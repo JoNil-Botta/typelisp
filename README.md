@@ -123,8 +123,10 @@ guide](https://jonil-botta.github.io/typelisp/getting-started.html) walks from
 [`tools/vs-code-extension`](tools/vs-code-extension) packages a VS Code
 extension with syntax highlighting and the stdio language server -- diagnostics,
 compiler/lint quick fixes, go-to-definition, hover, completion, inlay hints, and
-formatting. It downloads its own compiler, so a one-command `.vsix` install is
-the whole setup; see [its README](tools/vs-code-extension/README.md).
+formatting. The server maintains a deterministic multi-root workspace source
+index, with unsaved documents overriding their disk snapshots. It downloads its
+own compiler, so a one-command `.vsix` install is the whole setup; see [its
+README](tools/vs-code-extension/README.md).
 
 To start a package instead, run `$tl new hello-app`, then
 `$tl run --manifest-path hello-app/typelisp.pkg`. The generated binary prints
@@ -749,7 +751,8 @@ reflection, packages with lockfiles, inline tests, doctests, fmt, lint, doc
 generation, a docs site, and a stdio language server with diagnostics,
 compiler/lint quick fixes, definition lookup, document symbols/highlights,
 completion, inferred-type inlay hints, hover, import links, formatting,
-structural folding ranges, and structural-edit extensions.
+structural folding ranges, a multi-root source/declaration index with
+open-document overlays, and structural-edit extensions.
 
 Not yet (see [SPEC.md §8](SPEC.md) for the authoritative matrix): general
 GC/`free` (deferred by design in favor of arenas), vectorized SPMD

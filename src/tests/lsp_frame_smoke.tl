@@ -15,6 +15,191 @@
 (define (lsp-smoke-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
+(define (lsp-smoke-mkdir [path : String]) : unit
+  (match (fs.try-mkdir-if-missing (& path))
+    [(io.OkIoUnit) unit]
+    [(io.ErrIoUnit _) unit]))
+
+(define (lsp-smoke-remove-file [path : String]) : unit
+  (match (fs.try-remove-file-if-exists (& path))
+    [(io.OkIoUnit) unit]
+    [(io.ErrIoUnit _) unit]))
+
+(define (lsp-smoke-folder-json [uri : String]) : json.Json
+  (lsp-json-object2
+    "uri"
+    (json.JsonString uri)
+    "name"
+    (json.JsonString "workspace")))
+
+(define (lsp-smoke-folder-list-from [roots : lsp_svec.Vec] [index : i64]) : json.JsonSeq
+  (if (>= index (lsp_svec.len (& roots)))
+    (json.list-empty)
+    (lsp-json-list-cons
+      (lsp-smoke-folder-json (lsp_svec.get (& roots) index ""))
+      (lsp-smoke-folder-list-from roots (+ index 1)))))
+
+(define (lsp-smoke-initialize-message
+  [roots : lsp_svec.Vec]
+  [root-uri : String]) : json.Json
+  (lsp-json-object1
+    "params"
+    (lsp-json-object2
+      "workspaceFolders"
+      (lsp-json-array (lsp-smoke-folder-list-from roots 0))
+      "rootUri"
+      (if (> (string.string-length root-uri) 0)
+        (json.JsonString root-uri)
+        json.JsonNull))))
+
+(define (lsp-smoke-initialize-state [roots : lsp_svec.Vec] [root-uri : String]) : LspServerState
+  (let
+    [state : LspServerState (lsp-server-state-new)]
+    (lsp-server-state-initialize-workspaces
+      state
+      (lsp-smoke-initialize-message roots root-uri))))
+
+(define (lsp-smoke-state-name-count
+  [state : (& state LspServerState)]
+  [name : String]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    [total : i64 (lsp-server-state-declaration-count state)]
+    (begin
+      (while (< index total)
+        (begin
+          (match (lsp-server-state-declaration-at state index)
+            [(LspWorkspaceDeclLookup.Missing) unit]
+            [(LspWorkspaceDeclLookup.Found row)
+              (if (string.eq (struct-get (struct-get row decl) name) name)
+                (set! count (+ count 1))
+                unit)])
+          (set! index (+ index 1))))
+      count)))
+
+(define (lsp-smoke-state-row-matches?
+  [state : (& state LspServerState)]
+  [name : String]
+  [module : String]
+  [root-uri : String]
+  [explicit-module : bool]
+  [overlay : bool]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    [total : i64 (lsp-server-state-declaration-count state)]
+    (begin
+      (while (and (< index total) (not found))
+        (begin
+          (match (lsp-server-state-declaration-at state index)
+            [(LspWorkspaceDeclLookup.Missing) unit]
+            [(LspWorkspaceDeclLookup.Found row)
+              (if (and
+                (string.eq (struct-get (struct-get row decl) name) name)
+                (string.eq (struct-get row module) module)
+                (string.eq (struct-get row root-uri) root-uri)
+                (= (struct-get row explicit-module) explicit-module)
+                (= (struct-get row overlay) overlay))
+                (set! found true)
+                unit)])
+          (set! index (+ index 1))))
+      found)))
+
+(define (lsp-smoke-state-with-overlay
+  [state : LspServerState]
+  [path : String]
+  [text : String]
+  [version : i64]) : LspServerState
+  (let
+    [normalized : String (lsp-normalized-absolute-path path)]
+    [uri : String (lsp-resolved-path-to-file-uri normalized)]
+    [docs : lsp_document_vec.Vec
+      (lsp-documents-set-versioned
+        (struct-get state documents)
+        uri
+        normalized
+        text
+        version
+        (lsp-diagnostic-uris-empty))]
+    (match (lsp-server-state-refresh-document-result
+      state
+      (LspDocumentHandleResult.Continue docs)
+      uri
+      false)
+      [(LspHandleResult.Continue next) next]
+      [(LspHandleResult.Exit next) next])))
+
+(define (lsp-smoke-state-close [state : LspServerState] [path : String]) : LspServerState
+  (let
+    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [docs : lsp_document_vec.Vec
+      (lsp-documents-remove (struct-get state documents) uri)]
+    (match (lsp-server-state-refresh-document-result
+      state
+      (LspDocumentHandleResult.Continue docs)
+      uri
+      false)
+      [(LspHandleResult.Continue next) next]
+      [(LspHandleResult.Exit next) next])))
+
+(define (lsp-smoke-watcher-params [uri : String] [kind : i64]) : json.Json
+  (lsp-json-object1
+    "changes"
+    (lsp-json-array
+      (lsp-json-list-cons
+        (lsp-json-object2
+          "uri"
+          (json.JsonString uri)
+          "type"
+          (lsp-json-number kind))
+        (json.list-empty)))))
+
+(define (lsp-smoke-state-watch
+  [state : LspServerState]
+  [path : String]
+  [kind : i64]) : LspServerState
+  (let
+    [uri : String (lsp-resolved-path-to-file-uri path)]
+    (lsp-server-state-did-change-watched-files
+      state
+      (lsp-smoke-watcher-params uri kind))))
+
+(define (lsp-smoke-workspace-event-params
+  [added : lsp_svec.Vec]
+  [removed : lsp_svec.Vec]) : json.Json
+  (lsp-json-object1
+    "event"
+    (lsp-json-object2
+      "added"
+      (lsp-json-array (lsp-smoke-folder-list-from added 0))
+      "removed"
+      (lsp-json-array (lsp-smoke-folder-list-from removed 0)))))
+
+(define (lsp-smoke-state-workspace-event
+  [state : LspServerState]
+  [added : lsp_svec.Vec]
+  [removed : lsp_svec.Vec]) : LspServerState
+  (lsp-server-state-did-change-workspace-folders
+    state
+    (lsp-smoke-workspace-event-params added removed)))
+
+(define (lsp-smoke-state-root-count [state : (& state LspServerState)]) : i64
+  (lsp-workspace-roots-len (& (struct-get (struct-get state workspace) roots))))
+
+(define (lsp-smoke-state-source-count [state : (& state LspServerState)]) : i64
+  (lsp-workspace-sources-len
+    (& (struct-get (struct-get state workspace) sources))))
+
+(define (lsp-smoke-state-root-uri-at
+  [state : (& state LspServerState)]
+  [index : i64]) : String
+  (struct-get
+    (lsp-workspace-roots-get
+      (& (struct-get (struct-get state workspace) roots))
+      index)
+    uri))
+
 (define (lsp-smoke-string-vec-contains?
   [items : lsp_svec.Vec]
   [needle : String]) : bool
@@ -1193,6 +1378,314 @@
       (string.contains (& out) (& replacement))
       (string.contains (& out) (& second-index)))))
 
+(define (lsp-workspace-index-smoke-ok?) : bool
+  (let
+    [base : String "target/lsp_workspace_index"]
+    [root-a : String "target/lsp_workspace_index/a"]
+    [root-a-src : String "target/lsp_workspace_index/a/src"]
+    [root-a-target : String "target/lsp_workspace_index/a/target"]
+    [root-a-tests : String "target/lsp_workspace_index/a/tests"]
+    [root-a-nested : String "target/lsp_workspace_index/a/nested"]
+    [root-b : String "target/lsp_workspace_index/b"]
+    [disk-path : String "target/lsp_workspace_index/a/src/disk.tl"]
+    [explicit-path : String "target/lsp_workspace_index/a/src/explicit.tl"]
+    [target-path : String "target/lsp_workspace_index/a/target/ignored.tl"]
+    [tests-path : String "target/lsp_workspace_index/a/tests/ignored_test.tl"]
+    [nested-manifest : String
+      "target/lsp_workspace_index/a/nested/typelisp.pkg"]
+    [nested-path : String
+      "target/lsp_workspace_index/a/nested/ignored_nested.tl"]
+    [b-path : String "target/lsp_workspace_index/b/b.tl"]
+    [create-path : String "target/lsp_workspace_index/b/create.tl"]
+    [refresh-path : String "target/lsp_workspace_index/b/refresh.tl"]
+    [single-path : String "target/lsp_workspace_index/single.tl"]
+    [root-a-uri : String (lsp-resolved-path-to-file-uri root-a)]
+    [root-a-src-uri : String (lsp-resolved-path-to-file-uri root-a-src)]
+    [root-b-uri : String (lsp-resolved-path-to-file-uri root-b)]
+    [workspace-capabilities : String (json.stringify (lsp-initialize-result))]
+    [workspace-capability : String
+      "\"workspaceFolders\":{\"supported\":true,\"changeNotifications\":true}"]
+    [roots : lsp_svec.Vec (lsp_svec.new)]
+    [ok : bool true]
+    [_setup : unit
+      (begin
+        (lsp-smoke-mkdir base)
+        (lsp-smoke-mkdir root-a)
+        (lsp-smoke-mkdir root-a-src)
+        (lsp-smoke-mkdir root-a-target)
+        (lsp-smoke-mkdir root-a-tests)
+        (lsp-smoke-mkdir root-a-nested)
+        (lsp-smoke-mkdir root-b)
+        (lsp-smoke-remove-file create-path)
+        (lsp-smoke-remove-file refresh-path)
+        (lsp-smoke-write-text disk-path "(define disk-value : i64 1)")
+        (lsp-smoke-write-text
+          explicit-path
+          "(module explicit.mod) (define explicit-value : i64 2)")
+        (lsp-smoke-write-text
+          target-path
+          "(define ignored-target-value : i64 3)")
+        (lsp-smoke-write-text tests-path "(define ignored-test-value : i64 4)")
+        (lsp-smoke-write-text nested-manifest "")
+        (lsp-smoke-write-text
+          nested-path
+          "(define ignored-nested-value : i64 5)")
+        (lsp-smoke-write-text b-path "(define b-value : i64 6)")
+        (lsp_svec.push (&mut roots) root-a-uri)
+        (lsp_svec.push (&mut roots) root-a-uri)
+        (lsp_svec.push (&mut roots) root-a-src-uri)
+        (lsp_svec.push (&mut roots) root-b-uri)
+        (lsp_svec.push (&mut roots) "https://example.invalid/workspace"))]
+    [single-state : LspServerState
+      (lsp-smoke-state-with-overlay
+        (lsp-server-state-new)
+        single-path
+        "(define single-value : i64 7)"
+        1)]
+    [_single-check : unit
+      (begin
+        (let
+          [open-index : i64 1]
+          (while (< open-index 17)
+            (let
+              [suffix : String (string.int->string open-index)]
+              [path : String
+                (lsp-str4 "target/lsp_workspace_index/single-" suffix "" ".tl")]
+              [text : String
+                (lsp-str4 "(define single-value-" suffix " : i64 " "7)")]
+              (begin
+                (set!
+                  single-state
+                  (lsp-smoke-state-with-overlay
+                    single-state
+                    path
+                    text
+                    open-index))
+                (set! open-index (+ open-index 1))))))
+        (if (and
+          (= (lsp-smoke-state-root-count (& single-state)) 0)
+          (= (lsp_document_vec.len (& (struct-get single-state documents))) 17)
+          (= (lsp-smoke-state-source-count (& single-state)) 17)
+          (= (lsp-server-state-declaration-count (& single-state)) 17)
+          (= (lsp-smoke-state-name-count (& single-state) "single-value-16") 1)
+          (lsp-smoke-state-row-matches?
+            (& single-state)
+            "single-value"
+            "single"
+            ""
+            false
+            true))
+          unit
+          (begin
+            (io.print-error "workspace index smoke: single-file mode\n")
+            (set! ok false)))
+        (lsp-server-state-destroy! single-state))]
+    [state : LspServerState (lsp-smoke-initialize-state roots "")]
+    (begin
+      (if (and
+        (= (lsp-smoke-state-root-count (& state)) 3)
+        (= (lsp-smoke-state-source-count (& state)) 3)
+        (= (lsp-server-state-declaration-count (& state)) 3)
+        (string.contains (& workspace-capabilities) (& workspace-capability))
+        (string.eq (lsp-smoke-state-root-uri-at (& state) 0) root-a-uri)
+        (string.eq (lsp-smoke-state-root-uri-at (& state) 1) root-a-src-uri)
+        (string.eq (lsp-smoke-state-root-uri-at (& state) 2) root-b-uri)
+        (lsp-smoke-state-row-matches?
+          (& state)
+          "disk-value"
+          "src.disk"
+          root-a-uri
+          false
+          false)
+        (lsp-smoke-state-row-matches?
+          (& state)
+          "explicit-value"
+          "explicit.mod"
+          root-a-uri
+          true
+          false)
+        (= (lsp-smoke-state-name-count (& state) "b-value") 1)
+        (= (lsp-smoke-state-name-count (& state) "ignored-target-value") 0)
+        (= (lsp-smoke-state-name-count (& state) "ignored-test-value") 0)
+        (= (lsp-smoke-state-name-count (& state) "ignored-nested-value") 0))
+        unit
+        (begin
+          (io.print-error "workspace index smoke: initial discovery\n")
+          (set! ok false)))
+      (set!
+        state
+        (lsp-smoke-state-with-overlay
+          state
+          disk-path
+          "(define overlay-value : i64 8)"
+          2))
+      (if (and
+        (= (lsp-smoke-state-name-count (& state) "disk-value") 0)
+        (lsp-smoke-state-row-matches?
+          (& state)
+          "overlay-value"
+          "src.disk"
+          root-a-uri
+          false
+          true))
+        unit
+        (begin
+          (io.print-error "workspace index smoke: open overlay\n")
+          (set! ok false)))
+      (lsp-smoke-write-text disk-path "(define watcher-value : i64 9)")
+      (set! state (lsp-smoke-state-watch state disk-path 2))
+      (if (and
+        (= (lsp-smoke-state-name-count (& state) "watcher-value") 0)
+        (= (lsp-smoke-state-name-count (& state) "overlay-value") 1))
+        unit
+        (begin
+          (io.print-error "workspace index smoke: watcher below overlay\n")
+          (set! ok false)))
+      (lsp-smoke-remove-file disk-path)
+      (set! state (lsp-smoke-state-watch state disk-path 3))
+      (if (= (lsp-smoke-state-name-count (& state) "overlay-value") 1)
+        unit
+        (begin
+          (io.print-error "workspace index smoke: delete below overlay\n")
+          (set! ok false)))
+      (set! state (lsp-smoke-state-close state disk-path))
+      (if (and
+        (= (lsp-smoke-state-name-count (& state) "overlay-value") 0)
+        (= (lsp-smoke-state-source-count (& state)) 2))
+        unit
+        (begin
+          (io.print-error "workspace index smoke: close missing overlay\n")
+          (set! ok false)))
+      (lsp-smoke-write-text create-path "(define created-value : i64 10)")
+      (set! state (lsp-smoke-state-watch state create-path 1))
+      (if (= (lsp-smoke-state-name-count (& state) "created-value") 1)
+        unit
+        (begin
+          (io.print-error "workspace index smoke: create event\n")
+          (set! ok false)))
+      (lsp-smoke-write-text create-path "(define changed-value : i64 11)")
+      (set! state (lsp-smoke-state-watch state create-path 2))
+      (if (and
+        (= (lsp-smoke-state-name-count (& state) "created-value") 0)
+        (= (lsp-smoke-state-name-count (& state) "changed-value") 1))
+        unit
+        (begin
+          (io.print-error "workspace index smoke: change event\n")
+          (set! ok false)))
+      (set!
+        state
+        (lsp-smoke-state-with-overlay
+          state
+          create-path
+          "(define create-overlay-value : i64 12)"
+          3))
+      (set! state (lsp-smoke-state-close state create-path))
+      (if (and
+        (= (lsp-smoke-state-name-count (& state) "create-overlay-value") 0)
+        (= (lsp-smoke-state-name-count (& state) "changed-value") 1))
+        unit
+        (begin
+          (io.print-error "workspace index smoke: close restores disk\n")
+          (set! ok false)))
+      (lsp-smoke-remove-file create-path)
+      (set! state (lsp-smoke-state-watch state create-path 3))
+      (if (= (lsp-smoke-state-name-count (& state) "changed-value") 0)
+        unit
+        (begin
+          (io.print-error "workspace index smoke: delete event\n")
+          (set! ok false)))
+      (lsp-smoke-write-text refresh-path "(define refresh-value-0 : i64 13)")
+      (set! state (lsp-smoke-state-watch state refresh-path 1))
+      (let
+        [iteration : i64 1]
+        (while (< iteration 21)
+          (let
+            [owner : i64 (struct-get state owner-arena)]
+            [name : String
+              (lsp-str3 "refresh-value-" (string.int->string iteration) "")]
+            [source : String (lsp-str3 "(define " name " : i64 13)")]
+            (begin
+              (lsp-smoke-write-text refresh-path source)
+              (set! state (lsp-smoke-state-watch state refresh-path 2))
+              (if (and
+                (not (= owner (struct-get state owner-arena)))
+                (= (lsp-smoke-state-source-count (& state)) 3)
+                (= (lsp-server-state-declaration-count (& state)) 3)
+                (= (lsp-smoke-state-name-count (& state) name) 1))
+                unit
+                (begin
+                  (io.print-error "workspace index smoke: repeated refresh\n")
+                  (set! ok false)))
+              (set! iteration (+ iteration 1))))))
+      (let
+        [added : lsp_svec.Vec (lsp_svec.new)]
+        [removed : lsp_svec.Vec (lsp_svec.new)]
+        (begin
+          (lsp_svec.push (&mut removed) root-a-uri)
+          (set! state (lsp-smoke-state-workspace-event state added removed))))
+      (if (and
+        (= (lsp-smoke-state-root-count (& state)) 2)
+        (= (lsp-smoke-state-source-count (& state)) 3)
+        (lsp-smoke-state-row-matches?
+          (& state)
+          "explicit-value"
+          "explicit.mod"
+          root-a-src-uri
+          true
+          false))
+        unit
+        (begin
+          (io.print-error "workspace index smoke: overlapping root removal\n")
+          (set! ok false)))
+      (let
+        [added : lsp_svec.Vec (lsp_svec.new)]
+        [removed : lsp_svec.Vec (lsp_svec.new)]
+        (begin
+          (lsp_svec.push (&mut removed) root-b-uri)
+          (set! state (lsp-smoke-state-workspace-event state added removed))))
+      (if (and
+        (= (lsp-smoke-state-root-count (& state)) 1)
+        (= (lsp-smoke-state-source-count (& state)) 1)
+        (= (lsp-smoke-state-name-count (& state) "b-value") 0)
+        (= (lsp-smoke-state-name-count (& state) "refresh-value-20") 0))
+        unit
+        (begin
+          (io.print-error "workspace index smoke: root removal\n")
+          (set! ok false)))
+      (let
+        [added : lsp_svec.Vec (lsp_svec.new)]
+        [removed : lsp_svec.Vec (lsp_svec.new)]
+        (begin
+          (lsp_svec.push (&mut added) root-b-uri)
+          (set! state (lsp-smoke-state-workspace-event state added removed))))
+      (if (and
+        (= (lsp-smoke-state-root-count (& state)) 2)
+        (= (lsp-smoke-state-source-count (& state)) 3)
+        (= (lsp-smoke-state-name-count (& state) "b-value") 1)
+        (= (lsp-smoke-state-name-count (& state) "refresh-value-20") 1))
+        unit
+        (begin
+          (io.print-error "workspace index smoke: root addition\n")
+          (set! ok false)))
+      (let
+        [fallback-roots : lsp_svec.Vec (lsp_svec.new)]
+        [fallback-state : LspServerState
+          (lsp-smoke-initialize-state fallback-roots root-b-uri)]
+        (begin
+          (if (and
+            (= (lsp-smoke-state-root-count (& fallback-state)) 1)
+            (= (lsp-smoke-state-source-count (& fallback-state)) 2)
+            (string.eq
+              (lsp-smoke-state-root-uri-at (& fallback-state) 0)
+              root-b-uri))
+            unit
+            (begin
+              (io.print-error "workspace index smoke: rootUri fallback\n")
+              (set! ok false)))
+          (lsp-server-state-destroy! fallback-state)))
+      (lsp-server-state-destroy! state)
+      ok)))
+
 (define (main) : i64
   (let
     [base-result : i64 (lsp-diagnostic-metadata-smoke)]
@@ -1226,6 +1719,7 @@
         (unless (lsp-code-action-lint-smoke-ok?) (return 34))
         (unless (lsp-code-action-transcript-smoke-ok?) (return 35))
         (unless (lsp-second-diagnostic-code-action-smoke-ok?) (return 38))
+        (unless (lsp-workspace-index-smoke-ok?) (return 39))
         (unless (lsp-transcript-framing-smoke-ok?) (return 18))
         (unless (lsp-transcript-order-and-id-smoke-ok?) (return 19))
         (unless (lsp-transcript-reset-leakage-smoke-ok?) (return 20))

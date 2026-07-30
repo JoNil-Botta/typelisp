@@ -446,6 +446,99 @@
   [acc : svec.Vec]) : ResultPackageSourceList
   (package-source-scan-entries-from command root relative entries 0 acc))
 
+;; Discover ordinary package-style TypeLisp sources below an explicit root.
+;; Unlike `package-source-discover-for`, this does not require or parse a
+;; manifest at the root. It exists for tooling such as the LSP workspace index
+;; that receives roots from its protocol while still needing exactly the same
+;; deterministic traversal, exclusion, regular-file, and nested-package rules.
+(define (package-source-discover-root-for [command : String] [root : String]) : ResultPackageSourceList
+  (let
+    [normalized-root : String (compiler-load-normalize-path root)]
+    (match (fs.try-read-dir (& normalized-root))
+      [(fs.ErrIoStringVector error)
+        (package-source-read-dir-error command normalized-root error)]
+      [(fs.OkIoStringVector entries)
+        (package-source-scan-entries
+          command
+          normalized-root
+          ""
+          (package-source-sort-entries entries)
+          (svec.new))])))
+
+;; Return the next normalized path-separator position, or `end`.
+(define (package-source-relative-separator
+  [relative : String]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [index : i64 start]
+    (begin
+      (while (and
+        (< index end)
+        (not (fs.path-separator? (string.string-ref relative index))))
+        (set! index (+ index 1)))
+      index)))
+
+;; Check the directory segments that lead to one source. The root's own
+;; manifest is allowed; a manifest below it is a nested-package boundary.
+(define (package-source-relative-parent-eligible?
+  [root : String]
+  [relative : String]) : bool
+  (let
+    [end : i64 (fs.last-separator-index (& relative))]
+    [cursor : i64 0]
+    [prefix : String ""]
+    [eligible : bool true]
+    (begin
+      (while (and eligible (>= end 0) (< cursor end))
+        (let
+          [separator : i64
+            (package-source-relative-separator relative cursor end)]
+          [name : String
+            (string.substring relative cursor (- separator cursor))]
+          (begin
+            (if (or
+              (= (string.string-length name) 0)
+              (package-source-skip-dir? name))
+              (set! eligible false)
+              (begin
+                (set! prefix (package-source-relative-join prefix name))
+                (if (package-source-dir-has-manifest?
+                  (package-source-root-join root prefix))
+                  (set! eligible false)
+                  unit)))
+            (set! cursor (+ separator 1)))))
+      eligible)))
+
+;; Lexical half of the single-path policy. This intentionally does not require
+;; the file to exist so an unsaved open document can still be associated with
+;; its workspace root.
+(define (package-source-path-location-eligible-for-root?
+  [root : String]
+  [path : String]) : bool
+  (let
+    [normalized-root : String (compiler-load-normalize-path root)]
+    [normalized-path : String (compiler-load-normalize-path path)]
+    [relative : String
+      (compiler-load-root-relative-path normalized-root normalized-path)]
+    (and
+      (not (string.eq relative normalized-path))
+      (fs.path-safe-relative? (& relative))
+      (package-source-tl-file? normalized-path)
+      (package-source-relative-parent-eligible? normalized-root relative))))
+
+;; Fast single-path counterpart to root discovery for file-watcher events.
+;; The path must additionally be a current regular file.
+(define (package-source-path-eligible-for-root? [root : String] [path : String]) : bool
+  (let
+    [normalized-path : String (compiler-load-normalize-path path)]
+    (and
+      (package-source-path-location-eligible-for-root? root normalized-path)
+      (match (fs.try-file-metadata (& normalized-path))
+        [(fs.OkFsMetadata metadata)
+          (package-source-include-file? normalized-path metadata)]
+        [(fs.ErrFsMetadata _) false]))))
+
 (define (package-source-discover-for
   [command : String]
   [manifest-path : String]

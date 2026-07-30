@@ -9,7 +9,6 @@
 ;; #4870.
 (import "../compiler_embedded_stdlib_tlci.tl")
 (import "../tlci_core.tl")
-(import "../tlci_loader.tl")
 (import "../compiler_ast_types.tl")
 (import "../compiler_ctfe.tl")
 (import compiler_intern as ci)

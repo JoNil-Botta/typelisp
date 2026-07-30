@@ -105,6 +105,7 @@
         acc
         (match (compiler-ir-instr-seq-ref instrs index)
           [(CompilerIrInstr.Switch _ _ _ _) 1]
+          [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) 1]
           [_ 0])))))
 
 (define (opt-count-switch-instr-seq [instrs : CompilerIrInstrSeq]) : i64
@@ -138,6 +139,7 @@
           (if (= (compiler-ir-instr-seq-count instrs) 1)
             (match (compiler-ir-instr-seq-ref instrs 0)
               [(CompilerIrInstr.Switch _ base _ _) base]
+              [(CompilerIrInstr.TotalEnumSwitch _ base _ _ _) base]
               [_ (- 0 1)])
             (- 0 1))])]))
 
@@ -151,6 +153,8 @@
             (match (compiler-ir-instr-seq-ref instrs 0)
               [(CompilerIrInstr.Switch _ _ cases _)
                 (opt-switch-case-list-count cases)]
+              [(CompilerIrInstr.TotalEnumSwitch _ _ cases _ _)
+                (opt-switch-case-list-count cases)]
               [_ 0])
             0)])]))
 
@@ -163,6 +167,8 @@
           (if (= (compiler-ir-instr-seq-count instrs) 1)
             (match (compiler-ir-instr-seq-ref instrs 0)
               [(CompilerIrInstr.Switch _ _ _ default-label) default-label]
+              [(CompilerIrInstr.TotalEnumSwitch _ _ _ default-label _)
+                default-label]
               [_ (compiler-ir-label-none)])
             (compiler-ir-label-none))])]))
 
@@ -225,6 +231,28 @@
             next-label)
           (CompilerIrInstrList.Nil))))))
 
+(define (opt-switch-test-total-compare-block
+  [label : i64]
+  [tag : i64]
+  [eq-var : i64]
+  [arm-label : i64]
+  [next-label : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        eq-var
+        CompilerIrBinOp.Eq
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 tag)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.TotalEnumBranch
+          (CompilerIrValue.Var eq-var)
+          arm-label
+          next-label)
+        (CompilerIrInstrList.Nil)))))
+
 (define (opt-switch-test-return-block [label : i64] [value : i64]) : CompilerIrBlock
   (compiler-ir-block
     label
@@ -266,6 +294,7 @@
         instrs
         (- (compiler-ir-instr-seq-count instrs) 1))
         [(CompilerIrInstr.Switch _ base _ _) base]
+        [(CompilerIrInstr.TotalEnumSwitch _ base _ _ _) base]
         [_ (- 0 1)])]))
 
 (define (opt-switch-test-block-tail-case-count [block : CompilerIrBlock]) : i64
@@ -276,6 +305,8 @@
         (- (compiler-ir-instr-seq-count instrs) 1))
         [(CompilerIrInstr.Switch _ _ cases _)
           (opt-switch-case-list-count cases)]
+        [(CompilerIrInstr.TotalEnumSwitch _ _ cases _ _)
+          (opt-switch-case-list-count cases)]
         [_ 0])]))
 
 (define (opt-switch-test-block-tail-default [block : CompilerIrBlock]) : i64
@@ -285,7 +316,17 @@
         instrs
         (- (compiler-ir-instr-seq-count instrs) 1))
         [(CompilerIrInstr.Switch _ _ _ default-label) default-label]
+        [(CompilerIrInstr.TotalEnumSwitch _ _ _ default-label _) default-label]
         [_ (compiler-ir-label-none)])]))
+
+(define (opt-switch-test-block-tail-total? [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (match (compiler-ir-instr-seq-ref
+        instrs
+        (- (compiler-ir-instr-seq-count instrs) 1))
+        [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
+        [_ false])]))
 
 (define (opt-switch-test-block-starts-with-mov? [block : CompilerIrBlock]) : bool
   (match block
@@ -322,6 +363,8 @@
         instrs
         (- (compiler-ir-instr-seq-count instrs) 1))
         [(CompilerIrInstr.Switch _ _ cases _)
+          (opt-switch-test-cases-have? cases tag label)]
+        [(CompilerIrInstr.TotalEnumSwitch _ _ cases _ _)
           (opt-switch-test-cases-have? cases tag label)]
         [_ false])]))
 
@@ -378,6 +421,52 @@
               (opt-switch-test-return-block (compiler-ir-label "case2") 12)
               (compiler-ir-block-cons
                 (opt-switch-test-compare-block
+                  (compiler-ir-label "cmp3")
+                  tag3
+                  4
+                  (compiler-ir-label "case3")
+                  default-label)
+                (compiler-ir-block-cons
+                  (opt-switch-test-return-block (compiler-ir-label "case3") 13)
+                  (compiler-ir-block-cons
+                    (opt-switch-test-return-block default-label 99)
+                    (CompilerIrBlockList.Nil)))))))))))
+
+(define (opt-switch-test-total-chain-blocks
+  [tag0 : i64]
+  [tag1 : i64]
+  [tag2 : i64]
+  [tag3 : i64]
+  [default-label : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-switch-test-total-compare-block
+      (compiler-ir-label "entry")
+      tag0
+      1
+      (compiler-ir-label "case0")
+      (compiler-ir-label "cmp1"))
+    (compiler-ir-block-cons
+      (opt-switch-test-return-block (compiler-ir-label "case0") 10)
+      (compiler-ir-block-cons
+        (opt-switch-test-total-compare-block
+          (compiler-ir-label "cmp1")
+          tag1
+          2
+          (compiler-ir-label "case1")
+          (compiler-ir-label "cmp2"))
+        (compiler-ir-block-cons
+          (opt-switch-test-return-block (compiler-ir-label "case1") 11)
+          (compiler-ir-block-cons
+            (opt-switch-test-total-compare-block
+              (compiler-ir-label "cmp2")
+              tag2
+              3
+              (compiler-ir-label "case2")
+              (compiler-ir-label "cmp3"))
+            (compiler-ir-block-cons
+              (opt-switch-test-return-block (compiler-ir-label "case2") 12)
+              (compiler-ir-block-cons
+                (opt-switch-test-total-compare-block
                   (compiler-ir-label "cmp3")
                   tag3
                   4
@@ -703,7 +792,7 @@
     [total : CompilerIrFunction
       (opt-switch-form-function
         (opt-switch-test-function
-          (opt-switch-test-chain-blocks 0 1 2 3 total-final-label)))]
+          (opt-switch-test-total-chain-blocks 0 1 2 3 total-final-label)))]
     [total-blocks : CompilerIrBlockList (opt-function-blocks total)]
     [total-entry : CompilerIrBlock
       (match (opt-cfg-find-block total-blocks (compiler-ir-label "entry"))
@@ -724,12 +813,71 @@
       (opt-late-total-switch-function
         (ast-node-pool-reader-type-segment-bases)
         total-late)]
+    [cloned-total : CompilerIrInstr
+      (opt-inline-clone-multiblock-instr
+        (CompilerIrInstr.TotalEnumSwitch
+          (CompilerIrValue.Var 9)
+          0
+          (compiler-ir-switch-case-cons-linked
+            0
+            (compiler-ir-label "arm")
+            CompilerIrSwitchCaseList.Nil)
+          (compiler-ir-label "default")
+          (compiler-ir-label "trap"))
+        "cloned"
+        (CompilerIrCallArgs.Nil)
+        0
+        10)]
+    [cloned-pending-total : CompilerIrInstr
+      (opt-inline-clone-multiblock-instr
+        (CompilerIrInstr.TotalEnumSwitch
+          (CompilerIrValue.Var 9)
+          0
+          (compiler-ir-switch-case-cons-linked
+            0
+            (compiler-ir-label "arm")
+            CompilerIrSwitchCaseList.Nil)
+          (compiler-ir-label "default")
+          (compiler-ir-label-none))
+        "pending"
+        (CompilerIrCallArgs.Nil)
+        0
+        10)]
+    [preheader-forwarded-total : CompilerIrInstr
+      (opt-loop-preheaders-retarget-instr
+        (CompilerIrInstr.TotalEnumSwitch
+          (CompilerIrValue.Var 9)
+          0
+          (compiler-ir-switch-case-cons-linked
+            0
+            (compiler-ir-label "arm")
+            CompilerIrSwitchCaseList.Nil)
+          (compiler-ir-label "trap")
+          (compiler-ir-label "trap"))
+        (compiler-ir-label "trap")
+        (compiler-ir-label "preheader"))]
+    ;; Display spellings are deliberately identical to the old protocol. An
+    ;; ordinary chain using them must remain an ordinary checked Switch.
+    [spoofed : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-chain-blocks 0 1 2 3 total-final-label)))]
+    [spoofed-late : CompilerIrFunction
+      (opt-late-total-switch-function
+        (ast-node-pool-reader-type-segment-bases)
+        spoofed)]
+    [spoofed-blocks : CompilerIrBlockList (opt-function-blocks spoofed-late)]
+    [spoofed-entry : CompilerIrBlock
+      (match (opt-cfg-find-block spoofed-blocks (compiler-ir-label "entry"))
+        [(OptMaybeBlock.No)
+          (opt-switch-test-return-block (compiler-ir-label "missing") 0)]
+        [(OptMaybeBlock.Some block) block])]
     [marked-sparse-final-label : i64
       (compiler-ir-label "match_total_enum_default.sparse")]
     [marked-sparse : CompilerIrFunction
       (opt-switch-form-function
         (opt-switch-test-function
-          (opt-switch-test-chain-blocks 0 1 3 4 marked-sparse-final-label)))]
+          (opt-switch-test-total-chain-blocks 0 1 3 4 marked-sparse-final-label)))]
     [marked-sparse-blocks : CompilerIrBlockList
       (opt-function-blocks marked-sparse)]
     [level1 : CompilerIrFunction
@@ -804,10 +952,11 @@
         33]
       [(not (opt-switch-test-block-starts-with-mov? copy-head-entry)) 34]
       [(not (opt-verify-ok? (opt-verify-function copy-head))) 35]
-      ;; Switch formation preserves the classic final fallthrough throughout
-      ;; the optimizer fixpoint. Only the dedicated late pass consumes the
-      ;; marker, adds the final table case, and installs the trap default.
+      ;; Switch formation carries an explicit pending total-enum proof with the
+      ;; classic final fallthrough. Only the dedicated late pass consumes it,
+      ;; adds the final table case, and installs the trap default.
       [(not (= (opt-count-switch-blocks total-blocks) 1)) 36]
+      [(not (opt-switch-test-block-tail-total? total-entry)) 52]
       [(not (= (opt-switch-test-block-tail-base total-entry) 0)) 37]
       [(not (= (opt-switch-test-block-tail-case-count total-entry) 4)) 38]
       [(not
@@ -833,13 +982,60 @@
       [(not (opt-verify-ok? (opt-verify-function total-late))) 48]
       [(not (= (opt-count-switch-blocks (opt-function-blocks total-twice)) 1))
         49]
-      ;; A lowering marker alone is not authority: a sparse chain fails the
+      ;; Old display spellings are not authority without the explicit proof.
+      [(opt-switch-test-block-tail-total? spoofed-entry) 53]
+      [(not (= (opt-switch-test-block-tail-case-count spoofed-entry) 4)) 54]
+      [(not
+          (=
+            (opt-switch-test-block-tail-default spoofed-entry)
+            total-final-label))
+        55]
+      [(opt-block-list-has-label? spoofed-blocks total-trap-label) 56]
+      ;; An explicit proof alone is not enough: a sparse chain fails the
       ;; pre-existing density criterion, so neither Switch nor trap is added.
       [(not (= (opt-count-switch-blocks marked-sparse-blocks) 0)) 50]
       [(opt-block-list-has-label?
           marked-sparse-blocks
           (compiler-ir-label "match_total_trap__entry"))
         51]
+      ;; Multiblock inlining preserves the closed proof variant while
+      ;; deliberately remapping every real label. The none trap sentinel on a
+      ;; pending switch must remain a sentinel rather than becoming a label.
+      [(not
+          (match cloned-total
+            [(CompilerIrInstr.TotalEnumSwitch
+                (CompilerIrValue.Var value)
+                base
+                cases
+                default-label
+                trap-label)
+              (and
+                (= value 19)
+                (= base 0)
+                (opt-switch-test-cases-have?
+                  cases
+                  0
+                  (compiler-ir-label "cloned.arm"))
+                (= default-label (compiler-ir-label "cloned.default"))
+                (= trap-label (compiler-ir-label "cloned.trap")))]
+            [_ false]))
+        57]
+      [(not
+          (match cloned-pending-total
+            [(CompilerIrInstr.TotalEnumSwitch _ _ _ default-label trap-label)
+              (and
+                (= default-label (compiler-ir-label "pending.default"))
+                (= trap-label (compiler-ir-label-none)))]
+            [_ false]))
+        58]
+      [(not
+          (match preheader-forwarded-total
+            [(CompilerIrInstr.TotalEnumSwitch _ _ _ default-label trap-label)
+              (and
+                (= default-label (compiler-ir-label "preheader"))
+                (= trap-label (compiler-ir-label "trap")))]
+            [_ false]))
+        59]
       [else 42])))
 
 (define (smoke-mov-dst-var-type?

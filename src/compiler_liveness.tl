@@ -1167,6 +1167,7 @@
     [(CompilerIrInstr.TailCall _ args _) (compiler-live-call-args-vars args)]
     [(CompilerIrInstr.Store _ value _) (compiler-live-value-vars value)]
     [(CompilerIrInstr.Branch cond _ _) (compiler-live-value-vars cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _) (compiler-live-value-vars cond)]
     [(CompilerIrInstr.Return value) (compiler-live-maybe-value-vars value)]
     [(CompilerIrInstr.Phi _ inputs _) (compiler-live-phi-input-vars inputs)]
     [(CompilerIrInstr.Pack _ words _) (compiler-live-value-list-vars words)]
@@ -1174,7 +1175,9 @@
     [(CompilerIrInstr.Jump _) (compiler-live-set-empty)]
     [(CompilerIrInstr.TailCallIndirect func args _)
       (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
-    [(CompilerIrInstr.Switch index _ _ _) (compiler-live-value-vars index)]))
+    [(CompilerIrInstr.Switch index _ _ _) (compiler-live-value-vars index)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
+      (compiler-live-value-vars index)]))
 
 (define (compiler-live-instr-defs [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
@@ -1377,11 +1380,34 @@
                   true-label
                   CompilerLiveLabelSet.Nil)
                 false-label)]
+            [(CompilerIrInstr.TotalEnumBranch _ true-label false-label)
+              (compiler-live-label-set-insert
+                (compiler-live-label-set-cons
+                  true-label
+                  CompilerLiveLabelSet.Nil)
+                false-label)]
             [(CompilerIrInstr.Switch _ _ cases default-label)
               (compiler-live-switch-case-successors
                 (compiler-live-label-set-cons
                   default-label
                   CompilerLiveLabelSet.Nil)
+                cases)]
+            [(CompilerIrInstr.TotalEnumSwitch
+                _
+                _
+                cases
+                default-label
+                trap-label)
+              (compiler-live-switch-case-successors
+                (if (= trap-label (compiler-ir-label-none))
+                  (compiler-live-label-set-cons
+                    default-label
+                    CompilerLiveLabelSet.Nil)
+                  (compiler-live-label-set-insert
+                    (compiler-live-label-set-cons
+                      default-label
+                      CompilerLiveLabelSet.Nil)
+                    trap-label))
                 cases)]
             [_ CompilerLiveLabelSet.Nil])])]))
 

@@ -19322,9 +19322,9 @@
 ;; PARTIALLY versions now (the counter check still derives, the swap check
 ;; stays in the fast clone) -- 2 puts a call in the swap block, 3 makes the
 ;; counter step +2 -- the latter two must leave the function untouched. Variant
-;; 4 gives the header a total-switch terminator so cloning exercises every
-;; switch edge, including the compiler trap default. Variant 5 uses the late
-;; total-enum marker and must remain unversioned by the profitability gate.
+;; 4 gives the header a switch terminator so cloning exercises every switch
+;; edge, including the compiler trap default. Variant 5 uses explicit pending
+;; total-enum provenance and must remain unversioned by the profitability gate.
 ;; Variants 6-9 cover late pairing; 10 lets the smaller affine value escape
 ;; through a phi so the paired rewrite must fail verification and roll back.
 ;; Variants 11-12 route the first check's index through a reinterpret cast.
@@ -19335,7 +19335,7 @@
   14)
 
 ;; Variant thresholds. Every variant from 4 up terminates the header with a
-;; switch, from 5 up marks that switch as the late total-enum dispatch, from 6
+;; switch, from 5 up gives that switch explicit total-enum provenance, from 6
 ;; up gives "then" the adjacent affine check pair, and from 11 up feeds the
 ;; first of those checks through a reinterpret cast.
 (define (opt-bce-mb-test-switch-variant? [variant : i64]) : bool
@@ -19389,18 +19389,29 @@
               (AstType.Bool))
             (compiler-ir-instr-cons
               (if (opt-bce-mb-test-switch-variant? variant)
-                (CompilerIrInstr.Switch
-                  (CompilerIrValue.Var 5)
-                  0
-                  (compiler-ir-switch-case-cons
+                (if (opt-bce-mb-test-total-enum-variant? variant)
+                  (CompilerIrInstr.TotalEnumSwitch
+                    (CompilerIrValue.Var 5)
                     0
-                    (compiler-ir-label "else")
                     (compiler-ir-switch-case-cons
-                      1
-                      (compiler-ir-label "then")
-                      CompilerIrSwitchCaseList.Nil))
-                  (if (opt-bce-mb-test-total-enum-variant? variant)
+                      0
+                      (compiler-ir-label "else")
+                      (compiler-ir-switch-case-cons
+                        1
+                        (compiler-ir-label "then")
+                        CompilerIrSwitchCaseList.Nil))
                     (compiler-ir-label "match_total_enum_default")
+                    (compiler-ir-label-none))
+                  (CompilerIrInstr.Switch
+                    (CompilerIrValue.Var 5)
+                    0
+                    (compiler-ir-switch-case-cons
+                      0
+                      (compiler-ir-label "else")
+                      (compiler-ir-switch-case-cons
+                        1
+                        (compiler-ir-label "then")
+                        CompilerIrSwitchCaseList.Nil))
                     (compiler-ir-label "match_total_trap")))
                 (CompilerIrInstr.Branch
                   (CompilerIrValue.Var 5)

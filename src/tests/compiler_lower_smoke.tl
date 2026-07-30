@@ -649,6 +649,9 @@
       (compiler-lower-two-variant-fallthrough-shape-ok?)
       (panic "lower: two-variant final fallthrough smoke mismatch"))
     (unless
+      (compiler-lower-total-enum-provenance-shape-ok?)
+      (panic "lower: total-enum provenance smoke mismatch"))
+    (unless
       (compiler-lower-borrowed-enum-match-shape-ok?)
       (panic "lower: borrowed enum match shape smoke mismatch"))
     (unless

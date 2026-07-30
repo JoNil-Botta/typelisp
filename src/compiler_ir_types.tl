@@ -523,6 +523,11 @@
   (Store i64 CompilerIrValue AstType)
   (Jump i64)
   (Branch CompilerIrValue i64 i64)
+  ;; A compare-chain edge produced only for an exhaustive enum match that is
+  ;; eligible for dense switch formation.  It renders and executes exactly
+  ;; like Branch; the distinct variant is the proof carried into the switch
+  ;; former without recovering semantics from a label spelling.
+  (TotalEnumBranch CompilerIrValue i64 i64)
   (Return CompilerIrMaybeValue)
   (Phi i64 CompilerIrPhiInputList AstType)
   ;; Multi-word register groups. A small (<=16 B) inline struct/enum whose fields
@@ -536,7 +541,13 @@
   (Pack i64 CompilerIrValueList AstType)
   (Word i64 CompilerIrValue i64 AstType)
   (TailCallIndirect CompilerIrValue CompilerIrCallArgs AstType)
-  (Switch CompilerIrValue i64 CompilerIrSwitchCaseList i64))
+  (Switch CompilerIrValue i64 CompilerIrSwitchCaseList i64)
+  ;; `trap-label = compiler-ir-label-none` is the optimizer's pending
+  ;; exhaustive-enum proof.  The late total-switch pass materializes the final
+  ;; enum case and abort block, then stores that block's explicit label here.
+  ;; The ordinary default edge may subsequently point through a jump-only
+  ;; preheader; backends never infer this proof from rendered label text.
+  (TotalEnumSwitch CompilerIrValue i64 CompilerIrSwitchCaseList i64 i64))
 
 (define (compiler-ir-descriptor-pair-kind-for-handle-type [ty : AstType]) : CompilerIrMaybeDescriptorPairKind
   (match ty
@@ -1284,6 +1295,8 @@
       (CompilerIrInstrScalarFact.BinOp dst op lhs rhs ty)]
     [(CompilerIrInstr.Jump target) (CompilerIrInstrScalarFact.Jump target)]
     [(CompilerIrInstr.Branch cond yes no)
+      (CompilerIrInstrScalarFact.Branch cond yes no)]
+    [(CompilerIrInstr.TotalEnumBranch cond yes no)
       (CompilerIrInstrScalarFact.Branch cond yes no)]
     [(CompilerIrInstr.Phi dst inputs ty)
       (CompilerIrInstrScalarFact.Phi dst inputs ty)]
@@ -2783,6 +2796,11 @@
         (compiler-ir-clone-value cond)
         (clone true-label)
         (clone false-label))]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (CompilerIrInstr.TotalEnumBranch
+        (compiler-ir-clone-value cond)
+        (clone true-label)
+        (clone false-label))]
     [(CompilerIrInstr.Return value)
       (CompilerIrInstr.Return (compiler-ir-clone-maybe-value value))]
     [(CompilerIrInstr.Phi dst inputs ty)
@@ -2811,7 +2829,16 @@
         (compiler-ir-clone-value index)
         base
         (compiler-ir-clone-switch-case-list cases)
-        (clone default-label))]))
+        (clone default-label))]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
+      (CompilerIrInstr.TotalEnumSwitch
+        (compiler-ir-clone-value index)
+        base
+        (compiler-ir-clone-switch-case-list cases)
+        (clone default-label)
+        (if (= trap-label (compiler-ir-label-none))
+          trap-label
+          (clone trap-label)))]))
 
 (define (compiler-ir-clone-instr-list-acc
   [pools : AstNodePoolContext]
@@ -4277,6 +4304,14 @@
         (compiler-ir-label-text on-true)
         ", "
         (compiler-ir-label-text on-false))]
+    [(CompilerIrInstr.TotalEnumBranch test on-true on-false)
+      (str_cat.str-cat
+        "  branch "
+        (compiler-ir-value-render test)
+        ", "
+        (compiler-ir-label-text on-true)
+        ", "
+        (compiler-ir-label-text on-false))]
     [(CompilerIrInstr.Return value)
       (str_cat.str-cat "  return " (compiler-ir-maybe-value-render value))]
     [(CompilerIrInstr.Phi dst inputs ty)
@@ -4303,6 +4338,16 @@
         " : "
         (compiler-ir-type-render type-segment-bases ty))]
     [(CompilerIrInstr.Switch index base cases default-label)
+      (str_cat.str-cat
+        "  switch "
+        (compiler-ir-value-render index)
+        " base "
+        (string.int->string base)
+        " ["
+        (compiler-ir-switch-case-list-render cases)
+        "] default "
+        (compiler-ir-label-text default-label))]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label _)
       (str_cat.str-cat
         "  switch "
         (compiler-ir-value-render index)
@@ -4658,11 +4703,13 @@
     [(CompilerIrInstr.TailCall _ _ _) CompilerIrEffect.ControlFlow]
     [(CompilerIrInstr.Jump _) CompilerIrEffect.ControlFlow]
     [(CompilerIrInstr.Branch _ _ _) CompilerIrEffect.ControlFlow]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) CompilerIrEffect.ControlFlow]
     [(CompilerIrInstr.Return _) CompilerIrEffect.ControlFlow]
     [(CompilerIrInstr.Pack _ _ _) CompilerIrEffect.Pure]
     [(CompilerIrInstr.Word _ _ _ _) CompilerIrEffect.Pure]
     [(CompilerIrInstr.TailCallIndirect _ _ _) CompilerIrEffect.ControlFlow]
-    [(CompilerIrInstr.Switch _ _ _ _) CompilerIrEffect.ControlFlow]))
+    [(CompilerIrInstr.Switch _ _ _ _) CompilerIrEffect.ControlFlow]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) CompilerIrEffect.ControlFlow]))
 
 ;; Source provenance side table for the lowered IR. Kept OUTSIDE
 ;;
@@ -6685,6 +6732,16 @@
           ") -> "
           (compiler-ir-spmd-call-result-describe type-segment-bases result)))]
     [(CompilerIrInstr.Switch index base cases default-label)
+      (str_cat.str-cat
+        "  switch "
+        (compiler-ir-value-describe index)
+        " base "
+        (string.int->string base)
+        " ["
+        (compiler-ir-switch-case-list-render cases)
+        "] default "
+        (compiler-ir-label-text default-label))]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label _)
       (str_cat.str-cat
         "  switch "
         (compiler-ir-value-describe index)

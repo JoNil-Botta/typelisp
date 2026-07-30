@@ -9821,16 +9821,24 @@
         (CompilerIrInstr.Jump (compiler-ir-label "match_total_trap"))
         CompilerIrInstrList.Nil))))
 
-(define (compiler-backend-total-switch-test-blocks) : CompilerIrBlockList
+(define (compiler-backend-total-switch-test-blocks [explicit-total? : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
       (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Switch
-          (CompilerIrValue.Var 0)
-          0
-          (compiler-backend-total-switch-test-cases)
-          (compiler-ir-label "match_total_trap"))
+        (if explicit-total?
+          (CompilerIrInstr.TotalEnumSwitch
+            (CompilerIrValue.Var 0)
+            0
+            (compiler-backend-total-switch-test-cases)
+            (compiler-ir-label "match_total_trap")
+            (compiler-ir-label "match_total_trap"))
+          ;; The old display spelling must not authorize unchecked dispatch.
+          (CompilerIrInstr.Switch
+            (CompilerIrValue.Var 0)
+            0
+            (compiler-backend-total-switch-test-cases)
+            (compiler-ir-label "match_total_trap")))
         CompilerIrInstrList.Nil))
     (compiler-backend-total-switch-return-block
       (compiler-ir-label "zero")
@@ -9863,7 +9871,84 @@
         CompilerIrParamList.Nil
         (AstType.I64)
         2
-        (compiler-backend-total-switch-test-blocks))
+        (compiler-backend-total-switch-test-blocks true))
+      CompilerIrFunctionList.Nil)
+    CompilerIrExternList.Nil))
+
+(define (compiler-backend-forwarded-total-switch-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.TotalEnumSwitch
+          (CompilerIrValue.Var 0)
+          0
+          (compiler-backend-total-switch-test-cases)
+          (compiler-ir-label "plain_preheader")
+          (compiler-ir-label "plain_abort"))
+        CompilerIrInstrList.Nil))
+    (compiler-backend-total-switch-return-block
+      (compiler-ir-label "zero")
+      0
+      (compiler-backend-total-switch-return-block
+        (compiler-ir-label "one")
+        1
+        (compiler-backend-total-switch-return-block
+          (compiler-ir-label "two")
+          2
+          (compiler-backend-total-switch-return-block
+            (compiler-ir-label "three")
+            3
+            (compiler-backend-total-switch-return-block
+              (compiler-ir-label "four")
+              4
+              (compiler-backend-total-switch-return-block
+                (compiler-ir-label "five")
+                5
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    (compiler-ir-label "plain_preheader")
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump (compiler-ir-label "plain_abort"))
+                      CompilerIrInstrList.Nil))
+                  (compiler-ir-block-cons
+                    (compiler-ir-block
+                      (compiler-ir-label "plain_abort")
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Call
+                          1
+                          cbi.compiler-builtin-id-tl-oob-abort
+                          (CompilerIrCallArgs.Nil)
+                          (AstType.Unit))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Jump
+                            (compiler-ir-label "plain_abort"))
+                          CompilerIrInstrList.Nil)))
+                    CompilerIrBlockList.Nil))))))))))
+
+(define (compiler-backend-forwarded-total-switch-test-program) : CompilerIrProgram
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
+    (compiler-ir-function-cons
+      (CompilerIrFunction.Function
+        (ci.intern "main")
+        CompilerIrParamList.Nil
+        (AstType.I64)
+        2
+        (compiler-backend-forwarded-total-switch-test-blocks))
+      CompilerIrFunctionList.Nil)
+    CompilerIrExternList.Nil))
+
+(define (compiler-backend-spoofed-total-switch-test-program) : CompilerIrProgram
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
+    (compiler-ir-function-cons
+      (CompilerIrFunction.Function
+        (ci.intern "main")
+        CompilerIrParamList.Nil
+        (AstType.I64)
+        2
+        (compiler-backend-total-switch-test-blocks false))
       CompilerIrFunctionList.Nil)
     CompilerIrExternList.Nil))
 
@@ -9919,6 +10004,20 @@
           (compiler-backend-string-contains? asm "    .quad .Lf0_five\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-forwarded-total-switch-asm-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-forwarded-total-switch-test-program))
+    [(ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "main")]
+        (and
+          (compiler-backend-string-contains?
+            body
+            "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+          (not (compiler-backend-string-contains? body "    cmpq $5"))
+          (not (compiler-backend-string-contains? body "    ja "))))]
+    [(ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-total-switch-pic-asm-ok?) : bool
   (match (compiler-backend-emit-program-pic-target-with-mode
     (compiler-backend-total-switch-test-program)
@@ -9969,6 +10068,24 @@
             sections
             (compiler-backend-object-switch-indirect-jump-bytes))))]
     [(ResultCompilerBackendObject.Err _) false]))
+
+(define (compiler-backend-spoofed-total-switch-stays-checked?) : bool
+  (and
+    (match (compiler-backend-emit-program-linux
+      (compiler-backend-spoofed-total-switch-test-program))
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains? asm "    cmpq $5")
+          (compiler-backend-string-contains? asm "    ja "))]
+      [(ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-emit-program-object-image-linux
+      (compiler-backend-spoofed-total-switch-test-program)
+      (compiler-source-spans-empty))
+      [(ResultCompilerBackendObject.Ok image)
+        (cobj.compiler-object-section-contains-bytes?
+          (struct-get image sections)
+          (compiler-backend-object-cmp-imm32-rax-bytes 5))]
+      [(ResultCompilerBackendObject.Err _) false])))
 
 (define (compiler-backend-switch-asm-ok?) : bool
   (match (compiler-backend-emit-program-linux
@@ -10291,8 +10408,10 @@
       11)
     (compiler-backend-switch-asm-ok?)
     (compiler-backend-total-switch-asm-ok?)
+    (compiler-backend-forwarded-total-switch-asm-ok?)
     (compiler-backend-total-switch-pic-asm-ok?)
     (compiler-backend-total-switch-object-image-ok?)
+    (compiler-backend-spoofed-total-switch-stays-checked?)
     (compiler-backend-total-switch-lowered-opt2-asm-ok?)
     (compiler-backend-switch-base-asm-ok?)
     (compiler-backend-switch-shape-diagnostic-ok?)

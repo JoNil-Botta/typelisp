@@ -605,6 +605,16 @@ uppercase spelling such as `T`. One leading `_` marks an intentionally unused
 parameter or local. ABI-constrained and generated spellings require a targeted
 lint suppression at their declaration.
 
+Public stdlib operations that mutate caller-owned state through `&mut` use a
+terminal `!`. The suffix describes the effect; it does not make ordinary calls
+implicitly borrow a mutable place. Some generated APIs separately provide
+place-taking bang macros that evaluate each operand once and expand through
+normal checked `&mut` semantics. Consuming owners and reading or yielding views
+through `&mut` do not alone require `!`, and iterator `next` / `next-mut` is the
+protocol exception. See [the stdlib naming
+contract](stdlib/README.md#public-mutator-names) for examples and migration
+rules.
+
 `typelisp lint` includes staged migration rules such as
 `--deprecated-string-concat`, `--redundant-function-name`, and
 `--prefer-dotted-field`. `--legacy-path-import` reports compatibility-only

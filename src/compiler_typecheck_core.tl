@@ -75,6 +75,40 @@
   (rest i64)
   (below i64))
 
+(defstruct TcTopEnvMembershipStateData
+  ;; Bit 0 = membership active, bit 1 = alias fanout, bit 2 = explicit build.
+  ;; It is first so hot bind paths can read it directly through the capability
+  ;; without copying the larger table carrier.
+  (mode i64)
+  ;; The measured hot prefix of renderable names uses bounded epoch-stamped
+  ;; dense lanes. Higher typed IDs use a sparse overflow map, so an ID's numeric
+  ;; value never forces allocation up to that value. Structural and marker keys
+  ;; take a distinct explicit path into the same map; the validated renderable
+  ;; and raw structural key domains are disjoint.
+  (renderable-slots (__tl_dyn-array i64))
+  (renderable-bound-slots (__tl_dyn-array i64))
+  (structural-flags tc_i64_i64_map.Map)
+  (epoch i64)
+  (intern-table-id i64)
+  (intern-generation i64)
+  (accelerator-enabled bool)
+  (owner-arena i64))
+
+(defstruct TcTopEnvMembershipState
+  (address i64))
+
+(defstruct TcThreadNameKindStateData
+  ;; Values pack an ownership epoch above the two classification bits.
+  (kinds tc_i64_i64_map.Map)
+  (epoch i64)
+  (intern-table-id i64)
+  (intern-generation i64)
+  (accelerator-enabled bool)
+  (owner-arena i64))
+
+(defstruct TcThreadNameKindState
+  (address i64))
+
 (defstruct TcTypeEnvStore
   (bindings (__tl_dyn-array TcTypeEnvBinding))
   (binding-capacity i64)
@@ -82,7 +116,11 @@
   (caches (__tl_dyn-array TcTypeEnvCache))
   (cache-capacity i64)
   (cache-len i64)
-  (owner-arena i64))
+  (owner-arena i64)
+  ;; Zero for ordinary compatibility environments. The whole-program top env
+  ;; attaches its owning job's membership capability here so generic bind and
+  ;; lookup helpers need no process-global active-state selector.
+  (topenv-membership-state-address i64))
 
 (defstruct TcTypeEnv
   (store i64)
@@ -232,10 +270,65 @@
   ;; qualified table-id, generation, registry-id, ready.
   (control (__tl_dyn-array i64)))
 
+(defstruct TcJobStateData
+  (source-key-cache TcSourceKeyCacheState)
+  (topenv-membership TcTopEnvMembershipState)
+  (thread-name-kind TcThreadNameKindState))
+
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
   ;; allocated in the owning driver's lifetime arena.
   (address i64))
+
+(define tc-topenv-renderable-table-capacity : i64
+  32768)
+
+(define (tc-topenv-membership-state-new) : TcTopEnvMembershipState
+  (let
+    [cell : (__tl_dyn-array TcTopEnvMembershipStateData)
+      (array.make-array TcTopEnvMembershipStateData 1)]
+    (begin
+      (array-set!
+        cell
+        0
+        (TcTopEnvMembershipStateData
+          0
+          (array.make-array i64 tc-topenv-renderable-table-capacity)
+          (array.make-array i64 tc-topenv-renderable-table-capacity)
+          (tc_i64_i64_map.with-capacity 64)
+          1
+          -1
+          -1
+          true
+          (arena.tl_arena_current)))
+      (TcTopEnvMembershipState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (array-data cell) : (Ptr TcTopEnvMembershipStateData))))
+          : i64)))))
+
+(define (tc-thread-name-kind-state-new) : TcThreadNameKindState
+  (let
+    [cell : (__tl_dyn-array TcThreadNameKindStateData)
+      (array.make-array TcThreadNameKindStateData 1)]
+    (begin
+      (array-set!
+        cell
+        0
+        (TcThreadNameKindStateData
+          (tc_i64_i64_map.with-capacity 64)
+          1
+          -1
+          -1
+          true
+          (arena.tl_arena_current)))
+      (TcThreadNameKindState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (array-data cell) : (Ptr TcThreadNameKindStateData))))
+          : i64)))))
 
 (define (tc-source-key-cache-state-new) : TcSourceKeyCacheState
   (TcSourceKeyCacheState
@@ -253,23 +346,110 @@
 
 (define (tc-job-state-new) : TcJobState
   (let
-    [cell : (__tl_dyn-array TcSourceKeyCacheState)
-      (array.make-array TcSourceKeyCacheState 1)]
+    [cell : (__tl_dyn-array TcJobStateData) (array.make-array TcJobStateData 1)]
     (begin
-      (array-set! cell 0 (tc-source-key-cache-state-new))
+      (array-set!
+        cell
+        0
+        (TcJobStateData
+          (tc-source-key-cache-state-new)
+          (tc-topenv-membership-state-new)
+          (tc-thread-name-kind-state-new)))
       (TcJobState
         (cast
           (unsafe
-            (ptr->int
-              (ptr-cast (array-data cell) : (Ptr TcSourceKeyCacheState))))
+            (ptr->int (ptr-cast (array-data cell) : (Ptr TcJobStateData))))
           : i64)))))
 
+(define (tc-job-state-data [state : TcJobState]) : TcJobStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast (struct-get state address) : u64) : (Ptr TcJobStateData)))))
+
 (define (tc-job-state-source-key-cache [state : TcJobState]) : TcSourceKeyCacheState
+  (struct-get (tc-job-state-data state) source-key-cache))
+
+(define (tc-job-state-topenv-membership [state : TcJobState]) : TcTopEnvMembershipState
+  (struct-get (tc-job-state-data state) topenv-membership))
+
+(define (tc-job-state-thread-name-kind [state : TcJobState]) : TcThreadNameKindState
+  (struct-get (tc-job-state-data state) thread-name-kind))
+
+(define (tc-topenv-membership-state-data [state : TcTopEnvMembershipState]) : TcTopEnvMembershipStateData
   (unsafe
     (ptr-read
       (int->ptr
         (cast (struct-get state address) : u64)
-        : (Ptr TcSourceKeyCacheState)))))
+        : (Ptr TcTopEnvMembershipStateData)))))
+
+(define (tc-topenv-membership-state-data-set!
+  [state : TcTopEnvMembershipState]
+  [data : TcTopEnvMembershipStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (MutPtr TcTopEnvMembershipStateData))
+      data)))
+
+(define (tc-thread-name-kind-state-data [state : TcThreadNameKindState]) : TcThreadNameKindStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (Ptr TcThreadNameKindStateData)))))
+
+(define (tc-thread-name-kind-state-data-set!
+  [state : TcThreadNameKindState]
+  [data : TcThreadNameKindStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (MutPtr TcThreadNameKindStateData))
+      data)))
+
+(define (tc-job-state-set-topenv-membership-enabled!
+  [state : TcJobState]
+  [enabled : bool]) : unit
+  (let
+    [membership : TcTopEnvMembershipState
+      (tc-job-state-topenv-membership state)]
+    [data : TcTopEnvMembershipStateData
+      (tc-topenv-membership-state-data membership)]
+    (begin
+      (set! (struct-get data accelerator-enabled) enabled)
+      (tc-topenv-membership-state-data-set! membership data))))
+
+(define (tc-job-state-set-thread-name-kind-enabled!
+  [state : TcJobState]
+  [enabled : bool]) : unit
+  (let
+    [thread-state : TcThreadNameKindState (tc-job-state-thread-name-kind state)]
+    [data : TcThreadNameKindStateData
+      (tc-thread-name-kind-state-data thread-state)]
+    (begin
+      (set! (struct-get data accelerator-enabled) enabled)
+      (tc-thread-name-kind-state-data-set! thread-state data))))
+
+(define (tc-topenv-membership-state-reset! [state : TcTopEnvMembershipState]) : unit
+  (let
+    [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
+    (begin
+      (set! (struct-get data epoch) (+ (struct-get data epoch) 1))
+      (set! (struct-get data intern-table-id) -1)
+      (set! (struct-get data intern-generation) -1)
+      (set! (struct-get data mode) 0)
+      (tc-topenv-membership-state-data-set! state data))))
+
+(define (tc-thread-name-kind-state-reset! [state : TcThreadNameKindState]) : unit
+  (let
+    [data : TcThreadNameKindStateData (tc-thread-name-kind-state-data state)]
+    (begin
+      (set! (struct-get data epoch) (+ (struct-get data epoch) 1))
+      (set! (struct-get data intern-table-id) -1)
+      (set! (struct-get data intern-generation) -1)
+      (tc-thread-name-kind-state-data-set! state data))))
 
 (define (tc-source-key-cache-state-reset! [state : TcSourceKeyCacheState]) : unit
   (begin
@@ -278,7 +458,10 @@
     (array-set! (struct-get state control) 9 0)))
 
 (define (tc-job-state-reset-file-state! [state : TcJobState]) : unit
-  (tc-source-key-cache-state-reset! (tc-job-state-source-key-cache state)))
+  (begin
+    (tc-source-key-cache-state-reset! (tc-job-state-source-key-cache state))
+    (tc-topenv-membership-state-reset! (tc-job-state-topenv-membership state))
+    (tc-thread-name-kind-state-reset! (tc-job-state-thread-name-kind state))))
 
 ;; Standalone source APIs and direct tests are serial compatibility surfaces.
 ;; Allocate their state only when one of those adapters is called; production
@@ -6386,7 +6569,8 @@
     (unsafe
       (arena.tl_arena_set (tc-type-env-store-owner-current-head previous-arena)))))
 
-(define (tc-type-env-store-new) : TcTypeEnvStore
+(define (tc-type-env-store-new-with-topenv-state-address
+  [topenv-state-address : i64]) : TcTypeEnvStore
   (TcTypeEnvStore
     (array.make-array TcTypeEnvBinding 1)
     0
@@ -6394,15 +6578,26 @@
     (array.make-array TcTypeEnvCache 1)
     0
     0
-    (tc-type-env-store-owner-root (arena.tl_arena_current))))
+    (tc-type-env-store-owner-root (arena.tl_arena_current))
+    topenv-state-address))
 
-(define (tc-type-env-store-handle-new) : i64
+(define (tc-type-env-store-new) : TcTypeEnvStore
+  (tc-type-env-store-new-with-topenv-state-address 0))
+
+(define (tc-type-env-store-handle-new-with-topenv-state-address
+  [topenv-state-address : i64]) : i64
   (let
     [cell : (__tl_dyn-array TcTypeEnvStore) (array.make-array TcTypeEnvStore 1)]
     (begin
-      (array-set! cell 0 (tc-type-env-store-new))
+      (array-set!
+        cell
+        0
+        (tc-type-env-store-new-with-topenv-state-address topenv-state-address))
       (unsafe
         (cast (ptr->int (ptr-cast (array-data cell) : (Ptr u8))) : i64)))))
+
+(define (tc-type-env-store-handle-new) : i64
+  (tc-type-env-store-handle-new-with-topenv-state-address 0))
 
 (define (tc-type-env-store-read [handle : i64]) : TcTypeEnvStore
   (unsafe
@@ -6414,6 +6609,26 @@
 
 (define (tc-type-env-new) : TcTypeEnv
   (TcTypeEnv (tc-type-env-store-handle-new) -1 0))
+
+(define (tc-type-env-new-with-job-state [state : TcJobState]) : TcTypeEnv
+  (TcTypeEnv
+    (tc-type-env-store-handle-new-with-topenv-state-address
+      (struct-get (tc-job-state-topenv-membership state) address))
+    -1
+    0))
+
+(define (tc-type-env-topenv-membership-state [env : TcTypeEnv]) : TcTopEnvMembershipState
+  (TcTopEnvMembershipState
+    (unsafe
+      (ptr-read (ptr-offset (int->ptr (struct-get env store) : (Ptr i64)) 7)))))
+
+(define (tc-type-env-set-topenv-membership-state!
+  [env : TcTypeEnv]
+  [state : TcTopEnvMembershipState]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-offset (int->ptr (struct-get env store) : (MutPtr i64)) 7)
+      (struct-get state address))))
 
 (define (tc-type-env-store-grow-bindings!
   [store : (&mut store TcTypeEnvStore)]
@@ -6622,6 +6837,9 @@
 (define (tc-empty-env) : TcTypeEnv
   (tc-type-env-new))
 
+(define (tc-empty-env-with-job-state [state : TcJobState]) : TcTypeEnv
+  (tc-type-env-new-with-job-state state))
+
 (define (tc-type-env-spine-step [env : TcTypeEnv]) : TcTypeEnvSpineStep
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) (TcTypeEnvSpineStep.Done)]
@@ -6722,19 +6940,17 @@
 ;; visits, ~120ms of the top-env build of a self-compile, with the guard never
 ;; once finding a name already bound).
 ;;
-;; This is a membership bloom keyed by name-id: every name bound during the
-;; build (plus the seeded base env) is stamped with the current generation. An
-;; UNMARKED id is provably absent from the env, so the guard binds directly
-;; with no scan. A MARKED id (a real prior binding, or a transient local bind
-;; from an un-annotated top-level `define` initializer) falls back to the exact
-;; spine scan -- the bloom only ever SKIPS the scan when the name is definitely
-;; unbound, so the bound env, lookups, and diagnostics are identical to the
-;; unconditional scan. Generation stamps avoid clearing the array between
-;; builds; the array never grows, so out-of-range ids (>= capacity)
-;; conservatively report "maybe" and take the exact scan.
+;; This is a job-owned membership bloom keyed by name identity: every name
+;; bound during the build (plus the seeded base env) is stamped with the
+;; current ownership epoch. An UNMARKED id is provably absent from the env, so
+;; the guard binds directly with no scan. A MARKED id (a real prior binding, or
+;; a transient local bind from an un-annotated top-level `define` initializer)
+;; falls back to the exact spine scan -- the bloom only ever SKIPS the scan when
+;; the name is definitely unbound, so the bound env, lookups, and diagnostics
+;; are identical to the unconditional scan.
 ;;
-;; The bound-slots twin is the EXACT complement for the guard's other verdict:
-;; it is stamped only by binds that provably join the accumulated top-env spine
+;; Bit 1 is the EXACT complement for the guard's other verdict: it is stamped
+;; only by binds that provably join the accumulated top-env spine
 ;; (the seeded base env, tc-bind-alias-id-if-free's own binds, and top-env alias
 ;; fanout binds -- never the transient inference binds that make the bloom
 ;; conservative). A stamped id is therefore definitely bound, so the guard can
@@ -6744,168 +6960,429 @@
 ;; spine from the head down to the first binding. Ids that are bloom-marked but
 ;; not bound-stamped (e.g. spine binds made outside the alias binder) still
 ;; take the exact scan, so results are identical either way.
-(define tc-topenv-membership-slots : (__tl_dyn-array i64)
-  (array.make-array i64 (intern-capacity)))
-(define tc-topenv-membership-bound-slots : (__tl_dyn-array i64)
-  (array.make-array i64 (intern-capacity)))
+(define (tc-topenv-membership-state-present? [state : TcTopEnvMembershipState]) : bool
+  (not (= (struct-get state address) 0)))
 
-;; Qualified and generated structural ids live above the direct-slot range.
-;; Keep their maybe/bound bits in one bounded open-addressed table (bit 0 =
-;; maybe, bit 1 = definitely bound) so the reinterning migration does not send
-;; them back to an O(top-env) compatibility scan. This hot side table avoids
-;; the allocation and generic-map dispatch cost paid by every top-level bind.
-(define tc-topenv-membership-overflow-capacity : i64
-  65536)
-(define tc-topenv-membership-overflow-keys : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
-(define tc-topenv-membership-overflow-flags : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
-(define tc-topenv-membership-overflow-complete : bool
-  true)
-(define tc-topenv-membership-gen : i64
-  0)
-(define tc-topenv-membership-active : bool
-  false)
-(define tc-topenv-alias-fanout-active : bool
-  false)
-(define tc-topenv-explicit-build-active : bool
-  false)
+(define (tc-topenv-membership-map-needs-grow?
+  [map : (& map tc_i64_i64_map.Map)]) : bool
+  (let
+    [capacity : i64 (tc_i64_i64_map.capacity map)]
+    (or
+      (<= capacity 0)
+      (>=
+        (* (+ (tc_i64_i64_map.len map) (tc_i64_i64_map.deleted map)) 4)
+        (* capacity 3)))))
 
-(define (tc-topenv-membership-overflow-probe
-  [name-id : i64]
-  [slot : i64]
-  [probes : i64]) : i64
-  (if (>= probes tc-topenv-membership-overflow-capacity)
-    -1
+(define (tc-cache-map-clear! [map : (&mut map tc_i64_i64_map.Map)]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (array.length (struct-get map slots)))
+        (begin
+          (array-set!
+            (struct-get map slots)
+            index
+            (tc_i64_i64_map.GeneratedHashmapSlot.Empty))
+          (set! index (+ index 1))))
+      (set! (struct-get map len) 0)
+      (set! (struct-get map deleted) 0))))
+
+(define (tc-cache-map-grow-in-owner!
+  [map : (&mut map tc_i64_i64_map.Map)]
+  [owner : i64]) : unit
+  (if (tc-topenv-membership-map-needs-grow? (& map))
     (let
-      [flags : i64 (array-ref tc-topenv-membership-overflow-flags slot)]
-      (if (or
-        (= flags 0)
-        (= (array-ref tc-topenv-membership-overflow-keys slot) name-id))
-        slot
-        (tc-topenv-membership-overflow-probe
-          name-id
-          (bit-and (+ slot 1) (- tc-topenv-membership-overflow-capacity 1))
-          (+ probes 1))))))
+      [previous : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+        (tc_i64_i64_map.grow! map)
+        (tc-type-env-store-restore-after-owner-alloc! previous owner)))
+    unit))
 
-(define (tc-topenv-membership-overflow-slot [name-id : i64]) : i64
-  (tc-topenv-membership-overflow-probe
-    name-id
-    (bit-and
-      (* name-id 2654435761)
-      (- tc-topenv-membership-overflow-capacity 1))
+(define (tc-topenv-membership-renderable-overflow-flags-for
+  [data : (& data TcTopEnvMembershipStateData)]
+  [name-id : ci.InternId]) : i64
+  (let
+    [packed : i64
+      (tc_i64_i64_map.get-value-or
+        (& (struct-get data structural-flags))
+        (ci.intern-id-value name-id)
+        0)]
+    (if (= (shr packed 3) (struct-get data epoch))
+      (bit-and packed 3)
+      0)))
+
+(define (tc-topenv-membership-structural-flags-for
+  [data : (& data TcTopEnvMembershipStateData)]
+  [name-id : i64]) : i64
+  (let
+    [packed : i64
+      (tc_i64_i64_map.get-value-or
+        (& (struct-get data structural-flags))
+        name-id
+        0)]
+    (if (= (shr packed 2) (struct-get data epoch))
+      (bit-and packed 3)
+      0)))
+
+(define (tc-topenv-membership-mark-structural-data!
+  [data : (&mut data TcTopEnvMembershipStateData)]
+  [name-id : i64]
+  [bits : i64]) : unit
+  (let
+    [current : i64 (tc-topenv-membership-structural-flags-for (& data) name-id)]
+    (begin
+      (tc-cache-map-grow-in-owner!
+        (&mut (struct-get data structural-flags))
+        (struct-get data owner-arena))
+      (tc_i64_i64_map.insert-ref!
+        (&mut (struct-get data structural-flags))
+        name-id
+        (bit-or (shl (struct-get data epoch) 2) (bit-or current bits))))))
+
+(define (tc-topenv-membership-mark-renderable-data!
+  [data : (&mut data TcTopEnvMembershipStateData)]
+  [name-id : ci.InternId]
+  [bound : bool]) : unit
+  (let
+    [index : i64 (ci.intern-id-value name-id)]
+    (if (< index (array.length (struct-get data renderable-slots)))
+      (begin
+        (array-set!
+          (struct-get data renderable-slots)
+          index
+          (struct-get data epoch))
+        (if bound
+          (array-set!
+            (struct-get data renderable-bound-slots)
+            index
+            (struct-get data epoch))
+          unit))
+      (let
+        [current : i64
+          (tc-topenv-membership-renderable-overflow-flags-for (& data) name-id)]
+        (begin
+          (tc-cache-map-grow-in-owner!
+            (&mut (struct-get data structural-flags))
+            (struct-get data owner-arena))
+          (tc_i64_i64_map.insert-ref!
+            (&mut (struct-get data structural-flags))
+            index
+            (bit-or
+              (shl (struct-get data epoch) 3)
+              (bit-or
+                current
+                (if bound
+                  3
+                  1)))))))))
+
+;; TcTypeEnv still carries raw name keys during the typed-ID migration. Keep
+;; this one compatibility boundary explicit: valid renderable IDs become
+;; InternId before entering dense storage; every other raw identity takes the
+;; structural map path.
+(define (tc-topenv-membership-mark-key-data!
+  [data : (&mut data TcTopEnvMembershipStateData)]
+  [name-id : i64]
+  [bound : bool]) : unit
+  (if (ci.intern-renderable-id? name-id)
+    (tc-topenv-membership-mark-renderable-data!
+      data
+      (ci.intern-id-from-renderable name-id)
+      bound)
+    (tc-topenv-membership-mark-structural-data!
+      data
+      name-id
+      (if bound
+        3
+        1))))
+
+(define (tc-topenv-membership-mark!
+  [state : TcTopEnvMembershipState]
+  [name-id : i64]) : unit
+  (if (tc-topenv-membership-state-present? state)
+    (let
+      [data : TcTopEnvMembershipStateData
+        (tc-topenv-membership-state-data state)]
+      (if (and
+        (not (= (bit-and (struct-get data mode) 1) 0))
+        (struct-get data accelerator-enabled))
+        (begin
+          (tc-topenv-membership-mark-key-data! (&mut data) name-id false)
+          (tc-topenv-membership-state-data-set! state data))
+        unit))
+    unit))
+
+(define (tc-topenv-membership-mark-bound!
+  [state : TcTopEnvMembershipState]
+  [name-id : i64]) : unit
+  (if (tc-topenv-membership-state-present? state)
+    (let
+      [data : TcTopEnvMembershipStateData
+        (tc-topenv-membership-state-data state)]
+      (if (and
+        (not (= (bit-and (struct-get data mode) 1) 0))
+        (struct-get data accelerator-enabled))
+        (begin
+          (tc-topenv-membership-mark-key-data! (&mut data) name-id true)
+          (tc-topenv-membership-state-data-set! state data))
+        unit))
+    unit))
+
+(define (tc-topenv-explicit-build-active? [state : TcTopEnvMembershipState]) : bool
+  (and
+    (tc-topenv-membership-state-present? state)
+    (not (= (bit-and (tc-topenv-membership-mode state) 4) 0))))
+
+(define (tc-topenv-membership-mode [state : TcTopEnvMembershipState]) : i64
+  (if (tc-topenv-membership-state-present? state)
+    (unsafe
+      (ptr-read (int->ptr (cast (struct-get state address) : u64) : (Ptr i64))))
     0))
 
-(define (tc-topenv-membership-overflow-flags-for [name-id : i64]) : i64
+(define (tc-topenv-membership-set-alias-fanout-active!
+  [state : TcTopEnvMembershipState]
+  [active : bool]) : unit
   (let
-    [slot : i64 (tc-topenv-membership-overflow-slot name-id)]
-    (if (< slot 0)
-      0
-      (let
-        [flags : i64 (array-ref tc-topenv-membership-overflow-flags slot)]
-        (if (and
-          (not (= flags 0))
-          (= (array-ref tc-topenv-membership-overflow-keys slot) name-id))
-          flags
-          0)))))
-
-(define (tc-topenv-membership-overflow-mark! [name-id : i64] [bits : i64]) : unit
-  (let
-    [slot : i64 (tc-topenv-membership-overflow-slot name-id)]
-    (if (< slot 0)
-      (set! tc-topenv-membership-overflow-complete false)
-      (begin
-        (array-set! tc-topenv-membership-overflow-keys slot name-id)
-        (array-set!
-          tc-topenv-membership-overflow-flags
-          slot
-          (bit-or (array-ref tc-topenv-membership-overflow-flags slot) bits))))))
-
-(define (tc-topenv-membership-overflow-reset!) : unit
-  (let
-    [slot : i64 0]
+    [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
     (begin
-      (while (< slot tc-topenv-membership-overflow-capacity)
-        (begin
-          (array-set! tc-topenv-membership-overflow-flags slot 0)
-          (set! slot (+ slot 1))))
-      (set! tc-topenv-membership-overflow-complete true))))
+      (set!
+        (struct-get data mode)
+        (if active
+          (bit-or (struct-get data mode) 2)
+          (bit-and (struct-get data mode) -3)))
+      (tc-topenv-membership-state-data-set! state data))))
 
-(define (tc-topenv-membership-mark! [name-id : i64]) : unit
-  (if (and (>= name-id 0) (< name-id (intern-capacity)))
-    (array-set! tc-topenv-membership-slots name-id tc-topenv-membership-gen)
-    (tc-topenv-membership-overflow-mark! name-id 1)))
-
-(define (tc-topenv-membership-mark-bound! [name-id : i64]) : unit
-  (if (and
-    tc-topenv-membership-active
-    (>= name-id 0)
-    (< name-id (intern-capacity)))
-    (array-set!
-      tc-topenv-membership-bound-slots
-      name-id
-      tc-topenv-membership-gen)
-    (if tc-topenv-membership-active
-      (tc-topenv-membership-overflow-mark! name-id 3)
-      unit)))
+(define (tc-topenv-membership-set-explicit-build-active!
+  [state : TcTopEnvMembershipState]
+  [active : bool]) : unit
+  (let
+    [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
+    (begin
+      (set!
+        (struct-get data mode)
+        (if active
+          (bit-or (struct-get data mode) 4)
+          (bit-and (struct-get data mode) -5)))
+      (tc-topenv-membership-state-data-set! state data))))
 
 ;; True when the id is PROVABLY bound in the accumulated top-env spine (stamped
 ;; by a spine-joining bind this generation); false means "unknown", not
 ;; "unbound".
-(define (tc-topenv-membership-bound? [name-id : i64]) : bool
-  (if (and (>= name-id 0) (< name-id (intern-capacity)))
-    (=
-      (array-ref tc-topenv-membership-bound-slots name-id)
-      tc-topenv-membership-gen)
-    (not (= (bit-and (tc-topenv-membership-overflow-flags-for name-id) 2) 0))))
-
-;; True when the id MIGHT be in the env (marked this generation, or out of
-;; range); false only when it is provably absent.
-(define (tc-topenv-membership-maybe? [name-id : i64]) : bool
-  (if (and (>= name-id 0) (< name-id (intern-capacity)))
-    (= (array-ref tc-topenv-membership-slots name-id) tc-topenv-membership-gen)
+(define (tc-topenv-membership-bound?
+  [state : TcTopEnvMembershipState]
+  [name-id : i64]) : bool
+  (if (tc-topenv-membership-state-present? state)
     (let
-      [flags : i64 (tc-topenv-membership-overflow-flags-for name-id)]
-      (if (= flags 0)
-        (not tc-topenv-membership-overflow-complete)
-        (not (= (bit-and flags 1) 0))))))
+      [data : TcTopEnvMembershipStateData
+        (tc-topenv-membership-state-data state)]
+      (if (not (struct-get data accelerator-enabled))
+        false
+        (if (ci.intern-renderable-id? name-id)
+          (let
+            [renderable : ci.InternId (ci.intern-id-from-renderable name-id)]
+            [index : i64 (ci.intern-id-value renderable)]
+            (if (<
+              index
+              (array.length (struct-get data renderable-bound-slots)))
+              (=
+                (array-ref (struct-get data renderable-bound-slots) index)
+                (struct-get data epoch))
+              (not
+                (=
+                  (bit-and
+                    (tc-topenv-membership-renderable-overflow-flags-for
+                      (& data)
+                      renderable)
+                    2)
+                  0))))
+          (not
+            (=
+              (bit-and
+                (tc-topenv-membership-structural-flags-for (& data) name-id)
+                2)
+              0)))))
+    false))
 
-(define (tc-topenv-membership-seed! [env : TcTypeEnv]) : unit
+;; True when the id MIGHT be in the env; false only when the accelerator has
+;; recorded enough state to prove absence. Disabling the accelerator preserves
+;; the exact-scan behavior for differential tests.
+(define (tc-topenv-membership-maybe?
+  [state : TcTopEnvMembershipState]
+  [name-id : i64]) : bool
+  (if (tc-topenv-membership-state-present? state)
+    (let
+      [data : TcTopEnvMembershipStateData
+        (tc-topenv-membership-state-data state)]
+      (if (not (struct-get data accelerator-enabled))
+        true
+        (if (ci.intern-renderable-id? name-id)
+          (let
+            [renderable : ci.InternId (ci.intern-id-from-renderable name-id)]
+            [index : i64 (ci.intern-id-value renderable)]
+            (if (< index (array.length (struct-get data renderable-slots)))
+              (=
+                (array-ref (struct-get data renderable-slots) index)
+                (struct-get data epoch))
+              (not
+                (=
+                  (bit-and
+                    (tc-topenv-membership-renderable-overflow-flags-for
+                      (& data)
+                      renderable)
+                    1)
+                  0))))
+          (not
+            (=
+              (bit-and
+                (tc-topenv-membership-structural-flags-for (& data) name-id)
+                1)
+              0)))))
+    true))
+
+(define (tc-topenv-membership-seed!
+  [state : TcTopEnvMembershipState]
+  [env : TcTypeEnv]) : unit
   (match (tc-type-env-spine-step env)
     [(TcTypeEnvSpineStep.Done) unit]
-    [(TcTypeEnvSpineStep.Cache rest-env) (tc-topenv-membership-seed! rest-env)]
+    [(TcTypeEnvSpineStep.Cache rest-env)
+      (tc-topenv-membership-seed! state rest-env)]
     [(TcTypeEnvSpineStep.Bind key _ rest-env)
       (begin
-        (tc-topenv-membership-mark! key)
-        (tc-topenv-membership-mark-bound! key)
-        (tc-topenv-membership-seed! rest-env))]))
+        (tc-topenv-membership-mark! state key)
+        (tc-topenv-membership-mark-bound! state key)
+        (tc-topenv-membership-seed! state rest-env))]))
 
-(define (tc-topenv-membership-begin! [env : TcTypeEnv]) : unit
-  (begin
-    (set! tc-topenv-membership-gen (+ tc-topenv-membership-gen 1))
-    (tc-topenv-membership-overflow-reset!)
-    (set! tc-topenv-membership-active true)
-    (tc-topenv-membership-seed! env)))
+(define (tc-topenv-membership-begin!
+  [state : TcTopEnvMembershipState]
+  [env : TcTypeEnv]
+  [intern-table-id : i64]
+  [intern-generation : i64]) : unit
+  (let
+    [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
+    (begin
+      (if (or
+        (not (= (struct-get data intern-table-id) intern-table-id))
+        (not (= (struct-get data intern-generation) intern-generation)))
+        (tc-cache-map-clear! (&mut (struct-get data structural-flags)))
+        unit)
+      ;; Every build gets a fresh stamp. Recording the immutable source-name
+      ;; owner here prevents equal numeric IDs in two intern sessions from
+      ;; sharing accelerator facts.
+      (set! (struct-get data epoch) (+ (struct-get data epoch) 1))
+      (set! (struct-get data intern-table-id) intern-table-id)
+      (set! (struct-get data intern-generation) intern-generation)
+      (set! (struct-get data mode) 1)
+      (tc-topenv-membership-state-data-set! state data)
+      (tc-topenv-membership-seed! state env))))
 
-(define (tc-topenv-membership-end!) : unit
-  (set! tc-topenv-membership-active false))
+(define (tc-topenv-membership-end! [state : TcTopEnvMembershipState]) : unit
+  (let
+    [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
+    (begin
+      (set! (struct-get data mode) 0)
+      (tc-topenv-membership-state-data-set! state data))))
+
+(cfg
+  test
+  (define (tc-topenv-membership-job-owned-capacity-smoke?) : bool
+    (let
+      [job-a : TcJobState (tc-job-state-new)]
+      [job-b : TcJobState (tc-job-state-new)]
+      [state-a : TcTopEnvMembershipState (tc-job-state-topenv-membership job-a)]
+      [state-b : TcTopEnvMembershipState (tc-job-state-topenv-membership job-b)]
+      [env-a : TcTypeEnv (tc-empty-env-with-job-state job-a)]
+      [env-b : TcTypeEnv (tc-empty-env-with-job-state job-b)]
+      [renderable : i64 (intern "membership-job-owned")]
+      [renderable-overflow : i64 (+ tc-topenv-renderable-table-capacity 1)]
+      [alias-id : i64 (intern "membership-ab-alias")]
+      [structural-base : i64 (* (intern-capacity) (intern-capacity))]
+      [stress-count : i64 65537]
+      [index : i64 0]
+      (begin
+        (tc-topenv-membership-begin! state-a env-a 101 201)
+        (tc-topenv-membership-begin! state-b env-b 102 202)
+        (tc-topenv-membership-mark-bound! state-a renderable)
+        ;; One more entry than the removed fixed overflow table proves structural
+        ;; membership has no hidden 65,536-key ceiling.
+        (while (< index stress-count)
+          (begin
+            (tc-topenv-membership-mark-bound! state-a (+ structural-base index))
+            (set! index (+ index 1))))
+        (let
+          [isolated? : bool
+            (and
+              (tc-topenv-membership-bound? state-a renderable)
+              (not (tc-topenv-membership-maybe? state-b renderable))
+              (tc-topenv-membership-bound? state-a structural-base)
+              (tc-topenv-membership-bound?
+                state-a
+                (+ structural-base (- stress-count 1)))
+              (not (tc-topenv-membership-maybe? state-b structural-base)))]
+          [enabled-env : TcTypeEnv
+            (tc-bind-alias-id-if-free
+              (tc-bind-alias-id-if-free env-a alias-id (AstType.I64))
+              alias-id
+              (AstType.Bool))]
+          [overflow-safe? : bool
+            (begin
+              ;; A typed ID above the dense prefix remains exact in the
+              ;; renderable overflow map; it never enters the structural path.
+              (tc-topenv-membership-mark-bound! state-a renderable-overflow)
+              (and
+                (tc-topenv-membership-maybe? state-a renderable)
+                (tc-topenv-membership-maybe? state-a renderable-overflow)
+                (tc-topenv-membership-bound? state-a renderable)
+                (tc-topenv-membership-bound? state-a renderable-overflow)))]
+          (begin
+            (tc-job-state-set-topenv-membership-enabled! job-b false)
+            (tc-topenv-membership-begin! state-b env-b 102 202)
+            (let
+              [disabled-env : TcTypeEnv
+                (tc-bind-alias-id-if-free
+                  (tc-bind-alias-id-if-free env-b alias-id (AstType.I64))
+                  alias-id
+                  (AstType.Bool))]
+              (begin
+                (tc-topenv-membership-end! state-a)
+                (tc-topenv-membership-end! state-b)
+                (and
+                  isolated?
+                  overflow-safe?
+                  (match (tc-lookup-id enabled-env alias-id)
+                    [(ResultTcType.Ok (AstType.I64)) true]
+                    [_ false])
+                  (match (tc-lookup-id disabled-env alias-id)
+                    [(ResultTcType.Ok (AstType.I64)) true]
+                    [_ false]))))))))))
+
+(cfg
+  test
+  (test
+    tc-topenv-membership-job-owned-capacity
+    (if (tc-topenv-membership-job-owned-capacity-smoke?)
+      unit
+      (io.panic "typecheck: job-owned top-env membership/capacity smoke failed"))))
 
 (define (tc-bind-raw-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-bind))
-    (if tc-topenv-membership-active
-      (tc-topenv-membership-mark! name-id)
-      unit)
-    (if tc-topenv-alias-fanout-active
-      (tc-topenv-membership-mark-bound! name-id)
-      unit)
-    (let
-      [next-env : TcTypeEnv (tc-type-env-bind-node env name-id ty)]
-      (begin
-        (if tc-type-env-scoped-runtime-active
-          (tc-type-env-scoped-runtime-note-bind-id! next-env name-id ty env)
-          unit)
-        next-env))))
+  (let
+    [topenv-state : TcTopEnvMembershipState
+      (tc-type-env-topenv-membership-state env)]
+    [topenv-mode : i64 (tc-topenv-membership-mode topenv-state)]
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-bind))
+      (if (not (= (bit-and topenv-mode 2) 0))
+        (tc-topenv-membership-mark-bound! topenv-state name-id)
+        (if (not (= (bit-and topenv-mode 1) 0))
+          (tc-topenv-membership-mark! topenv-state name-id)
+          unit))
+      (let
+        [next-env : TcTypeEnv (tc-type-env-bind-node env name-id ty)]
+        (begin
+          (if tc-type-env-scoped-runtime-active
+            (tc-type-env-scoped-runtime-note-bind-id! next-env name-id ty env)
+            unit)
+          next-env)))))
 
 (define (tc-env-uncached-prefix-reaches-cache?
   [env : TcTypeEnv]
@@ -7012,17 +7489,22 @@
         -1))))
 
 (define (tc-env-compact-local-if-threshold [env : TcTypeEnv]) : TcTypeEnv
-  (if (or tc-topenv-explicit-build-active tc-topenv-alias-fanout-active)
-    env
-    (if (tc-env-uncached-prefix-reaches-cache? env (tc-local-cache-threshold))
-      (let
-        [below : TcTypeEnv (tc-env-after-prefix env (tc-local-cache-threshold))]
-        (if (>=
-          (tc-env-partial-layer-depth below)
-          (tc-local-cache-partial-layer-cap))
-          (tc-env-with-collapsed-local-cache env)
-          (tc-env-with-local-cache env)))
-      env)))
+  (let
+    [topenv-state : TcTopEnvMembershipState
+      (tc-type-env-topenv-membership-state env)]
+    [topenv-mode : i64 (tc-topenv-membership-mode topenv-state)]
+    (if (not (= (bit-and topenv-mode 6) 0))
+      env
+      (if (tc-env-uncached-prefix-reaches-cache? env (tc-local-cache-threshold))
+        (let
+          [below : TcTypeEnv
+            (tc-env-after-prefix env (tc-local-cache-threshold))]
+          (if (>=
+            (tc-env-partial-layer-depth below)
+            (tc-local-cache-partial-layer-cap))
+            (tc-env-with-collapsed-local-cache env)
+            (tc-env-with-local-cache env)))
+        env))))
 
 (define (tc-bind-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
   (tc-env-compact-local-if-threshold (tc-bind-raw-id env name-id ty)))
@@ -9214,36 +9696,36 @@
 (define (tc-name-bound-id-with-top-env-membership?
   [env : TcTypeEnv]
   [name-id : i64]) : bool
-  (cond
-    [(and
-        tc-topenv-membership-active
-        (not (tc-topenv-membership-maybe? name-id)))
-      false]
-    [(and tc-topenv-membership-active (tc-topenv-membership-bound? name-id))
-      true]
-    [else (tc-name-bound-id? env name-id)]))
+  (let
+    [state : TcTopEnvMembershipState (tc-type-env-topenv-membership-state env)]
+    [active : bool (not (= (bit-and (tc-topenv-membership-mode state) 1) 0))]
+    (cond
+      [(and active (not (tc-topenv-membership-maybe? state name-id))) false]
+      [(and active (tc-topenv-membership-bound? state name-id)) true]
+      [else (tc-name-bound-id? env name-id)])))
 
 (define (tc-bind-alias-id-if-free
   [env : TcTypeEnv]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnv
-  (cond
-    [(and
-        tc-topenv-membership-active
-        (not (tc-topenv-membership-maybe? name-id)))
-      ;; Provably unbound in the top-env spine: bind without the O(spine) scan.
-      (begin
-        (tc-topenv-membership-mark-bound! name-id)
-        (tc-bind-id env name-id ty))]
-    [(and tc-topenv-membership-active (tc-topenv-membership-bound? name-id))
-      ;; Provably bound by an earlier spine-joining bind this build: skip
-      ;; without the O(spine) scan (the scan would find that binding).
-      env]
-    [(tc-name-bound-id? env name-id) env]
-    [else
-      (begin
-        (tc-topenv-membership-mark-bound! name-id)
-        (tc-bind-id env name-id ty))]))
+  (let
+    [state : TcTopEnvMembershipState (tc-type-env-topenv-membership-state env)]
+    [active : bool (not (= (bit-and (tc-topenv-membership-mode state) 1) 0))]
+    (cond
+      [(and active (not (tc-topenv-membership-maybe? state name-id)))
+        ;; Provably unbound in the top-env spine: bind without the O(spine) scan.
+        (begin
+          (tc-topenv-membership-mark-bound! state name-id)
+          (tc-bind-id env name-id ty))]
+      [(and active (tc-topenv-membership-bound? state name-id))
+        ;; Provably bound by an earlier spine-joining bind this build: skip
+        ;; without the O(spine) scan (the scan would find that binding).
+        env]
+      [(tc-name-bound-id? env name-id) env]
+      [else
+        (begin
+          (tc-topenv-membership-mark-bound! state name-id)
+          (tc-bind-id env name-id ty))])))
 
 (define (tc-module-name-id-by-id [module-id : i64] [name-id : i64]) : i64
   (compiler-symbol-module-key-id-by-id module-id name-id))
@@ -10298,9 +10780,40 @@
 (define (tc-default-env) : TcTypeEnv
   (tc-bind-id (tc-default-env-base) (tc-default-boundary-id) (AstType.Unit)))
 
+(define (tc-default-env-with-job-state [state : TcJobState]) : TcTypeEnv
+  (tc-bind-id
+    (tc-default-env-base-with-job-state state)
+    (tc-default-boundary-id)
+    (AstType.Unit)))
+
 (define (tc-default-env-base) : TcTypeEnv
   (let
     [e0 : TcTypeEnv (tc-empty-env)]
+    [e1 : TcTypeEnv
+      (tc-bind-id
+        e0
+        cbi.compiler-builtin-id-cpuid
+        (tc-fn2
+          (AstType.I64)
+          (AstType.I64)
+          (ast-ty-tuple
+            (ast-type-cons
+              (AstType.I32)
+              (ast-type-cons
+                (AstType.I32)
+                (ast-type-cons
+                  (AstType.I32)
+                  (ast-type-cons (AstType.I32) (ast-type-list-new))))))))]
+    [e2 : TcTypeEnv
+      (tc-bind-id
+        e1
+        cbi.compiler-builtin-id-xgetbv
+        (tc-fn1 (AstType.I64) (AstType.I64)))]
+    (tc-bind-id e2 (tc-default-boundary-id) (AstType.Unit))))
+
+(define (tc-default-env-base-with-job-state [state : TcJobState]) : TcTypeEnv
+  (let
+    [e0 : TcTypeEnv (tc-empty-env-with-job-state state)]
     [e1 : TcTypeEnv
       (tc-bind-id
         e0
@@ -22237,7 +22750,11 @@
     (= (comptime (offset-of (type TcTypeEnvBinding) parent)) 32)
     (= (comptime (offset-of (type TcTypeEnvStore) bindings)) 0)
     (= (comptime (offset-of (type TcTypeEnvStore) binding-capacity)) 8)
-    (= (comptime (offset-of (type TcTypeEnvStore) binding-len)) 16)))
+    (= (comptime (offset-of (type TcTypeEnvStore) binding-len)) 16)
+    (=
+      (comptime
+        (offset-of (type TcTypeEnvStore) topenv-membership-state-address))
+      56)))
 
 (define (tc-type-env-owner-arena-smoke?) : bool
   (let
@@ -24587,17 +25104,24 @@
   [module : String]
   [module-id : i64]) : ResultTcEnv
   (let
-    [saved : bool tc-topenv-explicit-build-active]
+    [state : TcTopEnvMembershipState
+      (tc-job-state-topenv-membership (tc-context-job-state ctx))]
+    [saved-env-state : TcTopEnvMembershipState
+      (tc-type-env-topenv-membership-state env)]
+    [saved : bool (tc-topenv-explicit-build-active? state)]
     (begin
-      (set! tc-topenv-explicit-build-active true)
+      (tc-type-env-set-topenv-membership-state! env state)
+      (tc-topenv-membership-set-explicit-build-active! state true)
       (match (tc-build-top-env-list-in-module ctx decls env module module-id)
         [(ResultTcEnv.Ok next-env)
           (begin
-            (set! tc-topenv-explicit-build-active saved)
+            (tc-topenv-membership-set-explicit-build-active! state saved)
+            (tc-type-env-set-topenv-membership-state! next-env saved-env-state)
             (ResultTcEnv.Ok next-env))]
         [(ResultTcEnv.Err message)
           (begin
-            (set! tc-topenv-explicit-build-active saved)
+            (tc-topenv-membership-set-explicit-build-active! state saved)
+            (tc-type-env-set-topenv-membership-state! env saved-env-state)
             (ResultTcEnv.Err message))]))))
 
 (define (tc-build-top-env-bind-decl-in-module
@@ -25432,17 +25956,28 @@
       [(AstProgram.Program decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
-          [base-env : TcTypeEnv (tc-default-env)]
+          [body-state : TcBodyState (tc-context-body-state ctx)]
+          [job-state : TcJobState (struct-get body-state job-state)]
+          [membership-state : TcTopEnvMembershipState
+            (tc-job-state-topenv-membership job-state)]
+          [base-env : TcTypeEnv (tc-default-env-with-job-state job-state)]
           ;; Activate the membership bloom across the bind-list so the
           ;; enum-variant alias-if-free guard is O(1) instead of rescanning the
           ;; whole top-env spine per variant.
-          [_membership-begin : unit (tc-topenv-membership-begin! base-env)]
+          [_membership-begin : unit
+            (tc-topenv-membership-begin!
+              membership-state
+              base-env
+              (struct-get body-state intern-table-id)
+              (struct-get body-state intern-generation))]
           (match (tc-build-top-env-list ctx decls base-env)
             [(ResultTcEnv.Ok env)
               (let
                 [cached-env : TcTypeEnv (tc-env-with-cache env)]
                 [_alias-fanout-begin : unit
-                  (set! tc-topenv-alias-fanout-active true)]
+                  (tc-topenv-membership-set-alias-fanout-active!
+                    membership-state
+                    true)]
                 ;; Alias fanout copies canonical entries by lookup; cache the
                 ;; source env before adding aliases so that copy is O(1).
                 (match (tc-build-top-env-aliases-list
@@ -25453,20 +25988,32 @@
                   cbi.compiler-builtin-id-fix-empty)
                   [(ResultTcEnv.Ok aliases)
                     (begin
-                      (set! tc-topenv-alias-fanout-active false)
-                      (tc-topenv-membership-end!)
+                      (tc-topenv-membership-set-alias-fanout-active!
+                        membership-state
+                        false)
+                      (tc-topenv-membership-end! membership-state)
+                      ;; Membership is only needed while constructing the
+                      ;; explicit top env. Detach the capability from the
+                      ;; shared store so ordinary body binds pay only the
+                      ;; zero-address check; incremental explicit builders
+                      ;; reattach it for their scoped operation.
+                      (tc-type-env-set-topenv-membership-state!
+                        aliases
+                        (TcTopEnvMembershipState 0))
                       (let
                         [out : TcTypeEnv
                           (tc-env-with-cache-layer-over-explicit aliases)]
                         (ResultTcEnv.Ok out)))]
                   [(ResultTcEnv.Err message)
                     (begin
-                      (set! tc-topenv-alias-fanout-active false)
-                      (tc-topenv-membership-end!)
+                      (tc-topenv-membership-set-alias-fanout-active!
+                        membership-state
+                        false)
+                      (tc-topenv-membership-end! membership-state)
                       (ResultTcEnv.Err message))]))]
             [(ResultTcEnv.Err message)
               (begin
-                (tc-topenv-membership-end!)
+                (tc-topenv-membership-end! membership-state)
                 (ResultTcEnv.Err message))]))])))
 
 ;; Append-only env extension (plan P2). Given the live top-env and a materialized
@@ -29501,31 +30048,28 @@
 
 ;; Classifying a call name for the thread-safety checks costs a qualified?
 ;; scan plus a last-dot scan over the rendered name, and both checks run for
-;; every call expression in the program. The answers depend only on the
-;; interned source-name id, so they are cached per id: one slot packs the
-;; fill epoch with the two answer bits (bit 0 channel-send, bit 1
-;; spawn-potential), and the epoch/generation/pool-identity guards follow the
-;; backend's user-symbol cache (compat states may reuse a generation while
-;; assigning the same numeric id to different names, so pool identity is
-;; checked as well).
-(define tc-thread-name-kind-slots : (__tl_dyn-array i64)
-  (array.make-array i64 (intern-capacity)))
-(define tc-thread-name-kind-epoch : i64
-  1)
-(define tc-thread-name-kind-generation : i64
-  -1)
-(define tc-thread-name-kind-table-id : i64
-  0)
-
-(define (tc-thread-name-kind-ensure-current!) : unit
-  (if (and
-    (= tc-thread-name-kind-generation (intern-generation))
-    (= tc-thread-name-kind-table-id (ci.intern-active-table-id)))
-    unit
+;; every call expression in the program. The answers depend only on a typed
+;; renderable source-name ID and its immutable intern-session owner. A job-owned
+;; sparse epoch map avoids allocating `intern-capacity` slots and never consults
+;; the active process-global intern selector.
+(define (tc-thread-name-kind-ensure-owner!
+  [state : TcThreadNameKindState]
+  [table-id : i64]
+  [generation : i64]) : TcThreadNameKindStateData
+  (let
+    [data : TcThreadNameKindStateData (tc-thread-name-kind-state-data state)]
     (begin
-      (set! tc-thread-name-kind-epoch (+ tc-thread-name-kind-epoch 1))
-      (set! tc-thread-name-kind-generation (intern-generation))
-      (set! tc-thread-name-kind-table-id (ci.intern-active-table-id)))))
+      (if (and
+        (= (struct-get data intern-generation) generation)
+        (= (struct-get data intern-table-id) table-id))
+        unit
+        (begin
+          (tc-cache-map-clear! (&mut (struct-get data kinds)))
+          (set! (struct-get data epoch) (+ (struct-get data epoch) 1))
+          (set! (struct-get data intern-generation) generation)
+          (set! (struct-get data intern-table-id) table-id)
+          (tc-thread-name-kind-state-data-set! state data)))
+      data)))
 
 (define (tc-thread-name-kind-compute [name : String]) : i64
   (bit-or
@@ -29536,23 +30080,117 @@
       2
       0)))
 
-(define (tc-thread-name-kind [source-name-id : i64] [name : String]) : i64
-  (if (or (< source-name-id 0) (>= source-name-id (intern-capacity)))
-    (tc-thread-name-kind-compute name)
-    (begin
-      (tc-thread-name-kind-ensure-current!)
+(define (tc-thread-name-kind-owned
+  [state : TcThreadNameKindState]
+  [table-id : i64]
+  [generation : i64]
+  [source-name-id : ci.InternId]
+  [name : String]) : i64
+  (let
+    [data : TcThreadNameKindStateData
+      (tc-thread-name-kind-ensure-owner! state table-id generation)]
+    [key : i64 (ci.intern-id-value source-name-id)]
+    (if (not (struct-get data accelerator-enabled))
+      (tc-thread-name-kind-compute name)
       (let
-        [slot : i64 (array-ref tc-thread-name-kind-slots source-name-id)]
-        (if (= (shr slot 2) tc-thread-name-kind-epoch)
-          (bit-and slot 3)
+        [packed : i64
+          (tc_i64_i64_map.get-value-or (& (struct-get data kinds)) key 0)]
+        (if (= (shr packed 2) (struct-get data epoch))
+          (bit-and packed 3)
           (let
             [kind : i64 (tc-thread-name-kind-compute name)]
             (begin
-              (array-set!
-                tc-thread-name-kind-slots
-                source-name-id
-                (bit-or (shl tc-thread-name-kind-epoch 2) kind))
+              (tc-cache-map-grow-in-owner!
+                (&mut (struct-get data kinds))
+                (struct-get data owner-arena))
+              (tc_i64_i64_map.insert-ref!
+                (&mut (struct-get data kinds))
+                key
+                (bit-or (shl (struct-get data epoch) 2) kind))
+              (tc-thread-name-kind-state-data-set! state data)
               kind)))))))
+
+(cfg
+  test
+  (define (tc-thread-name-kind-job-owned-smoke?) : bool
+    (let
+      [job-a : TcJobState (tc-job-state-new)]
+      [job-b : TcJobState (tc-job-state-new)]
+      [state-a : TcThreadNameKindState (tc-job-state-thread-name-kind job-a)]
+      [state-b : TcThreadNameKindState (tc-job-state-thread-name-kind job-b)]
+      [name-id : ci.InternId
+        (ci.intern-id-from-renderable (intern "thread-kind-owned"))]
+      [a-channel : i64
+        (tc-thread-name-kind-owned
+          state-a
+          301
+          401
+          name-id
+          "channel-worker-send")]
+      [b-spawn : i64
+        (tc-thread-name-kind-owned state-b 301 401 name-id "spawn")]
+      [a-cached : i64
+        (tc-thread-name-kind-owned state-a 301 401 name-id "spawn")]
+      ;; Reusing a numeric ID under a different owner must invalidate A's entry.
+      [a-new-owner : i64
+        (tc-thread-name-kind-owned state-a 302 402 name-id "ordinary")]
+      (begin
+        (tc-job-state-set-thread-name-kind-enabled! job-a false)
+        (let
+          [uncached : i64
+            (tc-thread-name-kind-owned state-a 302 402 name-id "spawn")]
+          [data : TcThreadNameKindStateData
+            (tc-thread-name-kind-state-data state-a)]
+          (and
+            (= a-channel 1)
+            (= b-spawn 2)
+            (= a-cached 1)
+            (= a-new-owner 0)
+            (= uncached 2)
+            (= (tc_i64_i64_map.len (& (struct-get data kinds))) 1)
+            (<
+              (tc_i64_i64_map.capacity (& (struct-get data kinds)))
+              (intern-capacity))))))))
+
+(cfg
+  test
+  (test
+    tc-thread-name-kind-job-owned
+    (if (tc-thread-name-kind-job-owned-smoke?)
+      unit
+      (io.panic "typecheck: job-owned thread-name kind smoke failed"))))
+
+(define (tc-thread-name-kind
+  [ctx : TcContext]
+  [source-name-id : i64]
+  [name : String]) : i64
+  (let
+    [session : ci.InternSourceNameSession
+      (ci.intern-source-name-session-handle-session
+        (tc-context-source-names ctx))]
+    [identity : ci.InternSyntaxTextIdentity
+      (ci.intern-source-name-session-identity session source-name-id)]
+    (match (ci.intern-source-name-session-resolve session identity name)
+      [(ci.InternSourceNameResolution.ParsedIdentity owned-id)
+        (tc-thread-name-kind-owned
+          (tc-job-state-thread-name-kind (tc-context-job-state ctx))
+          (struct-get session table-id)
+          (struct-get session reset-generation)
+          (ci.intern-id-from-renderable owned-id)
+          name)]
+      [(ci.InternSourceNameResolution.GeneratedIdentity owned-id lookup)
+        (match lookup
+          [(ci.InternLookupFound resolved-id)
+            (if (= owned-id resolved-id)
+              (tc-thread-name-kind-owned
+                (tc-job-state-thread-name-kind (tc-context-job-state ctx))
+                (struct-get session table-id)
+                (struct-get session reset-generation)
+                (ci.intern-id-from-renderable owned-id)
+                name)
+              (tc-thread-name-kind-compute name))]
+          [_ (tc-thread-name-kind-compute name)])]
+      [_ (tc-thread-name-kind-compute name)])))
 
 (define (tc-thread-safe-spawn-call-name
   [ctx : TcContext]
@@ -29564,7 +30202,7 @@
       (let
         [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
         [name : String (intern-str source-id)]
-        (if (= (bit-and (tc-thread-name-kind source-id name) 2) 2)
+        (if (= (bit-and (tc-thread-name-kind ctx source-id name) 2) 2)
           (if (tc-thread-potential-safe-spawn-name?
             name
             (tc-thread-spawn-lookup-name ctx env name source-id))
@@ -29573,14 +30211,14 @@
           (TcMaybeString.No)))
       (TcMaybeString.No))))
 
-(define (tc-thread-channel-send-call-name [func : AstExpr]) : TcMaybeString
+(define (tc-thread-channel-send-call-name [ctx : TcContext] [func : AstExpr]) : TcMaybeString
   (let
     [nid : i64 (tc-expr-var-name-id func)]
     (if (>= nid 0)
       (let
         [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
         [name : String (intern-str source-id)]
-        (if (= (bit-and (tc-thread-name-kind source-id name) 1) 1)
+        (if (= (bit-and (tc-thread-name-kind ctx source-id name) 1) 1)
           (TcMaybeString.Some name)
           (TcMaybeString.No)))
       (TcMaybeString.No))))
@@ -30532,7 +31170,7 @@
   [args : AstExprList]
   [params : AstTypeList]
   [ret : AstType]) : ResultTcUnit
-  (match (tc-thread-channel-send-call-name func)
+  (match (tc-thread-channel-send-call-name ctx func)
     [(TcMaybeString.Some send-name)
       (if (tc-thread-channel-send-result-type? ctx ret)
         (match (tc-thread-channel-send-message-param params)
@@ -30568,7 +31206,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : AstExpr]) : bool
-  (match (tc-thread-channel-send-call-name func)
+  (match (tc-thread-channel-send-call-name ctx func)
     [(TcMaybeString.Some _)
       (tc-thread-channel-send-function-result? ctx env func)]
     [(TcMaybeString.No) false]))
@@ -37593,6 +38231,1009 @@
         (tc-expr-uses-free-name? expr-bases index name bound))]
     [(AstExpr.Syscall args)
       (tc-expr-list-uses-free-name? expr-bases args name bound)]))
+
+;; The id rule for a dot-free target text: the source-name id of an env key,
+;; or -1 when the key's display can never equal the target. Pool ids render
+;; as their text (intern-str is injective), structural-local and hygiene
+;; global/local ids render as their source name, and composite keys render
+;; dotted (with '/'), so they map to -1. For any dot-free target text T this
+;; makes (= (tc-env-key-source-id-or-neg v) (intern T)) EXACTLY
+;; (string.eq (tc-env-key-name-text v) T).
+(define (tc-env-key-source-id-or-neg [name-id : i64]) : i64
+  (cond
+    [(and (>= name-id 0) (< name-id (intern-capacity))) name-id]
+    [(ci.intern-structural-local-id? name-id)
+      (ci.intern-structural-local-source-name-id name-id)]
+    [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
+      (macro-hygiene-structural-source-name-id name-id)]
+    [else -1]))
+
+;; Same shadowing rules as `tc-expr-uses-free-name?`, but the target is one or
+;; two source-name ids matched in a single walk and the bound set is keyed by
+;; source-name id (the exact id form of the string-keyed set for the dot-free
+;; target texts the compat prescan uses).
+(define (tc-expr-list-uses-free-source-id?
+  [expr-bases : i64]
+  [exprs : AstExprList]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (tc-expr-list-uses-free-source-id-at?
+    expr-bases
+    (& exprs)
+    0
+    target-1
+    target-2
+    bound))
+
+(define (tc-expr-list-uses-free-source-id-at?
+  [expr-bases : i64]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (if (>= index (struct-get exprs len))
+    false
+    (or
+      (tc-expr-uses-free-source-id?
+        expr-bases
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))
+        target-1
+        target-2
+        bound)
+      (tc-expr-list-uses-free-source-id-at?
+        expr-bases
+        exprs
+        (+ index 1)
+        target-1
+        target-2
+        bound))))
+
+(define (tc-let-binding-list-uses-free-source-id?
+  [expr-bases : i64]
+  [bindings : AstLetBindingList]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (tc-let-binding-list-uses-free-source-id-at?
+    expr-bases
+    (& bindings)
+    target-1
+    target-2
+    bound
+    0))
+
+(define (tc-let-binding-list-uses-free-source-id-at?
+  [expr-bases : i64]
+  [bindings : (& bindings AstLetBindingList)]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding bind-name _ init-box)
+        (let
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          (or
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              init
+              target-1
+              target-2
+              bound)
+            (tc-let-binding-list-uses-free-source-id-at?
+              expr-bases
+              bindings
+              target-1
+              target-2
+              (tc-name-id-list-add
+                bound
+                (tc-env-key-source-id-or-neg bind-name))
+              (+ index 1))))])))
+
+(define (tc-resource-binding-list-uses-free-source-id?
+  [expr-bases : i64]
+  [bindings : AstResourceBindingList]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (tc-resource-binding-list-uses-free-source-id-at?
+    expr-bases
+    (& bindings)
+    target-1
+    target-2
+    bound
+    0))
+
+(define (tc-resource-binding-list-uses-free-source-id-at?
+  [expr-bases : i64]
+  [bindings : (& bindings AstResourceBindingList)]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (ast-resource-binding-list-len bindings))
+    false
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
+        (let
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [cleanup : AstExpr
+            (ast-expr-segment-bases-get expr-bases cleanup-box)]
+          (or
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              init
+              target-1
+              target-2
+              bound)
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              cleanup
+              target-1
+              target-2
+              bound)
+            (tc-resource-binding-list-uses-free-source-id-at?
+              expr-bases
+              bindings
+              target-1
+              target-2
+              (tc-name-id-list-add
+                bound
+                (tc-env-key-source-id-or-neg bind-name))
+              (+ index 1))))])))
+
+(define (tc-match-arms-use-free-source-id?
+  [expr-bases : i64]
+  [arms : AstMatchArmList]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (tc-match-arms-use-free-source-id-at?
+    expr-bases
+    (& arms)
+    target-1
+    target-2
+    bound
+    0))
+
+(define (tc-match-arms-use-free-source-id-at?
+  [expr-bases : i64]
+  [arms : (& arms AstMatchArmList)]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (struct-get arms len))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+          (or
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              body
+              target-1
+              target-2
+              (tc-pattern-add-bound-source-ids pattern bound))
+            (tc-match-arms-use-free-source-id-at?
+              expr-bases
+              arms
+              target-1
+              target-2
+              bound
+              (+ index 1))))])))
+
+(define (tc-pattern-add-bound-source-ids
+  [pattern : AstPattern]
+  [bound : TcNameIdList]) : TcNameIdList
+  (match pattern
+    [(AstPattern.Var name _)
+      (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))]
+    [(AstPattern.Tuple patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (tc-pattern-list-add-bound-source-ids patterns bound))]
+    [(AstPattern.Wildcard) bound]
+    [(AstPattern.Binding name)
+      (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))]
+    [(AstPattern.Variant _ patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (tc-pattern-list-add-bound-source-ids patterns bound))]
+    [(AstPattern.Literal _) bound]))
+
+(define (tc-pattern-list-add-bound-source-ids
+  [patterns : AstPatternList]
+  [bound : TcNameIdList]) : TcNameIdList
+  (tc-pattern-list-add-bound-source-ids-at (& patterns) bound 0))
+
+(define (tc-pattern-list-add-bound-source-ids-at
+  [patterns : (& patterns AstPatternList)]
+  [bound : TcNameIdList]
+  [index : i64]) : TcNameIdList
+  (if (>= index (struct-get patterns len))
+    bound
+    (tc-pattern-list-add-bound-source-ids-at
+      patterns
+      (tc-pattern-add-bound-source-ids
+        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        bound)
+      (+ index 1))))
+
+(define (tc-let-binding-list-add-bound-source-ids
+  [bindings : AstLetBindingList]
+  [bound : TcNameIdList]) : TcNameIdList
+  (tc-let-binding-list-add-bound-source-ids-at (& bindings) bound 0))
+
+(define (tc-let-binding-list-add-bound-source-ids-at
+  [bindings : (& bindings AstLetBindingList)]
+  [bound : TcNameIdList]
+  [index : i64]) : TcNameIdList
+  (if (>= index (ast-let-binding-list-len bindings))
+    bound
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (tc-let-binding-list-add-bound-source-ids-at
+          bindings
+          (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))
+          (+ index 1))])))
+
+(define (tc-resource-binding-list-add-bound-source-ids
+  [bindings : AstResourceBindingList]
+  [bound : TcNameIdList]) : TcNameIdList
+  (tc-resource-binding-list-add-bound-source-ids-at (& bindings) bound 0))
+
+(define (tc-resource-binding-list-add-bound-source-ids-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [bound : TcNameIdList]
+  [index : i64]) : TcNameIdList
+  (if (>= index (ast-resource-binding-list-len bindings))
+    bound
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name _ _ _)
+        (tc-resource-binding-list-add-bound-source-ids-at
+          bindings
+          (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))
+          (+ index 1))])))
+
+(define (tc-param-list-add-bound-source-ids
+  [params : AstParamList]
+  [bound : TcNameIdList]) : TcNameIdList
+  (tc-param-list-add-bound-source-ids-at (& params) 0 bound))
+
+(define (tc-param-list-add-bound-source-ids-at
+  [params : (& params AstParamList)]
+  [index : i64]
+  [bound : TcNameIdList]) : TcNameIdList
+  (if (>= index (ast-param-list-len params))
+    bound
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name _ _ _)
+        (tc-param-list-add-bound-source-ids-at
+          params
+          (+ index 1)
+          (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name)))])))
+
+(define (tc-expr-uses-free-source-id?
+  [expr-bases : i64]
+  [expr : AstExpr]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Literal _) false]
+    [(AstExpr.Var var-name)
+      (let
+        [sid : i64 (tc-env-key-source-id-or-neg var-name)]
+        (if (or (= sid target-1) (= sid target-2))
+          (not (tc-name-id-list-contains bound sid))
+          false))]
+    [(AstExpr.Binary _ left-box right-box)
+      (let
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases left target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            right
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.Unary _ inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Call func-box args)
+      (let
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases func target-1 target-2 bound)
+          (tc-expr-list-uses-free-source-id?
+            expr-bases
+            args
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.BracketClause items)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        items
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.TypeLiteral _) false]
+    [(AstExpr.Init _) false]
+    [(AstExpr.If cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases then-branch-box)]
+        [else-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases else-branch-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases cond target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            then-branch
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            else-branch
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body-box)
+          (let
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (or
+              (tc-let-binding-list-uses-free-source-id?
+                expr-bases
+                bindings
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                body
+                target-1
+                target-2
+                (tc-let-binding-list-add-bound-source-ids bindings bound))))])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda params _ body-box)
+          (let
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              body
+              target-1
+              target-2
+              (tc-param-list-add-bound-source-ids params bound)))])]
+    [(AstExpr.Tuple exprs)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        exprs
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.TupleRef tuple-box _)
+      (let
+        [tuple : AstExpr (ast-expr-segment-bases-get expr-bases tuple-box)]
+        (tc-expr-uses-free-source-id? expr-bases tuple target-1 target-2 bound))]
+    [(AstExpr.Array exprs)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        exprs
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.DynArray exprs)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        exprs
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.MakeArray _ len-box)
+      (let
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-expr-uses-free-source-id? expr-bases len target-1 target-2 bound))]
+    [(AstExpr.ArrayRef array-box index-box)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            array
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            index
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.ArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            array
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            index
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [live : AstExpr (ast-expr-segment-bases-get expr-bases live-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            array
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id? expr-bases live target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            index
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.ArrayPush array-box value-box)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            array
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.StringRef str-box index-box)
+      (let
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases str target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            index
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.While cond-box body-box)
+      (let
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases cond target-1 target-2 bound)
+          (tc-expr-uses-free-source-id? expr-bases body target-1 target-2 bound)))]
+    [(AstExpr.Begin exprs)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        exprs
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.Unsafe exprs)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        exprs
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.Set var-name value-box)
+      (let
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [sid : i64 (tc-env-key-source-id-or-neg var-name)]
+        (or
+          (if (or (= sid target-1) (= sid target-2))
+            (not (tc-name-id-list-contains bound sid))
+            false)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.Ann inner-box _)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Cast inner-box _)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Borrow _ _ place-box)
+      (let
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-expr-uses-free-source-id? expr-bases place target-1 target-2 bound))]
+    [(AstExpr.Box inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.BoxGet inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.BoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.BoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            inner
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr
+              (ast-expr-segment-bases-get expr-bases scrutinee-box)]
+            (or
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                scrutinee
+                target-1
+                target-2
+                bound)
+              (tc-match-arms-use-free-source-id?
+                expr-bases
+                arms
+                target-1
+                target-2
+                bound)))])]
+    [(AstExpr.Foreach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach.Foreach index _ start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (or
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                start
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                end
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                body
+                target-1
+                target-2
+                (tc-name-id-list-add bound (tc-env-key-source-id-or-neg index)))))])]
+    [(AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce.Reduce _ index _ start-box end-box init-box value-box)
+          (let
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            (or
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                start
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                end
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                init
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                value
+                target-1
+                target-2
+                (tc-name-id-list-add bound (tc-env-key-source-id-or-neg index)))))])]
+    [(AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan.Scan
+            _
+            index
+            _
+            start-box
+            end-box
+            prefix
+            _
+            init-box
+            value-box
+            body-box)
+          (let
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            [value-bound : TcNameIdList
+              (tc-name-id-list-add bound (tc-env-key-source-id-or-neg index))]
+            [body-bound : TcNameIdList
+              (tc-name-id-list-add
+                value-bound
+                (tc-env-key-source-id-or-neg prefix))]
+            (or
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                start
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                end
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                init
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                value
+                target-1
+                target-2
+                value-bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                body
+                target-1
+                target-2
+                body-bound)))])]
+    [(AstExpr.SpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id? expr-bases lane target-1 target-2 bound)))]
+    [(AstExpr.SpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id? expr-bases lane target-1 target-2 bound)))]
+    [(AstExpr.StructGet receiver-box _)
+      (let
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        (tc-expr-uses-free-source-id?
+          expr-bases
+          receiver
+          target-1
+          target-2
+          bound))]
+    [(AstExpr.StructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            receiver
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.WithRegion _ body)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        body
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.WithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            scratch
+            target-1
+            target-2
+            bound)
+          (tc-expr-list-uses-free-source-id?
+            expr-bases
+            body
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.WithScratch body)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        body
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.InArena arena-box body)
+      (let
+        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            arena
+            target-1
+            target-2
+            bound)
+          (tc-expr-list-uses-free-source-id?
+            expr-bases
+            body
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.WithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource.WithResource bindings body)
+          (or
+            (tc-resource-binding-list-uses-free-source-id?
+              expr-bases
+              bindings
+              target-1
+              target-2
+              bound)
+            (tc-expr-list-uses-free-source-id?
+              expr-bases
+              body
+              target-1
+              target-2
+              (tc-resource-binding-list-add-bound-source-ids bindings bound)))])]
+    [(AstExpr.TypeLiteral _) false]
+    [(AstExpr.Init _) false]
+    [(AstExpr.Comptime inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Quote inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Quasiquote inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Unquote inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.UnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Try inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Return inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Break) false]
+    [(AstExpr.Continue) false]
+    [(AstExpr.PtrNull _) false]
+    [(AstExpr.PtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-expr-uses-free-source-id? expr-bases place target-1 target-2 bound))]
+    [(AstExpr.PtrRead ptr-box)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound))]
+    [(AstExpr.PtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.PtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            offset
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.PtrCast ptr-box _)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound))]
+    [(AstExpr.PtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound))]
+    [(AstExpr.IntToPtr value-box _)
+      (let
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-expr-uses-free-source-id? expr-bases value target-1 target-2 bound))]
+    [(AstExpr.StringData str-box)
+      (let
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        (tc-expr-uses-free-source-id? expr-bases str target-1 target-2 bound))]
+    [(AstExpr.StringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound)
+          (tc-expr-uses-free-source-id? expr-bases len target-1 target-2 bound)))]
+    [(AstExpr.ArrayData array-box)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (tc-expr-uses-free-source-id? expr-bases array target-1 target-2 bound))]
+    [(AstExpr.BinaryData _) false]
+    [(AstExpr.SpmdProgramIndex) false]
+    [(AstExpr.SpmdProgramCount) false]
+    [(AstExpr.ProgramArgc) false]
+    [(AstExpr.ProgramArgv) false]
+    [(AstExpr.ProgramEnvp) false]
+    [(AstExpr.CpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases leaf target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            subleaf
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.CpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases leaf target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            subleaf
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.CpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases leaf target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            subleaf
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.CpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases leaf target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            subleaf
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.Xgetbv index-box)
+      (let
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-expr-uses-free-source-id? expr-bases index target-1 target-2 bound))]
+    [(AstExpr.Syscall args)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        args
+        target-1
+        target-2
+        bound)]))
 
 ;; Same shadowing rules as `tc-expr-uses-free-name?`, but it only returns true
 ;; when the expression assigns to the free name. Lambda capture checks use this
@@ -53006,7 +54647,7 @@
   [args : AstExprList]
   [params : AstTypeList]) : TcMoveResult
   (if (tc-thread-channel-send-call? ctx env func)
-    (match (tc-thread-channel-send-call-name func)
+    (match (tc-thread-channel-send-call-name ctx func)
       [(TcMaybeString.Some _)
         (match (tc-thread-channel-send-message-param params)
           [(ResultTcType.Ok message-ty)
@@ -57317,7 +58958,7 @@
   [args : AstExprList]
   [params : AstTypeList]) : TcBorrowCheckResult
   (if (tc-thread-channel-send-call? ctx env func)
-    (match (tc-thread-channel-send-call-name func)
+    (match (tc-thread-channel-send-call-name ctx func)
       [(TcMaybeString.Some _)
         (match (tc-thread-channel-send-message-param params)
           [(ResultTcType.Ok message-ty)
@@ -78204,21 +79845,34 @@
                                 (set! done true))]))])]))])))
       result)))
 
-(define (macro-expr-needs-compat-expansion? [expr-bases : i64] [expr : AstExpr]) : bool
-  (or
-    (tc-expr-uses-free-name? expr-bases expr "when" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr-bases expr "unless" TcStringList.Nil)))
+(define (macro-expr-needs-compat-expansion?
+  [expr-bases : i64]
+  [expr : AstExpr]
+  [when-id : i64]
+  [unless-id : i64]) : bool
+  ;; One walk matching both ids; per-Var comparison is the exact id form of
+  ;; the two string-keyed walks it replaces (see tc-env-key-source-id-or-neg).
+  (tc-expr-uses-free-source-id?
+    expr-bases
+    expr
+    when-id
+    unless-id
+    TcNameIdList.Nil))
 
-(define (macro-decl-needs-expansion? [expr-bases : i64] [decl : AstDecl]) : bool
+(define (macro-decl-needs-expansion?
+  [expr-bases : i64]
+  [decl : AstDecl]
+  [when-id : i64]
+  [unless-id : i64]) : bool
   (match decl
     [(AstDecl.Def decl-meta _ _ expr-box)
       (let
         [expr : AstExpr (ast-expr-segment-bases-get expr-bases expr-box)]
-        (macro-expr-needs-compat-expansion? expr-bases expr))]
+        (macro-expr-needs-compat-expansion? expr-bases expr when-id unless-id))]
     [(AstDecl.DefFn decl-meta _ _ _ body-box _)
       (let
         [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
-        (macro-expr-needs-compat-expansion? expr-bases body))]
+        (macro-expr-needs-compat-expansion? expr-bases body when-id unless-id))]
     [(AstDecl.DefMacro decl-meta _ _ _ _) true]
     [(AstDecl.Test _ _ _) false]
     [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ _ _))
@@ -78229,7 +79883,7 @@
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (macro-decl-needs-expansion? expr-bases inner))]
+        (macro-decl-needs-expansion? expr-bases inner when-id unless-id))]
     [_ false]))
 
 (define (macro-decl-has-defmacro? [decl : AstDecl]) : bool
@@ -78241,18 +79895,35 @@
         (macro-decl-has-defmacro? inner))]
     [_ false]))
 
-;; Whether a program needs the macro expansion pass.
+;; Whether a program needs the macro expansion pass. The when/unless intern
+;; ids are found once per scan and threaded through the per-declaration
+;; prescan.
 (define (macro-program-needs-expansion?
   [expr-bases : i64]
   [decls : AstDeclList]) : bool
+  (macro-program-needs-expansion-with-ids?
+    expr-bases
+    decls
+    (intern "when")
+    (intern "unless")))
+
+(define (macro-program-needs-expansion-with-ids?
+  [expr-bases : i64]
+  [decls : AstDeclList]
+  [when-id : i64]
+  [unless-id : i64]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList rest]
         (or
-          (macro-decl-needs-expansion? expr-bases decl)
-          (macro-program-needs-expansion? expr-bases rest)))]))
+          (macro-decl-needs-expansion? expr-bases decl when-id unless-id)
+          (macro-program-needs-expansion-with-ids?
+            expr-bases
+            rest
+            when-id
+            unless-id)))]))
 
 (define (macro-program-has-defmacro? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)

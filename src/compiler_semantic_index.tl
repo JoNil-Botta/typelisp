@@ -3637,6 +3637,22 @@
                   (& first)
                   (struct-get resource-definition symbol)
                   CompilerSemanticRecordRole.Use)]
+              [closure-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) closure-use-index)]
+              [alias-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) alias-use-index)]
+              [outer-callback-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  outer-callback-use-index)]
+              [inner-callback-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  inner-callback-use-index)]
+              [resource-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  resource-use-index)]
               (match (compiler-check-source-index-with-roots
                 path
                 source
@@ -3678,6 +3694,21 @@
                           "(-> bool bool)")
                         (string.eq
                           (struct-get resource-definition resolved-type)
+                          "i64")
+                        (string.eq
+                          (struct-get closure-use resolved-type)
+                          "(-> i64 i64)")
+                        (string.eq
+                          (struct-get alias-use resolved-type)
+                          "(-> i64 i64)")
+                        (string.eq
+                          (struct-get outer-callback-use resolved-type)
+                          "(-> i64 i64)")
+                        (string.eq
+                          (struct-get inner-callback-use resolved-type)
+                          "(-> bool bool)")
+                        (string.eq
+                          (struct-get resource-use resolved-type)
                           "i64")
                         (not
                           (compiler-semantic-symbol-id-eq?

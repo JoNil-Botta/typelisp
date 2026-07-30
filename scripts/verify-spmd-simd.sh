@@ -72,6 +72,60 @@ fi
 # Runnable SIMD ISAs on THIS host (CPUID feature bit + OS XSAVE), not host OS.
 SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh")
 
+spmd_short_tail_shape_fail() {
+    echo "[spmd-simd] spmd_short_tail benchmark shape: $*" >&2
+    exit 1
+}
+
+spmd_short_tail_typelisp_length() {
+    sed -n '
+        /^[[:space:]]*[(]define[[:space:]][[:space:]]*array-len[[:space:]]*:[[:space:]]*i64[[:space:]]*$/ {
+            n
+            s/^[[:space:]]*\([0-9][0-9]*\)[)][[:space:]]*$/\1/p
+        }
+    ' "$ROOT/benchmarks/spmd_short_tail/bench.tl"
+}
+
+spmd_short_tail_c_length() {
+    sed -n 's/^#define ARRAY_LEN \([0-9][0-9]*\)$/\1/p' \
+        "$ROOT/benchmarks/spmd_short_tail/baseline.c"
+}
+
+verify_spmd_short_tail_benchmark_shape() {
+    _tl_len=$(spmd_short_tail_typelisp_length) ||
+        spmd_short_tail_shape_fail "could not read the TypeLisp array-len literal"
+    _c_len=$(spmd_short_tail_c_length) ||
+        spmd_short_tail_shape_fail "could not read the C ARRAY_LEN literal"
+    case "$_tl_len" in
+        "" | *[!0-9]*)
+            spmd_short_tail_shape_fail \
+                "expected one literal TypeLisp array length, got '$_tl_len'"
+            ;;
+    esac
+    case "$_c_len" in
+        "" | *[!0-9]*)
+            spmd_short_tail_shape_fail \
+                "expected one literal C array length, got '$_c_len'"
+            ;;
+    esac
+    [ "$_tl_len" = "$_c_len" ] ||
+        spmd_short_tail_shape_fail \
+            "paired lengths differ: TypeLisp=$_tl_len C=$_c_len"
+
+    _avx2_tail=$((_tl_len % 4))
+    _avx512_tail=$((_tl_len % 8))
+    [ "$_avx2_tail" -ne 0 ] ||
+        spmd_short_tail_shape_fail \
+            "length $_tl_len executes zero i64 AVX2 tail lanes"
+    [ "$_avx512_tail" -ne 0 ] ||
+        spmd_short_tail_shape_fail \
+            "length $_tl_len executes zero i64 AVX-512 tail lanes"
+
+    echo "[spmd-simd] spmd_short_tail length $_tl_len: AVX2 tail $_avx2_tail lane(s), AVX-512 tail $_avx512_tail lane(s)"
+}
+
+verify_spmd_short_tail_benchmark_shape
+
 WORKDIR="$ROOT/target/spmd-simd-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"

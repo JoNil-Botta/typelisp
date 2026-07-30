@@ -1092,6 +1092,10 @@
             (tc-resolve-type
               ctx
               (tc-let-binding-plain-bind-type ctx resolved-maybe-ty init-ty))]
+          [recorded-maybe-ty : AstMaybeType
+            (match resolved-maybe-ty
+              [(AstMaybeType.Some ty) (AstMaybeType.Some ty)]
+              [(AstMaybeType.No) (AstMaybeType.Some binding-ty)])]
           [bound : CompilerSemanticBindResult
             (compiler-semantic-bind-local!
               state
@@ -1099,7 +1103,7 @@
               env
               name-id
               CompilerSemanticSymbolKind.Local
-              (AstMaybeType.Some binding-ty)
+              recorded-maybe-ty
               search-start
               search-limit)]
           (CompilerSemanticBindResult

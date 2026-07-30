@@ -19,7 +19,7 @@ src/compiler_ir_types.tl	1
 src/compiler_liveness.tl	1
 src/compiler_load.tl	4
 src/compiler_lower_package_tests.tl	1
-src/compiler_lower_tests.tl	6
+src/compiler_lower_tests.tl	3
 src/compiler_lower.tl	6
 src/compiler_optimize_tests.tl	1
 src/compiler_optimize.tl	3

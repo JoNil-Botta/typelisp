@@ -1,6 +1,7 @@
 ;; Emit the two canonical valid images used by the TLCI format corpus. The
 ;; gate compares these bytes with the checked-in fixtures, so a synchronized
 ;; emitter/parser change cannot silently redefine the container format.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import "../../src/tlci_core.tl")
 
@@ -57,9 +58,11 @@
         (io.print-error message)
         1)]
     [(ResultTlciBytes.Ok bytes)
-      (begin
-        (io.write-file path (tlci-bytes->string bytes 0 (array-length bytes)))
-        0)]))
+      (let
+        [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
+        (begin
+          (io.write-file path (byte_buf.as-bytes (& contents)))
+          0))]))
 
 (define (main) : i64
   (if (= (io.arg-count) 1)

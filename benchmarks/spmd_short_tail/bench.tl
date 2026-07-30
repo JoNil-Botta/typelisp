@@ -2,9 +2,9 @@
 ;#
 ;# Equivalent to benchmarks/spmd_short_tail/baseline.c. Both run `reps` passes
 ;# of an elementwise map `out[i] = a[i] + b[i] + r` over an array whose length
-;# (1000) is deliberately NOT a multiple of any SIMD lane width (4/8/16), so a
-;# vectorized lowering must handle a remainder/tail. On the current scalar
-;# backend it is a plain loop; the point is the trip-count shape that #937's
+;# (1003) is deliberately not a multiple of the i64 AVX2 or AVX-512 lane widths
+;# (4 and 8), so a vectorized lowering must execute a remainder/tail. On the
+;# scalar backend it is a plain loop; the point is the trip-count shape that
 ;# SIMD work must get right at the tail. TypeLisp `+` wraps modulo 2^64 (SPEC),
 ;# matching C `uint64_t`, so both programs produce the identical exit code.
 ;#
@@ -19,7 +19,7 @@
 (import stdlib.io)
 
 (define array-len : i64
-  1000)
+  1003)
 (define base-reps : i64
   1000000)
 

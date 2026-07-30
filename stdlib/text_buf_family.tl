@@ -250,7 +250,7 @@
           (let
             [status : i64 (stdlib.text_buf.write-chunks-rev raw (box-get rest))]
             (if (= status io.io-status-ok)
-              (io.file-write-status raw chunk)
+              (io.file-write-status raw (byte_buf.str-as-bytes (& chunk)))
               status))]))
     (define (batched-write-threshold) : i64
       1048576)
@@ -280,12 +280,15 @@
                         (set! index (+ index 1))))))
                 (set!
                   status
-                  (io.file-write-status
-                    raw
-                    (stdlib.text_buf.chunks-render-array-range
-                      items
-                      start
-                      index))))))
+                  (let
+                    [rendered : String
+                      (stdlib.text_buf.chunks-render-array-range
+                        items
+                        start
+                        index)]
+                    (io.file-write-status
+                      raw
+                      (byte_buf.str-as-bytes (& rendered))))))))
           status)))
     (define (write-chunks-batched [raw : i64] [chunks : TextBufChunkList]) : i64
       (let

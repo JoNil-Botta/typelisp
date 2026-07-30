@@ -25,6 +25,12 @@
 (import token)
 (import sym_i64_env)
 
+(define (lsp-read-file-text-or [path : (& source str)] [fallback : String]) : String
+  (byte_buf.to-string (io.read-file-or path (byte_buf.from-string fallback))))
+
+(define (lsp-write-file-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
+
 (define (lsp-str2 [a : String] [b : String]) : String
   (string.concat3 a b ""))
 
@@ -111,11 +117,11 @@
   (Err String))
 
 (defenum LspDocumentLookup
-  (Found String String LspDiagnosticUriList)
+  (Found String String LspDiagnosticUris)
   (Missing))
 
 (defenum LspDocumentDeclsLookup
-  (Found String String LspDiagnosticUriList lsp_decl_vec.Vec)
+  (Found String String LspDiagnosticUris lsp_decl_vec.Vec)
   (Missing))
 
 (defenum LspHandleResult
@@ -183,7 +189,7 @@
   (Invalid i64 i64 String String))
 
 (defstruct LspAnalyzeResult
-  (diagnostic-uris LspDiagnosticUriList)
+  (diagnostic-uris LspDiagnosticUris)
   (check-cache LspCheckCache))
 
 (define (lsp-frame-space? [c : char]) : bool
@@ -370,7 +376,7 @@
     (if (or lsp-frame-memory-eof (>= start n))
       (begin
         (set! lsp-frame-memory-eof true)
-        (io.StdinRead "" true))
+        (io.StdinRead (byte_buf.new) true))
       (let
         [end : i64 start]
         [found-newline : bool false]
@@ -383,13 +389,15 @@
             (begin
               (set! lsp-frame-memory-input-offset (+ end 1))
               (io.StdinRead
-                (string.substring lsp-frame-memory-input start (- end start))
+                (byte_buf.from-string
+                  (string.substring lsp-frame-memory-input start (- end start)))
                 false))
             (begin
               (set! lsp-frame-memory-input-offset n)
               (set! lsp-frame-memory-eof true)
               (io.StdinRead
-                (string.substring lsp-frame-memory-input start (- n start))
+                (byte_buf.from-string
+                  (string.substring lsp-frame-memory-input start (- n start)))
                 true))))))))
 
 (define (lsp-frame-memory-read-bytes [count : i64]) : io.StdinRead
@@ -409,7 +417,8 @@
         (set! lsp-frame-memory-eof true)
         unit)
       (io.StdinRead
-        (string.substring lsp-frame-memory-input start take)
+        (byte_buf.from-string
+          (string.substring lsp-frame-memory-input start take))
         lsp-frame-memory-eof))))
 
 (define (lsp-frame-input-read-line) : io.StdinRead
@@ -435,7 +444,8 @@
         (let
           [line-read : io.StdinRead (lsp-frame-input-read-line)]
           [line : String
-            (lsp-frame-trim-right-space-cr (io.stdin-read-text line-read))]
+            (lsp-frame-trim-right-space-cr
+              (byte_buf.to-string (io.stdin-read-buffer line-read)))]
           (if (io.stdin-read-eof? line-read)
             (if (= (string.string-length line) 0)
               (if saw-header
@@ -476,7 +486,8 @@
           (let
             [payload-read : io.StdinRead
               (lsp-frame-input-read-bytes content-length)]
-            [payload : String (io.stdin-read-text payload-read)]
+            [payload : String
+              (byte_buf.to-string (io.stdin-read-buffer payload-read))]
             (if (and
               (io.stdin-read-eof? payload-read)
               (< (string.string-length payload) content-length))
@@ -486,12 +497,12 @@
 (define (lsp-frame-stdout-write [text : String]) : unit
   (if lsp-frame-memory-active
     (lsp-frame-memory-stdout-append! text)
-    (io.stdout-write (& text))))
+    (io.stdout-write (byte_buf.str-as-bytes (& text)))))
 
 (define (lsp-frame-stderr-write [text : String]) : unit
   (if lsp-frame-memory-active
     (lsp-frame-memory-stderr-append! text)
-    (io.stderr-write (& text))))
+    (io.stderr-write (byte_buf.str-as-bytes (& text)))))
 
 (define (lsp-frame-stdout-flush) : unit
   (if lsp-frame-memory-active
@@ -865,18 +876,78 @@
       "version"
       (json.JsonString "selfhost"))))
 
-(define (lsp-diagnostic-uri-list-single [uri : String]) : LspDiagnosticUriList
-  (LspDiagnosticUriList.Cons uri (box LspDiagnosticUriList.Nil)))
+(define (lsp-diagnostic-uris-empty) : LspDiagnosticUris
+  (LspDiagnosticUris (make-array String 0) 0))
 
-(define (lsp-diagnostic-uri-list-contains?
-  [uris : LspDiagnosticUriList]
+(define (lsp-diagnostic-uris-single [uri : String]) : LspDiagnosticUris
+  (lsp-diagnostic-uris-add (lsp-diagnostic-uris-empty) uri))
+
+(define (lsp-diagnostic-uris-len [uris : LspDiagnosticUris]) : i64
+  (struct-get uris len))
+
+(define (lsp-diagnostic-uris-get [uris : LspDiagnosticUris] [index : i64]) : String
+  (array-ref (struct-get uris slots) index))
+
+(define (lsp-diagnostic-uris-contains-from?
+  [uris : LspDiagnosticUris]
+  [uri : String]
+  [index : i64]) : bool
+  (if (>= index (lsp-diagnostic-uris-len uris))
+    false
+    (if (string.eq (lsp-diagnostic-uris-get uris index) uri)
+      true
+      (lsp-diagnostic-uris-contains-from? uris uri (+ index 1)))))
+
+(define (lsp-diagnostic-uris-contains?
+  [uris : LspDiagnosticUris]
   [uri : String]) : bool
-  (match uris
-    [(LspDiagnosticUriList.Nil) false]
-    [(LspDiagnosticUriList.Cons item rest)
-      (if (string.eq item uri)
-        true
-        (lsp-diagnostic-uri-list-contains? (box-get rest) uri))]))
+  (lsp-diagnostic-uris-contains-from? uris uri 0))
+
+(define (lsp-diagnostic-uris-add [uris : LspDiagnosticUris] [uri : String]) : LspDiagnosticUris
+  (if (lsp-diagnostic-uris-contains? uris uri)
+    uris
+    (let
+      [n : i64 (lsp-diagnostic-uris-len uris)]
+      [slots : (Array String) (struct-get uris slots)]
+      (begin
+        (if (< n (array-length slots))
+          unit
+          (let
+            [old-cap : i64 (array-length slots)]
+            [new-cap : i64
+              (if (< old-cap 4)
+                4
+                (* old-cap 2))]
+            [bigger : (Array String) (make-array String new-cap)]
+            [index : i64 0]
+            (begin
+              (while (< index n)
+                (begin
+                  (array-set! bigger index (array-ref slots index))
+                  (set! index (+ index 1))))
+              (set! slots bigger))))
+        (array-set! slots n uri)
+        (LspDiagnosticUris slots (+ n 1))))))
+
+(define (lsp-diagnostic-uris-smoke-ok?) : bool
+  (let
+    [empty : LspDiagnosticUris (lsp-diagnostic-uris-empty)]
+    [one : LspDiagnosticUris (lsp-diagnostic-uris-add empty "one")]
+    [duplicate : LspDiagnosticUris (lsp-diagnostic-uris-add one "one")]
+    [two : LspDiagnosticUris (lsp-diagnostic-uris-add duplicate "two")]
+    [many0 : LspDiagnosticUris (lsp-diagnostic-uris-add two "three")]
+    [many1 : LspDiagnosticUris (lsp-diagnostic-uris-add many0 "four")]
+    [many : LspDiagnosticUris (lsp-diagnostic-uris-add many1 "five")]
+    (and
+      (= (lsp-diagnostic-uris-len empty) 0)
+      (= (lsp-diagnostic-uris-len one) 1)
+      (= (lsp-diagnostic-uris-len duplicate) 1)
+      (= (lsp-diagnostic-uris-len many) 5)
+      (lsp-diagnostic-uris-contains? many "one")
+      (lsp-diagnostic-uris-contains? many "five")
+      (not (lsp-diagnostic-uris-contains? many "missing"))
+      (string.eq (lsp-diagnostic-uris-get many 0) "one")
+      (string.eq (lsp-diagnostic-uris-get many 4) "five"))))
 
 (define (lsp-document-fallback) : LspDocument
   (LspDocument
@@ -884,7 +955,7 @@
     ""
     ""
     -1
-    LspDiagnosticUriList.Nil
+    (lsp-diagnostic-uris-empty)
     (lsp_decl_vec.new)
     false
     LspCheckCacheInvalid))
@@ -927,11 +998,11 @@
   [path : String]
   [text : String]
   [version : i64]
-  [diagnostic-uris : LspDiagnosticUriList]) : lsp_document_vec.Vec
+  [diagnostic-uris : LspDiagnosticUris]) : lsp_document_vec.Vec
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
-    [cached-diagnostic-uris : LspDiagnosticUriList
-      (lsp-cache-diagnostic-uri-list-copy diagnostic-uris)]
+    [cached-diagnostic-uris : LspDiagnosticUris
+      (lsp-cache-diagnostic-uris-copy diagnostic-uris)]
     (if (>= index 0)
       (let
         [old-doc : LspDocument
@@ -994,7 +1065,7 @@
   [uri : String]
   [path : String]
   [text : String]
-  [diagnostic-uris : LspDiagnosticUriList]) : lsp_document_vec.Vec
+  [diagnostic-uris : LspDiagnosticUris]) : lsp_document_vec.Vec
   (lsp-documents-set-versioned docs uri path text -1 diagnostic-uris))
 
 (define (lsp-documents-set-check-cache
@@ -1071,24 +1142,26 @@
     (if (string.eq path "")
       doc
       (match (io.try-read-file (& path))
-        [(io.OkIoString disk-text)
-          (if (string.eq disk-text (struct-get doc text))
-            doc
-            (let
-              [updated : LspDocument
-                (LspDocument
-                  (struct-get doc uri)
-                  path
-                  disk-text
-                  -1
-                  (struct-get doc diagnostic-uris)
-                  (lsp_decl_vec.new)
-                  false
-                  LspCheckCacheInvalid)]
-              (begin
-                (lsp_document_vec.set (&mut docs) index updated)
-                updated)))]
-        [(io.ErrIoString _) doc]))))
+        [(io.OkIoBytes disk-contents)
+          (let
+            [disk-text : String (byte_buf.to-string disk-contents)]
+            (if (string.eq disk-text (struct-get doc text))
+              doc
+              (let
+                [updated : LspDocument
+                  (LspDocument
+                    (struct-get doc uri)
+                    path
+                    disk-text
+                    -1
+                    (struct-get doc diagnostic-uris)
+                    (lsp_decl_vec.new)
+                    false
+                    LspCheckCacheInvalid)]
+                (begin
+                  (lsp_document_vec.set (&mut docs) index updated)
+                  updated))))]
+        [(io.ErrIoBytes _) doc]))))
 
 (define (lsp-documents-lookup-resynced
   [docs : lsp_document_vec.Vec]
@@ -1105,7 +1178,7 @@
       LspDocumentLookup.Missing)))
 
 (define (lsp-documents-smoke-add [docs : lsp_document_vec.Vec] [uri : String]) : lsp_document_vec.Vec
-  (lsp-documents-set docs uri uri uri LspDiagnosticUriList.Nil))
+  (lsp-documents-set docs uri uri uri (lsp-diagnostic-uris-empty)))
 
 (define (lsp-documents-smoke-missing?
   [docs : lsp_document_vec.Vec]
@@ -1157,7 +1230,12 @@
     (begin
       (set!
         docs
-        (lsp-documents-set docs uri "cached.tl" "same" LspDiagnosticUriList.Nil))
+        (lsp-documents-set
+          docs
+          uri
+          "cached.tl"
+          "same"
+          (lsp-diagnostic-uris-empty)))
       (set! docs (lsp-documents-set-check-cache docs uri LspCheckCacheOk))
       (let
         [preserved-docs : lsp_document_vec.Vec
@@ -1166,7 +1244,7 @@
             uri
             "cached.tl"
             "same"
-            LspDiagnosticUriList.Nil)]
+            (lsp-diagnostic-uris-empty))]
         (if (not (lsp-documents-smoke-check-cache-ok? preserved-docs uri))
           false
           (let
@@ -1176,7 +1254,7 @@
                 uri
                 "cached.tl"
                 "changed"
-                LspDiagnosticUriList.Nil)]
+                (lsp-diagnostic-uris-empty))]
             (lsp-documents-smoke-check-cache-invalid? invalidated-docs uri)))))))
 
 (define (lsp-documents-cache-bound-smoke-ok?) : bool
@@ -1210,7 +1288,7 @@
           "file:///doc10.tl"
           "doc10.tl"
           "updated"
-          (lsp-diagnostic-uri-list-single "diag10")))
+          (lsp-diagnostic-uris-single "diag10")))
       (set! docs (lsp-documents-smoke-add docs "file:///doc16.tl"))
       (and
         (= (lsp_document_vec.len (& docs)) lsp-documents-max-capacity)
@@ -1389,7 +1467,7 @@
     [path : String (compiler-diagnostic-span-path span)]
     (if (or (string.eq path "") (string.eq path fallback-path))
       fallback-text
-      (io.read-file-or (& path) ""))))
+      (lsp-read-file-text-or (& path) ""))))
 
 (define (lsp-position-from-byte-line-col
   [text : String]
@@ -1810,21 +1888,25 @@
     (lsp-json-list-cons (lsp-diagnostic 1 1 message "") (json.list-empty))))
 
 (define (lsp-clear-diagnostic-uris-not-in
-  [old-uris : LspDiagnosticUriList]
-  [next-uris : LspDiagnosticUriList]) : unit
-  (match old-uris
-    [(LspDiagnosticUriList.Nil) unit]
-    [(LspDiagnosticUriList.Cons old-uri rest)
-      (begin
-        (if (lsp-diagnostic-uri-list-contains? next-uris old-uri)
-          unit
-          (lsp-publish-diagnostics old-uri (json.list-empty)))
-        (lsp-clear-diagnostic-uris-not-in (box-get rest) next-uris))]))
+  [old-uris : LspDiagnosticUris]
+  [next-uris : LspDiagnosticUris]) : unit
+  (let
+    ;; Dense construction appends first-seen URIs. Walk backward to preserve
+    ;; the stale-clear wire order of the former prepend-built list.
+    [index : i64 (- (lsp-diagnostic-uris-len old-uris) 1)]
+    (while (>= index 0)
+      (let
+        [old-uri : String (lsp-diagnostic-uris-get old-uris index)]
+        (begin
+          (if (lsp-diagnostic-uris-contains? next-uris old-uri)
+            unit
+            (lsp-publish-diagnostics old-uri (json.list-empty)))
+          (set! index (- index 1)))))))
 
 (define (lsp-clear-stale-diagnostics
   [docs : lsp_document_vec.Vec]
   [uri : String]
-  [next-diagnostic-uris : LspDiagnosticUriList]) : unit
+  [next-diagnostic-uris : LspDiagnosticUris]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found _ _ old-diagnostic-uris)
       (lsp-clear-diagnostic-uris-not-in
@@ -1841,7 +1923,7 @@
         (lsp-publish-diagnostics uri (json.list-empty))
         (lsp-clear-diagnostic-uris-not-in
           old-diagnostic-uris
-          LspDiagnosticUriList.Nil))]
+          (lsp-diagnostic-uris-empty)))]
     [(LspDocumentLookup.Missing)
       (lsp-publish-diagnostics uri (json.list-empty))]))
 
@@ -1971,10 +2053,10 @@
   [version : i64]
   [diagnostics : CompilerDiagnosticList]
   [remaining : CompilerDiagnosticList]
-  [published : LspDiagnosticUriList]) : LspDiagnosticUriList
+  [published : LspDiagnosticUris]) : LspDiagnosticUris
   (let
     [cur : CompilerDiagnosticList remaining]
-    [result : LspDiagnosticUriList published]
+    [result : LspDiagnosticUris published]
     [done : bool false]
     (begin
       (while (not done)
@@ -1988,7 +2070,7 @@
                 (set! cur (box-get rest))
                 (if (or
                   (string.eq diag-uri root-uri)
-                  (lsp-diagnostic-uri-list-contains? result diag-uri))
+                  (lsp-diagnostic-uris-contains? result diag-uri))
                   unit
                   (begin
                     (lsp-publish-diagnostics
@@ -2001,9 +2083,7 @@
                         diagnostics
                         0
                         (json.list-empty)))
-                    (set!
-                      result
-                      (LspDiagnosticUriList.Cons diag-uri (box result)))))))]))
+                    (set! result (lsp-diagnostic-uris-add result diag-uri))))))]))
       result)))
 
 (define (lsp-analyze-document
@@ -2030,7 +2110,9 @@
                 "parse"
                 0)
               (json.list-empty)))
-          (LspAnalyzeResult LspDiagnosticUriList.Nil (LspCheckCacheErr message))))]
+          (LspAnalyzeResult
+            (lsp-diagnostic-uris-empty)
+            (LspCheckCacheErr message))))]
     [(LspValidationResult.Valid)
       (let
         [lint-diags : json.JsonSeq
@@ -2043,7 +2125,7 @@
           [(ResultCompilerCheck.Ok _)
             (begin
               (lsp-publish-diagnostics uri lint-diags)
-              (LspAnalyzeResult LspDiagnosticUriList.Nil LspCheckCacheOk))]
+              (LspAnalyzeResult (lsp-diagnostic-uris-empty) LspCheckCacheOk))]
           [(ResultCompilerCheck.Err diag)
             (let
               [diagnostics : CompilerDiagnosticList (box-get diag)]
@@ -2070,7 +2152,7 @@
                     version
                     diagnostics
                     diagnostics
-                    LspDiagnosticUriList.Nil)
+                    (lsp-diagnostic-uris-empty))
                   check-cache)))]))]))
 
 (define (lsp-first-change-text [params : json.Json]) : LspJsonText
@@ -2474,7 +2556,8 @@
   [fallback-path : String]
   [edits : CompilerDiagnosticTextEditSeq]) : bool
   (let
-    [slots : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
+    [slots : (__tl_dyn-array CompilerDiagnosticTextEdit)
+      (struct-get edits slots)]
     [count : i64 (struct-get edits len)]
     [index : i64 0]
     [ok : bool (> count 0)]
@@ -3764,7 +3847,7 @@
       (not (lsp-string-vec-contains? paths resolved)))
       (LspModuleSet
         (lsp-string-vec-push-copy paths resolved)
-        (lsp-string-vec-push-copy texts (io.read-file-or (& resolved) "")))
+        (lsp-string-vec-push-copy texts (lsp-read-file-text-or (& resolved) "")))
       set)))
 
 ;; Add every module `text` imports (resolved like the loader) to the set.
@@ -3888,7 +3971,7 @@
         (if (string.eq resolved "")
           LspDefLocation.Missing
           (let
-            [src : String (io.read-file-or (& resolved) "")]
+            [src : String (lsp-read-file-text-or (& resolved) "")]
             [off : i64 (lsp-find-def-or-variant-offset-in src needle)]
             (if (>= off 0)
               (lsp-def-loc-from
@@ -4574,7 +4657,7 @@
           (LspValidationResult.Invalid line col msg (lsp-line-at text line)))]
       [(lexer.ResultSpannedTokens.Ok toks)
         (let
-          [cur : (Array i64) (make-array i64 1)]
+          [cur : (__tl_dyn-array i64) (make-array i64 1)]
           [dispatch : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
           [done : bool false]
           [result : LspValidationResult LspValidationResult.Valid]
@@ -4808,7 +4891,7 @@
         (if (string.eq resolved "")
           LspDefSource.Missing
           (let
-            [src : String (io.read-file-or (& resolved) "")]
+            [src : String (lsp-read-file-text-or (& resolved) "")]
             [off : i64 (lsp-find-def-form-in src needle)]
             (if (>= off 0)
               (LspDefSource.Found src off)
@@ -6432,37 +6515,43 @@
         copied))
     (string.copy (& text))))
 
-(define (lsp-diagnostic-uri-list-copy [uris : LspDiagnosticUriList]) : LspDiagnosticUriList
-  (match uris
-    [(LspDiagnosticUriList.Nil) LspDiagnosticUriList.Nil]
-    [(LspDiagnosticUriList.Cons uri rest)
-      (LspDiagnosticUriList.Cons
-        (string.copy (& uri))
-        (box (lsp-diagnostic-uri-list-copy (box-get rest))))]))
+(define (lsp-diagnostic-uris-copy [uris : LspDiagnosticUris]) : LspDiagnosticUris
+  (let
+    [n : i64 (lsp-diagnostic-uris-len uris)]
+    [slots : (Array String) (make-array String n)]
+    [index : i64 0]
+    (begin
+      (while (< index n)
+        (let
+          [uri : String (lsp-diagnostic-uris-get uris index)]
+          (begin
+            (array-set! slots index (string.copy (& uri)))
+            (set! index (+ index 1)))))
+      (LspDiagnosticUris slots n))))
 
-(define (lsp-cache-diagnostic-uri-list-copy [uris : LspDiagnosticUriList]) : LspDiagnosticUriList
+(define (lsp-cache-diagnostic-uris-copy [uris : LspDiagnosticUris]) : LspDiagnosticUris
   (if (> lsp-document-cache-arena 0)
     (let
       [active-arena : i64 (arena.tl_arena_current)]
-      [copied : LspDiagnosticUriList LspDiagnosticUriList.Nil]
+      [copied : LspDiagnosticUris (lsp-diagnostic-uris-empty)]
       (begin
         (unsafe
           (arena.tl_arena_set lsp-document-cache-arena))
-        (set! copied (lsp-diagnostic-uri-list-copy uris))
+        (set! copied (lsp-diagnostic-uris-copy uris))
         (unsafe
           (arena.tl_arena_set active-arena))
         copied))
-    (lsp-diagnostic-uri-list-copy uris)))
+    (lsp-diagnostic-uris-copy uris)))
 
 (define (lsp-tl-save-doc
   [docs : lsp_document_vec.Vec]
   [uri : String]
   [path : String]
-  [diagnostic-uris : LspDiagnosticUriList]
+  [diagnostic-uris : LspDiagnosticUris]
   [formatted : String]) : LspSaveResult
   (match (lsp-validate-edited-document formatted)
     [(LspEditResult.Ok _)
-      (match (io.try-write-file (& path) (& formatted))
+      (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& formatted)))
         [(io.OkIoUnit)
           (let
             [cached-uri : String (lsp-cache-string-copy uri)]
@@ -6485,7 +6574,7 @@
   [docs : lsp_document_vec.Vec]
   [uri : String]
   [path : String]
-  [diagnostic-uris : LspDiagnosticUriList]
+  [diagnostic-uris : LspDiagnosticUris]
   [formatted : String]) : LspHandleResult
   (match (lsp-tl-save-doc docs uri path diagnostic-uris formatted)
     [(LspSaveResult.Ok next-docs)
@@ -6529,7 +6618,7 @@
                 docs
                 uri
                 path
-                LspDiagnosticUriList.Nil
+                (lsp-diagnostic-uris-empty)
                 formatted)]
             [(LspUriPath.Err message)
               (begin
@@ -6960,7 +7049,7 @@
           (match (lsp-file-uri-to-path uri)
             [(LspUriPath.Ok path)
               (let
-                [text : String (io.read-file-or (& path) "")]
+                [text : String (lsp-read-file-text-or (& path) "")]
                 (if (string.eq text "")
                   (begin
                     (lsp-write-response
@@ -7656,9 +7745,10 @@
                                             (fs.path-join (& path) (& entry))]
                                           (match (io.try-read-file
                                             (& entry-path))
-                                            [(io.OkIoString source)
+                                            [(io.OkIoBytes contents)
                                               (if (lsp-decls-contain-name?
-                                                (lsp-scan-decls source)
+                                                (lsp-scan-decls
+                                                  (byte_buf.to-string contents))
                                                 name)
                                                 (let
                                                   [entry-uri : String
@@ -7676,7 +7766,7 @@
                                                         (json.JsonString name))
                                                       results)))
                                                 unit)]
-                                            [(io.ErrIoString _) unit]))
+                                            [(io.ErrIoBytes _) unit]))
                                         unit)
                                       (set! i (+ i 1)))))
                                 (lsp-write-response
@@ -8598,20 +8688,22 @@
                   (set! status 2))]
               [(ResultLspTranscriptBatchEntry.Ok entry)
                 (let
-                  [input : String (io.read-file (struct-get entry input-path))]
+                  [input : String
+                    (byte_buf.to-string
+                      (io.read-file (struct-get entry input-path)))]
                   [result : LspTranscriptResult
                     (lsp-frame-run-transcript
                       (& input)
                       stdlib-roots
                       prefix-cache-stats)]
                   (begin
-                    (io.write-file
+                    (lsp-write-file-text
                       (struct-get entry stdout-path)
                       (struct-get result stdout))
-                    (io.write-file
+                    (lsp-write-file-text
                       (struct-get entry stderr-path)
                       (struct-get result stderr))
-                    (io.write-file
+                    (lsp-write-file-text
                       (struct-get entry status-path)
                       (string.append
                         (string.int->string (struct-get result status))
@@ -8638,7 +8730,7 @@
       (io.print-error "\n")
       2)
     (let
-      [text : String (io.read-file manifest-path)]
+      [text : String (byte_buf.to-string (io.read-file manifest-path))]
       [error : String (lsp-transcript-batch-validate text)]
       (if (> (string.string-length error) 0)
         (begin
@@ -9103,6 +9195,12 @@
   (unless
     (lsp-patch-text-first-byte-collisions-ok?)
     (io.panic "lsp-patch-text-first-byte-collisions failed")))
+
+(test
+  lsp-diagnostic-uris-dense
+  (unless
+    (lsp-diagnostic-uris-smoke-ok?)
+    (io.panic "lsp diagnostic URI empty/one/many/duplicate smoke failed")))
 
 (test
   lsp-validate-forms-smoke
@@ -10697,7 +10795,7 @@
   [docs : lsp_document_vec.Vec]
   [uri : String]
   [path : String]
-  [diagnostic-uris : LspDiagnosticUriList]
+  [diagnostic-uris : LspDiagnosticUris]
   [edited-text : String]
   [formatted : String]
   [results : json.JsonSeq]) : LspHandleResult

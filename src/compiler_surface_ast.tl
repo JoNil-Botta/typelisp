@@ -20,7 +20,7 @@
   (pools AstNodePoolContext))
 
 (defenum ResultSurfaceAstBytes
-  (Ok (Array u8))
+  (Ok (__tl_dyn-array u8))
   (Err String))
 
 (defenum ResultSurfaceAstHydration
@@ -103,7 +103,7 @@
 (define (surface-ast-read-macro-param-list! [reader : SurfaceAstReader]) : AstMacroParamList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstMacroParam) (make-array AstMacroParam count)]
+    [slots : (__tl_dyn-array AstMacroParam) (make-array AstMacroParam count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -164,7 +164,7 @@
 (define (surface-ast-read-field-def-list! [reader : SurfaceAstReader]) : AstFieldDefList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstFieldDef) (make-array AstFieldDef count)]
+    [slots : (__tl_dyn-array AstFieldDef) (make-array AstFieldDef count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -270,7 +270,8 @@
 (define (surface-ast-read-extern-link-list! [reader : SurfaceAstReader]) : AstExternLinkInputList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstExternLinkInput) (make-array AstExternLinkInput count)]
+    [slots : (__tl_dyn-array AstExternLinkInput)
+      (make-array AstExternLinkInput count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -326,7 +327,8 @@
 (define (surface-ast-read-spmd-param-class-list! [reader : SurfaceAstReader]) : AstSpmdParamClassList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstSpmdParamClass) (make-array AstSpmdParamClass count)]
+    [slots : (__tl_dyn-array AstSpmdParamClass)
+      (make-array AstSpmdParamClass count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -384,7 +386,7 @@
 (define (surface-ast-read-spmd-specialization-list! [reader : SurfaceAstReader]) : AstSpmdSpecializationList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstSpmdSpecialization)
+    [slots : (__tl_dyn-array AstSpmdSpecialization)
       (make-array AstSpmdSpecialization count)]
     [index : i64 0]
     (begin
@@ -460,7 +462,7 @@
   [reader : SurfaceAstReader]) : AstImportedSpmdSpecializationList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstImportedSpmdSpecialization)
+    [slots : (__tl_dyn-array AstImportedSpmdSpecialization)
       (make-array AstImportedSpmdSpecialization count)]
     [index : i64 0]
     (begin
@@ -506,7 +508,7 @@
   [reader : SurfaceAstReader]) : AstImportedSpmdCallableList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstImportedSpmdCallable)
+    [slots : (__tl_dyn-array AstImportedSpmdCallable)
       (make-array AstImportedSpmdCallable count)]
     [index : i64 0]
     (begin
@@ -629,7 +631,7 @@
 (define (surface-ast-read-variant-def-list! [reader : SurfaceAstReader]) : AstVariantDefList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstVariantDef) (make-array AstVariantDef count)]
+    [slots : (__tl_dyn-array AstVariantDef) (make-array AstVariantDef count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -637,7 +639,7 @@
           [name : i64 (surface-ast-read-name! reader)]
           [fields : AstTypeList (surface-ast-read-type-list! reader)]
           [cleanup-count : i64 (surface-ast-read-count! reader)]
-          [cleanup-slots : (Array AstVariantPayloadCleanup)
+          [cleanup-slots : (__tl_dyn-array AstVariantPayloadCleanup)
             (make-array AstVariantPayloadCleanup cleanup-count)]
           [cleanup-index : i64 0]
           (begin
@@ -805,7 +807,8 @@
 (define (surface-ast-read-dispatch-variant-list! [reader : SurfaceAstReader]) : AstDispatchVariantList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstDispatchVariant) (make-array AstDispatchVariant count)]
+    [slots : (__tl_dyn-array AstDispatchVariant)
+      (make-array AstDispatchVariant count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1123,7 +1126,7 @@
 (define (surface-ast-read-decl-list! [reader : SurfaceAstReader]) : AstDeclList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstDecl) (make-array AstDecl count)]
+    [slots : (__tl_dyn-array AstDecl) (make-array AstDecl count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1173,8 +1176,8 @@
 (define (surface-ast-read-paths! [reader : SurfaceAstReader]) : AstDeclPathList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array String) (make-array String count)]
-    [owners : (Array i64) (make-array i64 count)]
+    [slots : (__tl_dyn-array String) (make-array String count)]
+    [owners : (__tl_dyn-array i64) (make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1206,7 +1209,7 @@
 (define (surface-ast-read-modules! [reader : SurfaceAstReader]) : AstDeclModuleList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array i64) (make-array i64 count)]
+    [slots : (__tl_dyn-array i64) (make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1328,7 +1331,7 @@
             seen
             compacted-pools)])
       (let
-        [bytes : (Array u8)
+        [bytes : (__tl_dyn-array u8)
           (byte_buf_core.byte-buf-builder-finish-array (& out))]
         (begin
           (unsafe
@@ -1379,8 +1382,8 @@
             (set! index (+ index 1))))))))
 
 (define (surface-ast-decode
-  [bytes : (Array u8)]
-  [identity-remap : (Array i64)]
+  [bytes : (__tl_dyn-array u8)]
+  [identity-remap : (__tl_dyn-array i64)]
   [pools : AstNodePoolContext]) : ResultSurfaceAstHydration
   (let
     [reader : SurfaceAstReader (surface-ast-reader-new bytes identity-remap)]
@@ -1463,12 +1466,13 @@
             sum))]
       [macro-type-kinds : AstMacroTypeKindList
         (ast-macro-type-kind-list-with-length 3)]
-      [macro-param-slots : (Array AstMacroParam) (make-array AstMacroParam 1)]
-      [decl-slots : (Array AstDecl) (make-array AstDecl 2)]
-      [path-slots : (Array String) (make-array String 2)]
-      [owner-slots : (Array i64) (make-array i64 2)]
-      [module-slots : (Array i64) (make-array i64 2)]
-      [key-modules : (Array String) (make-array String 1)]
+      [macro-param-slots : (__tl_dyn-array AstMacroParam)
+        (make-array AstMacroParam 1)]
+      [decl-slots : (__tl_dyn-array AstDecl) (make-array AstDecl 2)]
+      [path-slots : (__tl_dyn-array String) (make-array String 2)]
+      [owner-slots : (__tl_dyn-array i64) (make-array i64 2)]
+      [module-slots : (__tl_dyn-array i64) (make-array i64 2)]
+      [key-modules : (__tl_dyn-array String) (make-array String 1)]
       (begin
         (ast-macro-type-kind-list-set! (&mut macro-type-kinds) 0 kind-i64-id)
         (ast-macro-type-kind-list-set! (&mut macro-type-kinds) 1 kind-struct-id)

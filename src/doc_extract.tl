@@ -11,6 +11,7 @@
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -94,7 +95,7 @@
 
 (define (doc-item-array-copy-to-list
   [out : (&mut out doc_item_vec.Vec)]
-  [items : (Array DocItem)]
+  [items : (__tl_dyn-array DocItem)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -103,7 +104,7 @@
       (doc_item_vec.push out (array-ref items index))
       (doc-item-array-copy-to-list out items (+ index 1) count))))
 
-(define (doc-item-array-to-list [items : (Array DocItem)]) : doc_item_vec.Vec
+(define (doc-item-array-to-list [items : (__tl_dyn-array DocItem)]) : doc_item_vec.Vec
   (let
     [out : doc_item_vec.Vec (doc_item_vec.with-capacity (array-length items))]
     (begin
@@ -474,7 +475,7 @@
     [module-has : bool false]
     [pending-doc : String ""]
     [pending-has : bool false]
-    [items : (Array DocItem) (make-array DocItem 0)]
+    [items : (__tl_dyn-array DocItem) (make-array DocItem 0)]
     (begin
       (while (< i n)
         (let
@@ -549,7 +550,7 @@
       (DocExtraction.Extraction module-doc (doc-item-array-to-list items)))))
 
 (define (doc-extract-file [path : String]) : DocExtraction
-  (doc-extract-source (io.read-file path)))
+  (doc-extract-source (byte_buf.to-string (io.read-file path))))
 
 (define (doc-extract-smoke-source) : String
   ";# Module title

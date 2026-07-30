@@ -22,7 +22,7 @@
 ;; (`str-copy-bytes-into`) and materializes the result with a single
 ;; `string-from-bytes`, with no per-fragment allocation.
 (defstruct FmtRenderBuf
-  (data (Array u8))
+  (data (__tl_dyn-array u8))
   (len i64))
 
 (define (fmt-render-buf-new) : FmtRenderBuf
@@ -30,7 +30,7 @@
 
 (define (fmt-render-buf-reserve [buf : FmtRenderBuf] [needed : i64]) : unit
   (let
-    [cur : (Array u8) (struct-get buf data)]
+    [cur : (__tl_dyn-array u8) (struct-get buf data)]
     [cap : i64 (array-length cur)]
     (if (<= needed cap)
       unit
@@ -40,7 +40,7 @@
           (while (< newcap needed)
             (set! newcap (* newcap 2)))
           (let
-            [bigger : (Array u8) (make-array u8 newcap)]
+            [bigger : (__tl_dyn-array u8) (make-array u8 newcap)]
             [n : i64 (struct-get buf len)]
             (begin
               (if (> n 0)

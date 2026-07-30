@@ -66,6 +66,7 @@
 ;# checksum is a wrapping 64-bit FNV-1a fold with no division, so the printed
 ;# decimal matches the C baseline's `%lld` bit for bit.
 (import stdlib.array)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -1597,7 +1598,9 @@
     [start : i64 0]
     [acc : i64 pl-hash-basis]
     (begin
-      (set! pl-text (io.read-file-or (& path) ""))
+      (set!
+        pl-text
+        (byte_buf.to-string (io.read-file-or (& path) (byte_buf.new))))
       (set! pl-len (string.string-length pl-text))
       (set! acc (pl-mix acc pl-len))
       (set! pl-chunk-start (array.make-array i64 (+ (/ pl-len 16) 4)))

@@ -1,6 +1,7 @@
 ;; compiler_backend_raw_pointer_fixture.tl - emit the raw-pointer backend
 ;; witness program's assembly for a target so the integration suite can
 ;; assemble, link, and run it.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import "../compiler_backend_tests.tl")
@@ -31,7 +32,7 @@
       (match (compiler-backend-raw-pointer-fixture-for-name target-name)
         [(ResultCompilerBackend.Ok asm)
           (begin
-            (io.write-file (io.arg 1) asm)
+            (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
             0)]
         [(ResultCompilerBackend.Err diag)
           (begin

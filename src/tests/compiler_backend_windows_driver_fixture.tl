@@ -1,4 +1,5 @@
 ;; compiler_backend_windows_driver_fixture.tl - emit Windows driver primitive fixture assembly.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import "../compiler_backend.tl")
 
@@ -13,7 +14,7 @@
       (CompilerBackendTarget.Windows))
       [(ResultCompilerBackend.Ok asm)
         (begin
-          (io.write-file (io.arg 1) asm)
+          (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
           0)]
       [(ResultCompilerBackend.Err diag)
         (begin

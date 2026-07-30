@@ -21,7 +21,7 @@
 (define (surface-ast-read-expr-list! [reader : SurfaceAstReader]) : AstExprList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array i64) (make-array i64 count)]
+    [slots : (__tl_dyn-array i64) (make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -69,7 +69,7 @@
 (define (surface-ast-read-param-list! [reader : SurfaceAstReader]) : AstParamList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstParam) (make-array AstParam count)]
+    [slots : (__tl_dyn-array AstParam) (make-array AstParam count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -127,7 +127,7 @@
 (define (surface-ast-read-pattern-list! [reader : SurfaceAstReader]) : AstPatternList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstPattern) (make-array AstPattern count)]
+    [slots : (__tl_dyn-array AstPattern) (make-array AstPattern count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -179,7 +179,7 @@
 (define (surface-ast-read-let-binding-list! [reader : SurfaceAstReader]) : AstLetBindingList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstLetBinding) (make-array AstLetBinding count)]
+    [slots : (__tl_dyn-array AstLetBinding) (make-array AstLetBinding count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -216,7 +216,8 @@
 (define (surface-ast-read-resource-binding-list! [reader : SurfaceAstReader]) : AstResourceBindingList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstResourceBinding) (make-array AstResourceBinding count)]
+    [slots : (__tl_dyn-array AstResourceBinding)
+      (make-array AstResourceBinding count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -252,7 +253,7 @@
 (define (surface-ast-read-match-arm-list! [reader : SurfaceAstReader]) : AstMatchArmList
   (let
     [count : i64 (surface-ast-read-count! reader)]
-    [slots : (Array AstMatchArm) (make-array AstMatchArm count)]
+    [slots : (__tl_dyn-array AstMatchArm) (make-array AstMatchArm count)]
     [index : i64 0]
     (begin
       (while (< index count)

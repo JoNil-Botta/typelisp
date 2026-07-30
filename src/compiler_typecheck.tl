@@ -1,4 +1,5 @@
 ;; compiler_typecheck.tl - Self-tests for the compiler typechecker API.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import "compiler_typecheck_api.tl")
 (import "compiler_typecheck_core.tl")
@@ -8,6 +9,9 @@
 (import sym_i64_env)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+
+(define (compiler-typecheck-write-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (string.append
@@ -23,22 +27,25 @@
 (extern (io.error [arg0 : String]) : never)
 (extern (arg-count) : i64)
 (extern (io.arg [arg0 : i64]) : String)
-(extern (io.read-file [arg0 : String]) : String)
+(defstruct ByteBuf
+  (slots (Array u8))
+  (len i64))
+(extern (io.read-file [arg0 : String]) : ByteBuf)
 (extern (io.read-file-status [arg0 : String]) : i64)
-(extern (io.write-file [arg0 : String] [arg1 : String]) : unit)
-(extern (io.write-file-status [arg0 : String] [arg1 : String]) : i64)
-(extern (io.append-file-status [arg0 : String] [arg1 : String]) : i64)
+(extern (io.write-file [arg0 : String] [arg1 : (& arg1 bytes)]) : unit)
+(extern (io.write-file-status [arg0 : String] [arg1 : (& arg1 bytes)]) : i64)
+(extern (io.append-file-status [arg0 : String] [arg1 : (& arg1 bytes)]) : i64)
 (extern (io.file-exists? [arg0 : String]) : bool)
 (extern (io.file-exists-status [arg0 : String]) : i64)
 (extern (io.file-open-status [arg0 : String] [arg1 : i64]) : i64)
 (extern (io.file-close-status [arg0 : i64]) : i64)
 (extern (io.file-read-chunk-status [arg0 : i64] [arg1 : i64]) : i64)
-(extern (io.file-write-status [arg0 : i64] [arg1 : String]) : i64)
+(extern (io.file-write-status [arg0 : i64] [arg1 : (& arg1 bytes)]) : i64)
 (extern (io.file-flush-status [arg0 : i64]) : i64)
-(extern (io.file-read-chunk-bytes [arg0 : i64]) : String)
+(extern (io.file-read-chunk-bytes [arg0 : i64]) : ByteBuf)
 (extern (io.file-read-chunk-eof? [arg0 : i64]) : bool)
-(extern (read-stdin-line) : String)
-(extern (io.read-stdin-bytes [arg0 : i64]) : String)
+(extern (read-stdin-line) : ByteBuf)
+(extern (io.read-stdin-bytes [arg0 : i64]) : ByteBuf)
 (extern (stdin-eof?) : bool)
 (extern (flush-stdout) : unit)
 "
@@ -433,7 +440,7 @@
   (y i64))
 
 (defstruct Vec
-  (slots (Array Ball))
+  (slots (__tl_dyn-array Ball))
   (len i64))
 
 (defstruct World
@@ -553,7 +560,7 @@
   (let
     [fixed : (Array i64 3) (array 1 2 3)]
     [t : (Tuple i64 bool) (tuple 7 true)]
-    [a : (Array i64) (make-array i64 n)]
+    [a : (__tl_dyn-array i64) (make-array i64 n)]
     (begin
       (array-set! a 0 (cast (__tl_string_ref s 0) : i64))
       (foreach ([i : i64 0 n])
@@ -586,8 +593,8 @@
   (begin
     (flush-stdout)
     (if (stdin-eof?)
-        (__tl_string_length (read-stdin-line))
-        (__tl_string_length (io.read-stdin-bytes 3)))))"))
+        (struct-get (read-stdin-line) len)
+        (struct-get (io.read-stdin-bytes 3) len))))"))
 
 (define (compiler-typecheck-env-source) : String
   (compiler-typecheck-with-env-source
@@ -651,22 +658,22 @@
   "(defstruct Holder
   (name String)
   (fixed (Array String 2))
-  (items (Array String))
+  (items (__tl_dyn-array String))
   (pair (Tuple String String)))
 (defenum StringTree
   (SLeaf String)
   (SBranch (Box StringTree) (Box StringTree)))
-(define (clone-tuple [items : (Array String)]) : (Tuple String (Array String))
+(define (clone-tuple [items : (__tl_dyn-array String)]) : (Tuple String (__tl_dyn-array String))
   (clone (tuple \"tuple\" items)))
 (define (clone-fixed) : (Array String 2)
   (clone (array \"left\" \"right\")))
-(define (clone-dyn [items : (Array String)]) : (Array String)
+(define (clone-dyn [items : (__tl_dyn-array String)]) : (__tl_dyn-array String)
   (clone items))
-(define (clone-holder [items : (Array String)]) : Holder
+(define (clone-holder [items : (__tl_dyn-array String)]) : Holder
   (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
 (define (clone-tree [tree : StringTree]) : StringTree
   (clone tree))
-(define (main [items : (Array String)] [tree : StringTree]) : i64 0)")
+(define (main [items : (__tl_dyn-array String)] [tree : StringTree]) : i64 0)")
 
 (define (compiler-typecheck-clone-function-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))
@@ -705,7 +712,7 @@
 (define (compiler-typecheck-foreach-try-source) : String
   "(import stdlib.result)
 (import (result.result i64 i64) as result_i64_i64)
-(define (main [out : (Array i64)] [flag : bool] [n : i64]) : result_i64_i64.Result
+(define (main [out : (__tl_dyn-array i64)] [flag : bool] [n : i64]) : result_i64_i64.Result
   (begin
     (foreach
       ([i : i64 0 n])
@@ -715,9 +722,9 @@
 (define (compiler-typecheck-foreach-spmd-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
-    [a : (Array i64) (make-array i64 n)]
-    [b : (Array i64) (make-array i64 n)]
-    [out : (Array i64) (make-array i64 n)]
+    [a : (__tl_dyn-array i64) (make-array i64 n)]
+    [b : (__tl_dyn-array i64) (make-array i64 n)]
+    [out : (__tl_dyn-array i64) (make-array i64 n)]
     (foreach ([i : i64 0 n])
       (let
         [sum : i64 (+ (array-ref a i) (array-ref b i))]
@@ -726,48 +733,48 @@
 (define (compiler-typecheck-foreach-spmd-f32-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
-    [a : (Array f32) (make-array f32 n)]
-    [b : (Array f32) (make-array f32 n)]
-    [out : (Array f32) (make-array f32 n)]
+    [a : (__tl_dyn-array f32) (make-array f32 n)]
+    [b : (__tl_dyn-array f32) (make-array f32 n)]
+    [out : (__tl_dyn-array f32) (make-array f32 n)]
     (foreach ([i : i64 0 n])
       (let
         [sum : f32 (+ (array-ref a i) (array-ref b i))]
         (array-set! out i sum)))))")
 
 (define (compiler-typecheck-foreach-spmd-i16-u16-ok-source) : String
-  "(define (fill-i16 [a : (Array i16)] [b : (Array i16)] [out : (Array i16)] [n : i64]) : unit
+  "(define (fill-i16 [a : (__tl_dyn-array i16)] [b : (__tl_dyn-array i16)] [out : (__tl_dyn-array i16)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))
-(define (fill-u16 [a : (Array u16)] [b : (Array u16)] [out : (Array u16)] [n : i64]) : unit
+(define (fill-u16 [a : (__tl_dyn-array u16)] [b : (__tl_dyn-array u16)] [out : (__tl_dyn-array u16)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-typecheck-foreach-varying-if-source) : String
-  "(define (main [xs : (Array i64)] [n : i64]) : unit
+  "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (= (array-ref xs i) 0) unit unit)))")
 
 (define (compiler-typecheck-foreach-varying-while-source) : String
-  "(define (main [xs : (Array i64)] [n : i64]) : unit
+  "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (while (< (array-ref xs i) 0) unit)))")
 
 (define (compiler-typecheck-foreach-inline-call-source) : String
   "(define (sink [x : i64]) : unit unit)
-(define (main [xs : (Array i64)] [n : i64]) : unit
+(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (sink (array-ref xs i))))")
 
 (define (compiler-typecheck-foreach-varying-call-source) : String
   "(define (sink [x : i64]) : unit unit)
-(define (main [xs : (Array i64)] [n : i64]) : unit
+(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [f : (-> i64 unit) sink]
     (foreach ([i : i64 0 n])
       (f (array-ref xs i)))))")
 
 (define (compiler-typecheck-foreach-outer-set-source) : String
-  "(define (main [xs : (Array i64)] [n : i64]) : i64
+  "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [sum : i64 0]
     (begin
@@ -776,7 +783,7 @@
       sum)))")
 
 (define (compiler-typecheck-foreach-unsupported-lane-source) : String
-  "(define (main [ss : (Array String)] [n : i64]) : unit
+  "(define (main [ss : (__tl_dyn-array String)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
       [s : String (array-ref ss i)]
@@ -784,7 +791,7 @@
 
 (define (compiler-typecheck-foreach-if-local-set-source) : String
   "(define (sink [x : i64]) : unit unit)
-(define (main [xs : (Array i64)] [flag : bool] [n : i64]) : unit
+(define (main [xs : (__tl_dyn-array i64)] [flag : bool] [n : i64]) : unit
   (let
     [f : (-> i64 unit) sink]
     (foreach ([i : i64 0 n])
@@ -796,7 +803,7 @@
 
 (define (compiler-typecheck-foreach-while-local-set-source) : String
   "(define (sink [x : i64]) : unit unit)
-(define (main [xs : (Array i64)] [flag : bool] [n : i64]) : unit
+(define (main [xs : (__tl_dyn-array i64)] [flag : bool] [n : i64]) : unit
   (let
     [f : (-> i64 unit) sink]
     (foreach ([i : i64 0 n])
@@ -809,7 +816,7 @@
 (define (compiler-typecheck-foreach-match-local-set-source) : String
   "(defenum Maybe (None) (Some i64))
 (define (sink [x : i64]) : unit unit)
-(define (main [m : Maybe] [xs : (Array i64)] [n : i64]) : unit
+(define (main [m : Maybe] [xs : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [f : (-> i64 unit) sink]
     (foreach ([i : i64 0 n])
@@ -2088,7 +2095,7 @@
 
 (define (compiler-typecheck-inline-dense-sequence-source) : String
   "(defstruct I64Sequence
-  (items (Array i64)))")
+  (items (__tl_dyn-array i64)))")
 
 (define (compiler-typecheck-inline-boxed-tree-source) : String
   "(defenum Tree
@@ -2100,17 +2107,17 @@
   (key i64)
   (value i64))
 (defstruct SymI64Env
-  (bindings (Array SymI64Binding)))")
+  (bindings (__tl_dyn-array SymI64Binding)))")
 
 (define (compiler-typecheck-inline-boxed-loader-helper-source) : String
   "(defstruct InlineHelperRoots
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 (defstruct CompilerPkgDep
   (alias String)
   (path String))
 (defstruct CompilerPkgDeps
-  (slots (Array CompilerPkgDep))
+  (slots (__tl_dyn-array CompilerPkgDep))
   (len i64))")
 
 (define (compiler-typecheck-inline-loader-helper-layout-ok?) : bool
@@ -2127,7 +2134,7 @@
   (name String)
   (offset i64))
 (defstruct CtfeLayoutFieldList
-  (slots (Array CtfeLayoutField))
+  (slots (__tl_dyn-array CtfeLayoutField))
   (len i64))
 (defstruct CtfeLayoutInfo
   (name String)
@@ -2136,30 +2143,30 @@
   (align i64)
   (fields CtfeLayoutFieldList))
 (defstruct CtfeLayoutInfoList
-  (slots (Array CtfeLayoutInfo))
+  (slots (__tl_dyn-array CtfeLayoutInfo))
   (len i64))
 (defenum AstType
   (AstType.I64))
 (defstruct AstTypeList
-  (slots (Array AstType))
+  (slots (__tl_dyn-array AstType))
   (len i64))
 (defstruct CtfeReflectField
   (name String)
   (ty AstType))
 (defstruct CtfeReflectFieldList
-  (slots (Array CtfeReflectField))
+  (slots (__tl_dyn-array CtfeReflectField))
   (len i64))
 (defstruct CtfeReflectVariant
   (name String)
   (payloads AstTypeList))
 (defstruct CtfeReflectVariantList
-  (slots (Array CtfeReflectVariant))
+  (slots (__tl_dyn-array CtfeReflectVariant))
   (len i64))
 (defenum CtfeReflectInfo
   (Struct String String String CtfeReflectFieldList)
   (Enum String String String CtfeReflectVariantList))
 (defstruct CtfeReflectInfoList
-  (slots (Array CtfeReflectInfo))
+  (slots (__tl_dyn-array CtfeReflectInfo))
   (len i64))
 (defstruct CtfeEnvBinding
   (key i64)
@@ -2168,7 +2175,7 @@
   (parent i64)
   (mutable-local bool))
 (defstruct CtfeEnvArena
-  (segments (Array (Array CtfeEnvBinding)))
+  (segments (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding)))
   (segment-count i64)
   (len i64)
   (owner-arena i64))
@@ -2201,13 +2208,13 @@
   (AstType.Tuple (Box AstTypeList))
   (AstType.Box (Box AstType)))
 (defstruct AstTypeList
-  (slots (Array AstType))
+  (slots (__tl_dyn-array AstType))
   (len i64))
 (defenum AstPattern
   (AstPattern.Wildcard)
   (AstPattern.Tuple (Box AstPatternList)))
 (defstruct AstPatternList
-  (slots (Array AstPattern))
+  (slots (__tl_dyn-array AstPattern))
   (len i64))
 (defenum AstExpr
   (AstExpr.Literal i64)
@@ -2215,7 +2222,7 @@
   (AstExpr.Tuple FixtureExprList)
   (AstExpr.Match (Box AstExpr) AstPatternList))
 (defstruct FixtureExprList
-  (slots (Array AstExpr))
+  (slots (__tl_dyn-array AstExpr))
   (len i64))")
 
 (define (compiler-typecheck-inline-ast-list-layout-ok?) : bool
@@ -2242,7 +2249,7 @@
   (FmtCstBracketList (Box FormatCstList))
   (FmtCstForms (Box FormatCstList)))
 (defstruct FormatCstList
-  (slots (Array FormatCst))
+  (slots (__tl_dyn-array FormatCst))
   (start i64)
   (len i64))
 (defenum Doc
@@ -2265,7 +2272,7 @@
 (define (compiler-typecheck-inline-pointer-boundaries-source) : String
   "(defstruct Node
   (name String)
-  (children (Array Node))
+  (children (__tl_dyn-array Node))
   (next (Box Node))
   (raw (Ptr Node))
   (raw-mut (MutPtr Node))
@@ -2583,7 +2590,7 @@
   "(define (main [n : i64]) : i64
   (with-arena r
     (let
-      [a : (Array i64) (make-array i64 n)]
+      [a : (__tl_dyn-array i64) (make-array i64 n)]
       (begin
         (array-set! a 0 7)
         (array-length a)))))")
@@ -2634,7 +2641,7 @@
 
 (define (compiler-typecheck-with-escape-array-result-source) : String
   (compiler-typecheck-with-arena-source
-    "(define (main) : (Array i64)
+    "(define (main) : (__tl_dyn-array i64)
   (let
     [scratch : Arena (arena-make)]
     (with-escape scratch (make-array i64 4))))"))
@@ -2650,7 +2657,7 @@
   (compiler-typecheck-with-arena-source
     "(defstruct EscapePayload
   (name String)
-  (items (Array String))
+  (items (__tl_dyn-array String))
   (cell (Box String)))
 (defenum EscapeResult
   (EscapeOk EscapePayload)
@@ -2660,7 +2667,7 @@
     [scratch : Arena (arena-make)]
     (with-escape scratch
       (let
-        [items : (Array String) (make-array String 2)]
+        [items : (__tl_dyn-array String) (make-array String 2)]
         (begin
           (array-set! items 0 (string.int->string 1))
           (array-set! items 1 (string.int->string 2))
@@ -2727,7 +2734,7 @@
 
 (define (compiler-typecheck-in-arena-array-result-source) : String
   (compiler-typecheck-with-arena-source
-    "(define (main) : (Array i64)
+    "(define (main) : (__tl_dyn-array i64)
   (let
     [scratch : Arena (arena-make)]
     (in-arena scratch (make-array i64 4))))"))
@@ -2881,7 +2888,7 @@
     [n : i64 (init : i64)]
     [flag : bool (init : bool)]
     [text : String (init : String)]
-    [items : (Array i64) (init : (Array i64))]
+    [items : (__tl_dyn-array i64) (init : (__tl_dyn-array i64))]
     [tupled : (Tuple i64 bool) (init : (Tuple i64 bool))]
     [fixed : (Array i64 2) (init : (Array i64 2))]
     [point : Point (init : Point)]
@@ -2899,7 +2906,7 @@
 (define (main) : i64
   (let
     [n : i64 (init)]
-    [items : (Array i64) (init)]
+    [items : (__tl_dyn-array i64) (init)]
     [fixed : (Array i64 2) (array (init) 5)]
     [point : Point (Point (init) (init))]
     [maybe : Maybe (Some (init))]
@@ -3642,7 +3649,7 @@
     (unsafe (ptr-addr-of (array-ref (struct-get bag slots) i)))))")
 
 (define (compiler-typecheck-raw-pointer-addr-of-dynamic-array-element-source) : String
-  "(define (main [items : (Array i64)] [i : i64]) : (MutPtr i64)
+  "(define (main [items : (__tl_dyn-array i64)] [i : i64]) : (MutPtr i64)
   (unsafe (ptr-addr-of (array-ref items i))))")
 
 (define (compiler-typecheck-raw-pointer-addr-of-ref-root-source) : String
@@ -3959,7 +3966,7 @@
 (define (take-pair [r : (& p i64)]) : unit unit)
 (define (take-tuple [r : (& t i64)]) : unit unit)
 (define (take-array [r : (& items i64)]) : unit unit)
-(define (main [p : Pair] [t : (Tuple i64 bool)] [items : (Array i64)]) : unit
+(define (main [p : Pair] [t : (Tuple i64 bool)] [items : (__tl_dyn-array i64)]) : unit
   (begin
     (take-pair (& (struct-get p left)))
     (take-tuple (& (tuple-ref t 0)))
@@ -4055,7 +4062,7 @@
 
 (define (compiler-typecheck-borrowed-enum-match-ref-struct-array-source) : String
   "(defenum Slot (Empty) (Occupied i64))
-(defstruct Bag (slots (Array Slot)))
+(defstruct Bag (slots (__tl_dyn-array Slot)))
 (defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
 (define (take [v : (& bag i64)]) : i64 7)
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
@@ -4102,7 +4109,7 @@
 
 (define (compiler-typecheck-returned-borrowed-lookup-assign-source) : String
   "(defenum Slot (Empty) (Occupied i64))
-(defstruct Bag (slots (Array Slot)))
+(defstruct Bag (slots (__tl_dyn-array Slot)))
 (defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
 (define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
@@ -4117,7 +4124,7 @@
 
 (define (compiler-typecheck-returned-borrowed-lookup-array-set-source) : String
   "(defenum Slot (Empty) (Occupied i64))
-(defstruct Bag (slots (Array Slot)))
+(defstruct Bag (slots (__tl_dyn-array Slot)))
 (defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
 (define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
@@ -4143,11 +4150,11 @@
 (define (compiler-typecheck-lifetime-iterator-mut-borrow-source) : String
   "(defstruct Iter
   (:lifetimes source)
-  (slots (& source (Array i64)))
+  (slots (& source (__tl_dyn-array i64)))
   (index i64))
 (define (advance [iter : (&mut iter (Iter source))]) : unit
   (set! (struct-get iter index) (+ (struct-get iter index) 1)))
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (let
     [iter : (Iter items) (Iter (& items) 0)]
     (advance (&mut iter))))")
@@ -4213,19 +4220,19 @@
   (take (&mut n)))")
 
 (define (compiler-typecheck-reference-mut-array-set-source) : String
-  "(define (put [items : (&mut items (Array i64))] [v : i64]) : unit
+  "(define (put [items : (&mut items (__tl_dyn-array i64))] [v : i64]) : unit
   (array-set! items 0 v))
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (put (&mut items) 7))")
 
 (define (compiler-typecheck-reference-mut-array-push-source) : String
-  "(define (grow [items : (&mut items (Array i64))] [v : i64]) : unit
+  "(define (grow [items : (&mut items (__tl_dyn-array i64))] [v : i64]) : unit
   (array-push! items v))
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (grow (&mut items) 7))")
 
 (define (compiler-typecheck-reference-immut-array-set-source) : String
-  "(define (bad [items : (& items (Array i64))]) : unit
+  "(define (bad [items : (& items (__tl_dyn-array i64))]) : unit
   (array-set! items 0 7))")
 
 (define (compiler-typecheck-reference-str-source) : String
@@ -5601,7 +5608,7 @@
   (match r [(result_i64_string.Ok v) v]))")
 
 (define (compiler-typecheck-match-ok-dense-sequence-source) : String
-  "(defenum SequenceView (Empty) (Items (Array i64)))
+  "(defenum SequenceView (Empty) (Items (__tl_dyn-array i64)))
 (define (main [view : SequenceView]) : i64
   (match view
     [(Items items) (if (= (array-length items) 0) 0 (array-ref items 0))]
@@ -5952,7 +5959,7 @@
   "(define (main) : i64 (__tl_string_length 5))")
 
 (define (compiler-typecheck-string-builtin-bad-array-source) : String
-  "(define (main [items : (Array i64)]) : i64 (__tl_string_length items))")
+  "(define (main [items : (__tl_dyn-array i64)]) : i64 (__tl_string_length items))")
 
 (define (compiler-typecheck-string-builtin-tests-ok?) : bool
   (let
@@ -6102,7 +6109,7 @@
 (define (compiler-typecheck-lambda-capture-dyn-array-source) : String
   "(define (main [n : i64]) : i64
   (let
-    [items : (Array i64) (make-array i64 n)]
+    [items : (__tl_dyn-array i64) (make-array i64 n)]
     (begin
       (array-push! items 5)
       (let [g : (-> i64) (lambda () : i64 (array-length items))] (g)))))")
@@ -6235,19 +6242,19 @@
 (define (compiler-typecheck-spmd-reduce-op-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))")
+      "(define (main [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))")
     (compiler-typecheck-ok?
-      "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref bs i)))")
+      "(define (main [bs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref bs i)))")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce all ([i : i64 0 n]) 0 (array-ref xs i)))"
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce all ([i : i64 0 n]) 0 (array-ref xs i)))"
       "typecheck: spmd-reduce all requires a bool type")
     (compiler-typecheck-error-ok?
-      "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
+      "(define (main [bs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
       "typecheck: spmd-reduce sum requires an i32, i64, f32, or f64 type")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce min ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      "(define (main [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce min ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
       "typecheck: spmd-reduce min requires an i32 or i64 type")))
 
 ;; spmd-reduce purity rules (SPEC.md 5.15): the per-lane value
@@ -6258,39 +6265,39 @@
 (define (compiler-typecheck-spmd-reduce-purity-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref xs i) 1)))")
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref xs i) 1)))")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
       "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")
     (compiler-typecheck-error-ok?
       "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
       "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md 5.15)")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
       "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))")
+      "(define (main [xs : (__tl_dyn-array i64)] [ys : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [offsets : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (+ i (array-ref offsets (program-index))))))")))
+      "(define (main [xs : (__tl_dyn-array i64)] [offsets : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (+ i (array-ref offsets (program-index))))))")))
 
 (define (compiler-typecheck-spmd-broadcast-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array u64)] [out : (Array u64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
+      "(define (main [xs : (__tl_dyn-array u64)] [out : (__tl_dyn-array u64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array u32)] [out : (Array u32)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
+      "(define (main [xs : (__tl_dyn-array u32)] [out : (__tl_dyn-array u32)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-broadcast (array-ref xs i) 0)))")
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-broadcast (array-ref xs i) 0)))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (array-set! out i (spmd-broadcast prefix 0))))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (array-set! out i (spmd-broadcast prefix 0))))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) i))) 0))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) i))) 0))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-shuffle (array-ref xs i) i)))")
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-shuffle (array-ref xs i) i)))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (array-set! out i (spmd-shuffle prefix 0))))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (array-set! out i (spmd-shuffle prefix 0))))")
     (compiler-typecheck-error-ok?
       "(define (main) : i64 (spmd-broadcast 1 0))"
       "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
@@ -6298,25 +6305,25 @@
       "(define (main) : i64 (spmd-shuffle 1 0))"
       "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (Array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (spmd-broadcast (array-ref xs i) 0) unit))"
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (spmd-broadcast (array-ref xs i) 0) unit))"
       "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (Array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (spmd-shuffle (array-ref xs i) 0) unit))"
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (spmd-shuffle (array-ref xs i) 0) unit))"
       "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) i))) 0))"
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) i))) 0))"
       "typecheck: spmd-broadcast lane must be uniform")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) true))) 0))"
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) true))) 0))"
       "typecheck: spmd-broadcast lane must have type i64: expected i64, found bool")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) true))) 0))"
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) true))) 0))"
       "typecheck: spmd-shuffle lane must have type i64: expected i64, found bool")
     (compiler-typecheck-error-ok?
-      "(define (main [bs : (Array bool)] [out : (Array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref bs i) 0))) true))"
+      "(define (main [bs : (__tl_dyn-array bool)] [out : (__tl_dyn-array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref bs i) 0))) true))"
       "typecheck: spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred")
     (compiler-typecheck-error-ok?
-      "(define (main [bs : (Array bool)] [out : (Array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref bs i) 0))) true))"
+      "(define (main [bs : (__tl_dyn-array bool)] [out : (__tl_dyn-array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref bs i) 0))) true))"
       "typecheck: spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred")))
 
 ;; array-builtin signature rules: make-array length, array-ref array/index
@@ -6327,52 +6334,52 @@
     [ok : bool true]
     (begin
       (if (compiler-typecheck-ok?
-        "(define (f [a : (Array i64)]) : i64 (begin (array-set! a 0 5) (array-ref a 0)))")
+        "(define (f [a : (__tl_dyn-array i64)]) : i64 (begin (array-set! a 0 5) (array-ref a 0)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
-        "(define (f) : i64 (let [a : (Array i64) (make-array i64 4)] (array-length a)))")
+        "(define (f) : i64 (let [a : (__tl_dyn-array i64) (make-array i64 4)] (array-length a)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
-    [items : (Array String) (make-array \"left\" \"right\")]
+    [items : (__tl_dyn-array String) (make-array \"left\" \"right\")]
     (array-length items)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
-    [items : (Array u8) (make-array 1 2)]
+    [items : (__tl_dyn-array u8) (make-array 1 2)]
     (array-length items)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
-    [items : (Array i64) (make-array (init) 7)]
+    [items : (__tl_dyn-array i64) (make-array (init) 7)]
     (+ (array-ref items 0) (array-ref items 1))))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
-    [items : (Array i64) (make-array)]
+    [items : (__tl_dyn-array i64) (make-array)]
     (array-length items)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f) : i64
   (let
-    [a : (Array i64) (make-array i64 0)]
+    [a : (__tl_dyn-array i64) (make-array i64 0)]
     (begin
       (array-push! a 5)
       (array-length a))))")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f [a : (Array i64)]) : i64 (array-ref a true))"
+        "(define (f [a : (__tl_dyn-array i64)]) : i64 (array-ref a true))"
         "typecheck: array index must be integer")
         unit
         (set! ok false))
@@ -6389,18 +6396,18 @@
       (if (compiler-typecheck-error-ok?
         "(define (f) : i64
   (let
-    [items : (Array (-> i64)) (make-array (lambda () : i64 1))]
+    [items : (__tl_dyn-array (-> i64)) (make-array (lambda () : i64 1))]
     (array-length items)))"
         "typecheck: dynamic array literal element type is not supported")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f [a : (Array i64)]) : unit (array-set! a 0 true))"
+        "(define (f [a : (__tl_dyn-array i64)]) : unit (array-set! a 0 true))"
         "typecheck: array-set! value type mismatch: expected i64, found bool")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f [a : (Array i64)]) : unit (array-push! a true))"
+        "(define (f [a : (__tl_dyn-array i64)]) : unit (array-push! a true))"
         "typecheck: array-push! value type mismatch: expected i64, found bool")
         unit
         (set! ok false))
@@ -6558,22 +6565,22 @@
     (begin
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String]) : String (io.read-file p))"))
+          "(define (f [p : String]) : ByteBuf (io.read-file p))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String]) : String (io.read-file p))"))
+          "(define (f [p : String]) : ByteBuf (io.read-file p))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String] [c : String]) : unit (io.write-file p c))"))
+          "(define (f [p : String] [c : (& c bytes)]) : unit (io.write-file p c))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String] [c : String]) : i64
+          "(define (f [p : String] [c : (& c bytes)]) : i64
   (begin
     (io.write-file p c)
     (io.file-open-status p 0)))"))
@@ -6581,7 +6588,7 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String] [c : String]) : i64 (io.append-file-status p c))"))
+          "(define (f [p : String] [c : (& c bytes)]) : i64 (io.append-file-status p c))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -6638,7 +6645,7 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64] [c : String]) : i64 (io.file-write-status h c))"))
+          "(define (f [h : i64] [c : (& c bytes)]) : i64 (io.file-write-status h c))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -6648,7 +6655,7 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64]) : String (io.file-read-chunk-bytes h))"))
+          "(define (f [h : i64]) : ByteBuf (io.file-read-chunk-bytes h))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -6658,12 +6665,12 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-io-source
-          "(define (f) : String (read-stdin-line))"))
+          "(define (f) : ByteBuf (read-stdin-line))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-io-source
-          "(define (f) : String (io.read-stdin-bytes 3))"))
+          "(define (f) : ByteBuf (io.read-stdin-bytes 3))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -6687,7 +6694,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [c : String]) : unit (io.write-file 5 c))")
+          "(define (f [c : (& c bytes)]) : unit (io.write-file 5 c))")
         "typecheck: call `io.write-file` argument 1 type mismatch: expected String, found i32")
         unit
         (set! ok false))
@@ -6699,7 +6706,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : i64]) : String (io.read-file p))")
+          "(define (f [p : i64]) : ByteBuf (io.read-file p))")
         "typecheck: call `io.read-file` argument 1 type mismatch: expected String, found i64")
         unit
         (set! ok false))
@@ -6736,7 +6743,7 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [h : i64]) : i64 (io.file-write-status h 5))")
-        "typecheck: call `io.file-write-status` argument 2 type mismatch: expected String, found i32")
+        "typecheck: borrow requires a local, parameter, or aggregate place")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6747,7 +6754,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String] [c : String]) : i64 (io.write-file p c))")
+          "(define (f [p : String] [c : (& c bytes)]) : i64 (io.write-file p c))")
         "typecheck: return type mismatch: expected i64, found unit")
         unit
         (set! ok false))
@@ -7305,6 +7312,8 @@
   (comptime.expr-int (array-length T)))
 (define (main) : i64 (fixed-length (Array i64 3)))")
 
+;; Keep the public spelling here until #6133 teaches CTFE's captured type
+;; expression bridge to recognize the private alias used as a macro operand.
 (define (compiler-typecheck-reflection-array-length-dynamic-source) : String
   "(import stdlib.comptime)
 (defmacro (fixed-length [T : type]) : i64
@@ -8449,7 +8458,7 @@
 
 (define (compiler-typecheck-decls-macro-runtime-raw-storage-source) : String
   "(defmacro (gen) : Decls
-  `(define (generated-copy [text : String] [items : (Array u8)]) : String
+  `(define (generated-copy [text : String] [items : (__tl_dyn-array u8)]) : String
      (unsafe
        (let
          [text-ptr : (Ptr u8) (string-data text)]
@@ -8835,7 +8844,7 @@
   `(array-length ,items))
 (module main)
 (import \"macros.tl\" module macros as m)
-(define (main [items : (Array i64)]) : i64
+(define (main [items : (__tl_dyn-array i64)]) : i64
   (m.dyn-len items))")
 
 (define (compiler-typecheck-macro-hygiene-nested-source) : String
@@ -9952,7 +9961,7 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (bad-owner-dyn-array-ref-call [items : (Array FileHandle)] [i : i64]) : unit
+(define (bad-owner-dyn-array-ref-call [items : (__tl_dyn-array FileHandle)] [i : i64]) : unit
   (take-handle (array-ref items i)))")
 
 (define (compiler-typecheck-move-owner-dyn-array-ref-bind-source) : String
@@ -9960,7 +9969,7 @@
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (bad-owner-dyn-array-ref-bind [items : (Array FileHandle)] [i : i64]) : i64
+(define (bad-owner-dyn-array-ref-bind [items : (__tl_dyn-array FileHandle)] [i : i64]) : i64
   (let [h : FileHandle (array-ref items i)]
     (struct-get h fd)))")
 
@@ -10248,7 +10257,7 @@
 
 (define (compiler-typecheck-live-borrow-array-set-source) : String
   "(define (read-i64-ref [r : (& items i64)]) : unit unit)
-(define (bad [items : (Array i64)]) : unit
+(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [borrowed : (& items i64) (& (array-ref items 0))]
     (begin
       (array-set! items 0 7)
@@ -10262,7 +10271,7 @@
     n))")
 
 (define (compiler-typecheck-live-mut-borrow-array-post-scope-source) : String
-  "(define (main [items : (Array i64)]) : unit
+  "(define (main [items : (__tl_dyn-array i64)]) : unit
   (begin
     (let [r : (&mut items i64) (&mut (array-ref items 0))] unit)
     (let [s : (&mut items i64) (&mut (array-ref items 0))] unit)))")
@@ -10282,17 +10291,17 @@
     (set! n 3)))")
 
 (define (compiler-typecheck-live-mut-borrow-duplicate-source) : String
-  "(define (bad [items : (Array i64)]) : unit
+  "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
     (let [s : (&mut items i64) (&mut (array-ref items 0))] unit)))")
 
 (define (compiler-typecheck-live-mut-borrow-after-immut-source) : String
-  "(define (bad [items : (Array i64)]) : unit
+  "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (& items i64) (& (array-ref items 0))]
     (let [s : (&mut items i64) (&mut (array-ref items 0))] unit)))")
 
 (define (compiler-typecheck-live-immut-borrow-after-mut-source) : String
-  "(define (bad [items : (Array i64)]) : unit
+  "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
     (let [s : (& items i64) (& (array-ref items 0))] unit)))")
 
@@ -10302,12 +10311,12 @@
   (take2 (&mut n) (&mut n)))")
 
 (define (compiler-typecheck-live-mut-borrow-assign-source) : String
-  "(define (bad [items : (Array i64)]) : unit
+  "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
     (array-set! items 0 2)))")
 
 (define (compiler-typecheck-live-mut-borrow-array-set-source) : String
-  "(define (bad [items : (Array i64)]) : unit
+  "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [borrowed : (&mut items i64) (&mut (array-ref items 0))]
     (array-set! items 0 7)))")
 
@@ -11131,11 +11140,11 @@
 
 (define (compiler-typecheck-imported-decl-origin-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-typecheck-write-text
       "target/tc_decl_origin_dep.tl"
       "(module tc.decl_origin_dep)
 (extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c))")
-    (io.write-file
+    (compiler-typecheck-write-text
       "target/tc_decl_origin_entry.tl"
       "(module tc.decl_origin_entry)
 (import \"tc_decl_origin_dep.tl\" module tc.decl_origin_dep as dep)

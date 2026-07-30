@@ -3,6 +3,7 @@
 ;; The formatter CLI logic, factored out of `format.tl` so both the retained
 ;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
 ;; can run the `fmt` command without duplicating a `main`.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -34,7 +35,7 @@
     (string.append path (string.append ": " (io.error-message error)))))
 
 (define (fmt-try-write-formatted-file [path : String] [formatted : String]) : ResultFmtWrite
-  (match (io.try-write-file (& path) (& formatted))
+  (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& formatted)))
     [(io.OkIoUnit) ResultFmtWrite.Ok]
     [(io.ErrIoUnit error)
       (ResultFmtWrite.Err (fmt-write-error-message path error))]))
@@ -388,7 +389,7 @@
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
-    [source : String (io.read-file path)]
+    [source : String (byte_buf.to-string (io.read-file path))]
     (match (format-rules-render-source-width-result source 80)
       [(ResultFormatString.Ok formatted)
         (if check

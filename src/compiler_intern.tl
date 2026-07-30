@@ -435,21 +435,21 @@
   (InternLookupMissing)
   (InternLookupFound i64))
 
-(define intern-pool-slots : (Array String)
+(define intern-pool-slots : (__tl_dyn-array String)
   (make-array String (intern-capacity)))
-(define intern-pool-qualified-slots : (Array bool)
+(define intern-pool-qualified-slots : (__tl_dyn-array bool)
   (make-array bool (intern-capacity)))
-(define intern-pool-last-slash-slots : (Array i32)
+(define intern-pool-last-slash-slots : (__tl_dyn-array i32)
   (make-array i32 (intern-capacity)))
-(define intern-pool-first-dot-slots : (Array i32)
+(define intern-pool-first-dot-slots : (__tl_dyn-array i32)
   (make-array i32 (intern-capacity)))
-(define intern-pool-leading-dot-id-slots : (Array InternSlotId)
+(define intern-pool-leading-dot-id-slots : (__tl_dyn-array InternSlotId)
   (make-array InternSlotId (intern-capacity)))
-(define intern-pool-dotted-prefix-id-slots : (Array InternSlotId)
+(define intern-pool-dotted-prefix-id-slots : (__tl_dyn-array InternSlotId)
   (make-array InternSlotId (intern-capacity)))
-(define intern-pool-module-id-slots : (Array InternSlotId)
+(define intern-pool-module-id-slots : (__tl_dyn-array InternSlotId)
   (make-array InternSlotId (intern-capacity)))
-(define intern-pool-base-id-slots : (Array InternSlotId)
+(define intern-pool-base-id-slots : (__tl_dyn-array InternSlotId)
   (make-array InternSlotId (intern-capacity)))
 (define intern-pool-count : i64
   0)
@@ -488,12 +488,12 @@
 
 (defstruct InternStructuralTable
   (owner i64)
-  (kinds (Array u8))
-  (lefts (Array i64))
-  (middles (Array i64))
-  (rights (Array i64))
-  (map-slots (Array i64))
-  (structural-cache-raws (Array i64))
+  (kinds (__tl_dyn-array u8))
+  (lefts (__tl_dyn-array i64))
+  (middles (__tl_dyn-array i64))
+  (rights (__tl_dyn-array i64))
+  (map-slots (__tl_dyn-array i64))
+  (structural-cache-raws (__tl_dyn-array i64))
   (len i64))
 
 (define (intern-structural-key-base) : i64
@@ -546,7 +546,7 @@
     (make-array i64 (intern-structural-cache-capacity))
     0))
 
-(define (intern-structural-table-cell-new-in-arena [arena : i64]) : (Array
+(define (intern-structural-table-cell-new-in-arena [arena : i64]) : (__tl_dyn-array
     InternStructuralTable)
   (let
     [previous-arena : i64 (tl_arena_current)]
@@ -569,7 +569,7 @@
 ;; its persistent arena instead of reserving another arena per compiler state.
 ;; Persistent full/floor resets reinitialize the table before use; logical
 ;; intern resets clear and re-owner the retained buffers.
-(define intern-structural-table-cell : (Array InternStructuralTable)
+(define intern-structural-table-cell : (__tl_dyn-array InternStructuralTable)
   (intern-structural-table-cell-new-in-arena intern-persistent-arena))
 (define intern-active-structural-prefix : i64
   (+
@@ -596,7 +596,8 @@
       (array-ref intern-structural-table-cell 0)
       structural-cache-raws)))
 
-(define (intern-active-structural-sync! [cell : (Array InternStructuralTable)]) : unit
+(define (intern-active-structural-sync!
+  [cell : (__tl_dyn-array InternStructuralTable)]) : unit
   (let
     [table : InternStructuralTable (array-ref cell 0)]
     (begin
@@ -674,7 +675,7 @@
     [left : i64 (array-ref (struct-get table lefts) index)]
     [middle : i64 (array-ref (struct-get table middles) index)]
     [right : i64 (array-ref (struct-get table rights) index)]
-    [slots : (Array i64) (struct-get table map-slots)]
+    [slots : (__tl_dyn-array i64) (struct-get table map-slots)]
     [slots-address : u64 (intern-i64-array-address slots)]
     [mask : i64 (- (array-length slots) 1)]
     [slot : i64
@@ -695,7 +696,7 @@
       ,bytes)))
 
 (define (intern-structural-table-grow-records!
-  [cell : (Array InternStructuralTable)]
+  [cell : (__tl_dyn-array InternStructuralTable)]
   [arena : i64]) : unit
   (let
     [table : InternStructuralTable (array-ref cell 0)]
@@ -707,10 +708,10 @@
       (unsafe
         (tl_arena_set arena))
       (let
-        [next-kinds : (Array u8) (make-array u8 new-capacity)]
-        [next-lefts : (Array i64) (make-array i64 new-capacity)]
-        [next-middles : (Array i64) (make-array i64 new-capacity)]
-        [next-rights : (Array i64) (make-array i64 new-capacity)]
+        [next-kinds : (__tl_dyn-array u8) (make-array u8 new-capacity)]
+        [next-lefts : (__tl_dyn-array i64) (make-array i64 new-capacity)]
+        [next-middles : (__tl_dyn-array i64) (make-array i64 new-capacity)]
+        [next-rights : (__tl_dyn-array i64) (make-array i64 new-capacity)]
         (begin
           (unsafe
             (tl_arena_set previous-arena))
@@ -749,7 +750,7 @@
           (array-set! cell 0 table))))))
 
 (define (intern-structural-table-grow-map!
-  [cell : (Array InternStructuralTable)]
+  [cell : (__tl_dyn-array InternStructuralTable)]
   [arena : i64]) : unit
   (let
     [table : InternStructuralTable (array-ref cell 0)]
@@ -759,7 +760,7 @@
       (unsafe
         (tl_arena_set arena))
       (let
-        [next-slots : (Array i64) (make-array i64 new-capacity)]
+        [next-slots : (__tl_dyn-array i64) (make-array i64 new-capacity)]
         (begin
           (unsafe
             (tl_arena_set previous-arena))
@@ -773,7 +774,7 @@
           (array-set! cell 0 table))))))
 
 (define (intern-structural-table-intern
-  [cell : (Array InternStructuralTable)]
+  [cell : (__tl_dyn-array InternStructuralTable)]
   [arena : i64]
   [kind : i64]
   [left : i64]
@@ -781,7 +782,7 @@
   [right : i64]) : i64
   (let
     [table : InternStructuralTable (array-ref cell 0)]
-    [slots : (Array i64) (struct-get table map-slots)]
+    [slots : (__tl_dyn-array i64) (struct-get table map-slots)]
     [slots-address : u64 (intern-i64-array-address slots)]
     [mask : i64 (- (array-length slots) 1)]
     [slot : i64
@@ -837,11 +838,12 @@
                 kind
                 index))))))))
 
-(define (intern-structural-table-reset! [cell : (Array InternStructuralTable)]) : unit
+(define (intern-structural-table-reset!
+  [cell : (__tl_dyn-array InternStructuralTable)]) : unit
   (let
     [table : InternStructuralTable (array-ref cell 0)]
-    [slots : (Array i64) (struct-get table map-slots)]
-    [structural-cache-raws : (Array i64)
+    [slots : (__tl_dyn-array i64) (struct-get table map-slots)]
+    [structural-cache-raws : (__tl_dyn-array i64)
       (struct-get table structural-cache-raws)]
     [index : i64 0]
     (begin
@@ -859,7 +861,7 @@
       (array-set! cell 0 table))))
 
 (define (intern-structural-table-reinitialize-in-arena!
-  [cell : (Array InternStructuralTable)]
+  [cell : (__tl_dyn-array InternStructuralTable)]
   [arena : i64]) : unit
   (let
     [previous-arena : i64 (tl_arena_current)]
@@ -874,21 +876,21 @@
           (array-set! cell 0 next))))))
 
 (define (intern-structural-session-reset!
-  [table-cell : (Array InternStructuralTable)]) : unit
+  [table-cell : (__tl_dyn-array InternStructuralTable)]) : unit
   (intern-structural-table-reset! table-cell))
 
 ;; Bucket IDs use the compact encoded `InternSlotId` representation. The pool owns
 ;; each spelling, so the hash table needs only identity and hash lanes rather
 ;; than a second String-bearing enum table.
-(define intern-map-id-slots : (Array InternSlotId)
+(define intern-map-id-slots : (__tl_dyn-array InternSlotId)
   (make-array InternSlotId (intern-capacity)))
-(define intern-map-hash-slots : (Array i64)
+(define intern-map-hash-slots : (__tl_dyn-array i64)
   (make-array i64 (intern-capacity)))
 (define intern-generated-map-capacity : i64
   32768)
-(define intern-generated-map-id-slots : (Array InternSlotId)
+(define intern-generated-map-id-slots : (__tl_dyn-array InternSlotId)
   (make-array InternSlotId intern-generated-map-capacity))
-(define intern-generated-map-hash-slots : (Array i64)
+(define intern-generated-map-hash-slots : (__tl_dyn-array i64)
   (make-array i64 intern-generated-map-capacity))
 (define intern-map-ready : bool
   false)
@@ -904,60 +906,38 @@
 ;; Capability for rendering an id retained across an intern-state boundary.
 ;; It is captured by the few consumers that outlive the currently installed
 ;; table rather than adding ownership metadata to every AST name.
-(defstruct InternIdProvenance
-  (table-id i64)
-  (generation i64))
-
-(defenum InternIdRender
-  (Ok String)
-  (WrongOwner)
-  (StaleGeneration)
-  (InvalidId))
-
-(define (intern-id-provenance-capture) : InternIdProvenance
-  (InternIdProvenance (intern-active-table-id) intern-reset-generation))
-
-(define (intern-id-render [owner : InternIdProvenance] [id : i64]) : InternIdRender
-  (cond
-    [(not (= (struct-get owner table-id) (intern-active-table-id)))
-      (InternIdRender.WrongOwner)]
-    [(not (= (struct-get owner generation) intern-reset-generation))
-      (InternIdRender.StaleGeneration)]
-    [(or (< id 0) (>= id intern-pool-count)) (InternIdRender.InvalidId)]
-    [else (InternIdRender.Ok (array-ref intern-pool-slots id))]))
-
 (defstruct InternCompatState
-  (table-id (Array i64))
-  (pool-slots (Array String))
-  (pool-qualified-slots (Array bool))
-  (pool-last-slash-slots (Array i32))
-  (pool-first-dot-slots (Array i32))
-  (pool-leading-dot-id-slots (Array InternSlotId))
-  (pool-dotted-prefix-id-slots (Array InternSlotId))
-  (pool-module-id-slots (Array InternSlotId))
-  (pool-base-id-slots (Array InternSlotId))
-  (pool-count (Array i64))
-  (generated-next-id (Array i64))
-  (map-id-slots (Array InternSlotId))
-  (map-hash-slots (Array i64))
-  (generated-map-id-slots (Array InternSlotId))
-  (generated-map-hash-slots (Array i64))
-  (map-ready (Array bool))
-  (reset-generation (Array i64))
-  (persistent-arena (Array i64))
-  (persistent-arena-floor-mark (Array i64))
-  (structural-table-cell (Array InternStructuralTable)))
+  (table-id (__tl_dyn-array i64))
+  (pool-slots (__tl_dyn-array String))
+  (pool-qualified-slots (__tl_dyn-array bool))
+  (pool-last-slash-slots (__tl_dyn-array i32))
+  (pool-first-dot-slots (__tl_dyn-array i32))
+  (pool-leading-dot-id-slots (__tl_dyn-array InternSlotId))
+  (pool-dotted-prefix-id-slots (__tl_dyn-array InternSlotId))
+  (pool-module-id-slots (__tl_dyn-array InternSlotId))
+  (pool-base-id-slots (__tl_dyn-array InternSlotId))
+  (pool-count (__tl_dyn-array i64))
+  (generated-next-id (__tl_dyn-array i64))
+  (map-id-slots (__tl_dyn-array InternSlotId))
+  (map-hash-slots (__tl_dyn-array i64))
+  (generated-map-id-slots (__tl_dyn-array InternSlotId))
+  (generated-map-hash-slots (__tl_dyn-array i64))
+  (map-ready (__tl_dyn-array bool))
+  (reset-generation (__tl_dyn-array i64))
+  (persistent-arena (__tl_dyn-array i64))
+  (persistent-arena-floor-mark (__tl_dyn-array i64))
+  (structural-table-cell (__tl_dyn-array InternStructuralTable)))
 
 ;; An immutable source-name lookup capability. The arrays are owned by one
 ;; intern state; the cells let resolution reject a capability after that state
 ;; is reset without consulting whichever compatibility table is active.
 (defstruct InternSourceNameSession
-  (table-id-cell (Array i64))
-  (reset-generation-cell (Array i64))
-  (pool-slots (Array String))
-  (map-id-slots (Array InternSlotId))
-  (map-hash-slots (Array i64))
-  (map-ready-cell (Array bool))
+  (table-id-cell (__tl_dyn-array i64))
+  (reset-generation-cell (__tl_dyn-array i64))
+  (pool-slots (__tl_dyn-array String))
+  (map-id-slots (__tl_dyn-array InternSlotId))
+  (map-hash-slots (__tl_dyn-array i64))
+  (map-ready-cell (__tl_dyn-array bool))
   (table-id i64)
   (reset-generation i64)
   (source-count i64))
@@ -979,15 +959,15 @@
 
 (define (intern-compat-state-new) : InternCompatState
   (let
-    [table-id : (Array i64) (make-array i64 1)]
-    [pool-count : (Array i64) (make-array i64 1)]
-    [generated-next-id : (Array i64) (make-array i64 1)]
-    [map-ready : (Array bool) (make-array bool 1)]
-    [reset-generation : (Array i64) (make-array i64 1)]
+    [table-id : (__tl_dyn-array i64) (make-array i64 1)]
+    [pool-count : (__tl_dyn-array i64) (make-array i64 1)]
+    [generated-next-id : (__tl_dyn-array i64) (make-array i64 1)]
+    [map-ready : (__tl_dyn-array bool) (make-array bool 1)]
+    [reset-generation : (__tl_dyn-array i64) (make-array i64 1)]
     [persistent-arena-handle : i64 (tl_arena_make)]
-    [persistent-arena : (Array i64) (make-array i64 1)]
-    [persistent-arena-floor-mark : (Array i64) (make-array i64 1)]
-    [structural-table-cell : (Array InternStructuralTable)
+    [persistent-arena : (__tl_dyn-array i64) (make-array i64 1)]
+    [persistent-arena-floor-mark : (__tl_dyn-array i64) (make-array i64 1)]
+    [structural-table-cell : (__tl_dyn-array InternStructuralTable)
       (intern-structural-table-cell-new-in-arena persistent-arena-handle)]
     (begin
       (array-set! table-id 0 (intern-table-id-allocate!))
@@ -1126,7 +1106,8 @@
 
 (define (intern-compat-state-generated-map-clear! [state : InternCompatState]) : unit
   (let
-    [slots : (Array InternSlotId) (struct-get state generated-map-id-slots)]
+    [slots : (__tl_dyn-array InternSlotId)
+      (struct-get state generated-map-id-slots)]
     [index : i64 0]
     [count : i64 (array-length slots)]
     (while (< index count)
@@ -1419,15 +1400,6 @@
   [id : i64]) : i64
   (cast (array-ref (struct-get state pool-last-slash-slots) id) : i64))
 
-(define (intern-compat-state-first-dot [state : InternCompatState] [id : i64]) : i64
-  (cast (array-ref (struct-get state pool-first-dot-slots) id) : i64))
-
-(define (intern-compat-state-leading-dot-id
-  [state : InternCompatState]
-  [id : i64]) : i64
-  (intern-id-slot-decode
-    (array-ref (struct-get state pool-leading-dot-id-slots) id)))
-
 (define (intern-compat-state-qualified-module-id
   [state : InternCompatState]
   [id : i64]) : i64
@@ -1680,11 +1652,6 @@
 
 (cfg
   compile-profile
-  (define (intern-profile-invalid-str-last-id-value) : i64
-    intern-profile-invalid-str-last-id))
-
-(cfg
-  compile-profile
   (define (intern-profile-source-bytes-value) : i64
     intern-profile-source-bytes-count))
 
@@ -1810,7 +1777,7 @@
 
 (define (intern-substring [text : String] [start : i64] [len : i64]) : String
   (let
-    [buf : (Array u8) (make-array u8 len)]
+    [buf : (__tl_dyn-array u8) (make-array u8 len)]
     [src : (Ptr u8)
       (unsafe
         (string-data (& text)))]
@@ -2613,9 +2580,9 @@
 ;; pass `intern-source-name-session-from-state` explicitly.
 (define (intern-source-name-session-capture-active) : InternSourceNameSession
   (let
-    [table-id-cell : (Array i64) (make-array i64 1)]
-    [generation-cell : (Array i64) (make-array i64 1)]
-    [map-ready-cell : (Array bool) (make-array bool 1)]
+    [table-id-cell : (__tl_dyn-array i64) (make-array i64 1)]
+    [generation-cell : (__tl_dyn-array i64) (make-array i64 1)]
+    [map-ready-cell : (__tl_dyn-array bool) (make-array bool 1)]
     (begin
       (array-set! table-id-cell 0 (intern-active-table-id))
       (array-set! generation-cell 0 intern-reset-generation)
@@ -2638,7 +2605,7 @@
       (unsafe
         (tl_arena_set intern-persistent-arena))
       (let
-        [cell : (Array InternSourceNameSession)
+        [cell : (__tl_dyn-array InternSourceNameSession)
           (make-array InternSourceNameSession 1)]
         (begin
           (array-set! cell 0 session)
@@ -2676,9 +2643,9 @@
   [name : String]) : InternLookup
   (if (array-ref (struct-get session map-ready-cell) 0)
     (let
-      [ids : (Array InternSlotId) (struct-get session map-id-slots)]
-      [hashes : (Array i64) (struct-get session map-hash-slots)]
-      [pool : (Array String) (struct-get session pool-slots)]
+      [ids : (__tl_dyn-array InternSlotId) (struct-get session map-id-slots)]
+      [hashes : (__tl_dyn-array i64) (struct-get session map-hash-slots)]
+      [pool : (__tl_dyn-array String) (struct-get session pool-slots)]
       [capacity : i64 (array-length ids)]
       [hash : i64 (intern-hash name)]
       [cursor : i64 (intern-bucket hash capacity)]
@@ -2913,6 +2880,19 @@
           (set! ok false))
         (unless (= qualified-id (- (intern-capacity) 4)) (set! ok false))
         (unless (= dotted-id (- (intern-capacity) 5)) (set! ok false))
+        (unless (= (intern-generated-count) 5) (set! ok false))
+        (unless
+          (= (intern-generated-id-at-allocation-index 0) opaque-id)
+          (set! ok false))
+        (unless
+          (= (intern-generated-id-at-allocation-index 4) dotted-id)
+          (set! ok false))
+        (unless
+          (= (intern-generated-id-at-allocation-index -1) -1)
+          (set! ok false))
+        (unless
+          (= (intern-generated-id-at-allocation-index 5) -1)
+          (set! ok false))
         (unless (not (= opaque-id opaque-again-id)) (set! ok false))
         (unless
           (intern-private-string-eq (intern-str opaque-id) "hygiene/local")
@@ -2986,6 +2966,19 @@
               base-id)]
           (begin
             (unless (= canonical-id canonical-again-id) (set! ok false))
+            (unless (= (intern-generated-count) 8) (set! ok false))
+            (unless
+              (intern-generated-canonical-id? canonical-id)
+              (set! ok false))
+            (unless
+              (intern-generated-canonical-id? canonical-dotted-id)
+              (set! ok false))
+            (unless
+              (intern-generated-canonical-id? canonical-qualified-id)
+              (set! ok false))
+            (unless
+              (not (intern-generated-canonical-id? opaque-id))
+              (set! ok false))
             (unless
               (= canonical-dotted-id canonical-dotted-again-id)
               (set! ok false))
@@ -3190,6 +3183,34 @@
       (intern-compat-state-intern state-a "after-boundary")]
     [ok : bool true]
     (begin
+      (match (intern-compat-state-lookup state-a "equal")
+        [(InternLookupFound id) (unless (= id equal-id) (set! ok false))]
+        [(InternLookupMissing) (set! ok false)])
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-str state-a equal-id)
+          "equal")
+        (set! ok false))
+      (unless
+        (intern-compat-state-qualified? state-a qualified-id)
+        (set! ok false))
+      (unless
+        (= (intern-compat-state-qualified-last-slash state-a qualified-id) 3)
+        (set! ok false))
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-str
+            state-a
+            (intern-compat-state-qualified-module-id state-a qualified-id))
+          "pkg")
+        (set! ok false))
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-str
+            state-a
+            (intern-compat-state-qualified-base-id state-a qualified-id))
+          "module.name")
+        (set! ok false))
       (match (intern-source-name-session-resolve session-a parsed-a "different")
         [(InternSourceNameResolution.ParsedIdentity id)
           (unless (= id equal-id) (set! ok false))]

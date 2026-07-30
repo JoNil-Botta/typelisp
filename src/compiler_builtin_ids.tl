@@ -785,20 +785,20 @@
 ;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
-(define compiler-builtin-ctfe-ids : (Array i64)
+(define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
   (make-array i64 280))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
-  (metadata (Array i64))
-  (ids (Array i64))
-  (ctfe-ids (Array i64)))
+  (metadata (__tl_dyn-array i64))
+  (ids (__tl_dyn-array i64))
+  (ctfe-ids (__tl_dyn-array i64)))
 
 (define (state-new) : CompilerBuiltinIdsState
   (let
-    [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 315)]
-    [ctfe-ids : (Array i64) (make-array i64 280)]
+    [metadata : (__tl_dyn-array i64) (make-array i64 4)]
+    [ids : (__tl_dyn-array i64) (make-array i64 315)]
+    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 280)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)
@@ -850,12 +850,6 @@
 
 (define (state-ref [state : CompilerBuiltinIdsState] [index : i64]) : i64
   (array-ref (struct-get state ids) index))
-
-(define (state-ids-data-addr [state : CompilerBuiltinIdsState]) : i64
-  (cast
-    (unsafe
-      (ptr->int (ptr-cast (array-data (struct-get state ids)) : (Ptr u8))))
-    : i64))
 
 (define (state-set!
   [state : CompilerBuiltinIdsState]
@@ -3494,35 +3488,10 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-str-view)))
 
-(define (compiler-builtin-backend-tl-string-eq-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-string-eq)))
-
-(define (compiler-builtin-backend-tl-string-to-int-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-string-to-int)))
-
 (define (compiler-builtin-backend-tl-int-to-string-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-int-to-string)))
-
-(define (compiler-builtin-backend-tl-abort-label-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-abort-label)))
-
-(define (compiler-builtin-backend-tl-div-abort-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-div-abort)))
-
-(define (compiler-builtin-backend-tl-shift-abort-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-shift-abort)))
 
 (define (compiler-builtin-backend-fixed-fault-id? [name-id : i64]) : bool
   (begin
@@ -3562,11 +3531,6 @@
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-tlci-call-macro-entry)))
-
-(define (compiler-builtin-backend-tl-hash-string-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-hash-string)))
 
 (define (compiler-builtin-backend-tls-current-arena-call-id? [name-id : i64]) : bool
   (begin

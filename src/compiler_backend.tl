@@ -1226,7 +1226,7 @@
   (current-label i64)
   (assignments CompilerRegAssignmentList)
   (vars i64)
-  (types CompilerRegVarTypeList)
+  (types CompilerRegVarTypes)
   (global-types CompilerBackendGlobalTypeTable)
   (ret-ty AstType)
   (plan CompilerBackendRuntimePlan)
@@ -10914,8 +10914,12 @@
                 (if (= count 2)
                   (match (compiler-ir-instr-seq-ref instrs 0)
                     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
-                      (match (compiler-ir-instr-seq-ref instrs 1)
-                        [(CompilerIrInstr.Branch cond on-true on-false)
+                      (match (compiler-ir-instr-scalar-fact
+                        (compiler-ir-instr-seq-ref instrs 1))
+                        [(CompilerIrInstrScalarFact.Branch
+                            cond
+                            on-true
+                            on-false)
                           (match cond
                             [(CompilerIrValue.Var cond-var)
                               (if (and
@@ -16210,11 +16214,11 @@
         values))))
 
 (define (compiler-backend-value-type
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [value : CompilerIrValue]) : CompilerRegMaybeType
   (match value
-    [(CompilerIrValue.Var id) (compiler-reg-var-type-lookup types id)]
+    [(CompilerIrValue.Var id) (compiler-reg-var-types-lookup types id)]
     [(CompilerIrValue.Global name)
       (compiler-backend-global-type-lookup global-types name)]
     [(CompilerIrValue.GlobalAddr _) (CompilerRegMaybeType.Some (AstType.U64))]
@@ -16243,7 +16247,7 @@
     [_ result-ty]))
 
 (define (compiler-backend-binop-operand-ty
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
@@ -16271,13 +16275,13 @@
       result-ty)))
 
 (define (compiler-backend-value-float?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [value : CompilerIrValue]) : bool
   (match value
     [(CompilerIrValue.F64 _) true]
     [(CompilerIrValue.Var id)
-      (match (compiler-reg-var-type-lookup types id)
+      (match (compiler-reg-var-types-lookup types id)
         [(CompilerRegMaybeType.Some ty) (compiler-backend-float-type? ty)]
         [(CompilerRegMaybeType.No) false])]
     [(CompilerIrValue.Global name)
@@ -16291,7 +16295,7 @@
 ;; instead of the integer path. The operand precision is recovered separately
 ;; via compiler-backend-binop-operand-ty.
 (define (compiler-backend-binop-f64?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
@@ -21569,7 +21573,7 @@
 
 (define (compiler-backend-emit-binop-with-plan
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -22279,7 +22283,7 @@
 
 (define (compiler-backend-emit-binop
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -22321,7 +22325,7 @@
     [_ false]))
 
 (define (compiler-backend-rax-forwardable-binop?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [op : CompilerIrBinOp]
@@ -22482,7 +22486,7 @@
 
 (define (compiler-backend-emit-binop-to-rax
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -22545,7 +22549,7 @@
 
 (define (compiler-backend-emit-binop-with-rax-value
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
@@ -22855,7 +22859,7 @@
   [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -23662,7 +23666,7 @@
   [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -29424,7 +29428,7 @@
       (compiler-backend-runtime-param-types-id name)]))
 
 (define (compiler-backend-call-actual-type
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [value : CompilerIrValue]) : AstType
   (match (compiler-backend-value-type types global-types value)
@@ -29433,7 +29437,7 @@
 
 (define (compiler-backend-call-actual-param-type-for-index
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [fixed-types : AstTypeList]
@@ -29456,7 +29460,7 @@
 (define (compiler-backend-call-actual-param-types-fill
   [type-segment-bases : i64]
   [out : (&mut out AstTypeList)]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [fixed-types : AstTypeList]
@@ -29488,7 +29492,7 @@
 
 (define (compiler-backend-call-actual-param-types-from
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [fixed-types : AstTypeList]
@@ -29512,7 +29516,7 @@
 (define (compiler-backend-call-c-abi-param-types-fill
   [type-segment-bases : i64]
   [out : (&mut out AstTypeList)]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [declared-types : AstTypeList]
@@ -29625,7 +29629,7 @@
 
 (define (compiler-backend-call-c-abi-param-types-from
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [declared-types : AstTypeList]
@@ -29648,7 +29652,7 @@
       out)))
 
 (define (compiler-backend-call-actual-param-type-at
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [index : i64]) : AstType
@@ -29661,7 +29665,7 @@
 
 (define (compiler-backend-call-actual-param-types
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]) : AstTypeList
   (compiler-backend-call-actual-param-types-from
@@ -29675,7 +29679,7 @@
 
 (define (compiler-backend-call-c-abi-param-types
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [declared-types : AstTypeList]
@@ -29718,7 +29722,7 @@
   [type-segment-bases : i64]
   [name : i64]
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [extern-call-info : i64]
   [index : CompilerBackendProgramIndex]) : AstTypeList
@@ -34846,7 +34850,7 @@
   [ty : AstType]
   [assignments : CompilerRegAssignmentList]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
@@ -35728,7 +35732,7 @@
   [name : i64]
   [args : CompilerIrCallArgs]
   [ty : AstType]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -36013,7 +36017,7 @@
   [inline-name : String]
   [args : CompilerIrCallArgs]
   [ty : AstType]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -36102,7 +36106,7 @@
   [assignments : CompilerRegAssignmentList]
   [arg-assignments : CompilerRegAssignmentList]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
   [externs : CompilerIrExternList]
@@ -37330,6 +37334,7 @@
   [all-blocks : CompilerIrBlockList]
   [cursor : CompilerIrBlockList]
   [label : i64]
+  [trap-label : i64]
   [fuel : i64]) : bool
   (if (<= fuel 0)
     false
@@ -37339,77 +37344,74 @@
         (match block
           [(CompilerIrBlock.Block block-label instrs)
             (if (= block-label label)
-              (or
+              (if (= label trap-label)
                 (compiler-backend-total-switch-trap-instrs? instrs label)
-                ;; Loop canonicalization treats the self-looping no-return
-                ;; trap as a loop and may retarget the switch through a tiny
-                ;; preheader. Follow only a compiler-marked, jump-only forwarder.
+                ;; Loop canonicalization may retarget the default through a
+                ;; jump-only preheader. The separately carried trap label is
+                ;; the authority; display text is never consulted.
                 (and
                   (= (compiler-ir-instr-seq-count instrs) 1)
                   (match (compiler-ir-instr-seq-ref instrs 0)
                     [(CompilerIrInstr.Jump target)
                       (and
                         (not (= target label))
-                        (compiler-backend-string-contains?
-                          (compiler-ir-label-text target)
-                          "match_total_trap")
                         (compiler-backend-total-switch-trap-block-from?
                           all-blocks
                           all-blocks
                           target
+                          trap-label
                           (- fuel 1)))]
                     [_ false])))
               (compiler-backend-total-switch-trap-block-from?
                 all-blocks
                 (box-get rest)
                 label
+                trap-label
                 fuel))])]
       [(CompilerIrBlockList.Array seq)
         (compiler-backend-total-switch-trap-block-from?
           all-blocks
           (compiler-ir-block-seq-to-list seq)
           label
+          trap-label
           fuel)])))
 
 (define (compiler-backend-total-switch-trap-block?
   [blocks : CompilerIrBlockList]
-  [label : i64]) : bool
-  ;; The marker is compiler-owned.  Requiring it as well as the exact abort
-  ;; block prevents a user integer switch with a trapping default from being
-  ;; mistaken for a type-proven enum dispatch.  Inline/BCE label remapping and
-  ;; loop-preheader insertion preserve the marker substring.
+  [label : i64]
+  [trap-label : i64]) : bool
   (and
-    (compiler-backend-string-contains?
-      (compiler-ir-label-text label)
-      "match_total_trap")
-    (compiler-backend-total-switch-trap-block-from? blocks blocks label 8)))
+    (!= trap-label (compiler-ir-label-none))
+    (compiler-backend-total-switch-trap-block-from?
+      blocks
+      blocks
+      label
+      trap-label
+      8)))
 
 (define (compiler-backend-total-switch?
   [blocks : CompilerIrBlockList]
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : i64]) : bool
+  [default-label : i64]
+  [trap-label : i64]) : bool
   (and
     (= base 0)
     (> (compiler-backend-switch-case-count cases) 0)
     (compiler-backend-switch-cases-contiguous-from? cases 0)
-    (compiler-backend-total-switch-trap-block? blocks default-label)))
+    (compiler-backend-total-switch-trap-block? blocks default-label trap-label)))
 
 (define (compiler-backend-object-total-switch?
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : i64]) : bool
+  [trap-label : i64]) : bool
   (and
     (= base 0)
     (> (compiler-backend-switch-case-count cases) 0)
     (compiler-backend-switch-cases-contiguous-from? cases 0)
-    ;; Direct-object emission consumes the same verified function immediately,
-    ;; but does not retain its owning block list at each instruction.  The
-    ;; compiler-owned marker is the totality proof here; source assembly also
-    ;; checks the exact abort block before taking the unchecked path.
-    (compiler-backend-string-contains?
-      (compiler-ir-label-text default-label)
-      "match_total_trap")))
+    ;; Direct-object emission consumes the explicit switch variant and trap
+    ;; provenance. Source assembly additionally validates the abort block.
+    (!= trap-label (compiler-ir-label-none))))
 
 (define (compiler-backend-switch-cases-target-phi?
   [cases : CompilerIrSwitchCaseList]) : bool
@@ -37626,6 +37628,14 @@
       (+ index 1)
       (match (compiler-ir-instr-seq-ref instrs index)
         [(CompilerIrInstr.Switch _ _ cases default-label)
+          (text_buf.append
+            buf
+            (compiler-backend-emit-switch-table
+              function
+              current-label
+              cases
+              (compiler-backend-switch-target-phi? cases default-label)))]
+        [(CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
           (text_buf.append
             buf
             (compiler-backend-emit-switch-table
@@ -38023,6 +38033,7 @@
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
   [default-label : i64]
+  [trap-label : i64]
   [assignments : CompilerRegAssignmentList]
   [planned-index-reg : String]
   [planned-table-reg : String]
@@ -38032,7 +38043,12 @@
   (let
     [case-count : i64 (compiler-backend-switch-case-count cases)]
     [total-switch : bool
-      (compiler-backend-total-switch? blocks base cases default-label)]
+      (compiler-backend-total-switch?
+        blocks
+        base
+        cases
+        default-label
+        trap-label)]
     (cond
       [(= case-count 0)
         (ResultCompilerBackend.Err
@@ -38150,6 +38166,8 @@
 (define (compiler-backend-switch-validate-instr [instr : CompilerIrInstr]) : CompilerBackendSwitchValidation
   (match instr
     [(CompilerIrInstr.Switch _ base cases default-label)
+      (compiler-backend-switch-validate-one base cases default-label)]
+    [(CompilerIrInstr.TotalEnumSwitch _ base cases default-label _)
       (compiler-backend-switch-validate-one base cases default-label)]
     [_ (CompilerBackendSwitchValidation.Ok)]))
 
@@ -38291,6 +38309,7 @@
         (match instr
           [(CompilerIrInstr.Jump _) planned-scratch2]
           [(CompilerIrInstr.Branch _ _ _) planned-scratch3]
+          [(CompilerIrInstr.TotalEnumBranch _ _ _) planned-scratch3]
           [_ ""]))]
     ;; Sound-scavenger: reserve this instruction's operand + result homes so the
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
@@ -39132,6 +39151,11 @@
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
+      [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+        (compiler-backend-emit-instr
+          ctx
+          fallthrough
+          (CompilerIrInstr.Branch cond true-label false-label))]
       [(CompilerIrInstr.Return value)
         (match (compiler-backend-emit-return
           ctx.type-segment-bases
@@ -39207,6 +39231,35 @@
           base
           cases
           default-label
+          (compiler-ir-label-none)
+          ctx.assignments
+          planned-scratch0
+          planned-scratch1
+          ctx.blocks
+          ctx.program-index
+          ctx.vars)
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
+      [(CompilerIrInstr.TotalEnumSwitch
+          index
+          base
+          cases
+          default-label
+          trap-label)
+        (match (compiler-backend-emit-switch
+          ctx.type-segment-bases
+          ctx.function
+          ctx.current-label
+          index
+          base
+          cases
+          default-label
+          trap-label
           ctx.assignments
           planned-scratch0
           planned-scratch1
@@ -39526,6 +39579,8 @@
       (compiler-backend-count-value-use counts value)]
     [(CompilerIrInstr.Branch cond _ _)
       (compiler-backend-count-value-use counts cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (compiler-backend-count-value-use counts cond)]
     [(CompilerIrInstr.Return maybe)
       (match maybe
         [(CompilerIrMaybeValue.No) unit]
@@ -39549,6 +39604,8 @@
     [(CompilerIrInstr.EntryEnvp _) unit]
     [(CompilerIrInstr.Jump _) unit]
     [(CompilerIrInstr.Switch index _ _ _)
+      (compiler-backend-count-value-use counts index)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
       (compiler-backend-count-value-use counts index)]))
 
 (define (compiler-backend-count-instr-seq-uses
@@ -39651,8 +39708,8 @@
   [j : i64]) : i64
   (if (<= j 0)
     (- 0 1)
-    (match (array-ref slots j)
-      [(CompilerIrInstr.Branch cond _ _)
+    (match (compiler-ir-instr-scalar-fact (array-ref slots j))
+      [(CompilerIrInstrScalarFact.Branch cond _ _)
         (match cond
           [(CompilerIrValue.Var v)
             (match (array-ref slots (- j 1))
@@ -39860,7 +39917,7 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [load-dst : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (Array i64)]) : bool
   (if (< index (struct-get instrs len))
@@ -39879,8 +39936,8 @@
               (let
                 [branch : CompilerIrInstr
                   (compiler-ir-instr-seq-ref instrs after-cmp)]
-                (match branch
-                  [(CompilerIrInstr.Branch cond _ _)
+                (match (compiler-ir-instr-scalar-fact branch)
+                  [(CompilerIrInstrScalarFact.Branch cond _ _)
                     (compiler-backend-branch-uses-var? cond cmp-dst)]
                   [_ false]))
               false)
@@ -40137,7 +40194,7 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-rax-forwardable-consumer?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
@@ -40168,7 +40225,7 @@
     [_ false]))
 
 (define (compiler-backend-rest-starts-rax-forwardable-consumer?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
@@ -40686,7 +40743,7 @@
 (define (compiler-backend-gep-load-pair-alu-probe
   [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (Array i64)]
   [base : CompilerIrValue]
@@ -41235,7 +41292,7 @@
 (define (compiler-backend-gep-load-alu-probe
   [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (Array i64)]
   [base : CompilerIrValue]
@@ -42108,7 +42165,7 @@
   [args : CompilerIrCallArgs]
   [assignments : CompilerRegAssignmentList]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
@@ -42236,7 +42293,7 @@
               instr-diag)))])))
 
 (define (compiler-backend-indirect-call-param-types
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [func : CompilerIrValue]
   [_functions : CompilerIrFunctionList]
   [_externs : CompilerIrExternList]
@@ -42299,7 +42356,7 @@
   [arg-assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -42451,7 +42508,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -42486,7 +42543,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [vars : i64]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
@@ -42645,7 +42702,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -42780,7 +42837,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
   [_externs : CompilerIrExternList]
@@ -42885,7 +42942,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -44213,8 +44270,11 @@
                   [branch : CompilerIrInstr
                     (compiler-ir-instr-seq-ref instrs after-cmp)]
                   [after-branch : i64 (+ after-cmp 1)]
-                  (match branch
-                    [(CompilerIrInstr.Branch cond true-label false-label)
+                  (match (compiler-ir-instr-scalar-fact branch)
+                    [(CompilerIrInstrScalarFact.Branch
+                        cond
+                        true-label
+                        false-label)
                       (if (compiler-backend-branch-uses-var? cond cmp-dst)
                         (compiler-backend-emit-fused-load-compare-branch-rest
                           ctx
@@ -44885,8 +44945,8 @@
                                 [branch : CompilerIrInstr
                                   (compiler-ir-instr-seq-ref instrs after-cmp)]
                                 [after-branch : i64 (+ after-cmp 1)]
-                                (match branch
-                                  [(CompilerIrInstr.Branch
+                                (match (compiler-ir-instr-scalar-fact branch)
+                                  [(CompilerIrInstrScalarFact.Branch
                                       cond
                                       true-label
                                       false-label)
@@ -45638,6 +45698,31 @@
                           instrs
                           rest
                           out))]
+                    [(CompilerIrInstr.TotalEnumBranch
+                        cond
+                        true-label
+                        false-label)
+                      (if (compiler-backend-branch-uses-var? cond dst)
+                        (compiler-backend-emit-fused-compare-branch-rest
+                          ctx
+                          fallthrough
+                          dst
+                          op
+                          lhs
+                          rhs
+                          ty
+                          true-label
+                          false-label
+                          instrs
+                          after-branch
+                          out)
+                        (compiler-backend-emit-instrs-normal
+                          ctx
+                          fallthrough
+                          instr
+                          instrs
+                          rest
+                          out))]
                     [(CompilerIrInstr.UnOp
                         not-dst
                         (CompilerIrUnOp.Not)
@@ -45658,8 +45743,8 @@
                             [branch : CompilerIrInstr
                               (compiler-ir-instr-seq-ref instrs after-branch)]
                             [after-not-branch : i64 (+ after-branch 1)]
-                            (match branch
-                              [(CompilerIrInstr.Branch
+                            (match (compiler-ir-instr-scalar-fact branch)
+                              [(CompilerIrInstrScalarFact.Branch
                                   cond
                                   true-label
                                   false-label)
@@ -45739,8 +45824,11 @@
                 [branch : CompilerIrInstr
                   (compiler-ir-instr-seq-ref instrs rest)]
                 [after-branch : i64 (+ rest 1)]
-                (match branch
-                  [(CompilerIrInstr.Branch cond true-label false-label)
+                (match (compiler-ir-instr-scalar-fact branch)
+                  [(CompilerIrInstrScalarFact.Branch
+                      cond
+                      true-label
+                      false-label)
                     (if (compiler-backend-branch-uses-var? cond dst)
                       (compiler-backend-emit-fused-not-branch-rest
                         ctx
@@ -46057,7 +46145,7 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
@@ -46180,7 +46268,7 @@
   [index : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
@@ -46262,7 +46350,7 @@
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
@@ -46368,7 +46456,7 @@
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
@@ -48841,7 +48929,11 @@
           (match (array-ref (struct-get instrs slots) (- n 1))
             [(CompilerIrInstr.Branch _ true-label false-label)
               (compiler-backend-branch-needs-phi-copies? true-label false-label)]
+            [(CompilerIrInstr.TotalEnumBranch _ true-label false-label)
+              (compiler-backend-branch-needs-phi-copies? true-label false-label)]
             [(CompilerIrInstr.Switch _ _ cases default-label)
+              (compiler-backend-switch-target-phi? cases default-label)]
+            [(CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
               (compiler-backend-switch-target-phi? cases default-label)]
             [_ false])))]))
 
@@ -52339,7 +52431,7 @@
               walk-vars
               walk-vars
               CompilerRegAssignmentList.Nil
-              CompilerRegVarTypeList.Nil))]
+              (compiler-reg-var-types-empty)))]
         [alloc-blocks : CompilerIrBlockList
           (match leaf-csr-rewrite
             [(CompilerRegCallSaveRewrite.Rewrite out-blocks _ _ _ _) out-blocks])]
@@ -52407,7 +52499,7 @@
               alloc-vars
               alloc-vars
               CompilerRegAssignmentList.Nil
-              CompilerRegVarTypeList.Nil))]
+              (compiler-reg-var-types-empty)))]
         [call-save-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
@@ -52441,7 +52533,7 @@
               call-save-vars
               call-save-vars
               CompilerRegAssignmentList.Nil
-              CompilerRegVarTypeList.Nil))]
+              (compiler-reg-var-types-empty)))]
         [rewrite-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
@@ -52479,7 +52571,7 @@
               rewritten-vars
               rewritten-vars
               CompilerRegAssignmentList.Nil
-              CompilerRegVarTypeList.Nil))]
+              (compiler-reg-var-types-empty)))]
         [remat0-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
@@ -52502,7 +52594,7 @@
             remat0-vars
             remat0-vars
             CompilerRegAssignmentList.Nil
-            CompilerRegVarTypeList.Nil)]
+            (compiler-reg-var-types-empty))]
         ;; Downstream-facing FINAL pipeline names (= identity of the remat output).
         [remat-reg-plan : CompilerRegPlan
           (if call-save-enabled
@@ -52549,7 +52641,7 @@
             [(CompilerRegScratchPlanResult.Result out-plan _) out-plan])]
         [scratch-vars : i64
           (compiler-reg-plan-var-count scratch-reg-plan remat-vars)]
-        [plan-types : CompilerRegVarTypeList
+        [plan-types : CompilerRegVarTypes
           (compiler-reg-plan-types scratch-reg-plan)]
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
@@ -52665,7 +52757,7 @@
                 scavenge-func
                 (compiler-live-analyze-function scavenge-func)))
             (compiler-reg-interval-seq-empty))]
-        [types : CompilerRegVarTypeList
+        [types : CompilerRegVarTypes
           (match coloring
             [(CompilerRegColoring.None) plan-types]
             [(CompilerRegColoring.Remap remap _)
@@ -54607,6 +54699,8 @@
       (compiler-backend-collect-value-collections collections value)]
     [(CompilerIrInstr.Branch cond _ _)
       (compiler-backend-collect-value-collections collections cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (compiler-backend-collect-value-collections collections cond)]
     [(CompilerIrInstr.Return maybe)
       (compiler-backend-collect-maybe-value-collections collections maybe)]
     [(CompilerIrInstr.Phi _ inputs _)
@@ -54780,6 +54874,8 @@
     [(CompilerIrInstr.EntryEnvp _) collections]
     [(CompilerIrInstr.Jump _) collections]
     [(CompilerIrInstr.Switch index _ _ _)
+      (compiler-backend-collect-value-collections collections index)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
       (compiler-backend-collect-value-collections collections index)]))
 
 (define (compiler-backend-collect-instr-seq-collections
@@ -57246,6 +57342,28 @@
           (compiler-backend-object-push-u32! (&mut out) disp)))
       (compiler-backend-object-bytes-finish (& out)))))
 
+(define (compiler-backend-object-lea-rbp-disp-bytes [disp : i64] [reg : String]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
+    [rex : i64
+      (+
+        0x48
+        (if (compiler-backend-object-reg-high? reg)
+          4
+          0))]
+    (begin
+      (compiler-backend-object-push-u8! (&mut out) rex)
+      (compiler-backend-object-push-u8! (&mut out) 0x8d)
+      (if (compiler-backend-object-disp8? disp)
+        (begin
+          (compiler-backend-object-push-u8! (&mut out) (+ 0x45 (* reg-code 8)))
+          (compiler-backend-object-push-u8! (&mut out) disp))
+        (begin
+          (compiler-backend-object-push-u8! (&mut out) (+ 0x85 (* reg-code 8)))
+          (compiler-backend-object-push-u32! (&mut out) disp)))
+      (compiler-backend-object-bytes-finish (& out)))))
+
 (define (compiler-backend-object-store-slot-bytes [var-id : i64] [reg : String]) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
@@ -57574,6 +57692,19 @@
   (compiler-backend-object-add-nonempty-bytes
     parts
     (compiler-backend-object-store-slot-bytes dst reg)))
+
+(define (compiler-backend-object-addr-of-to-var
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [dst : i64]
+  [src : i64]) : object_target.CompilerBackendObjectTargetParts
+  (compiler-backend-object-store-reg-to-var
+    (compiler-backend-object-add-nonempty-bytes
+      parts
+      (compiler-backend-object-lea-rbp-disp-bytes
+        (compiler-backend-object-slot-disp src)
+        "%rax"))
+    dst
+    "%rax"))
 
 (define (compiler-backend-object-move-value-to-var
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -57922,11 +58053,12 @@
   [index : CompilerIrValue]
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : i64]) : object_target.CompilerBackendObjectTargetParts
+  [default-label : i64]
+  [trap-label : i64]) : object_target.CompilerBackendObjectTargetParts
   (let
     ;; Decide before the table walker consumes its case-list cursor.
     [total-switch : bool
-      (compiler-backend-object-total-switch? base cases default-label)]
+      (compiler-backend-object-total-switch? base cases trap-label)]
     [case-count : i64 (compiler-backend-switch-case-count cases)]
     (compiler-backend-object-switch-dispatch
       (compiler-backend-object-switch-table
@@ -57943,7 +58075,21 @@
       default-label
       total-switch)))
 
-(define (compiler-backend-object-binop-bytes [op : CompilerIrBinOp]) : String
+(define (compiler-backend-object-divmod-bytes
+  [signed : bool]
+  [remainder : bool]) : String
+  (object_target.compiler-backend-object-bytes-from-hex
+    (cond
+      ;; cqo; idivq %r8; optionally movq %rdx, %rax
+      [(and signed remainder) "489949f7f84889d0"]
+      [signed "489949f7f8"]
+      ;; xorl %edx, %edx; divq %r8; optionally movq %rdx, %rax
+      [remainder "31d249f7f04889d0"]
+      [else "31d249f7f0"])))
+
+(define (compiler-backend-object-binop-bytes
+  [op : CompilerIrBinOp]
+  [ty : AstType]) : String
   (match op
     [(CompilerIrBinOp.Add)
       (object_target.compiler-backend-object-bytes-from-hex "4c01c0")]
@@ -57951,6 +58097,14 @@
       (object_target.compiler-backend-object-bytes-from-hex "4c29c0")]
     [(CompilerIrBinOp.Mul)
       (object_target.compiler-backend-object-bytes-from-hex "490fafc0")]
+    [(CompilerIrBinOp.Div)
+      (compiler-backend-object-divmod-bytes
+        (compiler-backend-type-signed? ty)
+        false)]
+    [(CompilerIrBinOp.Mod)
+      (compiler-backend-object-divmod-bytes
+        (compiler-backend-type-signed? ty)
+        true)]
     [(CompilerIrBinOp.Eq)
       (object_target.compiler-backend-object-bytes-from-hex
         "4c39c00f94c0480fb6c0")]
@@ -57991,22 +58145,22 @@
   (match op
     [(CompilerIrBinOp.Eq)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f94c0480fb6c0")]
+        "4885c00f94c0480fb6c0")]
     [(CompilerIrBinOp.Ne)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f95c0480fb6c0")]
+        "4885c00f95c0480fb6c0")]
     [(CompilerIrBinOp.Lt)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f9cc0480fb6c0")]
+        "4885c00f9cc0480fb6c0")]
     [(CompilerIrBinOp.Le)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f9ec0480fb6c0")]
+        "4885c00f9ec0480fb6c0")]
     [(CompilerIrBinOp.Gt)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f9fc0480fb6c0")]
+        "4885c00f9fc0480fb6c0")]
     [(CompilerIrBinOp.Ge)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f9dc0480fb6c0")]
+        "4885c00f9dc0480fb6c0")]
     [_ ""]))
 
 (define (compiler-backend-object-binop
@@ -58024,7 +58178,7 @@
           (and (= value 0) (compiler-backend-compare-uses-zero-test? op))]
         [_ false])
         (compiler-backend-object-zero-compare-bytes op)
-        (compiler-backend-object-binop-bytes op))]
+        (compiler-backend-object-binop-bytes op ty))]
     (if (or
       (= (string.string-length op-bytes) 0)
       (compiler-backend-float-type? ty))
@@ -58036,10 +58190,10 @@
       (compiler-backend-object-store-reg-to-var
         (compiler-backend-object-add-nonempty-bytes
           (compiler-backend-object-load-value-to-reg
-            (compiler-backend-object-load-value-to-reg parts site lhs "%rax")
+            (compiler-backend-object-load-value-to-reg parts site rhs "%r8")
             site
-            rhs
-            "%r8")
+            lhs
+            "%rax")
           op-bytes)
         dst
         "%rax"))))
@@ -58551,11 +58705,12 @@
         [symbol : String (compiler-backend-user-symbol-id name)]
         (object_target.compiler-backend-object-add-text
           (object_target.compiler-backend-object-add-text-relocation
-            (compiler-backend-object-value-ref-with-type
+            (compiler-backend-object-load-value-to-reg-with-type
               parts
               function
               value
-              ty)
+              ty
+              "%rax")
             function
             (cobj.CompilerObjectRelocationKind.RipAddress)
             symbol)
@@ -58604,7 +58759,11 @@
           (object_target.compiler-backend-object-add-text
             (object_target.compiler-backend-object-add-text-relocation
               (object_target.compiler-backend-object-add-text-relocation
-                (compiler-backend-object-value-ref parts function cond)
+                (compiler-backend-object-load-value-to-reg
+                  parts
+                  function
+                  cond
+                  "%rax")
                 function
                 (cobj.CompilerObjectRelocationKind.Branch)
                 true-symbol)
@@ -58640,10 +58799,11 @@
                                 (object_target.compiler-backend-object-add-text
                                   (object_target.compiler-backend-object-add-text-relocation
                                     (object_target.compiler-backend-object-add-text-relocation
-                                      (compiler-backend-object-value-ref
+                                      (compiler-backend-object-load-value-to-reg
                                         parts
                                         function
-                                        cond)
+                                        cond
+                                        "%rax")
                                       function
                                       (cobj.CompilerObjectRelocationKind.Branch)
                                       true-edge)
@@ -58673,6 +58833,18 @@
                 (cobj.CompilerObjectRelocationKind.Branch)
                 false-symbol)
               (cobj.CompilerObjectX64Instr.Jump false-symbol)))))]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (compiler-backend-object-instr
+        type-segment-bases
+        parts
+        target
+        function
+        label-scope
+        current-label
+        blocks
+        (CompilerIrInstr.Branch cond true-label false-label)
+        plan
+        program-index)]
     [(CompilerIrInstr.Return value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
@@ -58924,9 +59096,10 @@
         function
         args
         0)]
-    ;; Operand-free instructions and raw address-of emit no object references.
+    ;; Operand-free instructions emit no object bytes.
     [(CompilerIrInstr.Alloc _ _) parts]
-    [(CompilerIrInstr.AddrOf _ _) parts]
+    [(CompilerIrInstr.AddrOf dst src)
+      (compiler-backend-object-addr-of-to-var parts dst src)]
     [(CompilerIrInstr.LaneId _ _ _) parts]
     [(CompilerIrInstr.EntryArgc _) parts]
     [(CompilerIrInstr.EntryArgv _) parts]
@@ -58940,7 +59113,19 @@
         index
         base
         cases
-        default-label)]))
+        default-label
+        (compiler-ir-label-none))]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
+      (compiler-backend-object-switch
+        parts
+        function
+        label-scope
+        current-label
+        index
+        base
+        cases
+        default-label
+        trap-label)]))
 
 (define (compiler-backend-object-instr-seq
   [type-segment-bases : i64]
@@ -59102,7 +59287,7 @@
               (compiler-reg-function-group-vars
                 type-segment-bases
                 (CompilerIrFunction.Function name params ret-ty vars blocks)
-                (compiler-reg-var-types-list types))]
+                types)]
             [_group-enable : unit
               (begin
                 (compiler-backend-current-slot-vars-set! vars)
@@ -59178,7 +59363,7 @@
             (compiler-reg-function-group-vars
               type-segment-bases
               (CompilerIrFunction.Function name params ret-ty vars blocks)
-              (compiler-reg-var-types-list types))]
+              types)]
           [_group-enable : unit
             (begin
               (compiler-backend-current-slot-vars-set! vars)
@@ -65258,8 +65443,8 @@
 (define (compiler-backend-windows-driver-runtime-source) : String
   "(extern (arg-count) : i64 (:symbol \"tl_arg_count\"))
 (extern (io.arg [arg0 : i64]) : String (:symbol \"tl_arg\"))
-(extern (io.read-file [arg0 : String]) : String (:symbol \"tl_read_file\"))
-(extern (io.write-file [arg0 : String] [arg1 : String]) : unit (:symbol \"tl_write_file\"))
+(extern (raw-read-file [arg0 : String]) : String (:symbol \"tl_read_file\"))
+(extern (raw-write-file [arg0 : String] [arg1 : String]) : unit (:symbol \"tl_write_file\"))
 (extern (io.file-exists? [arg0 : String]) : bool (:symbol \"tl_file_exists\"))
 (extern (io.print-error [arg0 : String]) : unit (:symbol \"tl_print_err\"))
 (extern (string.eq [arg0 : String] [arg1 : String]) : bool (:symbol \"tl_string_eq\"))
@@ -65272,7 +65457,7 @@
       2)
     (let [input : String (io.arg 1)]
       [output : String (io.arg 2)]
-      (let [content : String (io.read-file input)]
+      (let [content : String (raw-read-file input)]
         (if (io.file-exists? input)
           (let [n : i64 (string.>int content)]
             (let [rendered : String (string.int->string (+ n 1))]
@@ -65280,7 +65465,7 @@
                 (if (string.eq content \"41\")
                   (io.print-error \"ok\")
                   (io.print-error \"mismatch\"))
-                (io.write-file output rendered)
+                (raw-write-file output rendered)
                 42)))
           3)))))")
 

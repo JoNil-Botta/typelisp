@@ -76,7 +76,7 @@
   (unsafe
     (int->ptr (cast addr : u64) : (Ptr u8))))
 
-(define (tlci-pages-array-ptr [bytes : (Array u8)]) : (Ptr u8)
+(define (tlci-pages-array-ptr [bytes : (__tl_dyn-array u8)]) : (Ptr u8)
   (unsafe
     (ptr-cast (array-data bytes) : (Ptr u8))))
 
@@ -137,7 +137,7 @@
   windows
   (define (tlci-pages-windows-protect [region : TlciPageRegion] [protect : i32]) : bool
     (let
-      [old : (Array i32) (make-array i32 1)]
+      [old : (__tl_dyn-array i32) (make-array i32 1)]
       [ok : i32
         (tlci-pages-win-virtual-protect
           (struct-get region addr)
@@ -202,7 +202,7 @@
 
 (define (tlci-pages-copy-from-array!
   [region : TlciPageRegion]
-  [bytes : (Array u8)]) : ResultTlciPageUnit
+  [bytes : (__tl_dyn-array u8)]) : ResultTlciPageUnit
   (let
     [count : i64 (array-length bytes)]
     (if (not (struct-get region writable))
@@ -251,7 +251,7 @@
     (ResultTlciPageUnit.Ok)
     (ResultTlciPageUnit.Err "tlci pages: page release failed")))
 
-(define (tlci-pages-map-code [bytes : (Array u8)]) : ResultTlciPageRegion
+(define (tlci-pages-map-code [bytes : (__tl_dyn-array u8)]) : ResultTlciPageRegion
   (match (tlci-pages-allocate-code (array-length bytes))
     [(ResultTlciPageRegion.Err message) (ResultTlciPageRegion.Err message)]
     [(ResultTlciPageRegion.Ok region)
@@ -262,7 +262,7 @@
             (ResultTlciPageRegion.Err message))]
         [(ResultTlciPageUnit.Ok) (tlci-pages-protect-code-executable region)])]))
 
-(define (tlci-pages-map-data [bytes : (Array u8)]) : ResultTlciPageRegion
+(define (tlci-pages-map-data [bytes : (__tl_dyn-array u8)]) : ResultTlciPageRegion
   (match (tlci-pages-allocate-data (array-length bytes))
     [(ResultTlciPageRegion.Err message) (ResultTlciPageRegion.Err message)]
     [(ResultTlciPageRegion.Ok region)
@@ -278,7 +278,7 @@
     (ptr-read
       (ptr-offset (tlci-pages-addr->ptr-u8 (struct-get region addr)) offset))))
 
-(define (tlci-pages-test-bytes [a : u8] [b : u8] [c : u8]) : (Array u8)
+(define (tlci-pages-test-bytes [a : u8] [b : u8] [c : u8]) : (__tl_dyn-array u8)
   (make-array a b c))
 
 (define (tlci-pages-test-release-ok? [region : TlciPageRegion]) : bool
@@ -303,7 +303,7 @@
 (test
   tlci-pages-map-data-non-executable
   (let
-    [bytes : (Array u8)
+    [bytes : (__tl_dyn-array u8)
       (tlci-pages-test-bytes (cast 17 : u8) (cast 34 : u8) (cast 51 : u8))]
     (match (tlci-pages-map-data bytes)
       [(ResultTlciPageRegion.Err message) (io.panic message)]
@@ -333,7 +333,7 @@
 (test
   tlci-pages-map-code-rx
   (let
-    [bytes : (Array u8)
+    [bytes : (__tl_dyn-array u8)
       (tlci-pages-test-bytes (cast 195 : u8) (cast 144 : u8) (cast 144 : u8))]
     (match (tlci-pages-map-code bytes)
       [(ResultTlciPageRegion.Err message) (io.panic message)]

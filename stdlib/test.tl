@@ -1,7 +1,8 @@
 ;# Minimal TypeLisp test assertion helpers.
 ;#
-;# Provides assertion helpers for TypeLisp fixtures using stdlib panic and
-;# non-allocating borrowed string comparison.
+;# Provides assertion helpers for TypeLisp fixtures with non-allocating
+;# borrowed string comparison. A generated `typelisp test` harness records
+;# failures and continues; assertions retain abort behavior in other programs.
 ;#
 ;# Usage: `(import stdlib.test)`
 ;#
@@ -16,28 +17,31 @@
 (import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.text_buf)
+(import stdlib.runtime)
 
-;: Assert that `condition` is true, panicking with `message` when it is false.
+;: Assert that `condition` is true, recording `message` when it is false.
 (define (assert-true [condition : bool] [message : String]) : unit
   (if condition
     unit
-    (io.panic message)))
+    (runtime.runtime-test-assertion-failure! message)))
 
-;: Assert that `condition` is false, panicking with `message` when it is true.
+;: Assert that `condition` is false, recording `message` when it is true.
 (define (assert-false [condition : bool] [message : String]) : unit
   (assert-true (not condition) message))
 
-;: Panic with a consistently rendered equality failure.
+;: Record a consistently rendered equality failure.
 (define (assert-eq-failure
   [actual : String]
   [expected : String]
-  [message : String]) : never
-  (io.panic (str_cat.str-cat message ": expected " expected ", found " actual)))
+  [message : String]) : unit
+  (runtime.runtime-test-assertion-failure!
+    (str_cat.str-cat message ": expected " expected ", found " actual)))
 
 ;: Assert that two bool values are equal.
 ;:
-;: Successful assertions do not allocate. Failures call `panic` with the
-;: caller-provided message plus the expected and actual values.
+;: Successful assertions do not allocate. Failures record the caller-provided
+;: message plus the expected and actual values. Outside a generated test
+;: harness, recording aborts the process.
 (define (assert-bool-eq [actual : bool] [expected : bool] [message : String]) : unit
   (if (= actual expected)
     unit
@@ -88,8 +92,8 @@
 
 ;: Assert that two borrowed text values compare equal without allocating on success.
 ;:
-;: Messages intentionally remain owned `String` values while `panic` exposes an
-;: owned-string public API.
+;: Messages intentionally remain owned `String` values because failure
+;: recording may render a composed diagnostic.
 ;:
 ;: ```typelisp
 ;: (import stdlib.test)

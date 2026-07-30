@@ -1,13 +1,13 @@
 /* benchmarks/spmd_short_tail/baseline.c - clang C baseline for spmd_short_tail (#1125).
  *
  * Equivalent to benchmarks/spmd_short_tail/bench.tl: run `reps` passes of an
- * elementwise map `out[i] = a[i] + b[i] + r` over an array whose length (1000)
- * is deliberately NOT a multiple of any SIMD lane width, fold one element of
- * each pass into an accumulator, and return its low byte as the process exit
- * code. uint64_t gives defined modulo-2^64 wrapping that matches TypeLisp i64
- * `+`, so both programs produce the identical exit code on a given host. The
- * non-lane-aligned length is the point: a vectorized lowering must handle the
- * remainder/tail; this is the scalar reference.
+ * elementwise map `out[i] = a[i] + b[i] + r` over an array whose length (1003)
+ * is deliberately not a multiple of the i64 AVX2 or AVX-512 lane widths (4 and
+ * 8), fold one element of each pass into an accumulator, and return its low
+ * byte as the process exit code. uint64_t gives defined modulo-2^64 wrapping
+ * that matches TypeLisp i64 `+`, so both programs produce the identical exit
+ * code on a given host. The non-lane-aligned length is the point: a vectorized
+ * lowering must execute the remainder/tail; this is the scalar reference.
  *
  * The array is small (cache-resident) and the work is made runtime-dominant by
  * the outer repetition loop. The per-pass `r` term keeps each pass distinct so
@@ -19,7 +19,7 @@
  */
 #include <stdint.h>
 
-#define ARRAY_LEN 1000
+#define ARRAY_LEN 1003
 
 int main(int argc, char **argv) {
     (void)argv;

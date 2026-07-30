@@ -6,8 +6,9 @@
 ;; --------------------------------------------------------------------------
 ;; `reader.tl` is the *demo* program for the s-expression reader: it carries a
 ;; `main` that reads a sample and folds the resulting tree with `sum-ints`.
-;; Reusable frontend modules need the reader's `read : (-> (Array token.Token) Sexpr)`
-;; and the `Sexpr` AST it builds without inheriting that demo `main`.
+;; Reusable frontend modules need the reader's
+;; `read : (-> (__tl_dyn-array token.Token) Sexpr)` and the `Sexpr` AST it
+;; builds without inheriting that demo `main`.
 ;;
 ;; The legacy stage0 module loader is whole-program: it concatenates every
 ;; imported module's declarations into a single program, then runs the unchanged
@@ -105,7 +106,7 @@
 ;; not construct 262,144 enum slots before argv dispatch. Growth uses one
 ;; dedicated arena that is created once and never reset, keeping the long-lived
 ;; global valid across transient driver arenas.
-(define sp-node-pool-slots : (Array SpannedSexpr)
+(define sp-node-pool-slots : (__tl_dyn-array SpannedSexpr)
   (make-array SpannedSexpr 0))
 
 ;; Current head of the dedicated backing arena, or zero before first use.
@@ -113,17 +114,17 @@
   0)
 (define sp-node-pool-count : i64
   0)
-(define sp-builder-slots : (Array SpannedSexpr)
+(define sp-builder-slots : (__tl_dyn-array SpannedSexpr)
   (make-array SpannedSexpr 0))
 (define sp-builder-count : i64
   0)
-(define sexpr-node-pool-slots : (Array Sexpr)
+(define sexpr-node-pool-slots : (__tl_dyn-array Sexpr)
   (make-array Sexpr 0))
 (define sexpr-node-pool-base-arena : i64
   0)
 (define sexpr-node-pool-count : i64
   0)
-(define sexpr-builder-slots : (Array Sexpr)
+(define sexpr-builder-slots : (__tl_dyn-array Sexpr)
   (make-array Sexpr 0))
 (define sexpr-builder-count : i64
   0)
@@ -176,7 +177,7 @@
 ;; from a transient file/test arena leaves the global dangling at teardown.
 (define (sp-node-pool-grow!) : unit
   (let
-    [old-slots : (Array SpannedSexpr) sp-node-pool-slots]
+    [old-slots : (__tl_dyn-array SpannedSexpr) sp-node-pool-slots]
     [old-cap : i64 (array-length old-slots)]
     [new-cap : i64
       (if (< old-cap 1)
@@ -191,7 +192,8 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
-    [new-slots : (Array SpannedSexpr) (make-array SpannedSexpr new-cap)]
+    [new-slots : (__tl_dyn-array SpannedSexpr)
+      (make-array SpannedSexpr new-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_restore-arena : unit
       (sp-node-pool-restore-arena-after-base-alloc!
@@ -210,7 +212,7 @@
 
 (define (sexpr-node-pool-grow!) : unit
   (let
-    [old-slots : (Array Sexpr) sexpr-node-pool-slots]
+    [old-slots : (__tl_dyn-array Sexpr) sexpr-node-pool-slots]
     [old-cap : i64 (array-length old-slots)]
     [new-cap : i64
       (if (< old-cap 1)
@@ -225,7 +227,7 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
-    [new-slots : (Array Sexpr) (make-array Sexpr new-cap)]
+    [new-slots : (__tl_dyn-array Sexpr) (make-array Sexpr new-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_restore-arena : unit
       (sp-node-pool-restore-arena-after-base-alloc!
@@ -244,7 +246,7 @@
 
 (define (sp-builder-grow!) : unit
   (let
-    [old-slots : (Array SpannedSexpr) sp-builder-slots]
+    [old-slots : (__tl_dyn-array SpannedSexpr) sp-builder-slots]
     [old-cap : i64 (array-length old-slots)]
     [new-cap : i64
       (if (< old-cap 1)
@@ -259,7 +261,8 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
-    [new-slots : (Array SpannedSexpr) (make-array SpannedSexpr new-cap)]
+    [new-slots : (__tl_dyn-array SpannedSexpr)
+      (make-array SpannedSexpr new-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_restore-arena : unit
       (sp-node-pool-restore-arena-after-base-alloc!
@@ -277,7 +280,7 @@
 
 (define (sexpr-builder-grow!) : unit
   (let
-    [old-slots : (Array Sexpr) sexpr-builder-slots]
+    [old-slots : (__tl_dyn-array Sexpr) sexpr-builder-slots]
     [old-cap : i64 (array-length old-slots)]
     [new-cap : i64
       (if (< old-cap 1)
@@ -292,7 +295,7 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
-    [new-slots : (Array Sexpr) (make-array Sexpr new-cap)]
+    [new-slots : (__tl_dyn-array Sexpr) (make-array Sexpr new-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_restore-arena : unit
       (sp-node-pool-restore-arena-after-base-alloc!
@@ -643,39 +646,45 @@
       (spanned-sexpr-range-form start length)]))
 
 ;; --------------------------------------------------------------------------
-;; The reader cursor: a single mutable index into the `(Array token.Token)`.
+;; The reader cursor: a single mutable index into the
+;; `(__tl_dyn-array token.Token)`.
 ;; --------------------------------------------------------------------------
 ;; A TypeLisp function returns a single value, but the reader must both *return
 ;; an `Sexpr`* and *advance past the tokens it consumed*. So the position is an
-;; out-param: a single-cell `(Array i64)` (`cur`) holding the index of the token
-;; under the cursor. Because arrays are heap references, a mutation through `cur`
-;; is visible to the caller across the recursive `read-form` / `read-list` calls.
+;; out-param: a single-cell `(__tl_dyn-array i64)` (`cur`) holding the index of
+;; the token under the cursor. Because arrays are heap references, a mutation
+;; through `cur` is visible to the caller across the recursive `read-form` /
+;; `read-list` calls.
 ;; Current cursor position (index of the token under the cursor).
-(define (cur-pos [cur : (Array i64)]) : i64
+(define (cur-pos [cur : (__tl_dyn-array i64)]) : i64
   (array-ref cur 0))
 
 ;; Kind tag of the token under the cursor, via the imported `token.tag`. This is
 ;; the load-bearing cross-import call: the reader classifies a `token.Token` produced
 ;; by the imported `lex` using the accessor defined in the imported token model.
-(define (peek-tag [toks : (Array token.Token)] [cur : (Array i64)]) : i64
+(define (peek-tag
+  [toks : (__tl_dyn-array token.Token)]
+  [cur : (__tl_dyn-array i64)]) : i64
   (token.tag (array-ref toks (cur-pos cur))))
 
 ;; The `token.Token` value under the cursor (for projecting its int/symbol payload).
-(define (peek-tok [toks : (Array token.Token)] [cur : (Array i64)]) : token.Token
+(define (peek-tok
+  [toks : (__tl_dyn-array token.Token)]
+  [cur : (__tl_dyn-array i64)]) : token.Token
   (array-ref toks (cur-pos cur)))
 
 (define (peek-spanned-token
-  [toks : (Array token.SpannedToken)]
-  [cur : (Array i64)]) : token.SpannedToken
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]) : token.SpannedToken
   (array-ref toks (cur-pos cur)))
 
 (define (peek-spanned-tag
-  [toks : (Array token.SpannedToken)]
-  [cur : (Array i64)]) : i64
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]) : i64
   (token.tag (token.spanned-token-token (peek-spanned-token toks cur))))
 
 ;; Consume the current token: advance the cursor by one.
-(define (advance [cur : (Array i64)]) : unit
+(define (advance [cur : (__tl_dyn-array i64)]) : unit
   (array-set! cur 0 (+ (cur-pos cur) 1)))
 
 (define (prefix-tag? [t : i64]) : bool
@@ -772,8 +781,8 @@
 ;; `read` wrapper below still panics for callers that have not moved to
 ;; `result`.
 (define (form-spanned-result
-  [toks : (Array token.SpannedToken)]
-  [cur : (Array i64)]) : ResultSpannedSexpr
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]) : ResultSpannedSexpr
   (let
     [st : token.SpannedToken (peek-spanned-token toks cur)]
     [tok : token.Token (token.spanned-token-token st)]
@@ -839,8 +848,8 @@
           (token.SourceError "reader: unexpected end of input" span))])))
 
 (define (list-spanned-items-result
-  [toks : (Array token.SpannedToken)]
-  [cur : (Array i64)]
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]
   [open-span : token.SourceSpan]
   [close-tag : i64]
   [builder : SpannedSexprBuilder]) : ResultSpannedSexpr
@@ -874,8 +883,8 @@
           [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])])))
 
 (define (list-spanned-result
-  [toks : (Array token.SpannedToken)]
-  [cur : (Array i64)]
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]
   [open-span : token.SourceSpan]) : ResultSpannedSexpr
   (let
     [pool-mark : i64 (sp-node-pool-len)]
@@ -891,8 +900,8 @@
           (ResultSpannedSexpr.Err err))])))
 
 (define (bracket-list-spanned-result
-  [toks : (Array token.SpannedToken)]
-  [cur : (Array i64)]
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]
   [open-span : token.SourceSpan]) : ResultSpannedSexpr
   (let
     [pool-mark : i64 (sp-node-pool-len)]
@@ -914,7 +923,9 @@
           (sp-node-pool-truncate! pool-mark)
           (ResultSpannedSexpr.Err err))])))
 
-(define (form-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
+(define (form-result
+  [toks : (__tl_dyn-array token.Token)]
+  [cur : (__tl_dyn-array i64)]) : ResultSexpr
   (let
     [t : i64 (peek-tag toks cur)]
     (cond
@@ -978,8 +989,8 @@
 ;; head form that starts with '(' re-enters `form-result` -> `list-result`,
 ;; completes its own child range, and then becomes one value in this builder.
 (define (list-result-with-close
-  [toks : (Array token.Token)]
-  [cur : (Array i64)]
+  [toks : (__tl_dyn-array token.Token)]
+  [cur : (__tl_dyn-array i64)]
   [close-tag : i64]
   [unterminated-message : String]
   [builder : SexprBuilder]) : ResultSexpr
@@ -1004,7 +1015,9 @@
               (sexpr-builder-push builder head))]
           [(ResultSexpr.Err message) (ResultSexpr.Err message)])))))
 
-(define (list-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
+(define (list-result
+  [toks : (__tl_dyn-array token.Token)]
+  [cur : (__tl_dyn-array i64)]) : ResultSexpr
   (let
     [pool-mark : i64 (sexpr-node-pool-len)]
     [builder : SexprBuilder (sexpr-builder-new)]
@@ -1023,7 +1036,9 @@
           (sexpr-node-pool-truncate! pool-mark)
           (ResultSexpr.Err message))])))
 
-(define (bracket-list-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
+(define (bracket-list-result
+  [toks : (__tl_dyn-array token.Token)]
+  [cur : (__tl_dyn-array i64)]) : ResultSexpr
   (let
     [pool-mark : i64 (sexpr-node-pool-len)]
     [builder : SexprBuilder (sexpr-builder-new)]
@@ -1046,17 +1061,17 @@
 ;; `toks` (a cursor starting at index 0) and return its `Sexpr` tree. (Trailing
 ;; tokens after the first form are ignored here, as a top-level `read` returns
 ;; one datum at a time.)
-(define (result [toks : (Array token.Token)]) : ResultSexpr
+(define (result [toks : (__tl_dyn-array token.Token)]) : ResultSexpr
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (sexpr-node-pool-reset!)
       (array-set! cur 0 0)
       (form-result toks cur))))
 
-(define (spanned-result [toks : (Array token.SpannedToken)]) : ResultSpannedSexpr
+(define (spanned-result [toks : (__tl_dyn-array token.SpannedToken)]) : ResultSpannedSexpr
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (set! sp-builder-count 0)
       (array-set! cur 0 0)
@@ -1096,7 +1111,7 @@
             [(ResultSpannedSexpr.Err _) false])))]
     [(lexer.ResultSpannedTokens.Err _) false]))
 
-(define (read [toks : (Array token.Token)]) : Sexpr
+(define (read [toks : (__tl_dyn-array token.Token)]) : Sexpr
   (match (result toks)
     [(ResultSexpr.Ok form) form]
     [(ResultSexpr.Err message) (io.panic message)]))

@@ -2,6 +2,8 @@
 ;#
 ;# This module keeps raw handle-table implementation details out of the public
 ;# `stdlib.io` module surface. User programs should import `stdlib.io`.
+(import stdlib.byte_buf)
+
 ;: Runtime allocator binding used to allocate raw handle tables.
 (extern (io-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
 
@@ -72,9 +74,9 @@
     (int->ptr io-file-last-ready-addr : (MutPtr bool))))
 
 ;: Return the raw cached-read byte table pointer.
-(define (io-file-last-bytes-ptr) : (MutPtr String)
+(define (io-file-last-bytes-ptr) : (MutPtr byte_buf.ByteBuf)
   (unsafe
-    (int->ptr io-file-last-bytes-addr : (MutPtr String))))
+    (int->ptr io-file-last-bytes-addr : (MutPtr byte_buf.ByteBuf))))
 
 ;: Convert a mutable byte pointer into an integer address for global storage.
 (define (io-file-ptr-addr [ptr : (MutPtr u8)]) : u64
@@ -101,16 +103,16 @@
   (unsafe
     (ptr-write! (ptr-offset items index) value)))
 
-;: Read a String from a raw table at `index`.
-(define (io-file-string-ref [items : (MutPtr String)] [index : i64]) : String
+;: Read a byte buffer from a raw table at `index`.
+(define (io-file-byte-buf-ref [items : (MutPtr byte_buf.ByteBuf)] [index : i64]) : byte_buf.ByteBuf
   (unsafe
-    (ptr-read (ptr-cast (ptr-offset items index) : (Ptr String)))))
+    (ptr-read (ptr-cast (ptr-offset items index) : (Ptr byte_buf.ByteBuf)))))
 
-;: Write a String to a raw table at `index`.
-(define (io-file-string-set!
-  [items : (MutPtr String)]
+;: Write a byte buffer to a raw table at `index`.
+(define (io-file-byte-buf-set!
+  [items : (MutPtr byte_buf.ByteBuf)]
   [index : i64]
-  [value : String]) : unit
+  [value : byte_buf.ByteBuf]) : unit
   (unsafe
     (ptr-write! (ptr-offset items index) value)))
 
@@ -122,7 +124,7 @@
     (io-file-i64-set! (io-file-states-ptr) handle 0)
     (io-file-bool-set! (io-file-eofs-ptr) handle false)
     (io-file-bool-set! (io-file-last-ready-ptr) handle false)
-    (io-file-string-set! (io-file-last-bytes-ptr) handle "")
+    (io-file-byte-buf-set! (io-file-last-bytes-ptr) handle (byte_buf.new))
     unit))
 
 ;: Return the first currently closed file-handle slot at or after `start`.
@@ -182,9 +184,9 @@
       [last-ready : (MutPtr bool)
         (unsafe
           (ptr-cast (io-runtime-alloc 1024) : (MutPtr bool)))]
-      [last-bytes : (MutPtr String)
+      [last-bytes : (MutPtr byte_buf.ByteBuf)
         (unsafe
-          (ptr-cast (io-runtime-alloc 16384) : (MutPtr String)))]
+          (ptr-cast (io-runtime-alloc 16384) : (MutPtr byte_buf.ByteBuf)))]
       [_restored : unit (io-arena-set prev-arena)]
       [i : i64 0]
       (begin

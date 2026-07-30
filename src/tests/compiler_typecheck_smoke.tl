@@ -1,4 +1,5 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -7,6 +8,11 @@
 (import compiler_intern as ci)
 (import stdlib.string)
 (import sym_i64_env)
+
+(define (compiler-typecheck-smoke-write-text
+  [path : String]
+  [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (compiler-typecheck-reference-nested-local-source) : String
   "(define (main [x : i64]) : unit
@@ -27,20 +33,20 @@
     (let [x : i64 1] (set! slot (& x)))))")
 
 (define (compiler-typecheck-reference-container-escape-source) : String
-  "(define (main [x : i64] [items : (Array (& x i64))]) : unit
+  "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (array-set! items 0 (& x))))")
 
 (define (compiler-typecheck-reference-array-push-ok-source) : String
-  "(define (main [x : i64] [items : (Array (& x i64))]) : unit
+  "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (array-push! items (& x)))")
 
 (define (compiler-typecheck-reference-array-push-escape-source) : String
-  "(define (main [x : i64] [items : (Array (& x i64))]) : unit
+  "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (array-push! items (& x))))")
 
 (define (compiler-typecheck-reference-arena-store-escape-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
-    "(define (main [items : (Array (& r str))]) : unit
+    "(define (main [items : (__tl_dyn-array (& r str))]) : unit
   (with-arena r
     (let [s : String (string.int->string 1)]
       (array-set! items 0 (& s)))))"))
@@ -165,7 +171,7 @@
 
 (define (compiler-typecheck-reference-lambda-mutable-reject-source) : String
   "(define (read [r : (&mut items i64)]) : i64 42)
-(define (main [items : (Array i64)]) : i64
+(define (main [items : (__tl_dyn-array i64)]) : i64
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
     ((lambda () : i64 (read r)))))")
 
@@ -199,16 +205,16 @@
 
 (define (compiler-typecheck-reference-dyn-array-init-ok-source) : String
   "(define (main [n : i64]) : unit
-  (let [items : (Array (& n i64)) (init : (Array (& n i64)))] unit))")
+  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))] unit))")
 
 (define (compiler-typecheck-reference-dyn-array-make-reject-source) : String
   "(define (main [n : i64]) : unit
-  (let [items : (Array (& n i64)) (make-array (& n i64) 0)] unit))")
+  (let [items : (__tl_dyn-array (& n i64)) (make-array (& n i64) 0)] unit))")
 
 (define (compiler-typecheck-reference-dyn-array-push-read-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
-    [items : (Array (& n i64)) (init : (Array (& n i64)))]
+    [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
     (begin
       (array-push! items (& n))
       (let [r : (& n i64) (array-ref items 0)] unit))))")
@@ -216,12 +222,12 @@
 (define (compiler-typecheck-reference-dyn-array-push-escape-source) : String
   "(define (main [n : i64]) : unit
   (let
-    [items : (Array (& n i64)) (init : (Array (& n i64)))]
+    [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
     (let [n : i64 1] (array-push! items (& n)))))")
 
 (define (compiler-typecheck-reference-dyn-array-hidden-source) : String
   "(define (main) : unit
-  (let [items : (Array (& n i64)) (make-array (& n i64) 0)] unit))")
+  (let [items : (__tl_dyn-array (& n i64)) (make-array (& n i64) 0)] unit))")
 
 (define (compiler-typecheck-bytes-borrowed-source) : String
   "(defstruct ByteViews
@@ -244,7 +250,7 @@
 (define (main) : unit unit)")
 
 (define (compiler-typecheck-bytes-bare-array-source) : String
-  "(define (main [items : (Array bytes)]) : unit unit)")
+  "(define (main [items : (__tl_dyn-array bytes)]) : unit unit)")
 
 (define (compiler-typecheck-bytes-policy-message) : String
   "typecheck: bytes is a borrowed byte-slice referent; use (& lifetime bytes) or (&mut lifetime bytes)")
@@ -252,7 +258,7 @@
 (define (compiler-typecheck-zero-make-array-recursive-source) : String
   "(defenum Loop (LoopBox (Box Loop)))
 (define (main) : unit
-  (let [items : (Array Loop) (make-array Loop 0)] unit))")
+  (let [items : (__tl_dyn-array Loop) (make-array Loop 0)] unit))")
 
 (define (compiler-typecheck-auto-borrow-ok-source) : String
   "(defstruct RefBox (:lifetimes owner) (value (& owner i64)))
@@ -458,7 +464,7 @@
 
 (define (compiler-typecheck-borrow-mut-after-immut-source) : String
   "(define (read-i64-ref [r : (& items i64)]) : unit unit)
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (let
     [borrowed : (& items i64) (& (array-ref items 0))]
     (begin
@@ -469,7 +475,7 @@
 
 (define (compiler-typecheck-borrow-immut-after-mut-source) : String
   "(define (write-i64-ref [r : (&mut items i64)]) : unit unit)
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (let
     [exclusive : (&mut items i64) (&mut (array-ref items 0))]
     (begin
@@ -524,74 +530,74 @@
 
 (define (compiler-typecheck-mut-borrow-disjoint-fields-source) : String
   "(defstruct Bags
-  (left (Array i64))
-  (right (Array i64)))
+  (left (__tl_dyn-array i64))
+  (right (__tl_dyn-array i64)))
 (define (main) : unit
   (let
-    [left-items : (Array i64) (make-array i64 1)]
-    [right-items : (Array i64) (make-array i64 1)]
+    [left-items : (__tl_dyn-array i64) (make-array i64 1)]
+    [right-items : (__tl_dyn-array i64) (make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
-      [left : (&mut bags (Array i64)) (&mut (struct-get bags left))]
-      [right : (&mut bags (Array i64)) (&mut (struct-get bags right))]
+      [left : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
+      [right : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags right))]
       unit)))")
 
 (define (compiler-typecheck-mut-borrow-same-field-source) : String
   "(defstruct Bags
-  (left (Array i64))
-  (right (Array i64)))
-(define (write-array-ref [items : (&mut bags (Array i64))]) : unit unit)
+  (left (__tl_dyn-array i64))
+  (right (__tl_dyn-array i64)))
+(define (write-array-ref [items : (&mut bags (__tl_dyn-array i64))]) : unit unit)
 (define (main) : unit
   (let
-    [left-items : (Array i64) (make-array i64 1)]
-    [right-items : (Array i64) (make-array i64 1)]
+    [left-items : (__tl_dyn-array i64) (make-array i64 1)]
+    [right-items : (__tl_dyn-array i64) (make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
-      [first : (&mut bags (Array i64)) (&mut (struct-get bags left))]
-      [second : (&mut bags (Array i64)) (&mut (struct-get bags left))]
+      [first : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
+      [second : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
       (write-array-ref first))))")
 
 (define (compiler-typecheck-mut-borrow-ancestor-descendant-source) : String
   "(defstruct Bags
-  (left (Array i64))
-  (right (Array i64)))
+  (left (__tl_dyn-array i64))
+  (right (__tl_dyn-array i64)))
 (define (main) : unit
   (let
-    [left-items : (Array i64) (make-array i64 1)]
-    [right-items : (Array i64) (make-array i64 1)]
+    [left-items : (__tl_dyn-array i64) (make-array i64 1)]
+    [right-items : (__tl_dyn-array i64) (make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
-      [whole-left : (&mut bags (Array i64)) (&mut (struct-get bags left))]
+      [whole-left : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
       [first-item : (&mut bags i64) (&mut (array-ref (struct-get bags left) 0))]
       (array-set! whole-left 0 1))))")
 
 (define (compiler-typecheck-mut-reborrow-bound-subscope-source) : String
   "(define (touch [slot : (&mut items i64)]) : unit unit)
-(define (use [items : (&mut items (Array i64))]) : unit
+(define (use [items : (&mut items (__tl_dyn-array i64))]) : unit
   (begin
     (let
       [slot : (&mut items i64) (&mut (array-ref items 0))]
       (touch slot))
     (array-set! items 0 7)))
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (use (&mut items)))")
 
 (define (compiler-typecheck-mut-reborrow-same-scope-use-source) : String
   "(define (touch [slot : (&mut items i64)]) : unit unit)
-(define (bad [items : (&mut items (Array i64))]) : unit
+(define (bad [items : (&mut items (__tl_dyn-array i64))]) : unit
   (let
     [slot : (&mut items i64) (&mut (array-ref items 0))]
     (begin
       (array-set! items 0 7)
       (touch slot))))
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (bad (&mut items)))")
 
 (define (compiler-typecheck-mut-borrow-read-array-length-source) : String
   "(define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
-    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-length items)]
     (begin
       (array-set! borrowed 0 41)
@@ -600,8 +606,8 @@
 (define (compiler-typecheck-mut-borrow-read-array-ref-source) : String
   "(define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
-    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-ref items 0)]
     (begin
       (array-set! borrowed 0 41)
@@ -609,27 +615,27 @@
 
 (define (compiler-typecheck-mut-borrow-read-struct-get-source) : String
   "(defstruct Bag
-  (left (Array i64))
+  (left (__tl_dyn-array i64))
   (right i64))
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     [bag : Bag (Bag items 42)]
-    [borrowed : (&mut bag (Array i64)) (&mut (struct-get bag left))]
-    [copy : (Array i64) (struct-get bag left)]
+    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut (struct-get bag left))]
+    [copy : (__tl_dyn-array i64) (struct-get bag left)]
     (begin
       (array-set! borrowed 0 41)
       (array-length copy))))")
 
 (define (compiler-typecheck-mut-borrow-read-disjoint-source) : String
   "(defstruct Bag
-  (left (Array i64))
+  (left (__tl_dyn-array i64))
   (right i64))
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     [bag : Bag (Bag items 42)]
-    [borrowed : (&mut bag (Array i64)) (&mut (struct-get bag left))]
+    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut (struct-get bag left))]
     [right : i64 (struct-get bag right)]
     (begin
       (array-set! borrowed 0 41)
@@ -638,8 +644,8 @@
 (define (compiler-typecheck-mut-borrow-read-through-ref-source) : String
   "(define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
-    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-length borrowed)]
     (begin
       (array-set! borrowed 0 41)
@@ -648,64 +654,64 @@
 (define (compiler-typecheck-mut-borrow-owner-read-after-last-use-source) : String
   "(define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
-    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     (begin
       (array-set! borrowed 0 41)
       (array-length items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-shared-read-source) : String
-  "(define (read-len [items : (& items (Array i64))]) : i64
+  "(define (read-len [items : (& items (__tl_dyn-array i64))]) : i64
   (array-length items))
-(define (push-with-len [items : (&mut items (Array i64))] [value : i64]) : unit
+(define (push-with-len [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
   (array-push! items value))
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (push-with-len (&mut items) (read-len (& items)))
       (array-length items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-direct-read-source) : String
-  "(define (push-with-len [items : (&mut items (Array i64))] [value : i64]) : unit
+  "(define (push-with-len [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
   (array-push! items value))
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (push-with-len (&mut items) (array-length items))
       (array-length items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-second-mut-source) : String
   "(define (take-two
-  [left : (&mut left (Array i64))]
-  [right : (&mut right (Array i64))]) : unit
+  [left : (&mut left (__tl_dyn-array i64))]
+  [right : (&mut right (__tl_dyn-array i64))]) : unit
   unit)
 (define (main) : unit
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (take-two (&mut items) (&mut items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-escaping-shared-source) : String
-  "(define (borrow-items [items : (& items (Array i64))]) : (& items (Array i64))
+  "(define (borrow-items [items : (& items (__tl_dyn-array i64))]) : (& items (__tl_dyn-array i64))
   items)
 (define (take-mut-and-view
-  [items : (&mut items (Array i64))]
-  [view : (& items (Array i64))]) : unit
+  [items : (&mut items (__tl_dyn-array i64))]
+  [view : (& items (__tl_dyn-array i64))]) : unit
   unit)
 (define (main) : unit
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (take-mut-and-view (&mut items) (borrow-items (& items)))))")
 
 (define (compiler-typecheck-two-phase-mut-call-mutate-owner-source) : String
   "(define (take-mut-and-value
-  [items : (&mut items (Array i64))]
+  [items : (&mut items (__tl_dyn-array i64))]
   [value : i64]) : unit
   unit)
 (define (main) : unit
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (take-mut-and-value (&mut items) (begin (array-push! items 1) 0))))")
 
 (define (compiler-typecheck-borrow-if-conservative-source) : String
@@ -841,7 +847,7 @@
 
 (define (compiler-typecheck-borrow-foreach-body-after-last-use-source) : String
   "(define (take [n : (& n i64)]) : i64 1)
-(define (main [n : i64] [out : (Array i64)] [limit : i64]) : unit
+(define (main [n : i64] [out : (__tl_dyn-array i64)] [limit : i64]) : unit
   (foreach ([i : i64 0 limit])
     (let [borrowed : (& n i64) (& n)]
       (begin
@@ -1766,7 +1772,7 @@
 (defmacro (int-stack) : Decls
   `(begin
     (defstruct Stack
-      (slots (Array i64))
+      (slots (__tl_dyn-array i64))
       (len i64)
       (cap i64))
     (define (stack-new) : Stack
@@ -1774,7 +1780,7 @@
     (define (stack-grow [s : Stack]) : Stack
       (let
         [new-cap : i64 (* (struct-get s cap) 2)]
-        [bigger : (Array i64) (array.make-array i64 new-cap)]
+        [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
         [i : i64 0]
         (begin
           (while (< i (struct-get s len))
@@ -1850,6 +1856,10 @@
     [pv : pvec.Vec (pvec.new)]
     (+ (sliceish.len-of v) (psliceish.len-of pv))))")
 
+;; CTFE's type-expression bridge currently recognizes the legacy `Array` head
+;; but not `__tl_dyn-array` when a type parameter is unquoted. Keep these two
+;; spellings as explicit bootstrap compatibility coverage; ordinary private
+;; alias parsing and identity are covered elsewhere in this smoke.
 (define (compiler-typecheck-smoke-type-macro-param-source) : String
   "(import stdlib.array)
 (defstruct Pair (value i64))
@@ -2255,7 +2265,7 @@
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         provider
         "(module tc.macro_kind.provider)
 (defmacro (emit [T : type (:kind i64 u8 struct)]) : Decls
@@ -2264,7 +2274,7 @@
   `(begin
     (module generated.macro_kind.family)
     (define (answer) : i64 41)))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry
         "(defstruct Ball (x i64))
 (import
@@ -2291,15 +2301,15 @@
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         dep
         "(module tc.prefix.local.dep)
 (define (value [x : i64]) : i64 (+ x 1))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry-a
         "(import \"tc_prefix_local_dep.tl\" module tc.prefix.local.dep as dep)
 (define (main) : i64 (dep.value 1))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry-b
         "(import \"tc_prefix_local_dep.tl\" module tc.prefix.local.dep as dep)
 (define (main) : i64 (dep.value 2))")
@@ -2355,12 +2365,14 @@
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
-      (io.write-file dep "(define (flat-helper [x : i64]) : i64 (+ x 1))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
+        dep
+        "(define (flat-helper [x : i64]) : i64 (+ x 1))")
+      (compiler-typecheck-smoke-write-text
         entry-a
         "(import \"tc_prefix_flat_dep.tl\")
 (define (main) : i64 (flat-helper 1))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry-b
         "(import \"tc_prefix_flat_dep.tl\")
 (define (main) : i64 (flat-helper 2))")
@@ -2408,14 +2420,14 @@
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         root-provider
         "(import \"stdlib/option.tl\")
 (import (stdlib.option.option i64) as option_i64)
 
 (define (root-score) : i64
   (option_i64.value-or (option_i64.some 1) 0))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         named-provider
         "(module tc4004named)
 (import \"stdlib/option.tl\")
@@ -2423,14 +2435,14 @@
 
 (define (named-score) : i64
   (option_i64.value-or (option_i64.some 2) 0))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         root-then-named
         "(import \"tc_4004_root_provider.tl\")
 (import \"tc_4004_named_provider.tl\")
 
 (define (main) : i64
   (+ (root-score) (tc4004named.named-score)))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         named-then-root
         "(import \"tc_4004_named_provider.tl\")
 (import \"tc_4004_root_provider.tl\")
@@ -2460,6 +2472,73 @@
   (cache-stores i64)
   (seen-nonempty bool)
   (surface-summary-present bool))
+
+(define (compiler-typecheck-smoke-generated-type-param-pool-isolation-ok?) : bool
+  (let
+    [active-before : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities 4 4)]
+    [installed-pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities 4 4)]
+    [name-id : i64 (ci.intern "generated-type-param-pool-isolation")]
+    [env : CtfeEnv
+      (ctfe-env-extend-id
+        (ctfe-env-empty-with-pools source-pools)
+        name-id
+        (CompilerCtfeValue.Type (AstType.I64)))]
+    [installed-type-id : i64
+      (ast-node-pool-context-type-push installed-pools (AstType.Bool))]
+    [installed-expr-id : i64
+      (ast-node-pool-context-expr-push
+        installed-pools
+        (AstExpr.Literal (AstLiteral.Bool false)))]
+    (begin
+      (ast-node-pool-context-install! installed-pools)
+      (let
+        [result-id : i64
+          (macro-generated-type-param-expr
+            source-pools
+            env
+            (AstExpr.Var name-id))]
+        [installed-expr-bases : i64
+          (ast-node-pool-context-expr-segment-bases installed-pools)]
+        [installed-type-bases : i64
+          (ast-node-pool-context-type-segment-bases installed-pools)]
+        [ok : bool
+          (and
+            (= result-id installed-expr-id)
+            (= (ast-node-pool-context-expr-len source-pools) 1)
+            (= (ast-node-pool-context-type-len source-pools) 1)
+            (= (ast-node-pool-context-expr-len installed-pools) 1)
+            (= (ast-node-pool-context-type-len installed-pools) 1)
+            (match (ast-node-pool-context-expr-get source-pools result-id)
+              [(AstExpr.TypeLiteral source-type-id)
+                (and
+                  (= source-type-id installed-type-id)
+                  (match (ast-node-pool-context-type-get
+                    source-pools
+                    source-type-id)
+                    [(AstType.I64) true]
+                    [_ false]))]
+              [_ false])
+            (match (ast-node-pool-context-expr-get
+              installed-pools
+              installed-expr-id)
+              [(AstExpr.Literal (AstLiteral.Bool value)) (not value)]
+              [_ false])
+            (match (ast-node-pool-context-type-get
+              installed-pools
+              installed-type-id)
+              [(AstType.Bool) true]
+              [_ false])
+            (= (ast-node-pool-active-expr-segment-bases) installed-expr-bases)
+            (=
+              (ast-node-pool-context-type-segment-bases
+                (ast-node-pool-context-capture-active))
+              installed-type-bases))]
+        (begin
+          (ast-node-pool-context-install! active-before)
+          ok)))))
 
 (define (compiler-typecheck-smoke-generated-import-decl
   [source : String]
@@ -2580,11 +2659,11 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [_fixtures : unit
       (begin
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_state_nested.tl"
           "(module tc_state.nested)
 (define nested-value : i64 7)")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_state_dep.tl"
           "(module tc_state.dep)
 (import \"tc_state_nested.tl\" module tc_state.nested as nested)
@@ -2815,8 +2894,8 @@
     (begin
       (compiler-load-test-mkdir base)
       (compiler-load-test-mkdir stdlib-root)
-      (io.write-file dep "(define value : i64 42)")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text dep "(define value : i64 42)")
+      (compiler-typecheck-smoke-write-text
         entry
         "(import stdlib.some_name)
 (define (main) : i64 some_name.value)")
@@ -2832,8 +2911,8 @@
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
       (compiler-load-test-mkdir dir)
-      (io.write-file dep "(define imported : i64 true)")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text dep "(define imported : i64 true)")
+      (compiler-typecheck-smoke-write-text
         entry
         "(define (id [comptime T : type] [value : T]) : T value)
 (import \"dep.tl\")
@@ -2887,13 +2966,13 @@
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         helper
         (compiler-typecheck-smoke-macro-dependency-helper-source))
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         provider
         (compiler-typecheck-smoke-macro-dependency-provider-source))
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry
         (compiler-typecheck-smoke-macro-dependency-entry-source))
       (compiler-typecheck-reset-load-session!)
@@ -2915,10 +2994,10 @@
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         provider
         (compiler-typecheck-smoke-surface-macro-provider-source))
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry
         (compiler-typecheck-smoke-surface-macro-entry-source))
       (compiler-typecheck-reset-load-session!)
@@ -3144,7 +3223,7 @@
 (define (take-array-ref [r : (& items i64)]) : i64 1)
 (define (main) : i64
   (let
-    [items : (Array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     [fixed : (Array i64 2) (array 3 4)]
     (begin
       (array-set! items 0 (array-ref fixed 1))
@@ -3735,7 +3814,7 @@
 (import stdlib.array)
 (define (main) : i64
   (let
-    [items : (Array i64) (stdlib.array.make-array i64 0)]
+    [items : (__tl_dyn-array i64) (stdlib.array.make-array i64 0)]
     (begin
       (stdlib.array.push! items 41)
       (+ (stdlib.array.ref items 0) (stdlib.array.length items)))))")
@@ -3745,7 +3824,7 @@
 (import stdlib.array)
 (define (main) : i64
   (let
-    [items : (Array i64) (array.make-array i64 0)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 0)]
     (begin
       (array.push! items 41)
       (+ (array.ref items 0) (array.length items)))))")
@@ -4375,7 +4454,7 @@
     [ok : bool
       (begin
         (compiler-load-test-mkdir "target/tc_lazy_stdlib_array")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_lazy_stdlib_array/canonical.tl"
           (compiler-typecheck-smoke-lazy-import-stdlib-array-source))
         (match (compiler-load-file-with-paths
@@ -4401,7 +4480,7 @@
                       (compiler-diagnostic-message
                         (compiler-diagnostic-list-first (box-get diag)))]
                     (begin
-                      (io.stderr-write (& message))
+                      (io.stderr-write (byte_buf.str-as-bytes (& message)))
                       (io.panic
                         "typecheck: lazy import stdlib.array nested typecheck failed")))]))]
           [(ResultCompilerLoadWithPaths.Err _)
@@ -4416,7 +4495,7 @@
     [ok : bool
       (begin
         (compiler-load-test-mkdir "target/tc_lazy_stdlib_result")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_lazy_stdlib_result/result.tl"
           (compiler-typecheck-smoke-lazy-import-stdlib-result-source))
         (match (compiler-load-file-with-paths
@@ -4440,7 +4519,7 @@
                       (compiler-diagnostic-message
                         (compiler-diagnostic-list-first (box-get diag)))]
                     (begin
-                      (io.stderr-write (& message))
+                      (io.stderr-write (byte_buf.str-as-bytes (& message)))
                       false))]))]
           [(ResultCompilerLoadWithPaths.Err _) false]))]
     (begin
@@ -4453,7 +4532,7 @@
     [ok : bool
       (begin
         (compiler-load-test-mkdir "target/tc_unused_result_local_type")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_unused_result_local_type/main.tl"
           (compiler-typecheck-smoke-unused-result-import-local-type-source))
         (match (compiler-load-file-with-paths
@@ -4470,7 +4549,7 @@
                     (compiler-diagnostic-message
                       (compiler-diagnostic-list-first (box-get diag)))]
                   (begin
-                    (io.stderr-write (& message))
+                    (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
           [(ResultCompilerLoadWithPaths.Err _) false]))]
     (begin
@@ -4483,7 +4562,7 @@
     [ok : bool
       (begin
         (compiler-load-test-mkdir "target/tc_result_enum_then_helper")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_result_enum_then_helper/main.tl"
           (compiler-typecheck-smoke-result-enum-then-helper-source))
         (match (compiler-load-file-with-paths
@@ -4500,7 +4579,7 @@
                     (compiler-diagnostic-message
                       (compiler-diagnostic-list-first (box-get diag)))]
                   (begin
-                    (io.stderr-write (& message))
+                    (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
           [(ResultCompilerLoadWithPaths.Err _) false]))]
     (begin
@@ -4513,7 +4592,7 @@
     [ok : bool
       (begin
         (compiler-load-test-mkdir "target/tc_lazy_stdlib_array")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_lazy_stdlib_array/alias.tl"
           (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-source))
         (match (compiler-load-file-with-paths
@@ -4906,9 +4985,168 @@
         [(ResultCompilerTypecheck.Ok _) true]
         [(ResultCompilerTypecheck.Err _) false]))))
 
+(cfg
+  compile-profile
+  (define (compiler-typecheck-smoke-macro-profile-entry-eq?
+    [index : i64]
+    [macro-id : i64]
+    [macro-name : String]
+    [arity : i64]
+    [calls : i64]
+    [total-ms : i64]) : bool
+    (if (and
+      (>= index 0)
+      (< index (struct-get compiler-tc-macro-profile-entries len)))
+      (let
+        [entry : CompilerTcMacroProfileEntry
+          (array-ref (struct-get compiler-tc-macro-profile-entries slots) index)]
+        (and
+          (= (struct-get entry macro-id) macro-id)
+          (string.eq (struct-get entry macro-name) macro-name)
+          (= (struct-get entry arity) arity)
+          (= (struct-get entry calls) calls)
+          (= (struct-get entry total-ms) total-ms)))
+      false)))
+
+(cfg
+  compile-profile
+  (define (compiler-typecheck-smoke-macro-profile-storage-ok?) : bool
+    (let
+      [module-a : i64 (ci.intern "profile-dense-module-a")]
+      [module-b : i64 (ci.intern "profile-dense-module-b")]
+      [name-id : i64 (ci.intern "profile-dense-macro")]
+      [macro-a : i64 (ci.intern-composite-pair-id module-a name-id)]
+      [macro-b : i64 (ci.intern-composite-pair-id module-b name-id)]
+      [growth-cursor : i64 0]
+      [ok : bool true]
+      (begin
+        (compiler-tc-macro-profile-reset)
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-a
+          "profile-dense-module-a/profile-dense-macro"
+          2
+          3)
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-a
+          "profile-dense-module-a/profile-dense-macro"
+          2
+          5)
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-a
+          "profile-dense-module-a/profile-dense-macro"
+          6
+          7)
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-b
+          "profile-dense-module-b/profile-dense-macro"
+          2
+          11)
+        (set!
+          ok
+          (and
+            (= (struct-get compiler-tc-macro-profile-entries len) 3)
+            (compiler-typecheck-smoke-macro-profile-entry-eq?
+              (compiler-tc-macro-profile-entry-index
+                (& compiler-tc-macro-profile-entries)
+                macro-a
+                2)
+              macro-a
+              "profile-dense-module-a/profile-dense-macro"
+              2
+              2
+              8)
+            (compiler-typecheck-smoke-macro-profile-entry-eq?
+              (compiler-tc-macro-profile-entry-index
+                (& compiler-tc-macro-profile-entries)
+                macro-a
+                6)
+              macro-a
+              "profile-dense-module-a/profile-dense-macro"
+              6
+              1
+              7)
+            (compiler-typecheck-smoke-macro-profile-entry-eq?
+              (compiler-tc-macro-profile-entry-index
+                (& compiler-tc-macro-profile-entries)
+                macro-b
+                2)
+              macro-b
+              "profile-dense-module-b/profile-dense-macro"
+              2
+              1
+              11)))
+        (while (< growth-cursor 32)
+          (begin
+            (compiler-tc-macro-profile-record-in!
+              (&mut compiler-tc-macro-profile-entries)
+              macro-b
+              "profile-dense-module-b/profile-dense-macro"
+              (+ growth-cursor 100)
+              growth-cursor)
+            (set! growth-cursor (+ growth-cursor 1))))
+        (set!
+          ok
+          (and
+            ok
+            (= (struct-get compiler-tc-macro-profile-entries len) 35)
+            (compiler-typecheck-smoke-macro-profile-entry-eq?
+              (compiler-tc-macro-profile-entry-index
+                (& compiler-tc-macro-profile-entries)
+                macro-b
+                131)
+              macro-b
+              "profile-dense-module-b/profile-dense-macro"
+              131
+              1
+              31)))
+        (compiler-tc-macro-profile-reset)
+        (set!
+          ok
+          (and
+            ok
+            compiler-tc-macro-profile-active
+            (= (struct-get compiler-tc-macro-profile-entries len) 0)
+            (=
+              (compiler-tc-macro-profile-entry-index
+                (& compiler-tc-macro-profile-entries)
+                macro-a
+                2)
+              -1)))
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-b
+          "profile-dense-module-b/profile-dense-macro"
+          2
+          13)
+        (set!
+          ok
+          (and
+            ok
+            (compiler-typecheck-smoke-macro-profile-entry-eq?
+              0
+              macro-b
+              "profile-dense-module-b/profile-dense-macro"
+              2
+              1
+              13)))
+        (compiler-tc-macro-profile-clear)
+        (and
+          ok
+          (not compiler-tc-macro-profile-active)
+          (= (struct-get compiler-tc-macro-profile-entries len) 0))))))
+
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
+    (cfg
+      compile-profile
+      (if (compiler-typecheck-smoke-macro-profile-storage-ok?)
+        (return 0)
+        (return 1)))
     (compiler-typecheck-self-test)
     (unless
       (compiler-typecheck-core-macro-bodies-observed?)
@@ -5073,6 +5311,9 @@
     (unless
       (compiler-typecheck-smoke-generated-moduleless-import-order-ok?)
       (io.panic "typecheck: generated moduleless import order smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-type-param-pool-isolation-ok?)
+      (io.panic "typecheck: generated type-param pool isolation smoke failed"))
     (unless
       (compiler-typecheck-smoke-generated-import-state-isolation-ok?)
       (io.panic "typecheck: generated import state isolation smoke failed"))

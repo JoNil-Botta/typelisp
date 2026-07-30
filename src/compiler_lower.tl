@@ -52147,7 +52147,8 @@
                   expr-ty
                   borrow-lifetime
                   CompilerIrPhiInputList.Nil
-                  true)]
+                  true
+                  false)]
               [_
                 (ResultLowerExpr.Err
                   (box
@@ -52165,6 +52166,7 @@
           expr-ty
           borrow-lifetime
           CompilerIrPhiInputList.Nil
+          false
           false))
       (match (lower-load-at-offset
         state
@@ -52187,6 +52189,7 @@
                 expr-ty
                 borrow-lifetime
                 CompilerIrPhiInputList.Nil
+                false
                 false)]
             [_
               (ResultLowerExpr.Err
@@ -52676,7 +52679,8 @@
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [phi-inputs : CompilerIrPhiInputList]
-  [scrut-reg-group? : bool]) : ResultLowerExpr
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerExpr
   (match pat
     [(AstPattern.Wildcard)
       (lower-match-catch-all
@@ -52707,7 +52711,8 @@
         expr-ty
         borrow-lifetime
         phi-inputs
-        scrut-reg-group?)]
+        scrut-reg-group?
+        total-enum-switch?)]
     [(AstPattern.Variant variant-name args-box)
       (let
         [args : AstPatternList (box-get args-box)]
@@ -52727,7 +52732,8 @@
           expr-ty
           borrow-lifetime
           phi-inputs
-          scrut-reg-group?))]
+          scrut-reg-group?
+          total-enum-switch?))]
     [_
       (ResultLowerExpr.Err
         (box (lower-diagnostic "lower: unsupported enum match pattern")))]))
@@ -52745,7 +52751,8 @@
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [phi-inputs : CompilerIrPhiInputList]
-  [scrut-reg-group? : bool]) : ResultLowerExpr
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerExpr
   (if (ast-match-arm-list-empty? (& arms))
     (ResultLowerExpr.Err (box (lower-diagnostic "lower: match with no arms")))
     (let
@@ -52788,7 +52795,8 @@
                 expr-ty
                 borrow-lifetime
                 phi-inputs
-                scrut-reg-group?)))]))))
+                scrut-reg-group?
+                total-enum-switch?)))]))))
 
 (define (lower-match-variant-final
   [ctx : TcContext]
@@ -52919,7 +52927,8 @@
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [phi-inputs : CompilerIrPhiInputList]
-  [scrut-reg-group? : bool]) : ResultLowerExpr
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerExpr
   (match (lower-bind-match-variant-payloads
     ctx
     body-start
@@ -52976,16 +52985,20 @@
                       body-value
                       body-end-label
                       phi-inputs))
-                  scrut-reg-group?))])]
+                  scrut-reg-group?
+                  total-enum-switch?))])]
         [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
     [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))
 
 ;; The switch-form pass is deliberately the only place that may materialize
-;; the final enum tag and unreachable default.  Lowering keeps the classic
-;; fallthrough instruction shape and carries only a compiler-owned label marker
-;; on exhaustive all-variant matches large enough to meet switch formation's
-;; existing four-comparison threshold.  Two-variant (and all other small)
-;; matches therefore remain byte-for-byte identical at the lowered-IR stage.
+;; the final enum tag and unreachable default. Lowering keeps the classic
+;; fallthrough instruction shape. Once exactly four explicit comparisons
+;; remain, their false-edge suffix carries TotalEnumBranch proof. Keeping the
+;; proof on only this terminal suffix matters because switch formation may
+;; split a long comparison chain: an earlier chunk's default still has more
+;; enum tags to test and must remain checked. Labels keep the old display
+;; spelling only for byte-stable IR/assembly. Small matches therefore remain
+;; byte-for-byte identical at the lowered-IR stage.
 (define (lower-total-enum-switch-rest-explicit-from?
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : bool
@@ -53000,26 +53013,24 @@
             (lower-total-enum-switch-rest-explicit-from? arms (+ index 1))]
           [_ false])])))
 
+(define (lower-total-enum-switch-next?
+  [total-enum-switch? : bool]
+  [rest : (& rest AstMatchArmList)]) : bool
+  (or
+    total-enum-switch?
+    (and
+      (= (ast-match-arm-list-len rest) 4)
+      (lower-total-enum-switch-rest-explicit-from? rest 0))))
+
 (define (lower-enum-match-next-label-base
-  [current-label : i64]
+  [total-enum-switch? : bool]
   [rest : AstMatchArmList]) : String
-  ;; Seed the proof once four explicit comparisons remain, carry it only along
-  ;; the outer compare chain, and put the durable marker on the final arm's
-  ;; classic fallthrough label. The distinct chain/default spellings prevent a
-  ;; nested match lowered inside the final arm from inheriting the outer proof.
+  ;; Preserve the old diagnostic spellings without consulting them for
+  ;; semantics. The explicit proof is threaded only through this match's
+  ;; outer compare chain and cannot leak into a nested arm body.
   (let
     [remaining : i64 (ast-match-arm-list-len (& rest))]
-    ;; This proof marker rides on the label's spelling, so it needs the text
-    ;; back out of the intern pool.
-    [current-label-text : String (compiler-ir-label-text current-label)]
-    [chain-marker : String "match_total_enum_chain"]
-    [total-chain? : bool
-      (or
-        (string.contains (& current-label-text) (& chain-marker))
-        (and
-          (= remaining 4)
-          (lower-total-enum-switch-rest-explicit-from? (& rest) 0)))]
-    (if total-chain?
+    (if (and total-enum-switch? (<= remaining 4))
       (if (= remaining 1)
         "match_total_enum_default"
         "match_total_enum_chain")
@@ -53041,7 +53052,8 @@
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [phi-inputs : CompilerIrPhiInputList]
-  [scrut-reg-group? : bool]) : ResultLowerExpr
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerExpr
   (match ctx
     [(TcContext _ symbols registries _ _ _ _ _ _)
       (let
@@ -53059,6 +53071,8 @@
           (match (compiler-registries-variant-fields-indexed symbols handle)
             [(ResultAstTypeList.Ok fields)
               (let
+                [next-total-enum-switch? : bool
+                  (lower-total-enum-switch-next? total-enum-switch? (& rest))]
                 [resolved-fields : AstTypeList
                   (lower-variant-payload-fields-for-handle
                     ctx
@@ -53083,7 +53097,7 @@
                           (match (lower-state-fresh-label
                             body-label-state
                             (lower-enum-match-next-label-base
-                              (lower-state-current-label state)
+                              next-total-enum-switch?
                               rest))
                             [(LowerLabel.Label next-label-state next-label)
                               (let
@@ -53091,10 +53105,15 @@
                                   (lower-state-finish-block
                                     (lower-state-emit
                                       next-label-state
-                                      (CompilerIrInstr.Branch
-                                        (CompilerIrValue.Var eq-var)
-                                        body-label
-                                        next-label))
+                                      (if next-total-enum-switch?
+                                        (CompilerIrInstr.TotalEnumBranch
+                                          (CompilerIrValue.Var eq-var)
+                                          body-label
+                                          next-label)
+                                        (CompilerIrInstr.Branch
+                                          (CompilerIrValue.Var eq-var)
+                                          body-label
+                                          next-label)))
                                     body-label)]
                                 (lower-match-variant-body
                                   ctx
@@ -53118,7 +53137,8 @@
                                   expr-ty
                                   borrow-lifetime
                                   phi-inputs
-                                  scrut-reg-group?))])]))]))]
+                                  scrut-reg-group?
+                                  next-total-enum-switch?))])]))]))]
             [(ResultAstTypeList.Err message)
               (ResultLowerExpr.Err (box (lower-diagnostic message)))])
           (ResultLowerExpr.Err
@@ -54842,7 +54862,8 @@
                   ret-ty
                   sret-var
                   borrow-lifetime
-                  true)]
+                  true
+                  false)]
               [_
                 (ResultLowerState.Err
                   (box
@@ -54859,6 +54880,7 @@
           ret-ty
           sret-var
           borrow-lifetime
+          false
           false))
       (match (lower-load-at-offset
         state
@@ -54880,6 +54902,7 @@
                 ret-ty
                 sret-var
                 borrow-lifetime
+                false
                 false)]
             [_
               (ResultLowerState.Err
@@ -54962,7 +54985,8 @@
   [ret-ty : AstType]
   [sret-var : i64]
   [borrow-lifetime : TcMaybeNameId]
-  [scrut-reg-group? : bool]) : ResultLowerState
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerState
   (match pat
     [(AstPattern.Wildcard)
       (lower-tail-match-catch-all
@@ -54991,7 +55015,8 @@
         ret-ty
         sret-var
         borrow-lifetime
-        scrut-reg-group?)]
+        scrut-reg-group?
+        total-enum-switch?)]
     [(AstPattern.Variant variant-name args-box)
       (let
         [args : AstPatternList (box-get args-box)]
@@ -55010,7 +55035,8 @@
           ret-ty
           sret-var
           borrow-lifetime
-          scrut-reg-group?))]
+          scrut-reg-group?
+          total-enum-switch?))]
     [_
       (ResultLowerState.Err
         (box (lower-diagnostic "lower: unsupported enum match pattern")))]))
@@ -55027,7 +55053,8 @@
   [ret-ty : AstType]
   [sret-var : i64]
   [borrow-lifetime : TcMaybeNameId]
-  [scrut-reg-group? : bool]) : ResultLowerState
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerState
   (if (ast-match-arm-list-empty? (& arms))
     (ResultLowerState.Err (box (lower-diagnostic "lower: match with no arms")))
     (let
@@ -55068,7 +55095,8 @@
                 ret-ty
                 sret-var
                 borrow-lifetime
-                scrut-reg-group?)))]))))
+                scrut-reg-group?
+                total-enum-switch?)))]))))
 
 ;; Per-match variant arm resolution memo. Each arm of one match re-runs the
 ;; same constructor/payload resolution chain (tc-env-key-name-text, scrutinee
@@ -55258,7 +55286,8 @@
   [ret-ty : AstType]
   [sret-var : i64]
   [borrow-lifetime : TcMaybeNameId]
-  [scrut-reg-group? : bool]) : ResultLowerState
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerState
   (match (lower-bind-match-variant-payloads
     ctx
     body-start
@@ -55299,7 +55328,8 @@
             ret-ty
             sret-var
             borrow-lifetime
-            scrut-reg-group?)]
+            scrut-reg-group?
+            total-enum-switch?)]
         [(ResultLowerState.Err message) (ResultLowerState.Err message)])]
     [(ResultLowerEnv.Err message) (ResultLowerState.Err message)]))
 
@@ -55318,7 +55348,8 @@
   [ret-ty : AstType]
   [sret-var : i64]
   [borrow-lifetime : TcMaybeNameId]
-  [scrut-reg-group? : bool]) : ResultLowerState
+  [scrut-reg-group? : bool]
+  [total-enum-switch? : bool]) : ResultLowerState
   (match ctx
     [(TcContext _ symbols registries _ _ _ _ _ _)
       (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
@@ -55338,6 +55369,8 @@
           (match (lower-state-alloc-var state)
             [(LowerAlloc.Alloc eq-alloc eq-var)
               (let
+                [next-total-enum-switch? : bool
+                  (lower-total-enum-switch-next? total-enum-switch? (& rest))]
                 [eq-state : LowerState
                   (lower-state-emit
                     eq-alloc
@@ -55353,7 +55386,7 @@
                     (match (lower-state-fresh-label
                       body-label-state
                       (lower-enum-match-next-label-base
-                        (lower-state-current-label state)
+                        next-total-enum-switch?
                         rest))
                       [(LowerLabel.Label next-label-state next-label)
                         (let
@@ -55361,10 +55394,15 @@
                             (lower-state-finish-block
                               (lower-state-emit
                                 next-label-state
-                                (CompilerIrInstr.Branch
-                                  (CompilerIrValue.Var eq-var)
-                                  body-label
-                                  next-label))
+                                (if next-total-enum-switch?
+                                  (CompilerIrInstr.TotalEnumBranch
+                                    (CompilerIrValue.Var eq-var)
+                                    body-label
+                                    next-label)
+                                  (CompilerIrInstr.Branch
+                                    (CompilerIrValue.Var eq-var)
+                                    body-label
+                                    next-label)))
                               body-label)]
                           (lower-tail-match-variant-body
                             ctx
@@ -55384,7 +55422,8 @@
                             ret-ty
                             sret-var
                             borrow-lifetime
-                            scrut-reg-group?))])]))])])]))
+                            scrut-reg-group?
+                            next-total-enum-switch?))])]))])])]))
 
 (define (lower-borrowed-enum-match-scrutinee?
   [ctx : TcContext]

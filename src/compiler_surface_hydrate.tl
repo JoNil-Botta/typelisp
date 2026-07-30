@@ -19,16 +19,16 @@
   (Ok CompilerSurfaceHydration)
   (Err String))
 
-(define (compiler-surface-identity-bytes [rodata : (Array u8)]) : ResultTlciAuxLookup
+(define (compiler-surface-identity-bytes [rodata : (__tl_dyn-array u8)]) : ResultTlciAuxLookup
   (tlci-aux-find rodata tlci-aux-kind-package-identity))
 
-(define (compiler-surface-ast-bytes [rodata : (Array u8)]) : ResultTlciAuxLookup
+(define (compiler-surface-ast-bytes [rodata : (__tl_dyn-array u8)]) : ResultTlciAuxLookup
   (tlci-aux-find rodata tlci-aux-kind-frontend-ast))
 
-(define (compiler-surface-fact-bytes [rodata : (Array u8)]) : ResultTlciAuxLookup
+(define (compiler-surface-fact-bytes [rodata : (__tl_dyn-array u8)]) : ResultTlciAuxLookup
   (tlci-aux-find rodata tlci-aux-kind-frontend-facts))
 
-(define (compiler-surface-key [rodata : (Array u8)]) : ResultCompilerSurfaceKey
+(define (compiler-surface-key [rodata : (__tl_dyn-array u8)]) : ResultCompilerSurfaceKey
   (match (compiler-surface-identity-bytes rodata)
     [(ResultTlciAuxLookup.Missing) ResultCompilerSurfaceKey.Missing]
     [(ResultTlciAuxLookup.Err message) (ResultCompilerSurfaceKey.Err message)]
@@ -43,9 +43,9 @@
             (ResultCompilerSurfaceKey.Ok (struct-get payload key))]))]))
 
 (define (compiler-surface-hydrate-payloads
-  [identity-bytes : (Array u8)]
-  [ast-bytes : (Array u8)]
-  [fact-bytes : (Array u8)]
+  [identity-bytes : (__tl_dyn-array u8)]
+  [ast-bytes : (__tl_dyn-array u8)]
+  [fact-bytes : (__tl_dyn-array u8)]
   [expected-key : surface_identity.SurfaceIdentityKey]
   [pools : AstNodePoolContext]) : ResultCompilerSurfaceHydration
   (match (surface_identity.surface-identity-hydrate identity-bytes expected-key)
@@ -70,7 +70,7 @@
                   (CompilerSurfaceHydration hydration facts)))])])]))
 
 (define (compiler-surface-hydrate
-  [rodata : (Array u8)]
+  [rodata : (__tl_dyn-array u8)]
   [expected-key : surface_identity.SurfaceIdentityKey]
   [pools : AstNodePoolContext]) : ResultCompilerSurfaceHydration
   (begin

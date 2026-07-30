@@ -13,7 +13,7 @@
 (import (vector.vector String) as surface_svec)
 
 (defenum ResultPreludeSurface
-  (Ok (Array u8))
+  (Ok (__tl_dyn-array u8))
   (Err String))
 
 (defenum ResultPreludeSurfaceFacts
@@ -33,7 +33,8 @@
           (set! index (+ index 1))))
       present)))
 
-(define (prelude-surface-module-set [paths : AstDeclPathList]) : (Array String)
+(define (prelude-surface-module-set [paths : AstDeclPathList]) : (__tl_dyn-array
+    String)
   (let
     [items : surface_svec.Vec (surface_svec.new)]
     [index : i64 0]
@@ -296,11 +297,11 @@
               pools)])])))
 
 (define (prelude-surface-pack
-  [identity-bytes : (Array u8)]
-  [ast-bytes : (Array u8)]
-  [fact-bytes : (Array u8)]) : ResultPreludeSurface
+  [identity-bytes : (__tl_dyn-array u8)]
+  [ast-bytes : (__tl_dyn-array u8)]
+  [fact-bytes : (__tl_dyn-array u8)]) : ResultPreludeSurface
   (let
-    [sections : (Array TlciAuxSection) (make-array TlciAuxSection 3)]
+    [sections : (__tl_dyn-array TlciAuxSection) (make-array TlciAuxSection 3)]
     (begin
       (array-set!
         sections
@@ -415,7 +416,8 @@
                 (ResultPreludeSurface.Err message))]
             [(ResultPreludeSurfaceFacts.Ok facts surface-program surface-paths)
               (let
-                [module-set : (Array String) (prelude-surface-module-set paths)]
+                [module-set : (__tl_dyn-array String)
+                  (prelude-surface-module-set paths)]
                 [surface-decls : AstDeclList
                   (match surface-program
                     [(AstProgram.Program decls-box) (box-get decls-box)])]

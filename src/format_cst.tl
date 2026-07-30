@@ -19,12 +19,12 @@
 ;; backing array, so stepping is index arithmetic instead of a pointer chase,
 ;; and every walker can also take the whole run at once.
 (defstruct FormatCstList
-  (slots (Array FormatCst))
+  (slots (__tl_dyn-array FormatCst))
   (start i64)
   (len i64))
 
 (defstruct FormatCstVec
-  (slots (Array FormatCst))
+  (slots (__tl_dyn-array FormatCst))
   (len i64))
 
 (defenum FormatCstListStep
@@ -57,8 +57,8 @@
   (FormatCstVec (make-array FormatCst 4) 0))
 
 (define (format-cst-vec-copy-range!
-  [dst : (&mut dst (Array FormatCst))]
-  [src : (& src (Array FormatCst))]
+  [dst : (&mut dst (__tl_dyn-array FormatCst))]
+  [src : (& src (__tl_dyn-array FormatCst))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -75,7 +75,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array FormatCst) (make-array FormatCst new-cap)]
+    [bigger : (__tl_dyn-array FormatCst) (make-array FormatCst new-cap)]
     (begin
       (format-cst-vec-copy-range!
         (&mut bigger)
@@ -348,7 +348,7 @@
 (extern (io.print [arg0 : i64]) : unit)
 (defenum Maybe (Some i64) (None))
 (defstruct Point (x i64) (y i64))
-(define (main [xs : (Array i64)] [p : Point]) : i64
+(define (main [xs : (__tl_dyn-array i64)] [p : Point]) : i64
   (let
     [n : i64 (array-ref xs 0)]
     [c : char ' ']

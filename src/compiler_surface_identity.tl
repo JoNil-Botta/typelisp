@@ -18,7 +18,7 @@
 
 (defstruct SurfaceIdentityKey
   (package-name String)
-  (modules (Array String))
+  (modules (__tl_dyn-array String))
   (source-hash String)
   (compiler-build String)
   (configuration String))
@@ -34,18 +34,18 @@
 
 (defstruct SurfaceIdentityPayload
   (key SurfaceIdentityKey)
-  (source-names (Array String))
-  (generated (Array SurfaceGeneratedIdentity)))
+  (source-names (__tl_dyn-array String))
+  (generated (__tl_dyn-array SurfaceGeneratedIdentity)))
 
 (defstruct SurfaceIdentityHydration
   (key SurfaceIdentityKey)
-  (remap (Array i64)))
+  (remap (__tl_dyn-array i64)))
 
 (defstruct SurfaceIdentityReader
-  (bytes (Array u8))
-  (offset (Array i64))
-  (ok (Array bool))
-  (message (Array String)))
+  (bytes (__tl_dyn-array u8))
+  (offset (__tl_dyn-array i64))
+  (ok (__tl_dyn-array bool))
+  (message (__tl_dyn-array String)))
 
 (defenum ResultSurfaceIdentityPayload
   (Ok SurfaceIdentityPayload)
@@ -69,7 +69,7 @@
 (define surface-identity-max-count : i64
   1048576)
 
-(define (surface-identity-empty-bytes) : (Array u8)
+(define (surface-identity-empty-bytes) : (__tl_dyn-array u8)
   (make-array u8 0))
 
 (define (surface-identity-string-eq? [left : String] [right : String]) : bool
@@ -114,7 +114,8 @@
         less
         (< left-len right-len)))))
 
-(define (surface-identity-module-set-canonical? [modules : (Array String)]) : bool
+(define (surface-identity-module-set-canonical?
+  [modules : (__tl_dyn-array String)]) : bool
   (let
     [index : i64 0]
     [ok : bool (> (array-length modules) 0)]
@@ -141,8 +142,8 @@
     (surface-identity-module-set-canonical? (struct-get key modules))))
 
 (define (surface-identity-string-array-eq?
-  [left : (Array String)]
-  [right : (Array String)]) : bool
+  [left : (__tl_dyn-array String)]
+  [right : (__tl_dyn-array String)]) : bool
   (let
     [index : i64 0]
     [equal : bool (= (array-length left) (array-length right))]
@@ -230,7 +231,9 @@
             (+ identity-count (+ (* module-ref identity-count) name-ref))))]
       [else (surface-identity-local-ref id source-count)])))
 
-(define (surface-identity-resolve-portable-id [id : i64] [remap : (Array i64)]) : i64
+(define (surface-identity-resolve-portable-id
+  [id : i64]
+  [remap : (__tl_dyn-array i64)]) : i64
   (let
     [image-stride : i64 (array-length remap)]
     [image-stride2 : i64 (* image-stride image-stride)]
@@ -291,7 +294,7 @@
 (define (surface-identity-payload-valid? [payload : SurfaceIdentityPayload]) : bool
   (let
     [source-count : i64 (array-length (struct-get payload source-names))]
-    [generated : (Array SurfaceGeneratedIdentity)
+    [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
       (struct-get payload generated)]
     [index : i64 0]
     [ok : bool (surface-identity-key-valid? (struct-get payload key))]
@@ -304,11 +307,11 @@
           (set! ok false)))
       ok)))
 
-(define (surface-identity-reader-new [bytes : (Array u8)]) : SurfaceIdentityReader
+(define (surface-identity-reader-new [bytes : (__tl_dyn-array u8)]) : SurfaceIdentityReader
   (let
-    [offset : (Array i64) (make-array i64 1)]
-    [ok : (Array bool) (make-array bool 1)]
-    [message : (Array String) (make-array String 1)]
+    [offset : (__tl_dyn-array i64) (make-array i64 1)]
+    [ok : (__tl_dyn-array bool) (make-array bool 1)]
+    [message : (__tl_dyn-array String) (make-array String 1)]
     (begin
       (array-set! offset 0 0)
       (array-set! ok 0 true)
@@ -327,7 +330,7 @@
 (define (surface-identity-reader-u64! [reader : SurfaceIdentityReader]) : i64
   (let
     [offset : i64 (array-ref (struct-get reader offset) 0)]
-    [bytes : (Array u8) (struct-get reader bytes)]
+    [bytes : (__tl_dyn-array u8) (struct-get reader bytes)]
     (if (or
       (not (array-ref (struct-get reader ok) 0))
       (> offset (- (array-length bytes) 8)))
@@ -342,7 +345,7 @@
   (let
     [len : i64 (surface-identity-reader-u64! reader)]
     [offset : i64 (array-ref (struct-get reader offset) 0)]
-    [bytes : (Array u8) (struct-get reader bytes)]
+    [bytes : (__tl_dyn-array u8) (struct-get reader bytes)]
     (if (or
       (< len 0)
       (> offset (array-length bytes))
@@ -361,7 +364,7 @@
 (define (surface-identity-safe-count? [count : i64]) : bool
   (and (>= count 0) (<= count surface-identity-max-count)))
 
-(define (surface-identity-decode [bytes : (Array u8)]) : ResultSurfaceIdentityPayload
+(define (surface-identity-decode [bytes : (__tl_dyn-array u8)]) : ResultSurfaceIdentityPayload
   (let
     [reader : SurfaceIdentityReader (surface-identity-reader-new bytes)]
     [magic : i64 (surface-identity-reader-u64! reader)]
@@ -382,9 +385,10 @@
         [source-hash : String (surface-identity-reader-string! reader)]
         [compiler-build : String (surface-identity-reader-string! reader)]
         [configuration : String (surface-identity-reader-string! reader)]
-        [modules : (Array String) (make-array String module-count)]
-        [source-names : (Array String) (make-array String source-count)]
-        [generated : (Array SurfaceGeneratedIdentity)
+        [modules : (__tl_dyn-array String) (make-array String module-count)]
+        [source-names : (__tl_dyn-array String)
+          (make-array String source-count)]
+        [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
           (make-array SurfaceGeneratedIdentity generated-count)]
         [index : i64 0]
         (begin
@@ -465,7 +469,7 @@
 
 (define (surface-identity-hydrate-generated!
   [record : SurfaceGeneratedIdentity]
-  [remap : (Array i64)]) : i64
+  [remap : (__tl_dyn-array i64)]) : i64
   (let
     [name : String (struct-get record name)]
     [canonical : bool (struct-get record canonical)]
@@ -509,11 +513,12 @@
       (ResultSurfaceIdentityHydration.KeyMismatch
         "surface identity: package key mismatch")
       (let
-        [source-names : (Array String) (struct-get payload source-names)]
-        [generated : (Array SurfaceGeneratedIdentity)
+        [source-names : (__tl_dyn-array String)
+          (struct-get payload source-names)]
+        [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
           (struct-get payload generated)]
         [source-count : i64 (array-length source-names)]
-        [remap : (Array i64)
+        [remap : (__tl_dyn-array i64)
           (make-array i64 (+ source-count (array-length generated)))]
         [index : i64 0]
         (begin
@@ -538,7 +543,7 @@
             (SurfaceIdentityHydration key remap)))))))
 
 (define (surface-identity-hydrate
-  [bytes : (Array u8)]
+  [bytes : (__tl_dyn-array u8)]
   [expected-key : SurfaceIdentityKey]) : ResultSurfaceIdentityHydration
   (match (surface-identity-decode bytes)
     [(ResultSurfaceIdentityPayload.Err message)
@@ -547,7 +552,7 @@
       (surface-identity-hydrate-payload payload expected-key)]))
 
 (defenum ResultSurfaceIdentityBytes
-  (Ok (Array u8))
+  (Ok (__tl_dyn-array u8))
   (Err String))
 
 (cfg
@@ -616,8 +621,8 @@
     (let
       [source-count : i64 (ci.intern-pool-len)]
       [generated-count : i64 (ci.intern-generated-count)]
-      [source-names : (Array String) (make-array String source-count)]
-      [generated : (Array SurfaceGeneratedIdentity)
+      [source-names : (__tl_dyn-array String) (make-array String source-count)]
+      [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
         (make-array SurfaceGeneratedIdentity generated-count)]
       [index : i64 0]
       (begin
@@ -645,8 +650,9 @@
         "surface identity: invalid package key or identity graph")
       (let
         [key : SurfaceIdentityKey (struct-get payload key)]
-        [source-names : (Array String) (struct-get payload source-names)]
-        [generated : (Array SurfaceGeneratedIdentity)
+        [source-names : (__tl_dyn-array String)
+          (struct-get payload source-names)]
+        [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
           (struct-get payload generated)]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
@@ -726,7 +732,7 @@
   compiler-surface-selftest
   (define (surface-identity-test-key) : SurfaceIdentityKey
     (let
-      [modules : (Array String) (make-array String 2)]
+      [modules : (__tl_dyn-array String) (make-array String 2)]
       (begin
         (array-set! modules 0 "pkg/a.tl")
         (array-set! modules 1 "pkg/b.tl")
@@ -739,7 +745,7 @@
     [source-count : i64]
     [generated-count : i64]) : bool
     (let
-      [remap : (Array i64) (struct-get hydration remap)]
+      [remap : (__tl_dyn-array i64) (struct-get hydration remap)]
       (and
         (= (array-length remap) (+ source-count generated-count))
         (= generated-count 4)
@@ -799,7 +805,7 @@
           [(ResultSurfaceIdentityBytes.Err _) false]
           [(ResultSurfaceIdentityBytes.Ok bytes)
             (let
-              [copy : (Array u8) (binary.surface-binary-copy bytes)]
+              [copy : (__tl_dyn-array u8) (binary.surface-binary-copy bytes)]
               (begin
                 (ci.intern-reset!)
                 (let
@@ -809,7 +815,8 @@
                     [(ResultSurfaceIdentityHydration.KeyMismatch _) false]
                     [(ResultSurfaceIdentityHydration.Ok hydration)
                       (let
-                        [remap : (Array i64) (struct-get hydration remap)]
+                        [remap : (__tl_dyn-array i64)
+                          (struct-get hydration remap)]
                         [mapped-module : i64 (array-ref remap 1)]
                         [mapped-base : i64 (array-ref remap 2)]
                         [mapped-alpha : i64 (array-ref remap 0)]

@@ -30,6 +30,42 @@ documented `lint-allow: deprecated-string-concat` suppressions. Qualified
 `comptime.string-append` calls are compiler-recognized macro-CTFE operations,
 not deprecated runtime concatenation.
 
+## Public Mutator Names
+
+A public stdlib operation that mutates caller-owned state through an `&mut`
+receiver has a terminal `!`. The bang is an API naming contract: it signals
+mutation, but it does not enable implicit mutable auto-borrowing. An ordinary
+function call still passes an explicit mutable reference, as in
+`(deque_i64.push-back-ref! (&mut pending) value)`.
+
+A family may additionally provide a place-taking bang macro for convenience.
+For example, `(deque_i64.push-back! pending value)` and the corresponding
+hashmap/set `insert!` operations borrow their storage places through the normal
+checked `&mut` rules and dispatch to explicit `*-ref!` helpers. Such a macro
+must evaluate the place and every other operand exactly once; it is not a
+general method-call or auto-borrow feature. `text_buf.append!` and
+`text_buf.clear!` use the same place-taking convention, while
+`byte_buf.bytes-set!` is an ordinary bang-named function over an already
+explicit mutable byte view.
+
+The rule follows effects, not spelling mechanics:
+
+- Consuming or returning an owner does not by itself require `!`;
+  `iterator.into-iterator`, for example, consumes its range without mutating a
+  caller-owned receiver.
+- A read or view operation is not a mutator merely because it accepts `&mut`.
+  `byte_buf.bytes-mut-length` reads a mutable view, and
+  `byte_buf.as-mut-bytes` yields one.
+- Iterator protocol steps retain the established `next` / `next-mut` names even
+  though they advance iterator state. Private construction and growth helpers
+  are outside this public API convention.
+
+Naming migrations update callers, documentation, tests, and generated surfaces
+atomically. Do not preserve the pre-bang name as a compatibility alias. The
+generated Vec family is still migrating under #4683: its currently shipped
+reference-taking operations remain `set`, `push`, and `pop`, so do not present
+Vec bang place macros as available yet.
+
 ## Current Modules
 
 - `arena.tl`: typed first-class `Arena`, `ArenaMark`, and `ArenaPhase` helper
@@ -591,8 +627,8 @@ append/render text builder, and `vector_slice.tl` remains a generated typed
 collection-slice precedent; neither is the raw byte-slice contract.
 The `string_caller_result.tl`, `io_caller_result.tl`, and
 `process_borrowed.tl` companion modules expose lifetime-preserving shapes.
-Borrowed process runtime wrappers copy at the owned boundary, while ordinary
-owned stdlib imports keep the compatibility wrappers.
+`io_caller_result.tl` is an explicit binary-to-text materialization boundary;
+borrowed process runtime wrappers likewise copy at their owned boundary.
 
 | Functions | Allocation behavior |
 |-----------|---------------------|
@@ -602,19 +638,19 @@ owned stdlib imports keep the compatibility wrappers.
 | `format.format` | Parses a literal template at macro expansion and emits one flat `str-cat` expression. The final rendered `String` allocates once in the active arena; scalar conversion helpers retain their documented allocation behavior before the final concat. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
 | `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |
-| `try-read-file` | Performs host file inspection through stdlib FFI; returns `OkIoString` with fresh active-arena `String` storage from `read-file` when the path is readable, or `ErrIoString` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. |
-| `try-write-file` | Writes through the recoverable stdlib status helper; returns `OkIoUnit` on success or `ErrIoUnit` for empty paths, missing parents, permission failures, interrupted writes, and target status-code failures. |
+| `read-file`, `try-read-file` | `read-file` returns an active-arena `ByteBuf`. The recoverable form returns `OkIoBytes ByteBuf` when the path is readable, or `ErrIoBytes` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. Text consumers call `byte_buf.to-string` explicitly. |
+| `write-file`, `try-write-file`, `write-file-status` | Take a borrowed `bytes` view and write it without a text-shaped intermediate. The recoverable form returns `OkIoUnit` on success or `ErrIoUnit` for empty paths, missing parents, permission failures, interrupted writes, and target status-code failures. |
 | `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |
-| `try-append-file` | Appends through the recoverable stdlib status helper. It preserves existing contents, creates missing files, does not allocate a concatenated temporary string, and uses best-effort host append semantics rather than truncating or rewriting the whole file. |
+| `try-append-file` | Appends a borrowed `bytes` view through the recoverable stdlib status helper. It preserves existing contents, creates missing files, allocates no concatenated temporary, and uses best-effort host append semantics rather than truncating or rewriting the whole file. |
 | `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque stdlib-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, and `OpenWriteAppend`. The stdlib copies the path into active-arena storage for the host call and tracks handle state in a process-global table. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
-| `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with active-arena `String` bytes plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
-| `file-write`, `file-flush` | `file-write` writes a `String` to an `OpenWriteTruncate` or `OpenWriteAppend` handle, retrying host short writes until complete or an error is reported. `file-flush` flushes a write-mode handle. Closed, invalid, read-only, and unsupported handles return `IoUnsupported`. |
-| `read-file-or` | Compatibility wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. `io_caller_result.tl` exposes a `read-file-or-result` shape that preserves the fallback borrow on error paths and owned file contents on success. |
-| `append-file` | Panic-on-error convenience wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
-| `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
-| `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing an active-arena `String` plus the post-read sticky EOF state. Byte reads still use `String` storage until the `ByteBuf`/`bytes` split lands. |
-| `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around stdlib FFI stdio helpers and `StdinRead` values. |
-| `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
+| `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with an active-arena `ByteBuf` plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
+| `file-write`, `file-flush` | `file-write` writes a borrowed `bytes` view to an `OpenWriteTruncate` or `OpenWriteAppend` handle, retrying host short writes until complete or an error is reported. `file-flush` flushes a write-mode handle. Closed, invalid, read-only, and unsupported handles return `IoUnsupported`. |
+| `read-file-or` | Returns a successful `ByteBuf` or the caller-provided `ByteBuf` fallback for every structured error. `io_caller_result.tl` provides an explicitly textual result shape for callers that deliberately materialize file bytes as `String`. |
+| `append-file` | Panic-on-error borrowed-`bytes` wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
+| `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `ByteBuf` only when the path exists. |
+| `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing an active-arena `ByteBuf` plus the post-read sticky EOF state. `stdin-read-buffer` accesses the owned bytes; text parsing requires explicit `byte_buf.to-string`. |
+| `stdin-at-eof?`, `stdin-read-buffer`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating borrowed-byte wrappers/accessors around stdlib FFI stdio helpers and `StdinRead` values. |
+| `stdout-write-line`, `stderr-write-line` | Write a borrowed `bytes` view followed by the static newline byte; they do not materialize a newline-appended `String`. |
 | `get`, `set!`, `unset!`, `path-list`, `path-list-vec`, `path-split`, `path-split-vec`, `path-join`, `path-join-vec` | Lookup/mutation names and values, split inputs, and explicit join separators are borrowed `str` inputs. Environment values and split/join results allocate fresh active-arena Strings and either vector backing arrays or compatibility list spines when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. Linux `set!`/`unset!` retain replacement entry/array storage in a process-lifetime arena so later lookups and child `execve` calls remain valid; Windows mutation uses kernel32-owned process storage. |
 | `path-join`, `path-join-owned-pair`, `path-join-many`, `dirname`, `basename`, `extension`, `path-absolute?`, `path-normalize`, `path-safe-relative?`, `try-current-dir`, `try-mkdir`, `try-mkdir-if-missing`, `try-remove-file`, `try-remove-dir`, `try-rename`, `try-read-dir`, `try-read-dir-vec`, `try-file-kind`, `try-file-metadata`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `path-join` remains the two-argument borrowed function; `path-join-owned-pair` accepts two owned `String` segments and delegates to it; `path-join-many` is the variadic macro alias for owned `String` segments, expanding zero segments to `""`, one segment to that segment, and two or more segments to pairwise joins that delegate to `path-join`. `dirname`/`basename`/`extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `extension` operates on the basename and treats a leading-dot name as extensionless). `path-absolute?` is non-allocating and treats `/...`, `\\...`, `C:/...`, and `C:\\...` as absolute/rooted while leaving drive-relative `C:...` non-absolute. `path-normalize` is lexical only: it accepts `/` and `\\`, collapses repeated separators, removes `.`, resolves `..` against normal segments with a `StringVec` stack, preserves relative leading `..`, preserves roots and drive roots, renders `/` as the stable separator on every host, and returns `"."` for empty relative paths. `path-safe-relative?` allocates through normalization and returns true only for non-empty relative suffixes that remain below a caller-chosen root after lexical normalization; it rejects rooted, drive-qualified, empty/`.` and leading-parent paths. `try-current-dir` returns the host-reported cwd as an owned active-arena `String` on Linux and Windows through stdlib FFI, without symlink canonicalization. Recoverable filesystem helpers map host/runtime status codes into `IoError`; `try-file-kind` returns `FsFileRegular`, `FsFileDirectory`, or `FsFileOther` on Linux and Windows. `try-file-metadata` returns `FsMetadata` with coarse kind and regular-file byte size on Linux and Windows; directory and other node sizes are zero in this first slice. `try-mkdir` works on Linux and Windows, `try-mkdir-if-missing` treats an already-existing path as success, and `try-rename` follows host rename/replacement behavior. `try-read-dir` and `try-read-dir-vec` return entry names only in a `StringVec`, filter `.` and `..`, preserve host directory order without promising stable sorting, and allocate returned storage and entry strings in the active arena; Linux reads directories directly through syscalls, while Windows uses kernel32 `FindFirstFileA`/`FindNextFileA`. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes. |
 | `ffi-c-bytes-*`, `ffi-cbytes`, `ffi-c-string-*`, `ffi-cstr` helpers | `ffi-c-bytes-required-bytes`, `ffi-c-bytes-interior-nul?`, and `ffi-c-bytes-copy!` inspect or copy borrowed `(& r bytes)` into caller-owned `(MutPtr u8)` storage without allocating. `ffi-c-bytes-copy!` validates interior NUL bytes and capacity before writing, appends the trailing NUL on success, and leaves raw-pointer validity/lifetime with the caller. `ffi-c-bytes-alloc` and `ffi-cbytes` allocate a NUL-terminated byte buffer in the active arena, return null for interior NUL input, and keep the returned `(Ptr u8)` valid only until the owning arena is rewound, reset, or destroyed. The `ffi-c-string-*` and `ffi-cstr` compatibility wrappers borrow `String` inputs as bytes and delegate to the same implementation. |
@@ -750,7 +786,10 @@ behavior.
 The assertion helpers in `stdlib/test.tl` are also intended for inline
 `(test ...)` items. They do not allocate on success; `assert-string-eq` takes
 borrowed `str` comparison inputs, while messages remain owned `String` values
-because the public `panic` API still takes owned text. Repository CI runs
+so failures can render composed diagnostics. In a generated `typelisp test`
+harness, failures are recorded and execution continues through the remaining
+assertions and tests. In any other program, a failed assertion still aborts.
+Repository CI runs
 `scripts/verify-inline-tests.sh`, so inline tests placed under stdlib modules or
 fixtures are discovered without a manifest edit.
 

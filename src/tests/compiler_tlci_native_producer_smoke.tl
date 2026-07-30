@@ -16,6 +16,7 @@
 (import compiler_intern as ci)
 (import stdlib.array)
 (import stdlib.arena)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as producer_test_svec)
@@ -236,7 +237,7 @@
 (define (producer-test-dispatch-with?
   [loaded : (& loaded TlciLoadedImage)]
   [identity : String]
-  [operands : (Array CompilerCtfeValue)]
+  [operands : (__tl_dyn-array CompilerCtfeValue)]
   [count : i64]
   [fallback-expected : bool]) : bool
   (let
@@ -278,7 +279,7 @@
     [(TlciMacroEntryLookup.Resolved resolved)
       (let
         [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-        [operands : (Array CompilerCtfeValue)
+        [operands : (__tl_dyn-array CompilerCtfeValue)
           (array.make-array CompilerCtfeValue 1)]
         (begin
           (array-set! operands 0 operand)
@@ -348,7 +349,7 @@
       (ast-node-pool-context-expr-push
         pools
         (AstExpr.Literal (AstLiteral.String (ci.intern "literal"))))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 2)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Expr var-node (AstType.Expr)))
@@ -662,7 +663,7 @@
     [third : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "gamma")))]
     [items : AstExprList (ast-expr-list-new)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (when (>= count 1) (ast-expr-list-push (&mut items) first))
@@ -704,7 +705,7 @@
 ;; variable. Refs #5656.
 (define (producer-test-scoped-cat-result-ok?
   [pools : AstNodePoolContext]
-  [nodes : (Array i64)]
+  [nodes : (__tl_dyn-array i64)]
   [count : i64]
   [borrowed : bool]) : bool
   (match (compiler-comptime-host-result-value)
@@ -759,9 +760,9 @@
   [mixed : bool]) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [nodes : (Array i64) (array.make-array i64 5)]
+    [nodes : (__tl_dyn-array i64) (array.make-array i64 5)]
     [items : AstExprList (ast-expr-list-new)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     [call-callee : i64
       (ast-node-pool-context-expr-push
@@ -897,7 +898,7 @@
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "gamma")))]
     [items : AstExprList (ast-expr-list-new)]
     [carrier : i64 0]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 2)]
     (begin
       (ast-expr-list-push (&mut items) first)
@@ -1006,7 +1007,7 @@
     [items : AstExprList (ast-expr-list-new)]
     [carrier : i64 0]
     [idx : i64 0]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 3)]
     (begin
       (ast-expr-list-push (&mut items) first)
@@ -1102,7 +1103,7 @@
       (ast-node-pool-context-expr-push
         pools
         (AstExpr.Literal (ast-lit-int index)))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 2)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Expr value (AstType.Expr)))
@@ -1213,7 +1214,7 @@
       (ast-node-pool-context-expr-push
         pools
         (AstExpr.Literal (AstLiteral.String (ci.intern "picked.name"))))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Expr literal (AstType.Expr)))
@@ -1251,6 +1252,91 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; `Expr.Var` destructuring binds an interpreted Name, not a generated String.
+;; A structural macro-global id is the non-vacuous case: its visible text is
+;; unwrapped to the source identifier while its original id remains intact.
+;; Assert the callback value directly, then dispatch a native entry that feeds
+;; that Name through `expr-var` and preserves the same id. Refs #5771.
+(define (producer-test-dispatch-var-name-identity?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-id : i64 (ci.intern "structural.alias")]
+    [structural-id : i64 (+ (ci.intern-macro-global-structural-base) source-id)]
+    [operand : i64
+      (ast-node-pool-context-expr-push pools (AstExpr.Var structural-id))]
+    [operands : (__tl_dyn-array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    (begin
+      (array-set! operands 0 (CompilerCtfeValue.Expr operand (AstType.Expr)))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [callback-ok : bool
+          (and
+            (=
+              (compiler-comptime-host-callback-operand-expr-var-name
+                producer-test-cookie
+                0
+                0
+                0)
+              tlci-host-callback-status-ok)
+            (=
+              (compiler-comptime-host-callback-commit-result
+                producer-test-cookie
+                0
+                0
+                0)
+              tlci-host-callback-status-ok)
+            (match (compiler-comptime-host-result-value)
+              [(CompilerCtfeValue.Name text name-id)
+                (and
+                  (string.eq text "structural.alias")
+                  (= name-id structural-id))]
+              [_ false]))]
+        (begin
+          (compiler-comptime-host-session-close!)
+          (if (not callback-ok)
+            false
+            (begin
+              (compiler-comptime-host-session-open!
+                pools
+                operands
+                1
+                64
+                producer-test-cookie
+                (ctfe-reflect-info-list-empty))
+              (let
+                [dispatch-ok : bool
+                  (match (tlci-loader-dispatch-macro
+                    loaded
+                    identity
+                    producer-test-cookie
+                    (array.make-array i64 0)
+                    0)
+                    [(ResultTlciMacroDispatch.Err _) false]
+                    [(ResultTlciMacroDispatch.Ok dispatch)
+                      (and
+                        (=
+                          (struct-get dispatch status)
+                          tlci-host-callback-status-ok)
+                        (compiler-comptime-host-result-ready?)
+                        (match (compiler-comptime-host-result-value)
+                          [(CompilerCtfeValue.Expr node _)
+                            (match (ast-node-pool-context-expr-get pools node)
+                              [(AstExpr.Var name-id) (= name-id structural-id)]
+                              [_ false])]
+                          [_ false]))])]
+                (begin
+                  (compiler-comptime-host-session-close!)
+                  dispatch-ok)))))))))
+
 ;; Module operands are canonical identity Strings. `modname` routes that value
 ;; through module-name then expr-var, while `modhook` resolves a generated hook
 ;; to the same canonical qualified Var as interpreted CTFE. Refs #5699.
@@ -1261,7 +1347,7 @@
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [module-id : i64 (ci.intern module)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.String module module-id))
@@ -1305,7 +1391,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [module-id : i64 (ci.intern module)]
     [hook-id : i64 (ci.intern hook)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.String module module-id))
@@ -1350,7 +1436,7 @@
   [hook : String]) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set!
@@ -1398,7 +1484,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [operand : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "value")))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Expr operand (AstType.I64)))
@@ -1458,7 +1544,7 @@
       (ast-node-pool-context-expr-push
         pools
         (AstExpr.Literal (AstLiteral.String (ci.intern literal))))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Expr operand (AstType.Expr)))
@@ -1523,7 +1609,7 @@
   [argument : String]) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (producer-test-expr-operand argument))
@@ -1563,7 +1649,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [operand : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern argument)))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Expr operand (AstType.Expr)))
@@ -1610,7 +1696,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [operand : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "value")))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 2)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Type (AstType.I64)))
@@ -1648,7 +1734,7 @@
   [identity : String]) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (compiler-comptime-host-session-open!
@@ -1715,7 +1801,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [operand : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "value")))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 2)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Type (AstType.I64)))
@@ -1809,7 +1895,7 @@
   [identity : String]) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (producer-test-expr-operand "value"))
@@ -1879,7 +1965,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [operand : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "value")))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Expr operand (AstType.F64)))
@@ -1915,7 +2001,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [operand : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "value")))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 2)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Type (AstType.I64)))
@@ -1945,6 +2031,258 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; `type-nominal-module` must preserve the interpreted Name result, including
+;; a structural macro-global module id whose displayed text is its source name.
+;; Modes 0/1 dispatch struct/enum operands, mode 2 checks the interpreted
+;; non-nominal diagnostic, and mode 3 proves a missing operand fails closed.
+;; Refs #6000.
+(define (producer-test-nominal-reflections
+  [canonical-id : i64]
+  [module-text : String]
+  [name-text : String]
+  [enum? : bool]) : CtfeReflectInfoList
+  (ctfe-reflect-info-list-push-id
+    (ctfe-reflect-info-list-with-capacity 1)
+    (if enum?
+      (CtfeReflectInfo.Enum
+        (string.append module-text (string.append "/" name-text))
+        module-text
+        name-text
+        canonical-id
+        (CtfeReflectCleanup.No)
+        (ctfe-reflect-variant-list-with-capacity 0))
+      (CtfeReflectInfo.Struct
+        (string.append module-text (string.append "/" name-text))
+        module-text
+        name-text
+        canonical-id
+        (CtfeReflectCleanup.No)
+        (ctfe-reflect-field-list-with-capacity 0)))
+    canonical-id))
+
+(define (producer-test-nominal-result-eq? [expected : CompilerCtfeValue]) : bool
+  (match expected
+    [(CompilerCtfeValue.Name expected-text expected-id)
+      (match (compiler-comptime-host-result-value)
+        [(CompilerCtfeValue.Name actual-text actual-id)
+          (and (string.eq actual-text expected-text) (= actual-id expected-id))]
+        [_ false])]
+    [_ false]))
+
+(define (producer-test-dispatch-nominal-module?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]
+  [mode : i64]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-module-id : i64 (ci.intern "producer.nominal.module")]
+    [module-id : i64
+      (if (= mode 0)
+        (+ (ci.intern-macro-global-structural-base) source-module-id)
+        source-module-id)]
+    [name-id : i64 (ci.intern "Nominal")]
+    [canonical-id : i64 (intern-composite-pair-id module-id name-id)]
+    [operands : (__tl_dyn-array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    [infos : CtfeReflectInfoList
+      (if (< mode 2)
+        (producer-test-nominal-reflections
+          canonical-id
+          "producer.nominal.module"
+          "Nominal"
+          (= mode 1))
+        (ctfe-reflect-info-list-empty))]
+    (begin
+      (array-set!
+        operands
+        0
+        (CompilerCtfeValue.Type
+          (cond
+            [(= mode 0) (AstType.Struct canonical-id)]
+            [(= mode 1) (AstType.Enum canonical-id)]
+            [else (AstType.I64)])))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        (if (= mode 3)
+          0
+          1)
+        64
+        producer-test-cookie
+        infos)
+      (let
+        [ok : bool
+          (match (tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(ResultTlciMacroDispatch.Err _) false]
+            [(ResultTlciMacroDispatch.Ok dispatch)
+              (cond
+                [(< mode 2)
+                  (and
+                    (=
+                      (struct-get dispatch status)
+                      tlci-host-callback-status-ok)
+                    (compiler-comptime-host-result-ready?)
+                    (producer-test-nominal-result-eq?
+                      (ctfe-name-value module-id)))]
+                [(= mode 2)
+                  (and
+                    (=
+                      (struct-get dispatch status)
+                      tlci-host-callback-status-diagnostic)
+                    (not (compiler-comptime-host-result-ready?))
+                    (string.eq
+                      (compiler-comptime-host-diagnostic-text)
+                      "type-nominal-module requires struct or enum type"))]
+                [else
+                  (and
+                    (=
+                      (struct-get dispatch status)
+                      tlci-host-callback-status-bad-request)
+                    (not (compiler-comptime-host-result-ready?)))])])]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
+;; Reflected module identities are Name values, while string literals are
+;; String values. Public string comparison accepts both on the interpreted
+;; path; keep the native callback compatible so a computed condition such as
+;; `(string-eq (type-nominal-module T) "")` is safe. Refs #5606.
+(define (producer-test-nominal-module-string-eq?) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-module-id : i64 (ci.intern "producer.nominal.module")]
+    [module-id : i64
+      (+ (ci.intern-macro-global-structural-base) source-module-id)]
+    [name-id : i64 (ci.intern "Nominal")]
+    [canonical-id : i64 (intern-composite-pair-id module-id name-id)]
+    [operands : (__tl_dyn-array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    (begin
+      (array-set!
+        operands
+        0
+        (CompilerCtfeValue.Type (AstType.Struct canonical-id)))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (producer-test-nominal-reflections
+          canonical-id
+          "producer.nominal.module"
+          "Nominal"
+          false))
+      (let
+        [push-status : i64
+          (compiler-comptime-host-callback-push-operand
+            producer-test-cookie
+            0
+            0
+            0)]
+        [module-status : i64
+          (compiler-comptime-host-callback-type-key producer-test-cookie 1 0 0)]
+        [literal-status : i64
+          (compiler-comptime-host-push!
+            (ctfe-generated-string-value "producer.nominal.module"))]
+        [equal : i64
+          (compiler-comptime-host-callback-string-eq producer-test-cookie 0 0 0)]
+        [ok : bool
+          (and
+            (= push-status tlci-host-callback-status-ok)
+            (= module-status tlci-host-callback-status-ok)
+            (= literal-status tlci-host-callback-status-ok)
+            (= equal 1))]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
+;; Dotted append has identity semantics beyond its rendered text. A structural
+;; module Name plus a generated `.member` suffix must remain the canonical
+;; generated-module member identity, or syntax construction resolves the same
+;; spelling in the wrong module. Refs #5606.
+(define (producer-test-name-dotted-string-append?) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-module-id : i64 (ci.intern "producer.nominal.module")]
+    [module-id : i64
+      (+ (ci.intern-macro-global-structural-base) source-module-id)]
+    [dot-id : i64 (ci.intern ".")]
+    [member-id : i64 (ci.intern "into-iterator")]
+    [expected-suffix : CompilerCtfeValue
+      (ctfe-generated-string-append-value "." dot-id "into-iterator" member-id)]
+    [operands : (__tl_dyn-array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 0)]
+    (match expected-suffix
+      [(CompilerCtfeValue.String suffix-text suffix-id)
+        (let
+          [expected : CompilerCtfeValue
+            (ctfe-generated-string-append-value
+              "producer.nominal.module"
+              module-id
+              suffix-text
+              suffix-id)]
+          (begin
+            (compiler-comptime-host-session-open!
+              pools
+              operands
+              0
+              64
+              producer-test-cookie
+              (ctfe-reflect-info-list-empty))
+            (let
+              [module-status : i64
+                (compiler-comptime-host-push! (ctfe-name-value module-id))]
+              [dot-status : i64
+                (compiler-comptime-host-push! (ctfe-source-string-value dot-id))]
+              [member-status : i64
+                (compiler-comptime-host-push!
+                  (ctfe-source-string-value member-id))]
+              [suffix-status : i64
+                (compiler-comptime-host-callback-string-append
+                  producer-test-cookie
+                  0
+                  0
+                  0)]
+              [full-status : i64
+                (compiler-comptime-host-callback-string-append
+                  producer-test-cookie
+                  0
+                  0
+                  0)]
+              [commit-status : i64
+                (compiler-comptime-host-callback-commit-result
+                  producer-test-cookie
+                  0
+                  0
+                  0)]
+              [ok : bool
+                (and
+                  (= module-status tlci-host-callback-status-ok)
+                  (= dot-status tlci-host-callback-status-ok)
+                  (= member-status tlci-host-callback-status-ok)
+                  (= suffix-status tlci-host-callback-status-ok)
+                  (= full-status tlci-host-callback-status-ok)
+                  (= commit-status tlci-host-callback-status-ok)
+                  (match expected
+                    [(CompilerCtfeValue.String expected-text expected-id)
+                      (match (compiler-comptime-host-result-value)
+                        [(CompilerCtfeValue.String actual-text actual-id)
+                          (and
+                            (string.eq actual-text expected-text)
+                            (= actual-id expected-id))]
+                        [_ false])]
+                    [_ false]))]
+              (begin
+                (compiler-comptime-host-session-close!)
+                ok))))]
+      [_ false])))
+
 (define (producer-test-dispatch-fold?
   [loaded : (& loaded TlciLoadedImage)]
   [identity : String]) : bool
@@ -1953,7 +2291,7 @@
     [condition : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "flag")))]
     [items : AstExprList (ast-expr-cons condition (ast-expr-list-new))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.ExprList items))
@@ -2001,7 +2339,7 @@
       (if (= body-count 2)
         (ast-expr-cons first (ast-expr-cons second (ast-expr-list-new)))
         (ast-expr-list-new))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 2)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Expr condition (AstType.Expr)))
@@ -2082,7 +2420,7 @@
       (if (= count 0)
         (ast-expr-list-new)
         (ast-expr-cons value (ast-expr-list-new)))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.ExprList items))
@@ -2122,7 +2460,7 @@
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "second")))]
     [expected : AstExprList
       (ast-expr-cons first (ast-expr-cons second (ast-expr-list-new)))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 2)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Expr first (AstType.Expr)))
@@ -2159,7 +2497,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [value : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "value")))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Expr value (AstType.Expr)))
@@ -2209,7 +2547,7 @@
   (arena.tl_arena_current))
 
 (define (producer-test-emitted-bytes-ok?
-  [bytes : (Array u8)]
+  [bytes : (__tl_dyn-array u8)]
   [template-identity : String]
   [template-callee : String]
   [fold-identity : String]
@@ -2231,7 +2569,7 @@
               template-callee)
             (producer-test-dispatch-fold? (& loaded) fold-identity)
             (let
-              [fallback-operands : (Array CompilerCtfeValue)
+              [fallback-operands : (__tl_dyn-array CompilerCtfeValue)
                 (array.make-array CompilerCtfeValue 1)]
               (begin
                 (array-set!
@@ -2254,7 +2592,8 @@
 ;; macro instead of maintaining a simplified copy. Refs #5656.
 (define (producer-test-str-cat-scoped-native-image-ok?) : bool
   (let
-    [source : String (io.read-file "stdlib/str_cat_runtime.tl")]
+    [source : String
+      (byte_buf.to-string (io.read-file "stdlib/str_cat_runtime.tl"))]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (match (parse-ast-source source)
@@ -2270,7 +2609,7 @@
                 (&mut captures))
               (let
                 [name-count : i64 (producer_test_svec.len (& names))]
-                [name-array : (Array String)
+                [name-array : (__tl_dyn-array String)
                   (array.make-array String name-count)]
                 [name-index : i64 0]
                 [_copy-names : unit
@@ -2356,11 +2695,11 @@
   (let
     [source-base : String
       "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr (match value [(comptime.Expr.If c t e) c] [_ value]))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n(defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))\n(defmacro (modname [format : Module]) : Expr (comptime.expr-var (comptime.module-name format)))\n(defmacro (modhook [format : Module]) : Expr (comptime.module-hook format \"object-field\"))\n(defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))\n(defmacro (twice [value : Expr]) : Expr `(begin (set! flag 1) (set! flag 2)))\n(defmacro (catlike [args : String ...]) : String (match (comptime.expr-list-length args) [0 `\"\"] [1 (comptime.expr-list-nth args 0)] [2 `(concat2 ,(comptime.expr-list-nth args 0) ,(comptime.expr-list-nth args 1))] [n `(concat-all (pack (__args ,@args) ,(comptime.expr-int n)))]))\n(defmacro (pushlike [carrier : Expr] [piece : Expr]) : Expr (match carrier [(comptime.Expr.Call callee pieces) `(,callee ,@pieces ,piece)] [_ carrier]))\n(defmacro (finishlike [carrier : Expr]) : Expr (match carrier [(comptime.Expr.Call _ pieces) `(joined ,@pieces)] [_ `\"\"]))\n(defmacro (kindfull [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [\"f64\" `(kind-f64 ,value)]))\n(defmacro (kindly [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [other (comptime.comptime-error \"kindly: unsupported\")]))
-(defmacro (kindwild [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [_ `(kind-other ,value)]))\n(defmacro (places [value : Expr]) : Expr `(match ,value [(Some inner) (begin (set! (struct-get inner len) 1.5) (box-get (box inner)))] [_ (return ,value)]))\n(defmacro (foldlike [carrier : Expr] [acc : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match carrier [(comptime.Expr.Call _ elems) (if (>= i (comptime.expr-list-length elems)) acc `(foldlike ,carrier (step ,acc ,(comptime.expr-list-nth elems i)) ,(comptime.expr-int (+ i 1))))] [_ acc])] [_ acc]))\n(defmacro (kindof [value : Expr]) : Expr (match (type-kind (comptime.expr-type value)) [\"f64\" `(f64-op ,value)] [_ `(other ,value)]))\n(defmacro (keyof [T : type] [value : Expr]) : Expr (match (type-key T) [\"i64\" `(i64-op (cast ,value : i64))] [_ `(other ,value)]))\n(defmacro (rawptr [value : Expr]) : Expr `(unsafe (ptr-write! (ptr-offset (string-data ,value) 1) (ptr-read (ptr-offset (array-data ,value) 2))) (string-from-bytes (string-data ,value) (ptr->int (string-data ,value)))))\n(defmacro (strval [value : Expr]) : Expr (comptime.expr-var (comptime.expr-string-value value)))\n(defmacro (typeof [value : Expr]) : Expr `(marker ,(comptime.expr-type value)))\n(defmacro (aliaslike [value : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match value [(comptime.Expr.Var t) (comptime.expr-var (comptime.string-append (comptime.string-append t \"_n\") (comptime.int->string i)))] [_ value])] [_ value]))\n(defmacro (typetpl [value : Expr]) : Expr `(let [a : (Ptr u8) (ptr-cast (string-data ,value) : (Ptr u8))] [b : (Array i64) ,value] [c : (& region str) ,value] [d : (Box i64) ,value] [e : (Array i64 4) ,value] (marker a b c d e)))\n(defmacro (scan [text : Expr]) : Expr (if (comptime.expr-string? text) (let [s : String (comptime.expr-string-value text)] [n : i64 (string.string-length s)] (if (= (cast (string.string-ref s 0) : i64) 123) `(brace ,(comptime.expr-int n)) `(plain ,(comptime.expr-string (comptime.string-slice s 1 (- n 1)))))) (comptime.comptime-error \"scan: expects a string literal\")))\n"]
+(defmacro (kindwild [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [_ `(kind-other ,value)]))\n(defmacro (places [value : Expr]) : Expr `(match ,value [(Some inner) (begin (set! (struct-get inner len) 1.5) (box-get (box inner)))] [_ (return ,value)]))\n(defmacro (foldlike [carrier : Expr] [acc : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match carrier [(comptime.Expr.Call _ elems) (if (>= i (comptime.expr-list-length elems)) acc `(foldlike ,carrier (step ,acc ,(comptime.expr-list-nth elems i)) ,(comptime.expr-int (+ i 1))))] [_ acc])] [_ acc]))\n(defmacro (kindof [value : Expr]) : Expr (match (type-kind (comptime.expr-type value)) [\"f64\" `(f64-op ,value)] [_ `(other ,value)]))\n(defmacro (keyof [T : type] [value : Expr]) : Expr (match (type-key T) [\"i64\" `(i64-op (cast ,value : i64))] [_ `(other ,value)]))\n(defmacro (rawptr [value : Expr]) : Expr `(unsafe (ptr-write! (ptr-offset (string-data ,value) 1) (ptr-read (ptr-offset (array-data ,value) 2))) (string-from-bytes (string-data ,value) (ptr->int (string-data ,value)))))\n(defmacro (strval [value : Expr]) : Expr (comptime.expr-var (comptime.expr-string-value value)))\n(defmacro (typeof [value : Expr]) : Expr `(marker ,(comptime.expr-type value)))\n(defmacro (aliaslike [value : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match value [(comptime.Expr.Var t) (comptime.expr-var (comptime.string-append (comptime.string-append t \"_n\") (comptime.int->string i)))] [_ value])] [_ value]))\n(defmacro (typetpl [value : Expr]) : Expr `(let [a : (Ptr u8) (ptr-cast (string-data ,value) : (Ptr u8))] [b : (__tl_dyn-array i64) ,value] [c : (& region str) ,value] [d : (Box i64) ,value] [e : (Array i64 4) ,value] (marker a b c d e)))\n(defmacro (scan [text : Expr]) : Expr (if (comptime.expr-string? text) (let [s : String (comptime.expr-string-value text)] [n : i64 (string.string-length s)] (if (= (cast (string.string-ref s 0) : i64) 123) `(brace ,(comptime.expr-int n)) `(plain ,(comptime.expr-string (comptime.string-slice s 1 (- n 1)))))) (comptime.comptime-error \"scan: expects a string literal\")))\n"]
     [source : String
       (string.append
         source-base
-        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n")]
+        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n")]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (match (parse-ast-source source)
@@ -2416,13 +2755,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 34)
-                              (= (struct-get captures len) 34)
+                              (= (array-length name-array) 36)
+                              (= (struct-get captures len) 36)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-count
                                   0)
-                                33)
+                                35)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-partial-count
@@ -2503,6 +2842,24 @@
                               (producer-test-dispatch-keyof?
                                 (& loaded)
                                 "package.macros/keyof")
+                              (producer-test-dispatch-nominal-module?
+                                (& loaded)
+                                "package.macros/nommod"
+                                0)
+                              (producer-test-dispatch-nominal-module?
+                                (& loaded)
+                                "package.macros/nommod"
+                                1)
+                              (producer-test-dispatch-nominal-module?
+                                (& loaded)
+                                "package.macros/nommod"
+                                2)
+                              (producer-test-dispatch-nominal-module?
+                                (& loaded)
+                                "package.macros/nommod"
+                                3)
+                              (producer-test-nominal-module-string-eq?)
+                              (producer-test-name-dotted-string-append?)
                               (producer-test-dispatch-shape?
                                 (& loaded)
                                 "package.macros/places"
@@ -2602,6 +2959,9 @@
                                 3
                                 false
                                 "")
+                              (producer-test-dispatch-var-name-identity?
+                                (& loaded)
+                                "package.macros/nameidentity")
                               (producer-test-dispatch-tuple-splice?
                                 (& loaded)
                                 "package.macros/tuplepack"
@@ -2633,7 +2993,7 @@
 (define (main) : i64
   (if (= (io.arg-count) 6)
     (if (producer-test-emitted-bytes-ok?
-      (tlci-string->bytes (io.read-file (io.arg 1)))
+      (byte_buf.to-array (io.read-file (io.arg 1)))
       (io.arg 2)
       (io.arg 3)
       (io.arg 4)

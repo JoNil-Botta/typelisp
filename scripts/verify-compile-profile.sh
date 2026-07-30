@@ -514,6 +514,19 @@ if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFI
     fail "profile-enabled CLI link failed"
 fi
 
+echo "[compile-profile] verify dense macro profile storage"
+if ! "$PROFILE_BIN" run src/tests/compiler_typecheck_smoke.tl \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    --cfg compile-profile \
+    --cfg test \
+    > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
+    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+    fail "dense macro profile storage smoke failed"
+fi
+
 echo "[compile-profile] verify native comptime host metadata parity"
 if ! "$PROFILE_BIN" compile src/tests/comptime_host_smoke.tl \
     -o "$COMPTIME_HOST_SMOKE_ASM" \
@@ -1028,7 +1041,7 @@ fi
 #
 # Current headroom, used against capacity, measured directly on Windows after
 # the AstExpr row narrowing landed:
-# expr macro_expand 2883702/2949120, expr typecheck 1712650/1769472,
+# expr macro_expand 2970871/3014656, expr typecheck 1712650/1769472,
 # type macro_expand 20858/21504, and type typecheck 6256/7168. #5980 added the
 # LSP code-action source and transcript coverage. Transformer-owned hygiene
 # nodes still reuse their CTFE slots instead of retaining a second complete
@@ -1036,8 +1049,9 @@ fi
 # typecheck boundary from 26 to 27 segments after #6012's last PR run; the
 # other three values are retained from their latest direct measurements.
 # #6090's dense macro type-kind storage crossed the expr macro_expand boundary
-# from 44 to 45 segments; the Windows probe measured the complete family
-# directly, including 94371840 physical payload bytes.
+# from 44 to 45 segments. #5606's remaining native producer support crossed it
+# from 45 to 46; the Windows probe measured the complete family directly,
+# including 96468992 physical payload bytes.
 # All four sit within a few percent of their next step, so expect these to move.
 # #5701 landed while
 # this was in review and consumed 4177 of the expr macro_expand headroom without
@@ -1083,7 +1097,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, so its macro-walk type footprint is part of the
     # intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 45 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 46 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 27 65536 32 \
@@ -1180,8 +1194,16 @@ fi
 
 assert_contains "$CHECK_STDERR" "compile-profile-detail|typecheck.macro_expand|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro_materialize|"
-assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=2 calls=1"
+assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=2 calls=2"
 assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=6 calls=1"
+str_cat_arity_2_line=$(grep -nF \
+    "stdlib.str_cat/str-cat arity=2 calls=2" \
+    "$CHECK_STDERR" | sed -n '1s/:.*//p')
+str_cat_arity_6_line=$(grep -nF \
+    "stdlib.str_cat/str-cat arity=6 calls=1" \
+    "$CHECK_STDERR" | sed -n '1s/:.*//p')
+[ "$str_cat_arity_2_line" -lt "$str_cat_arity_6_line" ] ||
+    fail "macro profile detail rows lost deterministic first-seen order"
 # str-cat's six-plus-operand path now delegates packing to the bootstrap-safe
 # runtime implementation, so that module's str-cat-pack step appears in the
 # macro-expansion profile.
@@ -1413,6 +1435,132 @@ if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM"; then
     diff -u "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM" >&2 || true
     fail "comment-modified stdlib root changed generated assembly"
 fi
+
+# Compile one public fixture through the embedded native catalog and through
+# forced source interpretation, require every named macro to execute on the
+# native route, and compare the resulting assembly byte-for-byte. This is the
+# route-level contract for the last string/computed-body residuals (#5606);
+# the image census alone cannot catch a callback returning the wrong syntax.
+verify_residual_route() {
+    _residual_label=$1
+    _residual_source=$2
+    shift 2
+    _residual_embedded_asm="$STDLIB_TLCI_DIR/$_residual_label-embedded.s"
+    _residual_embedded_stdout="$STDLIB_TLCI_DIR/$_residual_label-embedded.stdout"
+    _residual_embedded_stderr="$STDLIB_TLCI_DIR/$_residual_label-embedded.stderr"
+    _residual_interpreted_asm="$STDLIB_TLCI_DIR/$_residual_label-interpreted.s"
+    _residual_interpreted_stdout="$STDLIB_TLCI_DIR/$_residual_label-interpreted.stdout"
+    _residual_interpreted_stderr="$STDLIB_TLCI_DIR/$_residual_label-interpreted.stderr"
+
+    if ! (
+        cd "$STDLIB_TLCI_DIR"
+        "$PROFILE_BIN" compile "$_residual_source" \
+            -o "$_residual_embedded_asm" \
+            --target "$NL_BOOTSTRAP_TARGET" \
+            $(native_target_cfg_args)
+    ) > "$_residual_embedded_stdout" 2> "$_residual_embedded_stderr"; then
+        show_failure_logs \
+            "$_residual_embedded_stdout" "$_residual_embedded_stderr"
+        fail "embedded $_residual_label residual fixture compile failed"
+    fi
+    if ! (
+        cd "$STDLIB_TLCI_MODIFIED_DIR"
+        "$PROFILE_BIN" compile "$_residual_source" \
+            -o "$_residual_interpreted_asm" \
+            --target "$NL_BOOTSTRAP_TARGET" \
+            $(native_target_cfg_args) \
+            --stdlib-root stdlib
+    ) > "$_residual_interpreted_stdout" \
+        2> "$_residual_interpreted_stderr"; then
+        show_failure_logs \
+            "$_residual_interpreted_stdout" "$_residual_interpreted_stderr"
+        fail "interpreted $_residual_label residual fixture compile failed"
+    fi
+    assert_profile_counter_at_least_in \
+        "$_residual_embedded_stderr" \
+        "typecheck.macro.stdlib_tlci_native_dispatches" \
+        1 \
+        "$_residual_embedded_stdout" \
+        "$_residual_embedded_stderr"
+    assert_profile_counter_eq_in \
+        "$_residual_embedded_stderr" \
+        "typecheck.macro.stdlib_tlci_catalog_misses" \
+        0 \
+        "$_residual_embedded_stdout" \
+        "$_residual_embedded_stderr"
+    assert_profile_counter_eq_in \
+        "$_residual_interpreted_stderr" \
+        "typecheck.macro.stdlib_tlci_catalog_hits" \
+        0 \
+        "$_residual_interpreted_stdout" \
+        "$_residual_interpreted_stderr"
+    for _residual_identity in "$@"; do
+        assert_contains_in \
+            "$_residual_embedded_stderr" \
+            "$_residual_identity arity=" \
+            "$_residual_embedded_stdout" \
+            "$_residual_embedded_stderr"
+    done
+    if ! cmp -s "$_residual_embedded_asm" "$_residual_interpreted_asm"; then
+        diff -u "$_residual_interpreted_asm" "$_residual_embedded_asm" >&2 \
+            || true
+        fail "native and interpreted $_residual_label expansions differ"
+    fi
+}
+
+echo "[compile-profile] verify for residual routing differential (#5606)"
+verify_residual_route \
+    for-residual \
+    "$ROOT/tests/integration/for_macro.tl" \
+    "stdlib.core_macros/for"
+
+# `for` validates the iterator protocol before it builds syntax. Preserve the
+# source diagnostic as well as the successful binding/cleanup expansion above.
+FOR_RESIDUAL_DIAG_SOURCE="$ROOT/stdlib/tests/core_macros_for_missing_protocol.tl"
+FOR_RESIDUAL_DIAG_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/for-diagnostic-embedded.stdout"
+FOR_RESIDUAL_DIAG_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/for-diagnostic-embedded.stderr"
+FOR_RESIDUAL_DIAG_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/for-diagnostic-interpreted.stdout"
+FOR_RESIDUAL_DIAG_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/for-diagnostic-interpreted.stderr"
+if (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" check "$FOR_RESIDUAL_DIAG_SOURCE"
+) > "$FOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
+    2> "$FOR_RESIDUAL_DIAG_EMBEDDED_STDERR"; then
+    fail "embedded for diagnostic fixture unexpectedly passed"
+fi
+if (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" check "$FOR_RESIDUAL_DIAG_SOURCE" \
+        --stdlib-root stdlib
+) > "$FOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
+    2> "$FOR_RESIDUAL_DIAG_INTERPRETED_STDERR"; then
+    fail "interpreted for diagnostic fixture unexpectedly passed"
+fi
+grep -v 'compile-profile' "$FOR_RESIDUAL_DIAG_EMBEDDED_STDERR" \
+    > "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text"
+grep -v 'compile-profile' "$FOR_RESIDUAL_DIAG_INTERPRETED_STDERR" \
+    > "$STDLIB_TLCI_DIR/for-diagnostic-interpreted.text"
+assert_contains_in \
+    "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" \
+    "is missing protocol function" \
+    "$FOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
+    "$FOR_RESIDUAL_DIAG_EMBEDDED_STDERR"
+if ! cmp -s "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" \
+    "$STDLIB_TLCI_DIR/for-diagnostic-interpreted.text"; then
+    diff -u "$STDLIB_TLCI_DIR/for-diagnostic-interpreted.text" \
+        "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" >&2 || true
+    fail "native and interpreted for diagnostics differ"
+fi
+
+echo "[compile-profile] verify json/serialize residual routing differential (#5606)"
+verify_residual_route \
+    serialize-json-residual \
+    "$ROOT/tests/integration/stdlib_serialize_json.tl" \
+    "stdlib.json/decode-int" \
+    "stdlib.serialize/encode-value" \
+    "stdlib.serialize/decode-value" \
+    "stdlib.serialize/enum-source-import" \
+    "stdlib.serialize/nested-import-for-type"
 
 # The public concatenator must preserve every operand-count arm across the
 # embedded native route and forced source interpretation. Besides assembly
@@ -1862,6 +2010,8 @@ assert_profile_counter_eq_in     "$STDLIB_TLCI_WILD_MODIFIED_STDERR"     "typech
 # Both wildcard-arm identities must fire, so a fixture edit cannot silently
 # stop covering them.
 assert_contains "$STDLIB_TLCI_WILD_EMBEDDED_STDERR" "stdlib.hash/hash arity=1"
+assert_contains "$STDLIB_TLCI_WILD_EMBEDDED_STDERR" \
+    "stdlib.hash/inline-hash arity=2"
 assert_contains "$STDLIB_TLCI_WILD_EMBEDDED_STDERR" "stdlib.eq/inline-eq arity=3"
 if ! cmp -s "$STDLIB_TLCI_WILD_EMBEDDED_ASM"     "$STDLIB_TLCI_WILD_MODIFIED_ASM"; then
     diff -u "$STDLIB_TLCI_WILD_EMBEDDED_ASM"         "$STDLIB_TLCI_WILD_MODIFIED_ASM" >&2 || true

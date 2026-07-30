@@ -1,4 +1,5 @@
 ;; inspect_cli_core.tl - Public tlci inspection command.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -54,40 +55,62 @@ Summary:
     (string.int->string bytes)
     "\n"))
 
-(define (tlci-inspect-spmd-specializations [items : TlciSpmdSpecializationList]) : String
-  (match items
-    [(TlciSpmdSpecializationList.Nil) ""]
-    [(TlciSpmdSpecializationList.Cons item rest)
-      (str_cat.str-cat
-        "    specialization: abi="
-        (struct-get item abi)
-        " backend="
-        (struct-get item backend)
-        " lanes="
-        (string.int->string (struct-get item lanes))
-        " args="
-        (struct-get item args)
-        " result="
-        (struct-get item result)
-        " index-param="
-        (string.int->string (struct-get item index-param))
-        " symbol="
-        (struct-get item symbol)
-        "\n"
-        (tlci-inspect-spmd-specializations (box-get rest)))]))
+(define (tlci-inspect-spmd-specializations [items : TlciSpmdSpecializations]) : String
+  (let
+    [count : i64 (tlci-spmd-specializations-len items)]
+    [index : i64 0]
+    [out : String ""]
+    (begin
+      (while (< index count)
+        (let
+          [item : TlciSpmdSpecialization
+            (tlci-spmd-specializations-ref items index)]
+          (begin
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                "    specialization: abi="
+                (struct-get item abi)
+                " backend="
+                (struct-get item backend)
+                " lanes="
+                (string.int->string (struct-get item lanes))
+                " args="
+                (struct-get item args)
+                " result="
+                (struct-get item result)
+                " index-param="
+                (string.int->string (struct-get item index-param))
+                " symbol="
+                (struct-get item symbol)
+                "\n"))
+            (set! index (+ index 1)))))
+      out)))
 
-(define (tlci-inspect-spmd-callables [items : TlciSpmdCallableList]) : String
-  (match items
-    [(TlciSpmdCallableList.Nil) ""]
-    [(TlciSpmdCallableList.Cons item rest)
-      (str_cat.str-cat
-        "  helper: name="
-        (struct-get item name)
-        " signature="
-        (struct-get item signature)
-        "\n"
-        (tlci-inspect-spmd-specializations (struct-get item specializations))
-        (tlci-inspect-spmd-callables (box-get rest)))]))
+(define (tlci-inspect-spmd-callables [items : TlciSpmdCallables]) : String
+  (let
+    [count : i64 (tlci-spmd-callables-len items)]
+    [index : i64 0]
+    [out : String ""]
+    (begin
+      (while (< index count)
+        (let
+          [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
+          (begin
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                "  helper: name="
+                (struct-get item name)
+                " signature="
+                (struct-get item signature)
+                "\n"
+                (tlci-inspect-spmd-specializations
+                  (struct-get item specializations))))
+            (set! index (+ index 1)))))
+      out)))
 
 (define (tlci-inspect-spmd-section [metadata : TlciMetadata]) : String
   (if (string.eq (struct-get metadata version) tlci-metadata-version-v2)
@@ -96,7 +119,7 @@ Summary:
       (tlci-inspect-spmd-callables (struct-get metadata spmd-callables)))
     ""))
 
-(define (tlci-inspect-render [bytes : (Array u8)] [image : TlciImage]) : String
+(define (tlci-inspect-render [bytes : (__tl_dyn-array u8)] [image : TlciImage]) : String
   (let
     [metadata : TlciMetadata (struct-get image metadata)]
     [host-arch : i64 (struct-get image host-arch)]
@@ -172,7 +195,9 @@ Summary:
 (define (tlci-inspect-error [path : String] [message : String]) : String
   (str_cat.str-cat "inspect: " path ": " message "\n"))
 
-(define (tlci-inspect-render-bytes [path : String] [bytes : (Array u8)]) : i64
+(define (tlci-inspect-render-bytes
+  [path : String]
+  [bytes : (__tl_dyn-array u8)]) : i64
   (match (tlci-parse-image bytes)
     [(ResultTlciImage.Err message)
       (begin
@@ -269,10 +294,10 @@ Summary:
       (if (string.eq path "embedded:stdlib.tlci")
         (tlci-inspect-embedded-stdlib)
         (match (io.try-read-file (& path))
-          [(io.ErrIoString error)
+          [(io.ErrIoBytes error)
             (begin
               (io.print-error
                 (tlci-inspect-error path (io.error-message error)))
               1)]
-          [(io.OkIoString contents)
-            (tlci-inspect-render-bytes path (tlci-string->bytes contents))])))))
+          [(io.OkIoBytes contents)
+            (tlci-inspect-render-bytes path (byte_buf.to-array contents))])))))

@@ -309,7 +309,7 @@ if [ "$noasm_test_status" -ne 0 ]; then
     fail "selfhost test direct-object without assembler failed"
 fi
 assert_empty "$WORKDIR/test-direct-object.stdout"
-assert_contains "$WORKDIR/test-direct-object.stderr" "TypeLisp tests passed: 1 test(s)"
+assert_contains "$WORKDIR/test-direct-object.stderr" "TypeLisp tests: 1 passed; 0 failed; 1 total"
 
 LINK_LIB_DIR="$WORKDIR/native-lib"
 mkdir -p "$LINK_LIB_DIR"

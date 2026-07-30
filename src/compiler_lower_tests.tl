@@ -5,9 +5,6 @@
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import "compiler_ir_types.tl")
-(import "compiler_clone.tl")
-(import "compiler_ctfe.tl")
-(import "compiler_float.tl")
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
 (import stdlib.string)
@@ -1960,6 +1957,44 @@
     [Two.Second 20]))
 (define (main) : i64 0)")
 
+(define (compiler-lower-total-enum-provenance-source) : String
+  "(defenum Six (A) (B) (C) (D) (E) (F))
+(define (large [value : Six]) : i64
+  (match value
+    [Six.A 0]
+    [Six.B 1]
+    [Six.C 2]
+    [Six.D 3]
+    [Six.E 4]
+    [Six.F 5]))
+(defenum Small (Left) (Right))
+(define (small [value : Small]) : i64
+  (match value
+    [Small.Left 10]
+    [Small.Right 20]))
+(defenum Outer (Wrap Six) (Empty))
+(define (nested [value : Outer]) : i64
+  (match value
+    [(Outer.Wrap inner)
+      (match inner
+        [Six.A 20]
+        [Six.B 21]
+        [Six.C 22]
+        [Six.D 23]
+        [Six.E 24]
+        [Six.F 25])]
+    [Outer.Empty 30]))
+(defenum Seven (P0) (P1) (P2) (P3) (P4) (P5) (P6))
+(define (partial [value : Seven]) : i64
+  (match value
+    [Seven.P0 40]
+    [Seven.P1 41]
+    [Seven.P2 42]
+    [Seven.P3 43]
+    [Seven.P4 44]
+    [_ 45]))
+(define (main) : i64 0)")
+
 ;; A refutable literal payload subpattern: `(Some 0)` tests the payload
 ;; and, on mismatch, falls through to the `(Some n)` binding arm. The trailing
 ;; `(Some n)` keeps the match exhaustive.
@@ -2240,6 +2275,12 @@
 (define (lower-test-instr-branch-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(CompilerIrInstr.Branch _ _ _) 1]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instr-total-enum-branch-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) 1]
     [_ 0]))
 
 (define (lower-test-instr-bounds-count [instr : CompilerIrInstr]) : i64
@@ -2793,6 +2834,24 @@
           (set!
             acc
             (+ acc (lower-test-instr-branch-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-total-enum-branch-count
+  [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-total-enum-branch-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -3426,6 +3485,20 @@
     [(CompilerIrBlockList.Array seq)
       (lower-test-blocks-branch-count (compiler-ir-block-seq-to-list seq))]))
 
+(define (lower-test-blocks-total-enum-branch-count
+  [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (lower-test-instr-seq-total-enum-branch-count instrs)
+            (lower-test-blocks-total-enum-branch-count (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (lower-test-blocks-total-enum-branch-count
+        (compiler-ir-block-seq-to-list seq))]))
+
 (define (lower-test-blocks-bounds-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
@@ -3962,6 +4035,22 @@
             (lower-test-function-branch-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
       (lower-test-function-branch-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
+
+(define (lower-test-function-total-enum-branch-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(CompilerIrFunctionList.Nil) (- 0 1)]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function fname _ _ _ blocks)
+          (if (string.eq (compiler-ir-symbol-text fname) name)
+            (lower-test-blocks-total-enum-branch-count blocks)
+            (lower-test-function-total-enum-branch-count (box-get rest) name))])]
+    [(CompilerIrFunctionList.Array seq)
+      (lower-test-function-total-enum-branch-count
         (compiler-ir-function-seq-to-list seq)
         name)]))
 
@@ -6288,6 +6377,31 @@
               1)
             (=
               (lower-test-function-call-count functions "score" "tl_oob_abort")
+              0))])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-total-enum-provenance-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-total-enum-provenance-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (>=
+              (lower-test-function-total-enum-branch-count functions "large")
+              4)
+            (=
+              (lower-test-function-total-enum-branch-count functions "small")
+              0)
+            ;; The outer two-arm match remains ordinary while its nested
+            ;; six-variant match independently carries the total proof.
+            (=
+              (lower-test-function-total-enum-branch-count functions "nested")
+              4)
+            (= (lower-test-function-branch-count functions "nested") 6)
+            ;; A catch-all makes the match exhaustive as source syntax, but it
+            ;; does not prove that the compared tags cover the enum domain.
+            (=
+              (lower-test-function-total-enum-branch-count functions "partial")
               0))])]
     [(ResultCompilerLower.Err _) false]))
 

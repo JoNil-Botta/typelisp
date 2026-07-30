@@ -24,7 +24,7 @@
 ;# Generated family metadata is type-agnostic. Struct and enum element
 ;# instantiations use the same private dynamic storage and
 ;# `array-ref`/`array-set!`
-;# move pattern as scalar and `String` families: `push`/`set!` move the element
+;# move pattern as scalar and `String` families: `push`/`set` move the element
 ;# into a live slot, `pop` moves the last live element out with the shrunk
 ;# vector, and growth helpers move the live prefix into fresh storage. The same
 ;# source API works whether aggregate elements occupy handle slots or are stored

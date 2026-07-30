@@ -1,4 +1,5 @@
 ;; compiler_semantic_index.tl - Owned semantic source index for compiler tooling.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.string)
@@ -61,13 +62,13 @@
   (provenance CompilerSemanticProvenance))
 
 (defstruct CompilerSemanticRecordVec
-  (items (Array CompilerSemanticRecord))
-  (live (Array bool))
+  (items (__tl_dyn-array CompilerSemanticRecord))
+  (live (__tl_dyn-array bool))
   (len i64))
 
 (defstruct CompilerSemanticSourceIndex
   (owner-arena i64)
-  (records (Array CompilerSemanticRecord))
+  (records (__tl_dyn-array CompilerSemanticRecord))
   (len i64)
   ;; A failed check returns no replacement index. Callers keep their previous
   ;; successful value until this flag can also represent partial checks.
@@ -120,7 +121,7 @@
   (generated bool)
   (provenance CompilerSemanticProvenance)
   (records (Box CompilerSemanticRecordVec))
-  (visited-expr-ids (Array i64))
+  (visited-expr-ids (__tl_dyn-array i64))
   (next-local-ordinal (Box i64)))
 
 (define (compiler-semantic-record-fallback) : CompilerSemanticRecord
@@ -153,16 +154,17 @@
 (define (compiler-semantic-record-vec-grow!
   [records : (&mut records CompilerSemanticRecordVec)]) : unit
   (let
-    [old-items : (Array CompilerSemanticRecord) (struct-get records items)]
-    [old-live : (Array bool) (struct-get records live)]
+    [old-items : (__tl_dyn-array CompilerSemanticRecord)
+      (struct-get records items)]
+    [old-live : (__tl_dyn-array bool) (struct-get records live)]
     [old-capacity : i64 (array-length old-items)]
     [new-capacity : i64
       (if (< old-capacity 1)
         1
         (* old-capacity 2))]
-    [new-items : (Array CompilerSemanticRecord)
+    [new-items : (__tl_dyn-array CompilerSemanticRecord)
       (array.make-array CompilerSemanticRecord new-capacity)]
-    [new-live : (Array bool) (array.make-array bool new-capacity)]
+    [new-live : (__tl_dyn-array bool) (array.make-array bool new-capacity)]
     [index : i64 0]
     (begin
       (while (< index (struct-get records len))
@@ -818,7 +820,7 @@
 (define (compiler-semantic-handle-module-id [ctx : TcContext] [handle : i64]) : i64
   (let
     [index : i64 (compiler-symbol-handle-index handle)]
-    [owners : (Array i64)
+    [owners : (__tl_dyn-array i64)
       (compiler-symbols-owner-module-ids (tc-context-symbols ctx))]
     (if (and (>= index 0) (< index (array-length owners)))
       (array-ref owners index)
@@ -827,7 +829,8 @@
 (define (compiler-semantic-handle-decl [ctx : TcContext] [handle : i64]) : AstDecl
   (let
     [index : i64 (compiler-symbol-handle-index handle)]
-    [decls : (Array AstDecl) (compiler-symbols-decls (tc-context-symbols ctx))]
+    [decls : (__tl_dyn-array AstDecl)
+      (compiler-symbols-decls (tc-context-symbols ctx))]
     (if (and (>= index 0) (< index (array-length decls)))
       (array-ref decls index)
       (ast-decl-fallback))))
@@ -2153,7 +2156,7 @@
   [node-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
-    [visited : (Array i64) (struct-get state visited-expr-ids)]
+    [visited : (__tl_dyn-array i64) (struct-get state visited-expr-ids)]
     (if (or
       (< node-id 0)
       (>= node-id (array-length visited))
@@ -2618,7 +2621,7 @@
                         [(string.eq path entry-path)
                           (string.copy (& entry-source))]
                         [(and (not (string.eq path "")) (io.file-exists? path))
-                          (io.read-file path)]
+                          (byte_buf.to-string (io.read-file path))]
                         [else ""])))
                   unit)
                 (set! (struct-get walk-state ctx) decl-ctx)

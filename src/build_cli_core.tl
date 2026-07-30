@@ -5,6 +5,7 @@
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
 (import stdlib.fs)
+(import stdlib.byte_buf)
 (import stdlib.env)
 (import stdlib.io)
 (import stdlib.process)
@@ -88,7 +89,7 @@
   (Stale String))
 
 (defstruct BuildPackageGraphNodeVec
-  (slots (Array BuildPackageGraphNode))
+  (slots (__tl_dyn-array BuildPackageGraphNode))
   (len i64))
 
 (defstruct BuildPackageGraph
@@ -169,7 +170,7 @@
 ;; depth and siblings keep the shallower stack alive, so each descent
 ;; right-sizes a fresh array rather than sharing one growable buffer.
 (defstruct BuildPackagePathSeq
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 (defstruct BuildPackageWorkerConfig
@@ -197,7 +198,7 @@
   (Err String))
 
 (defstruct BuildPackageGraphWorkerVec
-  (slots (Array BuildPackageGraphWorker))
+  (slots (__tl_dyn-array BuildPackageGraphWorker))
   (len i64))
 
 (defstruct BuildPackageSchedulePass
@@ -1134,7 +1135,7 @@
   (if (io.file-exists? manifest-path)
     (match (compiler-load-parse-manifest-diagnostic-infer-kind
       manifest-path
-      (io.read-file manifest-path))
+      (byte_buf.to-string (io.read-file manifest-path)))
       [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
         (ResultBuildManifest.Ok manifest)]
       [(ResultCompilerPkgManifestDiagnostic.Err diag)
@@ -1477,15 +1478,15 @@
     [path : String (build-package-lock-path manifest-dir)]
     (if (io.file-exists? path)
       (match (io.try-read-file (& path))
-        [(io.ErrIoString error)
+        [(io.ErrIoBytes error)
           (ResultBuildPackageLockState.Err
             (str_cat.str-cat
               "build: cannot read package lock '"
               path
               "': "
               (io.error-message error)))]
-        [(io.OkIoString source)
-          (match (package-lock-parse source)
+        [(io.OkIoBytes source)
+          (match (package-lock-parse (byte_buf.to-string source))
             [(ResultPackageLockFile.Err message)
               (ResultBuildPackageLockState.Err
                 (str_cat.str-cat
@@ -1506,7 +1507,7 @@
     [lock : PackageLockFile (PackageLockFile package-lock-version entries)]
     [text : String (package-lock-emit lock)]
     [path : String (struct-get state path)]
-    (match (io.try-write-file (& path) (& text))
+    (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& text)))
       [(io.OkIoUnit) (ResultBuildString.Ok path)]
       [(io.ErrIoUnit error)
         (ResultBuildString.Err
@@ -2333,7 +2334,7 @@
   [path : String]) : BuildPackagePathSeq
   (let
     [count : i64 (struct-get paths len)]
-    [slots : (Array String) (make-array String (+ count 1))]
+    [slots : (__tl_dyn-array String) (make-array String (+ count 1))]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -2392,8 +2393,8 @@
   (array-ref (struct-get v slots) index))
 
 (define (build-package-graph-node-vec-copy-range!
-  [dst : (Array BuildPackageGraphNode)]
-  [src : (Array BuildPackageGraphNode)]
+  [dst : (__tl_dyn-array BuildPackageGraphNode)]
+  [src : (__tl_dyn-array BuildPackageGraphNode)]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -2405,7 +2406,7 @@
 (define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec]) : BuildPackageGraphNodeVec
   (let
     [count : i64 (build-package-graph-node-vec-len v)]
-    [bigger : (Array BuildPackageGraphNode)
+    [bigger : (__tl_dyn-array BuildPackageGraphNode)
       (make-array
         BuildPackageGraphNode
         (* (build-package-graph-node-vec-capacity v) 2))]
@@ -2423,7 +2424,7 @@
     (build-package-graph-node-vec-len v)
     (build-package-graph-node-vec-capacity v))
     (let
-      [slots : (Array BuildPackageGraphNode) (struct-get v slots)]
+      [slots : (__tl_dyn-array BuildPackageGraphNode) (struct-get v slots)]
       (begin
         (array-set! slots (build-package-graph-node-vec-len v) node)
         (BuildPackageGraphNodeVec
@@ -3220,51 +3221,110 @@
 
 (define (build-package-tlci-metadata
   [manifest : CompilerPkgManifest]
-  [callables : TlciSpmdCallableList]) : TlciMetadata
-  (match callables
-    [(TlciSpmdCallableList.Nil)
-      (tlci-make-metadata
-        "v1"
-        (struct-get manifest name)
-        (struct-get manifest version))]
-    [(TlciSpmdCallableList.Cons _ _)
-      (tlci-make-metadata-v2
-        (struct-get manifest name)
-        (struct-get manifest version)
-        callables)]))
+  [callables : TlciSpmdCallables]) : TlciMetadata
+  (if (= (tlci-spmd-callables-len callables) 0)
+    (tlci-make-metadata
+      "v1"
+      (struct-get manifest name)
+      (struct-get manifest version))
+    (tlci-make-metadata-v2
+      (struct-get manifest name)
+      (struct-get manifest version)
+      callables)))
 
 (defstruct BuildPackageTlciCallableCollector
-  (items TlciSpmdCallableList)
+  (items TlciSpmdCallables)
   (error String))
 
+;; Ordered insert that drops an exact duplicate. Rebuild the consumed input
+;; into one right-sized dense sequence at the located slot.
 (define (build-package-tlci-specialization-insert
   [item : TlciSpmdSpecialization]
-  [items : TlciSpmdSpecializationList]) : TlciSpmdSpecializationList
-  (match items
-    [(TlciSpmdSpecializationList.Nil)
-      (tlci-spmd-specialization-list-cons item items)]
-    [(TlciSpmdSpecializationList.Cons head rest)
-      (let
-        [order : i64 (tlci-spmd-specialization-compare item head)]
-        (cond
-          [(< order 0) (tlci-spmd-specialization-list-cons item items)]
-          [(= order 0) items]
-          [else
-            (tlci-spmd-specialization-list-cons
-              head
-              (build-package-tlci-specialization-insert item (box-get rest)))]))]))
+  [items : TlciSpmdSpecializations]) : TlciSpmdSpecializations
+  (let
+    [count : i64 (tlci-spmd-specializations-len items)]
+    [position : i64 count]
+    [scan : i64 0]
+    [duplicate : bool false]
+    (begin
+      (while (< scan count)
+        (let
+          [order : i64
+            (tlci-spmd-specialization-compare
+              item
+              (tlci-spmd-specializations-ref items scan))]
+          (cond
+            [(= order 0)
+              (begin
+                (set! duplicate true)
+                (set! scan count))]
+            [(< order 0)
+              (begin
+                (set! position scan)
+                (set! scan count))]
+            [else (set! scan (+ scan 1))])))
+      (if duplicate
+        items
+        (let
+          [dst : TlciSpmdSpecializations
+            (tlci-spmd-specializations-with-capacity (+ count 1))]
+          [cursor : i64 0]
+          (begin
+            (while (< cursor position)
+              (begin
+                (set!
+                  dst
+                  (tlci-spmd-specializations-push
+                    dst
+                    (tlci-spmd-specializations-ref items cursor)))
+                (set! cursor (+ cursor 1))))
+            (set! dst (tlci-spmd-specializations-push dst item))
+            (while (< cursor count)
+              (begin
+                (set!
+                  dst
+                  (tlci-spmd-specializations-push
+                    dst
+                    (tlci-spmd-specializations-ref items cursor)))
+                (set! cursor (+ cursor 1))))
+            dst))))))
 
 (define (build-package-tlci-callable-insert
   [item : TlciSpmdCallable]
-  [items : TlciSpmdCallableList]) : TlciSpmdCallableList
-  (match items
-    [(TlciSpmdCallableList.Nil) (tlci-spmd-callable-list-cons item items)]
-    [(TlciSpmdCallableList.Cons head rest)
-      (if (< (tlci-spmd-callable-compare item head) 0)
-        (tlci-spmd-callable-list-cons item items)
-        (tlci-spmd-callable-list-cons
-          head
-          (build-package-tlci-callable-insert item (box-get rest))))]))
+  [items : TlciSpmdCallables]) : TlciSpmdCallables
+  (let
+    [count : i64 (tlci-spmd-callables-len items)]
+    [position : i64 count]
+    [scan : i64 0]
+    [dst : TlciSpmdCallables (tlci-spmd-callables-with-capacity (+ count 1))]
+    [cursor : i64 0]
+    (begin
+      (while (< scan count)
+        (if (<
+          (tlci-spmd-callable-compare item (tlci-spmd-callables-ref items scan))
+          0)
+          (begin
+            (set! position scan)
+            (set! scan count))
+          (set! scan (+ scan 1))))
+      (while (< cursor position)
+        (begin
+          (set!
+            dst
+            (tlci-spmd-callables-push
+              dst
+              (tlci-spmd-callables-ref items cursor)))
+          (set! cursor (+ cursor 1))))
+      (set! dst (tlci-spmd-callables-push dst item))
+      (while (< cursor count)
+        (begin
+          (set!
+            dst
+            (tlci-spmd-callables-push
+              dst
+              (tlci-spmd-callables-ref items cursor)))
+          (set! cursor (+ cursor 1))))
+      dst)))
 
 (define (build-package-tlci-backend [mode : CompilerBackendMode]) : CompilerIrSpmdBackend
   (match mode
@@ -3281,7 +3341,7 @@
   [index : i64]
   [limit : i64]
   [backend : CompilerIrSpmdBackend]
-  [out : TlciSpmdSpecializationList]) : TlciSpmdSpecializationList
+  [out : TlciSpmdSpecializations]) : TlciSpmdSpecializations
   (if (or (>= index limit) (>= index (ast-spmd-specialization-list-len items)))
     out
     (let
@@ -3366,7 +3426,7 @@
         0
         count
         backend
-        TlciSpmdSpecializationList.Nil))))
+        (tlci-spmd-specializations-empty)))))
 
 (cfg
   test
@@ -3423,47 +3483,46 @@
           [ordinary-metadata : TlciMetadata
             (build-package-tlci-metadata
               (build-package-graph-test-manifest "pkg")
-              TlciSpmdCallableList.Nil)]
+              (tlci-spmd-callables-empty))]
+          [emitted : TlciSpmdSpecializations
+            (struct-get callable specializations)]
           (and
             (string.eq (struct-get ordinary-metadata version) "v1")
-            (match (struct-get ordinary-metadata spmd-callables)
-              [(TlciSpmdCallableList.Nil) true]
-              [_ false])
+            (=
+              (tlci-spmd-callables-len
+                (struct-get ordinary-metadata spmd-callables))
+              0)
             (string.eq (struct-get callable name) "pkg/helper")
             (string.eq (struct-get callable signature) "(-> i64 i64 i64)")
-            (match (struct-get callable specializations)
-              [(TlciSpmdSpecializationList.Cons item rest)
-                (and
-                  (string.eq (struct-get item abi) "spmd-call-v1")
-                  (string.eq (struct-get item backend) "scalar")
-                  (= (struct-get item lanes) 1)
-                  (string.eq (struct-get item args) "uv")
-                  (string.eq (struct-get item result) "v")
-                  (= (struct-get item index-param) 1)
-                  (string.eq
-                    (struct-get item symbol)
-                    (compiler-backend-user-symbol-id
-                      (ci.intern-generated-canonical-name
-                        (lower-spmd-package-symbol
-                          "pkg"
-                          "pkg/helper"
-                          "(-> i64 i64 i64)"
-                          (AstType.I64)
-                          CompilerIrSpmdBackend.Scalar
-                          1
-                          "uv"
-                          "v"
-                          1))))
-                  (match (box-get rest)
-                    [(TlciSpmdSpecializationList.Cons next tail)
-                      (and
-                        (string.eq (struct-get next args) "vu")
-                        (= (struct-get next index-param) 0)
-                        (match (box-get tail)
-                          [(TlciSpmdSpecializationList.Nil) true]
-                          [_ false]))]
-                    [_ false]))]
-              [_ false])))))))
+            (= (tlci-spmd-specializations-len emitted) 2)
+            (let
+              [item : TlciSpmdSpecialization
+                (tlci-spmd-specializations-ref emitted 0)]
+              [next : TlciSpmdSpecialization
+                (tlci-spmd-specializations-ref emitted 1)]
+              (and
+                (string.eq (struct-get item abi) "spmd-call-v1")
+                (string.eq (struct-get item backend) "scalar")
+                (= (struct-get item lanes) 1)
+                (string.eq (struct-get item args) "uv")
+                (string.eq (struct-get item result) "v")
+                (= (struct-get item index-param) 1)
+                (string.eq
+                  (struct-get item symbol)
+                  (compiler-backend-user-symbol-id
+                    (ci.intern-generated-canonical-name
+                      (lower-spmd-package-symbol
+                        "pkg"
+                        "pkg/helper"
+                        "(-> i64 i64 i64)"
+                        (AstType.I64)
+                        CompilerIrSpmdBackend.Scalar
+                        1
+                        "uv"
+                        "v"
+                        1))))
+                (string.eq (struct-get next args) "vu")
+                (= (struct-get next index-param) 0)))))))))
 
 (cfg
   test
@@ -3496,28 +3555,30 @@
             (box second-classes)
             AstSpmdResultClass.Uniform
             -1))
-        (match (struct-get
-          (build-package-tlci-callable
-            "pkg"
-            "pkg"
-            helper-id
-            (ast-param-cons
-              (ast-param-id x-id (AstType.I64) false)
-              (ast-param-list-new))
-            (AstType.I64)
-            specializations
-            (CompilerBackendMode.Scalar))
-          specializations)
-          [(TlciSpmdSpecializationList.Cons item rest)
-            (and
-              (= (struct-get item lanes) 1)
-              (string.eq (struct-get item args) "u")
-              (string.eq (struct-get item result) "u")
-              (= (struct-get item index-param) -1)
-              (match (box-get rest)
-                [(TlciSpmdSpecializationList.Nil) true]
-                [_ false]))]
-          [_ false])))))
+        (let
+          [emitted : TlciSpmdSpecializations
+            (struct-get
+              (build-package-tlci-callable
+                "pkg"
+                "pkg"
+                helper-id
+                (ast-param-cons
+                  (ast-param-id x-id (AstType.I64) false)
+                  (ast-param-list-new))
+                (AstType.I64)
+                specializations
+                (CompilerBackendMode.Scalar))
+              specializations)]
+          (and
+            (= (tlci-spmd-specializations-len emitted) 1)
+            (let
+              [item : TlciSpmdSpecialization
+                (tlci-spmd-specializations-ref emitted 0)]
+              (and
+                (= (struct-get item lanes) 1)
+                (string.eq (struct-get item args) "u")
+                (string.eq (struct-get item result) "u")
+                (= (struct-get item index-param) -1)))))))))
 
 (cfg
   test
@@ -3589,11 +3650,11 @@
           true)))))
 
 (defstruct BuildPackageTlciMacroCollector
-  (names (Array String))
+  (names (__tl_dyn-array String))
   (captures TlciNativeMacroCaptures))
 
 (define (build-package-tlci-sort-macro-catalog!
-  [catalog : (&mut catalog (Array String))]) : unit
+  [catalog : (&mut catalog (__tl_dyn-array String))]) : unit
   (let
     [count : i64 (array-length catalog)]
     [index : i64 1]
@@ -3831,7 +3892,8 @@
                       (build-package-tlci-finish-macro-collector
                         (&mut names)
                         captures)]
-                    [catalog : (Array String) (struct-get collector names)]
+                    [catalog : (__tl_dyn-array String)
+                      (struct-get collector names)]
                     [_source : String
                       (embedded-native-source
                         catalog
@@ -3939,7 +4001,7 @@
   [paths : AstDeclPathList]) : BuildPackageTlciCallableCollector
   (match (package-source-discover-for "build" manifest-path true)
     [(ResultPackageSourceSet.Err message)
-      (BuildPackageTlciCallableCollector TlciSpmdCallableList.Nil message)]
+      (BuildPackageTlciCallableCollector (tlci-spmd-callables-empty) message)]
     [(ResultPackageSourceSet.Ok source-set)
       (let
         [owned-sources : build_string_i64_map.Map
@@ -3952,7 +4014,7 @@
           (struct-get manifest name)
           mode
           owned-sources
-          (BuildPackageTlciCallableCollector TlciSpmdCallableList.Nil "")))]))
+          (BuildPackageTlciCallableCollector (tlci-spmd-callables-empty) "")))]))
 
 (define (build-package-tlci-image
   [metadata : TlciMetadata]
@@ -3993,7 +4055,7 @@
           paths)]
       [macro-collector : BuildPackageTlciMacroCollector
         (build-package-tlci-macro-collector manifest-path manifest decls paths)]
-      [macro-names : (Array String) (struct-get macro-collector names)]
+      [macro-names : (__tl_dyn-array String) (struct-get macro-collector names)]
       (if (> (string.string-length (struct-get collector error)) 0)
         (ResultBuildPackageTlciText.Err (struct-get collector error))
         (let
@@ -4065,7 +4127,7 @@
         (if (and
           (compiler-backend-target-linux? target)
           (not (string.contains (& haystack) (& needle))))
-          (match (io.try-append-file (& path) (& note))
+          (match (io.try-append-file (& path) (byte_buf.str-as-bytes (& note)))
             [(io.OkIoUnit) SourceToolCommandStatus.Ok]
             [(io.ErrIoUnit error)
               (SourceToolCommandStatus.Err
@@ -4902,8 +4964,8 @@
   (array-ref (struct-get v slots) index))
 
 (define (build-package-graph-worker-vec-copy-range!
-  [dst : (Array BuildPackageGraphWorker)]
-  [src : (Array BuildPackageGraphWorker)]
+  [dst : (__tl_dyn-array BuildPackageGraphWorker)]
+  [src : (__tl_dyn-array BuildPackageGraphWorker)]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -4915,7 +4977,7 @@
 (define (build-package-graph-worker-vec-grow [v : BuildPackageGraphWorkerVec]) : BuildPackageGraphWorkerVec
   (let
     [count : i64 (build-package-graph-worker-vec-len v)]
-    [bigger : (Array BuildPackageGraphWorker)
+    [bigger : (__tl_dyn-array BuildPackageGraphWorker)
       (make-array
         BuildPackageGraphWorker
         (* (build-package-graph-worker-vec-capacity v) 2))]
@@ -4933,7 +4995,7 @@
     (build-package-graph-worker-vec-len v)
     (build-package-graph-worker-vec-capacity v))
     (let
-      [slots : (Array BuildPackageGraphWorker) (struct-get v slots)]
+      [slots : (__tl_dyn-array BuildPackageGraphWorker) (struct-get v slots)]
       (begin
         (array-set! slots (build-package-graph-worker-vec-len v) worker)
         (BuildPackageGraphWorkerVec
@@ -5334,10 +5396,13 @@
   [source : String]
   [stdlib-roots : cli_svec.Vec]) : i64
   (match (io.try-read-file (& source))
-    [(io.ErrIoString _) 0]
-    [(io.OkIoString text)
+    [(io.ErrIoBytes _) 0]
+    [(io.OkIoBytes contents)
       (build-doctest-report
-        (doc-test-typecheck-source-with-roots source text stdlib-roots))]))
+        (doc-test-typecheck-source-with-roots
+          source
+          (byte_buf.to-string contents)
+          stdlib-roots))]))
 
 (define (build-doctest-typecheck-package-paths
   [paths : AstDeclPathList]

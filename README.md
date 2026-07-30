@@ -568,6 +568,12 @@ production codegen. `typelisp test <file.tl>` turns a file's inline tests
 into a generated harness and runs it; with no file, it runs the nearest
 package's inline tests plus `tests/**/*.tl` integration programs (exit 0
 passes). `typelisp test --check` type-checks harnesses without linking.
+The runner announces every selected test, continues after assertion failures,
+prints `ok` or `FAILED` for each test, and finishes with passed, failed, and
+total counts. `--filter <substring>` selects inline-test names (and package
+integration paths), while `--list` prints the selected names without running
+them. Ordinary assertion failures exit `1`; an unexpected harness abort exits
+`2`.
 Tests commonly import `stdlib/test.tl` for assertions. CI auto-discovers
 inline-test-bearing files, so adding tests requires no manifest edits.
 
@@ -598,6 +604,16 @@ descriptive kebab-case, while one-letter type variables may use the conventional
 uppercase spelling such as `T`. One leading `_` marks an intentionally unused
 parameter or local. ABI-constrained and generated spellings require a targeted
 lint suppression at their declaration.
+
+Public stdlib operations that mutate caller-owned state through `&mut` use a
+terminal `!`. The suffix describes the effect; it does not make ordinary calls
+implicitly borrow a mutable place. Some generated APIs separately provide
+place-taking bang macros that evaluate each operand once and expand through
+normal checked `&mut` semantics. Consuming owners and reading or yielding views
+through `&mut` do not alone require `!`, and iterator `next` / `next-mut` is the
+protocol exception. See [the stdlib naming
+contract](stdlib/README.md#public-mutator-names) for examples and migration
+rules.
 
 `typelisp lint` includes staged migration rules such as
 `--deprecated-string-concat`, `--redundant-function-name`, and

@@ -3137,7 +3137,7 @@
         assignments
         ""
         ""
-        CompilerRegVarTypeList.Nil
+        (compiler-reg-var-types-empty)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
@@ -3292,7 +3292,7 @@
         assignments
         ""
         ""
-        CompilerRegVarTypeList.Nil
+        (compiler-reg-var-types-empty)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
@@ -5819,6 +5819,28 @@
         "554889e54881ec00100000830c24004881ec00100000")]
     (and (string.eq linux direct) (string.eq windows probed))))
 
+(define (compiler-backend-object-runtime-state-encoding-ok?) : bool
+  (and
+    (string.eq
+      (compiler-backend-object-lea-rbp-disp-bytes -64 "%rax")
+      (object_target.compiler-backend-object-bytes-from-hex "488d45c0"))
+    (string.eq
+      (compiler-backend-object-zero-compare-bytes (CompilerIrBinOp.Eq))
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4885c00f94c0480fb6c0"))
+    (string.eq
+      (compiler-backend-object-divmod-bytes false false)
+      (object_target.compiler-backend-object-bytes-from-hex "31d249f7f0"))
+    (string.eq
+      (compiler-backend-object-divmod-bytes false true)
+      (object_target.compiler-backend-object-bytes-from-hex "31d249f7f04889d0"))
+    (string.eq
+      (compiler-backend-object-divmod-bytes true false)
+      (object_target.compiler-backend-object-bytes-from-hex "489949f7f8"))
+    (string.eq
+      (compiler-backend-object-divmod-bytes true true)
+      (object_target.compiler-backend-object-bytes-from-hex "489949f7f84889d0"))))
+
 (define (compiler-backend-reg-part-entry-ok?
   [reg : String]
   [reg32 : String]
@@ -6258,7 +6280,7 @@
       (compiler-backend-peephole-assignments)]
     (match (compiler-backend-emit-binop
       (ast-node-pool-reader-type-segment-bases)
-      (CompilerRegVarTypeList.Nil)
+      (compiler-reg-var-types-empty)
       (CompilerBackendGlobalTypeTable.Empty)
       assignments
       2
@@ -6269,7 +6291,7 @@
       [(ResultCompilerBackend.Ok add-asm)
         (match (compiler-backend-emit-binop
           (ast-node-pool-reader-type-segment-bases)
-          (CompilerRegVarTypeList.Nil)
+          (compiler-reg-var-types-empty)
           (CompilerBackendGlobalTypeTable.Empty)
           assignments
           2
@@ -6280,7 +6302,7 @@
           [(ResultCompilerBackend.Ok mul-asm)
             (match (compiler-backend-emit-binop
               (ast-node-pool-reader-type-segment-bases)
-              (CompilerRegVarTypeList.Nil)
+              (compiler-reg-var-types-empty)
               (CompilerBackendGlobalTypeTable.Empty)
               assignments
               2
@@ -6291,7 +6313,7 @@
               [(ResultCompilerBackend.Ok shl-asm)
                 (match (compiler-backend-emit-binop
                   (ast-node-pool-reader-type-segment-bases)
-                  (CompilerRegVarTypeList.Nil)
+                  (compiler-reg-var-types-empty)
                   (CompilerBackendGlobalTypeTable.Empty)
                   assignments
                   2
@@ -7452,7 +7474,7 @@
         (compiler-ir-label "entry")
         CompilerRegAssignmentList.Nil
         vars
-        CompilerRegVarTypeList.Nil
+        (compiler-reg-var-types-empty)
         (CompilerBackendGlobalTypeTable.Empty)
         (AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
@@ -7603,7 +7625,7 @@
         (compiler-ir-label "entry")
         CompilerRegAssignmentList.Nil
         compiler-backend-long-block-instr-count
-        CompilerRegVarTypeList.Nil
+        (compiler-reg-var-types-empty)
         (CompilerBackendGlobalTypeTable.Empty)
         (AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
@@ -7631,15 +7653,17 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil)]
-    [cmp-types : CompilerRegVarTypeList
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 0 (AstType.I64))
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType 1 (AstType.I64))
-          CompilerRegVarTypeList.Nil))]
+    [cmp-types : CompilerRegVarTypes
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          1
+          (AstType.I64))
+        0
+        (AstType.I64))]
     (match (compiler-backend-emit-binop
       (ast-node-pool-reader-type-segment-bases)
-      (CompilerRegVarTypeList.Nil)
+      (compiler-reg-var-types-empty)
       (CompilerBackendGlobalTypeTable.Empty)
       rhs-spill
       2
@@ -8163,7 +8187,7 @@
   (and
     (match (compiler-backend-emit-binop
       (ast-node-pool-reader-type-segment-bases)
-      (CompilerRegVarTypeList.Nil)
+      (compiler-reg-var-types-empty)
       (CompilerBackendGlobalTypeTable.Empty)
       (compiler-backend-peephole-assignments)
       2
@@ -8180,7 +8204,7 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-binop
       (ast-node-pool-reader-type-segment-bases)
-      (CompilerRegVarTypeList.Nil)
+      (compiler-reg-var-types-empty)
       (CompilerBackendGlobalTypeTable.Empty)
       (compiler-backend-peephole-assignments)
       2
@@ -8197,7 +8221,7 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-binop
       (ast-node-pool-reader-type-segment-bases)
-      (CompilerRegVarTypeList.Nil)
+      (compiler-reg-var-types-empty)
       (CompilerBackendGlobalTypeTable.Empty)
       (compiler-backend-peephole-assignments)
       2
@@ -8844,7 +8868,7 @@
         (compiler-ir-label "entry")
         assignments
         vars
-        CompilerRegVarTypeList.Nil
+        (compiler-reg-var-types-empty)
         (CompilerBackendGlobalTypeTable.Empty)
         (AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
@@ -9118,7 +9142,7 @@
         (compiler-ir-label "entry")
         (compiler-backend-mov-phi-copy-assignments)
         3
-        CompilerRegVarTypeList.Nil
+        (compiler-reg-var-types-empty)
         (CompilerBackendGlobalTypeTable.Empty)
         (AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
@@ -10199,16 +10223,24 @@
         (CompilerIrInstr.Jump (compiler-ir-label "match_total_trap"))
         CompilerIrInstrList.Nil))))
 
-(define (compiler-backend-total-switch-test-blocks) : CompilerIrBlockList
+(define (compiler-backend-total-switch-test-blocks [explicit-total? : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
       (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Switch
-          (CompilerIrValue.Var 0)
-          0
-          (compiler-backend-total-switch-test-cases)
-          (compiler-ir-label "match_total_trap"))
+        (if explicit-total?
+          (CompilerIrInstr.TotalEnumSwitch
+            (CompilerIrValue.Var 0)
+            0
+            (compiler-backend-total-switch-test-cases)
+            (compiler-ir-label "match_total_trap")
+            (compiler-ir-label "match_total_trap"))
+          ;; The old display spelling must not authorize unchecked dispatch.
+          (CompilerIrInstr.Switch
+            (CompilerIrValue.Var 0)
+            0
+            (compiler-backend-total-switch-test-cases)
+            (compiler-ir-label "match_total_trap")))
         CompilerIrInstrList.Nil))
     (compiler-backend-total-switch-return-block
       (compiler-ir-label "zero")
@@ -10241,7 +10273,84 @@
         CompilerIrParamList.Nil
         (AstType.I64)
         2
-        (compiler-backend-total-switch-test-blocks))
+        (compiler-backend-total-switch-test-blocks true))
+      CompilerIrFunctionList.Nil)
+    CompilerIrExternList.Nil))
+
+(define (compiler-backend-forwarded-total-switch-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.TotalEnumSwitch
+          (CompilerIrValue.Var 0)
+          0
+          (compiler-backend-total-switch-test-cases)
+          (compiler-ir-label "plain_preheader")
+          (compiler-ir-label "plain_abort"))
+        CompilerIrInstrList.Nil))
+    (compiler-backend-total-switch-return-block
+      (compiler-ir-label "zero")
+      0
+      (compiler-backend-total-switch-return-block
+        (compiler-ir-label "one")
+        1
+        (compiler-backend-total-switch-return-block
+          (compiler-ir-label "two")
+          2
+          (compiler-backend-total-switch-return-block
+            (compiler-ir-label "three")
+            3
+            (compiler-backend-total-switch-return-block
+              (compiler-ir-label "four")
+              4
+              (compiler-backend-total-switch-return-block
+                (compiler-ir-label "five")
+                5
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    (compiler-ir-label "plain_preheader")
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump (compiler-ir-label "plain_abort"))
+                      CompilerIrInstrList.Nil))
+                  (compiler-ir-block-cons
+                    (compiler-ir-block
+                      (compiler-ir-label "plain_abort")
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Call
+                          1
+                          cbi.compiler-builtin-id-tl-oob-abort
+                          (CompilerIrCallArgs.Nil)
+                          (AstType.Unit))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Jump
+                            (compiler-ir-label "plain_abort"))
+                          CompilerIrInstrList.Nil)))
+                    CompilerIrBlockList.Nil))))))))))
+
+(define (compiler-backend-forwarded-total-switch-test-program) : CompilerIrProgram
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
+    (compiler-ir-function-cons
+      (CompilerIrFunction.Function
+        (ci.intern "main")
+        CompilerIrParamList.Nil
+        (AstType.I64)
+        2
+        (compiler-backend-forwarded-total-switch-test-blocks))
+      CompilerIrFunctionList.Nil)
+    CompilerIrExternList.Nil))
+
+(define (compiler-backend-spoofed-total-switch-test-program) : CompilerIrProgram
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
+    (compiler-ir-function-cons
+      (CompilerIrFunction.Function
+        (ci.intern "main")
+        CompilerIrParamList.Nil
+        (AstType.I64)
+        2
+        (compiler-backend-total-switch-test-blocks false))
       CompilerIrFunctionList.Nil)
     CompilerIrExternList.Nil))
 
@@ -10297,6 +10406,20 @@
           (compiler-backend-string-contains? asm "    .quad .Lf0_five\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-forwarded-total-switch-asm-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-forwarded-total-switch-test-program))
+    [(ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "main")]
+        (and
+          (compiler-backend-string-contains?
+            body
+            "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+          (not (compiler-backend-string-contains? body "    cmpq $5"))
+          (not (compiler-backend-string-contains? body "    ja "))))]
+    [(ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-total-switch-pic-asm-ok?) : bool
   (match (compiler-backend-emit-program-pic-target-with-mode
     (compiler-backend-total-switch-test-program)
@@ -10347,6 +10470,24 @@
             sections
             (compiler-backend-object-switch-indirect-jump-bytes))))]
     [(ResultCompilerBackendObject.Err _) false]))
+
+(define (compiler-backend-spoofed-total-switch-stays-checked?) : bool
+  (and
+    (match (compiler-backend-emit-program-linux
+      (compiler-backend-spoofed-total-switch-test-program))
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains? asm "    cmpq $5")
+          (compiler-backend-string-contains? asm "    ja "))]
+      [(ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-emit-program-object-image-linux
+      (compiler-backend-spoofed-total-switch-test-program)
+      (compiler-source-spans-empty))
+      [(ResultCompilerBackendObject.Ok image)
+        (cobj.compiler-object-section-contains-bytes?
+          (struct-get image sections)
+          (compiler-backend-object-cmp-imm32-rax-bytes 5))]
+      [(ResultCompilerBackendObject.Err _) false])))
 
 (define (compiler-backend-switch-asm-ok?) : bool
   (match (compiler-backend-emit-program-linux
@@ -10669,8 +10810,10 @@
       11)
     (compiler-backend-switch-asm-ok?)
     (compiler-backend-total-switch-asm-ok?)
+    (compiler-backend-forwarded-total-switch-asm-ok?)
     (compiler-backend-total-switch-pic-asm-ok?)
     (compiler-backend-total-switch-object-image-ok?)
+    (compiler-backend-spoofed-total-switch-stays-checked?)
     (compiler-backend-total-switch-lowered-opt2-asm-ok?)
     (compiler-backend-switch-base-asm-ok?)
     (compiler-backend-switch-shape-diagnostic-ok?)
@@ -11687,7 +11830,7 @@
       CompilerRegAssignmentList.Nil
       CompilerRegIdList.Nil)
     CompilerRegAssignmentList.Nil
-    CompilerRegVarTypeList.Nil
+    (compiler-reg-var-types-empty)
     (ir-instr-vector-prefix
       2
       (CompilerIrVectorPrefixOp.Any)
@@ -14478,7 +14621,7 @@
         (compiler-ir-label "entry")
         CompilerRegAssignmentList.Nil
         vars
-        CompilerRegVarTypeList.Nil
+        (compiler-reg-var-types-empty)
         (CompilerBackendGlobalTypeTable.Empty)
         (AstType.I64)
         (CompilerBackendRuntimePlan.Plan
@@ -14621,7 +14764,7 @@
         (compiler-ir-label "entry")
         assignments
         vars
-        CompilerRegVarTypeList.Nil
+        (compiler-reg-var-types-empty)
         (CompilerBackendGlobalTypeTable.Empty)
         (AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
@@ -19194,8 +19337,8 @@
 
 (define (compiler-backend-append-file-status-ok?) : bool
   (match (compiler-backend-emit-source
-    "(extern (io.append-file-status [arg0 : String] [arg1 : String]) : i64 (:symbol \"tl_append_file_status\"))
-(define (main) : i64 (io.append-file-status \"out.txt\" \"x\"))")
+    "(extern (raw-append-file-status [arg0 : String] [arg1 : String]) : i64 (:symbol \"tl_append_file_status\"))
+(define (main) : i64 (raw-append-file-status \"out.txt\" \"x\"))")
     [(ResultCompilerBackend.Ok asm)
       (and
         (not
@@ -20061,13 +20204,13 @@
   [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 ty)
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 ty)
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType 2 ty)
-          CompilerRegVarTypeList.Nil)))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-insert (compiler-reg-var-types-empty) 2 ty)
+        1
+        ty)
+      0
+      ty)
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -20121,13 +20264,13 @@
 (define (compiler-backend-spill-float-arith-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 ty)
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 ty)
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType 2 ty)
-          CompilerRegVarTypeList.Nil)))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-insert (compiler-reg-var-types-empty) 2 ty)
+        1
+        ty)
+      0
+      ty)
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -20181,13 +20324,16 @@
 (define (compiler-backend-direct-float-compare-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 ty)
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 ty)
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType 2 (AstType.Bool))
-          CompilerRegVarTypeList.Nil)))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          2
+          (AstType.Bool))
+        1
+        ty)
+      0
+      ty)
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -20241,13 +20387,16 @@
 (define (compiler-backend-spill-float-compare-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 ty)
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 ty)
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType 2 (AstType.Bool))
-          CompilerRegVarTypeList.Nil)))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          2
+          (AstType.Bool))
+        1
+        ty)
+      0
+      ty)
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -20305,11 +20454,10 @@
 (define (compiler-backend-fallback-float-self-rhs-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 ty)
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 2 ty)
-        CompilerRegVarTypeList.Nil))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert (compiler-reg-var-types-empty) 2 ty)
+      0
+      ty)
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -20329,13 +20477,16 @@
 (define (compiler-backend-fallback-float-compare-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 ty)
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 ty)
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType 2 (AstType.Bool))
-          CompilerRegVarTypeList.Nil)))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          2
+          (AstType.Bool))
+        1
+        ty)
+      0
+      ty)
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment 0 (CompilerRegLocation.Spill -24))
@@ -20392,11 +20543,13 @@
     (ast-node-pool-reader-type-segment-bases)
     (ci.intern "ret_float")
     CompilerIrBlockList.Nil
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 (AstType.F64))
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 (AstType.F64))
-        CompilerRegVarTypeList.Nil))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-empty)
+        1
+        (AstType.F64))
+      0
+      (AstType.F64))
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment 0 (CompilerRegLocation.Register lhs-home))
@@ -20447,11 +20600,13 @@
     (ast-node-pool-reader-type-segment-bases)
     (ci.intern "ret_float_cmp")
     CompilerIrBlockList.Nil
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 (AstType.F64))
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 (AstType.F64))
-        CompilerRegVarTypeList.Nil))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-empty)
+        1
+        (AstType.F64))
+      0
+      (AstType.F64))
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -20473,11 +20628,13 @@
     (ast-node-pool-reader-type-segment-bases)
     (ci.intern "ret_float_cmp")
     CompilerIrBlockList.Nil
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 (AstType.F64))
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 (AstType.F64))
-        CompilerRegVarTypeList.Nil))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-empty)
+        1
+        (AstType.F64))
+      0
+      (AstType.F64))
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment 0 (CompilerRegLocation.Spill -24))
@@ -20556,7 +20713,7 @@
         (ast-node-pool-reader-type-segment-bases)
         (ci.intern "ret_int")
         CompilerIrBlockList.Nil
-        CompilerRegVarTypeList.Nil
+        (compiler-reg-var-types-empty)
         (CompilerBackendGlobalTypeTable.Empty)
         assignments
         2
@@ -20970,9 +21127,10 @@
 (define (compiler-backend-bit-and-low-mask-direct-asm [rhs : CompilerIrValue]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 (AstType.I64))
-      CompilerRegVarTypeList.Nil)
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-empty)
+      0
+      (AstType.I64))
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -21025,13 +21183,16 @@
 (define (compiler-backend-direct-compare-asm [rhs : CompilerIrValue]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 (AstType.I64))
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 (AstType.Bool))
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType 2 (AstType.I64))
-          CompilerRegVarTypeList.Nil)))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          2
+          (AstType.I64))
+        1
+        (AstType.Bool))
+      0
+      (AstType.I64))
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -21079,11 +21240,10 @@
   [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 ty)
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 ty)
-        CompilerRegVarTypeList.Nil))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert (compiler-reg-var-types-empty) 1 ty)
+      0
+      ty)
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -21129,13 +21289,16 @@
 (define (compiler-backend-direct-rcx-shift-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 (AstType.I64))
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 (AstType.I64))
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType 2 (AstType.I64))
-          CompilerRegVarTypeList.Nil)))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          2
+          (AstType.I64))
+        1
+        (AstType.I64))
+      0
+      (AstType.I64))
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -21193,11 +21356,10 @@
   [result-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 (AstType.I64))
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 result-ty)
-        CompilerRegVarTypeList.Nil))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert (compiler-reg-var-types-empty) 1 result-ty)
+      0
+      (AstType.I64))
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -21243,13 +21405,16 @@
   [result-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 (AstType.I64))
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 (AstType.I64))
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType 2 result-ty)
-          CompilerRegVarTypeList.Nil)))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          2
+          result-ty)
+        1
+        (AstType.I64))
+      0
+      (AstType.I64))
     (CompilerBackendGlobalTypeTable.Empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment
@@ -21839,14 +22004,14 @@
             "    subq %rax, %rcx\n    movq %rcx, %r9\n    movq %r9, (%rcx,%r12,8)\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-divrem-binop-types [ty : AstType]) : CompilerRegVarTypeList
-  (compiler-reg-var-type-cons
-    (CompilerRegVarType 0 ty)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 1 ty)
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 2 ty)
-        CompilerRegVarTypeList.Nil))))
+(define (compiler-backend-divrem-binop-types [ty : AstType]) : CompilerRegVarTypes
+  (compiler-reg-var-types-insert
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert (compiler-reg-var-types-empty) 2 ty)
+      1
+      ty)
+    0
+    ty))
 
 (define (compiler-backend-divrem-binop-asm
   [op : CompilerIrBinOp]
@@ -21976,12 +22141,11 @@
 
 (define (compiler-backend-narrow-binop-types
   [lhs-ty : AstType]
-  [rhs-ty : AstType]) : CompilerRegVarTypeList
-  (compiler-reg-var-type-cons
-    (CompilerRegVarType 0 lhs-ty)
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 1 rhs-ty)
-      CompilerRegVarTypeList.Nil)))
+  [rhs-ty : AstType]) : CompilerRegVarTypes
+  (compiler-reg-var-types-insert
+    (compiler-reg-var-types-insert (compiler-reg-var-types-empty) 1 rhs-ty)
+    0
+    lhs-ty))
 
 (define (compiler-backend-narrow-binop-shape?
   [op : CompilerIrBinOp]
@@ -22135,7 +22299,7 @@
 (define (compiler-backend-global-compare-binop-ok?) : bool
   (match (compiler-backend-emit-binop
     (ast-node-pool-reader-type-segment-bases)
-    (CompilerRegVarTypeList.Nil)
+    (compiler-reg-var-types-empty)
     (compiler-backend-global-compare-types)
     CompilerRegAssignmentList.Nil
     0
@@ -22223,7 +22387,7 @@
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-binop
       (ast-node-pool-reader-type-segment-bases)
-      (CompilerRegVarTypeList.Nil)
+      (compiler-reg-var-types-empty)
       (CompilerBackendGlobalTypeTable.Empty)
       rhs-spill
       2
@@ -23039,10 +23203,8 @@
           0
           (CompilerRegLocation.Register compiler-reg-id-r11))
         CompilerRegAssignmentList.Nil)]
-    [types : CompilerRegVarTypeList
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 0 callee-ty)
-        CompilerRegVarTypeList.Nil)]
+    [types : CompilerRegVarTypes
+      (compiler-reg-var-types-insert (compiler-reg-var-types-empty) 0 callee-ty)]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
         (CompilerIrInstr.TailCallIndirect
@@ -23173,7 +23335,7 @@
           ret
           CompilerRegAssignmentList.Nil
           ""
-          CompilerRegVarTypeList.Nil
+          (compiler-reg-var-types-empty)
           (CompilerBackendGlobalTypeTable.Empty)
           0
           plan
@@ -23387,7 +23549,7 @@
       CompilerRegAssignmentList.Nil
       ""
       ""
-      CompilerRegVarTypeList.Nil
+      (compiler-reg-var-types-empty)
       functions
       CompilerIrExternList.Nil
       index
@@ -23411,7 +23573,7 @@
       CompilerRegAssignmentList.Nil
       ""
       ""
-      CompilerRegVarTypeList.Nil
+      (compiler-reg-var-types-empty)
       functions
       CompilerIrExternList.Nil
       index
@@ -26103,16 +26265,20 @@
             (CompilerRegLocation.Register (compiler-abi-xmm-register-id 4)))
           CompilerRegAssignmentList.Nil)))))
 
-(define (compiler-backend-scratch-f64-four-types) : CompilerRegVarTypeList
-  (compiler-reg-var-type-cons
-    (CompilerRegVarType 0 (AstType.F64))
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 1 (AstType.F64))
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 2 (AstType.F64))
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType 3 (AstType.F64))
-          CompilerRegVarTypeList.Nil)))))
+(define (compiler-backend-scratch-f64-four-types) : CompilerRegVarTypes
+  (compiler-reg-var-types-insert
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          3
+          (AstType.F64))
+        2
+        (AstType.F64))
+      1
+      (AstType.F64))
+    0
+    (AstType.F64)))
 
 (define (compiler-backend-scratch-float-phi-branch-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
@@ -26137,10 +26303,11 @@
               (CompilerRegLocation.Register compiler-reg-id-r12))
             CompilerRegAssignmentList.Nil))))))
 
-(define (compiler-backend-scratch-float-phi-branch-types) : CompilerRegVarTypeList
-  (compiler-reg-var-type-cons
-    (CompilerRegVarType 4 (AstType.Bool))
-    (compiler-backend-scratch-f64-four-types)))
+(define (compiler-backend-scratch-float-phi-branch-types) : CompilerRegVarTypes
+  (compiler-reg-var-types-insert
+    (compiler-backend-scratch-f64-four-types)
+    4
+    (AstType.Bool)))
 
 (define (compiler-backend-scratch-vreg-phi-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
@@ -26151,12 +26318,13 @@
         (CompilerRegLocation.Register compiler-reg-id-r13))
       CompilerRegAssignmentList.Nil)))
 
-(define (compiler-backend-scratch-test-types-from [var : i64] [vars : i64]) : CompilerRegVarTypeList
+(define (compiler-backend-scratch-test-types-from [var : i64] [vars : i64]) : CompilerRegVarTypes
   (if (>= var vars)
-    CompilerRegVarTypeList.Nil
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType var (AstType.I64))
-      (compiler-backend-scratch-test-types-from (+ var 1) vars))))
+    (compiler-reg-var-types-empty)
+    (compiler-reg-var-types-insert
+      (compiler-backend-scratch-test-types-from (+ var 1) vars)
+      var
+      (AstType.I64))))
 
 (define (compiler-backend-scratch-test-base-plan
   [vars : i64]
@@ -26170,7 +26338,7 @@
     (compiler-reg-split-plan-empty)))
 
 (define (compiler-backend-scratch-test-base-plan-with-types
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [assignments : CompilerRegAssignmentList]) : CompilerRegPlan
   (CompilerRegPlan.Plan
     assignments
@@ -26185,7 +26353,7 @@
   [name : String]
   [blocks : CompilerIrBlockList]
   [vars : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [assignments : CompilerRegAssignmentList]) : CompilerRegScratchPlanResult
   (compiler-reg-plan-with-scratch-vreg-result
     (ast-node-pool-reader-type-segment-bases)
@@ -26232,18 +26400,21 @@
 (define (compiler-backend-scratch-float-types
   [result : AstType]
   [operand : AstType]
-  [vars : i64]) : CompilerRegVarTypeList
+  [vars : i64]) : CompilerRegVarTypes
   (if (= vars 0)
-    CompilerRegVarTypeList.Nil
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 result)
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 operand)
+    (compiler-reg-var-types-empty)
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
         (if (> vars 2)
-          (compiler-reg-var-type-cons
-            (CompilerRegVarType 2 operand)
-            CompilerRegVarTypeList.Nil)
-          CompilerRegVarTypeList.Nil)))))
+          (compiler-reg-var-types-insert
+            (compiler-reg-var-types-empty)
+            2
+            operand)
+          (compiler-reg-var-types-empty))
+        1
+        operand)
+      0
+      result)))
 
 (define (compiler-backend-scratch-test-register
   [result : CompilerRegScratchPlanResult]
@@ -26477,7 +26648,7 @@
           (compiler-backend-scratch-vreg-phi-test-blocks)
           2
           (compiler-backend-scratch-vreg-phi-test-assignments))]
-      [float-types : CompilerRegVarTypeList
+      [float-types : CompilerRegVarTypes
         (compiler-backend-scratch-f64-four-types)]
       [float-linux : CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -27422,11 +27593,11 @@
   (cfg
     scratch-vreg
     (let
-      [f64-types : CompilerRegVarTypeList
+      [f64-types : CompilerRegVarTypes
         (compiler-backend-scratch-float-types (AstType.F64) (AstType.F64) 3)]
-      [f32-compare-types : CompilerRegVarTypeList
+      [f32-compare-types : CompilerRegVarTypes
         (compiler-backend-scratch-float-types (AstType.Bool) (AstType.F32) 3)]
-      [f64-compare-types : CompilerRegVarTypeList
+      [f64-compare-types : CompilerRegVarTypes
         (compiler-backend-scratch-float-types (AstType.Bool) (AstType.F64) 3)]
       [direct-arith-assignments : CompilerRegAssignmentList
         (compiler-reg-assignment-cons
@@ -28285,7 +28456,7 @@
             (ast-node-pool-reader-type-segment-bases)
             (CompilerRegTargetAbi.Linux)
             same-home
-            CompilerRegVarTypeList.Nil
+            (compiler-reg-var-types-empty)
             (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.F64))
             CompilerRegLabelList.Nil
             CompilerRegLabelList.Nil
@@ -30214,7 +30385,8 @@
         (compiler-backend-aggregate-ok?)
         (compiler-backend-pack-immediate-word-shape-ok?)
         (compiler-backend-descriptor-pair-ok?)
-        (compiler-backend-object-windows-stack-probe-ok?)))
+        (compiler-backend-object-windows-stack-probe-ok?)
+        (compiler-backend-object-runtime-state-encoding-ok?)))
     (backend-and8
       (compiler-backend-literal-payload-ok?)
       (and

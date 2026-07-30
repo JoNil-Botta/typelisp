@@ -17,6 +17,161 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
+;; #6061: force every converted dense family past its initial capacity and
+;; pin the logical newest-first/LIFO semantics that the former Cons chains had.
+(define (opt-dense-test-licm-roots
+  [roots : OptLicmStoreRootList]
+  [next : i64]
+  [last : i64]) : OptLicmStoreRootList
+  (if (> next last)
+    roots
+    (opt-dense-test-licm-roots
+      (opt-licm-store-roots-add roots (OptLicmRoot.Fresh next))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-unroll-memories
+  [type-segment-bases : i64]
+  [memories : OptUnrollSimdMemoryList]
+  [next : i64]
+  [last : i64]) : OptUnrollSimdMemoryList
+  (if (> next last)
+    memories
+    (opt-dense-test-unroll-memories
+      type-segment-bases
+      (opt-unroll-simd-memory-add
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var next)
+        (AstType.I64))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-late-drops
+  [drops : OptLateBoundsPairDrop]
+  [next : i64]
+  [last : i64]) : OptLateBoundsPairDrop
+  (if (> next last)
+    drops
+    (opt-dense-test-late-drops
+      (opt-late-bounds-pair-drops-add drops next)
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-reach-push
+  [worklist : OptReachWorklist]
+  [next : i64]
+  [last : i64]) : OptReachWorklist
+  (if (> next last)
+    worklist
+    (opt-dense-test-reach-push
+      (opt-reach-worklist-push worklist next)
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-reach-pop-order?
+  [worklist : OptReachWorklist]
+  [expected : i64]) : bool
+  (match (opt-reach-worklist-pop worklist)
+    [(OptReachWorklistPop.Empty) (< expected 0)]
+    [(OptReachWorklistPop.Item found rest)
+      (and
+        (= found expected)
+        (opt-dense-test-reach-pop-order? rest (- expected 1)))]))
+
+(define (opt-dense-test-reach-reuse?) : bool
+  (match (opt-reach-worklist-pop
+    (opt-dense-test-reach-push (opt-reach-worklist-new) 0 20))
+    [(OptReachWorklistPop.Empty) false]
+    [(OptReachWorklistPop.Item found rest)
+      (if (= found 20)
+        (match (opt-reach-worklist-pop (opt-reach-worklist-push rest 99))
+          [(OptReachWorklistPop.Empty) false]
+          [(OptReachWorklistPop.Item reused tail)
+            (and (= reused 99) (opt-dense-test-reach-pop-order? tail 19))])
+        false)]))
+
+(define (opt-dense-test-scratch-roots
+  [roots : OptScratchRootList]
+  [next : i64]
+  [last : i64]) : OptScratchRootList
+  (if (> next last)
+    roots
+    (opt-dense-test-scratch-roots
+      (opt-scratch-root-list-add roots next)
+      (+ next 1)
+      last)))
+
+(define (compiler-optimize-dense-storage-self-test) : i64
+  (let
+    [type-segment-bases : i64 (ast-node-pool-reader-type-segment-bases)]
+    [licm : OptLicmStoreRootList
+      (opt-dense-test-licm-roots (opt-licm-store-roots-new) 1 8)]
+    [memories : OptUnrollSimdMemoryList
+      (opt-dense-test-unroll-memories
+        type-segment-bases
+        (opt-unroll-simd-memory-new)
+        1
+        8)]
+    [memory-count : i64 (opt-unroll-simd-memory-count memories)]
+    [newest-index : i64
+      (opt-unroll-simd-memory-index
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var 8)
+        (AstType.I64)
+        0)]
+    [oldest-index : i64
+      (opt-unroll-simd-memory-index
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var 1)
+        (AstType.I64)
+        0)]
+    [deduped : OptUnrollSimdMemoryList
+      (opt-unroll-simd-memory-add
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var 4)
+        (AstType.I64))]
+    [deduped-count : i64 (opt-unroll-simd-memory-count deduped)]
+    [typed : OptUnrollSimdMemoryList
+      (opt-unroll-simd-memory-add
+        type-segment-bases
+        deduped
+        (CompilerIrValue.Var 1)
+        (AstType.U64))]
+    [drops : OptLateBoundsPairDrop
+      (opt-dense-test-late-drops (opt-late-bounds-pair-drops-new) 1 8)]
+    [roots : OptScratchRootList
+      (opt-dense-test-scratch-roots (opt-scratch-root-list-new) 1 32)]
+    (cond
+      [(not (opt-licm-store-roots-safe? licm (OptLicmRoot.Fresh 99))) 1]
+      [(opt-licm-store-roots-safe? licm (OptLicmRoot.Fresh 4)) 2]
+      [(not (= memory-count 8)) 3]
+      [(not (= newest-index 0)) 4]
+      [(not (= oldest-index 7)) 5]
+      [(not (= deduped-count 8)) 6]
+      [(not (= (opt-unroll-simd-memory-count typed) 9)) 7]
+      [(not
+          (=
+            (opt-unroll-simd-memory-index
+              type-segment-bases
+              typed
+              (CompilerIrValue.Var 1)
+              (AstType.U64)
+              0)
+            0))
+        8]
+      [(not (opt-late-bounds-pair-drop? drops 1)) 9]
+      [(not (opt-late-bounds-pair-drop? drops 8)) 10]
+      [(opt-late-bounds-pair-drop? drops 9) 11]
+      [(not (opt-dense-test-reach-reuse?)) 12]
+      [(not (opt-scratch-root-list-contains? roots 1)) 13]
+      [(not (opt-scratch-root-list-contains? roots 32)) 14]
+      [(opt-scratch-root-list-contains? roots 33) 15]
+      [else 42])))
+
 ;; --- self-test ---------------------------------------------------------------
 (define (opt-count-arith-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -31,7 +186,7 @@
     [_ 0]))
 
 (define (opt-count-arith-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -75,7 +230,7 @@
         (opt-count-xgetbv-instrs (box-get rest)))]))
 
 (define (opt-count-cpuid-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -95,7 +250,7 @@
     0))
 
 (define (opt-count-xgetbv-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -223,7 +378,7 @@
         (opt-count-mov-i64-value (box-get rest) needle))]))
 
 (define (opt-count-mov-i64-value-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [needle : i64]
@@ -309,7 +464,7 @@
         [_ (opt-mov-dst-i64-value (box-get rest) dst fallback)])]))
 
 (define (opt-mov-dst-i64-value-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -1874,7 +2029,7 @@
         (opt-count-load-dst-instrs (box-get rest) dst))]))
 
 (define (opt-count-load-dst-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -2022,7 +2177,7 @@
         (opt-count-cast-instrs (box-get rest)))]))
 
 (define (opt-count-cast-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -3156,7 +3311,7 @@
   (let
     [block : CompilerIrBlock
       (compiler-ir-block (compiler-ir-label "entry") instrs)]
-    [used : (Array i64)
+    [used : (__tl_dyn-array i64)
       (opt-collect-blocks-uses-array
         64
         (compiler-ir-block-cons block CompilerIrBlockList.Nil))]
@@ -3548,7 +3703,7 @@
         (ast-node-pool-reader-type-segment-bases)
         params
         blocks)]
-    [used : (Array i64) (opt-collect-blocks-uses-array frame safe)]
+    [used : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame safe)]
     (opt-dce-block-list-array used safe)))
 
 (define (compiler-optimize-divrem-safety-self-test) : i64
@@ -4502,7 +4657,7 @@
     [_ 0]))
 
 (define (opt-count-word-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -4539,7 +4694,7 @@
     [_ 0]))
 
 (define (opt-count-pack-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -5410,7 +5565,7 @@
     [remat-cap : CompilerIrBlockList (opt-function-blocks remat-cap-function)]
     [induction-input : CompilerIrBlockList
       (opt-successor-sink-induction-remat-blocks)]
-    [induction-cell : (Array i64) (opt-used-array-new 1)]
+    [induction-cell : (__tl_dyn-array i64) (opt-used-array-new 1)]
     [_induction-cell-init : unit (array-set! induction-cell 0 16)]
     [induction-direct : CompilerIrBlockList
       (opt-successor-sink-blocks
@@ -5637,7 +5792,7 @@
         [_ (opt-copy-binop-lhs-var (box-get rest) dst)])]))
 
 (define (opt-copy-binop-lhs-var-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]) : i64
@@ -8135,7 +8290,7 @@
 
 (define (opt-scc-component-size [result : OptSccResult] [scc-id : i64]) : i64
   (let
-    [scc-of : (Array i64) (struct-get result scc-of)]
+    [scc-of : (__tl_dyn-array i64) (struct-get result scc-of)]
     [count : i64 (array-length scc-of)]
     [slot : i64 0]
     [size : i64 0]
@@ -8150,7 +8305,7 @@
 
 (define (opt-scc-order-position [result : OptSccResult] [scc-id : i64]) : i64
   (let
-    [order : (Array i64) (struct-get result order)]
+    [order : (__tl_dyn-array i64) (struct-get result order)]
     [count : i64 (array-length order)]
     [index : i64 0]
     [position : i64 (- 0 1)]
@@ -8234,7 +8389,7 @@
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
     [result : OptSccResult (opt-scc-compute graph)]
-    [order : (Array i64) (struct-get result order)]
+    [order : (__tl_dyn-array i64) (struct-get result order)]
     [main-scc : i64
       (opt-scc-result-component
         result
@@ -9340,7 +9495,7 @@
         (opt-count-direct-call-name (box-get rest) name))]))
 
 (define (opt-count-direct-call-name-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [name : String]
@@ -10421,7 +10576,8 @@
 
 (define (opt-inline-switch-caller-call-named [callee-name : i64]) : CompilerIrInstr
   (let
-    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 3)]
+    [args : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue 3)]
     (begin
       ;; Swap the first two arguments so the Switch scrutinee and BoundsCheck
       ;; index must both be remapped rather than retaining their callee ids.
@@ -11576,7 +11732,7 @@
       (opt-block-list-label-at? (compiler-ir-block-seq-to-list seq) index label)]))
 
 (define (opt-count-branches-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11612,7 +11768,7 @@
       (opt-count-branches-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-jump-to-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [target : i64]
@@ -11656,7 +11812,7 @@
       (opt-count-jump-to-blocks (compiler-ir-block-seq-to-list seq) target)]))
 
 (define (opt-count-tail-call-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11773,7 +11929,7 @@
       [else 42])))
 
 (define (opt-count-phi-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11822,7 +11978,7 @@
         (opt-count-mov-dst-instrs (box-get rest) dst))]))
 
 (define (opt-count-mov-dst-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -11890,7 +12046,7 @@
       (opt-count-arith-label-blocks (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (opt-count-mul-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11963,7 +12119,7 @@
       (opt-count-cast-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-gep-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -12023,7 +12179,7 @@
         (opt-count-load-instrs (box-get rest)))]))
 
 (define (opt-count-load-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -12124,7 +12280,7 @@
         [_ (opt-mov-src-var (box-get rest) dst fallback)])]))
 
 (define (opt-mov-src-var-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -12718,7 +12874,7 @@
         (CompilerIrValue.Var 1)
         (CompilerIrValue.Var 2)
         (AstType.I64))]
-    [buckets : (Array OptGlobalExprFacts)
+    [buckets : (__tl_dyn-array OptGlobalExprFacts)
       (array.make-array OptGlobalExprFacts 1)]
     [table : OptGlobalExprFactTable (OptGlobalExprFactTable buckets)]
     [doms : OptDomInfo
@@ -12774,7 +12930,7 @@
         (CompilerIrValue.Var 1)
         (CompilerIrValue.Var 2)
         (AstType.I64))]
-    [buckets : (Array OptGvnBucket) (array.make-array OptGvnBucket 1)]
+    [buckets : (__tl_dyn-array OptGvnBucket) (array.make-array OptGvnBucket 1)]
     [table : OptGvnMap (OptGvnMap buckets)]
     (begin
       (array-set! buckets 0 (OptGvnBucket.Nil))
@@ -12896,7 +13052,7 @@
           (AstType.I64)
           (opt-global-pack-word-blocks)))]
     [blocks : CompilerIrBlockList (opt-function-blocks forwarded)]
-    [uses : (Array i64) (opt-collect-blocks-uses-array 16 blocks)]
+    [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array 16 blocks)]
     (opt-dce-block-list-array uses blocks)))
 
 (define (compiler-optimize-global-value-number-self-test) : i64
@@ -15083,14 +15239,19 @@
         [(OptLoopPreheader.No) true]
         [(OptLoopPreheader.Some _) false])]))
 
-(define (opt-loop-rotation-top-test-blocks) : CompilerIrBlockList
+(define (opt-loop-rotation-top-test-blocks [constant-edge? : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
       (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
+          (if constant-edge?
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Bool true)
+              (compiler-ir-label "loop")
+              (compiler-ir-label "exit"))
+            (CompilerIrInstr.Jump (compiler-ir-label "loop")))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
@@ -18845,6 +19006,131 @@
     10
     (opt-unroll-mutable-vector-test-blocks loop-local-base?)))
 
+(define (opt-unroll-mutable-map-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "n" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "left" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "right" (AstType.I64) 2)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "out" (AstType.I64) 3)
+          (CompilerIrParamList.Nil))))))
+
+;; Mutable rotated map gang:
+;;   load left[i], load right[i], add, store out[i], i += 4.
+;; mode 1 aliases all three exact IR bases, mode 2 makes the output base
+;; loop-local, and mode 3 gives the store a noncanonical index.
+(define (opt-unroll-mutable-map-test-blocks [mode : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 0) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            5
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 4)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              6
+              (CompilerIrBinOp.Le)
+              (CompilerIrValue.Var 5)
+              (CompilerIrValue.Var 0)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 6)
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
+              (CompilerIrInstrList.Nil))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "body")
+        (compiler-ir-instr-cons
+          ;; Only mode 2 consumes this loop-local alias as a memory base.
+          (CompilerIrInstr.Mov 10 (CompilerIrValue.Var 3) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.VectorLoad
+              7
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 4)
+              4
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.VectorLoad
+                8
+                (if (= mode 1)
+                  (CompilerIrValue.Var 1)
+                  (CompilerIrValue.Var 2))
+                (CompilerIrValue.Var 4)
+                4
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (ir-instr-vector-bin-op
+                  9
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 7)
+                  (CompilerIrValue.Var 8)
+                  4
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (ir-instr-vector-store
+                    (cond
+                      [(= mode 1) (CompilerIrValue.Var 1)]
+                      [(= mode 2) (CompilerIrValue.Var 10)]
+                      [else (CompilerIrValue.Var 3)])
+                    (if (= mode 3)
+                      (CompilerIrValue.Var 5)
+                      (CompilerIrValue.Var 4))
+                    (CompilerIrValue.Var 9)
+                    4
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Mov
+                      4
+                      (CompilerIrValue.Var 5)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        5
+                        (CompilerIrBinOp.Add)
+                        (CompilerIrValue.Var 4)
+                        (CompilerIrValue.I64 4)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.BinOp
+                          6
+                          (CompilerIrBinOp.Le)
+                          (CompilerIrValue.Var 5)
+                          (CompilerIrValue.Var 0)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Branch
+                            (CompilerIrValue.Var 6)
+                            (compiler-ir-label "body")
+                            (compiler-ir-label "exit"))
+                          (CompilerIrInstrList.Nil)))))))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "exit")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+            (CompilerIrInstrList.Nil)))
+        (CompilerIrBlockList.Nil)))))
+
+(define (opt-unroll-mutable-map-test-function [mode : i64]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "unroll_mutable_map_fixture")
+    (opt-unroll-mutable-map-test-params)
+    (AstType.I64)
+    11
+    (opt-unroll-mutable-map-test-blocks mode)))
+
 (define (opt-unroll-test-count-add-instr-seq
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -18883,7 +19169,51 @@
           [(CompilerIrInstr.MaskBinOp _ _ _ _ _) 1]
           [(CompilerIrInstr.Select _) 1]
           [(CompilerIrInstr.VectorLoad _ _ _ _ _) 1]
+          [(CompilerIrInstr.VectorStore _) 1]
           [_ 0])))))
+
+(define (opt-unroll-test-count-store-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-unroll-test-count-store-instr-seq
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.VectorStore _) 1]
+          [_ 0])))))
+
+(define (opt-unroll-test-count-gep-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-unroll-test-count-gep-instr-seq
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.Gep _ _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-unroll-test-count-in-block
+  [blocks : CompilerIrBlockList]
+  [label : i64]
+  [stores? : bool]) : i64
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if stores?
+            (opt-unroll-test-count-store-instr-seq instrs 0 0)
+            (opt-unroll-test-count-gep-instr-seq instrs 0 0))])]))
 
 (define (opt-unroll-test-count-vector-in-block
   [blocks : CompilerIrBlockList]
@@ -18928,11 +19258,47 @@
         (opt-unroll-mutable-vector-test-function false))]
     [mutable-vector-out : CompilerIrBlockList
       (opt-function-blocks mutable-vector-func)]
+    [store-required-input : CompilerIrFunction
+      (opt-unroll-mutable-vector-test-function false)]
+    [store-required-func : CompilerIrFunction
+      (match (opt-unroll-simd-function-with-context-result
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-cfg-context-build (opt-function-blocks store-required-input))
+        store-required-input
+        true)
+        [(OptFunctionCtxResult.Result result _) result])]
     [local-base-func : CompilerIrFunction
       (opt-unroll-function
         (ast-node-pool-reader-type-segment-bases)
         (opt-unroll-mutable-vector-test-function true))]
     [local-base-out : CompilerIrBlockList (opt-function-blocks local-base-func)]
+    [map-func : CompilerIrFunction
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-map-test-function 0))]
+    [map-out : CompilerIrBlockList (opt-function-blocks map-func)]
+    [alias-map-func : CompilerIrFunction
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-map-test-function 1))]
+    [alias-map-out : CompilerIrBlockList (opt-function-blocks alias-map-func)]
+    [local-store-func : CompilerIrFunction
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-map-test-function 2))]
+    [local-store-out : CompilerIrBlockList
+      (opt-function-blocks local-store-func)]
+    [bad-store-index-func : CompilerIrFunction
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-map-test-function 3))]
+    [bad-store-index-out : CompilerIrBlockList
+      (opt-function-blocks bad-store-index-func)]
+    [pipeline-map-func : CompilerIrFunction
+      (optimize-function
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-map-test-function 0))]
     (cond
       [(not (opt-verify-ok? (opt-verify-function func))) 1]
       ;; entry, guard, unrolled body, remainder loop, exit.
@@ -18982,6 +19348,99 @@
       ;; A base defined inside the loop cannot feed the shared pre-body Gep.
       [(not (opt-verify-ok? (opt-verify-final-function local-base-func))) 14]
       [(not (= (compiler-ir-block-list-count local-base-out) 3)) 15]
+      ;; A store-bearing three-base map gets sixteen sequential gang copies.
+      [(not (opt-verify-ok? (opt-verify-final-function map-func))) 16]
+      [(not (= (compiler-ir-block-list-count map-out) 6)) 17]
+      [(not
+          (=
+            (opt-unroll-test-count-vector-in-block
+              map-out
+              (compiler-ir-label "body__unroll_body"))
+            64))
+        18]
+      [(not
+          (=
+            (opt-unroll-test-count-in-block
+              map-out
+              (compiler-ir-label "body__unroll_body")
+              true)
+            16))
+        19]
+      [(not
+          (=
+            (opt-unroll-test-count-in-block
+              map-out
+              (compiler-ir-label "body__unroll_body")
+              false)
+            3))
+        20]
+      ;; Exact duplicate bases deduplicate their group Gep. Runtime aliases
+      ;; between distinct parameters are still safe because copies stay ordered.
+      [(not (opt-verify-ok? (opt-verify-final-function alias-map-func))) 21]
+      [(not (= (compiler-ir-block-list-count alias-map-out) 6)) 22]
+      [(not
+          (=
+            (opt-unroll-test-count-in-block
+              alias-map-out
+              (compiler-ir-label "body__unroll_body")
+              true)
+            16))
+        23]
+      [(not
+          (=
+            (opt-unroll-test-count-in-block
+              alias-map-out
+              (compiler-ir-label "body__unroll_body")
+              false)
+            1))
+        24]
+      ;; Loop-local bases and noncanonical store indices remain rejected.
+      [(not (opt-verify-ok? (opt-verify-final-function local-store-func))) 25]
+      [(not (= (compiler-ir-block-list-count local-store-out) 3)) 26]
+      [(not (opt-verify-ok? (opt-verify-final-function bad-store-index-func)))
+        27]
+      [(not (= (compiler-ir-block-list-count bad-store-index-out) 3)) 28]
+      [(not
+          (opt-unroll-simd-body-instr-ok?
+            (ir-instr-vector-store
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.Var 9)
+              4
+              (AstType.I64))))
+        29]
+      [(opt-unroll-simd-body-instr-ok?
+          (ir-instr-predicated-store
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Var 9)
+            (CompilerIrValue.Var 6)
+            4
+            (AstType.I64)))
+        30]
+      [(opt-unroll-simd-body-instr-ok?
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 9)
+            (AstType.I64)))
+        31]
+      ;; The main pipeline must run this mutable-only path before scalar SSA.
+      [(not (opt-verify-ok? (opt-verify-final-function pipeline-map-func))) 32]
+      ;; Later CFG cleanup may merge the generated label, but it never shrinks
+      ;; the virtual-register frame allocated by the sixteen-copy rewrite.
+      [(not (> (opt-function-frame pipeline-map-func) 11)) 33]
+      ;; The speculative pre-SSA path is store-bearing only. Store-free
+      ;; reductions retain their established later-pipeline handling.
+      [(not (= (opt-function-frame store-required-func) 10)) 34]
+      [(opt-unroll-simd-body-instr-ok?
+          (ir-instr-predicated-load
+            8
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Bool true)
+            4
+            (AstType.I64)))
+        35]
       [else 42])))
 
 ;; --- bounds-check loop versioning self-test ------------------------------------
@@ -18994,10 +19453,82 @@
         (CompilerIrParam.Param "base" (AstType.I64) 2)
         (CompilerIrParamList.Nil)))))
 
-;; entry -> loop (i phi, acc phi, bounds check on i, acc += i, i += 1) -> exit
-;; (acc merged through an exit phi). `derivable` false swaps the check's index
-;; for the ADD result, which is neither counter, invariant, nor mask.
-(define (opt-bce-version-test-blocks [derivable : bool]) : CompilerIrBlockList
+;; entry -> loop (i phi, acc phi, bounds check, acc += i, i += 1) -> exit
+;; (acc merged through an exit phi). Variant 0 checks the unrelated ADD result
+;; and is underivable; 1 checks i directly; 2 checks i*3; 3 checks i-2; 4
+;; checks i*(-3), whose decreasing/wrapping range must remain underivable; and
+;; 5 checks a strength-reduced derived phi that starts at 1 and steps by 3.
+(define (opt-bce-version-test-check-tail [variant : i64]) : CompilerIrInstrList
+  (let
+    [check : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BoundsCheck
+          (cond
+            [(= variant 0) (CompilerIrValue.Var 5)]
+            [(= variant 1) (CompilerIrValue.Var 3)]
+            [else (CompilerIrValue.Var 9)])
+          (CompilerIrValue.Var 1)
+          (compiler-ir-label "bce_version_ok"))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            6
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              7
+              (CompilerIrBinOp.Lt)
+              (CompilerIrValue.Var 6)
+              (CompilerIrValue.Var 0)
+              (AstType.Bool))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 7)
+                (compiler-ir-label "loop")
+                (compiler-ir-label "done"))
+              (CompilerIrInstrList.Nil)))))]
+    (cond
+      [(= variant 2)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            9
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 3)
+            (AstType.I64))
+          check)]
+      [(= variant 3)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            9
+            (CompilerIrBinOp.Sub)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          check)]
+      [(= variant 4)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            9
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 -3)
+            (AstType.I64))
+          check)]
+      [(= variant 5)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            10
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 9)
+            (CompilerIrValue.I64 3)
+            (AstType.I64))
+          check)]
+      [else check])))
+
+(define (opt-bce-version-test-blocks [variant : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
       (compiler-ir-label "entry")
@@ -19011,7 +19542,10 @@
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
-              (CompilerIrValue.I64 0)
+              (CompilerIrValue.I64
+                (if (= variant 3)
+                  2
+                  0))
               (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 6)
@@ -19029,40 +19563,34 @@
                   (compiler-ir-label "loop")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.BinOp
-                5
-                (CompilerIrBinOp.Add)
-                (CompilerIrValue.Var 4)
-                (CompilerIrValue.Var 3)
-                (AstType.I64))
+            (if (= variant 5)
               (compiler-ir-instr-cons
-                (CompilerIrInstr.BoundsCheck
-                  (if derivable
-                    (CompilerIrValue.Var 3)
-                    (CompilerIrValue.Var 5))
-                  (CompilerIrValue.Var 1)
-                  (compiler-ir-label "bce_version_ok"))
+                (CompilerIrInstr.Phi
+                  9
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.I64 1)
+                    (compiler-ir-label "entry")
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.Var 10)
+                      (compiler-ir-label "loop")
+                      (CompilerIrPhiInputList.Nil)))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.BinOp
-                    6
+                    5
                     (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 4)
                     (CompilerIrValue.Var 3)
-                    (CompilerIrValue.I64 1)
                     (AstType.I64))
-                  (compiler-ir-instr-cons
-                    (CompilerIrInstr.BinOp
-                      7
-                      (CompilerIrBinOp.Lt)
-                      (CompilerIrValue.Var 6)
-                      (CompilerIrValue.Var 0)
-                      (AstType.Bool))
-                    (compiler-ir-instr-cons
-                      (CompilerIrInstr.Branch
-                        (CompilerIrValue.Var 7)
-                        (compiler-ir-label "loop")
-                        (compiler-ir-label "done"))
-                      (CompilerIrInstrList.Nil)))))))))
+                  (opt-bce-version-test-check-tail variant)))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  5
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 4)
+                  (CompilerIrValue.Var 3)
+                  (AstType.I64))
+                (opt-bce-version-test-check-tail variant))))))
       (compiler-ir-block-cons
         (compiler-ir-block
           (compiler-ir-label "done")
@@ -19085,7 +19613,7 @@
     (opt-test-symbol "bce_version_fixture")
     (opt-bce-version-test-params)
     (AstType.I64)
-    9
+    11
     blocks))
 
 (define (opt-bce-version-test-block-checks
@@ -19118,12 +19646,33 @@
   (let
     [versioned : CompilerIrFunction
       (opt-bce-version-function
-        (opt-bce-version-test-function (opt-bce-version-test-blocks true)))]
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 1)))]
     [out : CompilerIrBlockList (opt-function-blocks versioned)]
     [unchanged : CompilerIrFunction
       (opt-bce-version-function
-        (opt-bce-version-test-function (opt-bce-version-test-blocks false)))]
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 0)))]
     [unchanged-out : CompilerIrBlockList (opt-function-blocks unchanged)]
+    [scaled : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 2)))]
+    [scaled-out : CompilerIrBlockList (opt-function-blocks scaled)]
+    [offset : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 3)))]
+    [offset-out : CompilerIrBlockList (opt-function-blocks offset)]
+    [negative-scale-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 4))))]
+    [derived : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 5)))]
+    [derived-out : CompilerIrBlockList (opt-function-blocks derived)]
+    [slow-unroll-shape : OptUnrollMaybeShape
+      (match (opt-cfg-find-block out (compiler-ir-label "loop"))
+        [(OptMaybeBlock.No) (OptUnrollMaybeShape.No)]
+        [(OptMaybeBlock.Some slow-block)
+          (opt-unroll-block-shape out (compiler-ir-label "entry") slow-block)])]
     (cond
       [(not (opt-verify-ok? (opt-verify-function versioned))) 1]
       ;; entry, guard, fast, slow loop, exit.
@@ -19151,12 +19700,59 @@
         5]
       ;; a non-derivable index rejects: blocks stay untouched.
       [(not (= (compiler-ir-block-list-count unchanged-out) 3)) 6]
+      ;; Positive scaled induction versions through the overflow-safe
+      ;; quotient guard and drops the fast-path check.
+      [(not (opt-verify-ok? (opt-verify-function scaled))) 7]
+      [(not (= (compiler-ir-block-list-count scaled-out) 5)) 8]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              scaled-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        9]
+      [(not (= (opt-count-binop-op-blocks scaled-out (CompilerIrBinOp.Div)) 1))
+        10]
+      ;; The offset family uses the same guard, including its raised minimum
+      ;; seed (the fixture starts at 2 for i-2).
+      [(not (opt-verify-ok? (opt-verify-function offset))) 11]
+      [(not (= (compiler-ir-block-list-count offset-out) 5)) 12]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              offset-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        13]
+      [(not (= (opt-count-binop-op-blocks offset-out (CompilerIrBinOp.Div)) 1))
+        14]
+      ;; Decreasing affine expressions are outside this monotone analysis.
+      [(not (= (compiler-ir-block-list-count negative-scale-out) 3)) 15]
+      ;; Induction lowering's canonical derived phi is covered by the
+      ;; trip-count quotient guard as well.
+      [(not (opt-verify-ok? (opt-verify-function derived))) 16]
+      [(not (= (compiler-ir-block-list-count derived-out) 5)) 17]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              derived-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        18]
+      [(not (= (opt-count-binop-op-blocks derived-out (CompilerIrBinOp.Div)) 1))
+        19]
+      ;; Keep the checked fallback compact and preserve the unroller's single
+      ;; scheduling slot for hot versioned clones.
+      [(match slow-unroll-shape
+          [(OptUnrollMaybeShape.No) false]
+          [(OptUnrollMaybeShape.Some _) true])
+        20]
       [else 42])))
 
 ;; Full-pipeline integration: a lowered while loop with a checked array read
 ;; must version (rotation in iteration 1, versioning + unrolling of the fast
 ;; clone in iteration 2), leaving every fast-derived block check-free.
-(define (opt-bce-version-while-blocks) : CompilerIrBlockList
+(define (opt-bce-version-while-blocks [scaled : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
       (compiler-ir-label "entry")
@@ -19187,45 +19783,60 @@
         (compiler-ir-block
           (compiler-ir-label "body")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.BoundsCheck
-              (CompilerIrValue.Var 4)
-              (CompilerIrValue.Var 1)
-              (compiler-ir-label "bce_while_ok"))
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Gep
-                6
-                (CompilerIrValue.Var 2)
+            (if scaled
+              (CompilerIrInstr.BinOp
+                10
+                (CompilerIrBinOp.Mul)
                 (CompilerIrValue.Var 4)
+                (CompilerIrValue.I64 3)
                 (AstType.I64))
+              (CompilerIrInstr.Mov 10 (CompilerIrValue.I64 0) (AstType.I64)))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BoundsCheck
+                (CompilerIrValue.Var
+                  (if scaled
+                    10
+                    4))
+                (CompilerIrValue.Var 1)
+                (compiler-ir-label "bce_while_ok"))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Load 7 (CompilerIrValue.Var 6) (AstType.I64))
+                (CompilerIrInstr.Gep
+                  6
+                  (CompilerIrValue.Var 2)
+                  (CompilerIrValue.Var
+                    (if scaled
+                      10
+                      4))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.BinOp
-                    8
-                    (CompilerIrBinOp.Add)
-                    (CompilerIrValue.Var 3)
-                    (CompilerIrValue.Var 7)
-                    (AstType.I64))
+                  (CompilerIrInstr.Load 7 (CompilerIrValue.Var 6) (AstType.I64))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Mov
-                      3
-                      (CompilerIrValue.Var 8)
+                    (CompilerIrInstr.BinOp
+                      8
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 3)
+                      (CompilerIrValue.Var 7)
                       (AstType.I64))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.BinOp
-                        9
-                        (CompilerIrBinOp.Add)
-                        (CompilerIrValue.Var 4)
-                        (CompilerIrValue.I64 1)
+                      (CompilerIrInstr.Mov
+                        3
+                        (CompilerIrValue.Var 8)
                         (AstType.I64))
                       (compiler-ir-instr-cons
-                        (CompilerIrInstr.Mov
-                          4
-                          (CompilerIrValue.Var 9)
+                        (CompilerIrInstr.BinOp
+                          9
+                          (CompilerIrBinOp.Add)
+                          (CompilerIrValue.Var 4)
+                          (CompilerIrValue.I64 1)
                           (AstType.I64))
                         (compiler-ir-instr-cons
-                          (CompilerIrInstr.Jump (compiler-ir-label "header"))
-                          (CompilerIrInstrList.Nil))))))))))
+                          (CompilerIrInstr.Mov
+                            4
+                            (CompilerIrValue.Var 9)
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.Jump (compiler-ir-label "header"))
+                            (CompilerIrInstrList.Nil)))))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
             (compiler-ir-label "exit")
@@ -19291,9 +19902,20 @@
           (opt-test-symbol "bce_version_while_fixture")
           (opt-bce-version-test-params)
           (AstType.I64)
-          10
-          (opt-bce-version-while-blocks)))]
+          11
+          (opt-bce-version-while-blocks false)))]
     [blocks : CompilerIrBlockList (opt-function-blocks optimized)]
+    [scaled : CompilerIrFunction
+      (optimize-function
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        (CompilerIrFunction.Function
+          (opt-test-symbol "bce_version_scaled_while_fixture")
+          (opt-bce-version-test-params)
+          (AstType.I64)
+          11
+          (opt-bce-version-while-blocks true)))]
+    [scaled-blocks : CompilerIrBlockList (opt-function-blocks scaled)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
       ;; the fast clone exists ...
@@ -19311,6 +19933,21 @@
           (opt-bce-version-test-block-checks blocks (compiler-ir-label "body"))
           1)
         4]
+      [(not (opt-verify-ok? (opt-verify-function scaled))) 5]
+      [(match (opt-cfg-find-block
+          scaled-blocks
+          (compiler-ir-label "body__bce_fast"))
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        6]
+      [(not
+          (=
+            (opt-bce-version-test-prefix-checks
+              scaled-blocks
+              "body__bce_fast"
+              0)
+            0))
+        7]
       [else 42])))
 
 ;; --- multi-block bce-version self-tests -------------------------------------------
@@ -19322,33 +19959,34 @@
 ;; PARTIALLY versions now (the counter check still derives, the swap check
 ;; stays in the fast clone) -- 2 puts a call in the swap block, 3 makes the
 ;; counter step +2 -- the latter two must leave the function untouched. Variant
-;; 4 gives the header a total-switch terminator so cloning exercises every
-;; switch edge, including the compiler trap default. Variant 5 uses the late
-;; total-enum marker and must remain unversioned by the profitability gate.
+;; 4 gives the header a switch terminator so cloning exercises every switch
+;; edge, including the compiler trap default. Variant 5 uses explicit pending
+;; total-enum provenance and must remain unversioned by the profitability gate.
 ;; Variants 6-9 cover late pairing; 10 lets the smaller affine value escape
 ;; through a phi so the paired rewrite must fail verification and roll back.
 ;; Variants 11-12 route the first check's index through a reinterpret cast.
+;; Variant 13 uses a scaled header index (`i*3`) without the switch/pair modes.
 ;;
-;; Frame size shared by every variant: vars 0-13 are spelled out below, so the
-;; passes allocate their replacement values from 14 up.
+;; Frame size shared by every variant: vars 0-14 are spelled out below, so the
+;; passes allocate their replacement values from 15 up.
 (define opt-bce-mb-test-frame : i64
-  14)
+  15)
 
 ;; Variant thresholds. Every variant from 4 up terminates the header with a
-;; switch, from 5 up marks that switch as the late total-enum dispatch, from 6
+;; switch, from 5 up gives that switch explicit total-enum provenance, from 6
 ;; up gives "then" the adjacent affine check pair, and from 11 up feeds the
 ;; first of those checks through a reinterpret cast.
 (define (opt-bce-mb-test-switch-variant? [variant : i64]) : bool
-  (>= variant 4))
+  (and (>= variant 4) (<= variant 12)))
 
 (define (opt-bce-mb-test-total-enum-variant? [variant : i64]) : bool
-  (>= variant 5))
+  (and (>= variant 5) (<= variant 12)))
 
 (define (opt-bce-mb-test-pair-variant? [variant : i64]) : bool
-  (>= variant 6))
+  (and (>= variant 6) (<= variant 12)))
 
 (define (opt-bce-mb-test-cast-variant? [variant : i64]) : bool
-  (>= variant 11))
+  (and (>= variant 11) (<= variant 12)))
 
 (define (opt-bce-mb-test-header-block [variant : i64]) : CompilerIrBlock
   (compiler-ir-block
@@ -19376,37 +20014,60 @@
               (CompilerIrPhiInputList.Nil)))
           (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.BoundsCheck
-            (CompilerIrValue.Var 3)
-            (CompilerIrValue.Var 1)
-            (compiler-ir-label "mb_ok0"))
-          (compiler-ir-instr-cons
+          (if (= variant 13)
             (CompilerIrInstr.BinOp
-              5
-              (CompilerIrBinOp.Lt)
+              14
+              (CompilerIrBinOp.Mul)
               (CompilerIrValue.Var 3)
-              (CompilerIrValue.I64 4)
-              (AstType.Bool))
+              (CompilerIrValue.I64 3)
+              (AstType.I64))
+            (CompilerIrInstr.Mov 14 (CompilerIrValue.I64 0) (AstType.I64)))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var
+                (if (= variant 13)
+                  14
+                  3))
+              (CompilerIrValue.Var 1)
+              (compiler-ir-label "mb_ok0"))
             (compiler-ir-instr-cons
-              (if (opt-bce-mb-test-switch-variant? variant)
-                (CompilerIrInstr.Switch
-                  (CompilerIrValue.Var 5)
-                  0
-                  (compiler-ir-switch-case-cons
-                    0
-                    (compiler-ir-label "else")
-                    (compiler-ir-switch-case-cons
-                      1
-                      (compiler-ir-label "then")
-                      CompilerIrSwitchCaseList.Nil))
+              (CompilerIrInstr.BinOp
+                5
+                (CompilerIrBinOp.Lt)
+                (CompilerIrValue.Var 3)
+                (CompilerIrValue.I64 4)
+                (AstType.Bool))
+              (compiler-ir-instr-cons
+                (if (opt-bce-mb-test-switch-variant? variant)
                   (if (opt-bce-mb-test-total-enum-variant? variant)
-                    (compiler-ir-label "match_total_enum_default")
-                    (compiler-ir-label "match_total_trap")))
-                (CompilerIrInstr.Branch
-                  (CompilerIrValue.Var 5)
-                  (compiler-ir-label "then")
-                  (compiler-ir-label "else")))
-              (CompilerIrInstrList.Nil))))))))
+                    (CompilerIrInstr.TotalEnumSwitch
+                      (CompilerIrValue.Var 5)
+                      0
+                      (compiler-ir-switch-case-cons
+                        0
+                        (compiler-ir-label "else")
+                        (compiler-ir-switch-case-cons
+                          1
+                          (compiler-ir-label "then")
+                          CompilerIrSwitchCaseList.Nil))
+                      (compiler-ir-label "match_total_enum_default")
+                      (compiler-ir-label-none))
+                    (CompilerIrInstr.Switch
+                      (CompilerIrValue.Var 5)
+                      0
+                      (compiler-ir-switch-case-cons
+                        0
+                        (compiler-ir-label "else")
+                        (compiler-ir-switch-case-cons
+                          1
+                          (compiler-ir-label "then")
+                          CompilerIrSwitchCaseList.Nil))
+                      (compiler-ir-label "match_total_trap")))
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var 5)
+                    (compiler-ir-label "then")
+                    (compiler-ir-label "else")))
+                (CompilerIrInstrList.Nil)))))))))
 
 ;; The bytecode-VM shape: the first check reads a width-64 reinterpret cast of
 ;; the affine value rather than the value itself. Variant 11 gives that cast no
@@ -19782,6 +20443,10 @@
       (opt-bce-version-function
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 0)))]
     [out : CompilerIrBlockList (opt-function-blocks versioned)]
+    [scaled : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 13)))]
+    [scaled-out : CompilerIrBlockList (opt-function-blocks scaled)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function versioned))) 1]
       ;; entry + guard + four fast clones + four slow blocks + exit
@@ -19828,6 +20493,26 @@
               (compiler-ir-label "exit"))
             2))
         9]
+      ;; The same affine recovery works when the index definition and latch
+      ;; live in different blocks.
+      [(not (opt-verify-ok? (opt-verify-function scaled))) 10]
+      [(not (= (compiler-ir-block-list-count scaled-out) 11)) 11]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              scaled-out
+              (compiler-ir-label "body__bce_fast"))
+            0))
+        12]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              scaled-out
+              (compiler-ir-label "body"))
+            1))
+        13]
+      [(not (= (opt-count-binop-op-blocks scaled-out (CompilerIrBinOp.Div)) 1))
+        14]
       [else 42])))
 
 (define (opt-bce-mb-test-cloned-switch-cases-ok?
@@ -20731,7 +21416,8 @@
 
 (define (opt-merged-loop-test-callee-args) : CompilerIrCallArgs
   (let
-    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 3)]
+    [args : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue 3)]
     (begin
       (array-set! args 0 (CompilerIrValue.Var 0))
       (array-set! args 1 (CompilerIrValue.Var 1))
@@ -20740,7 +21426,8 @@
 
 (define (opt-merged-loop-test-tail-args [rounds : i64]) : CompilerIrCallArgs
   (let
-    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 4)]
+    [args : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue 4)]
     (begin
       ;; The first three arguments are unchanged. Tail-recursion conversion
       ;; must not materialize identity writes for them.
@@ -22349,9 +23036,14 @@
 
 (define (compiler-optimize-loop-rotation-self-test) : i64
   (let
-    [raw : CompilerIrBlockList (opt-loop-rotation-top-test-blocks)]
+    [raw : CompilerIrBlockList (opt-loop-rotation-top-test-blocks false)]
     [rotated : CompilerIrBlockList
       (opt-loop-rotation-blocks (ast-node-pool-reader-context-current) raw)]
+    [constant-edge-rotated : CompilerIrBlockList
+      (match (opt-loop-rotation-normalized-function-result
+        (ast-node-pool-reader-context-current)
+        (opt-cfg-test-function (opt-loop-rotation-top-test-blocks true)))
+        [(OptBlockCtxResult.Result blocks _ _) blocks])]
     [false-body-rotated : CompilerIrBlockList
       (opt-loop-rotation-blocks
         (ast-node-pool-reader-context-current)
@@ -22429,6 +23121,18 @@
               with-phi)
             with-phi))
         15]
+      [(not (= (compiler-ir-block-list-count constant-edge-rotated) 3)) 16]
+      [(opt-block-list-has-label?
+          constant-edge-rotated
+          (compiler-ir-label "loop"))
+        17]
+      [(not
+          (opt-loop-rotation-successors?
+            constant-edge-rotated
+            (compiler-ir-label "entry")
+            (compiler-ir-label "body")
+            (compiler-ir-label "exit")))
+        18]
       [else 42])))
 
 ;; Nested-loop SSA fixture: the inner-loop counter/accumulator phis at the
@@ -23857,7 +24561,7 @@
       [store-blocked : OptScratchScopeReport
         (let
           [roots : OptScratchRootList
-            (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+            (opt-scratch-root-list-add (opt-scratch-root-list-new) 1)]
           (OptScratchScopeReport.Report
             1
             32
@@ -23881,7 +24585,7 @@
       [return-blocked : OptScratchScopeReport
         (let
           [roots : OptScratchRootList
-            (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+            (opt-scratch-root-list-add (opt-scratch-root-list-new) 1)]
           (OptScratchScopeReport.Report
             1
             32

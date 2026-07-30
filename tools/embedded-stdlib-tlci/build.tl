@@ -7,6 +7,7 @@
 (import "../../src/tlci_core.tl")
 (import "../../src/compiler_backend.tl")
 (import "../../src/compiler_tlci_native_image.tl")
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -134,7 +135,7 @@
   (let
     [module : String (embedded-stdlib-tlci-module-name suffix)]
     [path : String (str-cat root "/" suffix)]
-    [source : String (io.read-file path)]
+    [source : String (byte_buf.to-string (io.read-file path))]
     (if (= (string.string-length module) 0)
       (set!
         embedded-stdlib-tlci-build-error
@@ -205,46 +206,51 @@
         (io.print-error (str-cat "embedded stdlib tlci: " message "\n"))
         1)]
     [(ResultProducerBytes.Ok bytes)
-      (begin
-        (io.write-file output (tlci-bytes->string bytes 0 (array-length bytes)))
-        (io.print-string
-          (str-cat
-            "embedded stdlib tlci: wrote "
-            (string.int->string (array-length bytes))
-            " bytes for "
-            (string.int->string (array-length names))
-            " macro entries ("
-            (string.int->string
-              (array-ref embedded-stdlib-tlci-native-report-count 0))
-            " native)\n"))
-        ;; The native entry count is an upper bound on coverage: a native entry
-        ;; may still route single arms back to the interpreter. Report the arm
-        ;; sites separately so #5596's zero-fallback goal is measurable.
-        ;; Per-shell reasons on stderr, one `identity<TAB>reason` line each, so
-        ;; a family's real blocker is read out of the producer instead of
-        ;; inferred from an AST histogram -- which mis-predicted the residue
-        ;; twice (#5605, #5600). stdout keeps exactly the two lines the gates
-        ;; match on. Refs #5596.
-        (io.print-error
-          (array-ref embedded-stdlib-tlci-native-report-reasons 0))
-        (io.print-string
-          (str-cat
-            "embedded stdlib tlci: coverage native-entries="
-            (string.int->string
-              (array-ref embedded-stdlib-tlci-native-report-count 0))
-            " shell-entries="
-            (string.int->string
-              (-
-                (array-length names)
-                (array-ref embedded-stdlib-tlci-native-report-count 0)))
-            " partial-entries="
-            (string.int->string
-              (array-ref embedded-stdlib-tlci-native-report-partial-count 0))
-            " interpreted-arms="
-            (string.int->string
-              (array-ref embedded-stdlib-tlci-native-report-interpreted-arms 0))
-            "\n"))
-        0)]))
+      (let
+        [bytes-len : i64 (array-length bytes)]
+        [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
+        (begin
+          (io.write-file output (byte_buf.as-bytes (& contents)))
+          (io.print-string
+            (str-cat
+              "embedded stdlib tlci: wrote "
+              (string.int->string bytes-len)
+              " bytes for "
+              (string.int->string (array-length names))
+              " macro entries ("
+              (string.int->string
+                (array-ref embedded-stdlib-tlci-native-report-count 0))
+              " native)\n"))
+          ;; The native entry count is an upper bound on coverage: a native entry
+          ;; may still route single arms back to the interpreter. Report the arm
+          ;; sites separately so #5596's zero-fallback goal is measurable.
+          ;; Per-shell reasons on stderr, one `identity<TAB>reason` line each, so
+          ;; a family's real blocker is read out of the producer instead of
+          ;; inferred from an AST histogram -- which mis-predicted the residue
+          ;; twice (#5605, #5600). stdout keeps exactly the two lines the gates
+          ;; match on. Refs #5596.
+          (io.print-error
+            (array-ref embedded-stdlib-tlci-native-report-reasons 0))
+          (io.print-string
+            (str-cat
+              "embedded stdlib tlci: coverage native-entries="
+              (string.int->string
+                (array-ref embedded-stdlib-tlci-native-report-count 0))
+              " shell-entries="
+              (string.int->string
+                (-
+                  (array-length names)
+                  (array-ref embedded-stdlib-tlci-native-report-count 0)))
+              " partial-entries="
+              (string.int->string
+                (array-ref embedded-stdlib-tlci-native-report-partial-count 0))
+              " interpreted-arms="
+              (string.int->string
+                (array-ref
+                  embedded-stdlib-tlci-native-report-interpreted-arms
+                  0))
+              "\n"))
+          0))]))
 
 (define (main) : i64
   (if (not (= (io.arg-count) 7))
@@ -263,10 +269,10 @@
       [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
       (if (or (string.eq target "linux") (string.eq target "windows"))
         (let
-          [rodata : (Array u8) (tlci-string->bytes (io.read-file rodata-path))]
+          [rodata : (Array u8) (byte_buf.to-array (io.read-file rodata-path))]
           (begin
             (embedded-stdlib-tlci-collect-manifest!
-              (io.read-file manifest-path)
+              (byte_buf.to-string (io.read-file manifest-path))
               root
               0
               (&mut names)

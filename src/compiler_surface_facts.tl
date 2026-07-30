@@ -13,12 +13,12 @@
   (summary-values i64)
   (summary-functions i64)
   (summary-externs i64)
-  (clone-decl-keys (Array i64))
-  (clone-root-keys (Array i64))
-  (clone-call-indices (Array i64)))
+  (clone-decl-keys (__tl_dyn-array i64))
+  (clone-root-keys (__tl_dyn-array i64))
+  (clone-call-indices (__tl_dyn-array i64)))
 
 (defenum ResultSurfaceTypecheckFactBytes
-  (Ok (Array u8))
+  (Ok (__tl_dyn-array u8))
   (Err String))
 
 (defenum ResultSurfaceTypecheckFacts
@@ -26,10 +26,10 @@
   (Err String))
 
 (defstruct SurfaceTypecheckFactReader
-  (bytes (Array u8))
-  (offset (Array i64))
-  (ok (Array bool))
-  (message (Array String)))
+  (bytes (__tl_dyn-array u8))
+  (offset (__tl_dyn-array i64))
+  (ok (__tl_dyn-array bool))
+  (message (__tl_dyn-array String)))
 
 (defstruct SurfaceCloneObservation
   (decl-key i64)
@@ -37,15 +37,15 @@
   (call-index i64))
 
 (defstruct SurfaceCloneObservationSeq
-  (slots (Array SurfaceCloneObservation))
+  (slots (__tl_dyn-array SurfaceCloneObservation))
   (len i64))
 
 (define (surface-clone-observation-seq-empty) : SurfaceCloneObservationSeq
   (SurfaceCloneObservationSeq (make-array SurfaceCloneObservation 0) 0))
 
 (define (surface-clone-observation-copy-range!
-  [dst : (&mut dst (Array SurfaceCloneObservation))]
-  [src : (& src (Array SurfaceCloneObservation))]
+  [dst : (&mut dst (__tl_dyn-array SurfaceCloneObservation))]
+  [src : (& src (__tl_dyn-array SurfaceCloneObservation))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -58,7 +58,7 @@
   [seq : (&mut seq SurfaceCloneObservationSeq)]) : unit
   (let
     [count : i64 (struct-get seq len)]
-    [bigger : (Array SurfaceCloneObservation)
+    [bigger : (__tl_dyn-array SurfaceCloneObservation)
       (make-array
         SurfaceCloneObservation
         (if (< count 1)
@@ -196,11 +196,11 @@
   (let
     [count : i64
       (struct-get surface-typecheck-facts-recording-observations len)]
-    [decl-keys : (Array i64) (make-array i64 count)]
-    [root-keys : (Array i64) (make-array i64 count)]
-    [call-indices : (Array i64) (make-array i64 count)]
+    [decl-keys : (__tl_dyn-array i64) (make-array i64 count)]
+    [root-keys : (__tl_dyn-array i64) (make-array i64 count)]
+    [call-indices : (__tl_dyn-array i64) (make-array i64 count)]
     [index : i64 0]
-    [slots : (Array SurfaceCloneObservation)
+    [slots : (__tl_dyn-array SurfaceCloneObservation)
       (struct-get surface-typecheck-facts-recording-observations slots)]
     (begin
       (while (< index count)
@@ -245,9 +245,9 @@
 
 (define (surface-typecheck-facts-valid? [facts : SurfaceTypecheckFacts]) : bool
   (let
-    [decl-keys : (Array i64) (struct-get facts clone-decl-keys)]
-    [root-keys : (Array i64) (struct-get facts clone-root-keys)]
-    [call-indices : (Array i64) (struct-get facts clone-call-indices)]
+    [decl-keys : (__tl_dyn-array i64) (struct-get facts clone-decl-keys)]
+    [root-keys : (__tl_dyn-array i64) (struct-get facts clone-root-keys)]
+    [call-indices : (__tl_dyn-array i64) (struct-get facts clone-call-indices)]
     (and
       (> (struct-get facts macro-prefix-decl-count) 0)
       (> (struct-get facts prefix-decl-count) 0)
@@ -270,9 +270,10 @@
       (ResultSurfaceTypecheckFactBytes.Err
         "surface facts: invalid checked-prefix facts")
       (let
-        [decl-keys : (Array i64) (struct-get facts clone-decl-keys)]
-        [root-keys : (Array i64) (struct-get facts clone-root-keys)]
-        [call-indices : (Array i64) (struct-get facts clone-call-indices)]
+        [decl-keys : (__tl_dyn-array i64) (struct-get facts clone-decl-keys)]
+        [root-keys : (__tl_dyn-array i64) (struct-get facts clone-root-keys)]
+        [call-indices : (__tl_dyn-array i64)
+          (struct-get facts clone-call-indices)]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
         [index : i64 0]
@@ -327,11 +328,11 @@
             (ResultSurfaceTypecheckFactBytes.Err
               "surface facts: identity is not relocatable")))))))
 
-(define (surface-typecheck-fact-reader-new [bytes : (Array u8)]) : SurfaceTypecheckFactReader
+(define (surface-typecheck-fact-reader-new [bytes : (__tl_dyn-array u8)]) : SurfaceTypecheckFactReader
   (let
-    [offset : (Array i64) (make-array i64 1)]
-    [ok : (Array bool) (make-array bool 1)]
-    [message : (Array String) (make-array String 1)]
+    [offset : (__tl_dyn-array i64) (make-array i64 1)]
+    [ok : (__tl_dyn-array bool) (make-array bool 1)]
+    [message : (__tl_dyn-array String) (make-array String 1)]
     (begin
       (array-set! offset 0 0)
       (array-set! ok 0 true)
@@ -351,7 +352,7 @@
   [reader : SurfaceTypecheckFactReader]) : i64
   (let
     [offset : i64 (array-ref (struct-get reader offset) 0)]
-    [bytes : (Array u8) (struct-get reader bytes)]
+    [bytes : (__tl_dyn-array u8) (struct-get reader bytes)]
     (if (or
       (not (array-ref (struct-get reader ok) 0))
       (> offset (- (array-length bytes) 8)))
@@ -378,8 +379,8 @@
         (< id (+ triple-offset (* identity-count2 identity-count)))))))
 
 (define (surface-typecheck-facts-decode
-  [bytes : (Array u8)]
-  [remap : (Array i64)]) : ResultSurfaceTypecheckFacts
+  [bytes : (__tl_dyn-array u8)]
+  [remap : (__tl_dyn-array i64)]) : ResultSurfaceTypecheckFacts
   (let
     [reader : SurfaceTypecheckFactReader
       (surface-typecheck-fact-reader-new bytes)]
@@ -404,9 +405,9 @@
       (ResultSurfaceTypecheckFacts.Err
         "surface facts: bad magic, schema, or count")
       (let
-        [decl-keys : (Array i64) (make-array i64 clone-count)]
-        [root-keys : (Array i64) (make-array i64 clone-count)]
-        [call-indices : (Array i64) (make-array i64 clone-count)]
+        [decl-keys : (__tl_dyn-array i64) (make-array i64 clone-count)]
+        [root-keys : (__tl_dyn-array i64) (make-array i64 clone-count)]
+        [call-indices : (__tl_dyn-array i64) (make-array i64 clone-count)]
         [identity-count : i64 (array-length remap)]
         [index : i64 0]
         (begin

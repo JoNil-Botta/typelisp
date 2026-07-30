@@ -3,7 +3,7 @@
 ;; source roots instead of recompressing the compiler payload for every file.
 (defenum CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone)
-  (CompilerEmbeddedStdlibPayloadSome (Array u8)))
+  (CompilerEmbeddedStdlibPayloadSome (__tl_dyn-array u8)))
 
 (define (compiler-embedded-stdlib-payload-lookup [_suffix : String]) : CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone))

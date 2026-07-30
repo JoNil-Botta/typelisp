@@ -35187,7 +35187,18 @@
                   (if (and
                     (= then-label label)
                     (not (= else-label label))
-                    (not (= label entry-label)))
+                    (not (= label entry-label))
+                    ;; A versioned loop's original body is the cold checked
+                    ;; fallback. Spending this invocation's sole unroll slot
+                    ;; on it both bloats cold code and can strand a later hot
+                    ;; `__bce_fast` clone at the optimizer iteration cap.
+                    (not
+                      (opt-cfg-block-exists?
+                        blocks
+                        (compiler-ir-label
+                          (string.append
+                            (compiler-ir-label-text label)
+                            "__bce_fast")))))
                     (opt-unroll-shape-scan blocks label instrs count cond-var)
                     (OptUnrollMaybeShape.No))]
                 [_ (OptUnrollMaybeShape.No)])]
@@ -37265,6 +37276,125 @@
               var)]
           [_ var])))))
 
+;; A loop-local index written as `scale * counter + offset`. The coefficients
+;; are mathematical signed i64 values, not merely their wrapping bit patterns:
+;; every fold below rejects coefficient overflow so the range guard may reason
+;; about a monotone positive-scale expression.
+(defenum OptBceCounterAffine
+  (No)
+  (Some i64 i64))
+
+;; A canonical derived induction phi: its preheader value and its positive
+;; constant increment per primary-counter trip.
+(defenum OptBceDerivedInduction
+  (No)
+  (Some CompilerIrValue i64))
+
+(define (opt-bce-counter-affine-add [value : OptBceCounterAffine] [delta : i64]) : OptBceCounterAffine
+  (match value
+    [(OptBceCounterAffine.No) (OptBceCounterAffine.No)]
+    [(OptBceCounterAffine.Some scale offset)
+      (let
+        [minimum : i64 (- (- 0 9223372036854775807) 1)]
+        (if (or
+          (and (> delta 0) (> offset (- 9223372036854775807 delta)))
+          (and (< delta 0) (< offset (- minimum delta))))
+          (OptBceCounterAffine.No)
+          (OptBceCounterAffine.Some scale (+ offset delta))))]))
+
+(define (opt-bce-counter-affine-mul
+  [value : OptBceCounterAffine]
+  [factor : i64]) : OptBceCounterAffine
+  (match value
+    [(OptBceCounterAffine.No) (OptBceCounterAffine.No)]
+    [(OptBceCounterAffine.Some scale offset)
+      (let
+        [minimum : i64 (- (- 0 9223372036854775807) 1)]
+        (if (or
+          (<= factor 0)
+          (> scale (/ 9223372036854775807 factor))
+          (if (>= offset 0)
+            (> offset (/ 9223372036854775807 factor))
+            (< offset (/ minimum factor))))
+          (OptBceCounterAffine.No)
+          (OptBceCounterAffine.Some (* scale factor) (* offset factor))))]))
+
+;; Same-block affine recovery for the canonical self-loop. Copy/reinterpret
+;; chains are resolved first; Add/Sub/Mul may then contribute one literal
+;; coefficient at a time.
+(define (opt-bce-version-counter-affine
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [iphi : i64]
+  [value : CompilerIrValue]
+  [fuel : i64]) : OptBceCounterAffine
+  (match value
+    [(CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
+        (if (= id iphi)
+          (OptBceCounterAffine.Some 1 0)
+          (if (<= fuel 0)
+            (OptBceCounterAffine.No)
+            (let
+              [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+              [def-index : i64 (opt-unroll-def-index slots phi-count last id)]
+              (if (< def-index 0)
+                (OptBceCounterAffine.No)
+                (match (array-ref slots def-index)
+                  [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+                    (if (opt-affine-64bit-type? ty)
+                      (match op
+                        [(CompilerIrBinOp.Add)
+                          (match (opt-affine-var-const lhs rhs)
+                            [(OptAffineOperands.Some src k)
+                              (opt-bce-counter-affine-add
+                                (opt-bce-version-counter-affine
+                                  instrs
+                                  phi-count
+                                  last
+                                  iphi
+                                  (CompilerIrValue.Var src)
+                                  (- fuel 1))
+                                k)]
+                            [(OptAffineOperands.No) (OptBceCounterAffine.No)])]
+                        [(CompilerIrBinOp.Sub)
+                          (match lhs
+                            [(CompilerIrValue.Var src)
+                              (match rhs
+                                [(CompilerIrValue.I64 k)
+                                  (if (= k (- (- 0 9223372036854775807) 1))
+                                    (OptBceCounterAffine.No)
+                                    (opt-bce-counter-affine-add
+                                      (opt-bce-version-counter-affine
+                                        instrs
+                                        phi-count
+                                        last
+                                        iphi
+                                        (CompilerIrValue.Var src)
+                                        (- fuel 1))
+                                      (- 0 k)))]
+                                [_ (OptBceCounterAffine.No)])]
+                            [_ (OptBceCounterAffine.No)])]
+                        [(CompilerIrBinOp.Mul)
+                          (match (opt-affine-var-const lhs rhs)
+                            [(OptAffineOperands.Some src k)
+                              (opt-bce-counter-affine-mul
+                                (opt-bce-version-counter-affine
+                                  instrs
+                                  phi-count
+                                  last
+                                  iphi
+                                  (CompilerIrValue.Var src)
+                                  (- fuel 1))
+                                k)]
+                            [(OptAffineOperands.No) (OptBceCounterAffine.No)])]
+                        [_ (OptBceCounterAffine.No)])
+                      (OptBceCounterAffine.No))]
+                  [_ (OptBceCounterAffine.No)]))))))]
+    [_ (OptBceCounterAffine.No)]))
+
 ;; The invariant value an operand resolves to (a literal, or a var defined
 ;; outside the loop -- possibly behind in-loop copies/reinterprets), if any.
 ;; The guard must reference the RESOLVED value: it is the one whose definition
@@ -37286,13 +37416,299 @@
           (CompilerIrMaybeValue.Some (CompilerIrValue.Var id))))]
     [_ (CompilerIrMaybeValue.No)]))
 
+;; Recover a same-block derived induction phi
+;;
+;;   derived = phi(preheader_start, derived + positive_step)
+;;
+;; Copy/reinterpret chains on the back value and add source are harmless.
+;; The initializer must remain loop-invariant because the versioning guard
+;; evaluates it before entering the cloned loop.
+(define (opt-bce-version-derived-induction
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
+  [phi-var : i64]
+  [inputs : CompilerIrPhiInputList]) : OptBceDerivedInduction
+  (match (opt-unroll-split-phi-inputs inputs loop-label)
+    [(OptUnrollPhiSplit.No) (OptBceDerivedInduction.No)]
+    [(OptUnrollPhiSplit.Split init back init-label)
+      (if (not (= init-label pred-label))
+        (OptBceDerivedInduction.No)
+        (match (opt-bce-version-invariant-operand
+          instrs
+          phi-count
+          last
+          defs
+          init)
+          [(CompilerIrMaybeValue.No) (OptBceDerivedInduction.No)]
+          [(CompilerIrMaybeValue.Some invariant-init)
+            (match back
+              [(CompilerIrValue.Var back-raw)
+                (let
+                  [back-var : i64
+                    (opt-bce-version-resolve instrs phi-count last back-raw 16)]
+                  [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+                  [back-index : i64
+                    (opt-unroll-def-index slots phi-count last back-var)]
+                  (if (< back-index 0)
+                    (OptBceDerivedInduction.No)
+                    (match (array-ref slots back-index)
+                      [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+                        (match ty
+                          [(AstType.I64)
+                            (match op
+                              [(CompilerIrBinOp.Add)
+                                (match (opt-affine-var-const lhs rhs)
+                                  [(OptAffineOperands.Some src step)
+                                    (if (and
+                                      (> step 0)
+                                      (=
+                                        (opt-bce-version-resolve
+                                          instrs
+                                          phi-count
+                                          last
+                                          src
+                                          16)
+                                        phi-var))
+                                      (OptBceDerivedInduction.Some
+                                        invariant-init
+                                        step)
+                                      (OptBceDerivedInduction.No))]
+                                  [(OptAffineOperands.No)
+                                    (OptBceDerivedInduction.No)])]
+                              [_ (OptBceDerivedInduction.No)])]
+                          [_ (OptBceDerivedInduction.No)])]
+                      [_ (OptBceDerivedInduction.No)])))]
+              [_ (OptBceDerivedInduction.No)])]))]))
+
+;; Prove `scale * i + offset` is in range for every
+;; `i in [seed, bound)`, with positive `scale`.
+;;
+;; A direct `scale * (bound - 1) + offset < length` instruction would itself
+;; wrap, and a wrapped negative maximum could make an unsound signed compare
+;; succeed. Instead compute the equivalent upper threshold
+;;
+;;   bound - 1 <= (length - 1 - offset) / scale
+;;
+;; after separately proving that the numerator is representable and
+;; non-negative. Negative offsets also raise the minimum admitted seed.
+;; Arithmetic on guard-false paths may wrap (the language defines it), but the
+;; conjunction can be true only where the mathematical quotient is exact.
+(define (opt-bce-version-affine-guard
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [length : CompilerIrValue]
+  [scale : i64]
+  [offset : i64]
+  [cell : (Array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (if (or (<= scale 0) (= offset (- (- 0 9223372036854775807) 1)))
+    (OptBceVersionGuardAcc.No)
+    (if (and (= scale 1) (= offset 0))
+      (opt-bce-version-cond-counter-seen
+        (opt-bce-version-cond cell (CompilerIrBinOp.Le) bound length acc))
+      (match acc
+        [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+        [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+          (let
+            [last-counter : i64 (opt-bce-version-alloc-var cell)]
+            [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
+            [adjusted-capacity : i64 (opt-bce-version-alloc-var cell)]
+            [maximum-counter : i64 (opt-bce-version-alloc-var cell)]
+            [with-arithmetic : OptBceVersionGuardAcc
+              (OptBceVersionGuardAcc.Some
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    maximum-counter
+                    (CompilerIrBinOp.Div)
+                    (CompilerIrValue.Var adjusted-capacity)
+                    (CompilerIrValue.I64 scale)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      adjusted-capacity
+                      (CompilerIrBinOp.Sub)
+                      (CompilerIrValue.Var length-minus-one)
+                      (CompilerIrValue.I64 offset)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        length-minus-one
+                        (CompilerIrBinOp.Sub)
+                        length
+                        (CompilerIrValue.I64 1)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.BinOp
+                          last-counter
+                          (CompilerIrBinOp.Sub)
+                          bound
+                          (CompilerIrValue.I64 1)
+                          (AstType.I64))
+                        instrs))))
+                values
+                counter-seen)]
+            [upper : OptBceVersionGuardAcc
+              (opt-bce-version-cond
+                cell
+                (CompilerIrBinOp.Le)
+                (CompilerIrValue.Var last-counter)
+                (CompilerIrValue.Var maximum-counter)
+                with-arithmetic)]
+            [capacity-safe : OptBceVersionGuardAcc
+              (if (>= offset 0)
+                ;; length > offset makes `length - 1 - offset`
+                ;; representable and non-negative.
+                (opt-bce-version-cond
+                  cell
+                  (CompilerIrBinOp.Gt)
+                  length
+                  (CompilerIrValue.I64 offset)
+                  upper)
+                (let
+                  ;; For offset=-d, cap <= MAX-d+1 prevents positive
+                  ;; overflow in `cap - 1 + d`; cap > 0 supplies its lower
+                  ;; bound.
+                  [maximum-length : i64 (+ (+ 9223372036854775807 offset) 1)]
+                  (opt-bce-version-cond
+                    cell
+                    (CompilerIrBinOp.Gt)
+                    length
+                    (CompilerIrValue.I64 0)
+                    (opt-bce-version-cond
+                      cell
+                      (CompilerIrBinOp.Le)
+                      length
+                      (CompilerIrValue.I64 maximum-length)
+                      upper))))]
+            [minimum-safe : OptBceVersionGuardAcc
+              (if (>= offset 0)
+                capacity-safe
+                (let
+                  [magnitude : i64 (- 0 offset)]
+                  [minimum-seed : i64
+                    (+
+                      (/ magnitude scale)
+                      (if (= (% magnitude scale) 0)
+                        0
+                        1))]
+                  (opt-bce-version-cond
+                    cell
+                    (CompilerIrBinOp.Ge)
+                    seed
+                    (CompilerIrValue.I64 minimum-seed)
+                    capacity-safe)))]
+            (opt-bce-version-cond-counter-seen minimum-safe))]))))
+
+;; Prove a positive-step derived induction phi stays in range. If the primary
+;; loop executes, its trip number ranges over
+;;
+;;   0 .. (bound - seed - 1)
+;;
+;; and the derived index is `derived-seed + trip * step`. Constructing that
+;; maximum directly could wrap. Instead prove
+;;
+;;   bound - seed - 1 <= (length - 1 - derived-seed) / step
+;;
+;; after separately proving `derived-seed >= 0` and
+;; `length > derived-seed`. Together with the once-only primary
+;; `seed >= 0 && seed < bound` conditions, every arithmetic operation is
+;; representable on the accepted path.
+(define (opt-bce-version-derived-guard
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [derived-seed : CompilerIrValue]
+  [step : i64]
+  [length : CompilerIrValue]
+  [cell : (Array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (if (<= step 0)
+    (OptBceVersionGuardAcc.No)
+    (match acc
+      [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+      [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+        (let
+          [trip-span : i64 (opt-bce-version-alloc-var cell)]
+          [last-trip : i64 (opt-bce-version-alloc-var cell)]
+          [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
+          [room : i64 (opt-bce-version-alloc-var cell)]
+          [maximum-trip : i64 (opt-bce-version-alloc-var cell)]
+          [with-arithmetic : OptBceVersionGuardAcc
+            (OptBceVersionGuardAcc.Some
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  maximum-trip
+                  (CompilerIrBinOp.Div)
+                  (CompilerIrValue.Var room)
+                  (CompilerIrValue.I64 step)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    room
+                    (CompilerIrBinOp.Sub)
+                    (CompilerIrValue.Var length-minus-one)
+                    derived-seed
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      length-minus-one
+                      (CompilerIrBinOp.Sub)
+                      length
+                      (CompilerIrValue.I64 1)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        last-trip
+                        (CompilerIrBinOp.Sub)
+                        (CompilerIrValue.Var trip-span)
+                        (CompilerIrValue.I64 1)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.BinOp
+                          trip-span
+                          (CompilerIrBinOp.Sub)
+                          bound
+                          seed
+                          (AstType.I64))
+                        instrs)))))
+              values
+              counter-seen)]
+          [upper : OptBceVersionGuardAcc
+            (opt-bce-version-cond
+              cell
+              (CompilerIrBinOp.Le)
+              (CompilerIrValue.Var last-trip)
+              (CompilerIrValue.Var maximum-trip)
+              with-arithmetic)]
+          [capacity-safe : OptBceVersionGuardAcc
+            (opt-bce-version-cond
+              cell
+              (CompilerIrBinOp.Gt)
+              length
+              derived-seed
+              upper)]
+          [minimum-safe : OptBceVersionGuardAcc
+            (opt-bce-version-cond
+              cell
+              (CompilerIrBinOp.Ge)
+              derived-seed
+              (CompilerIrValue.I64 0)
+              capacity-safe)]
+          (opt-bce-version-cond-counter-seen minimum-safe))])))
+
 ;; Derive the sufficient invariant condition for one check's index operand.
 (define (opt-bce-version-derive-index
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
   [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
   [iphi : i64]
+  [seed : CompilerIrValue]
   [bound : CompilerIrValue]
   [cell : (Array i64)]
   [index-value : CompilerIrValue]
@@ -37336,7 +37752,9 @@
                 acc))
             (let
               [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-              [def-index : i64 (opt-unroll-def-index slots phi-count last id)]
+              ;; Derived induction variables live in the Phi prefix; ordinary
+              ;; affine expressions live in the body. Search both regions.
+              [def-index : i64 (opt-unroll-def-index slots 0 last id)]
               (if (< def-index 0)
                 (OptBceVersionGuardAcc.No)
                 (match (array-ref slots def-index)
@@ -37355,6 +37773,47 @@
                                 acc)
                               (OptBceVersionGuardAcc.No))]
                           [(OptAffineOperands.No) (OptBceVersionGuardAcc.No)])]
+                      [_
+                        (match (opt-bce-version-counter-affine
+                          instrs
+                          phi-count
+                          last
+                          iphi
+                          (CompilerIrValue.Var id)
+                          16)
+                          [(OptBceCounterAffine.No) (OptBceVersionGuardAcc.No)]
+                          [(OptBceCounterAffine.Some scale offset)
+                            (opt-bce-version-affine-guard
+                              seed
+                              bound
+                              length-value
+                              scale
+                              offset
+                              cell
+                              acc)])])]
+                  [(CompilerIrInstr.Phi _ inputs pty)
+                    (match pty
+                      [(AstType.I64)
+                        (match (opt-bce-version-derived-induction
+                          instrs
+                          phi-count
+                          last
+                          defs
+                          loop-label
+                          pred-label
+                          id
+                          inputs)
+                          [(OptBceDerivedInduction.No)
+                            (OptBceVersionGuardAcc.No)]
+                          [(OptBceDerivedInduction.Some derived-seed step)
+                            (opt-bce-version-derived-guard
+                              seed
+                              bound
+                              derived-seed
+                              step
+                              length-value
+                              cell
+                              acc)])]
                       [_ (OptBceVersionGuardAcc.No)])]
                   [_ (OptBceVersionGuardAcc.No)]))))))]
     [_ (OptBceVersionGuardAcc.No)]))
@@ -37365,7 +37824,10 @@
   [phi-count : i64]
   [last : i64]
   [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
   [iphi : i64]
+  [seed : CompilerIrValue]
   [bound : CompilerIrValue]
   [cell : (Array i64)]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
@@ -37377,7 +37839,10 @@
       phi-count
       last
       defs
+      loop-label
+      pred-label
       iphi
+      seed
       bound
       cell
       (match (compiler-ir-instr-seq-ref instrs index)
@@ -37394,7 +37859,10 @@
                 phi-count
                 last
                 defs
+                loop-label
+                pred-label
                 iphi
+                seed
                 bound
                 cell
                 index-value
@@ -37532,6 +38000,8 @@
   [phi-count : i64]
   [last : i64]
   [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
   [iphi : i64]
   [seed : CompilerIrValue]
   [bound : CompilerIrValue]
@@ -37546,7 +38016,10 @@
       phi-count
       last
       defs
+      loop-label
+      pred-label
       iphi
+      seed
       bound
       cell
       (OptBceVersionGuardAcc.Some
@@ -38113,6 +38586,8 @@
               phi-count
               last
               defs
+              label
+              pred-label
               iphi
               seed
               bound
@@ -38395,6 +38870,70 @@
                 [_ var])
               var)]
           [_ var])])))
+
+;; Multi-block counterpart of `opt-bce-version-counter-affine`.
+(define (opt-bce-mb-counter-affine
+  [body-blocks : CompilerIrBlockList]
+  [iphi : i64]
+  [value : CompilerIrValue]
+  [fuel : i64]) : OptBceCounterAffine
+  (match value
+    [(CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+        (if (= id iphi)
+          (OptBceCounterAffine.Some 1 0)
+          (if (<= fuel 0)
+            (OptBceCounterAffine.No)
+            (match (opt-bce-mb-find-def body-blocks id)
+              [(OptBceMbMaybeInstr.No) (OptBceCounterAffine.No)]
+              [(OptBceMbMaybeInstr.Some instr)
+                (match instr
+                  [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+                    (if (opt-affine-64bit-type? ty)
+                      (match op
+                        [(CompilerIrBinOp.Add)
+                          (match (opt-affine-var-const lhs rhs)
+                            [(OptAffineOperands.Some src k)
+                              (opt-bce-counter-affine-add
+                                (opt-bce-mb-counter-affine
+                                  body-blocks
+                                  iphi
+                                  (CompilerIrValue.Var src)
+                                  (- fuel 1))
+                                k)]
+                            [(OptAffineOperands.No) (OptBceCounterAffine.No)])]
+                        [(CompilerIrBinOp.Sub)
+                          (match lhs
+                            [(CompilerIrValue.Var src)
+                              (match rhs
+                                [(CompilerIrValue.I64 k)
+                                  (if (= k (- (- 0 9223372036854775807) 1))
+                                    (OptBceCounterAffine.No)
+                                    (opt-bce-counter-affine-add
+                                      (opt-bce-mb-counter-affine
+                                        body-blocks
+                                        iphi
+                                        (CompilerIrValue.Var src)
+                                        (- fuel 1))
+                                      (- 0 k)))]
+                                [_ (OptBceCounterAffine.No)])]
+                            [_ (OptBceCounterAffine.No)])]
+                        [(CompilerIrBinOp.Mul)
+                          (match (opt-affine-var-const lhs rhs)
+                            [(OptAffineOperands.Some src k)
+                              (opt-bce-counter-affine-mul
+                                (opt-bce-mb-counter-affine
+                                  body-blocks
+                                  iphi
+                                  (CompilerIrValue.Var src)
+                                  (- fuel 1))
+                                k)]
+                            [(OptAffineOperands.No) (OptBceCounterAffine.No)])]
+                        [_ (OptBceCounterAffine.No)])
+                      (OptBceCounterAffine.No))]
+                  [_ (OptBceCounterAffine.No)])]))))]
+    [_ (OptBceCounterAffine.No)]))
 
 (define (opt-bce-mb-collect-defs
   [blocks : CompilerIrBlockList]
@@ -38987,6 +39526,58 @@
       (if (opt-bce-mb-bounded-value? body-blocks sphi value fuel)
         (opt-bce-mb-bounded-inputs? body-blocks sphi (box-get rest) fuel)
         false)]))
+
+;; Multi-block recovery of the same canonical positive-step derived phi used
+;; by single-block versioning. Its initializer comes from the loop preheader;
+;; its back value may be defined in any loop block.
+(define (opt-bce-mb-derived-induction
+  [body-blocks : CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : i64]
+  [preheader : i64]
+  [phi-var : i64]
+  [inputs : CompilerIrPhiInputList]) : OptBceDerivedInduction
+  (match (opt-unroll-split-phi-inputs inputs latch)
+    [(OptUnrollPhiSplit.No) (OptBceDerivedInduction.No)]
+    [(OptUnrollPhiSplit.Split init back pred-label)
+      (if (not (= pred-label preheader))
+        (OptBceDerivedInduction.No)
+        (match (opt-bce-mb-invariant-operand body-blocks defs init)
+          [(CompilerIrMaybeValue.No) (OptBceDerivedInduction.No)]
+          [(CompilerIrMaybeValue.Some invariant-init)
+            (match back
+              [(CompilerIrValue.Var back-raw)
+                (let
+                  [back-var : i64 (opt-bce-mb-resolve body-blocks back-raw 16)]
+                  (match (opt-bce-mb-find-def body-blocks back-var)
+                    [(OptBceMbMaybeInstr.No) (OptBceDerivedInduction.No)]
+                    [(OptBceMbMaybeInstr.Some instr)
+                      (match instr
+                        [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+                          (match ty
+                            [(AstType.I64)
+                              (match op
+                                [(CompilerIrBinOp.Add)
+                                  (match (opt-affine-var-const lhs rhs)
+                                    [(OptAffineOperands.Some src step)
+                                      (if (and
+                                        (> step 0)
+                                        (=
+                                          (opt-bce-mb-resolve
+                                            body-blocks
+                                            src
+                                            16)
+                                          phi-var))
+                                        (OptBceDerivedInduction.Some
+                                          invariant-init
+                                          step)
+                                        (OptBceDerivedInduction.No))]
+                                    [(OptAffineOperands.No)
+                                      (OptBceDerivedInduction.No)])]
+                                [_ (OptBceDerivedInduction.No)])]
+                            [_ (OptBceDerivedInduction.No)])]
+                        [_ (OptBceDerivedInduction.No)])]))]
+              [_ (OptBceDerivedInduction.No)])]))]))
 
 ;; Derive the sufficient invariant condition for one check's index operand.
 ;; Underivable checks kept in the fast clone, identified by (block label,
@@ -40104,7 +40695,22 @@
                                 acc)
                               (OptBceVersionGuardAcc.No))]
                           [(OptAffineOperands.No) (OptBceVersionGuardAcc.No)])]
-                      [_ (OptBceVersionGuardAcc.No)])]
+                      [_
+                        (match (opt-bce-mb-counter-affine
+                          body-blocks
+                          iphi
+                          (CompilerIrValue.Var id)
+                          16)
+                          [(OptBceCounterAffine.No) (OptBceVersionGuardAcc.No)]
+                          [(OptBceCounterAffine.Some scale offset)
+                            (opt-bce-version-affine-guard
+                              seed
+                              bound
+                              length-value
+                              scale
+                              offset
+                              cell
+                              acc)])])]
                   [(CompilerIrInstr.Phi _ inputs pty)
                     ;; Bounded header phi (only header phis carry latch-edge
                     ;; inputs): same seed as the counter, back-edge value
@@ -40125,7 +40731,24 @@
                                   bound
                                   length-value
                                   acc))
-                              (OptBceVersionGuardAcc.No))]
+                              (match (opt-bce-mb-derived-induction
+                                body-blocks
+                                defs
+                                latch
+                                preheader
+                                id
+                                inputs)
+                                [(OptBceDerivedInduction.No)
+                                  (OptBceVersionGuardAcc.No)]
+                                [(OptBceDerivedInduction.Some derived-seed step)
+                                  (opt-bce-version-derived-guard
+                                    seed
+                                    bound
+                                    derived-seed
+                                    step
+                                    length-value
+                                    cell
+                                    acc)]))]
                           [(OptUnrollPhiSplit.No) (OptBceVersionGuardAcc.No)])]
                       [_ (OptBceVersionGuardAcc.No)])]
                   [_ (OptBceVersionGuardAcc.No)])])]))]

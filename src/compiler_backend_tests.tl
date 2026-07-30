@@ -7813,6 +7813,51 @@
         (not (compiler-backend-string-contains? asm "-512(%rbp)")))]
     [(ResultCompilerBackend.Err _) false]))
 
+;; Direct register binops need no scratch. Keep every scavenger candidate live
+;; across the instruction so an eager fallback selection is observable as an
+;; emergency-slot save even though LEA and the direct-source XOR do not consume
+;; the selected register.
+(define (compiler-backend-binop-direct-pressure-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
+  (let
+    [previous-slot : i64 compiler-backend-emergency-slot-offset]
+    [_slot : unit (set! compiler-backend-emergency-slot-offset -512)]
+    [regs : (Array i64) (compiler-backend-scavenge-candidates)]
+    [count : i64 (array-length regs)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-test-reg-assignment-list-from regs 0)]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          op
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.I64))
+        (compiler-backend-bounds-direct-pressure-tail 1 count))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-test-instrs instrs assignments count)]
+    [_restore : unit
+      (set! compiler-backend-emergency-slot-offset previous-slot)]
+    result))
+
+(define (compiler-backend-binop-direct-pressure-ok?) : bool
+  (match (compiler-backend-binop-direct-pressure-asm (CompilerIrBinOp.Add))
+    [(ResultCompilerBackend.Ok add-asm)
+      (match (compiler-backend-binop-direct-pressure-asm
+        (CompilerIrBinOp.BitXor))
+        [(ResultCompilerBackend.Ok xor-asm)
+          (and
+            (compiler-backend-string-contains?
+              add-asm
+              "    leaq (%r9,%rcx), %rdx\n")
+            (compiler-backend-string-contains?
+              xor-asm
+              "    movq %r9, %rdx\n    xorq %rcx, %rdx\n")
+            (not (compiler-backend-string-contains? add-asm "-512(%rbp)"))
+            (not (compiler-backend-string-contains? xor-asm "-512(%rbp)")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [(ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-win64-bounds-index-scratch-ok?) : bool
   (let
     [_win : unit (compiler-backend-set-current-fn-win64!)]
@@ -8078,6 +8123,7 @@
     (compiler-backend-binop-operand-folding-ok?)
     (compiler-backend-bounds-operand-folding-ok?)
     (compiler-backend-bounds-direct-pressure-ok?)
+    (compiler-backend-binop-direct-pressure-ok?)
     (compiler-backend-win64-bounds-index-scratch-ok?)
     (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)

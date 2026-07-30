@@ -2,12 +2,12 @@
 ;; exercises scaled and negative-offset induction. The trap cases cover a
 ;; scaled index that wraps negative and an offset index below zero: the
 ;; quotient guards must retain the checked slow path and its ordinary bounds
-;; abort.
-(import stdlib.array)
+;; abort. Private dynamic storage lets each helper cover multiple runtime
+;; lengths without presenting this optimizer fixture as a public collection.
 (import stdlib.io)
 (import stdlib.string)
 
-(define (scaled-sum [items : (Array i64)] [start : i64] [end : i64]) : i64
+(define (scaled-sum [items : (__tl_dyn-array i64)] [start : i64] [end : i64]) : i64
   (let
     [i : i64 start]
     [sum : i64 0]
@@ -18,7 +18,7 @@
           (set! i (+ i 1))))
       sum)))
 
-(define (offset-sum [items : (Array i64)] [start : i64] [end : i64]) : i64
+(define (offset-sum [items : (__tl_dyn-array i64)] [start : i64] [end : i64]) : i64
   (let
     [i : i64 start]
     [sum : i64 0]
@@ -31,7 +31,7 @@
 
 (define (success) : i64
   (let
-    [items : (Array i64) (array.make-array i64 10)]
+    [items : (__tl_dyn-array i64) (make-array i64 10)]
     (begin
       (array-set! items 0 10)
       (array-set! items 1 20)
@@ -44,12 +44,12 @@
 
 (define (overflow-trap) : i64
   (let
-    [items : (Array i64) (array.make-array i64 8)]
+    [items : (__tl_dyn-array i64) (make-array i64 8)]
     [start : i64 3074457345618258603]
     (scaled-sum items start (+ start 1))))
 
 (define (underflow-trap) : i64
-  (offset-sum (array.make-array i64 8) 0 1))
+  (offset-sum (make-array i64 8) 0 1))
 
 (define (main) : i64
   (match (string.>int (io.arg 1))

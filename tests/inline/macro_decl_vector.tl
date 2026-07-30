@@ -4,7 +4,8 @@
 ;; A `: Decls` macro splices a growable i64 vector family - struct plus
 ;; new/push/len/get/set/capacity and the capacity-doubling growth loop - into
 ;; this module. The generated function bodies use arithmetic, struct-get,
-;; make-array, array-ref/array-set!, let, while, and set!, all of which the
+;; private dynamic-array storage, make-array, array-ref/array-set!, let, while,
+;; and set!, all of which the
 ;; module-scope macro-output serializer must round-trip back to declarations.
 ;; These inline tests build and run the generated code on the host compiler.
 (import stdlib.test)
@@ -12,7 +13,7 @@
 (defmacro (int-vector-family) : Decls
   `(begin
     (defstruct IntVec
-      (slots (Array i64))
+      (slots (__tl_dyn-array i64))
       (len i64)
       (cap i64))
     (define (int-vec-with-capacity [cap : i64]) : IntVec
@@ -38,7 +39,7 @@
       (let
         [old-cap : i64 (struct-get v cap)]
         [new-cap : i64 (* old-cap 2)]
-        [bigger : (Array i64) (make-array i64 new-cap)]
+        [bigger : (__tl_dyn-array i64) (make-array i64 new-cap)]
         [n : i64 (struct-get v len)]
         [i : i64 0]
         (begin
@@ -50,7 +51,7 @@
     (define (int-vec-push [v : IntVec] [value : i64]) : IntVec
       (if (< (struct-get v len) (struct-get v cap))
         (let
-          [slots : (Array i64) (struct-get v slots)]
+          [slots : (__tl_dyn-array i64) (struct-get v slots)]
           (begin
             (array-set! slots (struct-get v len) value)
             (IntVec slots (+ (struct-get v len) 1) (struct-get v cap))))

@@ -9,7 +9,7 @@
 
 (define (main) : i64
   (let
-    [items : (Array PtrOffsetTriple) (array.make-array PtrOffsetTriple 2)]
+    [items : (__tl_dyn-array PtrOffsetTriple) (array.make-array PtrOffsetTriple 2)]
     (begin
       (array-set! items 0 (PtrOffsetTriple 1 2 3))
       (array-set! items 1 (PtrOffsetTriple 13 17 19))

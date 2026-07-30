@@ -2,7 +2,7 @@
   (ValueText String))
 
 (defstruct FieldList
-  (items (Array Value)))
+  (items (__tl_dyn-array Value)))
 
 (defmacro (encode-string [value : String]) : Value
   `(serialize_bad_object_finish_hook_format.ValueText ,value))

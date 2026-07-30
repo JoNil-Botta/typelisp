@@ -1,10 +1,12 @@
+;; Raw atomic/thread ABI coverage intentionally shares private dynamic-array
+;; backing addresses. This is not the public owned thread-result surface.
 (import stdlib.array)
 (import stdlib.thread)
 
 (define atomic-counter-iterations : i64
   128)
 
-(define (atomic-counter-array-i64-addr [items : (Array i64)]) : i64
+(define (atomic-counter-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
 
@@ -20,7 +22,7 @@
         : (Ptr i64)))))
 
 (define (atomic-counter-write-slot!
-  [ctx : (Array i64)]
+  [ctx : (__tl_dyn-array i64)]
   [slot : i64]
   [value : i64]) : unit
   (array-set! ctx slot value))
@@ -44,12 +46,12 @@
     [(ThreadJoinOk code) code]
     [(ThreadJoinErr _) -1]))
 
-(define (atomic-counter-final-value [counter : (Array i64)]) : i64
+(define (atomic-counter-final-value [counter : (__tl_dyn-array i64)]) : i64
   (unsafe
     (atomic-load (array-data counter))))
 
 (define (atomic-counter-finish
-  [counter : (Array i64)]
+  [counter : (__tl_dyn-array i64)]
   [a : Thread]
   [b : Thread]) : i64
   (let
@@ -64,9 +66,9 @@
 
 (define (main) : i64
   (let
-    [counter : (Array i64) (array.make-array i64 1)]
-    [ctx-a : (Array i64) (array.make-array i64 2)]
-    [ctx-b : (Array i64) (array.make-array i64 2)]
+    [counter : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [ctx-a : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [ctx-b : (__tl_dyn-array i64) (array.make-array i64 2)]
     [counter-addr : i64 (atomic-counter-array-i64-addr counter)]
     (begin
       (array-set! counter 0 0)

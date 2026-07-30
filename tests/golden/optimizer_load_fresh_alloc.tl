@@ -8,10 +8,10 @@
 ;; must contain exactly one load of the parameter's length field.
 (import stdlib.array)
 
-(define (load-across-fresh-alloc [values : (Array i64)]) : i64
+(define (load-across-fresh-alloc [values : (__tl_dyn-array i64)]) : i64
   (let
     [before : i64 (array-length values)]
-    [scratch : (Array i64) (array.make-array i64 4)]
+    [scratch : (__tl_dyn-array i64) (array.make-array i64 4)]
     (begin
       (array-set! scratch 0 before)
       (+ before (array-length values)))))

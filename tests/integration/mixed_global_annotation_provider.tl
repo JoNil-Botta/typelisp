@@ -9,12 +9,12 @@
 (defenum MixedGlobalAnnotationResult
   (Ok MixedGlobalAnnotationNode))
 
-(define mixed-global-annotation-items : (Array MixedGlobalAnnotationItem)
+(define mixed-global-annotation-items : (__tl_dyn-array MixedGlobalAnnotationItem)
   (array.make-array MixedGlobalAnnotationItem 1))
 
 (define (mixed-global-annotation-items-len) : i64
   (let
-    [items : (Array MixedGlobalAnnotationItem) mixed-global-annotation-items]
+    [items : (__tl_dyn-array MixedGlobalAnnotationItem) mixed-global-annotation-items]
     (array-length items)))
 
 (define (mixed-global-annotation-node [value : i64]) : MixedGlobalAnnotationNode

@@ -1,6 +1,8 @@
+;; include-bin's compiler-owned binary literal currently materializes its
+;; low-level payload as private dynamic byte storage.
 (include-bin payload "include_bin_payload.bin")
 
-(define (byte-at [items : (Array u8)] [idx : i64]) : i64
+(define (byte-at [items : (__tl_dyn-array u8)] [idx : i64]) : i64
   (cast (array-ref items idx) : i64))
 
 (define (main) : i64

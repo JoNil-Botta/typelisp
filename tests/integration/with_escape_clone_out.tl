@@ -6,7 +6,7 @@
 ;; non-dynamic-array escape paths.
 (defstruct EscapeBundle
   (name String)
-  (items (Array String))
+  (items (__tl_dyn-array String))
   (fixed (Array String 2))
   (cell (Box String)))
 
@@ -19,10 +19,10 @@
     (string.append "escape:" (string.int->string seed))
     (string.append ":" (string.int->string slot))))
 
-(define (make-items [seed : i64]) : (Array String)
+(define (make-items [seed : i64]) : (__tl_dyn-array String)
   (make-array (piece seed 1) (piece seed 2)))
 
-(define (escape-items [scratch : arena.Arena] [seed : i64]) : (Array String)
+(define (escape-items [scratch : arena.Arena] [seed : i64]) : (__tl_dyn-array String)
   (with-escape scratch (make-items seed)))
 
 (define (escape-cell [scratch : arena.Arena] [seed : i64]) : (Box String)
@@ -38,7 +38,7 @@
         (array (piece seed 4) (piece seed 5))
         (box (piece seed 6))))))
 
-(define (scratch-items [seed : i64]) : (Array String)
+(define (scratch-items [seed : i64]) : (__tl_dyn-array String)
   (with-scratch (make-items seed)))
 
 (define (scratch-cell [seed : i64]) : (Box String)
@@ -53,7 +53,7 @@
         (array (piece seed 4) (piece seed 5))
         (box (piece seed 6))))))
 
-(define (items-ok? [items : (Array String)] [seed : i64]) : bool
+(define (items-ok? [items : (__tl_dyn-array String)] [seed : i64]) : bool
   (and
     (string.eq (array-ref items 0) (piece seed 1))
     (string.eq (array-ref items 1) (piece seed 2))))
@@ -86,7 +86,7 @@
       (unsafe
         (arena.set! home))
       (let
-        [items : (Array String) (escape-items scratch seed)]
+        [items : (__tl_dyn-array String) (escape-items scratch seed)]
         (begin
           (unsafe
             (arena.set! scratch))
@@ -98,11 +98,11 @@
 (define (main) : i64
   (let
     [scratch : arena.Arena (arena.make)]
-    [items : (Array String) (escape-items scratch 10)]
+    [items : (__tl_dyn-array String) (escape-items scratch 10)]
     [cell : (Box String) (escape-cell scratch 20)]
     [bundle : EscapeOutcome (escape-bundle scratch 30)]
     [noise : EscapeOutcome (escape-bundle scratch 99)]
-    [scratch-items-out : (Array String) (scratch-items 110)]
+    [scratch-items-out : (__tl_dyn-array String) (scratch-items 110)]
     [scratch-cell-out : (Box String) (scratch-cell 120)]
     [scratch-bundle-out : EscapeOutcome (scratch-bundle 130)]
     (if (and

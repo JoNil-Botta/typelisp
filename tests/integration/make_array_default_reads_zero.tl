@@ -17,7 +17,7 @@
   (Empty)
   (Filled i64))
 
-(define (dirty-i64! [items : (Array i64)] [n : i64]) : unit
+(define (dirty-i64! [items : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -25,7 +25,7 @@
         (array-set! items i (+ i 7))
         (set! i (+ i 1))))))
 
-(define (count-nonzero-i64 [items : (Array i64)] [n : i64]) : i64
+(define (count-nonzero-i64 [items : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
@@ -38,7 +38,7 @@
           (set! i (+ i 1))))
       bad)))
 
-(define (count-true-bool [items : (Array bool)] [n : i64]) : i64
+(define (count-true-bool [items : (__tl_dyn-array bool)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
@@ -51,7 +51,7 @@
           (set! i (+ i 1))))
       bad)))
 
-(define (count-non-empty-slot [items : (Array Slot)] [n : i64]) : i64
+(define (count-non-empty-slot [items : (__tl_dyn-array Slot)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
@@ -74,7 +74,7 @@
 (define (main) : i64
   (let
     ;; Force the program arena into existence before taking the mark.
-    [_warm : (Array i64) (array.make-array i64 8)]
+    [_warm : (__tl_dyn-array i64) (array.make-array i64 8)]
     [mark : arena.ArenaMark (arena.mark)]
     ;; Virgin arena: tl_array_zero is allowed to skip, the pages must still
     ;; read as the default.

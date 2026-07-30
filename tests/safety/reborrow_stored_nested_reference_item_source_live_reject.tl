@@ -2,7 +2,7 @@
 ;: the original array after the holder state leaves scope.
 (defstruct NestedReborrowIter
   (:lifetimes source)
-  (slots (& source (Array i64)))
+  (slots (& source (__tl_dyn-array i64)))
   (index i64))
 
 (defstruct NestedReborrowHolder
@@ -32,7 +32,7 @@
 
 (define (main) : unit
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (let
       [first : (NestedReborrowNext items)
         (let

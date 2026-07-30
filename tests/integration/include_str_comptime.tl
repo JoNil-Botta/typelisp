@@ -1,22 +1,24 @@
 (import stdlib.comptime)
 (import "include_str_comptime_owner.tl" module include.str.comptime.owner as owner)
 
+;; The comptime binary-data constructor is an internal compiler primitive and
+;; emits private dynamic byte storage by design.
 (include-str-comptime source-bytes "include_str_comptime_payload.txt")
 
 (defmacro (emit-payload [source : comptime.Expr]) : Decls
-  `(define payload : (Array u8)
+  `(define payload : (__tl_dyn-array u8)
     ,(comptime.expr-binary-data (comptime.expr-string-value source))))
 
 (emit-payload (source-bytes))
 
 (defmacro (emit-binary-payload [source : comptime.Expr]) : Decls
-  `(define binary-payload : (Array u8)
+  `(define binary-payload : (__tl_dyn-array u8)
     ,(comptime.expr-binary-data (comptime.expr-string-value source))))
 
 (emit-binary-payload (owner.binary-source-bytes))
 
 (defmacro (emit-empty-payload) : Decls
-  `(define empty-payload : (Array u8)
+  `(define empty-payload : (__tl_dyn-array u8)
     ,(comptime.expr-binary-data "")))
 
 (emit-empty-payload)

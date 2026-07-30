@@ -25,7 +25,7 @@
       (unsafe
         (arena.tl_arena_set owner))
       (let
-        [items : (Array i64) (make-array i64 4096)]
+        [items : (__tl_dyn-array i64) (make-array i64 4096)]
         (begin
           (array-set! items 0 21)
           (array-set! items 1 21)

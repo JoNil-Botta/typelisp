@@ -10,7 +10,7 @@
 
 (define (main) : i64
   (let
-    [a : (Array P) (array.make-array P 0)]
+    [a : (__tl_dyn-array P) (array.make-array P 0)]
     (begin
       (array-push! a (P 30 5))
       (array-push! a (P 100 7))

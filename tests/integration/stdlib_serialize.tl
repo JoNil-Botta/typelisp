@@ -36,7 +36,7 @@
 (import (serialize.serialize toy Address) as address_ser)
 (import (serialize.serialize toy i64) as i64_ser)
 (import (serialize.serialize toy (Array i64 3)) as fixed_i64_ser)
-(import (serialize.serialize toy (Array i64)) as dyn_i64_ser)
+(import (serialize.serialize toy (type (__tl_dyn-array i64))) as dyn_i64_ser)
 (import (serialize.serialize toy (Array Address 2)) as address_array_ser)
 (import (serialize.serialize toy enum_fixture.Status) as status_ser)
 (import (serialize.serialize toy option_i64.Option) as option_i64_ser)
@@ -50,8 +50,8 @@
   (home Address)
   (scores (Array i64 3))
   (previous (Array Address 2))
-  (samples (Array i64))
-  (combo (Tuple i64 Address (Array i64 2) (Array i64) (Tuple String bool))))
+  (samples (__tl_dyn-array i64))
+  (combo (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))))
 
 (import (serialize.serialize toy Person) as person_ser)
 (import (serialize.serialize toy Person) as person_ser_again)
@@ -68,7 +68,7 @@
     (= (array-ref scores 1) 5)
     (= (array-ref scores 2) 6)))
 
-(define (serialize-samples-ok? [samples : (Array i64)]) : bool
+(define (serialize-samples-ok? [samples : (__tl_dyn-array i64)]) : bool
   (and
     (= (array-length samples) 2)
     (= (array-ref samples 0) 7)
@@ -80,7 +80,7 @@
     (serialize-address-eq? (array-ref previous 1) 222 "Paris")))
 
 (define (serialize-combo-ok?
-  [combo : (Tuple i64 Address (Array i64 2) (Array i64) (Tuple String bool))]) : bool
+  [combo : (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))]) : bool
   (and
     (= (tuple-ref combo 0) 99)
     (serialize-address-eq? (tuple-ref combo 1) 333 "Rome")
@@ -357,14 +357,14 @@
 (define (serialize-previous-addresses) : (Array Address 2)
   (array (Address 111 "Oxford") (Address 222 "Paris")))
 
-(define (serialize-make-samples) : (Array i64)
+(define (serialize-make-samples) : (__tl_dyn-array i64)
   (make-array 7 8))
 
 (define (serialize-combo) : (Tuple
     i64
     Address
     (Array i64 2)
-    (Array i64)
+    (__tl_dyn-array i64)
     (Tuple String bool))
   (tuple
     99
@@ -438,7 +438,7 @@
 
 (define (serialize-dyn-array-root-roundtrip-ok?) : bool
   (let
-    [samples : (Array i64) (serialize-make-samples)]
+    [samples : (__tl_dyn-array i64) (serialize-make-samples)]
     [encoded : toy.Value (dyn_i64_ser.encode samples)]
     (and
       (serialize-samples-value-ok? encoded)

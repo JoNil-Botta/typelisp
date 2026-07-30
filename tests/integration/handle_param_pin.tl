@@ -15,7 +15,7 @@
 ;;
 ;; The never-taken `poke` branch takes sum-arr's address so no inline path may
 ;; absorb it (a call inside sum-arr would be a real clobber point).
-(define (sum-arr [xs : (Array i64)] [n : i64]) : i64
+(define (sum-arr [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -28,14 +28,14 @@
       acc)))
 
 ;; Never executed (n < 100 always); its only job is to take sum-arr's address.
-(define (poke [f : (-> (Array i64) i64 i64)] [xs : (Array i64)] [n : i64]) : i64
+(define (poke [f : (-> (__tl_dyn-array i64) i64 i64)] [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (f xs n))
 
 (define (main) : i64
   (let
     ;; no CLI args: arg-count = 1 (program name), so n = 4.
     [n : i64 (+ (io.arg-count) 3)]
-    [xs : (Array i64) (make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

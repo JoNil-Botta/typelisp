@@ -18,7 +18,7 @@
 ;; own frame (and threshold stays a register-homed param). A wrong/clobbered
 ;; operand yields a wrong branch -> not 42; target/cmp-fold-gate.sh asserts the
 ;; asm shape (FAILS pre-GAP6a: a staging movq feeds the fused compare).
-(define (check [xs : (Array i64)] [threshold : i64] [poke : i64]) : i64
+(define (check [xs : (__tl_dyn-array i64)] [threshold : i64] [poke : i64]) : i64
   (if (< poke 0)
     (check xs threshold (+ poke 1))
     (if (< (array.length xs) threshold)
@@ -27,7 +27,7 @@
 
 (define (main) : i64
   (let
-    [xs : (Array i64) (array.make-array i64 6)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 6)]
     (if (= (check xs 10 0) 1)
       (if (= (check xs 3 0) 0)
         42

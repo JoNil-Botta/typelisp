@@ -8,7 +8,7 @@
   (flag bool))
 
 (defstruct Bag
-  (items (Array i64)))
+  (items (__tl_dyn-array i64)))
 
 (defenum Maybe
   (None)
@@ -27,7 +27,7 @@
 (define (point-score [value : Point]) : i64
   (+ (struct-get value x) (score-bool (not (struct-get value flag)))))
 
-(define (bag-score [bags : (Array Bag)]) : i64
+(define (bag-score [bags : (__tl_dyn-array Bag)]) : i64
   (begin
     (array-push! (struct-get (array-ref bags 0) items) 7)
     (score-bool
@@ -38,15 +38,15 @@
 
 (define (main) : i64
   (let
-    [ints : (Array i64) (array.make-array i64 3)]
-    [flags : (Array bool) (array.make-array bool 2)]
+    [ints : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [flags : (__tl_dyn-array bool) (array.make-array bool 2)]
     ;; lint-allow: single-element-array-cell
-    [chars : (Array char) (array.make-array char 1)]
-    [texts : (Array String) (array.make-array String 2)]
-    [points : (Array Point) (array.make-array Point 2)]
-    [maybes : (Array Maybe) (array.make-array Maybe 2)]
-    [bags : (Array Bag) (array.make-array Bag 2)]
-    [empty-points : (Array Point) (array.make-array Point 0)]
+    [chars : (__tl_dyn-array char) (array.make-array char 1)]
+    [texts : (__tl_dyn-array String) (array.make-array String 2)]
+    [points : (__tl_dyn-array Point) (array.make-array Point 2)]
+    [maybes : (__tl_dyn-array Maybe) (array.make-array Maybe 2)]
+    [bags : (__tl_dyn-array Bag) (array.make-array Bag 2)]
+    [empty-points : (__tl_dyn-array Point) (array.make-array Point 0)]
     [int-score : i64 (+ (array-length ints) (array-ref ints 2))]
     [flag-score : i64 (score-bool (not (array-ref flags 0)))]
     [char-score : i64 (score-bool (= (array-ref chars 0) (init : char)))]

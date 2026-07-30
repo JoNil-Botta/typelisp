@@ -17,7 +17,7 @@
 ;; `probe` reads gtab[i] under a never-taken self-recursion that blocks the leaf
 ;; inliner + TCO so the named body survives for the gate to inspect
 ;; (target/global-handle-gate.sh; FAILS pre-SCAV2 which emits two handle loads).
-(define gtab : (Array i64)
+(define gtab : (__tl_dyn-array i64)
   (array.make-array i64 16))
 
 (define (probe [i : i64]) : i64

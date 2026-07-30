@@ -21,7 +21,7 @@
 ;; constant-fold the loop, and `expected` is recomputed from a straight-line closed
 ;; form (no loop) -- a reconstruction guard the pointer-heavy self-host fixpoint
 ;; cannot provide.
-(define (sum-array [items : (Array i64)] [n : i64] [seed : i64]) : i64
+(define (sum-array [items : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64
   (let
     [a : i64 (+ seed 1)]
     [b : i64 (+ seed 2)]
@@ -46,7 +46,7 @@
     [ac : i64 (io.arg-count)]
     [n : i64 (+ ac 4)]
     [seed : i64 ac]
-    [items : (Array i64) (make-array i64 n)]
+    [items : (__tl_dyn-array i64) (make-array i64 n)]
     [i : i64 0]
     (begin
       ;; items[k] = k*10

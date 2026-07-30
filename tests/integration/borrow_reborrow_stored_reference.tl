@@ -2,7 +2,7 @@
 ;; lifetime must be the stored source lifetime, not the iterator-state borrow.
 (defstruct SharedIter
   (:lifetimes source)
-  (slots (& source (Array i64)))
+  (slots (& source (__tl_dyn-array i64)))
   (index i64))
 
 (defenum SharedNext
@@ -29,14 +29,14 @@
     i64)
   (& (array-ref (struct-get (struct-get holder iter) slots) 0)))
 
-(define (shared-tuple-item [pair : (&mut state (Tuple (& source (Array i64))))]) : (&
+(define (shared-tuple-item [pair : (&mut state (Tuple (& source (__tl_dyn-array i64))))]) : (&
     source
     i64)
   (& (array-ref (tuple-ref pair 0) 0)))
 
 (defstruct MutIter
   (:lifetimes source)
-  (slots (&mut source (Array i64)))
+  (slots (&mut source (__tl_dyn-array i64)))
   (index i64))
 
 (defenum MutNext

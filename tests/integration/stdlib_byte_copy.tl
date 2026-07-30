@@ -1,3 +1,6 @@
+;; Low-level ABI coverage for the runtime memmove primitive. Private dynamic
+;; byte arrays intentionally expose stable raw backing pointers; public binary
+;; collection behavior is covered through ByteBuf/bytes fixtures.
 (import stdlib.array)
 (import stdlib.string)
 (import stdlib.test)
@@ -5,7 +8,7 @@
 (define (byte-copy-u8 [value : i64]) : u8
   (cast value : u8))
 
-(define (byte-copy-base [items : (Array u8)]) : (MutPtr u8)
+(define (byte-copy-base [items : (__tl_dyn-array u8)]) : (MutPtr u8)
   (unsafe
     (array-data items)))
 
@@ -13,7 +16,7 @@
   (unsafe
     (ptr-cast (ptr-offset base offset) : (Ptr u8))))
 
-(define (byte-copy-fill! [items : (Array u8)] [count : i64] [base : i64]) : unit
+(define (byte-copy-fill! [items : (__tl_dyn-array u8)] [count : i64] [base : i64]) : unit
   (let
     [i : i64 0]
     (while (< i count)
@@ -22,7 +25,7 @@
         (set! i (+ i 1))))))
 
 (define (byte-copy-fill-constant!
-  [items : (Array u8)]
+  [items : (__tl_dyn-array u8)]
   [count : i64]
   [value : i64]) : unit
   (let
@@ -33,14 +36,14 @@
         (set! i (+ i 1))))))
 
 (define (byte-copy-assert-at
-  [items : (Array u8)]
+  [items : (__tl_dyn-array u8)]
   [index : i64]
   [expected : i64]
   [message : String]) : unit
   (test.assert-i64-eq (cast (array-ref items index) : i64) expected message))
 
 (define (byte-copy-assert-range
-  [items : (Array u8)]
+  [items : (__tl_dyn-array u8)]
   [start : i64]
   [count : i64]
   [base : i64]
@@ -53,7 +56,7 @@
         (set! i (+ i 1))))))
 
 (define (byte-copy-assert-constant-range
-  [items : (Array u8)]
+  [items : (__tl_dyn-array u8)]
   [start : i64]
   [count : i64]
   [expected : i64]
@@ -67,8 +70,8 @@
 
 (define (byte-copy-zero-length-case) : unit
   (let
-    [src : (Array u8) (array.make-array u8 4)]
-    [dst : (Array u8) (array.make-array u8 4)]
+    [src : (__tl_dyn-array u8) (array.make-array u8 4)]
+    [dst : (__tl_dyn-array u8) (array.make-array u8 4)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     (begin
@@ -84,8 +87,8 @@
 
 (define (byte-copy-unaligned-case) : unit
   (let
-    [src : (Array u8) (array.make-array u8 20)]
-    [dst : (Array u8) (array.make-array u8 20)]
+    [src : (__tl_dyn-array u8) (array.make-array u8 20)]
+    [dst : (__tl_dyn-array u8) (array.make-array u8 20)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     [n : i64 11]
@@ -99,8 +102,8 @@
 
 (define (byte-copy-tail-case [n : i64]) : unit
   (let
-    [src : (Array u8) (array.make-array u8 12)]
-    [dst : (Array u8) (array.make-array u8 12)]
+    [src : (__tl_dyn-array u8) (array.make-array u8 12)]
+    [dst : (__tl_dyn-array u8) (array.make-array u8 12)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     (begin
@@ -121,8 +124,8 @@
 
 (define (byte-copy-medium-dynamic-case) : unit
   (let
-    [src : (Array u8) (array.make-array u8 96)]
-    [dst : (Array u8) (array.make-array u8 96)]
+    [src : (__tl_dyn-array u8) (array.make-array u8 96)]
+    [dst : (__tl_dyn-array u8) (array.make-array u8 96)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     [n : i64 (+ 64 9)]
@@ -136,7 +139,7 @@
 
 (define (byte-copy-overlap-dst-after-src-case) : unit
   (let
-    [buf : (Array u8) (array.make-array u8 20)]
+    [buf : (__tl_dyn-array u8) (array.make-array u8 20)]
     [base : (MutPtr u8) (byte-copy-base buf)]
     (begin
       (byte-copy-fill! buf 20 0)
@@ -147,7 +150,7 @@
 
 (define (byte-copy-medium-overlap-dst-after-src-case) : unit
   (let
-    [buf : (Array u8) (array.make-array u8 160)]
+    [buf : (__tl_dyn-array u8) (array.make-array u8 160)]
     [base : (MutPtr u8) (byte-copy-base buf)]
     (begin
       (byte-copy-fill! buf 160 0)
@@ -158,7 +161,7 @@
 
 (define (byte-copy-medium-overlap-dst-before-src-case) : unit
   (let
-    [buf : (Array u8) (array.make-array u8 160)]
+    [buf : (__tl_dyn-array u8) (array.make-array u8 160)]
     [base : (MutPtr u8) (byte-copy-base buf)]
     (begin
       (byte-copy-fill! buf 160 0)

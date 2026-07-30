@@ -1,7 +1,7 @@
 ;: A returned shared reborrow releases its source after its final use.
 (defstruct SharedReborrowAfterIter
   (:lifetimes source)
-  (slots (& source (Array i64)))
+  (slots (& source (__tl_dyn-array i64)))
   (index i64))
 
 (defenum SharedReborrowAfterNext
@@ -27,7 +27,7 @@
 
 (define (main) : unit
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (let
       [first : (SharedReborrowAfterNext items)
         (let

@@ -6,7 +6,7 @@
 
 (define (main) : i64
   (let
-    [slots : (Array map.GeneratedHashmapSlot)
+    [slots : (__tl_dyn-array map.GeneratedHashmapSlot)
       (array.make-array map.GeneratedHashmapSlot 1)]
     [key : String "missing"]
     (begin

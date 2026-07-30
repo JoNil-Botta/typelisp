@@ -30,7 +30,7 @@
     0
     (+ 1 (sink (- x 1)))))
 
-(define (count-below [xs : (Array i64)] [n : i64] [pivot : i64]) : i64
+(define (count-below [xs : (__tl_dyn-array i64)] [n : i64] [pivot : i64]) : i64
   (let
     [store : i64 0]
     [scan : i64 0]
@@ -52,7 +52,7 @@
   (let
     [s : i64 (io.arg-count)]
     [n : i64 1000]
-    [xs : (Array i64) (array.make-array i64 1000)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 1000)]
     [i : i64 0]
     (begin
       (while (< i n)

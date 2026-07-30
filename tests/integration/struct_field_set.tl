@@ -23,7 +23,7 @@
 ;; `(Array T)` removal in #3581.
 (define (compat-dynamic-array-element-field-set) : i64
   (let
-    [items : (Array Pair) (array.make-array Pair 0)]
+    [items : (__tl_dyn-array Pair) (array.make-array Pair 0)]
     (begin
       (array-push! items (Pair 1 2))
       (array-push! items (Pair 3 4))

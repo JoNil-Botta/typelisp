@@ -9,11 +9,11 @@
 ;; emergency-borrow the sibling length home; the pair-level restore then
 ;; overwrote the just-loaded length with an older loop index, tripping a false
 ;; string-ref bounds abort.
-(define (make-entry [name : String] [value : String]) : (Array u8)
+(define (make-entry [name : String] [value : String]) : (__tl_dyn-array u8)
   (let
     [nl : i64 (string.string-length name)]
     [vl : i64 (string.string-length value)]
-    [buf : (Array u8) (array.make-array u8 (+ (+ nl vl) 2))]
+    [buf : (__tl_dyn-array u8) (array.make-array u8 (+ (+ nl vl) 2))]
     [i : i64 0]
     (begin
       (while (< i nl)
@@ -34,7 +34,7 @@
 
 (define (main) : i64
   (let
-    [bytes : (Array u8)
+    [bytes : (__tl_dyn-array u8)
       (make-entry "TYPELISP_STDLIB_TEST_VALUE" "env-value-854")]
     (if (= (array-length bytes) 41)
       42

@@ -2,7 +2,7 @@
   (ValueObject FieldList))
 
 (defstruct FieldList
-  (items (Array Value)))
+  (items (__tl_dyn-array Value)))
 
 (defmacro (object-empty) : FieldList
   `(serialize_missing_sequence_hook_format.FieldList (make-array Value 0)))

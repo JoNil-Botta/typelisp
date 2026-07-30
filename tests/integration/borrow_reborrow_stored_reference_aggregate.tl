@@ -5,7 +5,7 @@
 
 (defstruct AggregateReborrowIter
   (:lifetimes source)
-  (slots (&mut source (Array AggregateReborrowItem)))
+  (slots (&mut source (__tl_dyn-array AggregateReborrowItem)))
   (index i64))
 
 (defenum AggregateReborrowNext
@@ -26,7 +26,7 @@
 
 (define (main) : i64
   (let
-    [items : (Array AggregateReborrowItem) (make-array AggregateReborrowItem 1)]
+    [items : (__tl_dyn-array AggregateReborrowItem) (make-array AggregateReborrowItem 1)]
     [iter : (AggregateReborrowIter items)
       (AggregateReborrowIter (&mut items) 0)]
     (match (next (&mut iter))

@@ -1,7 +1,10 @@
+;; Raw thread ABI coverage passes private dynamic-array backing addresses
+;; between workers. Safe owned thread results use the separate Vec-based
+;; thread_safe_i64_vec integration fixture.
 (import stdlib.array)
 (import stdlib.thread)
 
-(define (integration-array-i64-addr [items : (Array i64)]) : i64
+(define (integration-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
 
@@ -35,7 +38,7 @@
     (begin
       (while (< i integration-worker-iterations)
         (let
-          [buf : (Array i64) (array.make-array i64 16)]
+          [buf : (__tl_dyn-array i64) (array.make-array i64 16)]
           (begin
             (array-set! buf 0 (+ value i))
             (array-set! buf 15 (+ (array-ref buf 0) 7))
@@ -54,10 +57,10 @@
   [b : Thread]
   [c : Thread]
   [d : Thread]
-  [out-a : (Array i64)]
-  [out-b : (Array i64)]
-  [out-c : (Array i64)]
-  [out-d : (Array i64)]) : i64
+  [out-a : (__tl_dyn-array i64)]
+  [out-b : (__tl_dyn-array i64)]
+  [out-c : (__tl_dyn-array i64)]
+  [out-d : (__tl_dyn-array i64)]) : i64
   (let
     [a-code : i64 (integration-join-code (thread.join a))]
     [b-code : i64 (integration-join-code (thread.join b))]
@@ -79,14 +82,14 @@
       [else 42])))
 
 (define (integration-run-threads
-  [out-a : (Array i64)]
-  [out-b : (Array i64)]
-  [out-c : (Array i64)]
-  [out-d : (Array i64)]
-  [ctx-a : (Array i64)]
-  [ctx-b : (Array i64)]
-  [ctx-c : (Array i64)]
-  [ctx-d : (Array i64)]) : i64
+  [out-a : (__tl_dyn-array i64)]
+  [out-b : (__tl_dyn-array i64)]
+  [out-c : (__tl_dyn-array i64)]
+  [out-d : (__tl_dyn-array i64)]
+  [ctx-a : (__tl_dyn-array i64)]
+  [ctx-b : (__tl_dyn-array i64)]
+  [ctx-c : (__tl_dyn-array i64)]
+  [ctx-d : (__tl_dyn-array i64)]) : i64
   (match (thread.spawn integration-worker (integration-array-i64-addr ctx-a))
     [(ThreadSpawnErr _) 11]
     [(ThreadSpawnOk a)
@@ -109,14 +112,14 @@
 
 (define (main) : i64
   (let
-    [out-a : (Array i64) (array.make-array i64 1)]
-    [out-b : (Array i64) (array.make-array i64 1)]
-    [out-c : (Array i64) (array.make-array i64 1)]
-    [out-d : (Array i64) (array.make-array i64 1)]
-    [ctx-a : (Array i64) (array.make-array i64 2)]
-    [ctx-b : (Array i64) (array.make-array i64 2)]
-    [ctx-c : (Array i64) (array.make-array i64 2)]
-    [ctx-d : (Array i64) (array.make-array i64 2)]
+    [out-a : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [out-b : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [out-c : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [out-d : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [ctx-a : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [ctx-b : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [ctx-c : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [ctx-d : (__tl_dyn-array i64) (array.make-array i64 2)]
     (begin
       (array-set! ctx-a 0 (integration-array-i64-addr out-a))
       (array-set! ctx-a 1 11)

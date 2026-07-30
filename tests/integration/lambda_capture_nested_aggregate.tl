@@ -20,11 +20,11 @@
   (= ((make-label-reader)) 42))
 
 (defstruct Bag
-  (items (Array i64)))
+  (items (__tl_dyn-array i64)))
 
 (define (make-bag-reader) : (-> i64)
   (let
-    [a : (Array i64) (array.make-array i64 1)]
+    [a : (__tl_dyn-array i64) (array.make-array i64 1)]
     (begin
       (array-set! a 0 42)
       (let

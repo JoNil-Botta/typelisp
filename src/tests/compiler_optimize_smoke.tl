@@ -2141,7 +2141,7 @@
           (compiler-ir-function-cons
             (opt-test-function-named plain (CompilerIrInstrList.Nil))
             (CompilerIrFunctionList.Nil))))]
-    [starts : (Array i64) (struct-get index leaf-starts)]
+    [starts : (__tl_dyn-array i64) (struct-get index leaf-starts)]
     (cond
       [(not (= (array-length starts) 2)) 1]
       [(not (= (array-ref starts 0) (opt-symbol-leaf-start qualified))) 2]
@@ -2442,7 +2442,8 @@
 
 (define (smoke-inline-phi-call [symbols : OptInlineMultiTestSymbols]) : CompilerIrInstr
   (let
-    [values : (Array CompilerIrValue) (array.make-array CompilerIrValue 4)]
+    [values : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue 4)]
     (begin
       (array-set! values 0 (CompilerIrValue.I64 1))
       (array-set! values 1 (CompilerIrValue.I64 2))

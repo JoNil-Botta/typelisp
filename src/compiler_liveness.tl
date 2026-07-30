@@ -11,13 +11,13 @@
 (import (hashmap.hashmap i64 i64) as live_label_map)
 
 (defstruct CompilerLiveI64Set
-  (words (Array i64)))
+  (words (__tl_dyn-array i64)))
 
 (defenum CompilerLiveLabelSet
   (Nil)
   ;; Successor labels in deterministic head-first order. The logical head is
   ;; the end of the dense prefix, which makes tail views allocation-free.
-  (Dense (Array i64) i64))
+  (Dense (__tl_dyn-array i64) i64))
 
 (define (compiler-live-label-set-ref [set : CompilerLiveLabelSet] [index : i64]) : i64
   (match set
@@ -39,7 +39,7 @@
   (match set
     [(CompilerLiveLabelSet.Nil)
       (let
-        [items : (Array i64) (make-array i64 4)]
+        [items : (__tl_dyn-array i64) (make-array i64 4)]
         (begin
           (array-set! items 0 value)
           (CompilerLiveLabelSet.Dense items 1)))]
@@ -53,7 +53,7 @@
             (if (< len 4)
               4
               (* len 2))]
-          [bigger : (Array i64) (make-array i64 capacity)]
+          [bigger : (__tl_dyn-array i64) (make-array i64 capacity)]
           [index : i64 0]
           (begin
             (while (< index len)
@@ -64,10 +64,10 @@
             (CompilerLiveLabelSet.Dense bigger (+ len 1)))))]))
 
 (defstruct CompilerLiveIndexVec
-  (items (Array i64)))
+  (items (__tl_dyn-array i64)))
 
 (defstruct CompilerLiveInstrSetVec
-  (items (Array CompilerLiveI64Set)))
+  (items (__tl_dyn-array CompilerLiveI64Set)))
 
 (defstruct CompilerLiveBlock
   (label i64)
@@ -80,16 +80,16 @@
 
 (defstruct CompilerLiveBlockGraph
   (ids live_label_map.Map)
-  (blocks (Array CompilerLiveBlock))
-  (successors (Array CompilerLiveIndexVec))
-  (predecessors (Array CompilerLiveIndexVec)))
+  (blocks (__tl_dyn-array CompilerLiveBlock))
+  (successors (__tl_dyn-array CompilerLiveIndexVec))
+  (predecessors (__tl_dyn-array CompilerLiveIndexVec)))
 
 (defstruct CompilerLiveFunctionGraphBuild
   (seq CompilerIrBlockSeq)
   (graph CompilerLiveBlockGraph))
 
 (defenum CompilerFunctionLiveness
-  (Liveness live_label_map.Map (Array CompilerLiveBlock)))
+  (Liveness live_label_map.Map (__tl_dyn-array CompilerLiveBlock)))
 
 (defenum CompilerLiveMaybeBlock
   (No)
@@ -134,7 +134,8 @@
 (define (compiler-live-set-bit-mask [value : i64]) : i64
   (shl 1 (compiler-live-set-bit-index value)))
 
-(define (compiler-live-set-words [set : CompilerLiveI64Set]) : (Array i64)
+(define (compiler-live-set-words [set : CompilerLiveI64Set]) : (__tl_dyn-array
+    i64)
   (struct-get set words))
 
 ;; Every empty set is the same value: the word array has length zero, so no
@@ -156,7 +157,7 @@
   [set : CompilerLiveI64Set]
   [word-index : i64]) : i64
   (let
-    [words : (Array i64) (compiler-live-set-words set)]
+    [words : (__tl_dyn-array i64) (compiler-live-set-words set)]
     (if (and (>= word-index 0) (< word-index (array-length words)))
       (unsafe
         (ptr-read (ptr-offset (array-data words) word-index)))
@@ -171,8 +172,8 @@
       (ptr-offset (array-data (compiler-live-set-words set)) word-index))))
 
 (define (compiler-live-set-copy-words-into
-  [dst : (Array i64)]
-  [src : (Array i64)]
+  [dst : (__tl_dyn-array i64)]
+  [src : (__tl_dyn-array i64)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -183,17 +184,19 @@
 
 (define (compiler-live-set-copy-with-capacity
   [set : CompilerLiveI64Set]
-  [capacity : i64]) : (Array i64)
+  [capacity : i64]) : (__tl_dyn-array i64)
   (let
-    [words : (Array i64) (compiler-live-set-words set)]
+    [words : (__tl_dyn-array i64) (compiler-live-set-words set)]
     [old-capacity : i64 (array-length words)]
-    [out : (Array i64) (make-array i64 capacity)]
+    [out : (__tl_dyn-array i64) (make-array i64 capacity)]
     [copy-count : i64 (compiler-live-set-min old-capacity capacity)]
     (begin
       (compiler-live-set-copy-words-into out words 0 copy-count)
       out)))
 
-(define (compiler-live-set-trim-length [words : (Array i64)] [count : i64]) : i64
+(define (compiler-live-set-trim-length
+  [words : (__tl_dyn-array i64)]
+  [count : i64]) : i64
   (let
     [i : i64 count]
     (begin
@@ -202,7 +205,7 @@
       i)))
 
 (define (compiler-live-set-from-words-trimmed
-  [words : (Array i64)]
+  [words : (__tl_dyn-array i64)]
   [count : i64]) : CompilerLiveI64Set
   (let
     [n : i64 (compiler-live-set-trim-length words count)]
@@ -211,7 +214,7 @@
       (if (= n (array-length words))
         (CompilerLiveI64Set words)
         (let
-          [out : (Array i64) (make-array i64 n)]
+          [out : (__tl_dyn-array i64) (make-array i64 n)]
           (begin
             (compiler-live-set-copy-words-into out words 0 n)
             (CompilerLiveI64Set out)))))))
@@ -269,7 +272,7 @@
       (if (not (= (bit-and old-bits mask) 0))
         set
         (let
-          [out : (Array i64)
+          [out : (__tl_dyn-array i64)
             (compiler-live-set-copy-with-capacity set capacity)]
           (begin
             (array-set! out word-index (bit-or old-bits mask))
@@ -289,7 +292,7 @@
           (if (= (bit-and old-bits mask) 0)
             set
             (let
-              [out : (Array i64)
+              [out : (__tl_dyn-array i64)
                 (compiler-live-set-copy-with-capacity set capacity)]
               (begin
                 (array-set! out word-index (bit-and old-bits (bit-xor mask -1)))
@@ -299,8 +302,8 @@
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
-    [left-words : (Array i64) (compiler-live-set-words left)]
-    [right-words : (Array i64) (compiler-live-set-words right)]
+    [left-words : (__tl_dyn-array i64) (compiler-live-set-words left)]
+    [right-words : (__tl_dyn-array i64) (compiler-live-set-words right)]
     [left-count : i64 (array-length left-words)]
     [right-count : i64 (array-length right-words)]
     (if (= right-count 0)
@@ -338,7 +341,7 @@
                   (if (< left-count right-count)
                     left-count
                     right-count)]
-                [out : (Array i64) (make-array i64 count)]
+                [out : (__tl_dyn-array i64) (make-array i64 count)]
                 [left-data : (MutPtr i64)
                   (unsafe
                     (array-data left-words))]
@@ -387,8 +390,8 @@
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
-    [left-words : (Array i64) (compiler-live-set-words left)]
-    [right-words : (Array i64) (compiler-live-set-words right)]
+    [left-words : (__tl_dyn-array i64) (compiler-live-set-words left)]
+    [right-words : (__tl_dyn-array i64) (compiler-live-set-words right)]
     [count : i64 (array-length left-words)]
     [right-count : i64 (array-length right-words)]
     [probe-count : i64 (compiler-live-set-min count right-count)]
@@ -411,7 +414,7 @@
             (set! probe (+ probe 1)))))
       (if changed
         (let
-          [out : (Array i64) (make-array i64 count)]
+          [out : (__tl_dyn-array i64) (make-array i64 count)]
           [index : i64 0]
           (begin
             (while (< index count)
@@ -456,7 +459,7 @@
 ;; function-sized word row. CompilerLiveI64Set remains the canonical stored
 ;; representation: scratch is copied and trimmed only when a block fact or
 ;; instruction point must outlive the current walk.
-(define (compiler-live-scratch-clear! [words : (Array i64)]) : unit
+(define (compiler-live-scratch-clear! [words : (__tl_dyn-array i64)]) : unit
   (let
     [data : (MutPtr i64)
       (unsafe
@@ -470,13 +473,13 @@
         (set! index (+ index 1))))))
 
 (define (compiler-live-scratch-copy-set!
-  [words : (Array i64)]
+  [words : (__tl_dyn-array i64)]
   [set : CompilerLiveI64Set]) : i64
   (let
     [dst : (MutPtr i64)
       (unsafe
         (array-data words))]
-    [src-words : (Array i64) (compiler-live-set-words set)]
+    [src-words : (__tl_dyn-array i64) (compiler-live-set-words set)]
     [src : (MutPtr i64)
       (unsafe
         (array-data src-words))]
@@ -499,14 +502,14 @@
       src-count)))
 
 (define (compiler-live-scratch-union-set!
-  [words : (Array i64)]
+  [words : (__tl_dyn-array i64)]
   [active-count : i64]
   [set : CompilerLiveI64Set]) : i64
   (let
     [dst : (MutPtr i64)
       (unsafe
         (array-data words))]
-    [src-words : (Array i64) (compiler-live-set-words set)]
+    [src-words : (__tl_dyn-array i64) (compiler-live-set-words set)]
     [src : (MutPtr i64)
       (unsafe
         (array-data src-words))]
@@ -525,7 +528,7 @@
       (compiler-live-set-max active-count count))))
 
 (define (compiler-live-scratch-step!
-  [words : (Array i64)]
+  [words : (__tl_dyn-array i64)]
   [active-count : i64]
   [uses : CompilerLiveI64Set]
   [defs : CompilerLiveI64Set]) : i64
@@ -533,8 +536,8 @@
     [dst : (MutPtr i64)
       (unsafe
         (array-data words))]
-    [use-words : (Array i64) (compiler-live-set-words uses)]
-    [def-words : (Array i64) (compiler-live-set-words defs)]
+    [use-words : (__tl_dyn-array i64) (compiler-live-set-words uses)]
+    [def-words : (__tl_dyn-array i64) (compiler-live-set-words defs)]
     [use-data : (MutPtr i64)
       (unsafe
         (array-data use-words))]
@@ -574,7 +577,7 @@
       (compiler-live-set-trim-length words count))))
 
 (define (compiler-live-scratch-eq-set?
-  [words : (Array i64)]
+  [words : (__tl_dyn-array i64)]
   [active-count : i64]
   [set : CompilerLiveI64Set]) : bool
   (let
@@ -582,7 +585,7 @@
     [data : (MutPtr i64)
       (unsafe
         (array-data words))]
-    [set-words : (Array i64) (compiler-live-set-words set)]
+    [set-words : (__tl_dyn-array i64) (compiler-live-set-words set)]
     [set-data : (MutPtr i64)
       (unsafe
         (array-data set-words))]
@@ -602,14 +605,14 @@
       same)))
 
 (define (compiler-live-scratch-freeze
-  [words : (Array i64)]
+  [words : (__tl_dyn-array i64)]
   [active-count : i64]) : CompilerLiveI64Set
   (let
     [count : i64 (compiler-live-set-trim-length words active-count)]
     (if (<= count 0)
       (compiler-live-set-empty)
       (let
-        [out : (Array i64) (make-array i64 count)]
+        [out : (__tl_dyn-array i64) (make-array i64 count)]
         [src : (MutPtr i64)
           (unsafe
             (array-data words))]
@@ -691,7 +694,9 @@
           (set! index (- index 1))))
       score)))
 
-(define (compiler-live-set-builder-insert! [words : (Array i64)] [value : i64]) : unit
+(define (compiler-live-set-builder-insert!
+  [words : (__tl_dyn-array i64)]
+  [value : i64]) : unit
   (if (< value 0)
     unit
     (let
@@ -702,7 +707,7 @@
         word-index
         (bit-or old-bits (compiler-live-set-bit-mask value))))))
 
-(define (compiler-live-set-builder [max-value : i64]) : (Array i64)
+(define (compiler-live-set-builder [max-value : i64]) : (__tl_dyn-array i64)
   (make-array
     i64
     (if (< max-value 0)
@@ -711,14 +716,14 @@
 
 (define (compiler-live-set1 [a : i64]) : CompilerLiveI64Set
   (let
-    [words : (Array i64) (compiler-live-set-builder a)]
+    [words : (__tl_dyn-array i64) (compiler-live-set-builder a)]
     (begin
       (compiler-live-set-builder-insert! words a)
       (CompilerLiveI64Set words))))
 
 (define (compiler-live-set2 [a : i64] [b : i64]) : CompilerLiveI64Set
   (let
-    [words : (Array i64)
+    [words : (__tl_dyn-array i64)
       (compiler-live-set-builder (compiler-live-set-max a b))]
     (begin
       (compiler-live-set-builder-insert! words a)
@@ -727,7 +732,7 @@
 
 (define (compiler-live-set3 [a : i64] [b : i64] [c : i64]) : CompilerLiveI64Set
   (let
-    [words : (Array i64)
+    [words : (__tl_dyn-array i64)
       (compiler-live-set-builder
         (compiler-live-set-max (compiler-live-set-max a b) c))]
     (begin
@@ -738,7 +743,7 @@
 
 (define (compiler-live-set4 [a : i64] [b : i64] [c : i64] [d : i64]) : CompilerLiveI64Set
   (let
-    [words : (Array i64)
+    [words : (__tl_dyn-array i64)
       (compiler-live-set-builder
         (compiler-live-set-max
           (compiler-live-set-max a b)
@@ -752,7 +757,7 @@
 
 (define (compiler-live-set5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : CompilerLiveI64Set
   (let
-    [words : (Array i64)
+    [words : (__tl_dyn-array i64)
       (compiler-live-set-builder
         (compiler-live-set-max
           (compiler-live-set-max (compiler-live-set-max a b) c)
@@ -773,7 +778,7 @@
   [e : i64]
   [f : i64]) : CompilerLiveI64Set
   (let
-    [words : (Array i64)
+    [words : (__tl_dyn-array i64)
       (compiler-live-set-builder
         (compiler-live-set-max
           (compiler-live-set-max (compiler-live-set-max a b) c)
@@ -796,7 +801,7 @@
   [f : i64]
   [g : i64]) : CompilerLiveI64Set
   (let
-    [words : (Array i64)
+    [words : (__tl_dyn-array i64)
       (compiler-live-set-builder
         (compiler-live-set-max
           (compiler-live-set-max
@@ -856,7 +861,7 @@
 
 (define (compiler-live-scratch-ops-ok?) : bool
   (let
-    [words : (Array i64) (make-array i64 6)]
+    [words : (__tl_dyn-array i64) (make-array i64 6)]
     [copy-count : i64
       (compiler-live-scratch-copy-set! words (compiler-live-set3 1 64 130))]
     [copy-ok : bool
@@ -972,7 +977,7 @@
         value)]))
 
 (define (compiler-live-call-args-array-vars
-  [values : (Array CompilerIrValue)]
+  [values : (__tl_dyn-array CompilerIrValue)]
   [index : i64]) : CompilerLiveI64Set
   (if (>= index (array-length values))
     (compiler-live-set-empty)
@@ -1268,8 +1273,8 @@
     (compiler-live-set-empty)))
 
 (define (compiler-live-block-use-def-step!
-  [uses : (Array i64)]
-  [defs : (Array i64)]
+  [uses : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]
   [instr-uses : CompilerLiveI64Set]
   [instr-defs : CompilerLiveI64Set]) : unit
   (let
@@ -1279,8 +1284,10 @@
     [def-data : (MutPtr i64)
       (unsafe
         (array-data defs))]
-    [instr-use-words : (Array i64) (compiler-live-set-words instr-uses)]
-    [instr-def-words : (Array i64) (compiler-live-set-words instr-defs)]
+    [instr-use-words : (__tl_dyn-array i64)
+      (compiler-live-set-words instr-uses)]
+    [instr-def-words : (__tl_dyn-array i64)
+      (compiler-live-set-words instr-defs)]
     [instr-use-data : (MutPtr i64)
       (unsafe
         (array-data instr-use-words))]
@@ -1321,8 +1328,8 @@
 
 (define (compiler-live-block-use-def-seq-with-scratch
   [instrs : CompilerIrInstrSeq]
-  [uses : (Array i64)]
-  [defs : (Array i64)]
+  [uses : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]
   [edge-precise? : bool]) : CompilerLiveUseDef
   (let
     [count : i64 (compiler-ir-instr-seq-count instrs)]
@@ -1433,12 +1440,12 @@
     [(live_label_map.LookupMissing) -1]))
 
 (define (compiler-live-i64-array-prefix-copy
-  [items : (Array i64)]
-  [count : i64]) : (Array i64)
+  [items : (__tl_dyn-array i64)]
+  [count : i64]) : (__tl_dyn-array i64)
   (if (= count (array-length items))
     items
     (let
-      [out : (Array i64) (make-array i64 count)]
+      [out : (__tl_dyn-array i64) (make-array i64 count)]
       [i : i64 0]
       (begin
         (while (< i count)
@@ -1450,7 +1457,7 @@
 (define (compiler-live-label-set-fill-indexes!
   [labels : CompilerLiveLabelSet]
   [ids : (& ids live_label_map.Map)]
-  [items : (Array i64)]
+  [items : (__tl_dyn-array i64)]
   [index : i64]) : i64
   (match labels
     [(CompilerLiveLabelSet.Nil) index]
@@ -1476,7 +1483,7 @@
   [labels : CompilerLiveLabelSet]
   [ids : (& ids live_label_map.Map)]) : CompilerLiveIndexVec
   (let
-    [items : (Array i64)
+    [items : (__tl_dyn-array i64)
       (make-array i64 (compiler-live-label-set-count labels))]
     [count : i64 (compiler-live-label-set-fill-indexes! labels ids items 0)]
     (CompilerLiveIndexVec (compiler-live-i64-array-prefix-copy items count))))
@@ -1484,13 +1491,14 @@
 ;; Precompute reverse CFG edges once. The worklist below only reprocesses
 ;; predecessors of a changed block, preserving deterministic source/RPO order.
 (define (compiler-live-predecessor-counts-add!
-  [successors : (Array CompilerLiveIndexVec)]
-  [counts : (Array i64)]
+  [successors : (__tl_dyn-array CompilerLiveIndexVec)]
+  [counts : (__tl_dyn-array i64)]
   [source : i64]) : unit
   (if (>= source (array-length successors))
     unit
     (let
-      [items : (Array i64) (struct-get (array-ref successors source) items)]
+      [items : (__tl_dyn-array i64)
+        (struct-get (array-ref successors source) items)]
       [i : i64 0]
       (begin
         (while (< i (array-length items))
@@ -1502,9 +1510,9 @@
         (compiler-live-predecessor-counts-add! successors counts (+ source 1))))))
 
 (define (compiler-live-predecessor-items-make
-  [counts : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
   [index : i64]
-  [out : (Array CompilerLiveIndexVec)]) : unit
+  [out : (__tl_dyn-array CompilerLiveIndexVec)]) : unit
   (if (>= index (array-length counts))
     unit
     (begin
@@ -1515,21 +1523,22 @@
       (compiler-live-predecessor-items-make counts (+ index 1) out))))
 
 (define (compiler-live-predecessor-fill!
-  [successors : (Array CompilerLiveIndexVec)]
-  [predecessors : (Array CompilerLiveIndexVec)]
-  [next : (Array i64)]
+  [successors : (__tl_dyn-array CompilerLiveIndexVec)]
+  [predecessors : (__tl_dyn-array CompilerLiveIndexVec)]
+  [next : (__tl_dyn-array i64)]
   [source : i64]) : unit
   (if (>= source (array-length successors))
     unit
     (let
-      [items : (Array i64) (struct-get (array-ref successors source) items)]
+      [items : (__tl_dyn-array i64)
+        (struct-get (array-ref successors source) items)]
       [i : i64 0]
       (begin
         (while (< i (array-length items))
           (let
             [target : i64 (array-ref items i)]
             [slot : i64 (array-ref next target)]
-            [target-items : (Array i64)
+            [target-items : (__tl_dyn-array i64)
               (struct-get (array-ref predecessors target) items)]
             (begin
               (array-set! target-items slot source)
@@ -1542,12 +1551,14 @@
           (+ source 1))))))
 
 (define (compiler-live-predecessors-build
-  [successors : (Array CompilerLiveIndexVec)]) : (Array CompilerLiveIndexVec)
+  [successors : (__tl_dyn-array CompilerLiveIndexVec)]) : (__tl_dyn-array
+    CompilerLiveIndexVec)
   (let
     [count : i64 (array-length successors)]
-    [counts : (Array i64) (make-array i64 count)]
-    [out : (Array CompilerLiveIndexVec) (make-array CompilerLiveIndexVec count)]
-    [next : (Array i64) (make-array i64 count)]
+    [counts : (__tl_dyn-array i64) (make-array i64 count)]
+    [out : (__tl_dyn-array CompilerLiveIndexVec)
+      (make-array CompilerLiveIndexVec count)]
+    [next : (__tl_dyn-array i64) (make-array i64 count)]
     (begin
       (compiler-live-predecessor-counts-add! successors counts 0)
       (compiler-live-predecessor-items-make counts 0 out)
@@ -1557,9 +1568,9 @@
 (define (compiler-live-successor-live-out-graph-into!
   [successors : CompilerLiveIndexVec]
   [graph : CompilerLiveBlockGraph]
-  [words : (Array i64)]) : i64
+  [words : (__tl_dyn-array i64)]) : i64
   (let
-    [items : (Array i64) (struct-get successors items)]
+    [items : (__tl_dyn-array i64) (struct-get successors items)]
     [active-count : i64 0]
     [index : i64 0]
     (begin
@@ -1582,7 +1593,7 @@
   [block : CompilerLiveBlock]
   [graph : CompilerLiveBlockGraph]
   [index : i64]
-  [words : (Array i64)]) : CompilerLiveBlock
+  [words : (__tl_dyn-array i64)]) : CompilerLiveBlock
   (let
     [live-out-count : i64
       (compiler-live-successor-live-out-graph-into!
@@ -1627,7 +1638,9 @@
       (struct-get left live-out)
       (struct-get right live-out))))
 
-(define (compiler-live-worklist-seed! [pending : (Array bool)] [index : i64]) : unit
+(define (compiler-live-worklist-seed!
+  [pending : (__tl_dyn-array bool)]
+  [index : i64]) : unit
   (if (>= index (array-length pending))
     unit
     (begin
@@ -1637,7 +1650,7 @@
 ;; Blocks are laid out in the lowering's deterministic reverse-postorder. For
 ;; backward liveness, consume that order backwards; changed facts flow only to
 ;; predecessor blocks, which are re-enqueued at most once while pending.
-(define (compiler-live-worklist-pick! [pending : (Array bool)]) : i64
+(define (compiler-live-worklist-pick! [pending : (__tl_dyn-array bool)]) : i64
   (let
     [index : i64 (- (array-length pending) 1)]
     [picked : i64 -1]
@@ -1654,9 +1667,9 @@
 (define (compiler-live-worklist-enqueue-predecessors!
   [graph : CompilerLiveBlockGraph]
   [slot : i64]
-  [pending : (Array bool)]) : unit
+  [pending : (__tl_dyn-array bool)]) : unit
   (let
-    [items : (Array i64)
+    [items : (__tl_dyn-array i64)
       (struct-get (array-ref (struct-get graph predecessors) slot) items)]
     [i : i64 0]
     (while (< i (array-length items))
@@ -1667,8 +1680,8 @@
 (define (compiler-live-instr-seq-fill-after!
   [instrs : CompilerIrInstrSeq]
   [live-out : CompilerLiveI64Set]
-  [out : (Array CompilerLiveI64Set)]
-  [words : (Array i64)]
+  [out : (__tl_dyn-array CompilerLiveI64Set)]
+  [words : (__tl_dyn-array i64)]
   [edge-precise? : bool]) : unit
   (let
     [count : i64 (compiler-ir-instr-seq-count instrs)]
@@ -1701,12 +1714,12 @@
 (define (compiler-live-fill-instr-after-block
   [ir-block : CompilerIrBlock]
   [block : CompilerLiveBlock]
-  [words : (Array i64)]
+  [words : (__tl_dyn-array i64)]
   [edge-precise? : bool]) : CompilerLiveBlock
   (match ir-block
     [(CompilerIrBlock.Block _ instrs)
       (let
-        [items : (Array CompilerLiveI64Set)
+        [items : (__tl_dyn-array CompilerLiveI64Set)
           (make-array CompilerLiveI64Set (compiler-ir-instr-seq-count instrs))]
         (begin
           (compiler-live-instr-seq-fill-after!
@@ -1777,7 +1790,7 @@
 (define (compiler-live-phi-out-add-inputs!
   [inputs : CompilerIrPhiInputList]
   [ids : (& ids live_label_map.Map)]
-  [phi-out : (Array CompilerLiveI64Set)]) : unit
+  [phi-out : (__tl_dyn-array CompilerLiveI64Set)]) : unit
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) unit]
     [(CompilerIrPhiInputList.Array seq)
@@ -1805,7 +1818,7 @@
 (define (compiler-live-phi-out-add-seq!
   [instrs : CompilerIrInstrSeq]
   [ids : (& ids live_label_map.Map)]
-  [phi-out : (Array CompilerLiveI64Set)]) : unit
+  [phi-out : (__tl_dyn-array CompilerLiveI64Set)]) : unit
   (let
     [count : i64 (compiler-ir-instr-seq-count instrs)]
     [i : i64 0]
@@ -1824,8 +1837,8 @@
   [block : CompilerLiveBlock]
   [graph : CompilerLiveBlockGraph]
   [index : i64]
-  [phi-out : (Array CompilerLiveI64Set)]
-  [words : (Array i64)]) : CompilerLiveBlock
+  [phi-out : (__tl_dyn-array CompilerLiveI64Set)]
+  [words : (__tl_dyn-array i64)]) : CompilerLiveBlock
   (let
     [live-out-count : i64
       (compiler-live-successor-live-out-graph-into!
@@ -1872,13 +1885,13 @@
 
 (define (compiler-live-fixpoint-ep
   [graph : CompilerLiveBlockGraph]
-  [phi-out : (Array CompilerLiveI64Set)]
+  [phi-out : (__tl_dyn-array CompilerLiveI64Set)]
   [word-count : i64]) : CompilerLiveBlockGraph
   (let
-    [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
-    [pending : (Array bool)
+    [blocks : (__tl_dyn-array CompilerLiveBlock) (struct-get graph blocks)]
+    [pending : (__tl_dyn-array bool)
       (make-array bool (array-length (struct-get graph blocks)))]
-    [words : (Array i64) (make-array i64 word-count)]
+    [words : (__tl_dyn-array i64) (make-array i64 word-count)]
     [done : bool false]
     (begin
       (compiler-live-worklist-seed! pending 0)
@@ -1920,7 +1933,7 @@
         seq
         (compiler-live-build-block-array-nophi seq vars))]
     [graph0 : CompilerLiveBlockGraph (struct-get build graph)]
-    [phi-out : (Array CompilerLiveI64Set)
+    [phi-out : (__tl_dyn-array CompilerLiveI64Set)
       (make-array CompilerLiveI64Set (array-length (struct-get graph0 blocks)))]
     (begin
       (let
@@ -1990,7 +2003,7 @@
   [sets : CompilerLiveInstrSetVec]
   [index : i64]) : CompilerLiveI64Set
   (let
-    [items : (Array CompilerLiveI64Set) (struct-get sets items)]
+    [items : (__tl_dyn-array CompilerLiveI64Set) (struct-get sets items)]
     (if (or (< index 0) (>= index (array-length items)))
       (compiler-live-set-empty)
       (array-ref items index))))
@@ -2472,13 +2485,14 @@
 (define (compiler-live-build-block-array-with
   [blocks : CompilerIrBlockSeq]
   [vars : i64]
-  [edge-precise? : bool]) : (Array CompilerLiveBlock)
+  [edge-precise? : bool]) : (__tl_dyn-array CompilerLiveBlock)
   (let
     [count : i64 (compiler-ir-block-seq-count blocks)]
-    [out : (Array CompilerLiveBlock) (make-array CompilerLiveBlock count)]
+    [out : (__tl_dyn-array CompilerLiveBlock)
+      (make-array CompilerLiveBlock count)]
     [word-count : i64 (compiler-live-var-word-count vars)]
-    [uses : (Array i64) (make-array i64 word-count)]
-    [defs : (Array i64) (make-array i64 word-count)]
+    [uses : (__tl_dyn-array i64) (make-array i64 word-count)]
+    [defs : (__tl_dyn-array i64) (make-array i64 word-count)]
     [i : i64 0]
     (begin
       (while (< i count)
@@ -2502,18 +2516,18 @@
 
 (define (compiler-live-build-block-array
   [blocks : CompilerIrBlockSeq]
-  [vars : i64]) : (Array CompilerLiveBlock)
+  [vars : i64]) : (__tl_dyn-array CompilerLiveBlock)
   (compiler-live-build-block-array-with blocks vars false))
 
 (define (compiler-live-build-block-array-nophi
   [blocks : CompilerIrBlockSeq]
-  [vars : i64]) : (Array CompilerLiveBlock)
+  [vars : i64]) : (__tl_dyn-array CompilerLiveBlock)
   (compiler-live-build-block-array-with blocks vars true))
 
 (define (compiler-live-phi-out-build-seq!
   [blocks : CompilerIrBlockSeq]
   [ids : (& ids live_label_map.Map)]
-  [phi-out : (Array CompilerLiveI64Set)]) : unit
+  [phi-out : (__tl_dyn-array CompilerLiveI64Set)]) : unit
   (let
     [count : i64 (compiler-ir-block-seq-count blocks)]
     [i : i64 0]
@@ -2525,9 +2539,9 @@
         (set! i (+ i 1))))))
 
 (define (compiler-live-block-graph-fill-successors-from-array!
-  [blocks : (Array CompilerLiveBlock)]
+  [blocks : (__tl_dyn-array CompilerLiveBlock)]
   [ids : (& ids live_label_map.Map)]
-  [successors : (Array CompilerLiveIndexVec)]
+  [successors : (__tl_dyn-array CompilerLiveIndexVec)]
   [index : i64]) : unit
   (if (>= index (array-length blocks))
     unit
@@ -2547,10 +2561,10 @@
           (+ index 1))))))
 
 (define (compiler-live-block-graph-build-from-array
-  [blocks : (Array CompilerLiveBlock)]) : CompilerLiveBlockGraph
+  [blocks : (__tl_dyn-array CompilerLiveBlock)]) : CompilerLiveBlockGraph
   (let
     [count : i64 (array-length blocks)]
-    [successors : (Array CompilerLiveIndexVec)
+    [successors : (__tl_dyn-array CompilerLiveIndexVec)
       (make-array CompilerLiveIndexVec count)]
     [ids : live_label_map.Map (live_label_map.with-capacity (+ (* count 2) 1))]
     [i : i64 0]
@@ -2578,7 +2592,7 @@
 
 (define (compiler-live-function-graph-build
   [seq : CompilerIrBlockSeq]
-  [live-blocks : (Array CompilerLiveBlock)]) : CompilerLiveFunctionGraphBuild
+  [live-blocks : (__tl_dyn-array CompilerLiveBlock)]) : CompilerLiveFunctionGraphBuild
   (let
     [graph : CompilerLiveBlockGraph
       (compiler-live-block-graph-build-from-array live-blocks)]
@@ -2586,7 +2600,7 @@
 
 (define (compiler-live-fill-instr-after-graph-seq!
   [ir-blocks : CompilerIrBlockSeq]
-  [blocks : (Array CompilerLiveBlock)]
+  [blocks : (__tl_dyn-array CompilerLiveBlock)]
   [word-count : i64]
   [edge-precise? : bool]) : unit
   (let
@@ -2594,7 +2608,7 @@
       (compiler-live-set-min
         (compiler-ir-block-seq-count ir-blocks)
         (array-length blocks))]
-    [words : (Array i64) (make-array i64 word-count)]
+    [words : (__tl_dyn-array i64) (make-array i64 word-count)]
     [i : i64 0]
     (while (< i count)
       (begin
@@ -2612,10 +2626,10 @@
   [graph : CompilerLiveBlockGraph]
   [word-count : i64]) : CompilerLiveBlockGraph
   (let
-    [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
-    [pending : (Array bool)
+    [blocks : (__tl_dyn-array CompilerLiveBlock) (struct-get graph blocks)]
+    [pending : (__tl_dyn-array bool)
       (make-array bool (array-length (struct-get graph blocks)))]
-    [words : (Array i64) (make-array i64 word-count)]
+    [words : (__tl_dyn-array i64) (make-array i64 word-count)]
     [done : bool false]
     (begin
       (compiler-live-worklist-seed! pending 0)

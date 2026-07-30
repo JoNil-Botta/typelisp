@@ -36099,9 +36099,6 @@
 (define (lower-avx2-varying-while-diagnostic) : String
   "lower: SPMD varying while is not supported in AVX2 backend mode; use scalar or avx512")
 
-(define (lower-avx2-spmd-call-diagnostic) : String
-  "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512")
-
 (define (lower-simd-foreach-fallback-diagnostic) : String
   "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands")
 
@@ -39607,7 +39604,8 @@
           varying-while
           varying-match
           varying-enum-match
-          bool-array-lane)))
+          bool-array-lane
+          out-of-line-call)))
       (let
         [lanes : i64
           (lower-masked-vector-expr-lanes ctx mode env type-env index body)]
@@ -49368,19 +49366,26 @@
         "lower: :spmd-callable uniform body requires result uniform"]
       [else ""])))
 
-;; Private AVX-512 helpers keep source types on their parameters, so preserve
+;; Private SIMD helpers keep source types on their parameters, so preserve
 ;; the SPMD value class in the otherwise-internal parameter name.  The backend
-;; and register planner use these prefixes to select the private vector/opmask
+;; and register planner use these prefixes to select the private vector/mask
 ;; ABI without exposing a vector type in the source type system.
 (define (lower-spmd-private-param-name
   [name : i64]
-  [class : CompilerIrSpmdValueClass]) : String
+  [class : CompilerIrSpmdValueClass]
+  [mode : CompilerLowerMode]) : String
   (match class
     [(CompilerIrSpmdValueClass.Uniform) (tc-env-key-name-text name)]
     [(CompilerIrSpmdValueClass.Varying)
-      (string.append "__tl_spmd_varying_arg_" (tc-env-key-name-text name))]
+      (if (lower-mode-avx2? mode)
+        (string.append
+          "__tl_spmd_varying_arg_avx2_"
+          (tc-env-key-name-text name))
+        (string.append "__tl_spmd_varying_arg_" (tc-env-key-name-text name)))]
     [(CompilerIrSpmdValueClass.Mask)
-      (string.append "__tl_spmd_mask_arg_" (tc-env-key-name-text name))]))
+      (if (lower-mode-avx2? mode)
+        (string.append "__tl_spmd_mask_arg_avx2_" (tc-env-key-name-text name))
+        (string.append "__tl_spmd_mask_arg_" (tc-env-key-name-text name)))]))
 
 (define (lower-spmd-call-arg-at
   [args : CompilerIrSpmdCallArgList]
@@ -49407,13 +49412,15 @@
   [ctx : TcContext]
   [params : AstParamList]
   [args : CompilerIrSpmdCallArgList]
+  [mode : CompilerLowerMode]
   [idx : i64]) : CompilerIrParamList
-  (lower-spmd-private-param-list-at ctx (& params) args 0 idx))
+  (lower-spmd-private-param-list-at ctx (& params) args mode 0 idx))
 
 (define (lower-spmd-private-param-list-at
   [ctx : TcContext]
   [params : (& params AstParamList)]
   [args : CompilerIrSpmdCallArgList]
+  [mode : CompilerLowerMode]
   [index : i64]
   [idx : i64]) : CompilerIrParamList
   (if (>= index (ast-param-list-len params))
@@ -49424,7 +49431,7 @@
           [(CompilerIrSpmdCallArg.Arg class _ _)
             (compiler-ir-param-cons
               (CompilerIrParam.Param
-                (lower-spmd-private-param-name name class)
+                (lower-spmd-private-param-name name class mode)
                 (lower-one-word-register-storage-type
                   ctx
                   (tc-type-without-regions (tc-resolve-type ctx ty)))
@@ -49433,6 +49440,7 @@
                 ctx
                 params
                 args
+                mode
                 (+ index 1)
                 (+ idx 1)))])])))
 
@@ -49513,7 +49521,7 @@
         head
         (lower-spmd-private-param-list-append-index (box-get rest) var-id))]))
 
-(define (lower-spmd-avx512-helper-function
+(define (lower-spmd-simd-helper-function
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
@@ -49626,12 +49634,19 @@
                     hidden-name
                     (compiler-ir-param-cons
                       (CompilerIrParam.Param
-                        "__tl_spmd_active_mask"
+                        (if (lower-mode-avx2? mode)
+                          "__tl_spmd_active_mask_avx2"
+                          "__tl_spmd_active_mask")
                         (AstType.Bool)
                         0)
                       (let
                         [source-params : CompilerIrParamList
-                          (lower-spmd-private-param-list ctx params call-args 1)]
+                          (lower-spmd-private-param-list
+                            ctx
+                            params
+                            call-args
+                            mode
+                            1)]
                         (if (or
                           (= (string.string-length helper-index) 0)
                           (>= helper-index-source-param 0))
@@ -49734,7 +49749,7 @@
         names
         mode)]
     [(CompilerIrSpmdBackend.Avx512)
-      (lower-spmd-avx512-helper-function
+      (lower-spmd-simd-helper-function
         ctx
         top-env
         type-cache
@@ -49751,10 +49766,22 @@
         names
         mode)]
     [(CompilerIrSpmdBackend.Avx2)
-      (ResultLowerFunction.Err
-        (box
-          (lower-diagnostic
-            "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512")))]))
+      (lower-spmd-simd-helper-function
+        ctx
+        top-env
+        type-cache
+        hidden-name
+        params
+        ret
+        result-varying
+        body
+        call-args
+        lanes
+        helper-index
+        helper-index-source-param
+        spans
+        names
+        mode)]))
 
 (define (lower-spmd-package-specialization-function-active
   [ctx : TcContext]
@@ -50295,6 +50322,11 @@
                                     func
                                     args)
                                   0)]
+                              [backend : CompilerIrSpmdBackend
+                                (if (lower-mode-avx2?
+                                  (lower-state-mode named-state))
+                                  CompilerIrSpmdBackend.Avx2
+                                  CompilerIrSpmdBackend.Avx512)]
                               [private-name : i64
                                 (lower-spmd-private-helper-name
                                   hidden-name
@@ -50309,7 +50341,7 @@
                                 ret
                                 result-varying
                                 body
-                                (CompilerIrSpmdBackend.Avx512)
+                                backend
                                 abi-call-args
                                 lanes
                                 helper-index
@@ -50324,7 +50356,7 @@
                                       functions
                                       helper-spans)
                                     private-name
-                                    (CompilerIrSpmdBackend.Avx512)
+                                    backend
                                     active-mask
                                     lanes
                                     abi-call-args
@@ -50339,22 +50371,31 @@
               (ResultLowerExpr.Err
                 (box (lower-diagnostic-at-expr expr message)))])]
         [(LowerSpmdInlineHelper.Imported canonical-name fn-ty callables)
-          (lower-imported-spmd-avx512-call
-            ctx
-            state
-            env
-            type-env
-            lane-locals
-            index
-            index-var
-            active-mask
-            lanes
-            expr
-            func
-            args
-            canonical-name
-            fn-ty
-            (box-get callables))]
+          (if (lower-mode-avx2? (lower-state-mode state))
+            (ResultLowerExpr.Err
+              (box
+                (lower-diagnostic-at-expr
+                  expr
+                  (str_cat.str-cat
+                    "lower: imported SPMD helper `"
+                    (intern-str canonical-name)
+                    "` is not supported in AVX2 backend mode"))))
+            (lower-imported-spmd-avx512-call
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              expr
+              func
+              args
+              canonical-name
+              fn-ty
+              (box-get callables)))]
         [(LowerSpmdInlineHelper.No)
           (lower-avx512-masked-unsupported expr "non-direct SPMD helper calls")])]
     [(ResultLowerSpmdInlineHelper.Err message) (ResultLowerExpr.Err message)]))
@@ -51781,25 +51822,17 @@
     (lower-spmd-inline-subst-empty)
     (lower-id-set-insert (lower-id-set-empty) index-id))
     [(ResultLowerAstExpr.Ok inlined-body)
-      (if (and
-        (lower-mode-avx2? (lower-state-mode state))
-        (lower-spmd-expr-has-out-of-line-call? ctx env type-env inlined-body))
-        (ResultLowerExpr.Err
-          (box
-            (lower-diagnostic-at-expr
-              inlined-body
-              (lower-avx2-spmd-call-diagnostic))))
-        (lower-foreach-lowered-inlined
-          ctx
-          state
-          env
-          type-env
-          index-id
-          index
-          index-ty
-          start-value
-          end-value
-          inlined-body))]
+      (lower-foreach-lowered-inlined
+        ctx
+        state
+        env
+        type-env
+        index-id
+        index
+        index-ty
+        start-value
+        end-value
+        inlined-body)]
     [(ResultLowerAstExpr.Err diag) (ResultLowerExpr.Err diag)]))
 
 (define (lower-foreach

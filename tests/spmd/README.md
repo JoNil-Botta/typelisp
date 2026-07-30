@@ -50,24 +50,21 @@ compile and run in `avx2` and `avx512`.
 - `inline_helper_f64.tl` - `foreach` over `n = 13` f64 lanes through a direct
   source-known helper with a varying floating-point argument and result. Exit
   42.
-- `private_helper_i64.tl` - scalar/AVX-512 out-of-line helper ABI coverage for
-  nested direct calls with varying i64 arguments/results and a masked tail.
-  Exit 42; AVX2 reports the staged private-call diagnostic.
-- `private_helper_f64.tl` - scalar/AVX-512 out-of-line helper ABI coverage for
-  varying f64 arguments/results loaded and stored through a tail. Exit 42;
-  AVX2 reports the staged private-call diagnostic.
-- `private_helper_bool.tl` - scalar/AVX-512 out-of-line helper ABI coverage for
-  a varying bool result consumed as a branch mask. Exit 42; AVX2 reports the
-  staged private-call diagnostic.
-- `private_helper_masked_load.tl` - scalar/AVX-512 private helper with a direct
-  array load and bounds checks under composed branch/tail masks. Exit 42;
-  AVX2 reports the staged private-call diagnostic.
-- `private_helper_store.tl` - scalar/AVX-512 private unit helper with a direct
-  store under composed branch/tail masks. Exit 42; AVX2 reports the staged
-  private-call diagnostic.
-- `private_helper_effects.tl` - scalar/AVX-512 private unit helper with a store
-  and atomic update under composed branch/tail masks. SIMD atomic bodies use
-  the specified scalar fallback; AVX2 still reports the private-call diagnostic.
+- `private_helper_i64.tl` - scalar/AVX2/AVX-512 out-of-line helper ABI
+  coverage for nested direct calls with varying i64 arguments/results and a
+  masked tail. Exit 42.
+- `private_helper_f64.tl` - scalar/AVX2/AVX-512 out-of-line helper ABI coverage
+  for varying f64 arguments/results loaded and stored through a tail. Exit 42.
+- `private_helper_bool.tl` - scalar/AVX2/AVX-512 out-of-line helper ABI coverage
+  for a varying bool result consumed as a branch mask. Exit 42.
+- `private_helper_masked_load.tl` - scalar/AVX2/AVX-512 private helper with a
+  direct array load and bounds checks under composed branch/tail masks. Exit
+  42.
+- `private_helper_store.tl` - scalar/AVX2/AVX-512 private unit helper with a
+  direct store under composed branch/tail masks. Exit 42.
+- `private_helper_effects.tl` - scalar/AVX2/AVX-512 private unit helper with a
+  store and atomic update under composed branch/tail masks. SIMD atomic bodies
+  use the specified scalar fallback. Exit 42.
 - `package_callable/` and `package_consumer/` - separately built producer and
   consumer packages for TLCI-described private SPMD calls. The consumer covers
   scalar and AVX-512 varying, mask, uniform, and unit results; i64/f64/f32

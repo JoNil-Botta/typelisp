@@ -539,7 +539,7 @@
 
 (define (compiler-reg-spmd-mask-param? [name : String]) : bool
   (or
-    (string.eq name "__tl_spmd_active_mask")
+    (compiler-reg-string-prefix? name "__tl_spmd_active_mask")
     (compiler-reg-string-prefix? name "__tl_spmd_mask_arg_")))
 
 (define (compiler-reg-assignment-cons
@@ -5456,6 +5456,14 @@
                   [(CompilerIrSpmdValueClass.Varying)
                     (compiler-live-set-insert set dst)]
                   [_ set])])]
+          [(CompilerIrSpmdBackend.Avx2)
+            (match result
+              [(CompilerIrSpmdCallResult.Unit) set]
+              [(CompilerIrSpmdCallResult.Value dst class _)
+                (match class
+                  [(CompilerIrSpmdValueClass.Varying)
+                    (compiler-live-set-insert set dst)]
+                  [_ set])])]
           [_ set]))]
     [_ set]))
 
@@ -5490,6 +5498,14 @@
         [result (struct-get (box-get payload-box) result)]
         (match backend
           [(CompilerIrSpmdBackend.Avx512)
+            (match result
+              [(CompilerIrSpmdCallResult.Unit) set]
+              [(CompilerIrSpmdCallResult.Value dst class _)
+                (match class
+                  [(CompilerIrSpmdValueClass.Mask)
+                    (compiler-live-set-insert set dst)]
+                  [_ set])])]
+          [(CompilerIrSpmdBackend.Avx2)
             (match result
               [(CompilerIrSpmdCallResult.Unit) set]
               [(CompilerIrSpmdCallResult.Value dst class _)
@@ -22140,6 +22156,56 @@
         unit
         (array-set! words var 4)))))
 
+(define (compiler-reg-spmd-avx2-special-param? [name : String]) : bool
+  (or
+    (compiler-reg-string-prefix? name "__tl_spmd_active_mask_avx2")
+    (compiler-reg-string-prefix? name "__tl_spmd_varying_arg_avx2_")
+    (compiler-reg-string-prefix? name "__tl_spmd_mask_arg_avx2_")))
+
+(define (compiler-reg-vector-stack-words-params!
+  [params : CompilerIrParamList]
+  [words : (__tl_dyn-array i64)]) : unit
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-vector-stack-words-params!
+        (compiler-ir-param-seq-to-list seq)
+        words)]
+    [(CompilerIrParamList.Cons param rest)
+      (begin
+        (match param
+          [(CompilerIrParam.Param name _ var)
+            (if (compiler-reg-spmd-avx2-special-param? name)
+              (compiler-reg-vector-stack-words-set-mask! words var)
+              unit)])
+        (compiler-reg-vector-stack-words-params! (box-get rest) words))]))
+
+(define (compiler-reg-spmd-avx2-special-param-references!
+  [params : CompilerIrParamList]
+  [references : (__tl_dyn-array i64)]) : unit
+  ;; The backend materializes every private ABI parameter before instruction
+  ;; emission, including an active mask unused by the helper body. Keep those
+  ;; prologue-only writes in the private-range allocation census.
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-spmd-avx2-special-param-references!
+        (compiler-ir-param-seq-to-list seq)
+        references)]
+    [(CompilerIrParamList.Cons param rest)
+      (begin
+        (match param
+          [(CompilerIrParam.Param name _ var)
+            (if (and
+              (compiler-reg-spmd-avx2-special-param? name)
+              (>= var 0)
+              (< var (array-length references)))
+              (array-set! references var (+ (array-ref references var) 1))
+              unit)])
+        (compiler-reg-spmd-avx2-special-param-references!
+          (box-get rest)
+          references))]))
+
 (define (compiler-reg-vector-stack-words-instr!
   [instr : CompilerIrInstr]
   [words : (__tl_dyn-array i64)]) : unit
@@ -22220,6 +22286,20 @@
                       dst
                       lanes
                       elem-ty)]
+                  [_ unit])])]
+          [(CompilerIrSpmdBackend.Avx2)
+            (match result
+              [(CompilerIrSpmdCallResult.Unit) unit]
+              [(CompilerIrSpmdCallResult.Value dst class elem-ty)
+                (match class
+                  [(CompilerIrSpmdValueClass.Varying)
+                    (compiler-reg-vector-stack-words-set!
+                      words
+                      dst
+                      lanes
+                      elem-ty)]
+                  [(CompilerIrSpmdValueClass.Mask)
+                    (compiler-reg-vector-stack-words-set-mask! words dst)]
                   [_ unit])])]
           [_ unit]))]
     [_ unit]))
@@ -23602,9 +23682,10 @@
         (- vars 1)
         CompilerRegAssignmentList.Nil))))
 
-;; Identity-pin parameter variables: the prologue's param spill writes each
-;; parameter to the formula slot of its ORIGINAL id (the ABI hand-off
-;; contract), so params keep their ids and their slots are never shared.
+;; Identity-pin scalar parameter variables: the prologue's param spill writes
+;; each parameter to its remapped formula slot, and ordinary parameters keep
+;; their ids so those slots are never shared. AVX2 private SPMD parameters need
+;; a four-word YMM range, so leave those unpinned for the private-range pass.
 (define (compiler-reg-color-param-pins
   [params : CompilerIrParamList]
   [remap : (__tl_dyn-array i64)]
@@ -23620,9 +23701,11 @@
         highest)]
     [(CompilerIrParamList.Cons param rest)
       (match param
-        [(CompilerIrParam.Param _ _ var-id)
+        [(CompilerIrParam.Param name _ var-id)
           (begin
-            (if (< var-id (array-length remap))
+            (if (and
+              (not (compiler-reg-spmd-avx2-special-param? name))
+              (< var-id (array-length remap)))
               (begin
                 (array-set! remap var-id var-id)
                 (array-set! slot-ends var-id 9223372036854775807))
@@ -23631,7 +23714,9 @@
               (box-get rest)
               remap
               slot-ends
-              (compiler-reg-max highest (+ var-id 1))))])]))
+              (if (compiler-reg-spmd-avx2-special-param? name)
+                highest
+                (compiler-reg-max highest (+ var-id 1)))))])]))
 
 ;; --- M-B: stack-homed register-group Mov coalescing -------------------------
 ;; A group-typed `IrInstrMov dst <- src` between two slot-resident group vars
@@ -24507,7 +24592,9 @@
       (let
         [vector-stack-words : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [_vector-stack-words : unit
-          (compiler-reg-vector-stack-words-blocks! blocks vector-stack-words)]
+          (begin
+            (compiler-reg-vector-stack-words-params! params vector-stack-words)
+            (compiler-reg-vector-stack-words-blocks! blocks vector-stack-words))]
         [slots : i64
           (+
             (+
@@ -24554,7 +24641,8 @@
         [_referenced : unit
           (begin
             (compiler-reg-color-reference-intervals! intervals references)
-            (compiler-reg-ref-counts-blocks! references blocks))]
+            (compiler-reg-ref-counts-blocks! references blocks)
+            (compiler-reg-spmd-avx2-special-param-references! params references))]
         [var-tys : (__tl_dyn-array AstType) (array.make-array AstType vars)]
         [slot-tys : (__tl_dyn-array AstType) (array.make-array AstType slots)]
         [_typed : unit
@@ -24799,6 +24887,20 @@
       (compiler-ir-value-cons
         (compiler-reg-remap-value remap head)
         (compiler-reg-remap-value-list remap (box-get rest)))]))
+
+(define (compiler-reg-remap-params
+  [remap : (__tl_dyn-array i64)]
+  [params : CompilerIrParamList]) : CompilerIrParamList
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) CompilerIrParamList.Nil]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-remap-params remap (compiler-ir-param-seq-to-list seq))]
+    [(CompilerIrParamList.Cons param rest)
+      (match param
+        [(CompilerIrParam.Param name ty var)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param name ty (compiler-reg-remap-id remap var))
+            (compiler-reg-remap-params remap (box-get rest)))])]))
 
 (define (compiler-reg-remap-call-args
   [remap : (__tl_dyn-array i64)]
@@ -34783,6 +34885,88 @@
         (not (= (array-ref remap 0) 1)))]
     [(CompilerRegColoring.None) false]))
 
+(define (compiler-reg-color-avx2-param-ranges-ok?) : bool
+  (let
+    [params : CompilerIrParamList
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "__tl_spmd_active_mask_avx2" (AstType.Bool) 0)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "__tl_spmd_varying_arg_avx2_x" (AstType.I64) 1)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "__tl_spmd_index_base" (AstType.I64) 2)
+            CompilerIrParamList.Nil)))]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-insert
+        CompilerRegAssignmentList.Nil
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))]
+    (match (compiler-reg-color-stack-slots
+      (ast-node-pool-reader-type-segment-bases)
+      (CompilerRegPlan.Plan
+        assignments
+        (compiler-live-set-empty)
+        (compiler-reg-interval-seq-prepend
+          (CompilerRegInterval 1 0 1)
+          (compiler-reg-interval-seq-empty))
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          1
+          (AstType.I64))
+        (compiler-reg-call-split-empty)
+        (compiler-reg-split-plan-empty))
+      (compiler-live-set-empty)
+      params
+      CompilerIrBlockList.Nil
+      3
+      3)
+      [(CompilerRegColoring.Remap remap slots)
+        (let
+          [active : i64 (array-ref remap 0)]
+          [varying : i64 (array-ref remap 1)]
+          [uniform : i64 (array-ref remap 2)]
+          [rebuilt : CompilerRegAssignmentList
+            (compiler-reg-color-rebuild-assignments remap 3 assignments)]
+          (begin
+            (compiler-regalloc-self-test-require!
+              "AVX2 special parameter range reservation"
+              (and
+                (= uniform 2)
+                (>= active 3)
+                (<= (+ active 1) slots)
+                (or (< uniform (- active 3)) (> uniform active))
+                (not (= varying active))))
+            (compiler-regalloc-self-test-require!
+              "AVX2 special parameter assignment remap"
+              (compiler-reg-location-register?
+                (compiler-reg-assignment-index-lookup
+                  (compiler-reg-assignment-index-build rebuilt 3)
+                  varying)
+                compiler-reg-id-r12))
+            (compiler-regalloc-self-test-require!
+              "AVX2 emitted parameter id remap"
+              (match (compiler-ir-param-list-force-cons
+                (compiler-reg-remap-params remap params))
+                [(CompilerIrParamList.Cons
+                    (CompilerIrParam.Param _ _ active-param)
+                    rest1)
+                  (match (compiler-ir-param-list-force-cons (box-get rest1))
+                    [(CompilerIrParamList.Cons
+                        (CompilerIrParam.Param _ _ varying-param)
+                        rest2)
+                      (match (compiler-ir-param-list-force-cons (box-get rest2))
+                        [(CompilerIrParamList.Cons
+                            (CompilerIrParam.Param _ _ uniform-param)
+                            _)
+                          (and
+                            (= active-param active)
+                            (= varying-param varying)
+                            (= uniform-param uniform))]
+                        [_ false])]
+                    [_ false])]
+                [_ false]))
+            true))]
+      [(CompilerRegColoring.None) false])))
+
 (define (compiler-reg-color-spill-hole-demand-ok?) : bool
   (match (compiler-reg-color-stack-slots
     (ast-node-pool-reader-type-segment-bases)
@@ -35335,6 +35519,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-spill-param-pins-ok?"
       (compiler-reg-color-spill-param-pins-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-color-avx2-param-ranges-ok?"
+      (compiler-reg-color-avx2-param-ranges-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-spill-hole-demand-ok?"
       (compiler-reg-color-spill-hole-demand-ok?))

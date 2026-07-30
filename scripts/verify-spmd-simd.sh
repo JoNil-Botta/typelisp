@@ -218,9 +218,6 @@ spmd_mode_expected_compile_diagnostic() {
         tests/spmd/map_shift_i16_reject.tl:avx512)
             printf '%s\n' "lower: SPMD foreach SIMD lowering does not support shift 'shl' for lane type i16 in AVX-512 backend mode; supported lane types are i32, u32, i64, and u64"
             ;;
-        tests/spmd/private_helper_i64.tl:avx2 | tests/spmd/private_helper_f64.tl:avx2 | tests/spmd/private_helper_bool.tl:avx2 | tests/spmd/private_helper_masked_load.tl:avx2 | tests/spmd/private_helper_store.tl:avx2 | tests/spmd/private_helper_effects.tl:avx2)
-            printf '%s\n' "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
         tests/spmd/varying_match_enum_helper_reject.tl:avx2 | tests/spmd/varying_match_enum_helper_reject.tl:avx512)
             printf '%s\n' "lower: SPMD masked if does not support a SIMD varying enum match source outside a contiguous array lane"
             ;;
@@ -362,6 +359,46 @@ verify_shuffle_opcodes() {
         echo "[spmd-simd] shuffle AVX2 assembly uses AVX-512 registers" >&2
         echo "tests/integration/spmd_shuffle_simd.tl avx2 (AVX-512 register)" >> "$FAILURES"
     fi
+}
+
+verify_avx2_private_helper_call_shape() {
+    for _prog in \
+        tests/spmd/private_helper_i64.tl \
+        tests/spmd/private_helper_f64.tl \
+        tests/spmd/private_helper_bool.tl \
+        tests/spmd/private_helper_masked_load.tl \
+        tests/spmd/private_helper_store.tl \
+        tests/spmd/private_helper_effects.tl
+    do
+        compile_spmd_mode "$_prog" avx2
+        _tag=$(printf '%s' "$_prog" | sed 's#[/.]#_#g')
+        _asm="$WORKDIR/$_tag.avx2.compile.s"
+        if [ "$mode_code" != 0 ]; then
+            echo "[spmd-simd] AVX2 private-helper shape compile failed for $_prog:" >&2
+            sed 's/^/    /' "$mode_err" >&2
+            echo "$_prog avx2 (private-helper shape compile)" >> "$FAILURES"
+            continue
+        fi
+        if grep -E -- '%zmm[0-9]+|%k[0-7]' "$_asm" > /dev/null; then
+            echo "[spmd-simd] AVX2 private-helper assembly uses AVX-512 registers for $_prog" >&2
+            echo "$_prog avx2 (private-helper AVX-512 register)" >> "$FAILURES"
+        fi
+        case "$_prog" in
+            tests/spmd/private_helper_effects.tl)
+                # Atomic SPMD bodies retain the specified scalar fallback.
+                ;;
+            *)
+                if ! grep -E -- 'call _tl___tl_spmd_' "$_asm" > /dev/null; then
+                    echo "[spmd-simd] AVX2 private-helper assembly lacks a native private call for $_prog" >&2
+                    echo "$_prog avx2 (missing native private call)" >> "$FAILURES"
+                fi
+                if ! grep -E -- 'leaq? .*\(%rsp\), %r10' "$_asm" > /dev/null; then
+                    echo "[spmd-simd] AVX2 private-helper assembly lacks the stack-block ABI pointer for $_prog" >&2
+                    echo "$_prog avx2 (missing private ABI pointer)" >> "$FAILURES"
+                fi
+                ;;
+        esac
+    done
 }
 
 verify_reduce_accumulator_shape() {
@@ -1073,6 +1110,7 @@ for mode in avx2 avx512; do
     verify_map_shift_shape "$mode"
 done
 
+verify_avx2_private_helper_call_shape
 verify_avx2_varying_while_shape
 verify_avx2_varying_enum_match_shape
 verify_avx512_varying_enum_match_shape

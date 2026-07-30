@@ -65422,8 +65422,8 @@
 (define (compiler-backend-windows-driver-runtime-source) : String
   "(extern (arg-count) : i64 (:symbol \"tl_arg_count\"))
 (extern (io.arg [arg0 : i64]) : String (:symbol \"tl_arg\"))
-(extern (io.read-file [arg0 : String]) : String (:symbol \"tl_read_file\"))
-(extern (io.write-file [arg0 : String] [arg1 : String]) : unit (:symbol \"tl_write_file\"))
+(extern (raw-read-file [arg0 : String]) : String (:symbol \"tl_read_file\"))
+(extern (raw-write-file [arg0 : String] [arg1 : String]) : unit (:symbol \"tl_write_file\"))
 (extern (io.file-exists? [arg0 : String]) : bool (:symbol \"tl_file_exists\"))
 (extern (io.print-error [arg0 : String]) : unit (:symbol \"tl_print_err\"))
 (extern (string.eq [arg0 : String] [arg1 : String]) : bool (:symbol \"tl_string_eq\"))
@@ -65436,7 +65436,7 @@
       2)
     (let [input : String (io.arg 1)]
       [output : String (io.arg 2)]
-      (let [content : String (io.read-file input)]
+      (let [content : String (raw-read-file input)]
         (if (io.file-exists? input)
           (let [n : i64 (string.>int content)]
             (let [rendered : String (string.int->string (+ n 1))]
@@ -65444,7 +65444,7 @@
                 (if (string.eq content \"41\")
                   (io.print-error \"ok\")
                   (io.print-error \"mismatch\"))
-                (io.write-file output rendered)
+                (raw-write-file output rendered)
                 42)))
           3)))))")
 

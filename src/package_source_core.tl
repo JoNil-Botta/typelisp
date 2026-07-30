@@ -7,6 +7,7 @@
 ;; ordinary package source discovery skips them. Hosts without directory
 ;; enumeration fall back to the manifest entry source.
 (import stdlib.fs)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -128,7 +129,7 @@
   (if (io.file-exists? path)
     (match (compiler-load-parse-manifest-diagnostic-infer-kind
       path
-      (io.read-file path))
+      (byte_buf.to-string (io.read-file path)))
       [(ResultCompilerPkgManifestDiagnostic.Err diag)
         (ResultPackageSourceSet.Err
           (string.concat3

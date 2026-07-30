@@ -426,12 +426,12 @@
 
 (define (compiler-check-runtime-stdlib-boundary-io-source) : String
   "(import stdlib.io)
-(import stdlib.string)
+(import stdlib.byte_buf)
 (define (main [path : String]) : i64
   (begin
     (io.print-string \"\")
     (io.flush-stdout)
-    (+ (string.string-length (io.read-file path))
+    (+ (byte_buf.len (io.read-file path))
        (io.file-open-status path 0))))")
 
 (define (compiler-check-runtime-stdlib-boundary-env-source) : String

@@ -1,4 +1,5 @@
 ;; compiler_driver_smoke_tests.tl - Shared driver/lowering integration smokes.
+(import stdlib.byte_buf)
 (import stdlib.string)
 (import stdlib.io)
 (import stdlib.vector)
@@ -349,7 +350,7 @@
 (define (compiler-driver-pic-smoke-write-fixture-at?
   [path : String]
   [contents : String]) : bool
-  (match (try-write-file (& path) (& contents))
+  (match (try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
     [(OkIoUnit) true]
     [(ErrIoUnit _) false]))
 
@@ -364,7 +365,7 @@
     (if (compiler-driver-pic-smoke-write-fixture-at? path contents)
       path
       (begin
-        (write-file fallback-path contents)
+        (write-file fallback-path (byte_buf.str-as-bytes (& contents)))
         fallback-path))))
 
 (define (compiler-driver-smoke-write-module-macro-diagnostic-fixture) : String
@@ -387,7 +388,7 @@
     (if (compiler-driver-pic-smoke-write-fixture-at? path contents)
       path
       (begin
-        (write-file fallback-path contents)
+        (write-file fallback-path (byte_buf.str-as-bytes (& contents)))
         fallback-path))))
 
 (define (compiler-driver-smoke-module-macro-diagnostic-ok?) : bool
@@ -427,7 +428,7 @@
     (if (compiler-driver-pic-smoke-write-fixture-at? path contents)
       path
       (begin
-        (write-file fallback-path contents)
+        (write-file fallback-path (byte_buf.str-as-bytes (& contents)))
         fallback-path))))
 
 (define (compiler-driver-reader-context-smoke-installed?

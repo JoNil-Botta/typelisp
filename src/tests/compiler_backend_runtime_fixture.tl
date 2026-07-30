@@ -1,4 +1,5 @@
 ;; compiler_backend_runtime_fixture.tl - emit runtime-helper backend fixture assembly.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import "../compiler_backend.tl")
@@ -44,7 +45,7 @@
             (CompilerBackendTarget.Windows))
             [(ResultCompilerBackend.Ok asm)
               (begin
-                (io.write-file (io.arg 1) asm)
+                (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
                 0)]
             [(ResultCompilerBackend.Err diag)
               (begin
@@ -53,7 +54,7 @@
           (match (compiler-backend-runtime-fixture-emit target-name)
             [(ResultCompilerBackend.Ok asm)
               (begin
-                (io.write-file (io.arg 1) asm)
+                (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
                 0)]
             [(ResultCompilerBackend.Err diag)
               (begin

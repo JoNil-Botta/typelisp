@@ -20,9 +20,12 @@
 
 (define (tlci-v2-corpus-sections-image) : TlciImage
   (let
-    [fixups : (__tl_dyn-array u8) (make-array u8 tlci-section-fixup-record-size)]
-    [entries : (__tl_dyn-array u8) (make-array u8 tlci-section-entry-record-size)]
-    [symbols : (__tl_dyn-array u8) (make-array u8 tlci-section-symbol-record-size)]
+    [fixups : (__tl_dyn-array u8)
+      (make-array u8 tlci-section-fixup-record-size)]
+    [entries : (__tl_dyn-array u8)
+      (make-array u8 tlci-section-entry-record-size)]
+    [symbols : (__tl_dyn-array u8)
+      (make-array u8 tlci-section-symbol-record-size)]
     (begin
       ;; One inert load-base fixup, entry, and symbol record. The fixture is
       ;; parsed and inspected, never mapped or executed.

@@ -2,7 +2,9 @@
 ;: call-argument reservation is rejected (#3581 keeps this surface staged).
 (import stdlib.array)
 
-(define (take-mut-and-value [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
+(define (take-mut-and-value
+  [items : (&mut items (__tl_dyn-array i64))]
+  [value : i64]) : unit
   unit)
 
 (define (main) : unit

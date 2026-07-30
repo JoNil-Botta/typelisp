@@ -2,7 +2,10 @@
 ;: the same owned parameter is consumed into an array after the loop.
 (import stdlib.string)
 
-(define (insert-once! [names : (__tl_dyn-array String)] [count : i64] [name : String]) : unit
+(define (insert-once!
+  [names : (__tl_dyn-array String)]
+  [count : i64]
+  [name : String]) : unit
   (let
     [index : i64 0]
     [found : bool false]

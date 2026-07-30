@@ -29,7 +29,8 @@
     i64)
   (& (array-ref (struct-get (struct-get holder iter) slots) 0)))
 
-(define (shared-tuple-item [pair : (&mut state (Tuple (& source (__tl_dyn-array i64))))]) : (&
+(define (shared-tuple-item
+  [pair : (&mut state (Tuple (& source (__tl_dyn-array i64))))]) : (&
     source
     i64)
   (& (array-ref (tuple-ref pair 0) 0)))

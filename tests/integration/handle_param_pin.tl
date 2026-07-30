@@ -28,7 +28,10 @@
       acc)))
 
 ;; Never executed (n < 100 always); its only job is to take sum-arr's address.
-(define (poke [f : (-> (__tl_dyn-array i64) i64 i64)] [xs : (__tl_dyn-array i64)] [n : i64]) : i64
+(define (poke
+  [f : (-> (__tl_dyn-array i64) i64 i64)]
+  [xs : (__tl_dyn-array i64)]
+  [n : i64]) : i64
   (f xs n))
 
 (define (main) : i64

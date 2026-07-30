@@ -25,7 +25,8 @@
   (scores (Array i64 3))
   (previous (Array Address 2))
   (samples (__tl_dyn-array i64))
-  (combo (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))))
+  (combo
+    (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))))
 
 (import (serialize.serialize json Person) as person_json)
 (import (serialize.serialize json Person) as person_json_again)
@@ -221,7 +222,8 @@
     (serialize-json-address-eq? (array-ref previous 1) 222 "Paris")))
 
 (define (serialize-json-combo-ok?
-  [combo : (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))]) : bool
+  [combo
+    : (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))]) : bool
   (and
     (= (tuple-ref combo 0) 99)
     (serialize-json-address-eq? (tuple-ref combo 1) 333 "Rome")

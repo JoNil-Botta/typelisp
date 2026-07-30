@@ -21,7 +21,8 @@
 
 (define (main) : i64
   (let
-    [values : (__tl_dyn-array TotalSwitchValue) (array.make-array TotalSwitchValue 6)]
+    [values : (__tl_dyn-array TotalSwitchValue)
+      (array.make-array TotalSwitchValue 6)]
     [i : i64 0]
     [sum : i64 0]
     (begin

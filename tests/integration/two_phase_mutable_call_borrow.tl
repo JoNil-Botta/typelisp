@@ -3,7 +3,9 @@
 (define (read-len [items : (& items (__tl_dyn-array i64))]) : i64
   (array-length items))
 
-(define (push-with-len [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
+(define (push-with-len
+  [items : (&mut items (__tl_dyn-array i64))]
+  [value : i64]) : unit
   (array-push! items value))
 
 (define (main) : i64

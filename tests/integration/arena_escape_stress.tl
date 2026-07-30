@@ -162,7 +162,8 @@
     acc
     (let
       [items : (__tl_dyn-array String) (escape-items-rewind scratch 96 n)]
-      [after : (__tl_dyn-array String) (escape-items-rewind scratch 8 (+ n 3000))]
+      [after : (__tl_dyn-array String)
+        (escape-items-rewind scratch 8 (+ n 3000))]
       (if (and (items-ok? after 8 (+ n 3000)) (items-ok? items 96 n))
         (rewind-item-cycles-inner scratch (- n 1) (+ acc 1))
         0))))

@@ -51,7 +51,8 @@
   (scores (Array i64 3))
   (previous (Array Address 2))
   (samples (__tl_dyn-array i64))
-  (combo (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))))
+  (combo
+    (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))))
 
 (import (serialize.serialize toy Person) as person_ser)
 (import (serialize.serialize toy Person) as person_ser_again)
@@ -80,7 +81,8 @@
     (serialize-address-eq? (array-ref previous 1) 222 "Paris")))
 
 (define (serialize-combo-ok?
-  [combo : (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))]) : bool
+  [combo
+    : (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))]) : bool
   (and
     (= (tuple-ref combo 0) 99)
     (serialize-address-eq? (tuple-ref combo 1) 333 "Rome")

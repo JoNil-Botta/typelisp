@@ -16,7 +16,10 @@
   (unsafe
     (ptr-cast (ptr-offset base offset) : (Ptr u8))))
 
-(define (byte-copy-fill! [items : (__tl_dyn-array u8)] [count : i64] [base : i64]) : unit
+(define (byte-copy-fill!
+  [items : (__tl_dyn-array u8)]
+  [count : i64]
+  [base : i64]) : unit
   (let
     [i : i64 0]
     (while (< i count)

@@ -2,7 +2,9 @@
 ;: during reservation cannot escape activation (#3581 keeps this surface staged).
 (import stdlib.array)
 
-(define (borrow-items [items : (& items (__tl_dyn-array i64))]) : (& items (__tl_dyn-array i64))
+(define (borrow-items [items : (& items (__tl_dyn-array i64))]) : (&
+    items
+    (__tl_dyn-array i64))
   items)
 
 (define (take-mut-and-view

@@ -906,28 +906,6 @@
 ;; Capability for rendering an id retained across an intern-state boundary.
 ;; It is captured by the few consumers that outlive the currently installed
 ;; table rather than adding ownership metadata to every AST name.
-(defstruct InternIdProvenance
-  (table-id i64)
-  (generation i64))
-
-(defenum InternIdRender
-  (Ok String)
-  (WrongOwner)
-  (StaleGeneration)
-  (InvalidId))
-
-(define (intern-id-provenance-capture) : InternIdProvenance
-  (InternIdProvenance (intern-active-table-id) intern-reset-generation))
-
-(define (intern-id-render [owner : InternIdProvenance] [id : i64]) : InternIdRender
-  (cond
-    [(not (= (struct-get owner table-id) (intern-active-table-id)))
-      (InternIdRender.WrongOwner)]
-    [(not (= (struct-get owner generation) intern-reset-generation))
-      (InternIdRender.StaleGeneration)]
-    [(or (< id 0) (>= id intern-pool-count)) (InternIdRender.InvalidId)]
-    [else (InternIdRender.Ok (array-ref intern-pool-slots id))]))
-
 (defstruct InternCompatState
   (table-id (__tl_dyn-array i64))
   (pool-slots (__tl_dyn-array String))
@@ -1422,15 +1400,6 @@
   [id : i64]) : i64
   (cast (array-ref (struct-get state pool-last-slash-slots) id) : i64))
 
-(define (intern-compat-state-first-dot [state : InternCompatState] [id : i64]) : i64
-  (cast (array-ref (struct-get state pool-first-dot-slots) id) : i64))
-
-(define (intern-compat-state-leading-dot-id
-  [state : InternCompatState]
-  [id : i64]) : i64
-  (intern-id-slot-decode
-    (array-ref (struct-get state pool-leading-dot-id-slots) id)))
-
 (define (intern-compat-state-qualified-module-id
   [state : InternCompatState]
   [id : i64]) : i64
@@ -1680,11 +1649,6 @@
   compile-profile
   (define (intern-profile-invalid-str-value) : i64
     intern-profile-invalid-str-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-invalid-str-last-id-value) : i64
-    intern-profile-invalid-str-last-id))
 
 (cfg
   compile-profile
@@ -2916,6 +2880,19 @@
           (set! ok false))
         (unless (= qualified-id (- (intern-capacity) 4)) (set! ok false))
         (unless (= dotted-id (- (intern-capacity) 5)) (set! ok false))
+        (unless (= (intern-generated-count) 5) (set! ok false))
+        (unless
+          (= (intern-generated-id-at-allocation-index 0) opaque-id)
+          (set! ok false))
+        (unless
+          (= (intern-generated-id-at-allocation-index 4) dotted-id)
+          (set! ok false))
+        (unless
+          (= (intern-generated-id-at-allocation-index -1) -1)
+          (set! ok false))
+        (unless
+          (= (intern-generated-id-at-allocation-index 5) -1)
+          (set! ok false))
         (unless (not (= opaque-id opaque-again-id)) (set! ok false))
         (unless
           (intern-private-string-eq (intern-str opaque-id) "hygiene/local")
@@ -2989,6 +2966,19 @@
               base-id)]
           (begin
             (unless (= canonical-id canonical-again-id) (set! ok false))
+            (unless (= (intern-generated-count) 8) (set! ok false))
+            (unless
+              (intern-generated-canonical-id? canonical-id)
+              (set! ok false))
+            (unless
+              (intern-generated-canonical-id? canonical-dotted-id)
+              (set! ok false))
+            (unless
+              (intern-generated-canonical-id? canonical-qualified-id)
+              (set! ok false))
+            (unless
+              (not (intern-generated-canonical-id? opaque-id))
+              (set! ok false))
             (unless
               (= canonical-dotted-id canonical-dotted-again-id)
               (set! ok false))
@@ -3193,6 +3183,34 @@
       (intern-compat-state-intern state-a "after-boundary")]
     [ok : bool true]
     (begin
+      (match (intern-compat-state-lookup state-a "equal")
+        [(InternLookupFound id) (unless (= id equal-id) (set! ok false))]
+        [(InternLookupMissing) (set! ok false)])
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-str state-a equal-id)
+          "equal")
+        (set! ok false))
+      (unless
+        (intern-compat-state-qualified? state-a qualified-id)
+        (set! ok false))
+      (unless
+        (= (intern-compat-state-qualified-last-slash state-a qualified-id) 3)
+        (set! ok false))
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-str
+            state-a
+            (intern-compat-state-qualified-module-id state-a qualified-id))
+          "pkg")
+        (set! ok false))
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-str
+            state-a
+            (intern-compat-state-qualified-base-id state-a qualified-id))
+          "module.name")
+        (set! ok false))
       (match (intern-source-name-session-resolve session-a parsed-a "different")
         [(InternSourceNameResolution.ParsedIdentity id)
           (unless (= id equal-id) (set! ok false))]

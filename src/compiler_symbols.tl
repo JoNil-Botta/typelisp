@@ -295,20 +295,6 @@
                 [else (set! slot (bit-and (+ slot 1) mask))])))
           (compiler-symbol-map-missing-handle))))))
 
-(define (compiler-symbol-map-store-new!
-  [map : (&mut map CompilerSymbolMap)]
-  [slot : i64]
-  [encoded : i64]
-  [handle : i64]
-  [reused-deleted : bool]) : unit
-  (begin
-    (array-set! (struct-get map keys) slot encoded)
-    (array-set! (struct-get map values) slot handle)
-    (set! (struct-get map len) (+ (struct-get map len) 1))
-    (if reused-deleted
-      (set! (struct-get map deleted) (- (struct-get map deleted) 1))
-      unit)))
-
 (define (compiler-symbol-map-put-no-grow!
   [map : (&mut map CompilerSymbolMap)]
   [key : i64]
@@ -2174,13 +2160,6 @@
               (set! k (array-ref ent-next k))))
           cur-symbols))]))
 
-(define (compiler-symbols-import-alias-key
-  [importer-module : String]
-  [alias : String]) : String
-  (if (string.eq alias "")
-    importer-module
-    alias))
-
 (define (compiler-symbols-import-alias-key-id
   [importer-module : i64]
   [alias : i64]) : i64
@@ -3217,33 +3196,6 @@
                     name-key-id
                     handle))]
               (ResultCompilerRegistries.Ok aliases2))))])))
-
-(define (compiler-registries-add-field-id
-  [registries : CompilerRegistries]
-  [struct-name-id : i64]
-  [field-name-id : i64]
-  [struct-name : String]
-  [field-name : String]
-  [struct-index : i64]
-  [field-index : i64]) : ResultCompilerRegistries
-  (match registries
-    [(CompilerRegistries variants fields identity)
-      (let
-        [key-id : i64
-          (compiler-struct-field-key-id-by-id struct-name-id field-name-id)]
-        (if (compiler-symbol-map-contains-id? (& fields) key-id)
-          (ResultCompilerRegistries.Err
-            (compiler-registries-duplicate-field-message struct-name field-name))
-          (begin
-            (compiler-symbol-map-bind-id!
-              (&mut fields)
-              key-id
-              (compiler-registry-make-handle
-                (compiler-symbol-kind-struct-field)
-                struct-index
-                field-index))
-            (ResultCompilerRegistries.Ok
-              (CompilerRegistries variants fields identity)))))]))
 
 (define (compiler-registries-add-field-in-module-id
   [registries : CompilerRegistries]

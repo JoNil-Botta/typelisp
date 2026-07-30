@@ -851,12 +851,6 @@
 (define (state-ref [state : CompilerBuiltinIdsState] [index : i64]) : i64
   (array-ref (struct-get state ids) index))
 
-(define (state-ids-data-addr [state : CompilerBuiltinIdsState]) : i64
-  (cast
-    (unsafe
-      (ptr->int (ptr-cast (array-data (struct-get state ids)) : (Ptr u8))))
-    : i64))
-
 (define (state-set!
   [state : CompilerBuiltinIdsState]
   [index : i64]
@@ -3494,35 +3488,10 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-str-view)))
 
-(define (compiler-builtin-backend-tl-string-eq-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-string-eq)))
-
-(define (compiler-builtin-backend-tl-string-to-int-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-string-to-int)))
-
 (define (compiler-builtin-backend-tl-int-to-string-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-int-to-string)))
-
-(define (compiler-builtin-backend-tl-abort-label-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-abort-label)))
-
-(define (compiler-builtin-backend-tl-div-abort-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-div-abort)))
-
-(define (compiler-builtin-backend-tl-shift-abort-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-shift-abort)))
 
 (define (compiler-builtin-backend-fixed-fault-id? [name-id : i64]) : bool
   (begin
@@ -3562,11 +3531,6 @@
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-tlci-call-macro-entry)))
-
-(define (compiler-builtin-backend-tl-hash-string-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-hash-string)))
 
 (define (compiler-builtin-backend-tls-current-arena-call-id? [name-id : i64]) : bool
   (begin

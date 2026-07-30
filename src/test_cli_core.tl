@@ -18,6 +18,7 @@
 (import "compiler_backend.tl")
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_cfg_core as cfg_core)
 (import "compiler_load.tl")
 (import "package_source_core.tl")
 (import "compiler_optimize.tl")
@@ -2408,7 +2409,7 @@
     [(sym_i64_env.SymI64ViewNil) unit]
     [(sym_i64_env.SymI64ViewBind key value rest)
       (begin
-        (array-set! slots index (compiler-cfg-name key))
+        (array-set! slots index (cfg_core.compiler-cfg-name key))
         (array-set! values index value)
         (tltest-cfg-names-fill! rest slots values (+ index 1)))]))
 
@@ -2431,7 +2432,7 @@
           (set! index (- index 1))
           (set!
             env
-            (compiler-cfg-bind
+            (cfg_core.compiler-cfg-bind
               env
               (array-ref (struct-get names slots) index)
               (array-ref (struct-get names values) index)))))

@@ -2872,11 +2872,6 @@
 ;; Explicit reader used by compile-job phases. The pools value is intentionally
 ;; part of the call so interleaved jobs cannot observe whichever context a
 ;; compatibility caller most recently installed.
-(define (ast-node-pool-reader-type-get-with-pools
-  [pools : AstNodePoolContext]
-  [id : i64]) : AstType
-  (ast-node-pool-context-type-get pools id))
-
 ;; Legacy/test bridge for public adapters whose historical API has no pools
 ;; parameter. Explicit compile-job entry points never call this helper.
 (define (ast-node-pool-reader-type-segment-bases) : i64
@@ -3179,11 +3174,6 @@
     [_ false]))
 
 ;; Legacy/test adapter. Compile-job callers use the explicit-pools twin below.
-(define (ast-type-strip-consuming-param [ty : AstType]) : AstType
-  (match ty
-    [(AstType.Consume inner) (ast-node-pool-reader-type-get inner)]
-    [_ ty]))
-
 (define (ast-ty-tuple [elems : AstTypeList]) : AstType
   (AstType.Tuple (box elems)))
 
@@ -3554,9 +3544,6 @@
     ty
     variadic
     (ast-macro-type-kind-list-empty)))
-
-(define (ast-macro-param-id [name : i64] [ty : AstType] [variadic : bool]) : AstMacroParam
-  (ast-macro-param name ty variadic))
 
 (define (ast-macro-param-fallback) : AstMacroParam
   (AstMacroParam.Param 0 (AstType.Unit) false (ast-macro-type-kind-list-empty)))
@@ -4532,9 +4519,6 @@
 (define (ast-let-binding-list-len [v : (& v AstLetBindingList)]) : i64
   (struct-get v len))
 
-(define (ast-let-binding-list-empty? [v : (& v AstLetBindingList)]) : bool
-  (= (ast-let-binding-list-len v) 0))
-
 (define (ast-let-binding-list-get
   [v : (& v AstLetBindingList)]
   [index : i64]
@@ -4609,12 +4593,6 @@
 
 (define (ast-resource-binding-id [name : i64] [init : i64] [cleanup : i64]) : AstResourceBinding
   (AstResourceBinding.Binding name init cleanup false))
-
-(define (ast-move-aware-resource-binding-id
-  [name : i64]
-  [init : i64]
-  [cleanup : i64]) : AstResourceBinding
-  (AstResourceBinding.Binding name init cleanup true))
 
 (define (ast-resource-binding-fallback) : AstResourceBinding
   (AstResourceBinding.Binding 0 0 0 false))
@@ -4922,9 +4900,6 @@
 (define (ast-expr-clause-list-new) : AstExprClauseList
   (ast-expr-clause-list-with-capacity 4))
 
-(define (ast-expr-clause-list-empty? [v : (& v AstExprClauseList)]) : bool
-  (= (struct-get v len) 0))
-
 (define (ast-expr-clause-list-get
   [v : (& v AstExprClauseList)]
   [index : i64]
@@ -5014,10 +4989,6 @@
 
 (define (ast-expr-binding-clause-list-new) : AstExprBindingClauseList
   (ast-expr-binding-clause-list-with-capacity 4))
-
-(define (ast-expr-binding-clause-list-empty?
-  [v : (& v AstExprBindingClauseList)]) : bool
-  (= (struct-get v len) 0))
 
 (define (ast-expr-binding-clause-list-get
   [v : (& v AstExprBindingClauseList)]
@@ -5126,9 +5097,6 @@
 
 (define (ast-expr-type-literal [ty : AstType]) : i64
   (ast-node-push (AstExpr.TypeLiteral (ty-node-push ty))))
-
-(define (ast-expr-type-literal-id [ty-id : i64]) : i64
-  (ast-node-push (AstExpr.TypeLiteral ty-id)))
 
 (define (ast-expr-array-ref [target : i64] [index : i64]) : i64
   (ast-node-push (AstExpr.ArrayRef target index)))
@@ -5296,9 +5264,6 @@
 
 (define (ast-expr-init-maybe [maybe-ty : AstMaybeType]) : i64
   (ast-node-push (AstExpr.Init (ast-maybe-type-to-id maybe-ty))))
-
-(define (ast-expr-init-maybe-id [maybe-ty-id : i64]) : i64
-  (ast-node-push (AstExpr.Init maybe-ty-id)))
 
 (define (ast-expr-init [ty : AstType]) : i64
   (ast-expr-init-maybe (AstMaybeType.Some ty)))
@@ -6126,20 +6091,6 @@
     ret
     body
     (ast-fn-metadata AstFnExport.No)))
-
-(define (ast-decl-def-fn-export-id
-  [name : i64]
-  [params : AstParamList]
-  [ret : AstType]
-  [body : i64]
-  [export : AstFnExport]) : AstDecl
-  (AstDecl.DefFn
-    ast-decl-meta-runtime
-    name
-    params
-    ret
-    body
-    (ast-fn-metadata export)))
 
 (define (ast-decl-def-fn-metadata-id
   [name : i64]
@@ -8602,19 +8553,6 @@
 ;; Read-only walk entry point: snapshot the type pool's segment-bases once, so
 ;; the recursive workers address nodes exactly as cheaply as `ty-node-get`.
 ;; Safe because these walkers never push, and pushes are what replace the cell.
-(define (ast-type-list-eq-at-with-pools?
-  [pools : AstNodePoolContext]
-  [a : (& a AstTypeList)]
-  [b : (& b AstTypeList)]
-  [len : i64]
-  [index : i64]) : bool
-  (ast-type-list-eq-at-with-seg-bases?
-    (ast-node-pool-context-type-segment-bases pools)
-    a
-    b
-    len
-    index))
-
 (define (ast-type-eq-with-pools?
   [pools : AstNodePoolContext]
   [a : AstType]
@@ -8853,34 +8791,6 @@
             seg-bases
             (ast-type-segment-bases-get seg-bases a-inner)
             (ast-type-segment-bases-get seg-bases b-inner))]
-        [_ false])]))
-
-(define (ast-extern-abi-eq-with-pools?
-  [pools : AstNodePoolContext]
-  [a : AstExternAbi]
-  [b : AstExternAbi]) : bool
-  (ast-extern-abi-eq-with-seg-bases?
-    (ast-node-pool-context-type-segment-bases pools)
-    a
-    b))
-
-(define (ast-extern-abi-eq-with-seg-bases?
-  [seg-bases : i64]
-  [a : AstExternAbi]
-  [b : AstExternAbi]) : bool
-  (match a
-    [(AstExternAbi.C)
-      (match b
-        [(AstExternAbi.C) true]
-        [_ false])]
-    [(AstExternAbi.CVarargsOpen)
-      (match b
-        [(AstExternAbi.CVarargsOpen) true]
-        [_ false])]
-    [(AstExternAbi.CVarargsTyped aty)
-      (match b
-        [(AstExternAbi.CVarargsTyped bty)
-          (ast-type-eq-with-seg-bases? seg-bases aty bty)]
         [_ false])]))
 
 (define (ast-extern-link-input-eq?

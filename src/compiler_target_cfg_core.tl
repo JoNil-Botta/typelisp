@@ -24,11 +24,6 @@
 (define (compiler-target-cfg-host) : CompilerTargetCfg
   (cfg windows CompilerTargetCfg.Windows CompilerTargetCfg.Linux))
 
-(define (compiler-target-cfg-name [target : CompilerTargetCfg]) : String
-  (match target
-    [(CompilerTargetCfg.Linux) "linux-x86_64"]
-    [(CompilerTargetCfg.Windows) "windows-x86_64"]))
-
 (define (compiler-target-cfg-parse [value : String]) : ResultCompilerTargetCfg
   (cond
     [(or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
@@ -122,13 +117,3 @@
       intern-state)
     "os-windows"
     intern-state))
-
-(define (compiler-target-cfgs-with-intern-state
-  [target : CompilerTargetCfg]
-  [cfgs : sym_i64_env.SymI64Env]
-  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
-  (match target
-    [(CompilerTargetCfg.Linux)
-      (compiler-target-enable-linux-cfgs-with-intern-state cfgs intern-state)]
-    [(CompilerTargetCfg.Windows)
-      (compiler-target-enable-windows-cfgs-with-intern-state cfgs intern-state)]))

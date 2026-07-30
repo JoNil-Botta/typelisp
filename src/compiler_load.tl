@@ -25,7 +25,19 @@
 ;; Sources, manifests, and include payloads are interpreted as text here.
 ;; Make that conversion explicit at the binary IO boundary.
 (define (compiler-load-read-file-text [path : String]) : String
-  (byte_buf.to-string (io.read-file path)))
+  (let
+    [contents : byte_buf.ByteBuf (io.read-file path)]
+    [count : i64 (byte_buf.len contents)]
+    (if (= count 0)
+      ""
+      ;; `contents` is a fresh, unaliased read result and is never mutated or
+      ;; exposed after this point. Transfer its active-arena backing storage
+      ;; into the immutable String view instead of copying every source byte a
+      ;; second time through the general-purpose `ByteBuf.to-string` boundary.
+      (unsafe
+        (string-from-bytes
+          (byte_buf.bytes-data (byte_buf.as-bytes (& contents)))
+          count)))))
 
 (define (compiler-load-write-file-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))

@@ -15935,6 +15935,28 @@
       blocks
       (+ 1 (compiler-ir-block-list-count blocks)))))
 
+;; The SPMD lowerer emits `branch true, vector-header, tail` before the vector
+;; loop. Speculatively normalize that effective single-successor edge so
+;; rotation can expose a mutable gang to the dedicated unroller. The pipeline
+;; commits this result only when unrolling succeeds; unsupported scan/shuffle
+;; shapes therefore keep the ordinary, unnormalized rotation result.
+(define (opt-loop-rotation-normalized-function-result
+  [pools : AstNodePoolContext]
+  [func : CompilerIrFunction]) : OptBlockCtxResult
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (if (opt-ssa-blocks-have-phi? blocks)
+        (OptBlockCtxResult.Result blocks (opt-cfg-context-empty) false)
+        (let
+          [normalized : CompilerIrBlockList
+            (if (opt-cfg-blocks-have-foldable-branch? blocks)
+              (opt-cfg-fold-branches-blocks blocks)
+              blocks)]
+          (opt-loop-rotation-blocks-fixed-result
+            pools
+            normalized
+            (+ 1 (compiler-ir-block-list-count normalized)))))]))
+
 (define (opt-loop-rotation-blocks
   [pools : AstNodePoolContext]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -34402,10 +34424,14 @@
 ;;   B: vector body...; i = inext; inext = i + lanes;
 ;;      c = inext <= bound; Branch c B EXIT
 ;;
-;; The dedicated shape below versions that exact store-free form. Transient
-;; results are freshened while a destination that reads itself remains mutable,
-;; so each copy consumes the preceding copy's recurrence state. The original B
-;; remains the remainder loop.
+;; The dedicated shape below versions that exact form, including canonical
+;; ordinary vector stores. Transient results are freshened while a destination
+;; that reads itself remains mutable, so each copy consumes the preceding
+;; copy's recurrence state. The original B remains the remainder loop.
+(defenum OptUnrollSimdMemoryList
+  (Nil)
+  (Cons CompilerIrValue AstType (Box OptUnrollSimdMemoryList)))
+
 (defstruct OptUnrollSimdShape
   (pred-label i64)
   (tail-label i64)
@@ -34416,17 +34442,17 @@
   (ity AstType)
   (bound CompilerIrValue)
   (cmp-op CompilerIrBinOp)
-  (vector-base CompilerIrValue)
-  (vector-ty AstType))
+  (memory-bases OptUnrollSimdMemoryList)
+  (memory-count i64))
 
 (defenum OptUnrollSimdMaybeShape
   (No)
   (Some OptUnrollSimdShape))
 
-(defenum OptUnrollSimdLoadShape
+(defenum OptUnrollSimdMemoryShape
   (Fail)
-  (Empty)
-  (Some CompilerIrValue AstType))
+  ;; Unique base/type pairs, pair count, load count, store count.
+  (Some OptUnrollSimdMemoryList i64 i64 i64))
 
 (defenum OptUnrollResult
   (Result CompilerIrBlockList i64 bool))
@@ -35683,13 +35709,14 @@
           (array-ref cell 0)
           true))]))
 
-;; The mutable SIMD path admits the same pure/load vector forms as the SSA
-;; cloner, but not BoundsCheck: repeating one would duplicate its function-
-;; unique continuation label. Stores and predicated memory are already absent
-;; from `opt-unroll-body-instr-ok?`.
+;; The mutable SIMD path additionally admits an ordinary canonical VectorStore.
+;; The generic SSA cloner remains store-free. BoundsCheck is excluded because
+;; repeating one would duplicate its function-unique continuation label;
+;; predicated memory, scalar stores, gathers, and calls remain excluded too.
 (define (opt-unroll-simd-body-instr-ok? [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.BoundsCheck _ _ _) false]
+    [(CompilerIrInstr.VectorStore _) true]
     [_ (opt-unroll-body-instr-ok? instr)]))
 
 (define (opt-unroll-simd-vector-instr? [instr : CompilerIrInstr]) : bool
@@ -35702,6 +35729,7 @@
     [(CompilerIrInstr.MaskBinOp _ _ _ _ _) true]
     [(CompilerIrInstr.Select _) true]
     [(CompilerIrInstr.VectorLoad _ _ _ _ _) true]
+    [(CompilerIrInstr.VectorStore _) true]
     [_ false]))
 
 (define (opt-unroll-simd-body-ok?
@@ -35739,18 +35767,46 @@
     (OptLoopPreheader.No)))
 
 ;; Direct gang unrolling advances the scalar index once per group. Every
-;; VectorLoad must therefore read the canonical counter from the same base and
-;; use one vector-width step; no other body instruction may consume that
-;; counter. The unrolled group computes one Gep(base, group-index), then uses
-;; literal lane-group offsets from it.
-(define (opt-unroll-simd-load-shape
+;; VectorLoad and VectorStore must therefore read the canonical counter and use
+;; one vector-width step; no other body instruction may consume that counter.
+;; Record every invariant base/type pair so the unrolled group can compute one
+;; Gep(base, group-index) per array, then use literal lane-group offsets from it.
+(define (opt-unroll-simd-memory-contains?
   [type-segment-bases : i64]
+  [memory-bases : OptUnrollSimdMemoryList]
+  [base : CompilerIrValue]
+  [ty : AstType]) : bool
+  (match memory-bases
+    [(OptUnrollSimdMemoryList.Nil) false]
+    [(OptUnrollSimdMemoryList.Cons item-base item-ty rest)
+      (or
+        (and
+          (opt-value-eq item-base base)
+          (opt-type-eq type-segment-bases item-ty ty))
+        (opt-unroll-simd-memory-contains?
+          type-segment-bases
+          (box-get rest)
+          base
+          ty))]))
+
+(define (opt-unroll-simd-memory-add
+  [type-segment-bases : i64]
+  [memory-bases : OptUnrollSimdMemoryList]
+  [base : CompilerIrValue]
+  [ty : AstType]) : OptUnrollSimdMemoryList
+  (if (opt-unroll-simd-memory-contains? type-segment-bases memory-bases base ty)
+    memory-bases
+    (OptUnrollSimdMemoryList.Cons base ty (box memory-bases))))
+
+(define (opt-unroll-simd-memory-shape
+  [type-segment-bases : i64]
+  [defs : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [last : i64]
   [index-var : i64]
   [step : i64]
-  [state : OptUnrollSimdLoadShape]) : OptUnrollSimdLoadShape
+  [state : OptUnrollSimdMemoryShape]) : OptUnrollSimdMemoryShape
   (if (>= index last)
     state
     (let
@@ -35759,40 +35815,103 @@
         [(CompilerIrInstr.VectorLoad _ base load-index lanes ty)
           (match load-index
             [(CompilerIrValue.Var load-index-var)
-              (if (and (= load-index-var index-var) (= lanes step))
+              (if (and
+                (= load-index-var index-var)
+                (= lanes step)
+                (opt-unroll-invariant-bound? defs base))
                 (match state
-                  [(OptUnrollSimdLoadShape.Empty)
-                    (opt-unroll-simd-load-shape
-                      type-segment-bases
-                      instrs
-                      (+ index 1)
-                      last
-                      index-var
-                      step
-                      (OptUnrollSimdLoadShape.Some base ty))]
-                  [(OptUnrollSimdLoadShape.Some first-base first-ty)
-                    (if (and
-                      (opt-value-eq first-base base)
-                      (opt-type-eq type-segment-bases first-ty ty))
-                      (opt-unroll-simd-load-shape
+                  [(OptUnrollSimdMemoryShape.Some
+                      memory-bases
+                      memory-count
+                      load-count
+                      store-count)
+                    (let
+                      [known? : bool
+                        (opt-unroll-simd-memory-contains?
+                          type-segment-bases
+                          memory-bases
+                          base
+                          ty)]
+                      (opt-unroll-simd-memory-shape
                         type-segment-bases
+                        defs
                         instrs
                         (+ index 1)
                         last
                         index-var
                         step
-                        state)
-                      (OptUnrollSimdLoadShape.Fail))]
-                  [(OptUnrollSimdLoadShape.Fail) (OptUnrollSimdLoadShape.Fail)])
-                (OptUnrollSimdLoadShape.Fail))]
-            [_ (OptUnrollSimdLoadShape.Fail)])]
+                        (OptUnrollSimdMemoryShape.Some
+                          (opt-unroll-simd-memory-add
+                            type-segment-bases
+                            memory-bases
+                            base
+                            ty)
+                          (if known?
+                            memory-count
+                            (+ memory-count 1))
+                          (+ load-count 1)
+                          store-count)))]
+                  [(OptUnrollSimdMemoryShape.Fail)
+                    (OptUnrollSimdMemoryShape.Fail)])
+                (OptUnrollSimdMemoryShape.Fail))]
+            [_ (OptUnrollSimdMemoryShape.Fail)])]
+        [(CompilerIrInstr.VectorStore payload-box)
+          (let
+            [base : CompilerIrValue (struct-get (box-get payload-box) base)]
+            [store-index : CompilerIrValue
+              (struct-get (box-get payload-box) index)]
+            [lanes : i64 (struct-get (box-get payload-box) lanes)]
+            [ty : AstType (struct-get (box-get payload-box) ty)]
+            (match store-index
+              [(CompilerIrValue.Var store-index-var)
+                (if (and
+                  (= store-index-var index-var)
+                  (= lanes step)
+                  (opt-unroll-invariant-bound? defs base))
+                  (match state
+                    [(OptUnrollSimdMemoryShape.Some
+                        memory-bases
+                        memory-count
+                        load-count
+                        store-count)
+                      (let
+                        [known? : bool
+                          (opt-unroll-simd-memory-contains?
+                            type-segment-bases
+                            memory-bases
+                            base
+                            ty)]
+                        (opt-unroll-simd-memory-shape
+                          type-segment-bases
+                          defs
+                          instrs
+                          (+ index 1)
+                          last
+                          index-var
+                          step
+                          (OptUnrollSimdMemoryShape.Some
+                            (opt-unroll-simd-memory-add
+                              type-segment-bases
+                              memory-bases
+                              base
+                              ty)
+                            (if known?
+                              memory-count
+                              (+ memory-count 1))
+                            load-count
+                            (+ store-count 1))))]
+                    [(OptUnrollSimdMemoryShape.Fail)
+                      (OptUnrollSimdMemoryShape.Fail)])
+                  (OptUnrollSimdMemoryShape.Fail))]
+              [_ (OptUnrollSimdMemoryShape.Fail)]))]
         [_
           (if (opt-used-contains
             (opt-collect-instr-uses (opt_i64_i64_map.with-capacity 8) instr)
             index-var)
-            (OptUnrollSimdLoadShape.Fail)
-            (opt-unroll-simd-load-shape
+            (OptUnrollSimdMemoryShape.Fail)
+            (opt-unroll-simd-memory-shape
               type-segment-bases
+              defs
               instrs
               (+ index 1)
               last
@@ -35886,24 +36005,34 @@
                                         (if (opt-unroll-pred-retargetable?
                                           blocks
                                           pred-label)
-                                          (match (opt-unroll-simd-load-shape
+                                          (match (opt-unroll-simd-memory-shape
                                             type-segment-bases
+                                            defs
                                             instrs
                                             0
                                             (- cond-index 2)
                                             index-var
                                             step
-                                            (OptUnrollSimdLoadShape.Empty))
-                                            [(OptUnrollSimdLoadShape.Some
-                                                vector-base
-                                                vector-ty)
-                                              ;; The shared Gep is emitted
-                                              ;; before the cloned body, so its
-                                              ;; source base must be available
-                                              ;; outside the loop.
-                                              (if (opt-unroll-invariant-bound?
-                                                defs
-                                                vector-base)
+                                            (OptUnrollSimdMemoryShape.Some
+                                              (OptUnrollSimdMemoryList.Nil)
+                                              0
+                                              0
+                                              0))
+                                            [(OptUnrollSimdMemoryShape.Some
+                                                memory-bases
+                                                memory-count
+                                                load-count
+                                                store-count)
+                                              ;; Preserve the old single-base
+                                              ;; store-free scope. Store-bearing
+                                              ;; maps may use any number of
+                                              ;; invariant bases, but a pure
+                                              ;; fill is deliberately excluded.
+                                              (if (and
+                                                (> load-count 0)
+                                                (or
+                                                  (> store-count 0)
+                                                  (= memory-count 1)))
                                                 (OptUnrollSimdMaybeShape.Some
                                                   (OptUnrollSimdShape
                                                     pred-label
@@ -35915,8 +36044,8 @@
                                                     ity
                                                     bound
                                                     cmp-op
-                                                    vector-base
-                                                    vector-ty))
+                                                    memory-bases
+                                                    memory-count))
                                                 (OptUnrollSimdMaybeShape.No))]
                                             [_ (OptUnrollSimdMaybeShape.No)])
                                           (OptUnrollSimdMaybeShape.No))]
@@ -36067,10 +36196,35 @@
         ty)]
     [_ instr]))
 
+(define (opt-unroll-simd-memory-index
+  [type-segment-bases : i64]
+  [memory-bases : OptUnrollSimdMemoryList]
+  [base : CompilerIrValue]
+  [ty : AstType]
+  [index : i64]) : i64
+  (match memory-bases
+    ;; Shape validation guarantees that every cloned memory instruction is in
+    ;; this table. Returning -1 makes any violated internal invariant fail
+    ;; loudly at array access instead of silently changing an address.
+    [(OptUnrollSimdMemoryList.Nil) (- 0 1)]
+    [(OptUnrollSimdMemoryList.Cons item-base item-ty rest)
+      (if (and
+        (opt-value-eq item-base base)
+        (opt-type-eq type-segment-bases item-ty ty))
+        index
+        (opt-unroll-simd-memory-index
+          type-segment-bases
+          (box-get rest)
+          base
+          ty
+          (+ index 1)))]))
+
 (define (opt-unroll-simd-clone-instr
+  [type-segment-bases : i64]
   [remap : (Array CompilerIrValue)]
   [cell : (Array i64)]
-  [group-base : i64]
+  [memory-bases : OptUnrollSimdMemoryList]
+  [group-bases : (Array i64)]
   [step : i64]
   [copy : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -36083,57 +36237,123 @@
         (opt-unroll-simd-clone-recurrence remap instr))]
     [(option_i64.None)
       (match instr
-        [(CompilerIrInstr.VectorLoad dst _ _ lanes ty)
+        [(CompilerIrInstr.VectorLoad dst base _ lanes ty)
           (CompilerIrInstr.VectorLoad
             (opt-unroll-clone-dst remap cell dst)
-            (CompilerIrValue.Var group-base)
+            (CompilerIrValue.Var
+              (array-ref
+                group-bases
+                (opt-unroll-simd-memory-index
+                  type-segment-bases
+                  memory-bases
+                  base
+                  ty
+                  0)))
             (CompilerIrValue.I64 (* copy step))
             lanes
             ty)]
+        [(CompilerIrInstr.VectorStore payload-box)
+          (let
+            [base : CompilerIrValue (struct-get (box-get payload-box) base)]
+            [value : CompilerIrValue (struct-get (box-get payload-box) value)]
+            [lanes : i64 (struct-get (box-get payload-box) lanes)]
+            [ty : AstType (struct-get (box-get payload-box) ty)]
+            (ir-instr-vector-store
+              (CompilerIrValue.Var
+                (array-ref
+                  group-bases
+                  (opt-unroll-simd-memory-index
+                    type-segment-bases
+                    memory-bases
+                    base
+                    ty
+                    0)))
+              (CompilerIrValue.I64 (* copy step))
+              (opt-unroll-subst-value remap value)
+              lanes
+              ty))]
         [_ (opt-unroll-clone-instr remap cell copy instr)])]))
 
 ;; Emit sixteen sequential remapped copies.
 (define (opt-unroll-simd-copies
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [last : i64]
   [remap : (Array CompilerIrValue)]
   [cell : (Array i64)]
-  [group-base : i64]
+  [memory-bases : OptUnrollSimdMemoryList]
+  [group-bases : (Array i64)]
   [step : i64]
   [copy : i64]) : CompilerIrInstrList
   (if (>= copy 16)
     (CompilerIrInstrList.Nil)
     (if (>= index last)
       (opt-unroll-simd-copies
+        type-segment-bases
         instrs
         0
         last
         remap
         cell
-        group-base
+        memory-bases
+        group-bases
         step
         (+ copy 1))
       (let
         [cloned : CompilerIrInstr
           (opt-unroll-simd-clone-instr
+            type-segment-bases
             remap
             cell
-            group-base
+            memory-bases
+            group-bases
             step
             copy
             (compiler-ir-instr-seq-ref instrs index))]
         (compiler-ir-instr-cons
           cloned
           (opt-unroll-simd-copies
+            type-segment-bases
             instrs
             (+ index 1)
             last
             remap
             cell
-            group-base
+            memory-bases
+            group-bases
             step
             copy))))))
+
+(define (opt-unroll-simd-group-vars!
+  [cell : (Array i64)]
+  [group-bases : (Array i64)]
+  [index : i64]) : unit
+  (if (>= index (array.length group-bases))
+    unit
+    (begin
+      (array-set! group-bases index (opt-unroll-alloc-var cell))
+      (opt-unroll-simd-group-vars! cell group-bases (+ index 1)))))
+
+(define (opt-unroll-simd-group-geps
+  [memory-bases : OptUnrollSimdMemoryList]
+  [group-bases : (Array i64)]
+  [index : i64]
+  [group-index : i64]) : CompilerIrInstrList
+  (match memory-bases
+    [(OptUnrollSimdMemoryList.Nil) (CompilerIrInstrList.Nil)]
+    [(OptUnrollSimdMemoryList.Cons base ty rest)
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          (array-ref group-bases index)
+          base
+          (CompilerIrValue.Var group-index)
+          ty)
+        (opt-unroll-simd-group-geps
+          (box-get rest)
+          group-bases
+          (+ index 1)
+          group-index))]))
 
 (define (opt-unroll-simd-rewrite-blocks
   [blocks : CompilerIrBlockList]
@@ -36194,6 +36414,7 @@
         guard-label)]))
 
 (define (opt-unroll-simd-apply
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [block : CompilerIrBlock]
   [shape : OptUnrollSimdShape]
@@ -36218,23 +36439,26 @@
         [exit-label : i64
           (compiler-ir-label
             (string.append (compiler-ir-label-text label) "__unroll_exit"))]
-        [vector-base : CompilerIrValue (struct-get shape vector-base)]
-        [vector-ty : AstType (struct-get shape vector-ty)]
+        [memory-bases : OptUnrollSimdMemoryList (struct-get shape memory-bases)]
+        [memory-count : i64 (struct-get shape memory-count)]
         [remap : (Array CompilerIrValue)
           (array.make-array CompilerIrValue frame)]
         [_fill : unit (opt-unroll-remap-fill remap 0)]
         [cell : (Array i64) (array.make-array i64 1)]
         [_cell : unit (array-set! cell 0 frame)]
         [iu : i64 (opt-unroll-alloc-var cell)]
-        [group-base : i64 (opt-unroll-alloc-var cell)]
+        [group-bases : (Array i64) (array.make-array i64 memory-count)]
+        [_group-bases : unit (opt-unroll-simd-group-vars! cell group-bases 0)]
         [copies : CompilerIrInstrList
           (opt-unroll-simd-copies
+            type-segment-bases
             instrs
             0
             (- cond-index 2)
             remap
             cell
-            group-base
+            memory-bases
+            group-bases
             step
             0)]
         [end-index : i64 (opt-unroll-alloc-var cell)]
@@ -36297,12 +36521,8 @@
                     unrolled-label
                     (CompilerIrPhiInputList.Nil)))
                 ity)
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.Gep
-                  group-base
-                  vector-base
-                  (CompilerIrValue.Var iu)
-                  vector-ty)
+              (opt-aggregate-instr-list-append
+                (opt-unroll-simd-group-geps memory-bases group-bases 0 iu)
                 (opt-aggregate-instr-list-append
                   copies
                   (compiler-ir-instr-cons
@@ -36393,12 +36613,22 @@
         entry-label
         frame)]))
 
+(define (opt-unroll-simd-instrs-have-store?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.VectorStore _) true]
+      [_ (opt-unroll-simd-instrs-have-store? instrs (+ index 1))])))
+
 (define (opt-unroll-simd-blocks-scan
   [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [remaining : CompilerIrBlockList]
   [entry-label : i64]
-  [frame : i64]) : OptUnrollResult
+  [frame : i64]
+  [require-store? : bool]) : OptUnrollResult
   (match remaining
     [(CompilerIrBlockList.Nil) (OptUnrollResult.Result blocks frame false)]
     [(CompilerIrBlockList.Cons block rest)
@@ -36408,21 +36638,40 @@
         entry-label
         block)
         [(OptUnrollSimdMaybeShape.Some shape)
-          (opt-unroll-simd-apply blocks block shape frame)]
+          (match block
+            [(CompilerIrBlock.Block _ instrs)
+              (if (or
+                (not require-store?)
+                (opt-unroll-simd-instrs-have-store? instrs 0))
+                (opt-unroll-simd-apply
+                  type-segment-bases
+                  blocks
+                  block
+                  shape
+                  frame)
+                (opt-unroll-simd-blocks-scan
+                  type-segment-bases
+                  blocks
+                  (box-get rest)
+                  entry-label
+                  frame
+                  require-store?))])]
         [(OptUnrollSimdMaybeShape.No)
           (opt-unroll-simd-blocks-scan
             type-segment-bases
             blocks
             (box-get rest)
             entry-label
-            frame)])]
+            frame
+            require-store?)])]
     [(CompilerIrBlockList.Array seq)
       (opt-unroll-simd-blocks-scan
         type-segment-bases
         blocks
         (compiler-ir-block-seq-to-list seq)
         entry-label
-        frame)]))
+        frame
+        require-store?)]))
 
 ;; Cheap shape prescan: a candidate self-loop either starts with a Phi (the
 ;; canonical SSA form) or contains a mutable SIMD instruction (the SPMD gang
@@ -36458,7 +36707,8 @@
 (define (opt-unroll-simd-function-with-context-result
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  [func : CompilerIrFunction]
+  [require-store? : bool]) : OptFunctionCtxResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (match (opt-unroll-simd-blocks-scan
@@ -36466,7 +36716,8 @@
         blocks
         blocks
         (opt-cfg-entry-label blocks)
-        frame)
+        frame
+        require-store?)
         [(OptUnrollResult.Result next-blocks next-frame changed)
           (if changed
             (let
@@ -36518,7 +36769,8 @@
                 (opt-unroll-simd-function-with-context-result
                   type-segment-bases
                   context
-                  func)
+                  func
+                  false)
                 (OptFunctionCtxResult.Result func context))]))
         (OptFunctionCtxResult.Result func context))]))
 
@@ -46185,23 +46437,84 @@
                             sroa-blocks
                             (opt-cfg-context-empty)
                             false))]
+                      ;; Literal-edge normalization is speculative: keep it
+                      ;; only if the exact mutable SIMD rewrite succeeds.
+                      [simd-rotation-result : OptBlockCtxResult
+                        (if run-loop?
+                          (opt-loop-rotation-normalized-function-result
+                            pools
+                            (CompilerIrFunction.Function
+                              name
+                              params
+                              ret-ty
+                              promoted-frame
+                              sroa-blocks))
+                          (OptBlockCtxResult.Result
+                            sroa-blocks
+                            (opt-cfg-context-empty)
+                            false))]
+                      [simd-rotated : CompilerIrFunction
+                        (CompilerIrFunction.Function
+                          name
+                          params
+                          ret-ty
+                          promoted-frame
+                          (match simd-rotation-result
+                            [(OptBlockCtxResult.Result b _ _) b]))]
+                      [simd-rotation-context : OptCfgContext
+                        (match simd-rotation-result
+                          [(OptBlockCtxResult.Result _ ctx _) ctx])]
+                      [simd-rotation-context-valid? : bool
+                        (match simd-rotation-result
+                          [(OptBlockCtxResult.Result _ _ valid) valid])]
+                      ;; Rotation exposes the mutable SPMD body before scalar
+                      ;; SSA would split its gang counter into phis. Run the
+                      ;; dedicated exact-shape unroller here; its later pipeline
+                      ;; position remains as a fallback for functions whose SSA
+                      ;; construction is intentionally rejected.
+                      [simd-result : OptFunctionCtxResult
+                        (if (and run-loop? simd-rotation-context-valid?)
+                          (opt-unroll-simd-function-with-context-result
+                            type-segment-bases
+                            simd-rotation-context
+                            simd-rotated
+                            true)
+                          (OptFunctionCtxResult.Result
+                            simd-rotated
+                            simd-rotation-context))]
+                      ;; A successful SIMD rewrite always allocates fresh
+                      ;; destinations; rotation itself leaves the frame alone.
+                      [simd-applied? : bool
+                        (match simd-result
+                          [(OptFunctionCtxResult.Result simd-func _)
+                            (match simd-func
+                              [(CompilerIrFunction.Function _ _ _ f _)
+                                (> f promoted-frame)])])]
                       [rotated : CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
                           "rotation"
-                          (CompilerIrFunction.Function
-                            name
-                            params
-                            ret-ty
-                            promoted-frame
-                            (match rotation-result
-                              [(OptBlockCtxResult.Result b _ _) b])))]
+                          (if simd-applied?
+                            (match simd-result
+                              [(OptFunctionCtxResult.Result f _) f])
+                            (CompilerIrFunction.Function
+                              name
+                              params
+                              ret-ty
+                              promoted-frame
+                              (match rotation-result
+                                [(OptBlockCtxResult.Result b _ _) b]))))]
                       [rotation-context : OptCfgContext
-                        (match rotation-result
-                          [(OptBlockCtxResult.Result _ ctx _) ctx])]
+                        (if simd-applied?
+                          (match simd-result
+                            [(OptFunctionCtxResult.Result _ ctx) ctx])
+                          (match rotation-result
+                            [(OptBlockCtxResult.Result _ ctx _) ctx]))]
                       [rotation-context-valid? : bool
-                        (match rotation-result
-                          [(OptBlockCtxResult.Result _ _ valid) valid])]
+                        (if simd-applied?
+                          true
+                          (match rotation-result
+                            [(OptBlockCtxResult.Result _ _ valid) valid]))]
                       [_p-rotation : unit
                         (cfg
                           compile-profile

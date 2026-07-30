@@ -7054,6 +7054,54 @@
     [_reset-after : unit (compiler-backend-sweep-reset!)]
     (and (string.eq last-got last-want) (string.eq tail-got tail-input))))
 
+;; The candidate verifier's comma hint: a one-space `movq src, N(%rsp)` store
+;; uses the descriptor's comma position (same decision as the scan), while a
+;; two-space operand line takes the scan path and is not a candidate, both
+;; exactly as before.
+(define (compiler-backend-deadstore-sweep-candidate-comma-hint-ok?) : bool
+  (let
+    [hint-input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq $1, 40(%rsp)
+    movq $2, 32(%rsp)
+    movq 40(%rsp), %rax
+    leave
+    ret
+"]
+    [hint-want : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq $1, 40(%rsp)
+    movq 40(%rsp), %rax
+    leave
+    ret
+"]
+    [two-space-input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq  $1, 40(%rsp)
+    leave
+    ret
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 2 0 0 0)]
+    [hint-got : String (compiler-backend-peephole-asm hint-input)]
+    [_reset-mid : unit (compiler-backend-sweep-reset!)]
+    [_record-two : unit
+      (compiler-backend-sweep-record-win64! "main" 48 2 0 0 0)]
+    [two-space-got : String (compiler-backend-peephole-asm two-space-input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (and
+      (string.eq hint-got hint-want)
+      (string.eq two-space-got two-space-input))))
+
 (define (compiler-backend-deadstore-sweep-win64-ok?) : bool
   (and
     (compiler-backend-deadstore-sweep-win64-rbp-frame-ok?)
@@ -7070,7 +7118,8 @@
     (compiler-backend-deadstore-sweep-read-before-store-ok?)
     (compiler-backend-deadstore-sweep-coverage-em-window-ok?)
     (compiler-backend-deadstore-sweep-win64-inert-tail-poison-ok?)
-    (compiler-backend-deadstore-sweep-candidate-last-ok?)))
+    (compiler-backend-deadstore-sweep-candidate-last-ok?)
+    (compiler-backend-deadstore-sweep-candidate-comma-hint-ok?)))
 
 (define (compiler-backend-r10-dead-scan-long-gap-ok?) : bool
   (let

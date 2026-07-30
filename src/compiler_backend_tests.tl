@@ -19337,8 +19337,8 @@
 
 (define (compiler-backend-append-file-status-ok?) : bool
   (match (compiler-backend-emit-source
-    "(extern (io.append-file-status [arg0 : String] [arg1 : String]) : i64 (:symbol \"tl_append_file_status\"))
-(define (main) : i64 (io.append-file-status \"out.txt\" \"x\"))")
+    "(extern (raw-append-file-status [arg0 : String] [arg1 : String]) : i64 (:symbol \"tl_append_file_status\"))
+(define (main) : i64 (raw-append-file-status \"out.txt\" \"x\"))")
     [(ResultCompilerBackend.Ok asm)
       (and
         (not

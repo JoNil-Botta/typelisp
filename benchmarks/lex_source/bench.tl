@@ -54,6 +54,7 @@
 ;# 2^64 in both languages, so the printed decimal matches the C baseline's
 ;# `%lld`.
 (import stdlib.array)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -525,7 +526,7 @@
 
 (define (ls-bench [path : String] [rounds : i64]) : i64
   (let
-    [text : String (io.read-file path)]
+    [text : String (byte_buf.to-string (io.read-file path))]
     [buf : (Array u8) (ls-string-to-array text)]
     [n : i64 (array-length buf)]
     [round : i64 0]

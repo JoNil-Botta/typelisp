@@ -1,5 +1,6 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
 (import stdlib.fs)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.json)
@@ -10,6 +11,9 @@
 (import "../lsp_frame_core.tl")
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 (import (vector.vector LspDocument core) as lsp_document_vec)
+
+(define (lsp-smoke-write-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (lsp-smoke-string-vec-contains?
   [items : lsp_svec.Vec]
@@ -262,8 +266,10 @@
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
         [(io.ErrIoUnit _) unit])
-      (io.write-file dep-a-path "(module dep-a)\n(define broken-a : i64 true)")
-      (io.write-file
+      (lsp-smoke-write-text
+        dep-a-path
+        "(module dep-a)\n(define broken-a : i64 true)")
+      (lsp-smoke-write-text
         dep-b-path
         "(module dep-b)\n(define broken-b : i64 \"bad\")")
       (let
@@ -488,7 +494,7 @@
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
         [(io.ErrIoUnit _) unit])
-      (io.write-file path disk-text)
+      (lsp-smoke-write-text path disk-text)
       (set!
         docs
         (lsp-documents-set
@@ -554,7 +560,7 @@
         updated)
         [(LspSaveResult.Ok next-docs)
           (let
-            [disk-text : String (io.read-file path)]
+            [disk-text : String (byte_buf.to-string (io.read-file path))]
             [cached-doc : LspDocument
               (lsp_document_vec.get (& next-docs) 0 (lsp-document-fallback))]
             (and

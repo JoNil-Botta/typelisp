@@ -1,5 +1,6 @@
 ;; verify.tl - Prove every build-time payload decodes to its exact source bytes.
 (import compiler_embedded_stdlib as embedded)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -22,7 +23,8 @@
 
 (define (embedded-stdlib-verify-one [suffix : String]) : bool
   (let
-    [expected : String (io.read-file (str_cat.str-cat "stdlib/" suffix))]
+    [expected : String
+      (byte_buf.to-string (io.read-file (str_cat.str-cat "stdlib/" suffix)))]
     (match (embedded.compiler-embedded-stdlib-lookup suffix)
       [(embedded.CompilerEmbeddedStdlibSomeSource actual)
         (string.eq expected actual)]
@@ -53,7 +55,9 @@
 
 (define (main) : i64
   (if (= (io.arg-count) 2)
-    (if (embedded-stdlib-verify-lines (io.read-file (io.arg 1)) 0)
+    (if (embedded-stdlib-verify-lines
+      (byte_buf.to-string (io.read-file (io.arg 1)))
+      0)
       42
       1)
     (begin

@@ -5,6 +5,7 @@
 ;; in `<name>/`;
 ;; `init [--lib] <name>` creates the skeleton in the current directory. Both
 ;; refuse to clobber an existing manifest or entry source.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.str_cat)
@@ -69,7 +70,7 @@
   (fs.try-mkdir (& path)))
 
 (define (scaffold-try-write-file [path : String] [contents : String]) : io.ResultIoUnit
-  (io.try-write-file (& path) (& contents)))
+  (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents))))
 
 ;; Create a directory, treating an already-existing one as success. A genuine
 ;; create failure is an error.

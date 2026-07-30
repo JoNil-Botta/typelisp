@@ -20,6 +20,7 @@
 ;#     (fs.path-join (& left) (& right))))
 ;# ```
 (import stdlib.array)
+(cfg test (import stdlib.byte_buf))
 (import stdlib.byte_buf_core)
 (import stdlib.comptime)
 (import stdlib.env)
@@ -1847,13 +1848,13 @@
 
 (cfg
   test
-  (define (fs-api-test-try-read-file [path : String]) : io.ResultIoString
+  (define (fs-api-test-try-read-file [path : String]) : io.ResultIoBytes
     (io.try-read-file (& path))))
 
 (cfg
   test
   (define (fs-api-test-try-write-file [path : String] [contents : String]) : io.ResultIoUnit
-    (io.try-write-file (& path) (& contents))))
+    (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents)))))
 
 (cfg
   test
@@ -2209,9 +2210,12 @@
     [expected : String]
     [message : String]) : unit
     (match (fs-api-test-try-read-file path)
-      [(io.OkIoString contents)
-        (fs-test-assert-owned-string-eq contents expected message)]
-      [(io.ErrIoString error) (io.panic message)])))
+      [(io.OkIoBytes contents)
+        (fs-test-assert-owned-string-eq
+          (byte_buf.to-string contents)
+          expected
+          message)]
+      [(io.ErrIoBytes error) (io.panic message)])))
 
 (cfg
   test

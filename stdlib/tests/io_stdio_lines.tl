@@ -1,3 +1,4 @@
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.str_cat)
 (import stdlib.test)
@@ -15,7 +16,7 @@
   [message : String]) : unit
   (begin
     (assert-owned-string-eq
-      (io.stdin-read-text read)
+      (byte_buf.to-string (io.stdin-read-buffer read))
       expected-text
       (str_cat.str-cat message " text"))
     (test.assert-bool-eq
@@ -33,15 +34,15 @@
     (test.assert-true (io.stdin-at-eof?) "stdin EOF sticks after final line")
     (let
       [text : String "stdout"]
-      (io.stdout-write (& text)))
+      (io.stdout-write (byte_buf.str-as-bytes (& text))))
     (let
       [text : String "-line"]
-      (io.stdout-write-line (& text)))
+      (io.stdout-write-line (byte_buf.str-as-bytes (& text))))
     (let
       [text : String "stderr"]
-      (io.stderr-write (& text)))
+      (io.stderr-write (byte_buf.str-as-bytes (& text))))
     (let
       [text : String "-line"]
-      (io.stderr-write-line (& text)))
+      (io.stderr-write-line (byte_buf.str-as-bytes (& text))))
     (io.stdout-flush)
     42))

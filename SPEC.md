@@ -2327,11 +2327,11 @@ and owned `String` results for allocation sites.
 | Category | Members | Ownership contract |
 |----------|---------|--------------------|
 | Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
-| Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, `stdout-write`, `stderr-write`, `write-file`, append/write status helpers, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Host I/O may copy bytes outside the language heap but does not take TypeLisp ownership. |
-| Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
+| Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Text-to-binary I/O conversion is explicit. |
+| Active-arena owned string results | `arg`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
-| Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths; companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The companion modules expose lifetime-preserving aggregate shapes: branch-composed `StringReplaceResult` for replacement helpers and `ReadFileOrResult` for fallback reads. |
-| Mutable or binary byte storage | `ByteBuf`, `(& r bytes)`, `(&mut r bytes)` | Not modeled as `str`. Binary APIs use the explicit byte-buffer family; mutable byte views are exclusive borrowed `bytes`, not mutable strings. |
+| Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` `ByteBuf` fallback paths; companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The I/O companion is an explicit binary-to-text materialization boundary for callers that need a borrowed textual fallback. |
+| Mutable or binary byte storage | `ByteBuf`, `(& r bytes)`, `(&mut r bytes)`, `read-file`, `try-read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `write-file`, append/write status helpers, `file-write`, `stdout-write`, `stderr-write` | Allocated reads return active-arena `ByteBuf`; non-consuming writes take borrowed `(& r bytes)`. Binary data is not modeled as `str`, and mutable byte views remain exclusive. |
 
 #### ABI and lowering representation
 
@@ -5703,12 +5703,12 @@ from a read-mode handle:
 |--------|-----------|----------|
 | `file-read-chunk` | `FileHandle i64 → ResultIoRead` | Read up to `count` bytes; `OkIoRead FileRead` carries the bytes read plus a sticky EOF flag. |
 
-`FileRead` mirrors the shape of the existing `StdinRead` aggregate (a
-`String` payload plus a sticky `eof` flag):
+`FileRead` mirrors the shape of `StdinRead`: an active-arena `ByteBuf`
+payload plus a sticky `eof` flag:
 
 ```
 (defstruct FileRead
-  (bytes String)
+  (bytes ByteBuf)
   (eof bool))
 ```
 
@@ -5717,8 +5717,8 @@ from a read-mode handle:
   reported only through the `eof` flag, which becomes true once the host
   read reaches end-of-file.
 - A zero-length read (`count` = 0) performs no host read and returns an
-  empty `bytes` string with the current EOF state, deterministically. A read
-  at EOF returns an empty `bytes` string with `eof` = true.
+  empty `ByteBuf` with the current EOF state, deterministically. A read at EOF
+  returns an empty `ByteBuf` with `eof` = true.
 - A negative `count` returns `ErrIoRead (IoInvalidPath ...)` (an argument
   error) without performing a host read.
 - Reading a write-only (`OpenWriteTruncate` / `OpenWriteAppend`), closed, or
@@ -5729,23 +5729,21 @@ from a read-mode handle:
 `ResultIoRead` is a monomorphic result enum: `(OkIoRead FileRead)` /
 `(ErrIoRead IoError)`.
 
-**Text vs. binary (v1).** Like `StdinRead`, `FileRead` carries chunk data as
-a `String`: a chunk is the raw bytes read, with no text/binary distinction
-in the compatibility surface. New binary I/O helpers use the `ByteBuf` /
-`bytes` family of section 3.11 rather than mutable `str`: non-consuming
-writes take `(& r bytes)`, allocated reads return active-arena `ByteBuf`,
-and caller-provided reads fill `ByteBuf` or `(&mut r bytes)` under the
-exclusive borrow rules. Returned compatibility chunk strings allocate in the
-active arena, the same as `read-file` and `StdinRead`.
+**Text vs. binary.** `FileRead`, `StdinRead`, whole-file reads, and recoverable
+read results carry `ByteBuf`. Non-consuming whole-file, stream, and handle
+writes take `(& r bytes)`. Text consumers cross this boundary explicitly with
+`byte_buf.to-string`; text producers borrow their bytes with
+`byte_buf.str-as-bytes`. Embedded NULs and bytes that are not valid UTF-8
+therefore remain ordinary payload bytes.
 
 **Streaming writes / append.** Streaming writes reuse `ResultIoUnit`:
 
 | Helper | Signature | Behavior |
 |--------|-----------|----------|
-| `file-write` | `FileHandle String → ResultIoUnit` | Write the complete string payload to a write-mode handle. |
+| `file-write` | `FileHandle (& r bytes) → ResultIoUnit` | Write the complete borrowed byte payload to a write-mode handle. |
 | `file-flush` | `FileHandle → ResultIoUnit` | Flush pending writes for a write-mode handle. |
 
-- `file-write` on an empty string succeeds without issuing a host write.
+- `file-write` on an empty byte view succeeds without issuing a host write.
 - The runtime retries host short writes until all bytes are accepted. A host
   error maps through `error-from-status`; a zero-byte host write before all
   bytes are written maps to `IoSystemCode 5` / the common I/O error status.
@@ -6168,7 +6166,7 @@ from escaping.
 | Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib.string` `string-replace` when no match is found; `stdlib.io` `read-file-or` when the path is missing | Returns the caller-provided aggregate unchanged. Reference-typed signatures express the caller-owned result; without lifetime information in the signature, the conservative arena-tagging rule above applies inside a scoped arena. |
 | Mutates caller-provided storage | `array-set!`, `byte-buf-set!`/`bytes-set!` mutation helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
-| Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO; any temporary strings used by the helper allocate in the active arena. |
+| Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO. Binary writes borrow `bytes` directly; text helpers may allocate active-arena strings only where their own contract says so. |
 
 The owned `String` / borrowed `str` source contract, together with the
 `ByteBuf` / borrowed `bytes` binary-storage contract, is specified in section

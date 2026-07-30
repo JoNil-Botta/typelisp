@@ -1,6 +1,7 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
 (import stdlib.arena)
 (import stdlib.array)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -4431,8 +4432,9 @@
     (if (string.eq path "")
       (compiler-diagnostic-render-source diag "")
       (match (io.try-read-file (& path))
-        [(io.OkIoString source) (compiler-diagnostic-render-source diag source)]
-        [(io.ErrIoString _) (compiler-diagnostic-render-source diag "")]))))
+        [(io.OkIoBytes source)
+          (compiler-diagnostic-render-source diag (byte_buf.to-string source))]
+        [(io.ErrIoBytes _) (compiler-diagnostic-render-source diag "")]))))
 
 (define (compiler-driver-write-result
   [_profile-state : profile_state.CompilerProfileState]
@@ -4444,7 +4446,7 @@
         (cfg
           compile-profile
           (compiler-driver-profile-start-phase _profile-state))
-        (io.write-file output-path asm)
+        (io.write-file output-path (byte_buf.str-as-bytes (& asm)))
         (cfg
           compile-profile
           (compiler-driver-profile-finish-phase _profile-state "write"))
@@ -4515,8 +4517,12 @@
           (cfg
             compile-profile
             (compiler-driver-profile-start-phase _profile-state))
-          (io.write-file output-path (struct-get output asm))
-          (io.write-file fixups-path (struct-get output fixups))
+          (let
+            [asm : String (struct-get output asm)]
+            [fixups : String (struct-get output fixups)]
+            (begin
+              (io.write-file output-path (byte_buf.str-as-bytes (& asm)))
+              (io.write-file fixups-path (byte_buf.str-as-bytes (& fixups)))))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase _profile-state "write"))

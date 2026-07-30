@@ -25,6 +25,7 @@
 ;; abandons it. Parse and type errors report diagnostics, discard only the
 ;; failing input, and return to the prompt with previously accepted declarations
 ;; intact.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.process)
@@ -62,16 +63,16 @@
   "TypeLisp REPL commands:\n  .help         Show this help\n  .type <expr>  Print the inferred type without running code\n  .load <file>  Load declarations from a source file\n  .exit         Exit the REPL\n")
 
 (define (repl-stdout-write [text : String]) : unit
-  (io.stdout-write (& text)))
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
 
 (define (repl-stdout-write-line [text : String]) : unit
-  (io.stdout-write-line (& text)))
+  (io.stdout-write-line (byte_buf.str-as-bytes (& text))))
 
 (define (repl-stderr-write [text : String]) : unit
-  (io.stderr-write (& text)))
+  (io.stderr-write (byte_buf.str-as-bytes (& text))))
 
 (define (repl-stderr-write-line [text : String]) : unit
-  (io.stderr-write-line (& text)))
+  (io.stderr-write-line (byte_buf.str-as-bytes (& text))))
 
 (define (repl-path-join [left : String] [right : String]) : String
   (fs.path-join (& left) (& right)))
@@ -613,8 +614,9 @@
       (repl-print-error-line "Error: .load expects a file path")
       session-source)
     (match (io.try-read-file (& path))
-      [(io.OkIoString source)
+      [(io.OkIoBytes contents)
         (let
+          [source : String (byte_buf.to-string contents)]
           [candidate : String (repl-session-candidate session-source source)]
           (match (repl-typecheck-session-source candidate)
             [(ResultCompilerTypecheck.Ok _)
@@ -625,7 +627,7 @@
               (begin
                 (repl-report-diagnostics (box-get diag))
                 session-source)]))]
-      [(io.ErrIoString error)
+      [(io.ErrIoBytes error)
         (begin
           (repl-print-error-line
             (string.append "Error: .load failed: " (io.error-message error)))
@@ -910,7 +912,8 @@
         (let
           [line-read : io.StdinRead (stdin-read-line)]
           [line : String
-            (repl-normalize-input-line (io.stdin-read-text line-read))]
+            (repl-normalize-input-line
+              (byte_buf.to-string (io.stdin-read-buffer line-read)))]
           (if (and (not pending?) (string.eq line ".exit"))
             unit
             ;; A blank line while a form is pending cancels it. Guard on the

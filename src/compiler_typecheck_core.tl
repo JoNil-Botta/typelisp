@@ -80,9 +80,11 @@
   ;; It is first so hot bind paths can read it directly through the capability
   ;; without copying the larger table carrier.
   (mode i64)
-  ;; Renderable names use growable epoch-stamped dense lanes. Structural and
-  ;; marker keys never enter those lanes; their raw identities live in the
-  ;; explicit sparse side table.
+  ;; The measured hot prefix of renderable names uses bounded epoch-stamped
+  ;; dense lanes. Higher typed IDs use a sparse overflow map, so an ID's numeric
+  ;; value never forces allocation up to that value. Structural and marker keys
+  ;; take a distinct explicit path into the same map; the validated renderable
+  ;; and raw structural key domains are disjoint.
   (renderable-slots (__tl_dyn-array i64))
   (renderable-bound-slots (__tl_dyn-array i64))
   (structural-flags tc_i64_i64_map.Map)
@@ -278,6 +280,9 @@
   ;; allocated in the owning driver's lifetime arena.
   (address i64))
 
+(define tc-topenv-renderable-table-capacity : i64
+  32768)
+
 (define (tc-topenv-membership-state-new) : TcTopEnvMembershipState
   (let
     [cell : (__tl_dyn-array TcTopEnvMembershipStateData)
@@ -288,8 +293,8 @@
         0
         (TcTopEnvMembershipStateData
           0
-          (array.make-array i64 64)
-          (array.make-array i64 64)
+          (array.make-array i64 tc-topenv-renderable-table-capacity)
+          (array.make-array i64 tc-topenv-renderable-table-capacity)
           (tc_i64_i64_map.with-capacity 64)
           1
           -1
@@ -6944,8 +6949,8 @@
 ;; the name is definitely unbound, so the bound env, lookups, and diagnostics
 ;; are identical to the unconditional scan.
 ;;
-;; The bound-slots twin is the EXACT complement for the guard's other verdict:
-;; it is stamped only by binds that provably join the accumulated top-env spine
+;; Bit 1 is the EXACT complement for the guard's other verdict: it is stamped
+;; only by binds that provably join the accumulated top-env spine
 ;; (the seeded base env, tc-bind-alias-id-if-free's own binds, and top-env alias
 ;; fanout binds -- never the transient inference binds that make the bloom
 ;; conservative). A stamped id is therefore definitely bound, so the guard can
@@ -6968,52 +6973,45 @@
         (* (+ (tc_i64_i64_map.len map) (tc_i64_i64_map.deleted map)) 4)
         (* capacity 3)))))
 
-(define (tc-topenv-membership-map-grow-in-owner!
-  [data : (&mut data TcTopEnvMembershipStateData)]) : unit
-  (if (tc-topenv-membership-map-needs-grow?
-    (& (struct-get data structural-flags)))
+(define (tc-cache-map-clear! [map : (&mut map tc_i64_i64_map.Map)]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (array.length (struct-get map slots)))
+        (begin
+          (array-set!
+            (struct-get map slots)
+            index
+            (tc_i64_i64_map.GeneratedHashmapSlot.Empty))
+          (set! index (+ index 1))))
+      (set! (struct-get map len) 0)
+      (set! (struct-get map deleted) 0))))
+
+(define (tc-cache-map-grow-in-owner!
+  [map : (&mut map tc_i64_i64_map.Map)]
+  [owner : i64]) : unit
+  (if (tc-topenv-membership-map-needs-grow? (& map))
     (let
       [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (struct-get data owner-arena)]
       (begin
         (unsafe
           (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-        (tc_i64_i64_map.grow! (&mut (struct-get data structural-flags)))
+        (tc_i64_i64_map.grow! map)
         (tc-type-env-store-restore-after-owner-alloc! previous owner)))
     unit))
 
-(define (tc-topenv-membership-grow-renderable!
-  [data : (&mut data TcTopEnvMembershipStateData)]
-  [required : i64]) : unit
+(define (tc-topenv-membership-renderable-overflow-flags-for
+  [data : (& data TcTopEnvMembershipStateData)]
+  [name-id : ci.InternId]) : i64
   (let
-    [old-slots : (__tl_dyn-array i64) (struct-get data renderable-slots)]
-    [old-bound : (__tl_dyn-array i64) (struct-get data renderable-bound-slots)]
-    [old-capacity : i64 (array.length old-slots)]
-    [next-capacity : i64 old-capacity]
-    (begin
-      (while (< next-capacity required)
-        (set! next-capacity (* next-capacity 2)))
-      (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 (struct-get data owner-arena)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-          (let
-            [next-slots : (__tl_dyn-array i64)
-              (array.make-array i64 next-capacity)]
-            [next-bound : (__tl_dyn-array i64)
-              (array.make-array i64 next-capacity)]
-            [index : i64 0]
-            (begin
-              (while (< index old-capacity)
-                (begin
-                  (array-set! next-slots index (array-ref old-slots index))
-                  (array-set! next-bound index (array-ref old-bound index))
-                  (set! index (+ index 1))))
-              (set! (struct-get data renderable-slots) next-slots)
-              (set! (struct-get data renderable-bound-slots) next-bound)))
-          (tc-type-env-store-restore-after-owner-alloc! previous owner))))))
+    [packed : i64
+      (tc_i64_i64_map.get-value-or
+        (& (struct-get data structural-flags))
+        (ci.intern-id-value name-id)
+        0)]
+    (if (= (shr packed 3) (struct-get data epoch))
+      (bit-and packed 3)
+      0)))
 
 (define (tc-topenv-membership-structural-flags-for
   [data : (& data TcTopEnvMembershipStateData)]
@@ -7035,7 +7033,9 @@
   (let
     [current : i64 (tc-topenv-membership-structural-flags-for (& data) name-id)]
     (begin
-      (tc-topenv-membership-map-grow-in-owner! data)
+      (tc-cache-map-grow-in-owner!
+        (&mut (struct-get data structural-flags))
+        (struct-get data owner-arena))
       (tc_i64_i64_map.insert-ref!
         (&mut (struct-get data structural-flags))
         name-id
@@ -7047,20 +7047,35 @@
   [bound : bool]) : unit
   (let
     [index : i64 (ci.intern-id-value name-id)]
-    (begin
-      (if (>= index (array.length (struct-get data renderable-slots)))
-        (tc-topenv-membership-grow-renderable! data (+ index 1))
-        unit)
-      (array-set!
-        (struct-get data renderable-slots)
-        index
-        (struct-get data epoch))
-      (if bound
+    (if (< index (array.length (struct-get data renderable-slots)))
+      (begin
         (array-set!
-          (struct-get data renderable-bound-slots)
+          (struct-get data renderable-slots)
           index
           (struct-get data epoch))
-        unit))))
+        (if bound
+          (array-set!
+            (struct-get data renderable-bound-slots)
+            index
+            (struct-get data epoch))
+          unit))
+      (let
+        [current : i64
+          (tc-topenv-membership-renderable-overflow-flags-for (& data) name-id)]
+        (begin
+          (tc-cache-map-grow-in-owner!
+            (&mut (struct-get data structural-flags))
+            (struct-get data owner-arena))
+          (tc_i64_i64_map.insert-ref!
+            (&mut (struct-get data structural-flags))
+            index
+            (bit-or
+              (shl (struct-get data epoch) 3)
+              (bit-or
+                current
+                (if bound
+                  3
+                  1)))))))))
 
 ;; TcTypeEnv still carries raw name keys during the typed-ID migration. Keep
 ;; this one compatibility boundary explicit: valid renderable IDs become
@@ -7165,13 +7180,22 @@
         false
         (if (ci.intern-renderable-id? name-id)
           (let
-            [index : i64
-              (ci.intern-id-value (ci.intern-id-from-renderable name-id))]
-            (and
-              (< index (array.length (struct-get data renderable-bound-slots)))
+            [renderable : ci.InternId (ci.intern-id-from-renderable name-id)]
+            [index : i64 (ci.intern-id-value renderable)]
+            (if (<
+              index
+              (array.length (struct-get data renderable-bound-slots)))
               (=
                 (array-ref (struct-get data renderable-bound-slots) index)
-                (struct-get data epoch))))
+                (struct-get data epoch))
+              (not
+                (=
+                  (bit-and
+                    (tc-topenv-membership-renderable-overflow-flags-for
+                      (& data)
+                      renderable)
+                    2)
+                  0))))
           (not
             (=
               (bit-and
@@ -7194,13 +7218,20 @@
         true
         (if (ci.intern-renderable-id? name-id)
           (let
-            [index : i64
-              (ci.intern-id-value (ci.intern-id-from-renderable name-id))]
-            (and
-              (< index (array.length (struct-get data renderable-slots)))
+            [renderable : ci.InternId (ci.intern-id-from-renderable name-id)]
+            [index : i64 (ci.intern-id-value renderable)]
+            (if (< index (array.length (struct-get data renderable-slots)))
               (=
                 (array-ref (struct-get data renderable-slots) index)
-                (struct-get data epoch))))
+                (struct-get data epoch))
+              (not
+                (=
+                  (bit-and
+                    (tc-topenv-membership-renderable-overflow-flags-for
+                      (& data)
+                      renderable)
+                    1)
+                  0))))
           (not
             (=
               (bit-and
@@ -7230,6 +7261,11 @@
   (let
     [data : TcTopEnvMembershipStateData (tc-topenv-membership-state-data state)]
     (begin
+      (if (or
+        (not (= (struct-get data intern-table-id) intern-table-id))
+        (not (= (struct-get data intern-generation) intern-generation)))
+        (tc-cache-map-clear! (&mut (struct-get data structural-flags)))
+        unit)
       ;; Every build gets a fresh stamp. Recording the immutable source-name
       ;; owner here prevents equal numeric IDs in two intern sessions from
       ;; sharing accelerator facts.
@@ -7258,6 +7294,7 @@
       [env-a : TcTypeEnv (tc-empty-env-with-job-state job-a)]
       [env-b : TcTypeEnv (tc-empty-env-with-job-state job-b)]
       [renderable : i64 (intern "membership-job-owned")]
+      [renderable-overflow : i64 (+ tc-topenv-renderable-table-capacity 1)]
       [alias-id : i64 (intern "membership-ab-alias")]
       [structural-base : i64 (* (intern-capacity) (intern-capacity))]
       [stress-count : i64 65537]
@@ -7287,6 +7324,16 @@
               (tc-bind-alias-id-if-free env-a alias-id (AstType.I64))
               alias-id
               (AstType.Bool))]
+          [overflow-safe? : bool
+            (begin
+              ;; A typed ID above the dense prefix remains exact in the
+              ;; renderable overflow map; it never enters the structural path.
+              (tc-topenv-membership-mark-bound! state-a renderable-overflow)
+              (and
+                (tc-topenv-membership-maybe? state-a renderable)
+                (tc-topenv-membership-maybe? state-a renderable-overflow)
+                (tc-topenv-membership-bound? state-a renderable)
+                (tc-topenv-membership-bound? state-a renderable-overflow)))]
           (begin
             (tc-job-state-set-topenv-membership-enabled! job-b false)
             (tc-topenv-membership-begin! state-b env-b 102 202)
@@ -7301,6 +7348,7 @@
                 (tc-topenv-membership-end! state-b)
                 (and
                   isolated?
+                  overflow-safe?
                   (match (tc-lookup-id enabled-env alias-id)
                     [(ResultTcType.Ok (AstType.I64)) true]
                     [_ false])
@@ -30004,19 +30052,6 @@
 ;; renderable source-name ID and its immutable intern-session owner. A job-owned
 ;; sparse epoch map avoids allocating `intern-capacity` slots and never consults
 ;; the active process-global intern selector.
-(define (tc-thread-name-kind-map-grow-in-owner!
-  [data : (&mut data TcThreadNameKindStateData)]) : unit
-  (if (tc-topenv-membership-map-needs-grow? (& (struct-get data kinds)))
-    (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (struct-get data owner-arena)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
-        (tc_i64_i64_map.grow! (&mut (struct-get data kinds)))
-        (tc-type-env-store-restore-after-owner-alloc! previous owner)))
-    unit))
-
 (define (tc-thread-name-kind-ensure-owner!
   [state : TcThreadNameKindState]
   [table-id : i64]
@@ -30029,6 +30064,7 @@
         (= (struct-get data intern-table-id) table-id))
         unit
         (begin
+          (tc-cache-map-clear! (&mut (struct-get data kinds)))
           (set! (struct-get data epoch) (+ (struct-get data epoch) 1))
           (set! (struct-get data intern-generation) generation)
           (set! (struct-get data intern-table-id) table-id)
@@ -30064,7 +30100,9 @@
           (let
             [kind : i64 (tc-thread-name-kind-compute name)]
             (begin
-              (tc-thread-name-kind-map-grow-in-owner! (&mut data))
+              (tc-cache-map-grow-in-owner!
+                (&mut (struct-get data kinds))
+                (struct-get data owner-arena))
               (tc_i64_i64_map.insert-ref!
                 (&mut (struct-get data kinds))
                 key
@@ -30109,6 +30147,7 @@
             (= a-cached 1)
             (= a-new-owner 0)
             (= uncached 2)
+            (= (tc_i64_i64_map.len (& (struct-get data kinds))) 1)
             (<
               (tc_i64_i64_map.capacity (& (struct-get data kinds)))
               (intern-capacity))))))))

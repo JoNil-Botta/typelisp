@@ -1,5 +1,6 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
 (import stdlib.arena)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import "compiler_parse_core.tl")
 (import compiler_builtin_ids as cbi)
@@ -7,6 +8,7 @@
 (import lex as lexer)
 (import read as reader)
 (import compiler_intern as ci)
+(import compiler_cfg_core as cfg_core)
 (import sym_i64_env)
 (import stdlib.env)
 (import stdlib.fs)
@@ -20,6 +22,36 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import token)
 (import "tlci_core.tl")
+
+;; Sources, manifests, and include payloads are interpreted as text here.
+;; Make that conversion explicit at the binary IO boundary.
+(define (compiler-load-read-file-text [path : String]) : String
+  (let
+    [contents : byte_buf.ByteBuf (io.read-file path)]
+    [count : i64 (byte_buf.len contents)]
+    (if (= count 0)
+      ""
+      ;; `contents` is a fresh, unaliased read result and is never mutated or
+      ;; exposed after this point. Transfer its active-arena backing storage
+      ;; into the immutable String view instead of copying every source byte a
+      ;; second time through the general-purpose `ByteBuf.to-string` boundary.
+      (unsafe
+        (string-from-bytes
+          (byte_buf.bytes-data (byte_buf.as-bytes (& contents)))
+          count)))))
+
+(define (compiler-load-write-file-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
+
+(define (compiler-load-try-read-file-text [path : (& source str)]) : io.ResultIoString
+  (match (io.try-read-file path)
+    [(io.OkIoBytes contents) (io.OkIoString (byte_buf.to-string contents))]
+    [(io.ErrIoBytes error) (io.ErrIoString error)]))
+
+(define (compiler-load-try-write-file-text
+  [path : (& source str)]
+  [contents : (& content str)]) : io.ResultIoUnit
+  (io.try-write-file path (byte_buf.str-as-bytes contents)))
 
 (define (compiler-load-lex-token-buffer-arena-handle) : i64
   (lexer.spanned-token-buffer-arena-handle-value))
@@ -585,21 +617,12 @@
         (CompilerLoadProgramCacheEmpty))
       (compiler-load-session-state-program-cache-fill! state (+ index 1)))))
 
-(define (compiler-load-program-cache-fill! [index : i64]) : unit
-  (compiler-load-session-state-program-cache-fill!
-    compiler-load-active-session-state
-    index))
-
 (define (compiler-load-session-state-program-cache-stats-reset!
   [state : CompilerLoadSessionState]) : unit
   (begin
     (array-set! (struct-get state program-cache-hit-count) 0 0)
     (array-set! (struct-get state program-cache-miss-count) 0 0)
     (array-set! (struct-get state program-cache-store-count) 0 0)))
-
-(define (compiler-load-program-cache-stats-reset!) : unit
-  (compiler-load-session-state-program-cache-stats-reset!
-    compiler-load-active-session-state))
 
 (define (compiler-load-session-state-program-cache-clear!
   [state : CompilerLoadSessionState]) : unit
@@ -618,10 +641,6 @@
   (if (array-ref (struct-get state program-cache-ready) 0)
     unit
     (compiler-load-session-state-program-cache-clear! state)))
-
-(define (compiler-load-program-cache-ensure!) : unit
-  (compiler-load-session-state-program-cache-ensure!
-    compiler-load-active-session-state))
 
 (define (compiler-load-session-state-program-cache-note-hit!
   [state : CompilerLoadSessionState]) : unit
@@ -652,10 +671,6 @@
     0
     (+ (compiler-load-session-state-program-cache-store-count-value state) 1)))
 
-(define (compiler-load-program-cache-note-store!) : unit
-  (compiler-load-session-state-program-cache-note-store!
-    compiler-load-active-session-state))
-
 (define (compiler-load-session-state-program-cache-hit-count-value
   [state : CompilerLoadSessionState]) : i64
   (array-ref (struct-get state program-cache-hit-count) 0))
@@ -667,10 +682,6 @@
 (define (compiler-load-session-state-program-cache-miss-count-value
   [state : CompilerLoadSessionState]) : i64
   (array-ref (struct-get state program-cache-miss-count) 0))
-
-(define (compiler-load-program-cache-miss-count-value) : i64
-  (compiler-load-session-state-program-cache-miss-count-value
-    compiler-load-active-session-state))
 
 (define (compiler-load-session-state-program-cache-store-count-value
   [state : CompilerLoadSessionState]) : i64
@@ -751,14 +762,6 @@
             key
             (+ index 1)))])))
 
-(define (compiler-load-program-cache-lookup-from
-  [key : CompilerLoadProgramCacheKey]
-  [index : i64]) : CompilerLoadProgramCacheLookup
-  (compiler-load-session-state-program-cache-lookup-from
-    compiler-load-active-session-state
-    key
-    index))
-
 (define (compiler-load-session-state-program-cache-lookup
   [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]) : CompilerLoadProgramCacheLookup
@@ -802,16 +805,6 @@
             program
             (+ index 1)))])))
 
-(define (compiler-load-program-cache-store-at
-  [key : CompilerLoadProgramCacheKey]
-  [program : AstProgram]
-  [index : i64]) : bool
-  (compiler-load-session-state-program-cache-store-at
-    compiler-load-active-session-state
-    key
-    program
-    index))
-
 (define (compiler-load-session-state-program-cache-store
   [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
@@ -844,14 +837,6 @@
             key
             (+ index 1)))])))
 
-(define (compiler-load-program-cache-can-store-at
-  [key : CompilerLoadProgramCacheKey]
-  [index : i64]) : bool
-  (compiler-load-session-state-program-cache-can-store-at
-    compiler-load-active-session-state
-    key
-    index))
-
 (define (compiler-load-session-state-program-cache-can-store
   [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]) : bool
@@ -877,30 +862,17 @@
         (CompilerLoadProgramAdmissionEmpty))
       (compiler-load-session-state-program-admission-fill! state (+ index 1)))))
 
-(define (compiler-load-program-admission-fill! [index : i64]) : unit
-  (compiler-load-session-state-program-admission-fill!
-    compiler-load-active-session-state
-    index))
-
 (define (compiler-load-session-state-program-admission-clear!
   [state : CompilerLoadSessionState]) : unit
   (begin
     (compiler-load-session-state-program-admission-fill! state 0)
     (array-set! (struct-get state program-admission-ready) 0 true)))
 
-(define (compiler-load-program-admission-clear!) : unit
-  (compiler-load-session-state-program-admission-clear!
-    compiler-load-active-session-state))
-
 (define (compiler-load-session-state-program-admission-ensure!
   [state : CompilerLoadSessionState]) : unit
   (if (array-ref (struct-get state program-admission-ready) 0)
     unit
     (compiler-load-session-state-program-admission-clear! state)))
-
-(define (compiler-load-program-admission-ensure!) : unit
-  (compiler-load-session-state-program-admission-ensure!
-    compiler-load-active-session-state))
 
 (define (compiler-load-session-state-program-admission-contains-from?
   [state : CompilerLoadSessionState]
@@ -917,14 +889,6 @@
             state
             key
             (+ index 1)))])))
-
-(define (compiler-load-program-admission-contains-from?
-  [key : CompilerLoadProgramCacheKey]
-  [index : i64]) : bool
-  (compiler-load-session-state-program-admission-contains-from?
-    compiler-load-active-session-state
-    key
-    index))
 
 (define (compiler-load-session-state-program-admission-contains?
   [state : CompilerLoadSessionState]
@@ -961,26 +925,12 @@
             key
             (+ index 1)))])))
 
-(define (compiler-load-program-admission-record-at
-  [key : CompilerLoadProgramCacheKey]
-  [index : i64]) : bool
-  (compiler-load-session-state-program-admission-record-at
-    compiler-load-active-session-state
-    key
-    index))
-
 (define (compiler-load-session-state-program-admission-record
   [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]) : bool
   (begin
     (compiler-load-session-state-program-admission-ensure! state)
     (compiler-load-session-state-program-admission-record-at state key 0)))
-
-(define (compiler-load-program-admission-record
-  [key : CompilerLoadProgramCacheKey]) : bool
-  (compiler-load-session-state-program-admission-record
-    compiler-load-active-session-state
-    key))
 
 (define (compiler-load-session-state-program-admission-record-persistent
   [state : CompilerLoadSessionState]
@@ -1069,10 +1019,6 @@
     state
     (compiler-load-session-state-intern-floor-value state)))
 
-(define (compiler-load-session-note-persistent-interns!) : unit
-  (compiler-load-session-state-note-persistent-interns!
-    compiler-load-active-session-state))
-
 (define (compiler-load-session-state-note-persistent-with-pools!
   [state : CompilerLoadSessionState]
   [pools : AstNodePoolContext]) : unit
@@ -1096,12 +1042,6 @@
     (compiler-load-session-state-intern-floor-refresh!
       state
       (compiler-load-session-state-intern-floor-value state))))
-
-(define (compiler-load-session-note-persistent-with-pools!
-  [pools : AstNodePoolContext]) : unit
-  (compiler-load-session-state-note-persistent-with-pools!
-    compiler-load-active-session-state
-    pools))
 
 (define (compiler-load-session-state-ast-floor-value
   [state : CompilerLoadSessionState]) : i64
@@ -1230,9 +1170,6 @@
 (define (compiler-load-session-cache-enabled?) : bool
   (array-ref (struct-get compiler-load-active-session-state cache-enabled) 0))
 
-(define (compiler-load-session-embedded-stdlib-source-used?) : bool
-  (array-ref (struct-get compiler-load-active-session-state cache-enabled) 1))
-
 (define (compiler-load-session-state-embedded-stdlib-source-used?
   [state : CompilerLoadSessionState]) : bool
   (array-ref (struct-get state cache-enabled) 1))
@@ -1307,6 +1244,21 @@
 (define (compiler-load-embedded-provenance-noted?) : bool
   compiler-load-embedded-provenance-noted)
 
+(define (compiler-load-embedded-provenance-observer-ok?) : bool
+  (let
+    [previous : bool compiler-load-embedded-provenance-noted]
+    [false-ok : bool
+      (begin
+        (set! compiler-load-embedded-provenance-noted false)
+        (not (compiler-load-embedded-provenance-noted?)))]
+    [true-ok : bool
+      (begin
+        (set! compiler-load-embedded-provenance-noted true)
+        (compiler-load-embedded-provenance-noted?))]
+    (begin
+      (set! compiler-load-embedded-provenance-noted previous)
+      (and false-ok true-ok))))
+
 ;: A stdlib module resolved from a root (or the working directory) whose
 ;: source is byte-identical to the embedded payload's copy carries embedded
 ;: provenance for the macro route: the source-bound catalog is exact for it
@@ -1328,7 +1280,7 @@
             [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
                 embedded-text)
               (let
-                [disk-text : String (io.read-file disk-path)]
+                [disk-text : String (compiler-load-read-file-text disk-path)]
                 (if (and
                   (=
                     (string.string-length disk-text)
@@ -1405,12 +1357,6 @@
         (reader.sp-node-pool-reset!)
         (ast-node-pool-context-reset-to! pools 0 0)))))
 
-(define (compiler-load-session-reset-pools-with-pools!
-  [pools : AstNodePoolContext]) : unit
-  (compiler-load-session-state-reset-pools-with-pools!
-    compiler-load-active-session-state
-    pools))
-
 (define (compiler-load-session-reset-interns!) : unit
   (begin
     (compiler-load-embedded-module-ids-reset!)
@@ -1443,12 +1389,6 @@
         (ci.intern-compat-state-persistent-arena-reset-to-floor! intern-state))
       (ci.intern-compat-state-reset! intern-state))))
 
-(define (compiler-load-session-reset-interns-with-state!
-  [intern-state : ci.InternCompatState]) : unit
-  (compiler-load-session-state-reset-interns-with-state!
-    compiler-load-active-session-state
-    intern-state))
-
 (define (compiler-load-session-state-runtime-prelude-cache-fill!
   [state : CompilerLoadSessionState]
   [index : i64]) : unit
@@ -1462,11 +1402,6 @@
       (compiler-load-session-state-runtime-prelude-cache-fill!
         state
         (+ index 1)))))
-
-(define (compiler-load-runtime-prelude-cache-fill! [index : i64]) : unit
-  (compiler-load-session-state-runtime-prelude-cache-fill!
-    compiler-load-active-session-state
-    index))
 
 (define (compiler-load-session-state-runtime-prelude-cache-clear!
   [state : CompilerLoadSessionState]) : unit
@@ -1483,10 +1418,6 @@
   (if (array-ref (struct-get state runtime-prelude-cache-ready) 0)
     unit
     (compiler-load-session-state-runtime-prelude-cache-clear! state)))
-
-(define (compiler-load-runtime-prelude-cache-ensure!) : unit
-  (compiler-load-session-state-runtime-prelude-cache-ensure!
-    compiler-load-active-session-state))
 
 (define (compiler-load-intern-id-seq-equal?
   [left : CompilerLoadInternIdSeq]
@@ -1553,26 +1484,12 @@
             key
             (+ index 1)))])))
 
-(define (compiler-load-runtime-prelude-cache-lookup-from
-  [key : CompilerLoadPreludeCacheKey]
-  [index : i64]) : CompilerLoadPreludeCacheLookup
-  (compiler-load-session-state-runtime-prelude-cache-lookup-from
-    compiler-load-active-session-state
-    key
-    index))
-
 (define (compiler-load-session-state-runtime-prelude-cache-lookup
   [state : CompilerLoadSessionState]
   [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheLookup
   (begin
     (compiler-load-session-state-runtime-prelude-cache-ensure! state)
     (compiler-load-session-state-runtime-prelude-cache-lookup-from state key 0)))
-
-(define (compiler-load-runtime-prelude-cache-lookup
-  [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheLookup
-  (compiler-load-session-state-runtime-prelude-cache-lookup
-    compiler-load-active-session-state
-    key))
 
 (define (compiler-load-session-state-runtime-prelude-cache-store-at
   [state : CompilerLoadSessionState]
@@ -1605,22 +1522,6 @@
             seen
             (+ index 1)))])))
 
-(define (compiler-load-runtime-prelude-cache-store-at
-  [key : CompilerLoadPreludeCacheKey]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [modules : AstDeclModuleList]
-  [seen : sym_i64_env.SymI64Env]
-  [index : i64]) : unit
-  (compiler-load-session-state-runtime-prelude-cache-store-at
-    compiler-load-active-session-state
-    key
-    decls
-    paths
-    modules
-    seen
-    index))
-
 (define (compiler-load-session-state-runtime-prelude-cache-store
   [state : CompilerLoadSessionState]
   [key : CompilerLoadPreludeCacheKey]
@@ -1639,20 +1540,6 @@
       seen
       0)
     (compiler-load-session-state-note-persistent! state)))
-
-(define (compiler-load-runtime-prelude-cache-store
-  [key : CompilerLoadPreludeCacheKey]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [modules : AstDeclModuleList]
-  [seen : sym_i64_env.SymI64Env]) : unit
-  (compiler-load-session-state-runtime-prelude-cache-store
-    compiler-load-active-session-state
-    key
-    decls
-    paths
-    modules
-    seen))
 
 (define (compiler-load-session-state-runtime-prelude-cache-store-with-pools
   [state : CompilerLoadSessionState]
@@ -1673,22 +1560,6 @@
       seen
       0)
     (compiler-load-session-state-note-persistent-with-pools! state pools)))
-
-(define (compiler-load-runtime-prelude-cache-store-with-pools
-  [key : CompilerLoadPreludeCacheKey]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [modules : AstDeclModuleList]
-  [seen : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
-  (compiler-load-session-state-runtime-prelude-cache-store-with-pools
-    compiler-load-active-session-state
-    key
-    decls
-    paths
-    modules
-    seen
-    pools))
 
 (define (compiler-load-root-cache-ids-from
   [roots : svec.Vec]
@@ -1770,7 +1641,7 @@
           rest
           (str_cat.str-cat
             out
-            (compiler-cfg-key-name key)
+            (cfg_core.compiler-cfg-key-name key)
             "="
             (string.int->string value)
             ";")))]))
@@ -2120,11 +1991,6 @@
         state
         (+ index 1)))))
 
-(define (compiler-load-dotted-path-cache-clear-ready! [index : i64]) : unit
-  (compiler-load-session-state-dotted-path-cache-clear-ready!
-    compiler-load-active-session-state
-    index))
-
 (define (compiler-load-session-state-dotted-path-cache-reset!
   [state : CompilerLoadSessionState]) : unit
   (begin
@@ -2145,10 +2011,6 @@
     (intern-generation))
     unit
     (compiler-load-session-state-dotted-path-cache-reset! state)))
-
-(define (compiler-load-dotted-path-cache-ensure!) : unit
-  (compiler-load-session-state-dotted-path-cache-ensure!
-    compiler-load-active-session-state))
 
 (define (compiler-load-dotted-path-cache-bucket [module-id : i64]) : i64
   (bit-and module-id (- compiler-load-dotted-path-cache-capacity 1)))
@@ -2180,14 +2042,6 @@
       (array-set! (struct-get state dotted-path-cache-ready) bucket true)
       (array-set! (struct-get state dotted-path-cache-keys) bucket module-id)
       (array-set! (struct-get state dotted-path-cache-values) bucket path))))
-
-(define (compiler-load-dotted-path-cache-store!
-  [module-id : i64]
-  [path : String]) : unit
-  (compiler-load-session-state-dotted-path-cache-store!
-    compiler-load-active-session-state
-    module-id
-    path))
 
 (define (compiler-load-dotted-module-path-uncached [module-name : String]) : String
   (let
@@ -2594,7 +2448,9 @@
   [name : i64]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
     (ResultCompilerLoadInclude.Ok
-      (compiler-load-include-str-def name (io.read-file resolved)))
+      (compiler-load-include-str-def
+        name
+        (compiler-load-read-file-text resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
           source)
@@ -2619,7 +2475,7 @@
       (compiler-load-include-str-def-with-pools
         pools
         name
-        (io.read-file resolved)))
+        (compiler-load-read-file-text resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
           source)
@@ -2644,7 +2500,7 @@
       (compiler-load-include-str-comptime-def-with-pools
         pools
         name
-        (io.read-file resolved)))
+        (compiler-load-read-file-text resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
           source)
@@ -2669,7 +2525,7 @@
       (compiler-load-include-str-lzss-def-with-pools
         pools
         name
-        (io.read-file resolved)))
+        (compiler-load-read-file-text resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
           source)
@@ -2723,7 +2579,9 @@
   [name : i64]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
     (ResultCompilerLoadInclude.Ok
-      (compiler-load-include-bin-def name (io.read-file resolved)))
+      (compiler-load-include-bin-def
+        name
+        (compiler-load-read-file-text resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
           source)
@@ -2748,7 +2606,7 @@
       (compiler-load-include-bin-def-with-pools
         pools
         name
-        (io.read-file resolved)))
+        (compiler-load-read-file-text resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
           source)
@@ -3113,7 +2971,7 @@
             source-path)
           (compiler-load-stdlib-prelude-source-with-roots-cfg
             path
-            (io.read-file source-path)
+            (compiler-load-read-file-text source-path)
             seen
             stdlib-roots
             cfgs))]
@@ -3173,7 +3031,7 @@
           (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
             load-state
             path
-            (io.read-file source-path)
+            (compiler-load-read-file-text source-path)
             seen
             stdlib-roots
             cfgs
@@ -3959,11 +3817,6 @@
     (compiler-load-session-state-surface-summaries state)
     source-path-id))
 
-(define (compiler-load-surface-summary-find-source [source-path-id : i64]) : CompilerLoadMaybeSurfaceSummary
-  (compiler-load-session-state-surface-summary-find-source
-    compiler-load-active-session-state
-    source-path-id))
-
 (define (compiler-load-surface-summary-find-module-in
   [summaries : CompilerLoadSurfaceSummaryList]
   [module-id : i64]) : CompilerLoadMaybeSurfaceSummary
@@ -4099,14 +3952,6 @@
             (ci.intern-generated-canonical-name resolved))])]))
 
 ;; Serial/test compatibility adapter.
-(define (compiler-load-resolved-path-id-for-generated-import
-  [resolved : String]
-  [expected-module : AstMaybeModuleName]) : i64
-  (compiler-load-resolved-path-id-for-generated-import-with-state
-    (compiler-load-serial-test-session-state)
-    resolved
-    expected-module))
-
 (define (compiler-load-surface-summary-remove-source-in
   [summaries : CompilerLoadSurfaceSummaryList]
   [source-path-id : i64]) : CompilerLoadSurfaceSummaryList
@@ -4473,14 +4318,6 @@
 
 ;; Serial/test compatibility adapters. Production demand walks receive their
 ;; owning session explicitly and must not observe the active selector.
-(define (compiler-load-lazy-qualified-observer-active?) : bool
-  (compiler-load-session-state-lazy-qualified-observer-active?
-    compiler-load-active-session-state))
-
-(define (compiler-load-lazy-qualified-observer-exhaustive?) : bool
-  (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-    compiler-load-active-session-state))
-
 ;; Catalog observers only need lexical bindings that shadow either observed
 ;; root. Avoid allocating a lexical environment spine for every unrelated
 ;; parameter, binding, and pattern during those full scans while preserving
@@ -4497,14 +4334,6 @@
       (= name (compiler-load-lazy-qualified-observer-root-id observer 1)))
       (sym_i64_env.sym-i64-bind-id locals name 1)
       locals)))
-
-(define (compiler-load-lazy-demand-bind-local-exhaustive
-  [locals : sym_i64_env.SymI64Env]
-  [name : i64]) : sym_i64_env.SymI64Env
-  (compiler-load-session-state-lazy-demand-bind-local-exhaustive
-    compiler-load-active-session-state
-    locals
-    name))
 
 (define (compiler-load-session-state-lazy-qualified-observer-reset!
   [state : CompilerLoadSessionState]) : unit
@@ -4581,14 +4410,6 @@
       (compiler-load-lazy-qualified-observer-flag-set! observer 2 false)
       (compiler-load-lazy-qualified-observer-flag-set! observer 3 false))))
 
-(define (compiler-load-lazy-qualified-observer-begin-pair!
-  [root-id : i64]
-  [secondary-root-id : i64]) : unit
-  (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-    compiler-load-active-session-state
-    root-id
-    secondary-root-id))
-
 (define (compiler-load-lazy-qualified-observer-members-with-note
   [name : i64]
   [root-id : i64]
@@ -4612,11 +4433,6 @@
         name
         (compiler-load-lazy-qualified-observer-root-id observer 0)
         (compiler-load-lazy-qualified-observer-members observer 0)))))
-
-(define (compiler-load-lazy-qualified-observer-note! [name : i64]) : unit
-  (compiler-load-session-state-lazy-qualified-observer-note!
-    compiler-load-active-session-state
-    name))
 
 (define (compiler-load-session-state-lazy-qualified-observer-note-secondary!
   [state : CompilerLoadSessionState]
@@ -4644,14 +4460,6 @@
           (compiler-load-lazy-qualified-observer-flag-set! observer 3 true)
           unit))
       unit)))
-
-(define (compiler-load-lazy-qualified-observer-note-secondary!
-  [name : i64]
-  [locals : sym_i64_env.SymI64Env]) : unit
-  (compiler-load-session-state-lazy-qualified-observer-note-secondary!
-    compiler-load-active-session-state
-    name
-    locals))
 
 (define (compiler-load-session-state-lazy-qualified-observer-end-pair!
   [state : CompilerLoadSessionState]) : CompilerLoadLazyQualifiedObserverResult
@@ -4715,10 +4523,6 @@
               3
               (struct-get frame secondary-direct)))))
       out)))
-
-(define (compiler-load-lazy-qualified-observer-end-pair!) : CompilerLoadLazyQualifiedObserverResult
-  (compiler-load-session-state-lazy-qualified-observer-end-pair!
-    compiler-load-active-session-state))
 
 (define (compiler-load-lazy-name-qualified-by-id? [name : i64] [alias : i64]) : bool
   (>= (compiler-load-lazy-tail-after-prefix-id name alias) 0))
@@ -5520,96 +5324,6 @@
               name)
             (sym_i64_env.sym-i64-bind-id locals name 1))
           (+ index 1))])))
-
-(define (compiler-load-session-state-lazy-resource-bindings-demand-at?
-  [state : CompilerLoadSessionState]
-  [bindings : (& bindings AstResourceBindingList)]
-  [alias : i64]
-  [summary : CompilerLoadSurfaceSummary]
-  [locals : sym_i64_env.SymI64Env]
-  [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast-resource-binding-list-len bindings))
-    (compiler-load-lazy-alias-demand-none)
-    (match (ast-resource-binding-list-get
-      bindings
-      index
-      (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init cleanup _)
-        (compiler-load-lazy-alias-demand-merge
-          (compiler-load-session-state-lazy-expr-demand
-            state
-            (ast-node-get init)
-            alias
-            summary
-            locals)
-          (compiler-load-lazy-alias-demand-merge
-            (compiler-load-session-state-lazy-expr-demand
-              state
-              (ast-node-get cleanup)
-              alias
-              summary
-              locals)
-            (compiler-load-session-state-lazy-resource-bindings-demand-at?
-              state
-              bindings
-              alias
-              summary
-              (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-                state)
-                (compiler-load-session-state-lazy-demand-bind-local-exhaustive
-                  state
-                  locals
-                  name)
-                (sym_i64_env.sym-i64-bind-id locals name 1))
-              (+ index 1))))])))
-
-(define (compiler-load-session-state-lazy-resource-bindings-demand
-  [state : CompilerLoadSessionState]
-  [bindings : AstResourceBindingList]
-  [alias : i64]
-  [summary : CompilerLoadSurfaceSummary]
-  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (compiler-load-session-state-lazy-resource-bindings-demand-at?
-    state
-    (& bindings)
-    alias
-    summary
-    locals
-    0))
-
-(define (compiler-load-session-state-lazy-resource-bindings-locals-at
-  [state : CompilerLoadSessionState]
-  [bindings : (& bindings AstResourceBindingList)]
-  [locals : sym_i64_env.SymI64Env]
-  [index : i64]) : sym_i64_env.SymI64Env
-  (if (>= index (ast-resource-binding-list-len bindings))
-    locals
-    (match (ast-resource-binding-list-get
-      bindings
-      index
-      (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name _ _ _)
-        (compiler-load-session-state-lazy-resource-bindings-locals-at
-          state
-          bindings
-          (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-            state)
-            (compiler-load-session-state-lazy-demand-bind-local-exhaustive
-              state
-              locals
-              name)
-            (sym_i64_env.sym-i64-bind-id locals name 1))
-          (+ index 1))])))
-
-(define (compiler-load-session-state-lazy-resource-bindings-locals
-  [state : CompilerLoadSessionState]
-  [bindings : AstResourceBindingList]
-  [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (compiler-load-session-state-lazy-resource-bindings-locals-at
-    state
-    (& bindings)
-    locals
-    0))
 
 (define (compiler-load-session-state-lazy-match-arms-demand-at?
   [state : CompilerLoadSessionState]
@@ -6693,35 +6407,6 @@
               alias
               summary
               locals))))]))
-
-(define (compiler-load-session-state-lazy-decl-list-demand-full
-  [state : CompilerLoadSessionState]
-  [decls : AstDeclList]
-  [alias : i64]
-  [summary : CompilerLoadSurfaceSummary]
-  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (let
-    [cursor : AstDeclList decls]
-    [out : CompilerLoadLazyAliasDemand (compiler-load-lazy-alias-demand-none)]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest)
-            (begin
-              (set!
-                out
-                (compiler-load-lazy-alias-demand-merge
-                  out
-                  (compiler-load-session-state-lazy-decl-demand
-                    state
-                    decl
-                    alias
-                    summary
-                    locals)))
-              (set! cursor rest))]))
-      out)))
 
 (define (compiler-load-lazy-empty-surface-summary) : CompilerLoadSurfaceSummary
   ;; The first structural pass only decides whether a qualified or unresolved
@@ -8598,7 +8283,7 @@
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (let
-    [source : String (io.read-file path)]
+    [source : String (compiler-load-read-file-text path)]
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
 
 (define (compiler-load-parse-file-diagnostic-escaping-with-pools
@@ -8606,7 +8291,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
-    [source : String (io.read-file path)]
+    [source : String (compiler-load-read-file-text path)]
     (compiler-load-parse-source-diagnostic-escaping-with-pools
       path
       source
@@ -8687,7 +8372,7 @@
     [_use-scratch : unit
       (unsafe
         (arena.tl_arena_set scratch-root))]
-    [source : String (io.read-file path)]
+    [source : String (compiler-load-read-file-text path)]
     [source-len : i64 (string.string-length source)]
     ;; Source bytes are a useful low-cost predictor for parser node count. A
     ;; modest estimate avoids both a multi-million-node reserve per file and a
@@ -9407,34 +9092,6 @@
         -1)
       (compiler-load-decl-owner-id-from-root import-root path))))
 
-(define (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
-  [path : String]
-  [source-path-id : i64]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [kind : AstImportKind]
-  [import-path : String]
-  [expected-module : AstMaybeModuleName]
-  [import-root : String]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [context-module : String]
-  [context-module-id : i64]) : ResultCompilerLoadWithPaths
-  (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
-    compiler-load-active-session-state
-    path
-    source-path-id
-    seen
-    stdlib-roots
-    kind
-    import-path
-    expected-module
-    import-root
-    cfgs
-    pools
-    context-module
-    context-module-id))
-
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
   [path : String]
   [seen : sym_i64_env.SymI64Env]
@@ -10088,7 +9745,7 @@
     (if (not (io.file-exists? path))
       (ResultCompilerLoadPackageSpmdInterface.Ok
         CompilerLoadPackageSpmdInterface.Unavailable)
-      (match (io.try-read-file (& path))
+      (match (compiler-load-try-read-file-text (& path))
         [(io.ErrIoString error)
           (ResultCompilerLoadPackageSpmdInterface.Err
             (str_cat.str-cat
@@ -10493,7 +10150,7 @@
     [(CompilerLoadSomePath manifest-path)
       (match (compiler-load-parse-manifest-diagnostic-infer-kind
         manifest-path
-        (io.read-file manifest-path))
+        (compiler-load-read-file-text manifest-path))
         [(ResultCompilerPkgManifestDiagnostic.Err diag)
           (ResultCompilerLoadPackageEntry.Err
             (string.append
@@ -11509,7 +11166,7 @@
             source-path)
           (compiler-load-package-stdlib-prelude-source-with-roots-cfg
             path
-            (io.read-file source-path)
+            (compiler-load-read-file-text source-path)
             seen
             stdlib-roots
             manifest-dir
@@ -12496,12 +12153,12 @@
 
 (define (compiler-load-file-import-dedup-cycle-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/compiler_load_dep.tl"
       "(module smoke.dep)
 (import \"compiler_load_entry.tl\" module smoke.entry as entry)
 (define dep : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/compiler_load_entry.tl"
       "(module smoke.entry)
 (import \"compiler_load_dep.tl\" module smoke.dep as dep)
@@ -12520,11 +12177,11 @@
 
 (define (compiler-load-import-module-restore-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_restore_dep.tl"
       "(module restore.dep)
 (define dep-value : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_restore_entry.tl"
       "(import \"cl_restore_dep.tl\" module restore.dep as dep)
 (define (main) : i64 42)")
@@ -12537,10 +12194,10 @@
 
 (define (compiler-load-file-fallback-path-dedup-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/compiler_load_legacy_dep.tl"
       "(define legacy-dep : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/compiler_load_legacy_entry.tl"
       "(import \"compiler_load_legacy_dep.tl\")
 (import \"./compiler_load_legacy_dep.tl\")
@@ -12564,11 +12221,11 @@
 
 (define (compiler-load-import-alias-preserved-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_alias_dep.tl"
       "(module alias.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_alias_entry.tl"
       "(import \"cl_alias_dep.tl\" module alias.dep :as dep)
 (module alias.entry)
@@ -12582,11 +12239,11 @@
 
 (define (compiler-load-legacy-path-module-flat-alias-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_legacy_module_dep.tl"
       "(module legacy.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_legacy_module_entry.tl"
       "(import \"cl_legacy_module_dep.tl\")
 (define (main) : i64 (get))")
@@ -12599,15 +12256,15 @@
 
 (define (compiler-load-seen-legacy-path-module-flat-alias-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_seen_legacy_module_dep.tl"
       "(module seen.legacy.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_seen_legacy_module_pre.tl"
       "(import \"cl_seen_legacy_module_dep.tl\" module seen.legacy.dep :as dep)
 (define (pre) : i64 (dep.get))")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_seen_legacy_module_entry.tl"
       "(import \"cl_seen_legacy_module_pre.tl\")
 (import \"cl_seen_legacy_module_dep.tl\")
@@ -12621,11 +12278,11 @@
 
 (define (compiler-load-package-legacy-path-module-flat-alias-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_pkg_legacy_module_dep.tl"
       "(module legacy.pkg.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_pkg_legacy_module_entry.tl"
       "(import \"cl_pkg_legacy_module_dep.tl\")
 (define (main) : i64 (get))")
@@ -12641,15 +12298,15 @@
 
 (define (compiler-load-package-seen-legacy-path-module-flat-alias-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_pkg_seen_legacy_module_dep.tl"
       "(module seen.legacy.pkg.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_pkg_seen_legacy_module_pre.tl"
       "(import \"cl_pkg_seen_legacy_module_dep.tl\" module seen.legacy.pkg.dep :as dep)
 (define (pre) : i64 (dep.get))")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_pkg_seen_legacy_module_entry.tl"
       "(import \"cl_pkg_seen_legacy_module_pre.tl\")
 (import \"cl_pkg_seen_legacy_module_dep.tl\")
@@ -12721,14 +12378,16 @@
     [roots : svec.Vec (compiler-load-string-vec-one root)]
     (begin
       (compiler-load-test-mkdir root)
-      (io.write-file dep-file "(module cache.dep)
+      (compiler-load-write-file-text
+        dep-file
+        "(module cache.dep)
 (define dep-value : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
         "target/cl_cache_entry_a.tl"
         "(module cache.entry.a)
 (import \"stdlib/cache_dep.tl\" module cache.dep as dep)
 (define entry-a : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
         "target/cl_cache_entry_b.tl"
         "(module cache.entry.b)
 (import \"stdlib/cache_dep.tl\" module cache.dep as dep)
@@ -12774,20 +12433,20 @@
     (begin
       (compiler-load-test-mkdir root-a)
       (compiler-load-test-mkdir root-b)
-      (io.write-file
+      (compiler-load-write-file-text
         root-a-file
         "(module cache.root.a)
 (define root-value : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
         root-b-file
         "(module cache.root.b)
 (define root-value : i64 2)")
-      (io.write-file
+      (compiler-load-write-file-text
         "target/cl_cache_root_entry_a.tl"
         "(module cache.root.entry.a)
 (import \"stdlib/cache_root_dep.tl\" module cache.root.a as dep)
 (define entry-a : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
         "target/cl_cache_root_entry_b.tl"
         "(module cache.root.entry.b)
 (import \"stdlib/cache_root_dep.tl\" module cache.root.b as dep)
@@ -12818,7 +12477,7 @@
 
 (define (compiler-load-session-cache-entry-cold-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_cache_cold_entry.tl"
       "(module cache.cold.entry)
 (define entry-value : i64 1)")
@@ -12884,19 +12543,21 @@
     [entry-c : String (compiler-load-join-root-path dir "entry_c.tl")]
     (begin
       (compiler-load-test-mkdir dir)
-      (io.write-file dep "(module cache.local.dep)
+      (compiler-load-write-file-text
+        dep
+        "(module cache.local.dep)
 (define dep-value : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
         entry-a
         "(module cache.local.entry.a)
 (import \"dep.tl\" module cache.local.dep as dep)
 (define entry-a : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
         entry-b
         "(module cache.local.entry.b)
 (import \"dep.tl\" module cache.local.dep as dep)
 (define entry-b : i64 2)")
-      (io.write-file
+      (compiler-load-write-file-text
         entry-c
         "(module cache.local.entry.c)
 (import \"dep.tl\" module cache.local.dep as dep)
@@ -12956,21 +12617,21 @@
     (begin
       (compiler-load-test-mkdir root)
       (compiler-load-test-mkdir src)
-      (io.write-file
+      (compiler-load-write-file-text
         dep
         "(module cache.pkg.common)
 (define common-value : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
         entry-a
         "(module cache.pkg.entry.a)
 (import \"common.tl\" module cache.pkg.common as common)
 (define entry-a : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
         entry-b
         "(module cache.pkg.entry.b)
 (import \"common.tl\" module cache.pkg.common as common)
 (define entry-b : i64 2)")
-      (io.write-file
+      (compiler-load-write-file-text
         entry-c
         "(module cache.pkg.entry.c)
 (import \"common.tl\" module cache.pkg.common as common)
@@ -13028,16 +12689,16 @@
   (begin
     (compiler-load-test-mkdir "target/cl_dotted_src")
     (compiler-load-test-mkdir "target/cl_dotted_src/nested")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_dotted_src/root_leaf.tl"
       "(module root_leaf)
 (define leaf-val : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_dotted_src/nested/dep.tl"
       "(module nested.dep)
 (import root_leaf as leaf)
 (define dep-val : i64 leaf-val)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_dotted_src/entry.tl"
       "(module dotted.entry)
 (import nested.dep)
@@ -13056,14 +12717,14 @@
   (begin
     (compiler-load-test-mkdir "target/cl_moduleless_dotted_src")
     (compiler-load-test-mkdir "target/cl_moduleless_dotted_src/nested")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_moduleless_dotted_src/root_leaf.tl"
       "(define leaf-val : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_moduleless_dotted_src/nested/dep.tl"
       "(import root_leaf as leaf)
 (define dep-val : i64 leaf.leaf-val)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_moduleless_dotted_src/entry.tl"
       "(module moduleless.dotted.entry)
 (import nested.dep)
@@ -13102,14 +12763,16 @@
       (compiler-load-test-mkdir "target/cl_dotted_src_fallback")
       (compiler-load-test-mkdir root)
       (compiler-load-test-mkdir tests)
-      (io.write-file leaf "(module leaf)
+      (compiler-load-write-file-text
+        leaf
+        "(module leaf)
 (define leaf-val : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
         mid
         "(module mid)
 (import leaf)
 (define mid-val : i64 leaf.leaf-val)")
-      (io.write-file
+      (compiler-load-write-file-text
         entry
         "(module fallback.entry)
 (import \"../mid.tl\")
@@ -13136,14 +12799,16 @@
       (compiler-load-test-mkdir "target/cl_dotted_after_path")
       (compiler-load-test-mkdir root)
       (compiler-load-test-mkdir tests)
-      (io.write-file helper "(module helper)
+      (compiler-load-write-file-text
+        helper
+        "(module helper)
 (define answer : i64 42)")
-      (io.write-file
+      (compiler-load-write-file-text
         provider
         "(module provider)
 (import helper as helper)
 (define value : i64 helper.answer)")
-      (io.write-file
+      (compiler-load-write-file-text
         entry
         "(import \"../provider.tl\")
 (define (main) : i64 value)")
@@ -13168,14 +12833,14 @@
         "canonical.import.path_first"
         "cl_canonical_source_shared")]
     (begin
-      (io.write-file
+      (compiler-load-write-file-text
         shared
         "(defstruct SharedValue (value i64))
 (defenum SharedChoice (Chosen SharedValue) (Missing))
 (define canonical-source-marker : i64 42)
 (define (make-shared) : SharedChoice
   (SharedChoice.Chosen (SharedValue canonical-source-marker)))")
-      (io.write-file
+      (compiler-load-write-file-text
         entry
         (str_cat.str-cat
           (if path-first
@@ -13205,11 +12870,11 @@
 
 (define (compiler-load-canonical-source-explicit-mismatch-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_canonical_source_explicit.tl"
       "(module canonical.actual)
 (define value : i64 42)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_canonical_source_explicit_entry.tl"
       "(import \"cl_canonical_source_explicit.tl\" module canonical.actual as actual)
 (import cl_canonical_source_explicit as wrong)
@@ -13269,7 +12934,9 @@
     (begin
       (compiler-load-test-mkdir root)
       (compiler-load-test-mkdir src)
-      (io.write-file dep "(module dep)
+      (compiler-load-write-file-text
+        dep
+        "(module dep)
 (define dep-val : i64 1)")
       (match (compiler-load-resolve-package-import-spec
         entry
@@ -13300,11 +12967,13 @@
       (compiler-load-test-mkdir app-src)
       (compiler-load-test-mkdir math-root)
       (compiler-load-test-mkdir math-src)
-      (io.write-file
+      (compiler-load-write-file-text
         (compiler-load-join-root-path math-root "typelisp.pkg")
         "(package (name \"math\") (version \"1\") (kind staticlib) (entry \"src/add.tl\"))")
-      (io.write-file dep "(define (add [x : i64]) : i64 (+ x 1))")
-      (io.write-file
+      (compiler-load-write-file-text
+        dep
+        "(define (add [x : i64]) : i64 (+ x 1))")
+      (compiler-load-write-file-text
         entry
         "(module pkg.moduleless.entry)
 (import \"pkg:math/src/add.tl\")
@@ -13363,21 +13032,21 @@
 ;; loads through the file loader, mirroring the existing dedup/cycle self-test.
 (define (compiler-load-diamond-import-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_diamond_c.tl"
       "(module diamond.c)
 (define c-val : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_diamond_a.tl"
       "(module diamond.a)
 (import \"cl_diamond_c.tl\" module diamond.c as c)
 (define a-val : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_diamond_b.tl"
       "(module diamond.b)
 (import \"cl_diamond_c.tl\" module diamond.c as c)
 (define b-val : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_diamond_entry.tl"
       "(module diamond.entry)
 (import \"cl_diamond_a.tl\" module diamond.a as a)
@@ -13400,19 +13069,21 @@
 ;; every module recorded in the seen set.
 (define (compiler-load-transitive-import-ok?) : bool
   (begin
-    (io.write-file "target/cl_tr_c.tl" "(module tr.c)
+    (compiler-load-write-file-text
+      "target/cl_tr_c.tl"
+      "(module tr.c)
 (define c-val : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_tr_b.tl"
       "(module tr.b)
 (import \"cl_tr_c.tl\" module tr.c as c)
 (define b-val : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_tr_a.tl"
       "(module tr.a)
 (import \"cl_tr_b.tl\" module tr.b as b)
 (define a-val : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_tr_entry.tl"
       "(module tr.entry)
 (import \"cl_tr_a.tl\" module tr.a as a)
@@ -13445,8 +13116,10 @@
 
 (define (compiler-load-include-str-relative-ok?) : bool
   (begin
-    (io.write-file "target/cl_include_payload.txt" "hello from include")
-    (io.write-file
+    (compiler-load-write-file-text
+      "target/cl_include_payload.txt"
+      "hello from include")
+    (compiler-load-write-file-text
       "target/cl_include_entry.tl"
       "(include-str payload \"cl_include_payload.txt\")
 (define (main) : i64 0)")
@@ -13461,7 +13134,9 @@
 
 (define (compiler-load-include-str-stdlib-root-ok?) : bool
   (begin
-    (io.write-file "target/cl_include_root_payload.txt" "hello from root")
+    (compiler-load-write-file-text
+      "target/cl_include_root_payload.txt"
+      "hello from root")
     (match (compiler-load-source-with-paths-and-roots
       "src/include_entry.tl"
       "(include-str embedded \"stdlib/cl_include_root_payload.txt\")
@@ -13476,8 +13151,10 @@
 
 (define (compiler-load-include-str-comptime-relative-ok?) : bool
   (begin
-    (io.write-file "target/cl_include_comptime_payload.txt" "only at comptime")
-    (io.write-file
+    (compiler-load-write-file-text
+      "target/cl_include_comptime_payload.txt"
+      "only at comptime")
+    (compiler-load-write-file-text
       "target/cl_include_comptime_entry.tl"
       "(include-str-comptime payload \"cl_include_comptime_payload.txt\")
 (define (main) : i64 0)")
@@ -13492,8 +13169,10 @@
 
 (define (compiler-load-include-str-lzss-relative-ok?) : bool
   (begin
-    (io.write-file "target/cl_include_lzss_payload.txt" "compress me")
-    (io.write-file
+    (compiler-load-write-file-text
+      "target/cl_include_lzss_payload.txt"
+      "compress me")
+    (compiler-load-write-file-text
       "target/cl_include_lzss_entry.tl"
       "(include-str-lzss payload \"cl_include_lzss_payload.txt\")
 (define (main) : i64 0)")
@@ -13524,8 +13203,10 @@
       "(import \"definitely_missing.tl\")
 (define injected : i64 7)"]
     (begin
-      (io.write-file "target/cl_include_raw_payload.txt" payload)
-      (io.write-file
+      (compiler-load-write-file-text
+        "target/cl_include_raw_payload.txt"
+        payload)
+      (compiler-load-write-file-text
         "target/cl_include_raw_entry.tl"
         "(include-str payload \"cl_include_raw_payload.txt\")
 (define (main) : i64 0)")
@@ -13540,10 +13221,10 @@
 
 (define (compiler-load-include-bin-relative-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_include_bin_payload.bin"
       (compiler-load-binary-fixture))
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_include_bin_entry.tl"
       "(include-bin payload \"cl_include_bin_payload.bin\")
 (define (main) : i64 0)")
@@ -13597,11 +13278,11 @@
 ;; imported file (not the importer), preserving imported-file provenance.
 (define (compiler-load-imported-parse-error-path-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_ipe_dep.tl"
       "(module ipe.dep)
 (define broken : i64 )")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_ipe_entry.tl"
       "(module ipe.entry)
 (import \"cl_ipe_dep.tl\" module ipe.dep as dep)
@@ -13623,12 +13304,12 @@
 ;; diagnostic whose path is the imported file, not the importer.
 (define (compiler-load-imported-duplicate-module-path-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_idm_dep.tl"
       "(module idm.depa)
 (module idm.depb)
 (define v : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_idm_entry.tl"
       "(module idm.entry)
 (import \"cl_idm_dep.tl\" module idm.depa as dep)
@@ -13650,9 +13331,11 @@
 ;; a configured `--stdlib-root` (root fallback).
 (define (compiler-load-stdlib-root-fallback-ok?) : bool
   (begin
-    (io.write-file "target/cl_srf_mod.tl" "(module srf.mod)
+    (compiler-load-write-file-text
+      "target/cl_srf_mod.tl"
+      "(module srf.mod)
 (define v : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_srf_entry.tl"
       "(module srf.entry)
 (import \"stdlib/cl_srf_mod.tl\" module srf.mod as m)
@@ -13675,8 +13358,10 @@
     [roots : svec.Vec (compiler-load-string-vec-one root-dir)]
     (begin
       (fs.mkdir-status-owned root-dir)
-      (io.write-file root-path "(define prelude-root-marker : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
+        root-path
+        "(define prelude-root-marker : i64 1)")
+      (compiler-load-write-file-text
         "target/cl_prelude_root/core_macros.tl"
         "(define core-prelude-root-marker : i64 1)")
       (and
@@ -13749,9 +13434,11 @@
 ;; candidate wins, so a missing leading root is skipped.
 (define (compiler-load-stdlib-searched-root-ok?) : bool
   (begin
-    (io.write-file "target/cl_ssr_mod.tl" "(module ssr.mod)
+    (compiler-load-write-file-text
+      "target/cl_ssr_mod.tl"
+      "(module ssr.mod)
 (define v : i64 1)")
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_ssr_entry.tl"
       "(module ssr.entry)
 (import \"stdlib/cl_ssr_mod.tl\" module ssr.mod as m)
@@ -13768,7 +13455,7 @@
 ;; diagnostic naming the importer-relative candidate path.
 (define (compiler-load-stdlib-unresolved-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-load-write-file-text
       "target/cl_sur_entry.tl"
       "(module sur.entry)
 (import \"stdlib/cl_sur_missing.tl\" module sur.mod as m)
@@ -13792,11 +13479,11 @@
     (begin
       (fs.mkdir-status-owned root-dir)
       (fs.mkdir-status-owned entry-dir)
-      (io.write-file
+      (compiler-load-write-file-text
         "target/cl_sre_out.tl"
         "(module sre.out)
 (define v : i64 1)")
-      (io.write-file
+      (compiler-load-write-file-text
         "target/cl_sre_entry_dir/entry.tl"
         "(module sre.entry)
 (import \"stdlib/../cl_sre_out.tl\" module sre.out as out)
@@ -15152,7 +14839,7 @@
     [(io.ErrIoUnit _) false]))
 
 (define (compiler-load-manifest-test-write [path : String] [contents : String]) : bool
-  (match (io.try-write-file (& path) (& contents))
+  (match (compiler-load-try-write-file-text (& path) (& contents))
     [(io.OkIoUnit) true]
     [(io.ErrIoUnit _) false]))
 
@@ -15199,7 +14886,7 @@
   [expected-entry : String]) : bool
   (match (compiler-load-parse-manifest-diagnostic-infer-kind
     path
-    (io.read-file path))
+    (compiler-load-read-file-text path))
     [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
       (and
         (string.eq (struct-get manifest entry) expected-entry)
@@ -15219,7 +14906,7 @@
   [expected : String]) : bool
   (match (compiler-load-parse-manifest-diagnostic-infer-kind
     path
-    (io.read-file path))
+    (compiler-load-read-file-text path))
     [(ResultCompilerPkgManifestDiagnostic.Err diag)
       (string.eq (compiler-diagnostic-message (box-get diag)) expected)]
     [(ResultCompilerPkgManifestDiagnostic.Ok _) false]))
@@ -15660,7 +15347,7 @@
     [(CompilerLoadSomePath manifest-path)
       (match (compiler-load-parse-manifest-diagnostic
         manifest-path
-        (io.read-file manifest-path))
+        (compiler-load-read-file-text manifest-path))
         [(ResultCompilerPkgManifestDiagnostic.Err _)
           (ResultPkgResolve.Ok import-path)]
         [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
@@ -15743,7 +15430,9 @@
 
 (define (compiler-load-string-vec-roots-ok?) : bool
   (begin
-    (io.write-file "target/cl_vec_root_payload.tl" "(define v : i64 1)")
+    (compiler-load-write-file-text
+      "target/cl_vec_root_payload.tl"
+      "(define v : i64 1)")
     (let
       [roots : svec.Vec
         (compiler-load-string-vec-two "target/cl_vec_missing_root" "target")]
@@ -16186,7 +15875,7 @@
         (=
           (compiler-load-session-state-program-cache-store-count-value state-a)
           1)
-        (array-ref (struct-get state-a cache-enabled) 1)
+        (compiler-load-session-state-embedded-stdlib-source-used? state-a)
         (=
           (compiler-load-session-state-program-cache-hit-count-value state-b)
           0)
@@ -16196,7 +15885,7 @@
         (=
           (compiler-load-session-state-program-cache-store-count-value state-b)
           0)
-        (not (array-ref (struct-get state-b cache-enabled) 1)))]
+        (not (compiler-load-session-state-embedded-stdlib-source-used? state-b)))]
     (begin
       (compiler-load-session-state-use! previous-state)
       ok)))
@@ -16833,6 +16522,9 @@
 
 (define (compiler-load-self-test) : i64
   (begin
+    (unless
+      (compiler-load-embedded-provenance-observer-ok?)
+      (return (io.panic "compiler-load: embedded provenance observer mismatch")))
     (unless
       (compiler-load-session-explicit-cache-api-isolation-ok?)
       (return

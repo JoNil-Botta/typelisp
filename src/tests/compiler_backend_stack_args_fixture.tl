@@ -1,6 +1,7 @@
 ;; compiler_backend_stack_args_fixture.tl - emit the stack-passed call
 ;; argument witness program's assembly for a target so the integration suite can
 ;; assemble, link, and RUN it, proving each spilled argument arrives correctly.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import "../compiler_backend_tests.tl")
@@ -30,7 +31,7 @@
       (match (compiler-backend-stack-args-fixture-for-name target-name)
         [(ResultCompilerBackend.Ok asm)
           (begin
-            (io.write-file (io.arg 1) asm)
+            (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
             0)]
         [(ResultCompilerBackend.Err diag)
           (begin

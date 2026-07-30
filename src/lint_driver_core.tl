@@ -5,6 +5,7 @@
 ;; import it. Warn-only by default; callers can pass `--check` after the input
 ;; path to exit non-zero when findings remain. The deprecated string.concat rule
 ;; and staged migration rules are opt-in.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector)
@@ -17,6 +18,9 @@
 (import "package_source_core.tl")
 (import stdlib.string)
 (import sym_i64_env)
+
+(define (selfhost-lint-write-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present), and
@@ -1010,7 +1014,7 @@
             (io.file-exists? normalized))
             (match (parse-ast-source-diagnostic-with-cfg-and-pools
               normalized
-              (io.read-file normalized)
+              (byte_buf.to-string (io.read-file normalized))
               cfgs
               (ast-node-pool-compat-context-current))
               [(ResultAstProgramDiagnostic.Ok program)
@@ -2970,7 +2974,7 @@
             (selfhost-lint-dead-decls-empty)
             (lint_svec.new))
           path
-          (io.read-file path)
+          (byte_buf.to-string (io.read-file path))
           visible-root
           reportable))]
     [_restore-home : unit
@@ -3427,7 +3431,9 @@
     [path : String
       (compiler-load-join-root-path manifest-dir "src/compile_manifest.txt")]
     (if (io.file-exists? path)
-      (selfhost-lint-dead-manifest-roots (io.read-file path) manifest-dir)
+      (selfhost-lint-dead-manifest-roots
+        (byte_buf.to-string (io.read-file path))
+        manifest-dir)
       (lint_svec.new))))
 
 (define (selfhost-lint-package-dead-repository-test-roots
@@ -3629,7 +3635,7 @@
           (arena.set! scratch))
         (match (parse-ast-source-diagnostic-with-cfg
           path
-          (io.read-file path)
+          (byte_buf.to-string (io.read-file path))
           (selfhost-lint-package-dead-cfgs))
           [(ResultAstProgramDiagnostic.Err diag)
             (ResultSelfhostLintDeadImportList.Err diag)]
@@ -4098,7 +4104,7 @@
   [prefer-dotted-field : bool]
   [name-case : bool]) : i64
   (let
-    [source : String (io.read-file input-path)]
+    [source : String (byte_buf.to-string (io.read-file input-path))]
     ;; Parse directly INTO the installed compat-context pools rather than the
     ;; plain `parse-ast-source-diagnostic`, whose capture-active/install! dance
     ;; is a no-op under an explicit compat context: when the parse grows
@@ -4156,7 +4162,7 @@
   [name-case : bool]
   [dead-decls : SelfhostLintDeadDecls]) : i64
   (let
-    [source : String (io.read-file input-path)]
+    [source : String (byte_buf.to-string (io.read-file input-path))]
     ;; Parse directly INTO the installed compat-context pools rather than the
     ;; plain `parse-ast-source-diagnostic`, whose capture-active/install! dance
     ;; is a no-op under an explicit compat context: when the parse grows
@@ -5430,29 +5436,29 @@ end
       (compiler-load-test-mkdir root)
       (compiler-load-test-mkdir src-dir)
       (compiler-load-test-mkdir test-dir)
-      (io.write-file
+      (selfhost-lint-write-text
         manifest-path
         "(package
   (name \"lint-dead-root-import-closure\")
   (version \"1\")
   (kind \"bin\"))")
-      (io.write-file
+      (selfhost-lint-write-text
         main-path
         "(import \"core.tl\")
 (define (main) : i64
   (core-entry))")
-      (io.write-file
+      (selfhost-lint-write-text
         core-path
         "(define (core-entry) : i64 7)
 (define (core-test-helper) : i64 42)
 (define (core-second-test-helper) : i64 43)
 (define (core-unused) : i64 13)")
-      (io.write-file
+      (selfhost-lint-write-text
         test-path
         "(import core)
 (define (main) : i64
   (core-test-helper))")
-      (io.write-file
+      (selfhost-lint-write-text
         second-test-path
         "(import core)
 (define (main) : i64
@@ -5476,7 +5482,7 @@ end
                 [core-count : i64
                   (selfhost-lint-package-dead-count-for-source
                     (compiler-load-normalize-path core-path)
-                    (io.read-file core-path)
+                    (byte_buf.to-string (io.read-file core-path))
                     dead-decls)]
                 (and
                   (lint_svec.contains?

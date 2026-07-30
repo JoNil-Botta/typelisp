@@ -352,21 +352,6 @@
             (set! (struct-get aliases len) (+ index 1))))))
     unit))
 
-(define (compiler-parse-decl-origin-alias-vec-push!
-  [aliases : (&mut aliases CompilerParseDeclOriginAliasVec)]
-  [target-start : i64]
-  [count : i64]
-  [source : AstDeclList]
-  [repeat : bool]) : unit
-  (compiler-parse-decl-origin-alias-vec-push-key-slot!
-    aliases
-    target-start
-    count
-    (compiler-parse-decl-list-storage-key (& source))
-    (struct-get source offset)
-    (ast-decl-list-get (& source) 0 (ast-decl-fallback))
-    repeat))
-
 (define (compiler-parse-decl-origin-alias-vec-register!
   [decls : (& decls AstDeclList)]
   [aliases : (& aliases CompilerParseDeclOriginAliasVec)]) : unit
@@ -546,10 +531,6 @@
   (Ok AstFieldDefList)
   (Err String))
 
-(defenum ResultAstFieldDefListBuild
-  (Ok)
-  (Err String))
-
 (defenum ResultAstFieldCleanup
   (Ok AstFieldCleanup)
   (Err String))
@@ -651,10 +632,6 @@
 
 (defenum ResultAstVariantDefList
   (Ok AstVariantDefList)
-  (Err String))
-
-(defenum ResultAstVariantDefListBuild
-  (Ok)
   (Err String))
 
 (defenum ResultAstDispatchIsa
@@ -1020,47 +997,14 @@
               (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))))]
     [else (ci.intern-str name-id)]))
 
-(define (compiler-cfg-key-id [name-id : i64]) : i64
-  (cfg_core.compiler-cfg-key-id name-id))
-
-(define (compiler-cfg-name-id [key-id : i64]) : i64
-  (cfg_core.compiler-cfg-name-id key-id))
-
-(define (compiler-cfg-key-name [key-id : i64]) : String
-  (cfg_core.compiler-cfg-key-name key-id))
-
-(define (compiler-cfg-name [key-id : i64]) : String
-  (cfg_core.compiler-cfg-name key-id))
-
 (define (compiler-cfg-empty) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-empty))
-
-(define (compiler-cfg-enable-id [cfgs : sym_i64_env.SymI64Env] [name-id : i64]) : sym_i64_env.SymI64Env
-  (cfg_core.compiler-cfg-enable-id cfgs name-id))
-
-(define (compiler-cfg-bind-id
-  [cfgs : sym_i64_env.SymI64Env]
-  [name-id : i64]
-  [value : i64]) : sym_i64_env.SymI64Env
-  (cfg_core.compiler-cfg-bind-id cfgs name-id value))
 
 (define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-enable cfgs name))
 
 (define (compiler-cfg-union [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-union cfgs name))
-
-(define (compiler-cfg-bind
-  [cfgs : sym_i64_env.SymI64Env]
-  [name : String]
-  [value : i64]) : sym_i64_env.SymI64Env
-  (cfg_core.compiler-cfg-bind cfgs name value))
-
-(define (compiler-cfg-enable-with-intern-state
-  [cfgs : sym_i64_env.SymI64Env]
-  [name : String]
-  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
-  (cfg_core.compiler-cfg-enable-with-intern-state cfgs name intern-state))
 
 (define (compiler-cfg-merge
   [base : sym_i64_env.SymI64Env]
@@ -1498,12 +1442,6 @@
 (define (compiler-parse-tag-expr-array-take) : i64
   303)
 
-(define (compiler-parse-tag-expr-string-ref) : i64
-  242)
-
-(define (compiler-parse-tag-expr-char-at) : i64
-  243)
-
 (define (compiler-parse-tag-expr-match) : i64
   244)
 
@@ -1524,9 +1462,6 @@
 
 ;; Legacy parser-only adapters operate on the default state. Production load
 ;; paths reset and inspect their CompilerDriverState-owned parser state.
-(define (compiler-parse-type-literal-tracking-reset!) : unit
-  (compiler-parse-state-type-literal-reset! compiler-parse-default-state))
-
 (define (compiler-parse-type-literal-tracking-mark!
   [dispatch : sym_i64_env.SymI64Env]) : unit
   (let
@@ -1538,9 +1473,6 @@
         control
         compiler-parse-state-control-has-type-literal
         1))))
-
-(define (compiler-parse-current-load-has-type-literal?) : bool
-  (compiler-parse-state-has-type-literal? compiler-parse-default-state))
 
 (define (compiler-parse-tag-expr-init) : i64
   288)
@@ -1906,9 +1838,6 @@
             compiler-parse-state-control-marker-id)))
         control
         0))))
-
-(define (compiler-parse-dispatch-indexed? [dispatch : sym_i64_env.SymI64Env]) : bool
-  (not (= (compiler-parse-dispatch-indexed-control dispatch) 0)))
 
 (define (compiler-parse-dispatch-index-mark [dispatch : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
@@ -2786,9 +2715,6 @@
     (= tag (compiler-parse-tag-bin-shl))
     (= tag (compiler-parse-tag-bin-shr))))
 
-(define (ast-binop? [dispatch : sym_i64_env.SymI64Env] [name : i64]) : bool
-  (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
-
 (define (ast-left-fold-binop-tag? [tag : i64]) : bool
   (or
     (= tag (compiler-parse-tag-bin-add))
@@ -2816,9 +2742,6 @@
     [(= tag (compiler-parse-tag-bin-shl)) (AstBinOp.Shl)]
     [else (AstBinOp.Shr)]))
 
-(define (ast-binop-from-name [dispatch : sym_i64_env.SymI64Env] [name : i64]) : AstBinOp
-  (ast-binop-from-tag (compiler-parse-dispatch-tag dispatch name)))
-
 (define (ast-unop-tag? [tag : i64]) : bool
   (if (= tag (compiler-parse-tag-un-not))
     true
@@ -2826,18 +2749,12 @@
       true
       (= tag (compiler-parse-tag-un-bit-not)))))
 
-(define (ast-unop? [dispatch : sym_i64_env.SymI64Env] [name : i64]) : bool
-  (ast-unop-tag? (compiler-parse-dispatch-tag dispatch name)))
-
 (define (ast-unop-from-tag [tag : i64]) : AstUnOp
   (if (= tag (compiler-parse-tag-un-not))
     (AstUnOp.Not)
     (if (= tag (compiler-parse-tag-un-neg))
       (AstUnOp.Neg)
       (AstUnOp.BitNot))))
-
-(define (ast-unop-from-name [dispatch : sym_i64_env.SymI64Env] [name : i64]) : AstUnOp
-  (ast-unop-from-tag (compiler-parse-dispatch-tag dispatch name)))
 
 (define (parse-ast-type-list
   [dispatch : sym_i64_env.SymI64Env]
@@ -3920,46 +3837,6 @@
         [_ (ResultAstFieldDef.Err "parse: malformed field definition")])]
     [_ (ResultAstFieldDef.Err "parse: malformed field definition")]))
 
-(define (parse-ast-field-def-list-into
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [s : reader.Sexpr]
-  [allow-cleanup : bool]
-  [out : (&mut out AstFieldDefList)]) : ResultAstFieldDefListBuild
-  (match (reader.sexpr-view s)
-    [(reader.SexprView.Nil) (ResultAstFieldDefListBuild.Ok)]
-    [(reader.SexprView.Cons head tail)
-      (match (parse-ast-field-def dispatch pools head allow-cleanup)
-        [(ResultAstFieldDef.Ok parsed-head)
-          (begin
-            (ast-field-def-list-push out parsed-head)
-            (parse-ast-field-def-list-into
-              dispatch
-              pools
-              tail
-              allow-cleanup
-              out))]
-        [(ResultAstFieldDef.Err message)
-          (ResultAstFieldDefListBuild.Err message)])]
-    [_ (ResultAstFieldDefListBuild.Err "parse: malformed field list")]))
-
-(define (parse-ast-field-def-list
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [s : reader.Sexpr]
-  [allow-cleanup : bool]) : ResultAstFieldDefList
-  (let
-    [out : AstFieldDefList (ast-field-def-list-new)]
-    (match (parse-ast-field-def-list-into
-      dispatch
-      pools
-      s
-      allow-cleanup
-      (&mut out))
-      [(ResultAstFieldDefListBuild.Ok) (ResultAstFieldDefList.Ok out)]
-      [(ResultAstFieldDefListBuild.Err message)
-        (ResultAstFieldDefList.Err message)])))
-
 (define (compiler-parse-metadata-key? [name-id : i64]) : bool
   ;; Unknown metadata is a genuinely prefix-bearing diagnostic boundary. All
   ;; recognized fixed keys are classified by ID before reaching this helper.
@@ -4221,21 +4098,6 @@
             seen-cleanup)])]
     [_ (ResultAstStructDefParts.Err "parse: malformed field list")]))
 
-(define (compiler-parse-type-list-has-metadata? [s : reader.Sexpr]) : bool
-  (match (reader.sexpr-view s)
-    [(reader.SexprView.Nil) false]
-    [(reader.SexprView.Cons head rest)
-      (match (reader.sexpr-view head)
-        [(reader.SexprView.Cons key-node _)
-          (match (reader.sexpr-view key-node)
-            [(reader.SexprView.Sym key)
-              (if (compiler-parse-metadata-key? key)
-                true
-                (compiler-parse-type-list-has-metadata? rest))]
-            [_ (compiler-parse-type-list-has-metadata? rest)])]
-        [_ (compiler-parse-type-list-has-metadata? rest)])]
-    [_ false]))
-
 (define (compiler-parse-metadata-sexpr? [s : reader.Sexpr]) : bool
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons key-node _)
@@ -4356,46 +4218,6 @@
                 (ResultAstVariantDef.Err message)]))]
         [_ (ResultAstVariantDef.Err "parse: malformed variant definition")])]
     [_ (ResultAstVariantDef.Err "parse: malformed variant definition")]))
-
-(define (parse-ast-variant-def-list-into
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [s : reader.Sexpr]
-  [allow-cleanup : bool]
-  [out : (&mut out AstVariantDefList)]) : ResultAstVariantDefListBuild
-  (match (reader.sexpr-view s)
-    [(reader.SexprView.Nil) (ResultAstVariantDefListBuild.Ok)]
-    [(reader.SexprView.Cons head tail)
-      (match (parse-ast-variant-def dispatch pools head allow-cleanup)
-        [(ResultAstVariantDef.Ok parsed-head)
-          (begin
-            (ast-variant-def-list-push out parsed-head)
-            (parse-ast-variant-def-list-into
-              dispatch
-              pools
-              tail
-              allow-cleanup
-              out))]
-        [(ResultAstVariantDef.Err message)
-          (ResultAstVariantDefListBuild.Err message)])]
-    [_ (ResultAstVariantDefListBuild.Err "parse: malformed variant list")]))
-
-(define (parse-ast-variant-def-list
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [s : reader.Sexpr]
-  [allow-cleanup : bool]) : ResultAstVariantDefList
-  (let
-    [out : AstVariantDefList (ast-variant-def-list-new)]
-    (match (parse-ast-variant-def-list-into
-      dispatch
-      pools
-      s
-      allow-cleanup
-      (&mut out))
-      [(ResultAstVariantDefListBuild.Ok) (ResultAstVariantDefList.Ok out)]
-      [(ResultAstVariantDefListBuild.Err message)
-        (ResultAstVariantDefList.Err message)])))
 
 (define (parse-ast-dispatch-isa [name : i64]) : ResultAstDispatchIsa
   (cond
@@ -9573,23 +9395,12 @@
 (define (parse-ast-decl-vec-len [v : (& v ParseAstDeclVec)]) : i64
   (struct-get v len))
 
-(define (parse-ast-decl-vec-capacity [v : (& v ParseAstDeclVec)]) : i64
-  (array-length (struct-get v slots)))
-
 (define (parse-ast-decl-vec-get
   [v : (& v ParseAstDeclVec)]
   [index : i64]
   [fallback : AstDecl]) : AstDecl
   (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
     (array-ref (struct-get v slots) index)
-    fallback))
-
-(define (parse-ast-decl-vec-span-get
-  [v : (& v ParseAstDeclVec)]
-  [index : i64]
-  [fallback : AstSourceSpan]) : AstSourceSpan
-  (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
-    (array-ref (struct-get v spans) index)
     fallback))
 
 (define (parse-ast-decl-vec-copy-range
@@ -10086,11 +9897,6 @@
       [(ResultParseAstDeclVecDiagnostic.Err diag)
         (ResultAstDeclListDiagnostic.Err diag)])))
 
-(define (parse-ast-program-diagnostic
-  [path : String]
-  [toks : (__tl_dyn-array token.SpannedToken)]) : ResultAstProgramDiagnostic
-  (parse-ast-program-diagnostic-with-cfg path toks (compiler-cfg-empty)))
-
 (define (parse-ast-program-diagnostic-with-cfg-and-pools
   [path : String]
   [toks : (__tl_dyn-array token.SpannedToken)]
@@ -10120,18 +9926,6 @@
           (ResultAstProgramDiagnostic.Ok (ast-program decls))]
         [(ResultAstDeclListDiagnostic.Err diag)
           (ResultAstProgramDiagnostic.Err diag)]))))
-
-(define (parse-ast-program-diagnostic-with-cfg
-  [path : String]
-  [toks : (__tl_dyn-array token.SpannedToken)]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
-  (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [result : ResultAstProgramDiagnostic
-      (parse-ast-program-diagnostic-with-cfg-and-pools path toks cfgs pools)]
-    (begin
-      (ast-node-pool-context-install! pools)
-      result)))
 
 (define (parse-ast-source-diagnostic [path : String] [src : String]) : ResultAstProgramDiagnostic
   (parse-ast-source-diagnostic-with-cfg path src (compiler-cfg-empty)))
@@ -10909,14 +10703,6 @@
     [(ResultAstProgram.Err message) (string.eq message want)]
     [(ResultAstProgram.Ok _) false]))
 
-(define (compiler-parse-error-ok-with-cfg?
-  [src : String]
-  [cfgs : sym_i64_env.SymI64Env]
-  [want : String]) : bool
-  (match (parse-ast-source-with-cfg src cfgs)
-    [(ResultAstProgram.Err message) (string.eq message want)]
-    [(ResultAstProgram.Ok _) false]))
-
 (define (compiler-parse-diagnostic-code-ok?) : bool
   (match (parse-ast-source-diagnostic
     "parse-code.tl"
@@ -11095,13 +10881,6 @@
   "(extern (snprintf [buf : (MutPtr u8)] [len : i64] [fmt : (Ptr u8)] [arg : ...f64]) : i32 (:symbol \"snprintf\"))
 (extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol \"printf\"))
 (extern (local-add [a : i64] [b : i64]) : i64 (:symbol \"foreign_add_exact\"))")
-
-(define (compiler-parse-define-export-symbol-source) : String
-  "(define (_write [fd : i32] [buf : (Ptr u8)] [n : i32]) (:export-symbol \"_write\") : i32
-  0)")
-
-(define (compiler-parse-param-list-count [params : AstParamList]) : i64
-  (ast-param-list-len (& params)))
 
 (define (compiler-parse-type-list-count [types : AstTypeList]) : i64
   (ast-type-list-len (& types)))
@@ -11329,33 +11108,6 @@
                     [_ false]))]
               [_ false]))]
         [_ false])]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-define-export-symbol-ok?) : bool
-  (match (parse-ast-source (compiler-parse-define-export-symbol-source))
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons
-              (AstDecl.DefFn ast-decl-meta-runtime name params ret _ metadata)
-              rest)
-            (let
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (and
-                    (= name (reader.stable-symbol-id "_write"))
-                    (= (compiler-parse-param-list-count params) 3)
-                    (match ret
-                      [(AstType.I32) true]
-                      [_ false])
-                    (match (ast-fn-metadata-export metadata)
-                      [(AstFnExport.Export symbol)
-                        (= symbol (reader.stable-symbol-id "_write"))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-raw-pointer-ops-ok?) : bool
@@ -11602,26 +11354,6 @@
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-unit-expr? [expr : AstExpr]) : bool
-  (match (ast-expr-unspan expr)
-    [(AstExpr.Literal AstLiteral.Unit) true]
-    [_ false]))
-
-(define (compiler-parse-return-then-unit-begin? [expr : AstExpr]) : bool
-  (match (ast-expr-unspan expr)
-    [(AstExpr.Begin exprs)
-      (if (= (struct-get (& exprs) len) 2)
-        (let
-          [first : AstExpr (ast-node-get (ast-expr-list-get (& exprs) 0 0))]
-          [last : AstExpr (ast-node-get (ast-expr-list-get (& exprs) 1 0))]
-          (and
-            (match (ast-expr-unspan first)
-              [(AstExpr.Return _) true]
-              [_ false])
-            (compiler-parse-unit-expr? last)))
-        false)]
-    [_ false]))
 
 (define (compiler-parse-call-head-name? [expr : AstExpr] [name : String]) : bool
   (match (ast-expr-unspan expr)
@@ -12084,24 +11816,6 @@
     (compiler-parse-error-ok?
       "(unsafe (extern (a) : i64) (extern (b) : i64))"
       "parse: unsafe declaration expects exactly one declaration")))
-
-(define (compiler-parse-define-export-metadata-error-tests-ok?) : bool
-  (and
-    (compiler-parse-error-ok?
-      "(define (f) (:export-symbol \"\") : i64 0)"
-      "parse: define :export-symbol must not be empty")
-    (compiler-parse-error-ok?
-      "(define (f) (:export-symbol bad) : i64 0)"
-      "parse: malformed define :export-symbol metadata")
-    (compiler-parse-error-ok?
-      "(define (f) (:export-symbol \"a\") (:export-symbol \"b\") : i64 0)"
-      "parse: duplicate define :export-symbol metadata")
-    (compiler-parse-error-ok?
-      "(define (f) (:link-lib \"m\") : i64 0)"
-      "parse: unknown define metadata :link-lib")
-    (compiler-parse-error-ok?
-      "(define (f [comptime n : i64]) (:export-symbol \"f\") : i64 n)"
-      "parse: define :export-symbol cannot be used on functions with comptime parameters")))
 
 (define (compiler-parse-flat-let-call-body-ok?) : bool
   (match (parse-ast-source
@@ -12677,129 +12391,6 @@
       "(define (main) : i64 (with-arena r))"
       "parse: with-arena 'r' requires a non-empty body")))
 
-(define (compiler-parse-with-escape-shape-ok?) : bool
-  (match (parse-ast-source
-    "(define (main) : String (with-escape (arena-make) (string.int->string 42)))")
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons
-              (AstDecl.DefFn decl-meta _ _ _ body-box _)
-              rest)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (match (ast-expr-unspan body)
-                    [(AstExpr.WithEscape scratch-box body-exprs)
-                      (let
-                        [scratch : AstExpr (ast-node-get scratch-box)]
-                        (match (ast-expr-unspan scratch)
-                          [(AstExpr.Call callee-box call-args)
-                            (let
-                              [callee : AstExpr (ast-node-get callee-box)]
-                              (match (ast-expr-unspan callee)
-                                [(AstExpr.Var name)
-                                  (and
-                                    (= (struct-get (& call-args) len) 0)
-                                    (string.eq
-                                      (ci.intern-str name)
-                                      "arena-make")
-                                    (= (struct-get (& body-exprs) len) 1))]
-                                [_ false]))]
-                          [_ false]))]
-                    [_ false])]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-with-escape-tests-ok?) : bool
-  (and
-    (compiler-parse-with-escape-shape-ok?)
-    (compiler-parse-ok?
-      "(define (main) : i64 (let [scratch : Arena (arena-make)] (with-escape scratch 1 2 3)))")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (with-escape))"
-      "parse: with-escape requires a scratch arena before its body")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (with-escape (arena-make)))"
-      "parse: with-escape requires a non-empty body")))
-
-(define (compiler-parse-with-scratch-shape-ok?) : bool
-  (match (parse-ast-source
-    "(define (main) : String (with-scratch (string.int->string 41) (string.int->string 42)))")
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons
-              (AstDecl.DefFn decl-meta _ _ _ body-box _)
-              rest)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (match (ast-expr-unspan body)
-                    [(AstExpr.WithScratch body-exprs)
-                      (= (struct-get (& body-exprs) len) 2)]
-                    [_ false])]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-with-scratch-tests-ok?) : bool
-  (and
-    (compiler-parse-with-scratch-shape-ok?)
-    (compiler-parse-ok? "(define (main) : i64 (with-scratch 1 2 3))")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (with-scratch))"
-      "parse: with-scratch requires a non-empty body")))
-
-(define (compiler-parse-in-arena-shape-ok?) : bool
-  (match (parse-ast-source
-    "(define (main [arena : Arena]) : i64 (in-arena arena 1 2))")
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons
-              (AstDecl.DefFn decl-meta _ _ _ body-box _)
-              rest)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (match (ast-expr-unspan body)
-                    [(AstExpr.InArena arena-box body-exprs)
-                      (let
-                        [arena : AstExpr (ast-node-get arena-box)]
-                        (match (ast-expr-unspan arena)
-                          [(AstExpr.Var name)
-                            (and
-                              (string.eq (ci.intern-str name) "arena")
-                              (= (struct-get (& body-exprs) len) 2))]
-                          [_ false]))]
-                    [_ false])]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-in-arena-tests-ok?) : bool
-  (and
-    (compiler-parse-in-arena-shape-ok?)
-    (compiler-parse-ok?
-      "(define (main) : i64 (let [arena : Arena (arena-current)] (in-arena arena 1 2 3)))")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (in-arena))"
-      "parse: in-arena requires an arena before its body")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (in-arena 0))"
-      "parse: in-arena requires a non-empty body")))
-
 (define (compiler-parse-resource-with-source) : String
   "(define (main) : i64
   (with ([h (open-handle) close-handle]
@@ -13317,325 +12908,6 @@
     (compiler-parse-error-ok?
       "(defmacro (bad [T : type (:kind \"i64\")]) : Module unit)"
       "parse: macro type operand T constraint :kind expects unquoted kind names")))
-
-(define (compiler-parse-dispatch-state-interleaving-in-arena-ok?) : bool
-  (let
-    [owner-a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [owner-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [name-a : i64 (ci.intern-compat-state-intern owner-a "only-a")]
-    [name-b : i64 (ci.intern-compat-state-intern owner-b "only-b")]
-    [marker-a : i64 (ci.intern-compat-state-intern owner-a "defdispatch")]
-    [marker-b : i64 (ci.intern-compat-state-intern owner-b "defdispatch")]
-    [state-a : CompilerParseState
-      (compiler-parse-state-new-with-intern-state owner-a)]
-    [state-b : CompilerParseState
-      (compiler-parse-state-new-with-intern-state owner-b)]
-    [control-a : i64 (compiler-parse-state-control-addr state-a)]
-    [control-b : i64 (compiler-parse-state-control-addr state-b)]
-    [env-a : sym_i64_env.SymI64Env
-      (compiler-parse-state-cfgs
-        state-a
-        (sym_i64_env.sym-i64-bind-id
-          (sym_i64_env.sym-i64-bind-id
-            (sym_i64_env.sym-i64-empty)
-            name-a
-            (compiler-parse-tag-bin-add))
-          marker-a
-          (compiler-parse-tag-decl-defdispatch)))]
-    [env-b : sym_i64_env.SymI64Env
-      (compiler-parse-state-cfgs
-        state-b
-        (sym_i64_env.sym-i64-bind-id
-          (sym_i64_env.sym-i64-bind-id
-            (sym_i64_env.sym-i64-empty)
-            name-b
-            (compiler-parse-tag-bin-sub))
-          marker-b
-          (compiler-parse-tag-decl-defdispatch)))]
-    (begin
-      (compiler-parse-dispatch-index-populate! control-a env-a)
-      (compiler-parse-dispatch-index-populate! control-b env-b)
-      (let
-        [indexed-a : sym_i64_env.SymI64Env
-          (compiler-parse-dispatch-index-mark env-a)]
-        [indexed-b : sym_i64_env.SymI64Env
-          (compiler-parse-dispatch-index-mark env-b)]
-        (and
-          (= name-a name-b)
-          (string.eq (ci.intern-compat-state-str owner-a name-a) "only-a")
-          (string.eq (ci.intern-compat-state-str owner-b name-b) "only-b")
-          (compiler-parse-dispatch-indexed? indexed-a)
-          (compiler-parse-dispatch-indexed? indexed-b)
-          (=
-            (compiler-parse-dispatch-tag-id indexed-a name-a)
-            (compiler-parse-tag-bin-add))
-          (=
-            (compiler-parse-dispatch-tag-id indexed-b name-b)
-            (compiler-parse-tag-bin-sub))
-          (=
-            (compiler-parse-dispatch-tag-id indexed-a name-a)
-            (compiler-parse-tag-bin-add)))))))
-
-(define (compiler-parse-dispatch-state-interleaving-ok?) : bool
-  (let
-    [previous-arena : i64 (arena.tl_arena_current)]
-    [scratch-arena : i64 (arena.tl_arena_make)]
-    [ok : bool
-      (begin
-        (unsafe
-          (arena.tl_arena_set scratch-arena))
-        (compiler-parse-dispatch-state-interleaving-in-arena-ok?))]
-    (begin
-      (unsafe
-        (arena.tl_arena_set previous-arena))
-      (unsafe
-        (arena.tl_arena_destroy scratch-arena))
-      ok)))
-
-(define (compiler-parse-diagnostic-invocations-interleaving-ok?) : bool
-  (let
-    [base : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
-    [frame-a : (__tl_dyn-array i64) (array.make-array i64 5)]
-    [frame-b : (__tl_dyn-array i64) (array.make-array i64 5)]
-    [dispatch-a : sym_i64_env.SymI64Env
-      (sym_i64_env.sym-i64-bind-id
-        base
-        compiler-parse-invocation-marker-id
-        (compiler-parse-array-data-addr-i64 frame-a))]
-    [dispatch-b : sym_i64_env.SymI64Env
-      (sym_i64_env.sym-i64-bind-id
-        base
-        compiler-parse-invocation-marker-id
-        (compiler-parse-array-data-addr-i64 frame-b))]
-    [fallback : token.SourceSpan (token.SourceSpan 9 9 9 9)]
-    (begin
-      (parse-ast-error-span-clear! dispatch-a)
-      (parse-ast-error-span-clear! dispatch-b)
-      (parse-ast-error-span-note! dispatch-a (token.SourceSpan 1 2 3 4))
-      (parse-ast-error-span-note! dispatch-b (token.SourceSpan 5 6 7 8))
-      (parse-ast-error-span-note! dispatch-a (token.SourceSpan 10 11 12 13))
-      (let
-        [span-a : token.SourceSpan
-          (parse-ast-error-span-current dispatch-a fallback)]
-        [span-b : token.SourceSpan
-          (parse-ast-error-span-current dispatch-b fallback)]
-        (and
-          (= (token.span-start-line span-a) 1)
-          (= (token.span-start-col span-a) 2)
-          (= (token.span-end-line span-a) 3)
-          (= (token.span-end-col span-a) 4)
-          (= (token.span-start-line span-b) 5)
-          (= (token.span-start-col span-b) 6)
-          (= (token.span-end-line span-b) 7)
-          (= (token.span-end-col span-b) 8))))))
-
-(define (compiler-parse-type-literal-state-interleaving-ok?) : bool
-  (let
-    [state-a : CompilerParseState (compiler-parse-state-new)]
-    [state-b : CompilerParseState (compiler-parse-state-new)]
-    [cfgs-a : sym_i64_env.SymI64Env
-      (compiler-parse-state-cfgs state-a (compiler-cfg-empty))]
-    [cfgs-b : sym_i64_env.SymI64Env
-      (compiler-parse-state-cfgs state-b (compiler-cfg-empty))]
-    (begin
-      (compiler-parse-state-type-literal-reset! state-a)
-      (compiler-parse-state-type-literal-reset! state-b)
-      (match (parse-ast-source-with-cfg
-        "(define value : i64 (begin (type i64) 1))"
-        cfgs-a)
-        [(ResultAstProgram.Err _) false]
-        [(ResultAstProgram.Ok _)
-          (match (parse-ast-source-with-cfg "(define value : i64 1)" cfgs-b)
-            [(ResultAstProgram.Err _) false]
-            [(ResultAstProgram.Ok _)
-              (and
-                (compiler-parse-state-has-type-literal? state-a)
-                (not (compiler-parse-state-has-type-literal? state-b)))])]))))
-
-(define (compiler-parse-dispatch-index-env-matches?
-  [dispatch : sym_i64_env.SymI64Env]) : bool
-  (let
-    [control : i64 (compiler-parse-dispatch-indexed-control dispatch)]
-    [ok : bool (not (= control 0))]
-    [cursor : sym_i64_env.SymI64Env dispatch]
-    [done : bool false]
-    (begin
-      (while (and ok (not done))
-        (match (sym_i64_env.sym-i64-view cursor)
-          [(sym_i64_env.SymI64ViewNil) (set! done true)]
-          [(sym_i64_env.SymI64ViewBind name-id tag rest)
-            (if (or
-              (< name-id 0)
-              (= (compiler-parse-dispatch-index-lookup-id control name-id) tag))
-              (set! cursor rest)
-              (set! ok false))]))
-      (and ok done))))
-
-(define (compiler-parse-dispatch-index-ok?) : bool
-  (let
-    [full : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
-    [partial : sym_i64_env.SymI64Env
-      (compiler-parse-dispatch-binops (sym_i64_env.sym-i64-empty))]
-    [cfgs : sym_i64_env.SymI64Env
-      (compiler-cfg-enable (compiler-cfg-empty) "dispatch-index-test")]
-    [configured : sym_i64_env.SymI64Env
-      (parse-ast-program-dispatch-with-cfg cfgs)]
-    (and
-      (compiler-parse-dispatch-index-env-matches? full)
-      (=
-        (compiler-parse-dispatch-tag full (reader.stable-symbol-id "if"))
-        (compiler-parse-tag-expr-if))
-      (=
-        (compiler-parse-dispatch-tag
-          full
-          (reader.stable-symbol-id "not-parser-syntax"))
-        (compiler-parse-tag-unknown))
-      (not (compiler-parse-dispatch-indexed? partial))
-      (=
-        (compiler-parse-dispatch-tag partial (reader.stable-symbol-id "+"))
-        (compiler-parse-tag-bin-add))
-      (=
-        (compiler-parse-dispatch-tag partial (reader.stable-symbol-id "if"))
-        (compiler-parse-tag-unknown))
-      (compiler-parse-dispatch-indexed? configured)
-      (compiler-cfg-enabled?
-        configured
-        (reader.stable-symbol-id "dispatch-index-test")))))
-
-(define (compiler-parse-shape-tests-front-ok? [program : AstProgram]) : bool
-  (and
-    (= (compiler-parse-smoke-score program) 36)
-    (compiler-parse-nested-expr-span-ok?)
-    (compiler-parse-error-span-ok?)
-    (compiler-parse-float-literal-ok?)
-    (compiler-parse-region-ok?)
-    (compiler-parse-arena-ok?)))
-
-(define (compiler-parse-shape-tests-middle-ok?) : bool
-  (and
-    (compiler-parse-dispatch-index-ok?)
-    (compiler-parse-dispatch-state-interleaving-ok?)
-    (compiler-parse-diagnostic-invocations-interleaving-ok?)
-    (compiler-parse-type-literal-state-interleaving-ok?)
-    (compiler-parse-unsafe-decl-ok?)
-    (compiler-parse-module-decl-ok?)
-    (compiler-parse-import-metadata-ok?)
-    (compiler-parse-dotted-import-metadata-ok?)
-    (compiler-parse-module-macro-surface-ok?)
-    (compiler-parse-defdispatch-tests-ok?)
-    (compiler-parse-flat-let-call-body-ok?)
-    (compiler-parse-implicit-body-tail-ok?)
-    (compiler-parse-inline-test-ok?)
-    (compiler-parse-try-ok?)))
-
-(define (compiler-parse-error-suite-front-ok?) : bool
-  (and
-    (compiler-parse-error-tests-ok?)
-    (compiler-parse-declaration-tests-ok?)
-    (compiler-parse-let-tests-ok?)
-    (compiler-parse-spmd-tests-ok?)
-    (compiler-parse-pattern-tests-ok?)
-    (compiler-parse-pattern-string-char-tests-ok?)))
-
-(define (compiler-parse-error-suite-middle-ok?) : bool
-  (and
-    (compiler-parse-enum-struct-tests-ok?)
-    (compiler-parse-operator-tests-ok?)
-    (compiler-parse-type-literal-tests-ok?)
-    (compiler-parse-region-tests-ok?)
-    (compiler-parse-repl-tests-ok?)
-    (compiler-parse-comptime-param-tests-ok?)))
-
-(define (compiler-parse-error-suite-back-ok?) : bool
-  (and
-    (compiler-parse-defmacro-tests-ok?)
-    (compiler-parse-resource-with-tests-ok?)
-    (compiler-parse-with-escape-tests-ok?)
-    (compiler-parse-with-scratch-tests-ok?)
-    (compiler-parse-in-arena-tests-ok?)
-    (compiler-parse-quote-syntax-tests-ok?)
-    (compiler-parse-define-export-metadata-error-tests-ok?)
-    (compiler-parse-dotted-import-errors-ok?)))
-
-(define (compiler-parse-smoke-shapes [program : AstProgram]) : unit
-  (begin
-    (if (compiler-parse-shape-tests-front-ok? program)
-      unit
-      (io.panic "parse: compiler AST front shape tests failed"))
-    (if (compiler-parse-shape-tests-middle-ok?)
-      unit
-      (io.panic "parse: compiler AST middle shape tests failed"))
-    (if (compiler-parse-repr-c-ok?)
-      unit
-      (io.panic "parse: repr c shape test failed"))
-    (if (compiler-parse-cleanup-metadata-ok?)
-      unit
-      (io.panic "parse: cleanup metadata shape test failed"))
-    (if (compiler-parse-raw-pointer-ok?)
-      unit
-      (io.panic "parse: raw pointer shape test failed"))
-    (if (compiler-parse-extern-metadata-ok?)
-      unit
-      (io.panic "parse: extern metadata shape test failed"))
-    (if (compiler-parse-extern-varargs-metadata-rejected-ok?)
-      unit
-      (io.panic "parse: extern c-varargs metadata retirement test failed"))
-    (if (compiler-parse-extern-function-head-varargs-ok?)
-      unit
-      (io.panic "parse: extern function-head varargs shape test failed"))
-    (if (compiler-parse-define-export-symbol-ok?)
-      unit
-      (io.panic "parse: define export-symbol shape test failed"))
-    (if (compiler-parse-raw-pointer-ops-ok?)
-      unit
-      (io.panic "parse: raw pointer ops shape test failed"))
-    (if (compiler-parse-init-ok?)
-      unit
-      (io.panic "parse: init shape test failed"))
-    (if (compiler-parse-contextual-init-ok?)
-      unit
-      (io.panic "parse: contextual init shape test failed"))
-    (if (compiler-parse-init-call-name-ok?)
-      unit
-      (io.panic "parse: init call name compatibility test failed"))
-    (if (compiler-parse-box-ok?)
-      unit
-      (io.panic "parse: box shape test failed"))
-    (if (compiler-parse-reference-ok?)
-      unit
-      (io.panic "parse: reference shape test failed"))
-    (if (compiler-parse-borrow-ok?)
-      unit
-      (io.panic "parse: borrow shape test failed"))
-    (if (compiler-parse-resource-with-shape-ok?)
-      unit
-      (io.panic "parse: resource with shape test failed"))
-    (if (compiler-parse-with-escape-shape-ok?)
-      unit
-      (io.panic "parse: with-escape shape test failed"))
-    (if (compiler-parse-with-scratch-shape-ok?)
-      unit
-      (io.panic "parse: with-scratch shape test failed"))
-    (if (compiler-parse-in-arena-shape-ok?)
-      unit
-      (io.panic "parse: in-arena shape test failed"))
-    (if (compiler-parse-quote-syntax-shape-ok?)
-      unit
-      (io.panic "parse: quote syntax shape test failed"))
-    unit))
-
-(define (compiler-parse-smoke-errors) : unit
-  (begin
-    (if (compiler-parse-error-suite-front-ok?)
-      unit
-      (io.panic "parse: front error-path self-tests failed"))
-    (if (compiler-parse-error-suite-middle-ok?)
-      unit
-      (io.panic "parse: middle error-path self-tests failed"))
-    (if (compiler-parse-error-suite-back-ok?)
-      unit
-      (io.panic "parse: back error-path self-tests failed"))
-    unit))
 
 (define (compiler-parse-source-symbol-ids-preserved-ok?) : bool
   (let

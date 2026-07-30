@@ -20,13 +20,15 @@
 ;; as the command name. The retained bootstrap `compile.tl` driver and the
 ;; unified `cli.tl` dispatcher both call it, so the single binary drives the
 ;; compiler.
-(import stdlib.io)
 (import stdlib.arena)
+(import stdlib.byte_buf)
+(import stdlib.io)
 (import stdlib.fs)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
 (import compiler_allocation_profile as allocation_profile)
+(import compiler_cfg_core as cfg_core)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "compiler_windows_coff_core.tl")
@@ -165,7 +167,7 @@
     (compile-cli-cfg-names-to-env-with-intern-state-from
       names
       (+ index 1)
-      (compiler-cfg-enable-with-intern-state
+      (cfg_core.compiler-cfg-enable-with-intern-state
         env
         (compile-cli-cfg-names-get names index)
         intern-state)
@@ -1109,9 +1111,10 @@
   [input-path : String]
   [stdlib-roots : cli_svec.Vec]) : i64
   (match (io.try-read-file (& input-path))
-    [(io.ErrIoString _) 0]
-    [(io.OkIoString source)
+    [(io.ErrIoBytes _) 0]
+    [(io.OkIoBytes contents)
       (let
+        [source : String (byte_buf.to-string contents)]
         [report : DocTestRunReport
           (doc-test-typecheck-source-with-roots input-path source stdlib-roots)]
         (if (doc-test-run-report-ok? report)
@@ -1312,7 +1315,9 @@
                 compile-profile
                 (compiler-driver-profile-start-phase
                   (compiler-driver-state-profile _state)))
-              (match (io.try-write-file (& object-path) (& object))
+              (match (io.try-write-file
+                (& object-path)
+                (byte_buf.str-as-bytes (& object)))
                 [(io.OkIoUnit) 0]
                 [(io.ErrIoUnit error)
                   (begin
@@ -2105,7 +2110,9 @@
   [results : (& results cli_svec.Vec)]) : i64
   (let
     [contents : String (compile-cli-windows-batch-result-plan results)]
-    (match (io.try-write-file (& plan-path) (& contents))
+    (match (io.try-write-file
+      (& plan-path)
+      (byte_buf.str-as-bytes (& contents)))
       [(io.OkIoUnit)
         (begin
           (io.print-string
@@ -2274,7 +2281,7 @@
                   (if (= remove-status 0)
                     (compile-cli-run-windows-batch-from
                       state
-                      (io.read-file batch-path)
+                      (byte_buf.to-string (io.read-file batch-path))
                       0
                       1
                       windows-coff-plan-path
@@ -2286,7 +2293,7 @@
                     remove-status))
                 (compile-cli-run-batch-from
                   state
-                  (io.read-file batch-path)
+                  (byte_buf.to-string (io.read-file batch-path))
                   0
                   1
                   has-target

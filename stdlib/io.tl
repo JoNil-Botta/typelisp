@@ -20,7 +20,7 @@
 ;#
 ;# ```typelisp
 ;# (import stdlib.io)
-;# (define fallback : io.ResultIoString
+;# (define fallback : io.ResultIoBytes
 ;#   (let [path : String "missing-file-for-docs.txt"] (io.try-read-file (& path))))
 ;# ```
 ;#
@@ -33,19 +33,22 @@
 ;# ;; doctest-exit: 0
 ;# ;; doctest-stdout: literal:hello from io\n
 ;# (import stdlib.io)
+;# (import stdlib.byte_buf)
 ;# (define (main) : i64
 ;#   (begin
-;#     (let [text : String "hello from io\n"] (io.stdout-write (& text)))
+;#     (let
+;#       [text : String "hello from io\n"]
+;#       [bytes : (& text bytes) (byte_buf.str-as-bytes (& text))]
+;#       (io.stdout-write bytes))
 ;#     0))
 ;# ```
 (import stdlib.array)
-(import stdlib.byte_buf_core)
+(import stdlib.byte_buf)
 (import stdlib.comptime)
 (import stdlib.io_core)
 (import stdlib.math)
 (import stdlib.str_cat)
 (import stdlib.string)
-(import stdlib.text_buf)
 
 ;: Private errno-style status slot used by stdlib IO/FS helpers. This is not
 ;: libc errno; it preserves the previous backend-owned slot semantics in TL.
@@ -506,6 +509,14 @@
 (define (write-string-fd-status [fd : i64] [text : String]) : i64
   (write-all-fd-status fd (string-const-ptr text) (string-length text)))
 
+;: Write an immutable borrowed byte view to `fd`.
+(define (write-bytes-fd-status [fd : i64] [contents : (& contents bytes)]) : i64
+  (write-all-fd-status
+    fd
+    (unsafe
+      (byte_buf.bytes-data contents))
+    (byte_buf.bytes-length contents)))
+
 ;: Write a string to stdout without adding a newline.
 (define (print-string [text : String]) : unit
   (let
@@ -532,6 +543,20 @@
     (print-string (string.int->string value))
     (print-newline)))
 
+;: Render one supported ASCII/control character as a String for formatting.
+(define (format-char-string [value : char]) : String
+  (let
+    [code : i64 (cast value : i64)]
+    [printable : String
+      " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"]
+    (cond
+      [(= code 9) "\t"]
+      [(= code 10) "\n"]
+      [(= code 13) "\r"]
+      [(and (>= code 32) (<= code 126))
+        (string.substring printable (- code 32) 1)]
+      [else (panic "format: unsupported non-printable char")])))
+
 ;: Render one supported format placeholder as a String expression.
 (defmacro (format-value
   [float-formatter : comptime.Expr]
@@ -543,7 +568,7 @@
       `(if ,value
         "true"
         "false")]
-    ["char" `(stdlib.text_buf.char-string ,value)]
+    ["char" `(stdlib.io.format-char-string ,value)]
     ["f64" `(,float-formatter ,value)]
     ["f32" `(,float-formatter (cast ,value : f64))]
     [_
@@ -1454,8 +1479,8 @@
             (ptr-read (ptr-offset argv index)))]
         (copy-c-string raw)))))
 
-;: Read the entire seekable descriptor `fd` into a String.
-(define (read-fd-to-string [fd : i64]) : String
+;: Read the entire seekable descriptor `fd` into an active-arena byte buffer.
+(define (read-fd-to-byte-buf [fd : i64]) : byte_buf.ByteBuf
   (let
     [end : i64 (stdlib.io.platform-lseek fd 0 2)]
     (if (< end 0)
@@ -1484,8 +1509,7 @@
                   (if (= read-count 0)
                     (set! done true)
                     (set! offset (+ offset read-count))))))
-            (unsafe
-              (string-from-bytes (stdlib.io.array-const-ptr buf) offset))))))))
+            (byte_buf.from-array-prefix buf offset)))))))
 
 ;: Return the host status code for reading `path`.
 (define (read-file-status [path : String]) : i64
@@ -1510,28 +1534,31 @@
           (stdlib.io.platform-close fd)
           status)))))
 
-;: Read a whole file, aborting on host read failure.
-(define (read-file [path : String]) : String
+;: Read a whole file into an active-arena byte buffer, aborting on host failure.
+(define (read-file [path : String]) : byte_buf.ByteBuf
   (let
     [path-bytes : (__tl_dyn-array u8) (c-string path)]
     [fd : i64 (platform-open (array-const-ptr path-bytes) (open-read-flags) 0)]
     (if (< fd 0)
       (panic "tl: read-file failed\n")
       (let
-        [contents : String (read-fd-to-string fd)]
+        [contents : byte_buf.ByteBuf (read-fd-to-byte-buf fd)]
         (begin
           (platform-close fd)
           contents)))))
 
-;: Write `contents` to `path` using platform `flags`, returning a host status code.
-(define (write-path-status [path : String] [contents : String] [flags : i64]) : i64
+;: Write borrowed bytes to `path` using `flags`, returning a host status code.
+(define (write-path-status
+  [path : String]
+  [contents : (& contents bytes)]
+  [flags : i64]) : i64
   (let
     [path-bytes : (__tl_dyn-array u8) (c-string path)]
     [fd : i64 (platform-open (array-const-ptr path-bytes) flags (open-mode))]
     (if (< fd 0)
       (last-error-code)
       (let
-        [status : i64 (write-string-fd-status fd contents)]
+        [status : i64 (write-bytes-fd-status fd contents)]
         [close-status : i64 (platform-close fd)]
         (if (= status 0)
           (if (< close-status 0)
@@ -1539,8 +1566,8 @@
             0)
           status)))))
 
-;: Return the host status code for writing `contents` to `path`.
-(define (write-file-status [path : String] [contents : String]) : i64
+;: Return the host status code for writing borrowed bytes to `path`.
+(define (write-file-status [path : String] [contents : (& contents bytes)]) : i64
   (stdlib.io.write-path-status
     path
     contents
@@ -1553,16 +1580,16 @@
     (stdlib.io.error-message (stdlib.io.error-from-owned-status path status))
     "\n"))
 
-;: Write a whole file, aborting on host write failure.
-(define (write-file [path : String] [contents : String]) : unit
+;: Write borrowed bytes to a whole file, aborting on host write failure.
+(define (write-file [path : String] [contents : (& contents bytes)]) : unit
   (let
     [status : i64 (stdlib.io.write-file-status path contents)]
     (if (= status 0)
       unit
       (panic (stdlib.io.write-file-failure-message path status)))))
 
-;: Return the host status code for appending `contents` to `path`.
-(define (append-file-status [path : String] [contents : String]) : i64
+;: Return the host status code for appending borrowed bytes to `path`.
+(define (append-file-status [path : String] [contents : (& contents bytes)]) : i64
   (stdlib.io.write-path-status
     path
     contents
@@ -1648,7 +1675,10 @@
     [(< count 0) 22]
     [(= count 0)
       (begin
-        (io_core.io-file-string-set! (io_core.io-file-last-bytes-ptr) raw "")
+        (io_core.io-file-byte-buf-set!
+          (io_core.io-file-last-bytes-ptr)
+          raw
+          (byte_buf.new))
         (io_core.io-file-bool-set! (io_core.io-file-last-ready-ptr) raw true)
         0)]
     [else
@@ -1663,24 +1693,23 @@
             (if (= read-count 0)
               (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw true)
               (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw false))
-            (io_core.io-file-string-set!
+            (io_core.io-file-byte-buf-set!
               (io_core.io-file-last-bytes-ptr)
               raw
-              (unsafe
-                (string-from-bytes (stdlib.io.array-const-ptr buf) read-count)))
+              (byte_buf.from-array-prefix buf read-count))
             (io_core.io-file-bool-set!
               (io_core.io-file-last-ready-ptr)
               raw
               true)
             0)))]))
 
-;: Return the host status code for writing `contents` through a stdlib handle.
-(define (file-write-status [raw : i64] [contents : String]) : i64
+;: Return the host status code for writing borrowed bytes through a stdlib handle.
+(define (file-write-status [raw : i64] [contents : (& contents bytes)]) : i64
   (if (not (stdlib.io.valid-handle? raw))
     38
     (if (= (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw) 0)
       38
-      (stdlib.io.write-string-fd-status
+      (stdlib.io.write-bytes-fd-status
         (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)
         contents))))
 
@@ -1692,13 +1721,13 @@
       38
       0)))
 
-;: Return bytes from the last successful stdlib file chunk read.
-(define (file-read-chunk-bytes [raw : i64]) : String
+;: Return the owned buffer from the last successful file chunk read.
+(define (file-read-chunk-bytes [raw : i64]) : byte_buf.ByteBuf
   (if (if (stdlib.io.valid-handle? raw)
     (io_core.io-file-bool-ref (io_core.io-file-last-ready-ptr) raw)
     false)
-    (io_core.io-file-string-ref (io_core.io-file-last-bytes-ptr) raw)
-    ""))
+    (io_core.io-file-byte-buf-ref (io_core.io-file-last-bytes-ptr) raw)
+    (byte_buf.new)))
 
 ;: Return the sticky EOF bit from the last successful stdlib file chunk read.
 (define (file-read-chunk-eof? [raw : i64]) : bool
@@ -1706,12 +1735,12 @@
     (io_core.io-file-bool-ref (io_core.io-file-eofs-ptr) raw)
     true))
 
-;: Read up to `count` bytes from stdin, continuing across positive short reads.
-(define (read-stdin-bytes [count : i64]) : String
+;: Read up to `count` stdin bytes into an active-arena buffer.
+(define (read-stdin-bytes [count : i64]) : byte_buf.ByteBuf
   (if (< count 0)
     (panic "tl: stdin failed\n")
     (if (= count 0)
-      ""
+      (byte_buf.new)
       (let
         [buf : (__tl_dyn-array u8) (array.make-array u8 count)]
         [offset : i64 0]
@@ -1736,14 +1765,12 @@
                       (set! io-stdin-eof-state true)
                       (set! done true))
                     (set! offset (+ offset read-count)))))))
-          (unsafe
-            (string-from-bytes (array-const-ptr buf) offset)))))))
+          (byte_buf.from-array-prefix buf offset))))))
 
-;: Read one stdin line without the trailing newline.
-(define (read-stdin-line) : String
+;: Read one stdin line as bytes without the trailing newline.
+(define (read-stdin-line) : byte_buf.ByteBuf
   (let
-    [bytes : byte_buf_core.ByteBufBuilder
-      (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
+    [out : byte_buf.ByteBuf (byte_buf.new)]
     [one : (__tl_dyn-array u8) (array.make-array u8 1)]
     [done : bool false]
     (begin
@@ -1761,11 +1788,9 @@
                 (if (= (cast byte : i64) 10)
                   (set! done true)
                   (begin
-                    (array-push! (struct-get bytes slots) byte)
+                    (set! out (byte_buf.push out byte))
                     (set! done false))))))))
-      (begin
-        (set! (struct-get bytes len) (array-length (struct-get bytes slots)))
-        (byte_buf_core.byte-buf-builder-finish-string (& bytes))))))
+      out)))
 
 ;: Return the sticky stdin EOF state.
 (define (stdin-eof?) : bool
@@ -1794,6 +1819,11 @@
 (defenum ResultIoString
   (OkIoString String)
   (ErrIoString IoError))
+
+;: Result type for active-arena byte-buffer file reads.
+(defenum ResultIoBytes
+  (OkIoBytes byte_buf.ByteBuf)
+  (ErrIoBytes IoError))
 
 ;: Result type for unit-returning file I/O APIs.
 (defenum ResultIoUnit
@@ -1840,6 +1870,26 @@
   (match result
     [(OkIoString _) fallback]
     [(ErrIoString error) error]))
+
+;: Return true when a byte-buffer result succeeded.
+(define (result-bytes-ok? [result : ResultIoBytes]) : bool
+  (match result
+    [(OkIoBytes _) true]
+    [(ErrIoBytes _) false]))
+
+;: Return the byte-buffer result value, or `fallback` when the read failed.
+(define (result-bytes-value-or
+  [result : ResultIoBytes]
+  [fallback : byte_buf.ByteBuf]) : byte_buf.ByteBuf
+  (match result
+    [(OkIoBytes value) value]
+    [(ErrIoBytes _) fallback]))
+
+;: Return the byte-buffer result error, or `fallback` on success.
+(define (result-bytes-error-or [result : ResultIoBytes] [fallback : IoError]) : IoError
+  (match result
+    [(OkIoBytes _) fallback]
+    [(ErrIoBytes error) error]))
 
 ;: Return true when a bool result succeeded.
 (define (result-bool-ok? [result : ResultIoBool]) : bool
@@ -1889,11 +1939,9 @@
     [(OkIoFile value) value]
     [(ErrIoFile _) fallback]))
 
-;: Streaming file read chunk backed by active-arena owned bytes.
-;:
-;: `bytes` uses `String` as a byte container.
+;: Streaming file read chunk backed by an active-arena owned byte buffer.
 (defstruct FileRead
-  (bytes String)
+  (bytes byte_buf.ByteBuf)
   (eof bool))
 
 ;: Result type for streaming file reads.
@@ -1901,11 +1949,9 @@
   (OkIoRead FileRead)
   (ErrIoRead IoError))
 
-;: Stdin read result containing the bytes/text read plus the post-read EOF flag.
-;:
-;: `text` is a `String` for both line and fixed-byte reads.
+;: Stdin read result containing owned bytes plus the post-read EOF flag.
 (defstruct StdinRead
-  (text String)
+  (bytes byte_buf.ByteBuf)
   (eof bool))
 
 ;: Portable errno-style status code used by stdlib host helpers for success.
@@ -2087,8 +2133,8 @@
         (ErrIoUnit (IoUnsupported (file-handle-invalid-message)))
         (ErrIoUnit (error-from-label "file-close" status))))))
 
-;: Return the bytes captured by a streaming file read.
-(define (file-read-bytes [read : FileRead]) : String
+;: Return the owned buffer captured by a streaming file read.
+(define (file-read-bytes [read : FileRead]) : byte_buf.ByteBuf
   (struct-get read bytes))
 
 ;: Return true when a streaming file read observed EOF after the read.
@@ -2097,8 +2143,8 @@
 
 ;: Read up to `count` bytes from a stdlib-managed read-mode file handle.
 ;:
-;: The returned bytes are represented as `String`. A short read does not imply
-;: EOF; EOF becomes true only after the stdlib receives a zero-byte host read.
+;: A short read does not imply EOF; EOF becomes true only after the stdlib
+;: receives a zero-byte host read.
 (define (file-read-chunk [handle : FileHandle] [count : i64]) : ResultIoRead
   (if (< count 0)
     (ErrIoRead (IoInvalidPath (file-read-invalid-count-message)))
@@ -2117,10 +2163,9 @@
 ;: The stdlib retries short host writes until all bytes are accepted or a
 ;: host error is returned. Closed, invalid, read-only, and unsupported handles
 ;: return `IoUnsupported`.
-(define (file-write [handle : FileHandle] [contents : (& contents str)]) : ResultIoUnit
+(define (file-write [handle : FileHandle] [contents : (& contents bytes)]) : ResultIoUnit
   (let
-    [contents-text : String (string.copy contents)]
-    [status : i64 (file-write-status (struct-get handle id) contents-text)]
+    [status : i64 (file-write-status (struct-get handle id) contents)]
     (if (= status io-status-ok)
       OkIoUnit
       (if (= status io-status-unsupported)
@@ -2143,28 +2188,27 @@
 ;: Read `path` and return either its contents or a structured I/O error.
 ;:
 ;: Missing paths return `IoNotFound`. Empty paths return `IoInvalidPath`.
-(define (try-read-file [path : (& path str)]) : ResultIoString
+(define (try-read-file [path : (& path str)]) : ResultIoBytes
   (let
     [path-text : String (string.copy path)]
     (if (empty-path? path)
-      (ErrIoString (invalid-path-error path))
+      (ErrIoBytes (invalid-path-error path))
       (let
         [status : i64 (read-file-status path-text)]
         (if (= status io-status-ok)
-          (OkIoString (read-file path-text))
-          (ErrIoString (error-from-status path status)))))))
+          (OkIoBytes (read-file path-text))
+          (ErrIoBytes (error-from-status path status)))))))
 
 ;: Write `contents` to `path`, returning a structured result.
 ;:
 ;: Empty paths return `IoInvalidPath`.
-(define (try-write-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
+(define (try-write-file [path : (& path str)] [contents : (& contents bytes)]) : ResultIoUnit
   (let
     [path-text : String (string.copy path)]
-    [contents-text : String (string.copy contents)]
     (if (empty-path? path)
       (ErrIoUnit (invalid-path-error path))
       (let
-        [status : i64 (write-file-status path-text contents-text)]
+        [status : i64 (write-file-status path-text contents)]
         (if (= status io-status-ok)
           OkIoUnit
           (ErrIoUnit (error-from-status path status)))))))
@@ -2191,47 +2235,41 @@
 ;: The runtime opens the path in host append mode where available, preserving
 ;: existing contents and creating the file when missing. Empty paths return
 ;: `IoInvalidPath`.
-(define (try-append-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
+(define (try-append-file [path : (& path str)] [contents : (& contents bytes)]) : ResultIoUnit
   (let
     [path-text : String (string.copy path)]
-    [contents-text : String (string.copy contents)]
     (if (empty-path? path)
       (ErrIoUnit (invalid-path-error path))
       (let
-        [status : i64 (append-file-status path-text contents-text)]
+        [status : i64 (append-file-status path-text contents)]
         (if (= status io-status-ok)
           OkIoUnit
           (ErrIoUnit (error-from-status path status)))))))
 
-;: Read the contents of `path` if it exists, otherwise return `fallback`.
-;:
-;: This is a convenience wrapper over `try-read-file`. It returns `fallback`
-;: for every structured error, preserving the historical optional-file API.
-(define (read-file-or [path : (& path str)] [fallback : String]) : String
+;: Read `path` if it exists, otherwise return the caller-provided buffer.
+(define (read-file-or [path : (& path str)] [fallback : byte_buf.ByteBuf]) : byte_buf.ByteBuf
   (match (try-read-file path)
-    [(OkIoString contents) contents]
-    [(ErrIoString _) fallback]))
+    [(OkIoBytes contents) contents]
+    [(ErrIoBytes _) fallback]))
 
 ;: Append `contents` to the file at `path`, creating it when absent.
 ;:
 ;: Uses the platform append status path: non-truncating, create-if-missing,
 ;: and best-effort host append semantics.
-(define (append-file [path : (& path str)] [contents : (& contents str)]) : unit
+(define (append-file [path : (& path str)] [contents : (& contents bytes)]) : unit
   (match (try-append-file path contents)
     [(OkIoUnit) unit]
     [(ErrIoUnit error) (panic (error-message error))]))
 
-;: Return true when `path` exists and its contents are non-empty.
-;:
-;: Structured errors return false.
+;: Return true when `path` exists and its byte contents are non-empty.
 (define (file-nonempty? [path : (& path str)]) : bool
   (match (try-read-file path)
-    [(OkIoString contents) (> (string-length contents) 0)]
-    [(ErrIoString _) false]))
+    [(OkIoBytes contents) (> (byte_buf.len contents) 0)]
+    [(ErrIoBytes _) false]))
 
-;: Return the text/bytes captured by a stdin read result.
-(define (stdin-read-text [read : StdinRead]) : String
-  (struct-get read text))
+;: Return the owned buffer captured by a stdin read result.
+(define (stdin-read-buffer [read : StdinRead]) : byte_buf.ByteBuf
+  (struct-get read bytes))
 
 ;: Return true when a stdin read observed EOF after the read completed.
 (define (stdin-read-eof? [read : StdinRead]) : bool
@@ -2243,49 +2281,55 @@
 
 ;: Read one stdin line without the trailing newline and report post-read EOF.
 ;:
-;: The returned string is allocated by the runtime in the active arena. Blank
-;: lines return an empty string with `eof` false; end-of-file after the final
-;: unterminated line returns that line with `eof` true.
+;: The returned buffer is allocated in the active arena. Blank lines return an
+;: empty buffer with `eof` false; end-of-file after the final unterminated line
+;: returns that line's bytes with `eof` true.
 (define (stdin-read-line) : StdinRead
   (let
-    [text : String (read-stdin-line)]
-    (StdinRead text (stdin-eof?))))
+    [bytes : byte_buf.ByteBuf (read-stdin-line)]
+    (StdinRead bytes (stdin-eof?))))
 
 ;: Read up to `count` bytes from stdin and report post-read EOF.
-;:
-;: The returned bytes are represented as `String`.
 (define (stdin-read-bytes [count : i64]) : StdinRead
   (let
-    [text : String (read-stdin-bytes count)]
-    (StdinRead text (stdin-eof?))))
+    [bytes : byte_buf.ByteBuf (read-stdin-bytes count)]
+    (StdinRead bytes (stdin-eof?))))
 
-;: Write `text` to stdout without adding a newline.
-(define (stdout-write [text : (& text str)]) : unit
-  (print-string (string.copy text)))
+;: Write borrowed bytes to stdout without adding a newline.
+(define (stdout-write [contents : (& contents bytes)]) : unit
+  (let
+    [status : i64 (write-bytes-fd-status 1 contents)]
+    (if (= status io-status-ok)
+      unit
+      (platform-exit 134))))
 
-;: Write `text` and a trailing newline to stdout.
-;:
-;: This convenience helper allocates the newline-appended string.
-(define (stdout-write-line [text : (& text str)]) : unit
+;: Write borrowed bytes and a trailing newline to stdout.
+(define (stdout-write-line [contents : (& contents bytes)]) : unit
   (let
     [newline : String "\n"]
-    (print-string (str_cat.str-cat text newline))))
+    (begin
+      (stdout-write contents)
+      (stdout-write (byte_buf.str-as-bytes (& newline))))))
 
 ;: Flush stdout.
 (define (stdout-flush) : unit
   (flush-stdout))
 
-;: Write `text` to stderr without adding a newline.
-(define (stderr-write [text : (& text str)]) : unit
-  (print-error (string.copy text)))
+;: Write borrowed bytes to stderr without adding a newline.
+(define (stderr-write [contents : (& contents bytes)]) : unit
+  (let
+    [status : i64 (write-bytes-fd-status 2 contents)]
+    (if (= status io-status-ok)
+      unit
+      (platform-exit 134))))
 
-;: Write `text` and a trailing newline to stderr.
-;:
-;: This convenience helper allocates the newline-appended string.
-(define (stderr-write-line [text : (& text str)]) : unit
+;: Write borrowed bytes and a trailing newline to stderr.
+(define (stderr-write-line [contents : (& contents bytes)]) : unit
   (let
     [newline : String "\n"]
-    (print-error (str_cat.str-cat text newline))))
+    (begin
+      (stderr-write contents)
+      (stderr-write (byte_buf.str-as-bytes (& newline))))))
 
 (test
   io-core-macros-prelude
@@ -2377,19 +2421,19 @@
   test
   (define (io-edges-test-expect-try-read-ok [path : String] [expected : String]) : unit
     (match (try-read-file (& path))
-      [(OkIoString contents)
+      [(OkIoBytes contents)
         (io-edges-test-assert-owned-string-eq
-          contents
+          (byte_buf.to-string contents)
           expected
           "try-read-file returned contents")]
-      [(ErrIoString error) (panic (error-message error))])))
+      [(ErrIoBytes error) (panic (error-message error))])))
 
 (cfg
   test
   (define (io-edges-test-expect-try-read-missing [path : String]) : unit
     (match (try-read-file (& path))
-      [(OkIoString _) (panic "try-read-file unexpectedly read missing file")]
-      [(ErrIoString error)
+      [(OkIoBytes _) (panic "try-read-file unexpectedly read missing file")]
+      [(ErrIoBytes error)
         (begin
           (io-edges-test-assert-true
             (error-not-found? error)
@@ -2404,7 +2448,7 @@
   (define (io-edges-test-expect-try-write-ok
     [path : String]
     [contents : String]) : unit
-    (match (try-write-file (& path) (& contents))
+    (match (try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
       [(OkIoUnit) unit]
       [(ErrIoUnit error) (panic (error-message error))])))
 
@@ -2412,15 +2456,15 @@
   test
   (define (io-edges-test-expect-try-read-error [path : String]) : unit
     (match (try-read-file (& path))
-      [(OkIoString _) (panic "try-read-file unexpectedly succeeded")]
-      [(ErrIoString _) unit])))
+      [(OkIoBytes _) (panic "try-read-file unexpectedly succeeded")]
+      [(ErrIoBytes _) unit])))
 
 (cfg
   test
   (define (io-edges-test-expect-try-write-error [path : String]) : unit
     (let
       [contents : String "bad"]
-      (match (try-write-file (& path) (& contents))
+      (match (try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
         [(OkIoUnit) (panic "try-write-file unexpectedly succeeded")]
         [(ErrIoUnit _) unit]))))
 
@@ -2429,7 +2473,7 @@
   (define (io-edges-test-expect-try-append-error [path : String]) : unit
     (let
       [contents : String "bad"]
-      (match (try-append-file (& path) (& contents))
+      (match (try-append-file (& path) (byte_buf.str-as-bytes (& contents)))
         [(OkIoUnit) (panic "try-append-file unexpectedly succeeded")]
         [(ErrIoUnit _) unit]))))
 
@@ -2463,7 +2507,7 @@
 (cfg
   test
   (define (io-edges-test-read-file-or [path : String] [fallback : String]) : String
-    (read-file-or (& path) fallback)))
+    (byte_buf.to-string (read-file-or (& path) (byte_buf.from-string fallback)))))
 
 (cfg
   test
@@ -2473,12 +2517,12 @@
 (cfg
   test
   (define (io-edges-test-try-append-file [path : String] [contents : String]) : ResultIoUnit
-    (try-append-file (& path) (& contents))))
+    (try-append-file (& path) (byte_buf.str-as-bytes (& contents)))))
 
 (cfg
   test
   (define (io-edges-test-append-file [path : String] [contents : String]) : unit
-    (append-file (& path) (& contents))))
+    (append-file (& path) (byte_buf.str-as-bytes (& contents)))))
 
 (cfg
   test
@@ -2504,18 +2548,18 @@
       (let
         [path : String ""]
         (match (try-read-file (& path))
-          [(OkIoString _) (panic "empty path read should fail")]
-          [(ErrIoString error) (io-edges-test-expect-invalid-path error)]))
+          [(OkIoBytes _) (panic "empty path read should fail")]
+          [(ErrIoBytes error) (io-edges-test-expect-invalid-path error)]))
       (let
         [path : String ""]
         [contents : String "bad"]
-        (match (try-write-file (& path) (& contents))
+        (match (try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
           [(OkIoUnit) (panic "empty path write should fail")]
           [(ErrIoUnit error) (io-edges-test-expect-invalid-path error)]))
       (let
         [path : String ""]
         [contents : String "bad"]
-        (match (try-append-file (& path) (& contents))
+        (match (try-append-file (& path) (byte_buf.str-as-bytes (& contents)))
           [(OkIoUnit) (panic "empty path append should fail")]
           [(ErrIoUnit error) (io-edges-test-expect-invalid-path error)]))
       (io-edges-test-expect-try-read-error io-directory-path)
@@ -2528,7 +2572,9 @@
       (io-edges-test-assert-false
         (io-edges-test-file-nonempty? io-missing-file)
         "missing file is not nonempty")
-      (write-file io-empty-file "")
+      (let
+        [contents : String ""]
+        (write-file io-empty-file (byte_buf.str-as-bytes (& contents))))
       (io-edges-test-assert-false
         (io-edges-test-file-nonempty? io-empty-file)
         "empty file is not nonempty")
@@ -2547,7 +2593,7 @@
           [(OkIoUnit) unit]
           [(ErrIoUnit error) (panic (error-message error))]))
       (io-edges-test-assert-owned-string-eq
-        (read-file io-file)
+        (byte_buf.to-string (read-file io-file))
         "alpha-beta"
         "append existing file")
       (let
@@ -2556,7 +2602,7 @@
         (begin
           (io-edges-test-append-file created-file contents)
           (io-edges-test-assert-owned-string-eq
-            (read-file created-file)
+            (byte_buf.to-string (read-file created-file))
             "created"
             "append creates missing file")))
       42)))
@@ -2719,7 +2765,7 @@
       [(OkIoRead read)
         (begin
           (io-handle-test-assert-owned-string-eq
-            (file-read-bytes read)
+            (byte_buf.to-string (file-read-bytes read))
             expected-bytes
             (str_cat.str-cat message " bytes"))
           (io-handle-test-assert-bool-eq
@@ -2753,7 +2799,7 @@
 
 (cfg
   test
-  (define (io-handle-test-try-read-file [path : String]) : ResultIoString
+  (define (io-handle-test-try-read-file [path : String]) : ResultIoBytes
     (try-read-file (& path))))
 
 (cfg
@@ -2786,7 +2832,7 @@
 (cfg
   test
   (define (io-handle-test-try-write-file [path : String] [contents : String]) : ResultIoUnit
-    (try-write-file (& path) (& contents))))
+    (try-write-file (& path) (byte_buf.str-as-bytes (& contents)))))
 
 (cfg
   test
@@ -2796,7 +2842,7 @@
 (cfg
   test
   (define (io-handle-test-file-write [handle : FileHandle] [contents : String]) : ResultIoUnit
-    (file-write handle (& contents))))
+    (file-write handle (byte_buf.str-as-bytes (& contents)))))
 
 (cfg
   test
@@ -2805,9 +2851,12 @@
     [expected : String]
     [message : String]) : unit
     (match (io-handle-test-try-read-file path)
-      [(OkIoString contents)
-        (io-handle-test-assert-owned-string-eq contents expected message)]
-      [(ErrIoString error)
+      [(OkIoBytes contents)
+        (io-handle-test-assert-owned-string-eq
+          (byte_buf.to-string contents)
+          expected
+          message)]
+      [(ErrIoBytes error)
         (panic (str_cat.str-cat message (error-message error)))])))
 
 (cfg

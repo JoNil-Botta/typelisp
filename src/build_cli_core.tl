@@ -5,6 +5,7 @@
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
 (import stdlib.fs)
+(import stdlib.byte_buf)
 (import stdlib.env)
 (import stdlib.io)
 (import stdlib.process)
@@ -1134,7 +1135,7 @@
   (if (io.file-exists? manifest-path)
     (match (compiler-load-parse-manifest-diagnostic-infer-kind
       manifest-path
-      (io.read-file manifest-path))
+      (byte_buf.to-string (io.read-file manifest-path)))
       [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
         (ResultBuildManifest.Ok manifest)]
       [(ResultCompilerPkgManifestDiagnostic.Err diag)
@@ -1477,15 +1478,15 @@
     [path : String (build-package-lock-path manifest-dir)]
     (if (io.file-exists? path)
       (match (io.try-read-file (& path))
-        [(io.ErrIoString error)
+        [(io.ErrIoBytes error)
           (ResultBuildPackageLockState.Err
             (str_cat.str-cat
               "build: cannot read package lock '"
               path
               "': "
               (io.error-message error)))]
-        [(io.OkIoString source)
-          (match (package-lock-parse source)
+        [(io.OkIoBytes source)
+          (match (package-lock-parse (byte_buf.to-string source))
             [(ResultPackageLockFile.Err message)
               (ResultBuildPackageLockState.Err
                 (str_cat.str-cat
@@ -1506,7 +1507,7 @@
     [lock : PackageLockFile (PackageLockFile package-lock-version entries)]
     [text : String (package-lock-emit lock)]
     [path : String (struct-get state path)]
-    (match (io.try-write-file (& path) (& text))
+    (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& text)))
       [(io.OkIoUnit) (ResultBuildString.Ok path)]
       [(io.ErrIoUnit error)
         (ResultBuildString.Err
@@ -4126,7 +4127,7 @@
         (if (and
           (compiler-backend-target-linux? target)
           (not (string.contains (& haystack) (& needle))))
-          (match (io.try-append-file (& path) (& note))
+          (match (io.try-append-file (& path) (byte_buf.str-as-bytes (& note)))
             [(io.OkIoUnit) SourceToolCommandStatus.Ok]
             [(io.ErrIoUnit error)
               (SourceToolCommandStatus.Err
@@ -5395,10 +5396,13 @@
   [source : String]
   [stdlib-roots : cli_svec.Vec]) : i64
   (match (io.try-read-file (& source))
-    [(io.ErrIoString _) 0]
-    [(io.OkIoString text)
+    [(io.ErrIoBytes _) 0]
+    [(io.OkIoBytes contents)
       (build-doctest-report
-        (doc-test-typecheck-source-with-roots source text stdlib-roots))]))
+        (doc-test-typecheck-source-with-roots
+          source
+          (byte_buf.to-string contents)
+          stdlib-roots))]))
 
 (define (build-doctest-typecheck-package-paths
   [paths : AstDeclPathList]

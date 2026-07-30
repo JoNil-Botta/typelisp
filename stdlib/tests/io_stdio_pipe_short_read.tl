@@ -1,7 +1,5 @@
+(import stdlib.byte_buf)
 (import stdlib.io)
-
-;; lint-allow: unused-import
-(import stdlib.string)
 (import stdlib.test)
 
 (define pipe-stdin-read-size : i64
@@ -11,8 +9,8 @@
 
 (define (read-all-stdin-bytes-acc [total : i64]) : i64
   (let
-    [chunk : String (io.read-stdin-bytes pipe-stdin-read-size)]
-    [next : i64 (+ total (string-length chunk))]
+    [chunk : byte_buf.ByteBuf (io.read-stdin-bytes pipe-stdin-read-size)]
+    [next : i64 (+ total (byte_buf.len chunk))]
     (if (io.stdin-eof?)
       next
       (read-all-stdin-bytes-acc next))))

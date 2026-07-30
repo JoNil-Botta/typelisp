@@ -17,6 +17,161 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
+;; #6061: force every converted dense family past its initial capacity and
+;; pin the logical newest-first/LIFO semantics that the former Cons chains had.
+(define (opt-dense-test-licm-roots
+  [roots : OptLicmStoreRootList]
+  [next : i64]
+  [last : i64]) : OptLicmStoreRootList
+  (if (> next last)
+    roots
+    (opt-dense-test-licm-roots
+      (opt-licm-store-roots-add roots (OptLicmRoot.Fresh next))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-unroll-memories
+  [type-segment-bases : i64]
+  [memories : OptUnrollSimdMemoryList]
+  [next : i64]
+  [last : i64]) : OptUnrollSimdMemoryList
+  (if (> next last)
+    memories
+    (opt-dense-test-unroll-memories
+      type-segment-bases
+      (opt-unroll-simd-memory-add
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var next)
+        (AstType.I64))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-late-drops
+  [drops : OptLateBoundsPairDrop]
+  [next : i64]
+  [last : i64]) : OptLateBoundsPairDrop
+  (if (> next last)
+    drops
+    (opt-dense-test-late-drops
+      (opt-late-bounds-pair-drops-add drops next)
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-reach-push
+  [worklist : OptReachWorklist]
+  [next : i64]
+  [last : i64]) : OptReachWorklist
+  (if (> next last)
+    worklist
+    (opt-dense-test-reach-push
+      (opt-reach-worklist-push worklist next)
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-reach-pop-order?
+  [worklist : OptReachWorklist]
+  [expected : i64]) : bool
+  (match (opt-reach-worklist-pop worklist)
+    [(OptReachWorklistPop.Empty) (< expected 0)]
+    [(OptReachWorklistPop.Item found rest)
+      (and
+        (= found expected)
+        (opt-dense-test-reach-pop-order? rest (- expected 1)))]))
+
+(define (opt-dense-test-reach-reuse?) : bool
+  (match (opt-reach-worklist-pop
+    (opt-dense-test-reach-push (opt-reach-worklist-new) 0 20))
+    [(OptReachWorklistPop.Empty) false]
+    [(OptReachWorklistPop.Item found rest)
+      (if (= found 20)
+        (match (opt-reach-worklist-pop (opt-reach-worklist-push rest 99))
+          [(OptReachWorklistPop.Empty) false]
+          [(OptReachWorklistPop.Item reused tail)
+            (and (= reused 99) (opt-dense-test-reach-pop-order? tail 19))])
+        false)]))
+
+(define (opt-dense-test-scratch-roots
+  [roots : OptScratchRootList]
+  [next : i64]
+  [last : i64]) : OptScratchRootList
+  (if (> next last)
+    roots
+    (opt-dense-test-scratch-roots
+      (opt-scratch-root-list-add roots next)
+      (+ next 1)
+      last)))
+
+(define (compiler-optimize-dense-storage-self-test) : i64
+  (let
+    [type-segment-bases : i64 (ast-node-pool-reader-type-segment-bases)]
+    [licm : OptLicmStoreRootList
+      (opt-dense-test-licm-roots (opt-licm-store-roots-new) 1 8)]
+    [memories : OptUnrollSimdMemoryList
+      (opt-dense-test-unroll-memories
+        type-segment-bases
+        (opt-unroll-simd-memory-new)
+        1
+        8)]
+    [memory-count : i64 (opt-unroll-simd-memory-count memories)]
+    [newest-index : i64
+      (opt-unroll-simd-memory-index
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var 8)
+        (AstType.I64)
+        0)]
+    [oldest-index : i64
+      (opt-unroll-simd-memory-index
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var 1)
+        (AstType.I64)
+        0)]
+    [deduped : OptUnrollSimdMemoryList
+      (opt-unroll-simd-memory-add
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var 4)
+        (AstType.I64))]
+    [deduped-count : i64 (opt-unroll-simd-memory-count deduped)]
+    [typed : OptUnrollSimdMemoryList
+      (opt-unroll-simd-memory-add
+        type-segment-bases
+        deduped
+        (CompilerIrValue.Var 1)
+        (AstType.U64))]
+    [drops : OptLateBoundsPairDrop
+      (opt-dense-test-late-drops (opt-late-bounds-pair-drops-new) 1 8)]
+    [roots : OptScratchRootList
+      (opt-dense-test-scratch-roots (opt-scratch-root-list-new) 1 32)]
+    (cond
+      [(not (opt-licm-store-roots-safe? licm (OptLicmRoot.Fresh 99))) 1]
+      [(opt-licm-store-roots-safe? licm (OptLicmRoot.Fresh 4)) 2]
+      [(not (= memory-count 8)) 3]
+      [(not (= newest-index 0)) 4]
+      [(not (= oldest-index 7)) 5]
+      [(not (= deduped-count 8)) 6]
+      [(not (= (opt-unroll-simd-memory-count typed) 9)) 7]
+      [(not
+          (=
+            (opt-unroll-simd-memory-index
+              type-segment-bases
+              typed
+              (CompilerIrValue.Var 1)
+              (AstType.U64)
+              0)
+            0))
+        8]
+      [(not (opt-late-bounds-pair-drop? drops 1)) 9]
+      [(not (opt-late-bounds-pair-drop? drops 8)) 10]
+      [(opt-late-bounds-pair-drop? drops 9) 11]
+      [(not (opt-dense-test-reach-reuse?)) 12]
+      [(not (opt-scratch-root-list-contains? roots 1)) 13]
+      [(not (opt-scratch-root-list-contains? roots 32)) 14]
+      [(opt-scratch-root-list-contains? roots 33) 15]
+      [else 42])))
+
 ;; --- self-test ---------------------------------------------------------------
 (define (opt-count-arith-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -31,7 +186,7 @@
     [_ 0]))
 
 (define (opt-count-arith-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -75,7 +230,7 @@
         (opt-count-xgetbv-instrs (box-get rest)))]))
 
 (define (opt-count-cpuid-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -95,7 +250,7 @@
     0))
 
 (define (opt-count-xgetbv-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -223,7 +378,7 @@
         (opt-count-mov-i64-value (box-get rest) needle))]))
 
 (define (opt-count-mov-i64-value-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [needle : i64]
@@ -309,7 +464,7 @@
         [_ (opt-mov-dst-i64-value (box-get rest) dst fallback)])]))
 
 (define (opt-mov-dst-i64-value-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -1874,7 +2029,7 @@
         (opt-count-load-dst-instrs (box-get rest) dst))]))
 
 (define (opt-count-load-dst-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -2022,7 +2177,7 @@
         (opt-count-cast-instrs (box-get rest)))]))
 
 (define (opt-count-cast-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -3156,7 +3311,7 @@
   (let
     [block : CompilerIrBlock
       (compiler-ir-block (compiler-ir-label "entry") instrs)]
-    [used : (Array i64)
+    [used : (__tl_dyn-array i64)
       (opt-collect-blocks-uses-array
         64
         (compiler-ir-block-cons block CompilerIrBlockList.Nil))]
@@ -3548,7 +3703,7 @@
         (ast-node-pool-reader-type-segment-bases)
         params
         blocks)]
-    [used : (Array i64) (opt-collect-blocks-uses-array frame safe)]
+    [used : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame safe)]
     (opt-dce-block-list-array used safe)))
 
 (define (compiler-optimize-divrem-safety-self-test) : i64
@@ -4502,7 +4657,7 @@
     [_ 0]))
 
 (define (opt-count-word-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -4539,7 +4694,7 @@
     [_ 0]))
 
 (define (opt-count-pack-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -5410,7 +5565,7 @@
     [remat-cap : CompilerIrBlockList (opt-function-blocks remat-cap-function)]
     [induction-input : CompilerIrBlockList
       (opt-successor-sink-induction-remat-blocks)]
-    [induction-cell : (Array i64) (opt-used-array-new 1)]
+    [induction-cell : (__tl_dyn-array i64) (opt-used-array-new 1)]
     [_induction-cell-init : unit (array-set! induction-cell 0 16)]
     [induction-direct : CompilerIrBlockList
       (opt-successor-sink-blocks
@@ -5637,7 +5792,7 @@
         [_ (opt-copy-binop-lhs-var (box-get rest) dst)])]))
 
 (define (opt-copy-binop-lhs-var-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]) : i64
@@ -8135,7 +8290,7 @@
 
 (define (opt-scc-component-size [result : OptSccResult] [scc-id : i64]) : i64
   (let
-    [scc-of : (Array i64) (struct-get result scc-of)]
+    [scc-of : (__tl_dyn-array i64) (struct-get result scc-of)]
     [count : i64 (array-length scc-of)]
     [slot : i64 0]
     [size : i64 0]
@@ -8150,7 +8305,7 @@
 
 (define (opt-scc-order-position [result : OptSccResult] [scc-id : i64]) : i64
   (let
-    [order : (Array i64) (struct-get result order)]
+    [order : (__tl_dyn-array i64) (struct-get result order)]
     [count : i64 (array-length order)]
     [index : i64 0]
     [position : i64 (- 0 1)]
@@ -8234,7 +8389,7 @@
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
     [result : OptSccResult (opt-scc-compute graph)]
-    [order : (Array i64) (struct-get result order)]
+    [order : (__tl_dyn-array i64) (struct-get result order)]
     [main-scc : i64
       (opt-scc-result-component
         result
@@ -9340,7 +9495,7 @@
         (opt-count-direct-call-name (box-get rest) name))]))
 
 (define (opt-count-direct-call-name-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [name : String]
@@ -10421,7 +10576,8 @@
 
 (define (opt-inline-switch-caller-call-named [callee-name : i64]) : CompilerIrInstr
   (let
-    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 3)]
+    [args : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue 3)]
     (begin
       ;; Swap the first two arguments so the Switch scrutinee and BoundsCheck
       ;; index must both be remapped rather than retaining their callee ids.
@@ -11576,7 +11732,7 @@
       (opt-block-list-label-at? (compiler-ir-block-seq-to-list seq) index label)]))
 
 (define (opt-count-branches-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11612,7 +11768,7 @@
       (opt-count-branches-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-jump-to-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [target : i64]
@@ -11656,7 +11812,7 @@
       (opt-count-jump-to-blocks (compiler-ir-block-seq-to-list seq) target)]))
 
 (define (opt-count-tail-call-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11773,7 +11929,7 @@
       [else 42])))
 
 (define (opt-count-phi-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11822,7 +11978,7 @@
         (opt-count-mov-dst-instrs (box-get rest) dst))]))
 
 (define (opt-count-mov-dst-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -11890,7 +12046,7 @@
       (opt-count-arith-label-blocks (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (opt-count-mul-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11963,7 +12119,7 @@
       (opt-count-cast-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-gep-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -12023,7 +12179,7 @@
         (opt-count-load-instrs (box-get rest)))]))
 
 (define (opt-count-load-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -12124,7 +12280,7 @@
         [_ (opt-mov-src-var (box-get rest) dst fallback)])]))
 
 (define (opt-mov-src-var-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -12718,7 +12874,7 @@
         (CompilerIrValue.Var 1)
         (CompilerIrValue.Var 2)
         (AstType.I64))]
-    [buckets : (Array OptGlobalExprFacts)
+    [buckets : (__tl_dyn-array OptGlobalExprFacts)
       (array.make-array OptGlobalExprFacts 1)]
     [table : OptGlobalExprFactTable (OptGlobalExprFactTable buckets)]
     [doms : OptDomInfo
@@ -12774,7 +12930,7 @@
         (CompilerIrValue.Var 1)
         (CompilerIrValue.Var 2)
         (AstType.I64))]
-    [buckets : (Array OptGvnBucket) (array.make-array OptGvnBucket 1)]
+    [buckets : (__tl_dyn-array OptGvnBucket) (array.make-array OptGvnBucket 1)]
     [table : OptGvnMap (OptGvnMap buckets)]
     (begin
       (array-set! buckets 0 (OptGvnBucket.Nil))
@@ -12896,7 +13052,7 @@
           (AstType.I64)
           (opt-global-pack-word-blocks)))]
     [blocks : CompilerIrBlockList (opt-function-blocks forwarded)]
-    [uses : (Array i64) (opt-collect-blocks-uses-array 16 blocks)]
+    [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array 16 blocks)]
     (opt-dce-block-list-array uses blocks)))
 
 (define (compiler-optimize-global-value-number-self-test) : i64
@@ -21260,7 +21416,8 @@
 
 (define (opt-merged-loop-test-callee-args) : CompilerIrCallArgs
   (let
-    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 3)]
+    [args : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue 3)]
     (begin
       (array-set! args 0 (CompilerIrValue.Var 0))
       (array-set! args 1 (CompilerIrValue.Var 1))
@@ -21269,7 +21426,8 @@
 
 (define (opt-merged-loop-test-tail-args [rounds : i64]) : CompilerIrCallArgs
   (let
-    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 4)]
+    [args : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue 4)]
     (begin
       ;; The first three arguments are unchanged. Tail-recursion conversion
       ;; must not materialize identity writes for them.
@@ -24403,7 +24561,7 @@
       [store-blocked : OptScratchScopeReport
         (let
           [roots : OptScratchRootList
-            (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+            (opt-scratch-root-list-add (opt-scratch-root-list-new) 1)]
           (OptScratchScopeReport.Report
             1
             32
@@ -24427,7 +24585,7 @@
       [return-blocked : OptScratchScopeReport
         (let
           [roots : OptScratchRootList
-            (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+            (opt-scratch-root-list-add (opt-scratch-root-list-new) 1)]
           (OptScratchScopeReport.Report
             1
             32

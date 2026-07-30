@@ -12,6 +12,7 @@
 ;; path where the target supports process execution. Each failure records the
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.vector)
@@ -1916,7 +1917,10 @@
 (define (doc-test-run-file-with-roots
   [path : String]
   [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
-  (doc-test-run-source-with-roots path (io.read-file path) stdlib-roots))
+  (doc-test-run-source-with-roots
+    path
+    (byte_buf.to-string (io.read-file path))
+    stdlib-roots))
 
 (define (doc-test-typecheck-source [path : String] [source : String]) : DocTestRunReport
   (doc-test-typecheck-source-with-roots path source (doc_svec.new)))
@@ -1979,7 +1983,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (doc-test-typecheck-source-with-roots-and-cfg
     path
-    (io.read-file path)
+    (byte_buf.to-string (io.read-file path))
     stdlib-roots
     cfgs))
 
@@ -2097,12 +2101,12 @@
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (match (io.try-read-file (& path))
-    [(io.ErrIoString _)
+    [(io.ErrIoBytes _)
       (DocTestRunReport.Report 0 (doc-test-run-failure-list-empty))]
-    [(io.OkIoString text)
+    [(io.OkIoBytes contents)
       (doc-test-typecheck-package-source-with-roots-and-cfg
         path
-        text
+        (byte_buf.to-string contents)
         stdlib-roots
         manifest-dir
         deps
@@ -2232,24 +2236,26 @@
             (string.append
               ";# (import stdlib.io)\n"
               (string.append
-                ";# (define (main) : i64\n"
+                ";# (import stdlib.byte_buf)\n"
                 (string.append
-                  ";#   (begin\n"
+                  ";# (define (main) : i64\n"
                   (string.append
-                    ";#     (let [text : String \"hello\\n\"] (io.stdout-write (& text)))\n"
+                    ";#   (begin\n"
                     (string.append
-                      ";#     (let [text : String \"error\\tline\\r\"] (io.stderr-write (& text)))\n"
+                      ";#     (let [text : String \"hello\\n\"] (io.stdout-write (byte_buf.str-as-bytes (& text))))\n"
                       (string.append
-                        ";#     0))\n"
+                        ";#     (let [text : String \"error\\tline\\r\"] (io.stderr-write (byte_buf.str-as-bytes (& text))))\n"
                         (string.append
-                          ";# ```\n"
+                          ";#     0))\n"
                           (string.append
-                            ";# ```tl run\n"
+                            ";# ```\n"
                             (string.append
-                              ";# ;; doctest-exit: 42\n"
+                              ";# ```tl run\n"
                               (string.append
-                                ";# (define (main) : i64 42)\n"
-                                ";# ```\n"))))))))))))))))
+                                ";# ;; doctest-exit: 42\n"
+                                (string.append
+                                  ";# (define (main) : i64 42)\n"
+                                  ";# ```\n")))))))))))))))))
 
 (define (doc-test-runnable-malformed-source) : String
   ";# ```typelisp run expect-error
@@ -2432,7 +2438,7 @@
             (doc-test-runnable-example-ok?
               second
               2
-              13
+              14
               42
               ""
               ""
@@ -2528,9 +2534,10 @@
 ;# ;; doctest-exit: 0
 ;# ;; doctest-stdout: literal:expected\\n
 ;# (import stdlib.io)
+;# (import stdlib.byte_buf)
 ;# (define (main) : i64
 ;#   (begin
-;#     (let [text : String \"actual\\n\"] (io.stdout-write (& text)))
+;#     (let [text : String \"actual\\n\"] (io.stdout-write (byte_buf.str-as-bytes (& text))))
 ;#     0))
 ;# ```
 ")
@@ -2540,9 +2547,10 @@
 ;# ;; doctest-exit: 0
 ;# ;; doctest-stderr: literal:expected-error\\n
 ;# (import stdlib.io)
+;# (import stdlib.byte_buf)
 ;# (define (main) : i64
 ;#   (begin
-;#     (let [text : String \"actual-error\\n\"] (io.stderr-write (& text)))
+;#     (let [text : String \"actual-error\\n\"] (io.stderr-write (byte_buf.str-as-bytes (& text))))
 ;#     0))
 ;# ```
 ")
@@ -2843,7 +2851,9 @@ typecheck: return type mismatch"))]
     (begin
       (compiler-load-test-mkdir "target")
       (compiler-load-test-mkdir root)
-      (io.write-file dep-file "(define shared-value : i64 7)")
+      (let
+        [contents : String "(define shared-value : i64 7)"]
+        (io.write-file dep-file (byte_buf.str-as-bytes (& contents))))
       (compiler-load-session-cache-enable!)
       (compiler-load-program-cache-clear!)
       (let
@@ -2887,8 +2897,10 @@ typecheck: return type mismatch"))]
         (let
           [path : String (doc-test-package-walk-numbered-path root "empty_" i)]
           (begin
-            (io.write-file path ";; no doctest fence
-")
+            (let
+              [contents : String ";; no doctest fence
+"]
+              (io.write-file path (byte_buf.str-as-bytes (& contents))))
             (set!
               out
               (ast-decl-path-list-prepend-builder-with-owner-id
@@ -2907,9 +2919,14 @@ typecheck: return type mismatch"))]
     (begin
       (compiler-load-test-mkdir "target")
       (compiler-load-test-mkdir root)
-      (io.write-file example-a (doc-test-package-walk-example-source 1))
-      (io.write-file example-b (doc-test-package-walk-example-source 2))
-      (io.write-file example-c (doc-test-package-walk-example-source 3))
+      (let
+        [contents-a : String (doc-test-package-walk-example-source 1)]
+        [contents-b : String (doc-test-package-walk-example-source 2)]
+        [contents-c : String (doc-test-package-walk-example-source 3)]
+        (begin
+          (io.write-file example-a (byte_buf.str-as-bytes (& contents-a)))
+          (io.write-file example-b (byte_buf.str-as-bytes (& contents-b)))
+          (io.write-file example-c (byte_buf.str-as-bytes (& contents-c)))))
       (let
         [paths : AstDeclPathList
           (doc-test-package-walk-write-empty-paths

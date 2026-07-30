@@ -101,29 +101,6 @@
           (set! i (+ i 1))))
       last)))
 
-(define (clone-type-name-has-dot? [name : String]) : bool
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length name)]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< i n))
-        (if (= (cast (string.string-ref name i) : i64) (cast '.' : i64))
-          (set! found true)
-          (set! i (+ i 1))))
-      found)))
-
-(define (clone-type-name-first-dot [name : String]) : i64
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length name)]
-    (begin
-      (while (< i n)
-        (if (= (cast (string.string-ref name i) : i64) (cast '.' : i64))
-          (return i)
-          (set! i (+ i 1))))
-      -1)))
-
 (define (clone-type-name-module [name : String]) : String
   (let
     [last : i64 (clone-type-name-last-slash name)]
@@ -138,14 +115,6 @@
     (if (< last 0)
       name
       (string.substring name (+ last 1) (- n (+ last 1))))))
-
-(define (clone-type-name-canonical [module : String] [name : String]) : String
-  (if (or
-    (string.eq module "")
-    (>= (clone-type-name-last-slash name) 0)
-    (clone-type-name-has-dot? name))
-    name
-    (string.append (string.append module "/") name)))
 
 (define (clone-import-alias-key-id [module-id : i64] [alias-id : i64]) : i64
   (clone-name-key-id-in-module module-id alias-id))
@@ -429,9 +398,6 @@
 
 (define (clone-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
   (ast-node-pool-context-type-get pools id))
-
-(define (clone-expr-push [pools : AstNodePoolContext] [expr : AstExpr]) : i64
-  (ast-node-pool-context-expr-push pools expr))
 
 ;; A field type is clone-able given the current clone-able-name set: scalars,
 ;; String, tuples, fixed arrays, and dynamic arrays are clone-able recursively; a

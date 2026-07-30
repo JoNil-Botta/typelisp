@@ -3,6 +3,7 @@
 (import stdlib.text_buf_borrowed)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.byte_buf)
 
 (define (text-buf-integration-ok?) : bool
   (let
@@ -36,7 +37,7 @@
     [buf : text_buf.TextBuf
       (text_buf.append (text_buf.append (text_buf.empty) "file") "-out")]
     [status : i64 (text_buf.write-file path buf)]
-    [readback : String (io.read-file path)]
+    [readback : String (byte_buf.to-string (io.read-file path))]
     (if (= status io.io-status-ok)
       (string.eq readback "file-out")
       false)))

@@ -1,4 +1,5 @@
 ;; inspect_cli_core.tl - Public tlci inspection command.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -293,10 +294,10 @@ Summary:
       (if (string.eq path "embedded:stdlib.tlci")
         (tlci-inspect-embedded-stdlib)
         (match (io.try-read-file (& path))
-          [(io.ErrIoString error)
+          [(io.ErrIoBytes error)
             (begin
               (io.print-error
                 (tlci-inspect-error path (io.error-message error)))
               1)]
-          [(io.OkIoString contents)
-            (tlci-inspect-render-bytes path (tlci-string->bytes contents))])))))
+          [(io.OkIoBytes contents)
+            (tlci-inspect-render-bytes path (byte_buf.to-array contents))])))))

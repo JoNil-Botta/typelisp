@@ -56,6 +56,7 @@
 ;# constant folded, and all arithmetic wraps modulo 2^64 in both languages, so
 ;# the printed decimal matches the C baseline's `%lld`.
 (import stdlib.array)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -409,7 +410,7 @@
 
 (define (ln-bench [path : String] [rounds : i64]) : i64
   (let
-    [source : String (io.read-file path)]
+    [source : String (byte_buf.to-string (io.read-file path))]
     [text : (Array u8) (ln-string-to-array source)]
     [n : i64 (array-length text)]
     [token-count : i64 (ln-count-tokens text n)]

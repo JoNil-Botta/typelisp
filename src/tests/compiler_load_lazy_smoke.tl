@@ -1,4 +1,5 @@
 ;; compiler_load_lazy_smoke.tl - Lazy dotted import loader smokes.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -6,15 +7,18 @@
 (import compiler_builtin_ids as cbi)
 (import sym_i64_env)
 
+(define (lazy-write-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
+
 (define (lazy-unused-dotted-import-ok?) : bool
   (begin
     (compiler-load-test-mkdir "target/cl_lazy_dotted")
     (compiler-load-test-mkdir "target/cl_lazy_dotted/nested")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_dotted/nested/dep.tl"
       "(module nested.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_dotted/entry.tl"
       "(module lazy.dotted.entry)
 (import nested.dep as dep)
@@ -39,11 +43,11 @@
   (begin
     (compiler-load-test-mkdir "target/cl_lazy_dotted_used")
     (compiler-load-test-mkdir "target/cl_lazy_dotted_used/nested")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_dotted_used/nested/dep.tl"
       "(module nested.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_dotted_used/entry.tl"
       "(module lazy.dotted.used.entry)
 (import nested.dep as dep)
@@ -62,12 +66,12 @@
   (begin
     (compiler-load-test-mkdir "target/cl_lazy_stdlib_array")
     (compiler-load-test-mkdir "target/cl_lazy_stdlib_array/nested")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_stdlib_array/nested/user.tl"
       "(module nested.user)
 (import stdlib.array)
 (define (len-b) : i64 (array.length (array.make-array i64 2)))")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_stdlib_array/entry.tl"
       "(module lazy.stdlib.array.entry)
 (import stdlib.array)
@@ -93,13 +97,13 @@
   (begin
     (compiler-load-test-mkdir "target/cl_lazy_stdlib_array_canonical")
     (compiler-load-test-mkdir "target/cl_lazy_stdlib_array_canonical/nested")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_stdlib_array_canonical/nested/user.tl"
       "(module nested.user)
 (import stdlib.array)
 (define (len-b) : i64
   (stdlib.array.length (stdlib.array.make-array i64 2)))")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_stdlib_array_canonical/entry.tl"
       "(module lazy.stdlib.array.canonical.entry)
 (import stdlib.array)
@@ -128,7 +132,7 @@
 (define (lazy-stdlib-result-macro-import-ok?) : bool
   (begin
     (compiler-load-test-mkdir "target/cl_lazy_stdlib_result")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_stdlib_result/entry.tl"
       "(module lazy.stdlib.result.entry)
 (import stdlib.result)
@@ -151,7 +155,7 @@
 (define (lazy-direct-module-macro-demand-ok?) : bool
   (begin
     (compiler-load-test-mkdir "target/cl_lazy_module_macro")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_module_macro/entry.tl"
       "(module lazy.module.macro.entry)
 (import stdlib.option)
@@ -170,7 +174,7 @@
 (define (lazy-unused-module-macro-import-ok?) : bool
   (begin
     (compiler-load-test-mkdir "target/cl_lazy_unused_module_macro")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_unused_module_macro/entry.tl"
       "(module lazy.unused.module.macro.entry)
 (import stdlib.option)
@@ -193,11 +197,11 @@
     (compiler-load-test-mkdir "target/cl_lazy_aliased_module_macro/generic")
     (compiler-load-test-mkdir
       "target/cl_lazy_aliased_module_macro/generic/macro")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_aliased_module_macro/generic/macro/dep.tl"
       "(module generic.macro.dep)
 (defmacro (make [T : type]) : Module (expr-unit))")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_aliased_module_macro/entry.tl"
       "(module lazy.aliased.module.macro.entry)
 (import generic.macro.dep as api)
@@ -221,11 +225,11 @@
     (compiler-load-test-mkdir "target/cl_lazy_qualified_module_macro/generic")
     (compiler-load-test-mkdir
       "target/cl_lazy_qualified_module_macro/generic/macro")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_qualified_module_macro/generic/macro/dep.tl"
       "(module generic.macro.dep)
 (defmacro (make [T : type]) : Module (expr-unit))")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_qualified_module_macro/entry.tl"
       "(module lazy.qualified.module.macro.entry)
 (import generic.macro.dep as api)
@@ -246,7 +250,7 @@
 (define (lazy-stdlib-vector-qualified-module-macro-demand-ok?) : bool
   (begin
     (compiler-load-test-mkdir "target/cl_lazy_stdlib_vector_module_macro")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_stdlib_vector_module_macro/entry.tl"
       "(module lazy.stdlib.vector.module.macro.entry)
 (import stdlib.vector)
@@ -272,11 +276,11 @@
   (begin
     (compiler-load-test-mkdir "target/cl_pkg_lazy_dotted")
     (compiler-load-test-mkdir "target/cl_pkg_lazy_dotted/nested")
-    (io.write-file
+    (lazy-write-text
       "target/cl_pkg_lazy_dotted/nested/dep.tl"
       "(module nested.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (lazy-write-text
       "target/cl_pkg_lazy_dotted/entry.tl"
       "(module pkg.lazy.dotted.entry)
 (import nested.dep as dep)
@@ -300,11 +304,11 @@
   (begin
     (compiler-load-test-mkdir "target/cl_pkg_lazy_dotted_used")
     (compiler-load-test-mkdir "target/cl_pkg_lazy_dotted_used/nested")
-    (io.write-file
+    (lazy-write-text
       "target/cl_pkg_lazy_dotted_used/nested/dep.tl"
       "(module nested.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (lazy-write-text
       "target/cl_pkg_lazy_dotted_used/entry.tl"
       "(module pkg.lazy.dotted.used.entry)
 (import nested.dep as dep)
@@ -327,11 +331,11 @@
     (compiler-load-test-mkdir "target/cl_lazy_local_alias")
     (compiler-load-test-mkdir "target/cl_lazy_local_alias/generic")
     (compiler-load-test-mkdir "target/cl_lazy_local_alias/generic/local")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_local_alias/generic/local/dep.tl"
       "(module generic.local.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_local_alias/entry.tl"
       "(module generic.local.entry)
 (import generic.local.dep as dep)
@@ -354,13 +358,13 @@
     (compiler-load-test-mkdir "target/cl_lazy_generic_surface")
     (compiler-load-test-mkdir "target/cl_lazy_generic_surface/generic")
     (compiler-load-test-mkdir "target/cl_lazy_generic_surface/generic/surface")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_generic_surface/generic/surface/dep.tl"
       "(module generic.surface.dep)
 (defenum Choice (Empty) (Full i64))
 (define (get) : i64 7)
 (defmacro (number) : Expr 5)")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_generic_surface/entry.tl"
       "(module generic.surface.entry)
 (import generic.surface.dep as dep)
@@ -384,11 +388,11 @@
     (compiler-load-test-mkdir "target/cl_lazy_generic_direct")
     (compiler-load-test-mkdir "target/cl_lazy_generic_direct/generic")
     (compiler-load-test-mkdir "target/cl_lazy_generic_direct/generic/direct")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_generic_direct/generic/direct/dep.tl"
       "(module generic.direct.dep)
 (define (get) : i64 7)")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_generic_direct/entry.tl"
       "(module generic.direct.entry)
 (import generic.direct.dep as dep)
@@ -408,11 +412,11 @@
     (compiler-load-test-mkdir "target/cl_lazy_cfg_surface")
     (compiler-load-test-mkdir "target/cl_lazy_cfg_surface/generic")
     (compiler-load-test-mkdir "target/cl_lazy_cfg_surface/generic/cfg")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_cfg_surface/generic/cfg/dep.tl"
       "(module generic.cfg.dep)
 (cfg feature (define (get) : i64 7))")
-    (io.write-file
+    (lazy-write-text
       "target/cl_lazy_cfg_surface/entry.tl"
       "(module generic.cfg.entry)
 (import generic.cfg.dep as dep)

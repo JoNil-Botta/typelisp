@@ -1,4 +1,5 @@
 ;; compiler_typecheck.tl - Self-tests for the compiler typechecker API.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import "compiler_typecheck_api.tl")
 (import "compiler_typecheck_core.tl")
@@ -8,6 +9,9 @@
 (import sym_i64_env)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+
+(define (compiler-typecheck-write-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (string.append
@@ -23,22 +27,25 @@
 (extern (io.error [arg0 : String]) : never)
 (extern (arg-count) : i64)
 (extern (io.arg [arg0 : i64]) : String)
-(extern (io.read-file [arg0 : String]) : String)
+(defstruct ByteBuf
+  (slots (Array u8))
+  (len i64))
+(extern (io.read-file [arg0 : String]) : ByteBuf)
 (extern (io.read-file-status [arg0 : String]) : i64)
-(extern (io.write-file [arg0 : String] [arg1 : String]) : unit)
-(extern (io.write-file-status [arg0 : String] [arg1 : String]) : i64)
-(extern (io.append-file-status [arg0 : String] [arg1 : String]) : i64)
+(extern (io.write-file [arg0 : String] [arg1 : (& arg1 bytes)]) : unit)
+(extern (io.write-file-status [arg0 : String] [arg1 : (& arg1 bytes)]) : i64)
+(extern (io.append-file-status [arg0 : String] [arg1 : (& arg1 bytes)]) : i64)
 (extern (io.file-exists? [arg0 : String]) : bool)
 (extern (io.file-exists-status [arg0 : String]) : i64)
 (extern (io.file-open-status [arg0 : String] [arg1 : i64]) : i64)
 (extern (io.file-close-status [arg0 : i64]) : i64)
 (extern (io.file-read-chunk-status [arg0 : i64] [arg1 : i64]) : i64)
-(extern (io.file-write-status [arg0 : i64] [arg1 : String]) : i64)
+(extern (io.file-write-status [arg0 : i64] [arg1 : (& arg1 bytes)]) : i64)
 (extern (io.file-flush-status [arg0 : i64]) : i64)
-(extern (io.file-read-chunk-bytes [arg0 : i64]) : String)
+(extern (io.file-read-chunk-bytes [arg0 : i64]) : ByteBuf)
 (extern (io.file-read-chunk-eof? [arg0 : i64]) : bool)
-(extern (read-stdin-line) : String)
-(extern (io.read-stdin-bytes [arg0 : i64]) : String)
+(extern (read-stdin-line) : ByteBuf)
+(extern (io.read-stdin-bytes [arg0 : i64]) : ByteBuf)
 (extern (stdin-eof?) : bool)
 (extern (flush-stdout) : unit)
 "
@@ -586,8 +593,8 @@
   (begin
     (flush-stdout)
     (if (stdin-eof?)
-        (__tl_string_length (read-stdin-line))
-        (__tl_string_length (io.read-stdin-bytes 3)))))"))
+        (struct-get (read-stdin-line) len)
+        (struct-get (io.read-stdin-bytes 3) len))))"))
 
 (define (compiler-typecheck-env-source) : String
   (compiler-typecheck-with-env-source
@@ -6558,22 +6565,22 @@
     (begin
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String]) : String (io.read-file p))"))
+          "(define (f [p : String]) : ByteBuf (io.read-file p))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String]) : String (io.read-file p))"))
+          "(define (f [p : String]) : ByteBuf (io.read-file p))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String] [c : String]) : unit (io.write-file p c))"))
+          "(define (f [p : String] [c : (& c bytes)]) : unit (io.write-file p c))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String] [c : String]) : i64
+          "(define (f [p : String] [c : (& c bytes)]) : i64
   (begin
     (io.write-file p c)
     (io.file-open-status p 0)))"))
@@ -6581,7 +6588,7 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String] [c : String]) : i64 (io.append-file-status p c))"))
+          "(define (f [p : String] [c : (& c bytes)]) : i64 (io.append-file-status p c))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -6638,7 +6645,7 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64] [c : String]) : i64 (io.file-write-status h c))"))
+          "(define (f [h : i64] [c : (& c bytes)]) : i64 (io.file-write-status h c))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -6648,7 +6655,7 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64]) : String (io.file-read-chunk-bytes h))"))
+          "(define (f [h : i64]) : ByteBuf (io.file-read-chunk-bytes h))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -6658,12 +6665,12 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-io-source
-          "(define (f) : String (read-stdin-line))"))
+          "(define (f) : ByteBuf (read-stdin-line))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-io-source
-          "(define (f) : String (io.read-stdin-bytes 3))"))
+          "(define (f) : ByteBuf (io.read-stdin-bytes 3))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -6687,7 +6694,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [c : String]) : unit (io.write-file 5 c))")
+          "(define (f [c : (& c bytes)]) : unit (io.write-file 5 c))")
         "typecheck: call `io.write-file` argument 1 type mismatch: expected String, found i32")
         unit
         (set! ok false))
@@ -6699,7 +6706,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : i64]) : String (io.read-file p))")
+          "(define (f [p : i64]) : ByteBuf (io.read-file p))")
         "typecheck: call `io.read-file` argument 1 type mismatch: expected String, found i64")
         unit
         (set! ok false))
@@ -6736,7 +6743,7 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [h : i64]) : i64 (io.file-write-status h 5))")
-        "typecheck: call `io.file-write-status` argument 2 type mismatch: expected String, found i32")
+        "typecheck: borrow requires a local, parameter, or aggregate place")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6747,7 +6754,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String] [c : String]) : i64 (io.write-file p c))")
+          "(define (f [p : String] [c : (& c bytes)]) : i64 (io.write-file p c))")
         "typecheck: return type mismatch: expected i64, found unit")
         unit
         (set! ok false))
@@ -11133,11 +11140,11 @@
 
 (define (compiler-typecheck-imported-decl-origin-ok?) : bool
   (begin
-    (io.write-file
+    (compiler-typecheck-write-text
       "target/tc_decl_origin_dep.tl"
       "(module tc.decl_origin_dep)
 (extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c))")
-    (io.write-file
+    (compiler-typecheck-write-text
       "target/tc_decl_origin_entry.tl"
       "(module tc.decl_origin_entry)
 (import \"tc_decl_origin_dep.tl\" module tc.decl_origin_dep as dep)

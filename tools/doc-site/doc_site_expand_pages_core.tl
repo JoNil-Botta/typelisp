@@ -1,4 +1,5 @@
 ;; doc_site_expand_pages_core.tl - Generated-module API section post-processing.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.string)
@@ -9,6 +10,9 @@
 
 (define doc-site-expand-status-ok : i64
   0)
+
+(define (doc-site-expand-write-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (doc-site-expand-path-join [left : String] [right : String]) : String
   (fs.path-join (& left) (& right)))
@@ -671,12 +675,12 @@
         [status : i64 (io.read-file-status path)]
         (if (= status doc-site-expand-status-ok)
           (let
-            [html : String (io.read-file path)]
+            [html : String (byte_buf.to-string (io.read-file path))]
             (if (doc-site-expand-string-contains?
               html
               "generated-module-import")
               unit
-              (io.write-file
+              (doc-site-expand-write-text
                 path
                 (doc-site-expand-insert-before-main-close html sections))))
           (io.panic (str_cat.str-cat "doc-site-expand: missing page: " path "")))))))

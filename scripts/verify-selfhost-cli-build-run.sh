@@ -272,6 +272,7 @@ prepare_cli_surface_files() {
   0)' > "$CLI_SURFACE_SRC"
     cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
 (import "stdlib/io.tl")
+(import stdlib.byte_buf)
 
 (define (fixture-cstr-len [p : (Ptr u8)]) : i64
   (let
@@ -281,7 +282,7 @@ prepare_cli_surface_files() {
         (set! n (+ n 1)))
       n)))
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (& text)))
+  (stdout-write (byte_buf.str-as-bytes (& text))))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
@@ -1762,6 +1763,7 @@ assert_contains scaffold-init-lib-source "$INIT_LIB_DIR/src/lib.tl" 'answer-is-4
 RUN_SRC="$WORKDIR/run-main.tl"
 cat > "$RUN_SRC" <<'EOF'
 (import "stdlib/io.tl")
+(import stdlib.byte_buf)
 
 (define (fixture-cstr-len [p : (Ptr u8)]) : i64
   (let
@@ -1771,7 +1773,7 @@ cat > "$RUN_SRC" <<'EOF'
         (set! n (+ n 1)))
       n)))
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (& text)))
+  (stdout-write (byte_buf.str-as-bytes (& text))))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]

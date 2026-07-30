@@ -1270,9 +1270,10 @@ RUN_MATRIX="$WORKDIR/run-matrix"
 mkdir -p "$RUN_MATRIX"
 cat > "$RUN_MATRIX/output_status.tl" <<'EOF'
 (import "stdlib/io.tl")
+(import stdlib.byte_buf)
 
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (& text)))
+  (stdout-write (byte_buf.str-as-bytes (& text))))
 (define (main) : i64
   (begin
     (fixture-stdout-write "hello")
@@ -1286,13 +1287,14 @@ assert_contains "$out" "hello"
 
 cat > "$RUN_MATRIX/stdin.tl" <<'EOF'
 (import "stdlib/io.tl")
+(import stdlib.byte_buf)
 
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (& text)))
+  (stdout-write (byte_buf.str-as-bytes (& text))))
 (define (fixture-read-stdin) : String
   (let
     [read : StdinRead (stdin-read-bytes 256)]
-    (stdin-read-text read)))
+    (byte_buf.to-string (stdin-read-buffer read))))
 (define (main) : unit
   (fixture-stdout-write (fixture-read-stdin)))
 EOF
@@ -1676,9 +1678,10 @@ EOF
     if [ "$HOST_OS" = windows ]; then
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'
 (import "stdlib/io.tl")
+(import stdlib.byte_buf)
 
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (& text)))
+  (stdout-write (byte_buf.str-as-bytes (& text))))
 (define (main) : i64
   (begin
     (fixture-stdout-write "hello")
@@ -1687,6 +1690,7 @@ EOF
     else
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'
 (import "stdlib/io.tl")
+(import stdlib.byte_buf)
 (import stdlib.string)
 
 (define (fixture-cstr-len [p : (Ptr u8)]) : i64
@@ -1697,7 +1701,7 @@ EOF
         (set! n (+ n 1)))
       n)))
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (& text)))
+  (stdout-write (byte_buf.str-as-bytes (& text))))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]

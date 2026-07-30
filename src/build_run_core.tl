@@ -7,6 +7,7 @@
 (import "compiler_object_elf.tl")
 (import "compiler_windows_coff_core.tl")
 (import stdlib.env)
+(import stdlib.byte_buf)
 (import stdlib.fs)
 (import stdlib.io)
 (import stdlib.msvc)
@@ -602,7 +603,9 @@
   (io.try-file-exists? (& path)))
 
 (define (source-tool-try-read-file [path : String]) : io.ResultIoString
-  (io.try-read-file (& path)))
+  (match (io.try-read-file (& path))
+    [(io.OkIoBytes contents) (io.OkIoString (byte_buf.to-string contents))]
+    [(io.ErrIoBytes error) (io.ErrIoString error)]))
 
 (define (source-tool-try-remove-file-if-exists [path : String]) : io.ResultIoUnit
   (fs.try-remove-file-if-exists (& path)))
@@ -611,10 +614,10 @@
   (fs.try-remove-dir-if-exists (& path)))
 
 (define (source-tool-stdout-write [text : String]) : unit
-  (io.stdout-write (& text)))
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
 
 (define (source-tool-stderr-write [text : String]) : unit
-  (io.stderr-write (& text)))
+  (io.stderr-write (byte_buf.str-as-bytes (& text))))
 
 (define (source-tool-path-command-exists? [candidate : String]) : bool
   (match (source-tool-try-file-exists? candidate)
@@ -1042,7 +1045,7 @@
   [path : String]
   [contents : String]
   [context : String]) : SourceToolCommandStatus
-  (match (io.try-write-file (& path) (& contents))
+  (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
     [(io.OkIoUnit) SourceToolCommandStatus.Ok]
     [(io.ErrIoUnit error)
       (SourceToolCommandStatus.Err

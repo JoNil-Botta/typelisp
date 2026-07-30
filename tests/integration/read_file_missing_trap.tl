@@ -1,6 +1,6 @@
 (import stdlib.io)
-(import stdlib.string)
+(import stdlib.byte_buf)
 
 (define (main) : i64
-  (string.string-length
+  (byte_buf.len
     (io.read-file "tests/integration/this-path-does-not-exist-zzz.txt")))

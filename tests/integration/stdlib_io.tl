@@ -5,6 +5,7 @@
 ;; target/ directory (the program runs with the repo root as its working
 ;; directory).
 (import stdlib.string)
+(import stdlib.byte_buf)
 (import stdlib.io)
 
 (define io-smoke-path : String
@@ -13,14 +14,16 @@
   "target/stdlib_io_absent_long_path_copy_helper_payload_alpha_beta_gamma_delta.txt")
 (define io-missing-parent-path : String
   "target/stdlib_io_missing_parent_long_path_copy_helper_payload/out.txt")
+(define io-binary-path : String
+  "target/stdlib_io_binary_round_trip.bin")
 
-(define (read-result-score [result : ResultIoString]) : i64
+(define (read-result-score [result : ResultIoBytes]) : i64
   (match result
-    [(OkIoString value)
-      (if (string.eq value "alpha")
+    [(OkIoBytes value)
+      (if (string.eq (byte_buf.to-string value) "alpha")
         1
         100)]
-    [(ErrIoString error)
+    [(ErrIoBytes error)
       (if (io.error-not-found? error)
         2
         200)]))
@@ -41,27 +44,52 @@
         7)]
     [(ErrIoBool _) 400]))
 
-(define (test-try-read-file [path : String]) : ResultIoString
+(define (test-try-read-file [path : String]) : ResultIoBytes
   (io.try-read-file (& path)))
 
 (define (test-try-write-file [path : String] [contents : String]) : ResultIoUnit
-  (io.try-write-file (& path) (& contents)))
+  (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents))))
 
 (define (test-try-file-exists? [path : String]) : ResultIoBool
   (io.try-file-exists? (& path)))
 
 (define (test-read-file-or [path : String] [fallback : String]) : String
-  (io.read-file-or (& path) fallback))
+  (byte_buf.to-string
+    (io.read-file-or (& path) (byte_buf.from-string fallback))))
 
 (define (test-append-file [path : String] [contents : String]) : unit
-  (io.append-file (& path) (& contents)))
+  (io.append-file (& path) (byte_buf.str-as-bytes (& contents))))
 
 (define (test-file-nonempty? [path : String]) : bool
   (io.file-nonempty? (& path)))
 
+(define (make-u8 [value : i64]) : u8
+  (cast value : u8))
+
+(define (binary-round-trip-ok?) : bool
+  (let
+    [payload : byte_buf.ByteBuf
+      (byte_buf.push
+        (byte_buf.push
+          (byte_buf.push
+            (byte_buf.push (byte_buf.new) (make-u8 65))
+            (make-u8 0))
+          (make-u8 128))
+        (make-u8 255))]
+    (begin
+      (io.write-file io-binary-path (byte_buf.as-bytes (& payload)))
+      (let
+        [readback : byte_buf.ByteBuf (io.read-file io-binary-path)]
+        (and
+          (= (byte_buf.len readback) 4)
+          (= (byte_buf.ref readback 0) (make-u8 65))
+          (= (byte_buf.ref readback 1) (make-u8 0))
+          (= (byte_buf.ref readback 2) (make-u8 128))
+          (= (byte_buf.ref readback 3) (make-u8 255)))))))
+
 (define (main) : i64
   (begin
-    (io.write-file io-smoke-path "alpha")
+    (test-try-write-file io-smoke-path "alpha")
     (unless
       (= (read-result-score (test-try-read-file io-smoke-path)) 1)
       (return 80))
@@ -89,7 +117,10 @@
       (string.eq (test-read-file-or io-absent-path "MISS") "MISS")
       (return 40))
     (test-append-file io-smoke-path "-beta")
-    (unless (string.eq (io.read-file io-smoke-path) "alpha-beta") (return 30))
+    (unless
+      (string.eq (byte_buf.to-string (io.read-file io-smoke-path)) "alpha-beta")
+      (return 30))
     (unless (test-file-nonempty? io-smoke-path) (return 20))
     (when (test-file-nonempty? io-absent-path) (return 10))
+    (unless (binary-round-trip-ok?) (return 9))
     42))

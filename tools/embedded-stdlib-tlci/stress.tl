@@ -35,6 +35,7 @@
 (import compiler_intern as ci)
 (import stdlib.array)
 (import stdlib.arena)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -113,30 +114,31 @@
   [status : i64]
   [canary-a : i64]
   [canary-b : i64]) : unit
-  (io.write-file
-    path
-    (str_cat.str-cat
-      "tier="
-      (stress-pad (string.int->string tier) 4)
-      " iter="
-      (stress-pad (string.int->string iteration) 12)
-      " status="
-      (stress-pad (string.int->string status) 6)
-      " canary-a-ok="
-      (stress-pad
-        (string.int->string
-          (if (= canary-a stress-canary-a)
-            1
-            0))
-        2)
-      " canary-b-ok="
-      (stress-pad
-        (string.int->string
-          (if (= canary-b stress-canary-b)
-            1
-            0))
-        2)
-      "\n")))
+  (let
+    [contents : String
+      (str_cat.str-cat
+        "tier="
+        (stress-pad (string.int->string tier) 4)
+        " iter="
+        (stress-pad (string.int->string iteration) 12)
+        " status="
+        (stress-pad (string.int->string status) 6)
+        " canary-a-ok="
+        (stress-pad
+          (string.int->string
+            (if (= canary-a stress-canary-a)
+              1
+              0))
+          2)
+        " canary-b-ok="
+        (stress-pad
+          (string.int->string
+            (if (= canary-b stress-canary-b)
+              1
+              0))
+          2)
+        "\n")]
+    (io.write-file path (byte_buf.str-as-bytes (& contents)))))
 
 ;: Both canaries intact. Extracted so each tier's guard chain stays a flat
 ;: `cond` rather than a nested if-ladder.

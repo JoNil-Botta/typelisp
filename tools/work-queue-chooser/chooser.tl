@@ -24,6 +24,7 @@
 ;# `stdlib/json.tl`.
 ;#
 ;# Usage: `typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib`
+(import stdlib.byte_buf)
 (import stdlib.json)
 (import stdlib.io)
 (import stdlib.random)
@@ -140,8 +141,8 @@
 
 (define (read-all-stdin-acc [acc : String]) : String
   (let
-    [chunk : String (io.read-stdin-bytes stdin-read-size)]
-    [text : String (string.append acc chunk)]
+    [chunk : byte_buf.ByteBuf (io.read-stdin-bytes stdin-read-size)]
+    [text : String (string.append acc (byte_buf.to-string chunk))]
     (if (io.stdin-eof?)
       text
       (read-all-stdin-acc text))))

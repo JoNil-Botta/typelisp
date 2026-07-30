@@ -146,12 +146,12 @@
 (define (compiler-reg-remat-defn? [instr : CompilerIrInstr]) : bool
   (compiler-reg-remat-defn-with-invariant-loads? instr false))
 
-(define (compiler-reg-function-ref-counts [func : CompilerIrFunction]) : (Array
+(define (compiler-reg-function-ref-counts [func : CompilerIrFunction]) : (__tl_dyn-array
     i64)
   (match func
     [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [counts : (Array i64) (array.make-array i64 vars)]
+        [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array counts 0)
           (compiler-reg-ref-counts-blocks! counts blocks)
@@ -159,13 +159,14 @@
 
 (define (compiler-reg-function-spill-weights-remat
   [func : CompilerIrFunction]
-  [coalesce : CompilerRegCoalesceMap]) : (Array i64)
+  [coalesce : CompilerRegCoalesceMap]) : (__tl_dyn-array i64)
   (match func
     [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [counts : (Array i64) (array.make-array i64 vars)]
-        [def-status : (Array i64) (array.make-array i64 vars)]
-        [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+        [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [def-status : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [depths : (__tl_dyn-array i64)
+          (compiler-reg-function-loop-depths blocks)]
         [allow-invariant-loads : bool
           (compiler-reg-remat-invariant-loads-ok? func)]
         (begin
@@ -770,7 +771,8 @@
   test
   (define (compiler-reg-mixed-float-call-arg-function) : CompilerIrFunction
     (let
-      [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 4)]
+      [args : (__tl_dyn-array CompilerIrValue)
+        (array.make-array CompilerIrValue 4)]
       (begin
         (array-set! args 0 (CompilerIrValue.Var 0))
         (array-set! args 1 (CompilerIrValue.Var 1))
@@ -1454,15 +1456,15 @@
       (compiler-reg-self-loop-exit-live-phi-function true)]
     [exit-first : CompilerIrFunction
       (compiler-reg-self-loop-exit-live-phi-function false)]
-    [loop-first-mask : (Array i64)
+    [loop-first-mask : (__tl_dyn-array i64)
       (compiler-reg-function-phi-touched-safe
         loop-first
         (compiler-live-analyze-function-edge-precise loop-first))]
-    [exit-first-mask : (Array i64)
+    [exit-first-mask : (__tl_dyn-array i64)
       (compiler-reg-function-phi-touched-safe
         exit-first
         (compiler-live-analyze-function-edge-precise exit-first))]
-    [fixed-register-mask : (Array i64)
+    [fixed-register-mask : (__tl_dyn-array i64)
       (compiler-reg-function-phi-touched-safe-mode
         loop-first
         (compiler-live-analyze-function-edge-precise loop-first)
@@ -1479,7 +1481,7 @@
     (let
       [pool : CompilerRegIdList
         (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Linux)]
-      [prefs : (Array i64)
+      [prefs : (__tl_dyn-array i64)
         (compiler-reg-function-arg-prefs
           CompilerRegTargetAbi.Linux
           (compiler-reg-indirect-call-arg-function)
@@ -1674,8 +1676,8 @@
   test
   (define (compiler-reg-test-identity-coalesce [n : i64]) : CompilerRegCoalesceMap
     (let
-      [parents : (Array i64) (array.make-array i64 n)]
-      [sizes : (Array i64) (array.make-array i64 n)]
+      [parents : (__tl_dyn-array i64) (array.make-array i64 n)]
+      [sizes : (__tl_dyn-array i64) (array.make-array i64 n)]
       (begin
         (compiler-reg-coalesce-map-init! parents sizes 0)
         (CompilerRegCoalesceMap parents)))))
@@ -1684,7 +1686,8 @@
   test
   (define (compiler-reg-win64-arg-result-pref-function) : CompilerIrFunction
     (let
-      [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 5)]
+      [args : (__tl_dyn-array CompilerIrValue)
+        (array.make-array CompilerIrValue 5)]
       (begin
         (array-set! args 0 (CompilerIrValue.Var 0))
         (array-set! args 1 (CompilerIrValue.Var 1))
@@ -1717,7 +1720,7 @@
     (let
       [pool : CompilerRegIdList
         (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Windows)]
-      [prefs : (Array i64)
+      [prefs : (__tl_dyn-array i64)
         (compiler-reg-function-arg-prefs
           CompilerRegTargetAbi.Windows
           (compiler-reg-win64-arg-result-pref-function)
@@ -1974,22 +1977,22 @@
       [func : CompilerIrFunction (compiler-reg-remat-weight-function)]
       [empty-coalesce : CompilerRegCoalesceMap
         (CompilerRegCoalesceMap (array.make-array i64 0))]
-      [raw : (Array i64) (compiler-reg-function-spill-weights func)]
-      [discounted : (Array i64)
+      [raw : (__tl_dyn-array i64) (compiler-reg-function-spill-weights func)]
+      [discounted : (__tl_dyn-array i64)
         (compiler-reg-function-spill-weights-remat func empty-coalesce)]
-      [multi-raw : (Array i64)
+      [multi-raw : (__tl_dyn-array i64)
         (compiler-reg-function-spill-weights
           (compiler-reg-remat-multi-def-function))]
-      [multi-discounted : (Array i64)
+      [multi-discounted : (__tl_dyn-array i64)
         (compiler-reg-function-spill-weights-remat
           (compiler-reg-remat-multi-def-function)
           empty-coalesce)]
-      [parents : (Array i64) (array.make-array i64 2)]
+      [parents : (__tl_dyn-array i64) (array.make-array i64 2)]
       (begin
         (array-set! parents 0 0)
         (array-set! parents 1 0)
         (let
-          [coalesced : (Array i64)
+          [coalesced : (__tl_dyn-array i64)
             (compiler-reg-function-spill-weights-remat
               func
               (CompilerRegCoalesceMap parents))]
@@ -2150,8 +2153,8 @@
         (compiler-reg-remat-spill-weight-eviction-function)]
       [empty-coalesce : CompilerRegCoalesceMap
         (CompilerRegCoalesceMap (array.make-array i64 0))]
-      [raw : (Array i64) (compiler-reg-function-spill-weights func)]
-      [discounted : (Array i64)
+      [raw : (__tl_dyn-array i64) (compiler-reg-function-spill-weights func)]
+      [discounted : (__tl_dyn-array i64)
         (compiler-reg-function-spill-weights-remat func empty-coalesce)]
       (match (compiler-reg-plan-function-scalar func)
         [(CompilerRegPlan.Plan assignments _ _ _ _ _)
@@ -2477,8 +2480,10 @@
     (let
       [func : CompilerIrFunction
         (compiler-reg-loop-spill-weight-eviction-function)]
-      [static-counts : (Array i64) (compiler-reg-function-ref-counts func)]
-      [weighted-counts : (Array i64) (compiler-reg-function-spill-weights func)]
+      [static-counts : (__tl_dyn-array i64)
+        (compiler-reg-function-ref-counts func)]
+      [weighted-counts : (__tl_dyn-array i64)
+        (compiler-reg-function-spill-weights func)]
       (match (compiler-reg-plan-function-scalar func)
         [(CompilerRegPlan.Plan assignments _ _ _ _ _)
           (and
@@ -3551,7 +3556,7 @@
     [dst : i64]
     [want-pred-end : bool]) : bool
     (let
-      [slots : (Array CompilerRegEdgeCopy) (struct-get copies slots)]
+      [slots : (__tl_dyn-array CompilerRegEdgeCopy) (struct-get copies slots)]
       [count : i64 (struct-get copies len)]
       [index : i64 0]
       [found : bool false]
@@ -5075,10 +5080,10 @@
                               (CompilerRegInterval 9 0 10)
                               (compiler-reg-interval-seq-empty)))))))))))
           vars)]
-      [members : (Array i64) (array.make-array i64 vars)]
-      [parents : (Array i64) (array.make-array i64 vars)]
-      [poisoned : (Array bool) (array.make-array bool vars)]
-      [weights : (Array i64) (array.make-array i64 vars)]
+      [members : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [parents : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [poisoned : (__tl_dyn-array bool) (array.make-array bool vars)]
+      [weights : (__tl_dyn-array i64) (array.make-array i64 vars)]
       [assignments : CompilerRegAssignmentTable
         (compiler-reg-assignment-table-make vars)]
       [csr-assignments : CompilerRegAssignmentTable
@@ -5087,7 +5092,7 @@
         (compiler-reg-assignment-table-make vars)]
       [nonoccupying : CompilerRegAssignmentTable
         (compiler-reg-assignment-table-make vars)]
-      [shadow-regs : (Array i64) (array.make-array i64 2)]
+      [shadow-regs : (__tl_dyn-array i64) (array.make-array i64 2)]
       (begin
         (compiler-reg-fill-i64-array shadow-regs compiler-reg-id-invalid)
         (array-set! members 0 0)

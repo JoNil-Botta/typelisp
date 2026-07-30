@@ -1,4 +1,5 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -7,6 +8,11 @@
 (import compiler_intern as ci)
 (import stdlib.string)
 (import sym_i64_env)
+
+(define (compiler-typecheck-smoke-write-text
+  [path : String]
+  [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (compiler-typecheck-reference-nested-local-source) : String
   "(define (main [x : i64]) : unit
@@ -2259,7 +2265,7 @@
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         provider
         "(module tc.macro_kind.provider)
 (defmacro (emit [T : type (:kind i64 u8 struct)]) : Decls
@@ -2268,7 +2274,7 @@
   `(begin
     (module generated.macro_kind.family)
     (define (answer) : i64 41)))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry
         "(defstruct Ball (x i64))
 (import
@@ -2295,15 +2301,15 @@
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         dep
         "(module tc.prefix.local.dep)
 (define (value [x : i64]) : i64 (+ x 1))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry-a
         "(import \"tc_prefix_local_dep.tl\" module tc.prefix.local.dep as dep)
 (define (main) : i64 (dep.value 1))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry-b
         "(import \"tc_prefix_local_dep.tl\" module tc.prefix.local.dep as dep)
 (define (main) : i64 (dep.value 2))")
@@ -2359,12 +2365,14 @@
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
-      (io.write-file dep "(define (flat-helper [x : i64]) : i64 (+ x 1))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
+        dep
+        "(define (flat-helper [x : i64]) : i64 (+ x 1))")
+      (compiler-typecheck-smoke-write-text
         entry-a
         "(import \"tc_prefix_flat_dep.tl\")
 (define (main) : i64 (flat-helper 1))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry-b
         "(import \"tc_prefix_flat_dep.tl\")
 (define (main) : i64 (flat-helper 2))")
@@ -2412,14 +2420,14 @@
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         root-provider
         "(import \"stdlib/option.tl\")
 (import (stdlib.option.option i64) as option_i64)
 
 (define (root-score) : i64
   (option_i64.value-or (option_i64.some 1) 0))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         named-provider
         "(module tc4004named)
 (import \"stdlib/option.tl\")
@@ -2427,14 +2435,14 @@
 
 (define (named-score) : i64
   (option_i64.value-or (option_i64.some 2) 0))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         root-then-named
         "(import \"tc_4004_root_provider.tl\")
 (import \"tc_4004_named_provider.tl\")
 
 (define (main) : i64
   (+ (root-score) (tc4004named.named-score)))")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         named-then-root
         "(import \"tc_4004_named_provider.tl\")
 (import \"tc_4004_root_provider.tl\")
@@ -2651,11 +2659,11 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [_fixtures : unit
       (begin
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_state_nested.tl"
           "(module tc_state.nested)
 (define nested-value : i64 7)")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_state_dep.tl"
           "(module tc_state.dep)
 (import \"tc_state_nested.tl\" module tc_state.nested as nested)
@@ -2886,8 +2894,8 @@
     (begin
       (compiler-load-test-mkdir base)
       (compiler-load-test-mkdir stdlib-root)
-      (io.write-file dep "(define value : i64 42)")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text dep "(define value : i64 42)")
+      (compiler-typecheck-smoke-write-text
         entry
         "(import stdlib.some_name)
 (define (main) : i64 some_name.value)")
@@ -2903,8 +2911,8 @@
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
       (compiler-load-test-mkdir dir)
-      (io.write-file dep "(define imported : i64 true)")
-      (io.write-file
+      (compiler-typecheck-smoke-write-text dep "(define imported : i64 true)")
+      (compiler-typecheck-smoke-write-text
         entry
         "(define (id [comptime T : type] [value : T]) : T value)
 (import \"dep.tl\")
@@ -2958,13 +2966,13 @@
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         helper
         (compiler-typecheck-smoke-macro-dependency-helper-source))
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         provider
         (compiler-typecheck-smoke-macro-dependency-provider-source))
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry
         (compiler-typecheck-smoke-macro-dependency-entry-source))
       (compiler-typecheck-reset-load-session!)
@@ -2986,10 +2994,10 @@
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         provider
         (compiler-typecheck-smoke-surface-macro-provider-source))
-      (io.write-file
+      (compiler-typecheck-smoke-write-text
         entry
         (compiler-typecheck-smoke-surface-macro-entry-source))
       (compiler-typecheck-reset-load-session!)
@@ -4446,7 +4454,7 @@
     [ok : bool
       (begin
         (compiler-load-test-mkdir "target/tc_lazy_stdlib_array")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_lazy_stdlib_array/canonical.tl"
           (compiler-typecheck-smoke-lazy-import-stdlib-array-source))
         (match (compiler-load-file-with-paths
@@ -4472,7 +4480,7 @@
                       (compiler-diagnostic-message
                         (compiler-diagnostic-list-first (box-get diag)))]
                     (begin
-                      (io.stderr-write (& message))
+                      (io.stderr-write (byte_buf.str-as-bytes (& message)))
                       (io.panic
                         "typecheck: lazy import stdlib.array nested typecheck failed")))]))]
           [(ResultCompilerLoadWithPaths.Err _)
@@ -4487,7 +4495,7 @@
     [ok : bool
       (begin
         (compiler-load-test-mkdir "target/tc_lazy_stdlib_result")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_lazy_stdlib_result/result.tl"
           (compiler-typecheck-smoke-lazy-import-stdlib-result-source))
         (match (compiler-load-file-with-paths
@@ -4511,7 +4519,7 @@
                       (compiler-diagnostic-message
                         (compiler-diagnostic-list-first (box-get diag)))]
                     (begin
-                      (io.stderr-write (& message))
+                      (io.stderr-write (byte_buf.str-as-bytes (& message)))
                       false))]))]
           [(ResultCompilerLoadWithPaths.Err _) false]))]
     (begin
@@ -4524,7 +4532,7 @@
     [ok : bool
       (begin
         (compiler-load-test-mkdir "target/tc_unused_result_local_type")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_unused_result_local_type/main.tl"
           (compiler-typecheck-smoke-unused-result-import-local-type-source))
         (match (compiler-load-file-with-paths
@@ -4541,7 +4549,7 @@
                     (compiler-diagnostic-message
                       (compiler-diagnostic-list-first (box-get diag)))]
                   (begin
-                    (io.stderr-write (& message))
+                    (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
           [(ResultCompilerLoadWithPaths.Err _) false]))]
     (begin
@@ -4554,7 +4562,7 @@
     [ok : bool
       (begin
         (compiler-load-test-mkdir "target/tc_result_enum_then_helper")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_result_enum_then_helper/main.tl"
           (compiler-typecheck-smoke-result-enum-then-helper-source))
         (match (compiler-load-file-with-paths
@@ -4571,7 +4579,7 @@
                     (compiler-diagnostic-message
                       (compiler-diagnostic-list-first (box-get diag)))]
                   (begin
-                    (io.stderr-write (& message))
+                    (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
           [(ResultCompilerLoadWithPaths.Err _) false]))]
     (begin
@@ -4584,7 +4592,7 @@
     [ok : bool
       (begin
         (compiler-load-test-mkdir "target/tc_lazy_stdlib_array")
-        (io.write-file
+        (compiler-typecheck-smoke-write-text
           "target/tc_lazy_stdlib_array/alias.tl"
           (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-source))
         (match (compiler-load-file-with-paths

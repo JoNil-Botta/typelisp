@@ -3703,16 +3703,16 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding name init cleanup _)
         (let
+          ;; Finish the ancestor scan before retaining a child snapshot. Dense
+          ;; name sets may reuse an ancestor's spare slot for a nested scope.
+          [init-scan : LintUnsafeScan (lint-unsafe-scan-node init scope)]
           [bound : LintUnsafeScope (lint-unsafe-scope-add-id scope name)]
+          [cleanup-scan : LintUnsafeScan (lint-unsafe-scan-node cleanup bound)]
+          [rest-scan : LintUnsafeScan
+            (lint-unsafe-scan-resource-bindings bindings body bound (+ index 1))]
           (lint-unsafe-scan-combine
-            (lint-unsafe-scan-node init scope)
-            (lint-unsafe-scan-combine
-              (lint-unsafe-scan-node cleanup bound)
-              (lint-unsafe-scan-resource-bindings
-                bindings
-                body
-                bound
-                (+ index 1)))))])))
+            init-scan
+            (lint-unsafe-scan-combine cleanup-scan rest-scan)))])))
 
 (define (lint-unsafe-scan-expr [expr : AstExpr] [scope : LintUnsafeScope]) : LintUnsafeScan
   (match expr
@@ -3795,14 +3795,20 @@
       (match (box-get scan-box)
         [(AstSpmdScan.Scan _ index _ start end prefix _ init value body)
           (let
+            ;; Scan each ancestor before retaining descendants that share its
+            ;; dense name-set capacity.
+            [outer : LintUnsafeScan
+              (lint-unsafe-scan-three-nodes start end init scope)]
             [index-scope : LintUnsafeScope
               (lint-unsafe-scope-add-id scope index)]
+            [value-scan : LintUnsafeScan
+              (lint-unsafe-scan-node value index-scope)]
             [body-scope : LintUnsafeScope
               (lint-unsafe-scope-add-id index-scope prefix)]
             (lint-unsafe-scan-combine
-              (lint-unsafe-scan-three-nodes start end init scope)
+              outer
               (lint-unsafe-scan-combine
-                (lint-unsafe-scan-node value index-scope)
+                value-scan
                 (lint-unsafe-scan-node body body-scope))))])]
     [(AstExpr.SpmdBroadcast value lane)
       (lint-unsafe-scan-two-nodes value lane scope)]

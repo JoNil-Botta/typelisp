@@ -314,6 +314,23 @@
 (define (main) : i64
   (unsafe (tls-current-arena-set! 1)))")
 
+(define (lint-driver-smoke-unsafe-resource-snapshot-source) : String
+  "(define (main) : i64
+  (unsafe
+    (with ([atomic-load
+      (let [clobber : i64 0] 0)
+      (atomic-load 1)])
+      0)))")
+
+(define (lint-driver-smoke-unsafe-spmd-scan-snapshot-source) : String
+  "(define (main) : i64
+  (unsafe
+    (spmd-scan sum
+      ([atomic-load : i64 (let [clobber : i64 0] 0) 1]
+       [prefix : i64 0])
+      (atomic-load 1)
+      prefix)))")
+
 (define (lint-driver-smoke-unsafe-ambiguous-import-source) : String
   "(import \"legacy.tl\")
 (define (main) : i64
@@ -1128,6 +1145,16 @@
       [(not (= (lint-findings-count let-shadow) 1)) 174]
       [(not (= (lint-findings-count top-level-shadow) 1)) 175]
       [(not (= (lint-findings-count tls-shadow) 1)) 176]
+      [(not
+          (lint-driver-smoke-source-has-unused-unsafe-candidate?
+            "lint_driver_unsafe_resource_snapshot.tl"
+            (lint-driver-smoke-unsafe-resource-snapshot-source)))
+        178]
+      [(not
+          (lint-driver-smoke-source-has-unused-unsafe-candidate?
+            "lint_driver_unsafe_spmd_scan_snapshot.tl"
+            (lint-driver-smoke-unsafe-spmd-scan-snapshot-source)))
+        179]
       [(not
           (lint-driver-smoke-source-has-unused-unsafe-candidate?
             "lint_driver_unsafe_ambiguous_import.tl"

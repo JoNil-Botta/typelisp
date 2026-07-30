@@ -1931,6 +1931,8 @@
     [(CompilerIrInstr.Xgetbv _ index) (opt-collect-value-uses set index)]
     [(CompilerIrInstr.Syscall _ args) (opt-collect-call-args-uses set args)]
     [(CompilerIrInstr.Branch cond _ _) (opt-collect-value-uses set cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-collect-value-uses set cond)]
     [(CompilerIrInstr.Return maybe)
       (match maybe
         [(CompilerIrMaybeValue.Some value) (opt-collect-value-uses set value)]
@@ -1944,6 +1946,8 @@
     [(CompilerIrInstr.TailCallIndirect func args _)
       (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
     [(CompilerIrInstr.Switch index _ _ _) (opt-collect-value-uses set index)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
+      (opt-collect-value-uses set index)]
     ;; `CompilerIrInstr.Alloc` has no operand uses; `CompilerIrInstr.Jump` has none either.
     [_ set]))
 
@@ -2404,6 +2408,8 @@
       (opt-collect-call-args-uses-array items args)]
     [(CompilerIrInstr.Branch cond _ _)
       (opt-collect-value-uses-array items cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-collect-value-uses-array items cond)]
     [(CompilerIrInstr.Return maybe)
       (match maybe
         [(CompilerIrMaybeValue.Some value)
@@ -2419,6 +2425,8 @@
         (opt-collect-value-uses-array items func)
         (opt-collect-call-args-uses-array items args))]
     [(CompilerIrInstr.Switch index _ _ _)
+      (opt-collect-value-uses-array items index)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
       (opt-collect-value-uses-array items index)]
     [_ unit]))
 
@@ -3351,6 +3359,12 @@
       (opt-aggregate-value-has-pointer? base ptrs value)]
     [(CompilerIrInstr.Branch cond _ _)
       (opt-aggregate-value-has-pointer? base ptrs cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-aggregate-value-has-pointer? base ptrs cond)]
+    [(CompilerIrInstr.Switch index _ _ _)
+      (opt-aggregate-value-has-pointer? base ptrs index)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
+      (opt-aggregate-value-has-pointer? base ptrs index)]
     [(CompilerIrInstr.Return maybe)
       (opt-aggregate-maybe-value-has-pointer? base ptrs maybe)]
     [(CompilerIrInstr.Phi _ inputs _)
@@ -5716,6 +5730,11 @@
         [(CompilerIrInstr.Branch bv af bf)
           (and (= at af) (= bt bf) (opt-value-eq av bv))]
         [_ false])]
+    [(CompilerIrInstr.TotalEnumBranch av at bt)
+      (match b
+        [(CompilerIrInstr.TotalEnumBranch bv af bf)
+          (and (= at af) (= bt bf) (opt-value-eq av bv))]
+        [_ false])]
     [(CompilerIrInstr.Return av)
       (match b
         [(CompilerIrInstr.Return bv) (opt-maybe-value-eq av bv)]
@@ -5753,6 +5772,16 @@
             (= abase bbase)
             (opt-switch-case-list-eq acases bcases)
             (= adefault bdefault))]
+        [_ false])]
+    [(CompilerIrInstr.TotalEnumSwitch av abase acases adefault atrap)
+      (match b
+        [(CompilerIrInstr.TotalEnumSwitch bv bbase bcases bdefault btrap)
+          (and
+            (opt-value-eq av bv)
+            (= abase bbase)
+            (opt-switch-case-list-eq acases bcases)
+            (= adefault bdefault)
+            (= atrap btrap))]
         [_ false])]))
 
 (define (opt-instr-list-eq
@@ -6274,6 +6303,8 @@
     [(CompilerIrInstr.Jump _) (OptCseResult.Result (OptExprTable.Nil) instr)]
     [(CompilerIrInstr.Branch _ _ _)
       (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
     [(CompilerIrInstr.Return _) (OptCseResult.Result (OptExprTable.Nil) instr)]
     [(CompilerIrInstr.TailCallIndirect _ _ _)
       (OptCseResult.Result (OptExprTable.Nil) instr)]
@@ -6284,6 +6315,8 @@
     [(CompilerIrInstr.Word dst _ _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
     [(CompilerIrInstr.Switch _ _ _ _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
       (OptCseResult.Result (OptExprTable.Nil) instr)]))
 
 (define (opt-cse-instrs
@@ -6668,6 +6701,8 @@
         ok-label)]
     [(CompilerIrInstr.Branch cond a b)
       (CompilerIrInstr.Branch (opt-copy-resolve env cond) a b)]
+    [(CompilerIrInstr.TotalEnumBranch cond a b)
+      (CompilerIrInstr.TotalEnumBranch (opt-copy-resolve env cond) a b)]
     [(CompilerIrInstr.Return maybe)
       (match maybe
         [(CompilerIrMaybeValue.Some value)
@@ -6708,7 +6743,14 @@
         (opt-copy-resolve env index)
         base
         cases
-        default-label)]))
+        default-label)]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
+      (CompilerIrInstr.TotalEnumSwitch
+        (opt-copy-resolve env index)
+        base
+        cases
+        default-label
+        trap-label)]))
 
 ;; Update the copy env after an instruction. A `Mov dst src` (with `src` already
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
@@ -7067,13 +7109,15 @@
     [(CompilerIrInstr.PredicatedStore _) (OptBoundsFacts.Nil)]
     [(CompilerIrInstr.Jump _) (OptBoundsFacts.Nil)]
     [(CompilerIrInstr.Branch _ _ _) (OptBoundsFacts.Nil)]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) (OptBoundsFacts.Nil)]
     [(CompilerIrInstr.Return _) (OptBoundsFacts.Nil)]
     [(CompilerIrInstr.Phi _ _ _) (OptBoundsFacts.Nil)]
     [(CompilerIrInstr.BoundsCheck _ _ _) facts]
     [(CompilerIrInstr.Pack dst _ _) (opt-bounds-invalidate-var facts dst)]
     [(CompilerIrInstr.Word dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(CompilerIrInstr.TailCallIndirect _ _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.Switch _ _ _ _) (OptBoundsFacts.Nil)]))
+    [(CompilerIrInstr.Switch _ _ _ _) (OptBoundsFacts.Nil)]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (OptBoundsFacts.Nil)]))
 
 (define (opt-bounds-instrs-with-object
   [type-segment-bases : i64]
@@ -10211,6 +10255,8 @@
       (opt-verify-value-use defs doms value block-id pos)]
     [(CompilerIrInstr.Branch cond _ _)
       (opt-verify-value-use defs doms cond block-id pos)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-verify-value-use defs doms cond block-id pos)]
     [(CompilerIrInstr.Return maybe)
       (opt-verify-maybe-value-use defs doms maybe block-id pos)]
     [(CompilerIrInstr.Phi _ inputs _)
@@ -10228,6 +10274,8 @@
         (opt-verify-value-use defs doms func block-id pos)
         (opt-verify-call-args-uses defs doms args block-id pos))]
     [(CompilerIrInstr.Switch index _ _ _)
+      (opt-verify-value-use defs doms index block-id pos)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
       (opt-verify-value-use defs doms index block-id pos)]))
 
 (define (opt-verify-instr-seq-uses-from
@@ -11888,6 +11936,14 @@
           false-label)
         env
         next-var)]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (OptSsaInstrResult.Result
+        (CompilerIrInstr.TotalEnumBranch
+          (opt-ssa-rewrite-value env cond)
+          true-label
+          false-label)
+        env
+        next-var)]
     [(CompilerIrInstr.Return maybe)
       (OptSsaInstrResult.Result
         (CompilerIrInstr.Return (opt-ssa-rewrite-maybe-value env maybe))
@@ -11946,6 +12002,16 @@
           base
           cases
           default-label)
+        env
+        next-var)]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
+      (OptSsaInstrResult.Result
+        (CompilerIrInstr.TotalEnumSwitch
+          (opt-ssa-rewrite-value env index)
+          base
+          cases
+          default-label
+          trap-label)
         env
         next-var)]))
 
@@ -13584,6 +13650,11 @@
         (opt-global-copy-resolve facts doms block-id pos cond)
         true-label
         false-label)]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (CompilerIrInstr.TotalEnumBranch
+        (opt-global-copy-resolve facts doms block-id pos cond)
+        true-label
+        false-label)]
     [(CompilerIrInstr.Return maybe)
       (match maybe
         [(CompilerIrMaybeValue.Some value)
@@ -13675,7 +13746,14 @@
         (opt-global-copy-resolve facts doms block-id pos index)
         base
         cases
-        default-label)]))
+        default-label)]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
+      (CompilerIrInstr.TotalEnumSwitch
+        (opt-global-copy-resolve facts doms block-id pos index)
+        base
+        cases
+        default-label
+        trap-label)]))
 
 ;; 1:1 rewrite: the output has exactly the input's length, so it is built
 ;; straight into a right-sized dense array instead of a cons spine that
@@ -14185,6 +14263,10 @@
       (match cond
         [(CompilerIrValue.Bool _) true]
         [_ false])]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (match cond
+        [(CompilerIrValue.Bool _) true]
+        [_ false])]
     [_ false]))
 
 (define (opt-cfg-foldable-branch-instr-seq?
@@ -14215,6 +14297,13 @@
 (define (opt-cfg-fold-branch [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(CompilerIrInstr.Branch cond true-label false-label)
+      (match cond
+        [(CompilerIrValue.Bool known)
+          (if known
+            (CompilerIrInstr.Jump true-label)
+            (CompilerIrInstr.Jump false-label))]
+        [_ instr])]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
       (match cond
         [(CompilerIrValue.Bool known)
           (if known
@@ -14295,7 +14384,11 @@
     [(CompilerIrInstr.Jump label) (opt-label-add set label)]
     [(CompilerIrInstr.Branch _ true-label false-label)
       (opt-label-add (opt-label-add set true-label) false-label)]
+    [(CompilerIrInstr.TotalEnumBranch _ true-label false-label)
+      (opt-label-add (opt-label-add set true-label) false-label)]
     [(CompilerIrInstr.Switch _ _ cases default-label)
+      (opt-cfg-switch-case-successors (opt-label-add set default-label) cases)]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
       (opt-cfg-switch-case-successors (opt-label-add set default-label) cases)]
     [_ set]))
 
@@ -14388,10 +14481,12 @@
   (match instr
     [(CompilerIrInstr.Jump _) true]
     [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) true]
     [(CompilerIrInstr.Return _) true]
     [(CompilerIrInstr.TailCall _ _ _) true]
     [(CompilerIrInstr.TailCallIndirect _ _ _) true]
     [(CompilerIrInstr.Switch _ _ _ _) true]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
     [_ false]))
 
 (define (opt-cfg-instr-seq-can-fallthrough? [instrs : CompilerIrInstrSeq]) : bool
@@ -15337,12 +15432,27 @@
         cond
         (opt-loop-preheaders-retarget-label true-label header preheader)
         (opt-loop-preheaders-retarget-label false-label header preheader))]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (CompilerIrInstr.TotalEnumBranch
+        cond
+        (opt-loop-preheaders-retarget-label true-label header preheader)
+        (opt-loop-preheaders-retarget-label false-label header preheader))]
     [(CompilerIrInstr.Switch index base cases default-label)
       (CompilerIrInstr.Switch
         index
         base
         (opt-loop-preheaders-retarget-switch-cases cases header preheader)
         (opt-loop-preheaders-retarget-label default-label header preheader))]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
+      (CompilerIrInstr.TotalEnumSwitch
+        index
+        base
+        (opt-loop-preheaders-retarget-switch-cases cases header preheader)
+        (opt-loop-preheaders-retarget-label default-label header preheader)
+        ;; This is provenance, not an executable edge. If the default edge
+        ;; acquires a preheader, retain the actual abort block as the proof
+        ;; target so source emission can follow and validate the forwarder.
+        trap-label)]
     [_ instr]))
 
 (define (opt-loop-preheaders-retarget-instrs-from
@@ -18253,6 +18363,7 @@
     ;; a Branch is only ever a terminator; the walk itself validates both
     ;; of its arms.
     [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) true]
     [(CompilerIrInstr.Return _) true]
     [_ false]))
 
@@ -18334,7 +18445,27 @@
           (opt-licm-branch-exit-return-shaped? blocks body else-label))
           1
           2))]
+    [(CompilerIrInstr.TotalEnumBranch _ then-label else-label)
+      (if (and
+        (opt-label-contains body then-label)
+        (opt-label-contains body else-label))
+        0
+        (if (and
+          (opt-licm-branch-exit-return-shaped? blocks body then-label)
+          (opt-licm-branch-exit-return-shaped? blocks body else-label))
+          1
+          2))]
     [(CompilerIrInstr.Switch _ _ cases default-label)
+      (if (or
+        (not (opt-label-contains body default-label))
+        (opt-licm-switch-case-outside? body cases))
+        (if (and
+          (opt-licm-branch-exit-return-shaped? blocks body default-label)
+          (opt-licm-switch-cases-return-shaped? blocks body cases))
+          1
+          2)
+        0)]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
       (if (or
         (not (opt-label-contains body default-label))
         (opt-licm-switch-case-outside? body cases))
@@ -19790,6 +19921,7 @@
               (> count 0)
               (match (compiler-ir-instr-seq-ref instrs (- count 1))
                 [(CompilerIrInstr.Switch _ _ _ _) true]
+                [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
                 [_ false])
               (opt-label-contains
                 (opt-cfg-instr-successors
@@ -24509,6 +24641,8 @@
     [(CompilerIrInstr.Jump label) (opt-sccp-state-mark-executable state label)]
     [(CompilerIrInstr.Branch cond true-label false-label)
       (opt-sccp-mark-branch-targets state cond true-label false-label)]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (opt-sccp-mark-branch-targets state cond true-label false-label)]
     [(CompilerIrInstr.Alloc dst _)
       (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.AddrOf dst _)
@@ -24595,6 +24729,10 @@
     [(CompilerIrInstr.Word dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.Switch _ _ cases default-label)
+      (opt-sccp-mark-switch-targets
+        (opt-sccp-state-mark-executable state default-label)
+        cases)]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
       (opt-sccp-mark-switch-targets
         (opt-sccp-state-mark-executable state default-label)
         cases)]
@@ -24794,6 +24932,10 @@
   [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.Branch cond _ _)
+      (match (opt-sccp-rewrite-value env cond)
+        [(CompilerIrValue.Bool _) true]
+        [_ false])]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
       (match (opt-sccp-rewrite-value env cond)
         [(CompilerIrValue.Bool _) true]
         [_ false])]
@@ -25075,6 +25217,19 @@
               (CompilerIrInstr.Jump true-label)
               (CompilerIrInstr.Jump false-label))]
           [_ (CompilerIrInstr.Branch rewritten-cond true-label false-label)]))]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (let
+        [rewritten-cond : CompilerIrValue (opt-sccp-rewrite-value env cond)]
+        (match rewritten-cond
+          [(CompilerIrValue.Bool known)
+            (if known
+              (CompilerIrInstr.Jump true-label)
+              (CompilerIrInstr.Jump false-label))]
+          [_
+            (CompilerIrInstr.TotalEnumBranch
+              rewritten-cond
+              true-label
+              false-label)]))]
     [(CompilerIrInstr.Return value)
       (CompilerIrInstr.Return (opt-sccp-rewrite-maybe-value env value))]
     [(CompilerIrInstr.Phi dst inputs ty)
@@ -25268,7 +25423,14 @@
         (opt-sccp-rewrite-value env index)
         base
         cases
-        default-label)]))
+        default-label)]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
+      (CompilerIrInstr.TotalEnumSwitch
+        (opt-sccp-rewrite-value env index)
+        base
+        cases
+        default-label
+        trap-label)]))
 
 ;; Constant propagation can decide a bounds check outright. Only the in-range
 ;; case is dropped: an out-of-range literal keeps its check so the trap still
@@ -25427,10 +25589,10 @@
 
 (defenum OptSwitchCompare
   (No)
-  (Some i64 i64 i64 i64 i64))
+  (Some i64 i64 i64 i64 i64 bool))
 
 (defenum OptSwitchCandidate
-  (Candidate i64 i64 i64 i64 i64))
+  (Candidate i64 i64 i64 i64 i64 bool))
 
 (defenum OptSwitchCandidateList
   (Nil)
@@ -25440,7 +25602,8 @@
   [items : OptSwitchCandidateList]
   [index : i64]) : OptSwitchCandidate
   (match items
-    [(OptSwitchCandidateList.Nil) (OptSwitchCandidate.Candidate -1 -1 -1 -1 -1)]
+    [(OptSwitchCandidateList.Nil)
+      (OptSwitchCandidate.Candidate -1 -1 -1 -1 -1 false)]
     [(OptSwitchCandidateList.Dense slots len)
       (array-ref slots (- (- len 1) index))]))
 
@@ -25458,10 +25621,17 @@
   [eq-var : i64]
   [arm-label : i64]
   [next-label : i64]
+  [total-enum? : bool]
   [items : OptSwitchCandidateList]) : OptSwitchCandidateList
   (let
     [candidate : OptSwitchCandidate
-      (OptSwitchCandidate.Candidate label tag eq-var arm-label next-label)]
+      (OptSwitchCandidate.Candidate
+        label
+        tag
+        eq-var
+        arm-label
+        next-label
+        total-enum?)]
     (match items
       [(OptSwitchCandidateList.Nil)
         (let
@@ -25536,11 +25706,13 @@
             (if (opt-binop-eq op CompilerIrBinOp.Eq)
               (match (opt-switch-index-tag-from-values lhs rhs)
                 [(OptSwitchIndexTag.Some index-var tag)
-                  (match (compiler-ir-instr-seq-ref instrs 1)
-                    [(CompilerIrInstr.Branch
+                  (match (opt-switch-branch
+                    (compiler-ir-instr-seq-ref instrs 1))
+                    [(OptSwitchBranch.Some
                         (CompilerIrValue.Var cond-var)
                         arm-label
-                        next-label)
+                        next-label
+                        total-enum?)
                       (if (and
                         (= cond-var eq-var)
                         (= (opt-switch-use-count uses eq-var) 1))
@@ -25549,7 +25721,8 @@
                           tag
                           eq-var
                           arm-label
-                          next-label)
+                          next-label
+                          total-enum?)
                         (OptSwitchCompare.No))]
                     [_ (OptSwitchCompare.No)])]
                 [(OptSwitchIndexTag.No) (OptSwitchCompare.No)])
@@ -25573,7 +25746,19 @@
 ;; instruction count kept ahead of the Switch.
 (defenum OptSwitchCompareTail
   (No)
-  (Some i64 i64 i64 i64 i64 i64))
+  (Some i64 i64 i64 i64 i64 i64 bool))
+
+(defenum OptSwitchBranch
+  (No)
+  (Some CompilerIrValue i64 i64 bool))
+
+(define (opt-switch-branch [instr : CompilerIrInstr]) : OptSwitchBranch
+  (match instr
+    [(CompilerIrInstr.Branch cond yes no)
+      (OptSwitchBranch.Some cond yes no false)]
+    [(CompilerIrInstr.TotalEnumBranch cond yes no)
+      (OptSwitchBranch.Some cond yes no true)]
+    [_ (OptSwitchBranch.No)]))
 
 (define (opt-switch-parse-compare-block-tail
   [block : CompilerIrBlock]
@@ -25584,11 +25769,13 @@
         [count : i64 (compiler-ir-instr-seq-count instrs)]
         (if (= count 0)
           (OptSwitchCompareTail.No)
-          (match (compiler-ir-instr-seq-ref instrs (- count 1))
-            [(CompilerIrInstr.Branch
+          (match (opt-switch-branch
+            (compiler-ir-instr-seq-ref instrs (- count 1)))
+            [(OptSwitchBranch.Some
                 (CompilerIrValue.Var cond-var)
                 true-label
-                false-label)
+                false-label
+                total-enum?)
               (if (>= count 2)
                 (match (compiler-ir-instr-seq-ref instrs (- count 2))
                   [(CompilerIrInstr.BinOp eq-var op lhs rhs _)
@@ -25604,7 +25791,8 @@
                             eq-var
                             true-label
                             false-label
-                            (- count 2))]
+                            (- count 2)
+                            total-enum?)]
                         [(OptSwitchIndexTag.No) (OptSwitchCompareTail.No)])
                       (OptSwitchCompareTail.No))]
                   [_
@@ -25614,14 +25802,16 @@
                       (- 0 1)
                       false-label
                       true-label
-                      (- count 1))])
+                      (- count 1)
+                      total-enum?)])
                 (OptSwitchCompareTail.Some
                   cond-var
                   0
                   (- 0 1)
                   false-label
                   true-label
-                  0))]
+                  0
+                  total-enum?))]
             [_ (OptSwitchCompareTail.No)])))]))
 
 ;; Chain-head prefix copy facts: a `Mov dst, src` in the head block's prefix
@@ -25695,6 +25885,29 @@
     [(OptSwitchCandidateList.Nil) 0]
     [(OptSwitchCandidateList.Dense _ len) len]))
 
+(define (opt-switch-candidates-total-enum-prefix-count-from
+  [items : OptSwitchCandidateList]
+  [count : i64]) : i64
+  (match items
+    [(OptSwitchCandidateList.Nil) count]
+    [(OptSwitchCandidateList.Dense _ _)
+      (match (opt-switch-candidate-ref items 0)
+        [(OptSwitchCandidate.Candidate _ _ _ _ _ total-enum?)
+          (if total-enum?
+            (opt-switch-candidates-total-enum-prefix-count-from
+              (opt-switch-candidate-tail items)
+              (+ count 1))
+            count)])]))
+
+(define (opt-switch-candidates-total-enum? [items : OptSwitchCandidateList]) : bool
+  ;; Lowering proves only the final four-comparison suffix. Candidate storage
+  ;; exposes the collected chain in reverse, so that suffix is the logical
+  ;; prefix here. Earlier ordinary comparisons are allowed after it so a
+  ;; complete six-or-more-variant chain can form one total switch. An earlier
+  ;; chunk of a long chain has no proved prefix and therefore keeps its range
+  ;; check and continuation default.
+  (>= (opt-switch-candidates-total-enum-prefix-count-from items 0) 4))
+
 (define (opt-switch-candidate-has-tag?
   [items : OptSwitchCandidateList]
   [tag : i64]) : bool
@@ -25702,7 +25915,7 @@
     [(OptSwitchCandidateList.Nil) false]
     [(OptSwitchCandidateList.Dense _ _)
       (match (opt-switch-candidate-ref items 0)
-        [(OptSwitchCandidate.Candidate _ item-tag _ _ _)
+        [(OptSwitchCandidate.Candidate _ item-tag _ _ _ _)
           (if (= item-tag tag)
             true
             (opt-switch-candidate-has-tag?
@@ -25716,7 +25929,7 @@
     [(OptSwitchCandidateList.Nil) false]
     [(OptSwitchCandidateList.Dense _ _)
       (match (opt-switch-candidate-ref items 0)
-        [(OptSwitchCandidate.Candidate item-label _ _ _ _)
+        [(OptSwitchCandidate.Candidate item-label _ _ _ _ _)
           (if (= item-label label)
             true
             (opt-switch-candidate-has-label?
@@ -25730,7 +25943,7 @@
     [(OptSwitchCandidateList.Nil) current]
     [(OptSwitchCandidateList.Dense _ _)
       (match (opt-switch-candidate-ref items 0)
-        [(OptSwitchCandidate.Candidate _ tag _ _ _)
+        [(OptSwitchCandidate.Candidate _ tag _ _ _ _)
           (opt-switch-candidate-min-from
             (opt-switch-candidate-tail items)
             (if (< tag current)
@@ -25744,7 +25957,7 @@
     [(OptSwitchCandidateList.Nil) current]
     [(OptSwitchCandidateList.Dense _ _)
       (match (opt-switch-candidate-ref items 0)
-        [(OptSwitchCandidate.Candidate _ tag _ _ _)
+        [(OptSwitchCandidate.Candidate _ tag _ _ _ _)
           (opt-switch-candidate-max-from
             (opt-switch-candidate-tail items)
             (if (> tag current)
@@ -25756,7 +25969,7 @@
     [(OptSwitchCandidateList.Nil) 0]
     [(OptSwitchCandidateList.Dense _ _)
       (match (opt-switch-candidate-ref items 0)
-        [(OptSwitchCandidate.Candidate _ tag _ _ _)
+        [(OptSwitchCandidate.Candidate _ tag _ _ _ _)
           (opt-switch-candidate-min-from (opt-switch-candidate-tail items) tag)])]))
 
 (define (opt-switch-candidate-max [items : OptSwitchCandidateList]) : i64
@@ -25764,7 +25977,7 @@
     [(OptSwitchCandidateList.Nil) 0]
     [(OptSwitchCandidateList.Dense _ _)
       (match (opt-switch-candidate-ref items 0)
-        [(OptSwitchCandidate.Candidate _ tag _ _ _)
+        [(OptSwitchCandidate.Candidate _ tag _ _ _ _)
           (opt-switch-candidate-max-from (opt-switch-candidate-tail items) tag)])]))
 
 (define (opt-switch-candidate-label-for-tag
@@ -25774,7 +25987,7 @@
     [(OptSwitchCandidateList.Nil) (OptSwitchMaybeLabel.NoLabel)]
     [(OptSwitchCandidateList.Dense _ _)
       (match (opt-switch-candidate-ref items 0)
-        [(OptSwitchCandidate.Candidate _ item-tag _ arm-label _)
+        [(OptSwitchCandidate.Candidate _ item-tag _ arm-label _ _)
           (if (= item-tag tag)
             (OptSwitchMaybeLabel.SomeLabel arm-label)
             (opt-switch-candidate-label-for-tag
@@ -25821,10 +26034,10 @@
         (CompilerIrInstr.Jump label)
         CompilerIrInstrList.Nil))))
 
-;; Totality is intentionally materialized only after the complete per-function
-;; optimization fixpoint and the final scratch-reset pass. Mid-pipeline loop,
-;; versioning, GVN, and verifier gates therefore see the same classic Switch as
-;; clean HEAD: cases 0..N-2 and the last exhaustive arm as the default.
+;; The final case and trap are intentionally materialized only after the
+;; complete per-function optimization fixpoint and the final scratch-reset
+;; pass. Mid-pipeline passes carry a pending TotalEnumSwitch: cases 0..N-2,
+;; the last exhaustive arm as the default, and no trap label yet.
 (defenum OptLateTotalSwitchCases
   (No)
   (Some CompilerIrSwitchCaseList i64))
@@ -25835,12 +26048,6 @@
 
 (defenum OptLateTotalSwitchBlocks
   (Result CompilerIrBlockList CompilerIrBlockList))
-
-(define (opt-late-total-switch-marker-label? [label : i64]) : bool
-  (let
-    [marker : String "match_total_enum_default"]
-    [text : String (compiler-ir-label-text label)]
-    (string.contains (& text) (& marker))))
 
 (define (opt-late-total-switch-cases-from
   [cases : CompilerIrSwitchCaseList]
@@ -25911,17 +26118,22 @@
         (if (<= count 0)
           (OptLateTotalSwitchBlock.Unchanged block)
           (match (compiler-ir-instr-seq-ref instrs (- count 1))
-            [(CompilerIrInstr.Switch index base cases default-label)
+            [(CompilerIrInstr.TotalEnumSwitch
+                index
+                base
+                cases
+                default-label
+                existing-trap-label)
               (if (and
                 (= base 0)
-                (opt-late-total-switch-marker-label? default-label))
+                (= existing-trap-label (compiler-ir-label-none)))
                 (match (opt-late-total-switch-cases-from cases 0 default-label)
                   [(OptLateTotalSwitchCases.No)
                     (OptLateTotalSwitchBlock.Unchanged block)]
                   [(OptLateTotalSwitchCases.Some total-cases case-count)
                     ;; Four comparisons is switch formation's existing gate.
-                    ;; Rechecking it here prevents a marker from authorizing a
-                    ;; small or otherwise foreign Switch shape.
+                    ;; Rechecking it here prevents malformed or foreign
+                    ;; provenance from authorizing a small Switch shape.
                     (if (< case-count 4)
                       (OptLateTotalSwitchBlock.Unchanged block)
                       (let
@@ -25947,11 +26159,12 @@
                               instrs
                               0
                               (- count 1)
-                              (CompilerIrInstr.Switch
+                              (CompilerIrInstr.TotalEnumSwitch
                                 index
                                 base
                                 (compiler-ir-switch-case-list-compact
                                   total-cases)
+                                trap-label
                                 trap-label)))
                           (opt-switch-total-enum-trap-block trap-label trap-var))))])
                 (OptLateTotalSwitchBlock.Unchanged block))]
@@ -26079,7 +26292,7 @@
       [(OptSwitchCandidateList.Nil) true]
       [(OptSwitchCandidateList.Dense _ _)
         (match (opt-switch-candidate-ref items 0)
-          [(OptSwitchCandidate.Candidate _ _ _ arm-label _)
+          [(OptSwitchCandidate.Candidate _ _ _ arm-label _ _)
             (and
               (not (opt-switch-candidate-has-label? all-items arm-label))
               (not (opt-switch-block-starts-with-phi? index arm-label))
@@ -26142,6 +26355,7 @@
   [eq-var : i64]
   [arm-label : i64]
   [next-label : i64]
+  [total-enum? : bool]
   [head-prefix : i64]
   [copies : OptSwitchCopyEnv]) : OptMaybeSwitchChain
   ;; Candidate vars read through the head prefix's copy Movs: block-local copy
@@ -26177,6 +26391,7 @@
               eq-var
               arm-label
               next-label
+              total-enum?
               items)
             head-prefix
             copies))))))
@@ -26213,7 +26428,8 @@
                     eq-var
                     arm-label
                     next-label
-                    prefix)
+                    prefix
+                    total-enum?)
                   (match block
                     [(CompilerIrBlock.Block _ head-instrs)
                       (opt-switch-collect-parsed
@@ -26230,6 +26446,7 @@
                         eq-var
                         arm-label
                         next-label
+                        total-enum?
                         prefix
                         (opt-switch-prefix-copies-from
                           head-instrs
@@ -26247,7 +26464,8 @@
               tag
               eq-var
               arm-label
-              next-label)
+              next-label
+              total-enum?)
             (opt-switch-collect-parsed
               blocks
               index
@@ -26262,6 +26480,7 @@
               eq-var
               arm-label
               next-label
+              total-enum?
               head-prefix
               copies)])])))
 
@@ -26273,7 +26492,7 @@
     [(OptSwitchCandidateList.Nil) skip]
     [(OptSwitchCandidateList.Dense _ _)
       (match (opt-switch-candidate-ref items 0)
-        [(OptSwitchCandidate.Candidate label _ _ _ _)
+        [(OptSwitchCandidate.Candidate label _ _ _ _ _)
           (opt-switch-skip-candidate-labels
             (opt-switch-candidate-tail items)
             first-label
@@ -26313,11 +26532,18 @@
               instrs
               0
               head-prefix
-              (CompilerIrInstr.Switch
-                (CompilerIrValue.Var index-var)
-                min-tag
-                (opt-switch-build-cases items min-tag max-tag)
-                default-label)))]
+              (if (opt-switch-candidates-total-enum? items)
+                (CompilerIrInstr.TotalEnumSwitch
+                  (CompilerIrValue.Var index-var)
+                  min-tag
+                  (opt-switch-build-cases items min-tag max-tag)
+                  default-label
+                  (compiler-ir-label-none))
+                (CompilerIrInstr.Switch
+                  (CompilerIrValue.Var index-var)
+                  min-tag
+                  (opt-switch-build-cases items min-tag max-tag)
+                  default-label))))]
         [(OptMaybeSwitchChain.No) block])]))
 
 (define (opt-switch-rewrite-blocks-from
@@ -26415,8 +26641,9 @@
             (if (opt-binop-eq op CompilerIrBinOp.Eq)
               (match (opt-switch-index-tag-from-values lhs rhs)
                 [(OptSwitchIndexTag.Some _ _)
-                  (match (compiler-ir-instr-seq-ref instrs 1)
-                    [(CompilerIrInstr.Branch (CompilerIrValue.Var cond-var) _ _)
+                  (match (opt-switch-branch
+                    (compiler-ir-instr-seq-ref instrs 1))
+                    [(OptSwitchBranch.Some (CompilerIrValue.Var cond-var) _ _ _)
                       (= cond-var eq-var)]
                     [_ false])]
                 [(OptSwitchIndexTag.No) false])
@@ -26657,12 +26884,14 @@
     [(CompilerIrInstr.Store _ _ _) (- 0 1)]
     [(CompilerIrInstr.Jump _) (- 0 1)]
     [(CompilerIrInstr.Branch _ _ _) (- 0 1)]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) (- 0 1)]
     [(CompilerIrInstr.Return _) (- 0 1)]
     ;; Register-group ops define their dst.
     [(CompilerIrInstr.Pack dst _ _) dst]
     [(CompilerIrInstr.Word dst _ _ _) dst]
     [(CompilerIrInstr.TailCallIndirect _ _ _) (- 0 1)]
-    [(CompilerIrInstr.Switch _ _ _ _) (- 0 1)]))
+    [(CompilerIrInstr.Switch _ _ _ _) (- 0 1)]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (- 0 1)]))
 
 (define (opt-gvn-sources-params
   [params : CompilerIrParamList]
@@ -31570,6 +31799,20 @@
         cond
         true-label
         false-label)]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (opt-loop-bce-branch-state
+        type-segment-bases
+        state
+        sources
+        types
+        blocks
+        doms
+        index
+        loops
+        block-label
+        cond
+        true-label
+        false-label)]
     [(CompilerIrInstr.Phi dst _ _)
       (opt-loop-bce-state-invalidate-def state dst)]
     [(CompilerIrInstr.Pack dst _ _)
@@ -31581,7 +31824,8 @@
       (opt-loop-bce-state-clear-lengths state)]
     [(CompilerIrInstr.Jump _) state]
     [(CompilerIrInstr.Return _) state]
-    [(CompilerIrInstr.Switch _ _ _ _) state]))
+    [(CompilerIrInstr.Switch _ _ _ _) state]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) state]))
 
 (define (opt-loop-bce-length-expr-known?
   [type-segment-bases : i64]
@@ -33327,6 +33571,8 @@
       (opt-scan-note-call-args-uses items generation args)]
     [(CompilerIrInstr.Branch cond _ _)
       (opt-scan-note-value-uses items generation cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-scan-note-value-uses items generation cond)]
     [(CompilerIrInstr.Return maybe)
       (match maybe
         [(CompilerIrMaybeValue.Some value)
@@ -33342,6 +33588,8 @@
         (opt-scan-note-value-uses items generation func)
         (opt-scan-note-call-args-uses items generation args))]
     [(CompilerIrInstr.Switch index _ _ _)
+      (opt-scan-note-value-uses items generation index)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
       (opt-scan-note-value-uses items generation index)]
     [_ unit]))
 
@@ -34651,6 +34899,7 @@
               true
               (match (compiler-ir-instr-seq-ref instrs (- count 1))
                 [(CompilerIrInstr.Switch _ _ _ _) false]
+                [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) false]
                 [_ true])))])]))
 
 ;; The counter phi's back-edge input must carry the incremented counter,
@@ -38107,8 +38356,8 @@
     [(CompilerIrBlockList.Array seq)
       (opt-bce-mb-body-checks (compiler-ir-block-seq-to-list seq) acc)]))
 
-;; Exhaustive enum dispatches carry their totality proof on the classic Switch
-;; default until the dedicated late rewrite. Cloning one of these high-fanout
+;; Exhaustive enum dispatches carry an explicit TotalEnumSwitch proof until the
+;; dedicated late rewrite. Cloning one of these high-fanout
 ;; interpreter loops duplicates every arm, pushes the combined CFG over the
 ;; backend's compact allocation shape, and loses far more than BCE removes.
 ;; Ordinary Switch loops remain clonable (and are covered by the fixture).
@@ -38124,8 +38373,7 @@
               (and
                 (> count 0)
                 (match (compiler-ir-instr-seq-ref instrs (- count 1))
-                  [(CompilerIrInstr.Switch _ _ _ default-label)
-                    (opt-late-total-switch-marker-label? default-label)]
+                  [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
                   [_ false]))
               (opt-bce-mb-body-has-total-enum-switch? (box-get rest))))])]
     [(CompilerIrBlockList.Array seq)
@@ -44512,7 +44760,11 @@
               (match terminator
                 [(CompilerIrInstr.Branch _ _ _)
                   (opt-cfg-index-successors cfg label)]
+                [(CompilerIrInstr.TotalEnumBranch _ _ _)
+                  (opt-cfg-index-successors cfg label)]
                 [(CompilerIrInstr.Switch _ _ _ _)
+                  (opt-cfg-index-successors cfg label)]
+                [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
                   (opt-cfg-index-successors cfg label)]
                 [_ (OptLabelSet.Nil)])]
             [moves : OptSuccessorSinkMoves tail]
@@ -48441,6 +48693,8 @@
     [(CompilerIrInstr.Jump _) census]
     [(CompilerIrInstr.Branch cond _ _)
       (opt-inline-census-value index census cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-inline-census-value index census cond)]
     [(CompilerIrInstr.Return maybe)
       (opt-inline-census-maybe-value index census maybe)]
     [(CompilerIrInstr.Phi _ inputs _)
@@ -48456,6 +48710,8 @@
         (opt-inline-census-value index census func)
         args)]
     [(CompilerIrInstr.Switch idx _ _ _)
+      (opt-inline-census-value index census idx)]
+    [(CompilerIrInstr.TotalEnumSwitch idx _ _ _ _)
       (opt-inline-census-value index census idx)]))
 
 (define (opt-inline-census-instr-seq-from
@@ -49385,7 +49641,9 @@
   (match instr
     [(CompilerIrInstr.Jump _) true]
     [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) true]
     [(CompilerIrInstr.Switch _ _ _ _) true]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
     [(CompilerIrInstr.Return _) true]
     [(CompilerIrInstr.Phi dst _ _) (>= dst 0)]
     ;; Bounds checks are inlinable: the instruction remapper freshens the
@@ -49793,6 +50051,7 @@
     [(CompilerIrInstr.UnOp _ _ _ _) true]
     [(CompilerIrInstr.Word _ _ _ _) true]
     [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) true]
     [(CompilerIrInstr.Return _) true]
     [(CompilerIrInstr.Phi dst _ _) (>= dst 0)]
     [(CompilerIrInstr.Jump _) true]
@@ -50525,12 +50784,31 @@
         (opt-inline-remap-value cond sa np base)
         (opt-inline-prefix-label prefix true-label)
         (opt-inline-prefix-label prefix false-label))]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (CompilerIrInstr.TotalEnumBranch
+        (opt-inline-remap-value cond sa np base)
+        (opt-inline-prefix-label prefix true-label)
+        (opt-inline-prefix-label prefix false-label))]
     [(CompilerIrInstr.Switch value tag-base cases default-label)
       (CompilerIrInstr.Switch
         (opt-inline-remap-value value sa np base)
         tag-base
         (opt-inline-prefix-switch-cases cases prefix)
         (opt-inline-prefix-label prefix default-label))]
+    [(CompilerIrInstr.TotalEnumSwitch
+        value
+        tag-base
+        cases
+        default-label
+        trap-label)
+      (CompilerIrInstr.TotalEnumSwitch
+        (opt-inline-remap-value value sa np base)
+        tag-base
+        (opt-inline-prefix-switch-cases cases prefix)
+        (opt-inline-prefix-label prefix default-label)
+        (if (= trap-label (compiler-ir-label-none))
+          trap-label
+          (opt-inline-prefix-label prefix trap-label)))]
     [(CompilerIrInstr.Phi dst inputs ty)
       (CompilerIrInstr.Phi
         (opt-inline-rebase-var dst np base)
@@ -53860,6 +54138,8 @@
       (opt-reach-value index (opt-reach-add-global state name) value)]
     [(CompilerIrInstr.Jump _) state]
     [(CompilerIrInstr.Branch cond _ _) (opt-reach-value index state cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-reach-value index state cond)]
     [(CompilerIrInstr.Return maybe) (opt-reach-maybe-value index state maybe)]
     [(CompilerIrInstr.Phi _ inputs _) (opt-reach-phi-inputs index state inputs)]
     ;; Register-group ops carry word-class scalar operands (vars/consts);
@@ -53869,7 +54149,9 @@
     [(CompilerIrInstr.Word _ src _ _) (opt-reach-value index state src)]
     [(CompilerIrInstr.TailCallIndirect func args _)
       (opt-reach-call-args index (opt-reach-value index state func) args)]
-    [(CompilerIrInstr.Switch idx _ _ _) (opt-reach-value index state idx)]))
+    [(CompilerIrInstr.Switch idx _ _ _) (opt-reach-value index state idx)]
+    [(CompilerIrInstr.TotalEnumSwitch idx _ _ _ _)
+      (opt-reach-value index state idx)]))
 
 (define (opt-reach-instr-seq-from
   [index : OptFunctionIndex]
@@ -54286,6 +54568,8 @@
                 (OptLoopBceArgcScan.Scan env true false)])]
           [(CompilerIrInstr.Jump _) (OptLoopBceArgcScan.Scan env seen false)]
           [(CompilerIrInstr.Branch _ _ _)
+            (OptLoopBceArgcScan.Scan env seen false)]
+          [(CompilerIrInstr.TotalEnumBranch _ _ _)
             (OptLoopBceArgcScan.Scan env seen false)]
           [_
             (let
@@ -55730,6 +56014,8 @@
         (opt-const-globals-disq-value disq value))]
     [(CompilerIrInstr.Jump _) disq]
     [(CompilerIrInstr.Branch cond _ _) (opt-const-globals-disq-value disq cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-const-globals-disq-value disq cond)]
     [(CompilerIrInstr.Return maybe) (opt-const-globals-disq-maybe disq maybe)]
     [(CompilerIrInstr.Phi _ inputs _) (opt-const-globals-disq-phi disq inputs)]
     [(CompilerIrInstr.Pack _ _ _) disq]
@@ -55738,7 +56024,9 @@
       (opt-const-globals-disq-args
         (opt-const-globals-disq-value disq func)
         args)]
-    [(CompilerIrInstr.Switch idx _ _ _) (opt-const-globals-disq-value disq idx)]))
+    [(CompilerIrInstr.Switch idx _ _ _) (opt-const-globals-disq-value disq idx)]
+    [(CompilerIrInstr.TotalEnumSwitch idx _ _ _ _)
+      (opt-const-globals-disq-value disq idx)]))
 
 (define (opt-const-globals-disq-seq-from
   [disq : opt_i64_i64_map.Map]
@@ -57538,6 +57826,10 @@
             (OptScratchBlockerReason.Blocked "return_escape")
             (OptScratchBlockerReason.NoBlocker))]
         [(CompilerIrInstr.Branch cond _ _)
+          (if (opt-scratch-value-derived? roots facts cond)
+            (OptScratchBlockerReason.Blocked "raw_pointer")
+            (OptScratchBlockerReason.NoBlocker))]
+        [(CompilerIrInstr.TotalEnumBranch cond _ _)
           (if (opt-scratch-value-derived? roots facts cond)
             (OptScratchBlockerReason.Blocked "raw_pointer")
             (OptScratchBlockerReason.NoBlocker))]

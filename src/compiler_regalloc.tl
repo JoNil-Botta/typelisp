@@ -8297,10 +8297,12 @@
     [(CompilerIrInstr.EntryEnvp _) true]
     [(CompilerIrInstr.Store _ _ _) true]
     [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) true]
     [(CompilerIrInstr.Return _) true]
     [(CompilerIrInstr.Pack _ _ _) true]
     [(CompilerIrInstr.Word _ _ _ _) true]
     [(CompilerIrInstr.Switch _ _ _ _) true]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
     [_ false]))
 
 (define (compiler-reg-backend-caller-clobber-instr-for-abi?
@@ -8401,6 +8403,7 @@
     ;; so occupancy added at a dispatch by an ABI pin must be refused until
     ;; that emitter is fixed).
     [(CompilerIrInstr.Switch _ _ _ _) (= kind 3)]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (= kind 3)]
     [_
       (cond
         [(= kind 0)
@@ -10892,6 +10895,7 @@
           false
           (match (compiler-ir-instr-seq-ref instrs (- c 1))
             [(CompilerIrInstr.Branch _ _ _) true]
+            [(CompilerIrInstr.TotalEnumBranch _ _ _) true]
             [_ false])))]))
 
 ;; loop-ends[h] = highest block index with a back-edge to block h (-1 if none).
@@ -11059,6 +11063,19 @@
                     (compiler-reg-preheader-replace-last-instr-seq
                       instrs
                       (CompilerIrInstr.Branch cond nt nf)))))]
+            [(CompilerIrInstr.TotalEnumBranch cond t f)
+              (let
+                [nt : i64
+                  (compiler-reg-preheader-subst-label ids header-pred index t)]
+                [nf : i64
+                  (compiler-reg-preheader-subst-label ids header-pred index f)]
+                (if (and (= nt t) (= nf f))
+                  block
+                  (CompilerIrBlock.Block
+                    label
+                    (compiler-reg-preheader-replace-last-instr-seq
+                      instrs
+                      (CompilerIrInstr.TotalEnumBranch cond nt nf)))))]
             [_ block])))]))
 
 ;; Relabel a header's phi inputs that came from `pred-label` to `ph-label`
@@ -12302,8 +12319,8 @@
   [index : i64]) : i64
   (if (<= index 0)
     (- 0 1)
-    (match (array-ref slots index)
-      [(CompilerIrInstr.Branch cond _ _)
+    (match (compiler-ir-instr-scalar-fact (array-ref slots index))
+      [(CompilerIrInstrScalarFact.Branch cond _ _)
         (match cond
           [(CompilerIrValue.Var var)
             (match (array-ref slots (- index 1))
@@ -14334,8 +14351,9 @@
               (not (compiler-reg-float-type? ty))
               (compiler-reg-early-exit-value-safe? params lhs)
               (compiler-reg-early-exit-value-safe? params rhs)
-              (match (compiler-ir-instr-seq-ref instrs 1)
-                [(CompilerIrInstr.Branch cond _ _)
+              (match (compiler-ir-instr-scalar-fact
+                (compiler-ir-instr-seq-ref instrs 1))
+                [(CompilerIrInstrScalarFact.Branch cond _ _)
                   (match cond
                     [(CompilerIrValue.Var cond-var) (= cond-var dst)]
                     [_ false])]
@@ -14437,6 +14455,23 @@
                       mode
                       saving-label
                       bare-prefix))]
+                [(CompilerIrInstr.TotalEnumBranch cond on-true on-false)
+                  (CompilerIrInstr.TotalEnumBranch
+                    cond
+                    (compiler-reg-early-exit-target
+                      seq
+                      states
+                      on-true
+                      mode
+                      saving-label
+                      bare-prefix)
+                    (compiler-reg-early-exit-target
+                      seq
+                      states
+                      on-false
+                      mode
+                      saving-label
+                      bare-prefix))]
                 [_ last])]
             [out : (Array CompilerIrInstr)
               (array.make-array CompilerIrInstr count)]
@@ -14495,15 +14530,16 @@
                 (let
                   [count : i64 (compiler-ir-instr-seq-count instrs)]
                   (if (> count 0)
-                    (match (compiler-ir-instr-seq-ref instrs (- count 1))
-                      [(CompilerIrInstr.Jump target)
+                    (match (compiler-ir-instr-scalar-fact
+                      (compiler-ir-instr-seq-ref instrs (- count 1)))
+                      [(CompilerIrInstrScalarFact.Jump target)
                         (if (compiler-reg-early-exit-target-is-guard?
                           seq
                           states
                           target)
                           (set! found true)
                           unit)]
-                      [(CompilerIrInstr.Branch _ on-true on-false)
+                      [(CompilerIrInstrScalarFact.Branch _ on-true on-false)
                         (if (or
                           (compiler-reg-early-exit-target-is-guard?
                             seq
@@ -14623,8 +14659,12 @@
                             (compiler-ir-block-seq-ref seq scan)))
                           (match (compiler-ir-block-seq-ref seq scan)
                             [(CompilerIrBlock.Block _ instrs)
-                              (match (compiler-ir-instr-seq-ref instrs 1)
-                                [(CompilerIrInstr.Branch _ on-true on-false)
+                              (match (compiler-ir-instr-scalar-fact
+                                (compiler-ir-instr-seq-ref instrs 1))
+                                [(CompilerIrInstrScalarFact.Branch
+                                    _
+                                    on-true
+                                    on-false)
                                   (let
                                     [true-index : i64
                                       (compiler-reg-cold-call-find-label
@@ -14663,8 +14703,12 @@
                       (set! head (+ head 1))
                       (match (compiler-ir-block-seq-ref seq index)
                         [(CompilerIrBlock.Block _ instrs)
-                          (match (compiler-ir-instr-seq-ref instrs 1)
-                            [(CompilerIrInstr.Branch _ on-true on-false)
+                          (match (compiler-ir-instr-scalar-fact
+                            (compiler-ir-instr-seq-ref instrs 1))
+                            [(CompilerIrInstrScalarFact.Branch
+                                _
+                                on-true
+                                on-false)
                               (let
                                 [side : i64 0]
                                 (while (and valid (< side 2))
@@ -23182,6 +23226,8 @@
       (compiler-reg-color-invalidate-value! roots invalid value)]
     [(CompilerIrInstr.Branch value _ _)
       (compiler-reg-color-invalidate-value! roots invalid value)]
+    [(CompilerIrInstr.TotalEnumBranch value _ _)
+      (compiler-reg-color-invalidate-value! roots invalid value)]
     [(CompilerIrInstr.Return value)
       (compiler-reg-color-invalidate-maybe-value! roots invalid value)]
     [(CompilerIrInstr.Phi dst inputs _)
@@ -25190,6 +25236,11 @@
         (compiler-reg-remap-value remap cond)
         true-label
         false-label)]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (CompilerIrInstr.TotalEnumBranch
+        (compiler-reg-remap-value remap cond)
+        true-label
+        false-label)]
     [(CompilerIrInstr.Return value)
       (CompilerIrInstr.Return (compiler-reg-remap-maybe-value remap value))]
     [(CompilerIrInstr.Phi dst inputs ty)
@@ -25213,7 +25264,14 @@
         (compiler-reg-remap-value remap index)
         base
         cases
-        default-label)]))
+        default-label)]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
+      (CompilerIrInstr.TotalEnumSwitch
+        (compiler-reg-remap-value remap index)
+        base
+        cases
+        default-label
+        trap-label)]))
 
 ;; A 1:1 var remap: the output is exactly as long as the input, so it is
 ;; written straight into a right-sized dense sequence instead of through a
@@ -26011,6 +26069,16 @@
           (if (compiler-reg-scratch-value-direct? _assignments condition)
             0
             1))]
+      [(CompilerIrInstr.TotalEnumBranch condition true-label false-label)
+        (compiler-reg-scratch-vreg-slots
+          _type-segment-bases
+          _abi
+          _assignments
+          _types
+          (CompilerIrInstr.Branch condition true-label false-label)
+          _phi-targets
+          _phi-xmm-targets
+          _binop-return)]
       [(CompilerIrInstr.Select payload-box)
         (let
           [lanes (struct-get (box-get payload-box) lanes)]
@@ -26100,6 +26168,16 @@
           1)]
       [(CompilerIrInstr.CpuId _ _ _ _) 1]
       [(CompilerIrInstr.Switch _ _ _ _) 2]
+      [(CompilerIrInstr.TotalEnumSwitch index base cases default-label _)
+        (compiler-reg-scratch-vreg-slots
+          _type-segment-bases
+          _abi
+          _assignments
+          _types
+          (CompilerIrInstr.Switch index base cases default-label)
+          _phi-targets
+          _phi-xmm-targets
+          _binop-return)]
       [(CompilerIrInstr.BoundsCheck _ _ _) 2]
       ;; Ordered selector validation keeps active-lanes and the current selector
       ;; in independent GP temporaries.
@@ -26614,6 +26692,8 @@
         (compiler-reg-scratch-value-registers assignments src))]
     [(CompilerIrInstr.Branch cond _ _)
       (compiler-reg-scratch-value-registers assignments cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (compiler-reg-scratch-value-registers assignments cond)]
     [(CompilerIrInstr.CpuId dst leaf subleaf _)
       (compiler-reg-id-list-append
         (compiler-reg-scratch-location-registers assignments dst)
@@ -26621,6 +26701,8 @@
           (compiler-reg-scratch-value-registers assignments leaf)
           (compiler-reg-scratch-value-registers assignments subleaf)))]
     [(CompilerIrInstr.Switch index _ _ _)
+      (compiler-reg-scratch-value-registers assignments index)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
       (compiler-reg-scratch-value-registers assignments index)]
     [(CompilerIrInstr.Store _ value _)
       (compiler-reg-scratch-value-registers assignments value)]
@@ -27316,6 +27398,18 @@
         point
         (+ point 1)
         var)]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (compiler-reg-scratch-requirement-local
+        type-segment-bases
+        abi
+        policy
+        assignments
+        var-types
+        (CompilerIrInstr.Branch cond true-label false-label)
+        point
+        ordinal
+        var
+        binop-return)]
     [(CompilerIrInstr.Switch _ _ _ _)
       (CompilerRegScratchRequirement
         point
@@ -27327,6 +27421,18 @@
         point
         (+ point 1)
         var)]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label _)
+      (compiler-reg-scratch-requirement-local
+        type-segment-bases
+        abi
+        policy
+        assignments
+        var-types
+        (CompilerIrInstr.Switch index base cases default-label)
+        point
+        ordinal
+        var
+        binop-return)]
     [(CompilerIrInstr.BoundsCheck _ _ _)
       (CompilerRegScratchRequirement
         point
@@ -27731,6 +27837,7 @@
 (define (compiler-reg-scratch-instr-branch? [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) true]
     [_ false]))
 
 (define (compiler-reg-scratch-instr-return? [instr : CompilerIrInstr]) : bool
@@ -29543,8 +29650,10 @@
   (match instr
     [(CompilerIrInstr.Jump _) true]
     [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) true]
     [(CompilerIrInstr.Return _) true]
     [(CompilerIrInstr.Switch _ _ _ _) true]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
     [(CompilerIrInstr.TailCall _ _ _) true]
     [(CompilerIrInstr.TailCallIndirect _ _ _) true]
     [_ false]))

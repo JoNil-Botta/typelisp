@@ -10914,8 +10914,12 @@
                 (if (= count 2)
                   (match (compiler-ir-instr-seq-ref instrs 0)
                     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
-                      (match (compiler-ir-instr-seq-ref instrs 1)
-                        [(CompilerIrInstr.Branch cond on-true on-false)
+                      (match (compiler-ir-instr-scalar-fact
+                        (compiler-ir-instr-seq-ref instrs 1))
+                        [(CompilerIrInstrScalarFact.Branch
+                            cond
+                            on-true
+                            on-false)
                           (match cond
                             [(CompilerIrValue.Var cond-var)
                               (if (and
@@ -37330,6 +37334,7 @@
   [all-blocks : CompilerIrBlockList]
   [cursor : CompilerIrBlockList]
   [label : i64]
+  [trap-label : i64]
   [fuel : i64]) : bool
   (if (<= fuel 0)
     false
@@ -37339,77 +37344,74 @@
         (match block
           [(CompilerIrBlock.Block block-label instrs)
             (if (= block-label label)
-              (or
+              (if (= label trap-label)
                 (compiler-backend-total-switch-trap-instrs? instrs label)
-                ;; Loop canonicalization treats the self-looping no-return
-                ;; trap as a loop and may retarget the switch through a tiny
-                ;; preheader. Follow only a compiler-marked, jump-only forwarder.
+                ;; Loop canonicalization may retarget the default through a
+                ;; jump-only preheader. The separately carried trap label is
+                ;; the authority; display text is never consulted.
                 (and
                   (= (compiler-ir-instr-seq-count instrs) 1)
                   (match (compiler-ir-instr-seq-ref instrs 0)
                     [(CompilerIrInstr.Jump target)
                       (and
                         (not (= target label))
-                        (compiler-backend-string-contains?
-                          (compiler-ir-label-text target)
-                          "match_total_trap")
                         (compiler-backend-total-switch-trap-block-from?
                           all-blocks
                           all-blocks
                           target
+                          trap-label
                           (- fuel 1)))]
                     [_ false])))
               (compiler-backend-total-switch-trap-block-from?
                 all-blocks
                 (box-get rest)
                 label
+                trap-label
                 fuel))])]
       [(CompilerIrBlockList.Array seq)
         (compiler-backend-total-switch-trap-block-from?
           all-blocks
           (compiler-ir-block-seq-to-list seq)
           label
+          trap-label
           fuel)])))
 
 (define (compiler-backend-total-switch-trap-block?
   [blocks : CompilerIrBlockList]
-  [label : i64]) : bool
-  ;; The marker is compiler-owned.  Requiring it as well as the exact abort
-  ;; block prevents a user integer switch with a trapping default from being
-  ;; mistaken for a type-proven enum dispatch.  Inline/BCE label remapping and
-  ;; loop-preheader insertion preserve the marker substring.
+  [label : i64]
+  [trap-label : i64]) : bool
   (and
-    (compiler-backend-string-contains?
-      (compiler-ir-label-text label)
-      "match_total_trap")
-    (compiler-backend-total-switch-trap-block-from? blocks blocks label 8)))
+    (!= trap-label (compiler-ir-label-none))
+    (compiler-backend-total-switch-trap-block-from?
+      blocks
+      blocks
+      label
+      trap-label
+      8)))
 
 (define (compiler-backend-total-switch?
   [blocks : CompilerIrBlockList]
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : i64]) : bool
+  [default-label : i64]
+  [trap-label : i64]) : bool
   (and
     (= base 0)
     (> (compiler-backend-switch-case-count cases) 0)
     (compiler-backend-switch-cases-contiguous-from? cases 0)
-    (compiler-backend-total-switch-trap-block? blocks default-label)))
+    (compiler-backend-total-switch-trap-block? blocks default-label trap-label)))
 
 (define (compiler-backend-object-total-switch?
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : i64]) : bool
+  [trap-label : i64]) : bool
   (and
     (= base 0)
     (> (compiler-backend-switch-case-count cases) 0)
     (compiler-backend-switch-cases-contiguous-from? cases 0)
-    ;; Direct-object emission consumes the same verified function immediately,
-    ;; but does not retain its owning block list at each instruction.  The
-    ;; compiler-owned marker is the totality proof here; source assembly also
-    ;; checks the exact abort block before taking the unchecked path.
-    (compiler-backend-string-contains?
-      (compiler-ir-label-text default-label)
-      "match_total_trap")))
+    ;; Direct-object emission consumes the explicit switch variant and trap
+    ;; provenance. Source assembly additionally validates the abort block.
+    (!= trap-label (compiler-ir-label-none))))
 
 (define (compiler-backend-switch-cases-target-phi?
   [cases : CompilerIrSwitchCaseList]) : bool
@@ -37626,6 +37628,14 @@
       (+ index 1)
       (match (compiler-ir-instr-seq-ref instrs index)
         [(CompilerIrInstr.Switch _ _ cases default-label)
+          (text_buf.append
+            buf
+            (compiler-backend-emit-switch-table
+              function
+              current-label
+              cases
+              (compiler-backend-switch-target-phi? cases default-label)))]
+        [(CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
           (text_buf.append
             buf
             (compiler-backend-emit-switch-table
@@ -38023,6 +38033,7 @@
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
   [default-label : i64]
+  [trap-label : i64]
   [assignments : CompilerRegAssignmentList]
   [planned-index-reg : String]
   [planned-table-reg : String]
@@ -38032,7 +38043,12 @@
   (let
     [case-count : i64 (compiler-backend-switch-case-count cases)]
     [total-switch : bool
-      (compiler-backend-total-switch? blocks base cases default-label)]
+      (compiler-backend-total-switch?
+        blocks
+        base
+        cases
+        default-label
+        trap-label)]
     (cond
       [(= case-count 0)
         (ResultCompilerBackend.Err
@@ -38150,6 +38166,8 @@
 (define (compiler-backend-switch-validate-instr [instr : CompilerIrInstr]) : CompilerBackendSwitchValidation
   (match instr
     [(CompilerIrInstr.Switch _ base cases default-label)
+      (compiler-backend-switch-validate-one base cases default-label)]
+    [(CompilerIrInstr.TotalEnumSwitch _ base cases default-label _)
       (compiler-backend-switch-validate-one base cases default-label)]
     [_ (CompilerBackendSwitchValidation.Ok)]))
 
@@ -38291,6 +38309,7 @@
         (match instr
           [(CompilerIrInstr.Jump _) planned-scratch2]
           [(CompilerIrInstr.Branch _ _ _) planned-scratch3]
+          [(CompilerIrInstr.TotalEnumBranch _ _ _) planned-scratch3]
           [_ ""]))]
     ;; Sound-scavenger: reserve this instruction's operand + result homes so the
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
@@ -39132,6 +39151,11 @@
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
+      [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+        (compiler-backend-emit-instr
+          ctx
+          fallthrough
+          (CompilerIrInstr.Branch cond true-label false-label))]
       [(CompilerIrInstr.Return value)
         (match (compiler-backend-emit-return
           ctx.type-segment-bases
@@ -39207,6 +39231,35 @@
           base
           cases
           default-label
+          (compiler-ir-label-none)
+          ctx.assignments
+          planned-scratch0
+          planned-scratch1
+          ctx.blocks
+          ctx.program-index
+          ctx.vars)
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
+      [(CompilerIrInstr.TotalEnumSwitch
+          index
+          base
+          cases
+          default-label
+          trap-label)
+        (match (compiler-backend-emit-switch
+          ctx.type-segment-bases
+          ctx.function
+          ctx.current-label
+          index
+          base
+          cases
+          default-label
+          trap-label
           ctx.assignments
           planned-scratch0
           planned-scratch1
@@ -39526,6 +39579,8 @@
       (compiler-backend-count-value-use counts value)]
     [(CompilerIrInstr.Branch cond _ _)
       (compiler-backend-count-value-use counts cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (compiler-backend-count-value-use counts cond)]
     [(CompilerIrInstr.Return maybe)
       (match maybe
         [(CompilerIrMaybeValue.No) unit]
@@ -39549,6 +39604,8 @@
     [(CompilerIrInstr.EntryEnvp _) unit]
     [(CompilerIrInstr.Jump _) unit]
     [(CompilerIrInstr.Switch index _ _ _)
+      (compiler-backend-count-value-use counts index)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
       (compiler-backend-count-value-use counts index)]))
 
 (define (compiler-backend-count-instr-seq-uses
@@ -39651,8 +39708,8 @@
   [j : i64]) : i64
   (if (<= j 0)
     (- 0 1)
-    (match (array-ref slots j)
-      [(CompilerIrInstr.Branch cond _ _)
+    (match (compiler-ir-instr-scalar-fact (array-ref slots j))
+      [(CompilerIrInstrScalarFact.Branch cond _ _)
         (match cond
           [(CompilerIrValue.Var v)
             (match (array-ref slots (- j 1))
@@ -39879,8 +39936,8 @@
               (let
                 [branch : CompilerIrInstr
                   (compiler-ir-instr-seq-ref instrs after-cmp)]
-                (match branch
-                  [(CompilerIrInstr.Branch cond _ _)
+                (match (compiler-ir-instr-scalar-fact branch)
+                  [(CompilerIrInstrScalarFact.Branch cond _ _)
                     (compiler-backend-branch-uses-var? cond cmp-dst)]
                   [_ false]))
               false)
@@ -44213,8 +44270,11 @@
                   [branch : CompilerIrInstr
                     (compiler-ir-instr-seq-ref instrs after-cmp)]
                   [after-branch : i64 (+ after-cmp 1)]
-                  (match branch
-                    [(CompilerIrInstr.Branch cond true-label false-label)
+                  (match (compiler-ir-instr-scalar-fact branch)
+                    [(CompilerIrInstrScalarFact.Branch
+                        cond
+                        true-label
+                        false-label)
                       (if (compiler-backend-branch-uses-var? cond cmp-dst)
                         (compiler-backend-emit-fused-load-compare-branch-rest
                           ctx
@@ -44885,8 +44945,8 @@
                                 [branch : CompilerIrInstr
                                   (compiler-ir-instr-seq-ref instrs after-cmp)]
                                 [after-branch : i64 (+ after-cmp 1)]
-                                (match branch
-                                  [(CompilerIrInstr.Branch
+                                (match (compiler-ir-instr-scalar-fact branch)
+                                  [(CompilerIrInstrScalarFact.Branch
                                       cond
                                       true-label
                                       false-label)
@@ -45638,6 +45698,31 @@
                           instrs
                           rest
                           out))]
+                    [(CompilerIrInstr.TotalEnumBranch
+                        cond
+                        true-label
+                        false-label)
+                      (if (compiler-backend-branch-uses-var? cond dst)
+                        (compiler-backend-emit-fused-compare-branch-rest
+                          ctx
+                          fallthrough
+                          dst
+                          op
+                          lhs
+                          rhs
+                          ty
+                          true-label
+                          false-label
+                          instrs
+                          after-branch
+                          out)
+                        (compiler-backend-emit-instrs-normal
+                          ctx
+                          fallthrough
+                          instr
+                          instrs
+                          rest
+                          out))]
                     [(CompilerIrInstr.UnOp
                         not-dst
                         (CompilerIrUnOp.Not)
@@ -45658,8 +45743,8 @@
                             [branch : CompilerIrInstr
                               (compiler-ir-instr-seq-ref instrs after-branch)]
                             [after-not-branch : i64 (+ after-branch 1)]
-                            (match branch
-                              [(CompilerIrInstr.Branch
+                            (match (compiler-ir-instr-scalar-fact branch)
+                              [(CompilerIrInstrScalarFact.Branch
                                   cond
                                   true-label
                                   false-label)
@@ -45739,8 +45824,11 @@
                 [branch : CompilerIrInstr
                   (compiler-ir-instr-seq-ref instrs rest)]
                 [after-branch : i64 (+ rest 1)]
-                (match branch
-                  [(CompilerIrInstr.Branch cond true-label false-label)
+                (match (compiler-ir-instr-scalar-fact branch)
+                  [(CompilerIrInstrScalarFact.Branch
+                      cond
+                      true-label
+                      false-label)
                     (if (compiler-backend-branch-uses-var? cond dst)
                       (compiler-backend-emit-fused-not-branch-rest
                         ctx
@@ -48841,7 +48929,11 @@
           (match (array-ref (struct-get instrs slots) (- n 1))
             [(CompilerIrInstr.Branch _ true-label false-label)
               (compiler-backend-branch-needs-phi-copies? true-label false-label)]
+            [(CompilerIrInstr.TotalEnumBranch _ true-label false-label)
+              (compiler-backend-branch-needs-phi-copies? true-label false-label)]
             [(CompilerIrInstr.Switch _ _ cases default-label)
+              (compiler-backend-switch-target-phi? cases default-label)]
+            [(CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
               (compiler-backend-switch-target-phi? cases default-label)]
             [_ false])))]))
 
@@ -54389,6 +54481,8 @@
       (compiler-backend-collect-value-collections collections value)]
     [(CompilerIrInstr.Branch cond _ _)
       (compiler-backend-collect-value-collections collections cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (compiler-backend-collect-value-collections collections cond)]
     [(CompilerIrInstr.Return maybe)
       (compiler-backend-collect-maybe-value-collections collections maybe)]
     [(CompilerIrInstr.Phi _ inputs _)
@@ -54562,6 +54656,8 @@
     [(CompilerIrInstr.EntryEnvp _) collections]
     [(CompilerIrInstr.Jump _) collections]
     [(CompilerIrInstr.Switch index _ _ _)
+      (compiler-backend-collect-value-collections collections index)]
+    [(CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
       (compiler-backend-collect-value-collections collections index)]))
 
 (define (compiler-backend-collect-instr-seq-collections
@@ -57704,11 +57800,12 @@
   [index : CompilerIrValue]
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : i64]) : object_target.CompilerBackendObjectTargetParts
+  [default-label : i64]
+  [trap-label : i64]) : object_target.CompilerBackendObjectTargetParts
   (let
     ;; Decide before the table walker consumes its case-list cursor.
     [total-switch : bool
-      (compiler-backend-object-total-switch? base cases default-label)]
+      (compiler-backend-object-total-switch? base cases trap-label)]
     [case-count : i64 (compiler-backend-switch-case-count cases)]
     (compiler-backend-object-switch-dispatch
       (compiler-backend-object-switch-table
@@ -58455,6 +58552,18 @@
                 (cobj.CompilerObjectRelocationKind.Branch)
                 false-symbol)
               (cobj.CompilerObjectX64Instr.Jump false-symbol)))))]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (compiler-backend-object-instr
+        type-segment-bases
+        parts
+        target
+        function
+        label-scope
+        current-label
+        blocks
+        (CompilerIrInstr.Branch cond true-label false-label)
+        plan
+        program-index)]
     [(CompilerIrInstr.Return value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
@@ -58722,7 +58831,19 @@
         index
         base
         cases
-        default-label)]))
+        default-label
+        (compiler-ir-label-none))]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
+      (compiler-backend-object-switch
+        parts
+        function
+        label-scope
+        current-label
+        index
+        base
+        cases
+        default-label
+        trap-label)]))
 
 (define (compiler-backend-object-instr-seq
   [type-segment-bases : i64]

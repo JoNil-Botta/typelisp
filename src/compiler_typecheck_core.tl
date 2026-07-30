@@ -67090,6 +67090,12 @@
 (define (macro-hygiene-env-pattern-name-kind) : i64
   1)
 
+;; A nested Module-macro import exposes its flat output surface only after this
+;; hygiene walk. Mark that deferred output scope so incidental definition-site
+;; names do not capture the generated module's imported bare references.
+(define (macro-hygiene-env-output-flat-import-kind) : i64
+  2)
+
 (define (macro-hygiene-env-empty) : MacroHygieneEnv
   (MacroHygieneEnv.Snapshot -1))
 
@@ -67277,6 +67283,19 @@
             (set! cursor (array-ref macro-hygiene-env-parents cursor)))))
       out)))
 
+(define (macro-hygiene-env-has-output-flat-import? [env : MacroHygieneEnv]) : bool
+  (let
+    [cursor : i64 (macro-hygiene-env-head env)]
+    [found : bool false]
+    (begin
+      (while (and (not found) (>= cursor 0))
+        (if (=
+          (array-ref macro-hygiene-env-kinds cursor)
+          (macro-hygiene-env-output-flat-import-kind))
+          (set! found true)
+          (set! cursor (array-ref macro-hygiene-env-parents cursor))))
+      found)))
+
 (define (macro-hygiene-env-bind-raw
   [env : MacroHygieneEnv]
   [key-id : i64]
@@ -67292,6 +67311,9 @@
     env
     key-id
     value-id))
+
+(define (macro-hygiene-env-bind-output-flat-import [env : MacroHygieneEnv]) : MacroHygieneEnv
+  (macro-hygiene-env-push (macro-hygiene-env-output-flat-import-kind) env 0 0))
 
 (define (macro-hygiene-output-bind-id [env : MacroHygieneEnv] [name-id : i64]) : MacroHygieneEnv
   (if (ci.intern-template-source-id? name-id)
@@ -67452,6 +67474,10 @@
       (if (> count 0)
         (match (ast-expr-unspan (ast-node-get (ast-expr-list-get items 0 0)))
           [(AstExpr.Var target-id) (macro-hygiene-output-bind-id env target-id)]
+          [(AstExpr.Call _ _)
+            (if (= count 1)
+              (macro-hygiene-env-bind-output-flat-import env)
+              env)]
           [_ env])
         env)]
     (if (>= count 3)
@@ -67720,7 +67746,11 @@
                           (string.append
                             "typecheck: missing macro template source id: "
                             base)))
-                      (macro-hygiene-global-name-id source-name-id macro-name)))))]))
+                      (if (and
+                        (< (tc-name-first-dot-id source-name-id) 0)
+                        (macro-hygiene-env-has-output-flat-import? env))
+                        source-name-id
+                        (macro-hygiene-global-name-id source-name-id macro-name))))))]))
         name-id)]
     result))
 

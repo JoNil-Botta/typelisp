@@ -1463,6 +1463,14 @@
     (array-set! (struct-get sources slots) (struct-get sources len) source)
     (set! (struct-get sources len) (+ (struct-get sources len) 1))))
 
+(define (lsp-workspace-sources-set!
+  [sources : (&mut sources LspWorkspaceSources)]
+  [index : i64]
+  [source : LspWorkspaceSource]) : unit
+  (if (and (>= index 0) (< index (struct-get sources len)))
+    (array-set! (struct-get sources slots) index source)
+    unit))
+
 (define (lsp-workspace-sources-find-uri
   [sources : (& sources LspWorkspaceSources)]
   [uri : String]) : i64
@@ -6197,6 +6205,26 @@
       unit
       (lsp-workspace-sources-push! (&mut (struct-get index sources)) source))))
 
+(define (lsp-workspace-index-set-text-source!
+  [index : (&mut index LspWorkspaceIndex)]
+  [root : LspWorkspaceRootLookup]
+  [path : String]
+  [text : String]
+  [overlay : bool]) : unit
+  (let
+    [source : LspWorkspaceSource
+      (lsp-workspace-source-from-text root path text overlay)]
+    [existing : i64
+      (lsp-workspace-sources-find-uri
+        (& (struct-get index sources))
+        (struct-get source uri))]
+    (if (>= existing 0)
+      (lsp-workspace-sources-set!
+        (&mut (struct-get index sources))
+        existing
+        source)
+      (lsp-workspace-sources-push! (&mut (struct-get index sources)) source))))
+
 (define (lsp-workspace-index-add-path!
   [index : (&mut index LspWorkspaceIndex)]
   [docs : lsp_document_vec.Vec]
@@ -6446,42 +6474,55 @@
     [uri : String (lsp-path-to-file-uri normalized)]
     [existing : i64
       (lsp-workspace-sources-find-uri (& (struct-get index sources)) uri)]
-    (begin
-      (if (>= existing 0)
-        (lsp-workspace-sources-remove-index!
-          (&mut (struct-get index sources))
-          existing)
-        unit)
+    [doc-index : i64 (lsp-documents-find-path-index docs normalized)]
+    (if (>= doc-index 0)
       (let
-        [doc-index : i64 (lsp-documents-find-path-index docs normalized)]
-        (if (>= doc-index 0)
-          (let
-            [doc : LspDocument
-              (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-            [root : LspWorkspaceRootLookup
-              (lsp-workspace-root-for-path
-                (& (struct-get index roots))
-                normalized
-                false)]
-            (lsp-workspace-index-add-text-source!
-              index
-              root
-              normalized
-              (struct-get doc text)
-              true))
-          (if deleted
-            unit
-            (match (lsp-workspace-root-for-path
-              (& (struct-get index roots))
-              normalized
-              true)
-              [(LspWorkspaceRootLookup.Missing) unit]
-              [(LspWorkspaceRootLookup.Found root)
-                (lsp-workspace-index-add-path!
-                  index
-                  docs
-                  (LspWorkspaceRootLookup.Found root)
-                  normalized)])))))))
+        [doc : LspDocument
+          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+        [root : LspWorkspaceRootLookup
+          (lsp-workspace-root-for-path
+            (& (struct-get index roots))
+            normalized
+            false)]
+        (lsp-workspace-index-set-text-source!
+          index
+          root
+          normalized
+          (struct-get doc text)
+          true))
+      (if deleted
+        (if (>= existing 0)
+          (lsp-workspace-sources-remove-index!
+            (&mut (struct-get index sources))
+            existing)
+          unit)
+        (match (lsp-workspace-root-for-path
+          (& (struct-get index roots))
+          normalized
+          true)
+          [(LspWorkspaceRootLookup.Missing)
+            (if (>= existing 0)
+              (lsp-workspace-sources-remove-index!
+                (&mut (struct-get index sources))
+                existing)
+              unit)]
+          [(LspWorkspaceRootLookup.Found root)
+            (match (io.try-read-file (& normalized))
+              [(io.OkIoBytes contents)
+                (let
+                  [text : String (byte_buf.to-string contents)]
+                  (lsp-workspace-index-set-text-source!
+                    index
+                    (LspWorkspaceRootLookup.Found root)
+                    normalized
+                    text
+                    false))]
+              [(io.ErrIoBytes _)
+                (if (>= existing 0)
+                  (lsp-workspace-sources-remove-index!
+                    (&mut (struct-get index sources))
+                    existing)
+                  unit)])])))))
 
 (define (lsp-workspace-index-refresh-documents!
   [index : (&mut index LspWorkspaceIndex)]

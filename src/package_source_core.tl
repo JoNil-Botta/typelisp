@@ -288,12 +288,8 @@
 (define (package-source-tl-file? [path : String]) : bool
   (string.eq (fs.extension (& path)) "tl"))
 
-(define (package-source-include-file?
-  [path : String]
-  [metadata : fs.FsMetadata]) : bool
-  (and
-    (fs.file-kind-regular? (fs.metadata-kind metadata))
-    (package-source-tl-file? path)))
+(define (package-source-include-kind? [path : String] [kind : fs.FsFileKind]) : bool
+  (and (fs.file-kind-regular? kind) (package-source-tl-file? path)))
 
 (define (package-source-entry-error
   [command : String]
@@ -395,22 +391,23 @@
     (let
       [child-relative : String (package-source-relative-join relative name)]
       [child-path : String (package-source-root-join root child-relative)]
-      (match (fs.try-file-metadata (& child-path))
-        [(fs.ErrFsMetadata error)
+      ;; Do not follow symbolic links or Windows reparse points. Package and
+      ;; workspace discovery must stay inside the lexical root and a directory
+      ;; link back to an ancestor must not turn traversal into a cycle.
+      (match (fs.try-file-kind-no-follow (& child-path))
+        [(fs.ErrFsFileKind error)
           (package-source-entry-error command child-path error)]
-        [(fs.OkFsMetadata metadata)
-          (let
-            [kind : fs.FsFileKind (fs.metadata-kind metadata)]
-            (if (fs.file-kind-directory? kind)
-              (if (package-source-dir-has-manifest? child-path)
-                (ResultPackageSourceList.Ok acc)
-                (package-source-scan-dir command root child-relative acc))
-              (if (package-source-include-file? child-path metadata)
-                (ResultPackageSourceList.Ok
-                  (package-source-vec-insert
-                    acc
-                    (compiler-load-normalize-path child-path)))
-                (ResultPackageSourceList.Ok acc))))]))))
+        [(fs.OkFsFileKind kind)
+          (if (fs.file-kind-directory? kind)
+            (if (package-source-dir-has-manifest? child-path)
+              (ResultPackageSourceList.Ok acc)
+              (package-source-scan-dir command root child-relative acc))
+            (if (package-source-include-kind? child-path kind)
+              (ResultPackageSourceList.Ok
+                (package-source-vec-insert
+                  acc
+                  (compiler-load-normalize-path child-path)))
+              (ResultPackageSourceList.Ok acc)))]))))
 
 (define (package-source-scan-entries-from
   [command : String]
@@ -534,10 +531,10 @@
     [normalized-path : String (compiler-load-normalize-path path)]
     (and
       (package-source-path-location-eligible-for-root? root normalized-path)
-      (match (fs.try-file-metadata (& normalized-path))
-        [(fs.OkFsMetadata metadata)
-          (package-source-include-file? normalized-path metadata)]
-        [(fs.ErrFsMetadata _) false]))))
+      (match (fs.try-file-kind-no-follow (& normalized-path))
+        [(fs.OkFsFileKind kind)
+          (package-source-include-kind? normalized-path kind)]
+        [(fs.ErrFsFileKind _) false]))))
 
 (define (package-source-discover-for
   [command : String]

@@ -125,7 +125,7 @@
   ;; Surface builders count first and retain a right-sized array in source
   ;; order. `len` stays explicit so consumers never derive logical shape from
   ;; a boxed tail.
-  (slots (Array CompilerLoadSurfaceImport))
+  (slots (__tl_dyn-array CompilerLoadSurfaceImport))
   (len i64))
 
 (defenum CompilerLoadSurfaceMacroResultKind
@@ -205,13 +205,13 @@
 (defstruct CompilerLoadSurfaceDeclList
   ;; Declarations are stored in source order, including declarations flattened
   ;; from nested module bodies.
-  (slots (Array CompilerLoadSurfaceDecl))
+  (slots (__tl_dyn-array CompilerLoadSurfaceDecl))
   (len i64))
 
 (defstruct CompilerLoadSurfaceBuild
-  (import-slots (Array CompilerLoadSurfaceImport))
+  (import-slots (__tl_dyn-array CompilerLoadSurfaceImport))
   (import-len i64)
-  (decl-slots (Array CompilerLoadSurfaceDecl))
+  (decl-slots (__tl_dyn-array CompilerLoadSurfaceDecl))
   (decl-len i64)
   (has-tests bool)
   (has-export-metadata bool)
@@ -246,7 +246,7 @@
 (defstruct CompilerLoadSurfaceSummaryList
   ;; Physical order is oldest-to-newest so recording is amortized O(1).
   ;; Accessors expose the previous logical newest-to-oldest order.
-  (slots (Array CompilerLoadSurfaceSummary))
+  (slots (__tl_dyn-array CompilerLoadSurfaceSummary))
   (len i64))
 
 (define (compiler-load-surface-import-list-empty) : CompilerLoadSurfaceImportList
@@ -308,7 +308,7 @@
     sym_i64_env.SymI64Env))
 
 (defstruct CompilerLoadInternIdSeq
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (len i64))
 
 (defstruct CompilerLoadPreludeCacheKey
@@ -369,49 +369,49 @@
 ;; Reset replaces this value instead of retaining capacity because traversal
 ;; slots may belong to the just-reclaimed entry arena.
 (defstruct CompilerLoadLazyQualifiedObserverStack
-  (slots (Array CompilerLoadLazyQualifiedObserverFrame))
+  (slots (__tl_dyn-array CompilerLoadLazyQualifiedObserverFrame))
   (len i64))
 
 (defstruct CompilerLoadLazyQualifiedObserverState
   ;; flags: active, exhaustive, secondary-qualified, secondary-direct.
-  (flags (Array bool))
+  (flags (__tl_dyn-array bool))
   ;; root-ids/member-sets: primary, secondary.
-  (root-ids (Array i64))
-  (member-sets (Array sym_i64_env.SymI64Env))
-  (stack (Array CompilerLoadLazyQualifiedObserverStack)))
+  (root-ids (__tl_dyn-array i64))
+  (member-sets (__tl_dyn-array sym_i64_env.SymI64Env))
+  (stack (__tl_dyn-array CompilerLoadLazyQualifiedObserverStack)))
 
 ;; Loader cache and traversal data is owned by an explicit session state. The
 ;; no-argument compatibility helpers below are serial/test-only adapters over
 ;; the active state pointer. State-owned driver reset paths use the explicit
 ;; APIs so resetting one job cannot mutate another job's storage.
 (defstruct CompilerLoadSessionState
-  (cache-enabled (Array bool))
-  (program-cache-enabled (Array bool))
-  (ast-floor (Array i64))
-  (ty-floor (Array i64))
-  (intern-floor (Array i64))
-  (program-cache (Array CompilerLoadProgramCacheSlot))
-  (program-admission (Array CompilerLoadProgramAdmissionSlot))
-  (program-cache-ready (Array bool))
-  (program-admission-ready (Array bool))
-  (program-cache-hit-count (Array i64))
-  (program-cache-miss-count (Array i64))
-  (program-cache-store-count (Array i64))
-  (runtime-prelude-cache (Array CompilerLoadPreludeCacheSlot))
-  (runtime-prelude-cache-ready (Array bool))
-  (dotted-path-cache-ready (Array bool))
-  (dotted-path-cache-keys (Array i64))
-  (dotted-path-cache-values (Array String))
-  (dotted-path-cache-generation (Array i64))
-  (surface-summaries (Array CompilerLoadSurfaceSummaryList))
-  (surface-summary-load-depth (Array i64))
-  (lazy-import-skip-record-count (Array i64))
+  (cache-enabled (__tl_dyn-array bool))
+  (program-cache-enabled (__tl_dyn-array bool))
+  (ast-floor (__tl_dyn-array i64))
+  (ty-floor (__tl_dyn-array i64))
+  (intern-floor (__tl_dyn-array i64))
+  (program-cache (__tl_dyn-array CompilerLoadProgramCacheSlot))
+  (program-admission (__tl_dyn-array CompilerLoadProgramAdmissionSlot))
+  (program-cache-ready (__tl_dyn-array bool))
+  (program-admission-ready (__tl_dyn-array bool))
+  (program-cache-hit-count (__tl_dyn-array i64))
+  (program-cache-miss-count (__tl_dyn-array i64))
+  (program-cache-store-count (__tl_dyn-array i64))
+  (runtime-prelude-cache (__tl_dyn-array CompilerLoadPreludeCacheSlot))
+  (runtime-prelude-cache-ready (__tl_dyn-array bool))
+  (dotted-path-cache-ready (__tl_dyn-array bool))
+  (dotted-path-cache-keys (__tl_dyn-array i64))
+  (dotted-path-cache-values (__tl_dyn-array String))
+  (dotted-path-cache-generation (__tl_dyn-array i64))
+  (surface-summaries (__tl_dyn-array CompilerLoadSurfaceSummaryList))
+  (surface-summary-load-depth (__tl_dyn-array i64))
+  (lazy-import-skip-record-count (__tl_dyn-array i64))
   (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState)
   ;; Intern table this session's floor bookkeeping is bound to once
   ;; `compiler-load-session-state-use-with-intern-state!` installs it; the
   ;; ready flag keeps legacy sessions on the compatibility-global floor path.
-  (intern-state (Array ci.InternCompatState))
-  (intern-state-ready (Array bool)))
+  (intern-state (__tl_dyn-array ci.InternCompatState))
+  (intern-state-ready (__tl_dyn-array bool)))
 
 ;; Per-source traversal data stays explicit without widening the hot recursive
 ;; declaration-loader call for each independently owned field.
@@ -420,16 +420,18 @@
   (importer-path-id i64)
   (importer-decl-owner-id i64))
 
-(define (compiler-load-session-state-bool-cell [value : bool]) : (Array bool)
+(define (compiler-load-session-state-bool-cell [value : bool]) : (__tl_dyn-array
+    bool)
   (make-array value))
 
-(define (compiler-load-session-state-flags-new) : (Array bool)
+(define (compiler-load-session-state-flags-new) : (__tl_dyn-array bool)
   ;; Slot 0 is cache-enabled; slot 1 records embedded-stdlib source use. Keep
   ;; both session flags in one allocation so the published seed backend does
   ;; not cross its per-function aggregate-allocation label limit here.
   (array.make-array bool 2))
 
-(define (compiler-load-session-state-i64-cell [value : i64]) : (Array i64)
+(define (compiler-load-session-state-i64-cell [value : i64]) : (__tl_dyn-array
+    i64)
   (make-array value))
 
 (define (compiler-load-lazy-qualified-observer-stack-empty) : CompilerLoadLazyQualifiedObserverStack
@@ -446,7 +448,7 @@
   [frame : CompilerLoadLazyQualifiedObserverFrame]) : CompilerLoadLazyQualifiedObserverStack
   (let
     [len : i64 (struct-get stack len)]
-    [slots : (Array CompilerLoadLazyQualifiedObserverFrame)
+    [slots : (__tl_dyn-array CompilerLoadLazyQualifiedObserverFrame)
       (struct-get stack slots)]
     (begin
       (if (< len (array-length slots))
@@ -456,7 +458,7 @@
             (if (= (array-length slots) 0)
               1
               (* (array-length slots) 2))]
-          [bigger : (Array CompilerLoadLazyQualifiedObserverFrame)
+          [bigger : (__tl_dyn-array CompilerLoadLazyQualifiedObserverFrame)
             (array.make-array CompilerLoadLazyQualifiedObserverFrame capacity)]
           [index : i64 0]
           (begin
@@ -470,32 +472,33 @@
 
 (define (compiler-load-lazy-qualified-observer-state-new) : CompilerLoadLazyQualifiedObserverState
   (let
-    [flags : (Array bool) (array.make-array bool 4)]
-    [root-ids : (Array i64) (array.make-array i64 2)]
-    [member-sets : (Array sym_i64_env.SymI64Env)
+    [flags : (__tl_dyn-array bool) (array.make-array bool 4)]
+    [root-ids : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [member-sets : (__tl_dyn-array sym_i64_env.SymI64Env)
       (array.make-array sym_i64_env.SymI64Env 2)]
-    [stack : (Array CompilerLoadLazyQualifiedObserverStack)
+    [stack : (__tl_dyn-array CompilerLoadLazyQualifiedObserverStack)
       (make-array (compiler-load-lazy-qualified-observer-stack-empty))]
     (begin
       (array-set! member-sets 0 (sym_i64_env.sym-i64-empty))
       (array-set! member-sets 1 (sym_i64_env.sym-i64-empty))
       (CompilerLoadLazyQualifiedObserverState flags root-ids member-sets stack))))
 
-(define (compiler-load-session-state-bool-cell-get [cell : (Array bool)]) : bool
+(define (compiler-load-session-state-bool-cell-get
+  [cell : (__tl_dyn-array bool)]) : bool
   (array-ref cell 0))
 
 (define (compiler-load-session-state-bool-cell-set!
-  [cell : (Array bool)]
+  [cell : (__tl_dyn-array bool)]
   [value : bool]) : unit
   (array-set! cell 0 value))
 
 (define (compiler-load-session-state-new) : CompilerLoadSessionState
   (let
-    [surface-summaries : (Array CompilerLoadSurfaceSummaryList)
+    [surface-summaries : (__tl_dyn-array CompilerLoadSurfaceSummaryList)
       (make-array (compiler-load-surface-summary-list-empty))]
-    [surface-summary-load-depth : (Array i64)
+    [surface-summary-load-depth : (__tl_dyn-array i64)
       (compiler-load-session-state-i64-cell 0)]
-    [lazy-import-skip-record-count : (Array i64)
+    [lazy-import-skip-record-count : (__tl_dyn-array i64)
       (compiler-load-session-state-i64-cell 0)]
     [lazy-qualified-observer : CompilerLoadLazyQualifiedObserverState
       (compiler-load-lazy-qualified-observer-state-new)]
@@ -525,7 +528,8 @@
       (array.make-array ci.InternCompatState 1)
       (compiler-load-session-state-bool-cell false))))
 
-(define compiler-load-default-session-state : (Array CompilerLoadSessionState)
+(define compiler-load-default-session-state : (__tl_dyn-array
+    CompilerLoadSessionState)
   (make-array (compiler-load-session-state-new)))
 
 ;; Serial/test compatibility selector. Production call sites are migrated to
@@ -1507,7 +1511,7 @@
 (define (compiler-load-intern-id-seq-copy [ids : CompilerLoadInternIdSeq]) : CompilerLoadInternIdSeq
   (let
     [count : i64 (struct-get ids len)]
-    [slots : (Array i64) (array.make-array i64 count)]
+    [slots : (__tl_dyn-array i64) (array.make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1695,7 +1699,7 @@
       (if (< index count)
         (- count index)
         0)]
-    [slots : (Array i64) (array.make-array i64 len)]
+    [slots : (__tl_dyn-array i64) (array.make-array i64 len)]
     [cursor : i64 0]
     (begin
       (while (< cursor len)
@@ -3891,7 +3895,8 @@
   [summary : CompilerLoadSurfaceSummary]) : CompilerLoadSurfaceSummaryList
   (let
     [len : i64 (compiler-load-surface-summary-list-count summaries)]
-    [slots : (Array CompilerLoadSurfaceSummary) (struct-get summaries slots)]
+    [slots : (__tl_dyn-array CompilerLoadSurfaceSummary)
+      (struct-get summaries slots)]
     (begin
       (if (< len (array-length slots))
         unit
@@ -3900,7 +3905,7 @@
             (if (= (array-length slots) 0)
               1
               (* (array-length slots) 2))]
-          [bigger : (Array CompilerLoadSurfaceSummary)
+          [bigger : (__tl_dyn-array CompilerLoadSurfaceSummary)
             (array.make-array CompilerLoadSurfaceSummary capacity)]
           [index : i64 0]
           (begin
@@ -4124,7 +4129,7 @@
       (if (= kept len)
         summaries
         (let
-          [slots : (Array CompilerLoadSurfaceSummary)
+          [slots : (__tl_dyn-array CompilerLoadSurfaceSummary)
             (array.make-array CompilerLoadSurfaceSummary kept)]
           [read-index : i64 0]
           [write-index : i64 0]
@@ -8637,9 +8642,9 @@
         (if (< source-count dest-count)
           source-count
           dest-count)]
-      [source-slots : (Array AstDecl) (struct-get source slots)]
+      [source-slots : (__tl_dyn-array AstDecl) (struct-get source slots)]
       [source-offset : i64 (struct-get source offset)]
-      [dest-slots : (Array AstDecl) (struct-get dest slots)]
+      [dest-slots : (__tl_dyn-array AstDecl) (struct-get dest slots)]
       [dest-offset : i64 (struct-get dest offset)]
       [index : i64 0]
       (while (< index count)
@@ -11794,7 +11799,7 @@
 
 (define (compiler-load-binary-fixture) : String
   (let
-    [bytes : (Array u8) (make-array u8 6)]
+    [bytes : (__tl_dyn-array u8) (make-array u8 6)]
     (begin
       (array-set! bytes 0 (cast 0 : u8))
       (array-set! bytes 1 (cast 65 : u8))
@@ -13828,7 +13833,7 @@
 
 ;: Alias->path dependency list from a parsed manifest, in manifest order.
 (defstruct CompilerPkgDepList
-  (slots (Array CompilerPkgDep))
+  (slots (__tl_dyn-array CompilerPkgDep))
   (len i64))
 
 ;: Package dependencies preserve manifest order for deterministic builds while
@@ -13909,7 +13914,7 @@
   (CompilerPkgDepList (array.make-array CompilerPkgDep 0) 0))
 
 (define (compiler-pkg-dep-list-copy-into
-  [dst : (Array CompilerPkgDep)]
+  [dst : (__tl_dyn-array CompilerPkgDep)]
   [src : CompilerPkgDepList]
   [dst-offset : i64]) : unit
   (let
@@ -13930,7 +13935,8 @@
   [dep : CompilerPkgDep]) : CompilerPkgDepList
   (let
     [n : i64 (compiler-pkg-dep-list-count deps)]
-    [slots : (Array CompilerPkgDep) (array.make-array CompilerPkgDep (+ n 1))]
+    [slots : (__tl_dyn-array CompilerPkgDep)
+      (array.make-array CompilerPkgDep (+ n 1))]
     (begin
       (compiler-pkg-dep-list-copy-into slots deps 0)
       (array-set! slots n dep)
@@ -13942,7 +13948,8 @@
   [deps : CompilerPkgDepList]) : CompilerPkgDepList
   (let
     [n : i64 (compiler-pkg-dep-list-count deps)]
-    [slots : (Array CompilerPkgDep) (array.make-array CompilerPkgDep (+ n 1))]
+    [slots : (__tl_dyn-array CompilerPkgDep)
+      (array.make-array CompilerPkgDep (+ n 1))]
     (begin
       (array-set! slots 0 dep)
       (compiler-pkg-dep-list-copy-into slots deps 1)
@@ -16026,7 +16033,7 @@
     [right-address : i64 (compiler-load-module-list-slots-address right)]
     [reused : AstDeclModuleList
       (compiler-load-decl-module-list-append-onto left right)]
-    [shared : (Array i64) (array.make-array i64 8)]
+    [shared : (__tl_dyn-array i64) (array.make-array i64 8)]
     [_shared : unit
       (begin
         (array-set! shared 1 alias-a-id)

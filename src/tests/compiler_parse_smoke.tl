@@ -249,7 +249,7 @@
   [first : CompilerDiagnosticTextEdit]
   [second : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditSeq
   (let
-    [slots : (Array CompilerDiagnosticTextEdit)
+    [slots : (__tl_dyn-array CompilerDiagnosticTextEdit)
       (make-array CompilerDiagnosticTextEdit 2)]
     (begin
       (array-set! slots 0 first)

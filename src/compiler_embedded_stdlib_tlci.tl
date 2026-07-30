@@ -32,18 +32,19 @@
   (Unavailable String))
 
 (defenum CompilerEmbeddedStdlibTlciSurface
-  (Ok String String (Array u8))
+  (Ok String String (__tl_dyn-array u8))
   (Unavailable String))
 
 ;; The compiler maps the image lazily on the first embedded-stdlib macro call
 ;; and keeps it mapped through that macro-expansion pass. State values are
 ;; 0 = closed, 1 = loaded, and -1 = load failed. The separate cells avoid
 ;; requiring an artificial zero-value TlciLoadedImage enum variant.
-(define compiler-embedded-stdlib-tlci-session-state : (Array i64)
+(define compiler-embedded-stdlib-tlci-session-state : (__tl_dyn-array i64)
   (make-array 0))
-(define compiler-embedded-stdlib-tlci-session-image : (Array TlciLoadedImage)
+(define compiler-embedded-stdlib-tlci-session-image : (__tl_dyn-array
+    TlciLoadedImage)
   (array.make-array TlciLoadedImage 1))
-(define compiler-embedded-stdlib-tlci-session-error : (Array String)
+(define compiler-embedded-stdlib-tlci-session-error : (__tl_dyn-array String)
   (make-array ""))
 
 ;; R3-P2d. The session is opened LAZILY, from inside whatever the compiler
@@ -100,10 +101,10 @@
 (define (compiler-embedded-stdlib-tlci-length) : i64
   (array-length payload.embedded-stdlib-tlci-bytes))
 
-(define (compiler-embedded-stdlib-tlci-copy) : (Array u8)
+(define (compiler-embedded-stdlib-tlci-copy) : (__tl_dyn-array u8)
   (let
     [length : i64 (compiler-embedded-stdlib-tlci-length)]
-    [out : (Array u8) (array.make-array u8 length)]
+    [out : (__tl_dyn-array u8) (array.make-array u8 length)]
     [index : i64 0]
     (begin
       (while (< index length)
@@ -275,32 +276,33 @@
   0)
 (define compiler-comptime-host-session-status : i64
   tlci-host-callback-status-ok)
-(define compiler-comptime-host-pools : (Array AstNodePoolContext)
+(define compiler-comptime-host-pools : (__tl_dyn-array AstNodePoolContext)
   (array.make-array AstNodePoolContext 1))
-(define compiler-comptime-host-operands : (Array CompilerCtfeValue)
+(define compiler-comptime-host-operands : (__tl_dyn-array CompilerCtfeValue)
   (array.make-array CompilerCtfeValue 8))
 (define compiler-comptime-host-operand-count : i64
   0)
-(define compiler-comptime-host-reflections : (Array CtfeReflectInfoList)
+(define compiler-comptime-host-reflections : (__tl_dyn-array
+    CtfeReflectInfoList)
   (array.make-array CtfeReflectInfoList 1))
-(define compiler-comptime-host-stack : (Array CompilerCtfeValue)
+(define compiler-comptime-host-stack : (__tl_dyn-array CompilerCtfeValue)
   (array.make-array CompilerCtfeValue 64))
 (define compiler-comptime-host-stack-len : i64
   0)
-(define compiler-comptime-host-result : (Array CompilerCtfeValue)
+(define compiler-comptime-host-result : (__tl_dyn-array CompilerCtfeValue)
   (array.make-array CompilerCtfeValue 1))
 (define compiler-comptime-host-result-ready : bool
   false)
-(define compiler-comptime-host-diagnostic : (Array String)
+(define compiler-comptime-host-diagnostic : (__tl_dyn-array String)
   (make-array ""))
 
 ;; Computed-body local slots for let-bound transformer bodies (refs #5603).
 ;; Slots are addressed by immediate operand and validated per session.
 (define compiler-comptime-host-locals-cap : i64
   32)
-(define compiler-comptime-host-locals : (Array CompilerCtfeValue)
+(define compiler-comptime-host-locals : (__tl_dyn-array CompilerCtfeValue)
   (array.make-array CompilerCtfeValue compiler-comptime-host-locals-cap))
-(define compiler-comptime-host-locals-live : (Array bool)
+(define compiler-comptime-host-locals-live : (__tl_dyn-array bool)
   (array.make-array bool compiler-comptime-host-locals-cap))
 
 ;; Pop `count` patterns into a fresh list (last-pushed becomes the final
@@ -350,7 +352,7 @@
 ;; context; its explicit arguments begin with this cookie.
 (define (compiler-comptime-host-session-open!
   [pools : AstNodePoolContext]
-  [operands : (Array CompilerCtfeValue)]
+  [operands : (__tl_dyn-array CompilerCtfeValue)]
   [operand-count : i64]
   [fuel : i64]
   [cookie : i64]
@@ -6494,8 +6496,8 @@
 ;; ordinary callback additions numeric-free; array bounds fail closed if this
 ;; internal implementation limit is ever reached.
 (defstruct CompilerComptimeHostRegistryBuilder
-  (names (Array String))
-  (callbacks (Array i64))
+  (names (__tl_dyn-array String))
+  (callbacks (__tl_dyn-array i64))
   (len i64))
 
 (define (compiler-comptime-host-registry-new) : CompilerComptimeHostRegistryBuilder

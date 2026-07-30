@@ -38,7 +38,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [operand-node : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "x")))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     [callee-name : String "__tl_array-length"]
     (begin
@@ -131,7 +131,7 @@
 (define (comptime-host-smoke-type-kind-data-ok?) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     [i64-kind : String "i64"]
     [string-kind : String "string"]
@@ -357,7 +357,7 @@
       (ast-node-pool-context-expr-push
         pools
         (AstExpr.Literal (AstLiteral.Bool true)))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 5)]
     [prefix : String "p"]
     (begin
@@ -690,7 +690,7 @@
 (define (comptime-host-smoke-pattern-binding-fuel-ok?) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     [prefix : String "p"]
     (begin
@@ -729,7 +729,7 @@
     [condition-node : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "flag")))]
     [items : AstExprList (ast-expr-cons condition-node (ast-expr-list-new))]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.ExprList items))
@@ -785,7 +785,7 @@
     [else-node : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "else")))]
     [clauses : AstExprClauseList (ast-expr-clause-list-new)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (ast-expr-clause-list-push
@@ -838,7 +838,7 @@
 (define (comptime-host-smoke-call-provenance-ok?) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     [macro-name : String "nested-macro"]
     [macro-name-id : i64 (ci.intern macro-name)]
@@ -885,7 +885,7 @@
 (define (comptime-host-smoke-single-commit-ok?) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (array-set! operands 0 (CompilerCtfeValue.Bool true))
@@ -943,7 +943,7 @@
 (define (comptime-host-smoke-status-ok?) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [operands : (Array CompilerCtfeValue)
+    [operands : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue 1)]
     (begin
       (compiler-comptime-host-session-open!

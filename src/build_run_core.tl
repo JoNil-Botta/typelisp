@@ -50,7 +50,7 @@
   (Err String))
 
 (defstruct SourceToolCfgNames
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 (define (source-tool-cfg-names-with-capacity [capacity : i64]) : SourceToolCfgNames
@@ -65,8 +65,8 @@
   (source-tool-cfg-names-with-capacity 4))
 
 (define (source-tool-cfg-names-copy-range!
-  [dst : (&mut dst (Array String))]
-  [src : (& src (Array String))]
+  [dst : (&mut dst (__tl_dyn-array String))]
+  [src : (& src (__tl_dyn-array String))]
   [index : i64]
   [count : i64]) : unit
   (let
@@ -84,7 +84,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array String) (make-array String new-cap)]
+    [bigger : (__tl_dyn-array String) (make-array String new-cap)]
     (begin
       (source-tool-cfg-names-copy-range!
         (&mut bigger)
@@ -1299,7 +1299,7 @@
 (define (source-tool-windows-direct-object-runtime-fallback-smoke-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
     "(define (main) : i64
-  (let [items : (Array i64) (make-array i64 1)]
+  (let [items : (__tl_dyn-array i64) (make-array i64 1)]
     (array-length items)))"
     (CompilerBackendTarget.Windows))
     [(ResultCompilerBackendObject.Ok image)

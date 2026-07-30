@@ -47,7 +47,7 @@
   (replacement String))
 
 (defstruct CompilerDiagnosticTextEditSeq
-  (slots (Array CompilerDiagnosticTextEdit))
+  (slots (__tl_dyn-array CompilerDiagnosticTextEdit))
   (len i64))
 
 (defstruct CompilerDiagnosticFix
@@ -56,7 +56,7 @@
   (edits CompilerDiagnosticTextEditSeq))
 
 (defstruct CompilerDiagnosticFixSeq
-  (slots (Array CompilerDiagnosticFix))
+  (slots (__tl_dyn-array CompilerDiagnosticFix))
   (len i64))
 
 (defstruct CompilerDiagnostic
@@ -335,8 +335,8 @@
   [edits : CompilerDiagnosticTextEditSeq]) : CompilerDiagnosticTextEditSeq
   (let
     [count : i64 (struct-get edits len)]
-    [src : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
-    [dst : (Array CompilerDiagnosticTextEdit)
+    [src : (__tl_dyn-array CompilerDiagnosticTextEdit) (struct-get edits slots)]
+    [dst : (__tl_dyn-array CompilerDiagnosticTextEdit)
       (make-array CompilerDiagnosticTextEdit count)]
     [index : i64 0]
     (begin
@@ -358,8 +358,8 @@
 (define (compiler-diagnostic-copy-fix-list [fixes : CompilerDiagnosticFixSeq]) : CompilerDiagnosticFixSeq
   (let
     [count : i64 (struct-get fixes len)]
-    [src : (Array CompilerDiagnosticFix) (struct-get fixes slots)]
-    [dst : (Array CompilerDiagnosticFix)
+    [src : (__tl_dyn-array CompilerDiagnosticFix) (struct-get fixes slots)]
+    [dst : (__tl_dyn-array CompilerDiagnosticFix)
       (make-array CompilerDiagnosticFix count)]
     [index : i64 0]
     (begin
@@ -466,7 +466,7 @@
 (define (compiler-diagnostic-edit-overlaps-rest?
   [diagnostic-path : String]
   [edit : CompilerDiagnosticTextEdit]
-  [slots : (Array CompilerDiagnosticTextEdit)]
+  [slots : (__tl_dyn-array CompilerDiagnosticTextEdit)]
   [count : i64]
   [start : i64]) : bool
   (let
@@ -489,7 +489,8 @@
   [edits : CompilerDiagnosticTextEditSeq]) : bool
   (let
     [count : i64 (struct-get edits len)]
-    [slots : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
+    [slots : (__tl_dyn-array CompilerDiagnosticTextEdit)
+      (struct-get edits slots)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -543,8 +544,8 @@
   [path : String]) : CompilerDiagnosticTextEditSeq
   (let
     [count : i64 (struct-get edits len)]
-    [src : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
-    [dst : (Array CompilerDiagnosticTextEdit)
+    [src : (__tl_dyn-array CompilerDiagnosticTextEdit) (struct-get edits slots)]
+    [dst : (__tl_dyn-array CompilerDiagnosticTextEdit)
       (make-array CompilerDiagnosticTextEdit count)]
     [index : i64 0]
     (begin
@@ -562,8 +563,8 @@
   [path : String]) : CompilerDiagnosticFixSeq
   (let
     [count : i64 (struct-get fixes len)]
-    [src : (Array CompilerDiagnosticFix) (struct-get fixes slots)]
-    [dst : (Array CompilerDiagnosticFix)
+    [src : (__tl_dyn-array CompilerDiagnosticFix) (struct-get fixes slots)]
+    [dst : (__tl_dyn-array CompilerDiagnosticFix)
       (make-array CompilerDiagnosticFix count)]
     [index : i64 0]
     (begin
@@ -792,7 +793,7 @@
 (define (compiler-diagnostic-text-edit-single
   [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditSeq
   (let
-    [slots : (Array CompilerDiagnosticTextEdit)
+    [slots : (__tl_dyn-array CompilerDiagnosticTextEdit)
       (make-array CompilerDiagnosticTextEdit 1)]
     (begin
       (array-set! slots 0 edit)
@@ -811,8 +812,8 @@
   [fixes : CompilerDiagnosticFixSeq]) : CompilerDiagnosticFixSeq
   (let
     [count : i64 (struct-get fixes len)]
-    [src : (Array CompilerDiagnosticFix) (struct-get fixes slots)]
-    [dst : (Array CompilerDiagnosticFix)
+    [src : (__tl_dyn-array CompilerDiagnosticFix) (struct-get fixes slots)]
+    [dst : (__tl_dyn-array CompilerDiagnosticFix)
       (make-array CompilerDiagnosticFix (+ count 1))]
     [index : i64 0]
     (begin

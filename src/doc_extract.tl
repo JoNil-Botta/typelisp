@@ -94,7 +94,7 @@
 
 (define (doc-item-array-copy-to-list
   [out : (&mut out doc_item_vec.Vec)]
-  [items : (Array DocItem)]
+  [items : (__tl_dyn-array DocItem)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -103,7 +103,7 @@
       (doc_item_vec.push out (array-ref items index))
       (doc-item-array-copy-to-list out items (+ index 1) count))))
 
-(define (doc-item-array-to-list [items : (Array DocItem)]) : doc_item_vec.Vec
+(define (doc-item-array-to-list [items : (__tl_dyn-array DocItem)]) : doc_item_vec.Vec
   (let
     [out : doc_item_vec.Vec (doc_item_vec.with-capacity (array-length items))]
     (begin
@@ -474,7 +474,7 @@
     [module-has : bool false]
     [pending-doc : String ""]
     [pending-has : bool false]
-    [items : (Array DocItem) (make-array DocItem 0)]
+    [items : (__tl_dyn-array DocItem) (make-array DocItem 0)]
     (begin
       (while (< i n)
         (let

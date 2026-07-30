@@ -785,20 +785,20 @@
 ;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
-(define compiler-builtin-ctfe-ids : (Array i64)
+(define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
   (make-array i64 280))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
-  (metadata (Array i64))
-  (ids (Array i64))
-  (ctfe-ids (Array i64)))
+  (metadata (__tl_dyn-array i64))
+  (ids (__tl_dyn-array i64))
+  (ctfe-ids (__tl_dyn-array i64)))
 
 (define (state-new) : CompilerBuiltinIdsState
   (let
-    [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 315)]
-    [ctfe-ids : (Array i64) (make-array i64 280)]
+    [metadata : (__tl_dyn-array i64) (make-array i64 4)]
+    [ids : (__tl_dyn-array i64) (make-array i64 315)]
+    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 280)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)

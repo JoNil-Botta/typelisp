@@ -88,7 +88,7 @@
   (Stale String))
 
 (defstruct BuildPackageGraphNodeVec
-  (slots (Array BuildPackageGraphNode))
+  (slots (__tl_dyn-array BuildPackageGraphNode))
   (len i64))
 
 (defstruct BuildPackageGraph
@@ -169,7 +169,7 @@
 ;; depth and siblings keep the shallower stack alive, so each descent
 ;; right-sizes a fresh array rather than sharing one growable buffer.
 (defstruct BuildPackagePathSeq
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 (defstruct BuildPackageWorkerConfig
@@ -197,7 +197,7 @@
   (Err String))
 
 (defstruct BuildPackageGraphWorkerVec
-  (slots (Array BuildPackageGraphWorker))
+  (slots (__tl_dyn-array BuildPackageGraphWorker))
   (len i64))
 
 (defstruct BuildPackageSchedulePass
@@ -2333,7 +2333,7 @@
   [path : String]) : BuildPackagePathSeq
   (let
     [count : i64 (struct-get paths len)]
-    [slots : (Array String) (make-array String (+ count 1))]
+    [slots : (__tl_dyn-array String) (make-array String (+ count 1))]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -2392,8 +2392,8 @@
   (array-ref (struct-get v slots) index))
 
 (define (build-package-graph-node-vec-copy-range!
-  [dst : (Array BuildPackageGraphNode)]
-  [src : (Array BuildPackageGraphNode)]
+  [dst : (__tl_dyn-array BuildPackageGraphNode)]
+  [src : (__tl_dyn-array BuildPackageGraphNode)]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -2405,7 +2405,7 @@
 (define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec]) : BuildPackageGraphNodeVec
   (let
     [count : i64 (build-package-graph-node-vec-len v)]
-    [bigger : (Array BuildPackageGraphNode)
+    [bigger : (__tl_dyn-array BuildPackageGraphNode)
       (make-array
         BuildPackageGraphNode
         (* (build-package-graph-node-vec-capacity v) 2))]
@@ -2423,7 +2423,7 @@
     (build-package-graph-node-vec-len v)
     (build-package-graph-node-vec-capacity v))
     (let
-      [slots : (Array BuildPackageGraphNode) (struct-get v slots)]
+      [slots : (__tl_dyn-array BuildPackageGraphNode) (struct-get v slots)]
       (begin
         (array-set! slots (build-package-graph-node-vec-len v) node)
         (BuildPackageGraphNodeVec
@@ -3589,11 +3589,11 @@
           true)))))
 
 (defstruct BuildPackageTlciMacroCollector
-  (names (Array String))
+  (names (__tl_dyn-array String))
   (captures TlciNativeMacroCaptures))
 
 (define (build-package-tlci-sort-macro-catalog!
-  [catalog : (&mut catalog (Array String))]) : unit
+  [catalog : (&mut catalog (__tl_dyn-array String))]) : unit
   (let
     [count : i64 (array-length catalog)]
     [index : i64 1]
@@ -3831,7 +3831,8 @@
                       (build-package-tlci-finish-macro-collector
                         (&mut names)
                         captures)]
-                    [catalog : (Array String) (struct-get collector names)]
+                    [catalog : (__tl_dyn-array String)
+                      (struct-get collector names)]
                     [_source : String
                       (embedded-native-source
                         catalog
@@ -3993,7 +3994,7 @@
           paths)]
       [macro-collector : BuildPackageTlciMacroCollector
         (build-package-tlci-macro-collector manifest-path manifest decls paths)]
-      [macro-names : (Array String) (struct-get macro-collector names)]
+      [macro-names : (__tl_dyn-array String) (struct-get macro-collector names)]
       (if (> (string.string-length (struct-get collector error)) 0)
         (ResultBuildPackageTlciText.Err (struct-get collector error))
         (let
@@ -4902,8 +4903,8 @@
   (array-ref (struct-get v slots) index))
 
 (define (build-package-graph-worker-vec-copy-range!
-  [dst : (Array BuildPackageGraphWorker)]
-  [src : (Array BuildPackageGraphWorker)]
+  [dst : (__tl_dyn-array BuildPackageGraphWorker)]
+  [src : (__tl_dyn-array BuildPackageGraphWorker)]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -4915,7 +4916,7 @@
 (define (build-package-graph-worker-vec-grow [v : BuildPackageGraphWorkerVec]) : BuildPackageGraphWorkerVec
   (let
     [count : i64 (build-package-graph-worker-vec-len v)]
-    [bigger : (Array BuildPackageGraphWorker)
+    [bigger : (__tl_dyn-array BuildPackageGraphWorker)
       (make-array
         BuildPackageGraphWorker
         (* (build-package-graph-worker-vec-capacity v) 2))]
@@ -4933,7 +4934,7 @@
     (build-package-graph-worker-vec-len v)
     (build-package-graph-worker-vec-capacity v))
     (let
-      [slots : (Array BuildPackageGraphWorker) (struct-get v slots)]
+      [slots : (__tl_dyn-array BuildPackageGraphWorker) (struct-get v slots)]
       (begin
         (array-set! slots (build-package-graph-worker-vec-len v) worker)
         (BuildPackageGraphWorkerVec

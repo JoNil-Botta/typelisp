@@ -51,7 +51,7 @@
   (Case String String i64 i64 i64 String i64 i64))
 
 (defenum InlineCollect
-  (Collect AstDeclList AstDeclPathList (Array InlineTest)))
+  (Collect AstDeclList AstDeclPathList (__tl_dyn-array InlineTest)))
 
 (defenum InlineHarness
   (Harness AstProgram AstDeclPathList i64))
@@ -781,13 +781,13 @@
   [paths : AstDeclPathList]
   [runtime-decls : AstDeclList]
   [runtime-paths : AstDeclPathList]
-  [tests : (Array InlineTest)]) : InlineCollect
+  [tests : (__tl_dyn-array InlineTest)]) : InlineCollect
   (let
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [runtime-decls-out : AstDeclList runtime-decls]
     [runtime-paths-out : AstDeclPathList runtime-paths]
-    [test-items : (Array InlineTest) tests]
+    [test-items : (__tl_dyn-array InlineTest) tests]
     [current-module : i64 (tltest-empty-name-id)]
     [done : bool false]
     (begin
@@ -885,7 +885,9 @@
         name
         (string.append " " (string.append (tltest-location path line) "\n")))]))
 
-(define (tltest-list-tests-from [tests : (Array InlineTest)] [index : i64]) : i64
+(define (tltest-list-tests-from
+  [tests : (__tl_dyn-array InlineTest)]
+  [index : i64]) : i64
   (if (>= index (array-length tests))
     (array-length tests)
     (begin
@@ -1185,7 +1187,7 @@
         (tltest-paths-with-print-runtime-count 4 runtime-path-id paths)])))
 
 (define (tltest-main-exprs-from
-  [tests : (Array InlineTest)]
+  [tests : (__tl_dyn-array InlineTest)]
   [index : i64]
   [out : AstExprList]) : AstExprList
   (if (< index 0)
@@ -1211,7 +1213,7 @@
                       (tltest-print-expr (tltest-ok-line test)))
                     out)))))]))))
 
-(define (tltest-main-exprs [tests : (Array InlineTest)]) : AstExprList
+(define (tltest-main-exprs [tests : (__tl_dyn-array InlineTest)]) : AstExprList
   (let
     [count : i64 (array-length tests)]
     (ast-expr-cons
@@ -1224,7 +1226,7 @@
           (ast-expr-list-new))))))
 
 (define (tltest-test-decls-onto
-  [tests : (Array InlineTest)]
+  [tests : (__tl_dyn-array InlineTest)]
   [index : i64]
   [out : AstDeclList]) : AstDeclList
   (if (< index 0)
@@ -1246,7 +1248,7 @@
                   body)
                 out)))]))))
 
-(define (tltest-main-decls [tests : (Array InlineTest)]) : AstDeclList
+(define (tltest-main-decls [tests : (__tl_dyn-array InlineTest)]) : AstDeclList
   (ast-decl-cons
     (ast-decl-module-id (tltest-empty-name-id))
     (ast-decl-cons
@@ -1272,31 +1274,31 @@
         cbi.compiler-builtin-id-fix-empty
         (ast-decl-path-list-new)))))
 
-(define (tltest-generated-test-decls [tests : (Array InlineTest)]) : AstDeclList
+(define (tltest-generated-test-decls [tests : (__tl_dyn-array InlineTest)]) : AstDeclList
   (tltest-test-decls-onto
     tests
     (- (array-length tests) 1)
     (tltest-main-decls tests)))
 
-(define (tltest-generated-typecheck-decls [tests : (Array InlineTest)]) : AstDeclList
+(define (tltest-generated-typecheck-decls [tests : (__tl_dyn-array InlineTest)]) : AstDeclList
   (tltest-test-decls-onto tests (- (array-length tests) 1) (ast-decl-list-new)))
 
 (define (tltest-generated-test-paths
   [source : String]
-  [tests : (Array InlineTest)]) : AstDeclPathList
+  [tests : (__tl_dyn-array InlineTest)]) : AstDeclPathList
   (tltest-test-paths-onto
     tests
     (- (array-length tests) 1)
     (tltest-main-paths source)))
 
-(define (tltest-generated-typecheck-paths [tests : (Array InlineTest)]) : AstDeclPathList
+(define (tltest-generated-typecheck-paths [tests : (__tl_dyn-array InlineTest)]) : AstDeclPathList
   (tltest-test-paths-onto
     tests
     (- (array-length tests) 1)
     (ast-decl-path-list-new)))
 
 (define (tltest-test-paths-onto
-  [tests : (Array InlineTest)]
+  [tests : (__tl_dyn-array InlineTest)]
   [index : i64]
   [out : AstDeclPathList]) : AstDeclPathList
   (if (< index 0)
@@ -1316,7 +1318,7 @@
                 module-id
                 out)))]))))
 
-(define (tltest-main-decl [tests : (Array InlineTest)]) : AstDecl
+(define (tltest-main-decl [tests : (__tl_dyn-array InlineTest)]) : AstDecl
   (ast-decl-def-fn-id
     (tltest-main-id)
     (ast-param-list-new)
@@ -1862,7 +1864,7 @@
     [(AstExpr.Syscall args) (tltest-reach-mark-expr-list args names)]))
 
 (define (tltest-reach-mark-tests-from
-  [tests : (Array InlineTest)]
+  [tests : (__tl_dyn-array InlineTest)]
   [index : i64]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (if (< index 0)
@@ -1877,7 +1879,7 @@
             (tltest-reach-mark-expr (ast-node-get body) names))]))))
 
 (define (tltest-reach-mark-tests
-  [tests : (Array InlineTest)]
+  [tests : (__tl_dyn-array InlineTest)]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-tests-from tests (- (array-length tests) 1) names))
 
@@ -2106,7 +2108,7 @@
 
 (define (tltest-reachable-names
   [decls : AstDeclList]
-  [tests : (Array InlineTest)]) : tltest_name_map.Map
+  [tests : (__tl_dyn-array InlineTest)]) : tltest_name_map.Map
   (tltest-reach-fixed
     decls
     (tltest-decl-list-count decls)
@@ -2192,7 +2194,7 @@
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [tests : (Array InlineTest)]) : InlineRuntimeDecls
+  [tests : (__tl_dyn-array InlineTest)]) : InlineRuntimeDecls
   (tltest-prune-runtime-decls-in
     decls
     paths
@@ -2230,7 +2232,7 @@
 
 (define (tltest-inline-typecheck-program
   [decls : AstDeclList]
-  [tests : (Array InlineTest)]) : AstProgram
+  [tests : (__tl_dyn-array InlineTest)]) : AstProgram
   (ast-program
     (compiler-load-decl-list-append
       decls
@@ -2238,7 +2240,7 @@
 
 (define (tltest-inline-typecheck-paths
   [paths : AstDeclPathList]
-  [tests : (Array InlineTest)]) : AstDeclPathList
+  [tests : (__tl_dyn-array InlineTest)]) : AstDeclPathList
   (compiler-load-decl-path-list-append
     paths
     (tltest-generated-typecheck-paths tests)))
@@ -2388,8 +2390,8 @@
     0))
 
 (defstruct TltestCfgNames
-  (slots (Array String))
-  (values (Array i64))
+  (slots (__tl_dyn-array String))
+  (values (__tl_dyn-array i64))
   (len i64))
 
 (define (tltest-cfg-env-count [cfgs : sym_i64_env.SymI64Env]) : i64
@@ -2399,8 +2401,8 @@
 
 (define (tltest-cfg-names-fill!
   [cfgs : sym_i64_env.SymI64Env]
-  [slots : (Array String)]
-  [values : (Array i64)]
+  [slots : (__tl_dyn-array String)]
+  [values : (__tl_dyn-array i64)]
   [index : i64]) : unit
   (match (sym_i64_env.sym-i64-view cfgs)
     [(sym_i64_env.SymI64ViewNil) unit]
@@ -2413,8 +2415,8 @@
 (define (tltest-cfg-names-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNames
   (let
     [count : i64 (tltest-cfg-env-count cfgs)]
-    [slots : (Array String) (make-array String count)]
-    [values : (Array i64) (make-array i64 count)]
+    [slots : (__tl_dyn-array String) (make-array String count)]
+    [values : (__tl_dyn-array i64) (make-array i64 count)]
     (begin
       (tltest-cfg-names-fill! cfgs slots values 0)
       (TltestCfgNames slots values count))))

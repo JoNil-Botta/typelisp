@@ -407,6 +407,8 @@
 (import a)
 (define (main) : i64 a.x)")
 
+;; This source intentionally keeps the legacy public `(Array T)` spelling and
+;; stdlib.array path as compatibility coverage until the final #3581 removal.
 (define (compiler-check-implicit-core-prelude-source) : String
   "(import \"stdlib/array.tl\" module stdlib.array as arr)
 (define (main) : i64

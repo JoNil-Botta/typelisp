@@ -7,8 +7,9 @@
 ;; `lexer.tl` is the *demo* program for the s-expression lexer: it carries a
 ;; `main` that lexes a sample and tallies its symbols. But the next front-end
 ;; component - the s-expression *reader* in `reader.tl` - wants to REUSE the
-;; lexer's `lex : (-> String (Array token.Token))` rather than re-derive it, and it
-;; carries its own `main` (read tokens into a recursive `Sexpr` tree, fold it).
+;; lexer's `lex : (-> String (__tl_dyn-array token.Token))` rather than
+;; re-derive it, and it carries its own `main` (read tokens into a recursive
+;; `Sexpr` tree, fold it).
 ;;
 ;; The module loader is whole-program: it concatenates every imported
 ;; module's declarations into a single program, then runs the unchanged
@@ -44,11 +45,11 @@
 (import (result.result i64 String) as result_lex_i64)
 
 (defenum ResultTokens
-  (Ok (Array token.Token))
+  (Ok (__tl_dyn-array token.Token))
   (Err String))
 
 (defenum ResultSpannedTokens
-  (Ok (Array token.SpannedToken))
+  (Ok (__tl_dyn-array token.SpannedToken))
   (Err token.SourceError))
 
 (defenum ResultLexCheck
@@ -590,8 +591,8 @@
 ;; token count (excluding the trailing `token.Token.End`).
 (define (into-spanned-result
   [src : String]
-  [toks : (Array token.Token)]
-  [starts : (Array i64)]) : ResultLexIntoSpanned
+  [toks : (__tl_dyn-array token.Token)]
+  [starts : (__tl_dyn-array i64)]) : ResultLexIntoSpanned
   (let
     [i : i64 0]
     [n : i64 (string.string-length src)]
@@ -800,7 +801,7 @@
     [ok : bool true]
     [message : String ""]
     [err-pos : i64 0]
-    [stoks : (Array token.SpannedToken) lex-spanned-token-buffer]
+    [stoks : (__tl_dyn-array token.SpannedToken) lex-spanned-token-buffer]
     [limit : i64 (array-length stoks)]
     (begin
       (cfg compile-profile (ci.intern-profile-note-source-bytes n))
@@ -1059,22 +1060,22 @@
           (ResultLexIntoSpanned.Ok count))
         (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
 
-;; `lex : (-> String (Array token.Token))` - the public entry point. Size the token
-;; array by an upper bound (every char yields at most one token, plus the
-;; `token.Token.End` sentinel), lex into it, then return that exact array. The trailing
-;; `token.Token.End` marks
+;; `lex : (-> String (__tl_dyn-array token.Token))` - the public entry point.
+;; Size the token array by an upper bound (every char yields at most one token,
+;; plus the `token.Token.End` sentinel), lex into it, then return that exact
+;; array. The trailing `token.Token.End` marks
 ;; the logical end even though the backing array may be larger.
 (define (result [src : String]) : ResultTokens
   (let
     [cap : i64 (+ (string.string-length src) 1)]
-    [toks : (Array token.Token) (make-array token.Token cap)]
-    [starts : (Array i64) (make-array i64 cap)]
+    [toks : (__tl_dyn-array token.Token) (make-array token.Token cap)]
+    [starts : (__tl_dyn-array i64) (make-array i64 cap)]
     (match (into-spanned-result src toks starts)
       [(ResultLexIntoSpanned.Ok _) (ResultTokens.Ok toks)]
       [(ResultLexIntoSpanned.Err err)
         (ResultTokens.Err (token.source-error-message err))])))
 
-(define (lex [src : String]) : (Array token.Token)
+(define (lex [src : String]) : (__tl_dyn-array token.Token)
   (match (result src)
     [(ResultTokens.Ok toks) toks]
     [(ResultTokens.Err message) (io.panic message)]))
@@ -1141,7 +1142,7 @@
 ;; in one dedicated arena that is created once and never reset, so a grow while
 ;; a transient driver arena is active cannot leave this global pointing at
 ;; reclaimed storage.
-(define lex-spanned-token-buffer : (Array token.SpannedToken)
+(define lex-spanned-token-buffer : (__tl_dyn-array token.SpannedToken)
   (make-array token.SpannedToken 0))
 (define lex-spanned-token-buffer-arena : i64
   0)
@@ -1168,7 +1169,7 @@
   (let
     [previous-arena : i64 (arena.tl_arena_current)]
     [old-storage-arena : i64 lex-spanned-token-buffer-arena]
-    [old-buffer : (Array token.SpannedToken) lex-spanned-token-buffer]
+    [old-buffer : (__tl_dyn-array token.SpannedToken) lex-spanned-token-buffer]
     [storage-root : i64
       (if (= old-storage-arena 0)
         (arena.tl_arena_make)
@@ -1176,7 +1177,7 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
-    [new-buffer : (Array token.SpannedToken)
+    [new-buffer : (__tl_dyn-array token.SpannedToken)
       (make-array
         token.SpannedToken
         (spanned-token-buffer-next-capacity required))]
@@ -1286,13 +1287,16 @@
         (string.eq (token.sym (array-ref toks 2)) "-"))]
     [(ResultTokens.Err _) false]))
 
-(define (token-int-eq? [toks : (Array token.Token)] [idx : i64] [value : i64]) : bool
+(define (token-int-eq?
+  [toks : (__tl_dyn-array token.Token)]
+  [idx : i64]
+  [value : i64]) : bool
   (and
     (= (token.tag (array-ref toks idx)) (token.tag-int))
     (= (token.int (array-ref toks idx)) value)))
 
 (define (token-sym-eq?
-  [toks : (Array token.Token)]
+  [toks : (__tl_dyn-array token.Token)]
   [idx : i64]
   [value : String]) : bool
   (and
@@ -1389,7 +1393,7 @@
     [(ResultTokens.Err _) false]))
 
 (define (spanned-token-sym-eq?
-  [toks : (Array token.SpannedToken)]
+  [toks : (__tl_dyn-array token.SpannedToken)]
   [idx : i64]
   [value : String]) : bool
   (let
@@ -1529,7 +1533,7 @@
 
 (define (string-token-ok? [src : String] [expected : String]) : bool
   (let
-    [toks : (Array token.Token) (lex src)]
+    [toks : (__tl_dyn-array token.Token) (lex src)]
     (and
       (= (token.tag (array-ref toks 0)) (token.tag-str))
       (string.eq (token.str (array-ref toks 0)) expected)
@@ -1537,7 +1541,7 @@
 
 (define (string-token-retains-id?) : bool
   (let
-    [toks : (Array token.Token) (lex (string-source "literal-id"))]
+    [toks : (__tl_dyn-array token.Token) (lex (string-source "literal-id"))]
     [literal : token.Token (array-ref toks 0)]
     [literal-id : i64 (token.str-id literal)]
     (and
@@ -1586,7 +1590,7 @@
         (= (token.tag (array-ref toks 8)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
-(define (span-positions-ok? [s : (Array token.SpannedToken)]) : bool
+(define (span-positions-ok? [s : (__tl_dyn-array token.SpannedToken)]) : bool
   (let
     [ok : bool true]
     (begin

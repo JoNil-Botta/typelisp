@@ -97,12 +97,12 @@
   (callback-abi-version i64)
   (compiler-build-hash String)
   (metadata TlciMetadata)
-  (rodata (Array u8))
-  (code (Array u8))
-  (fixups (Array u8))
-  (entries (Array u8))
-  (symbols (Array u8))
-  (imports (Array u8)))
+  (rodata (__tl_dyn-array u8))
+  (code (__tl_dyn-array u8))
+  (fixups (__tl_dyn-array u8))
+  (entries (__tl_dyn-array u8))
+  (symbols (__tl_dyn-array u8))
+  (imports (__tl_dyn-array u8)))
 
 ;; Construct the aggregate in its declaring module. Besides keeping the tlci
 ;; API concise, this lets the published stage0 compile dotted importers before
@@ -112,12 +112,12 @@
   [callback-abi-version : i64]
   [compiler-build-hash : String]
   [metadata : TlciMetadata]
-  [rodata : (Array u8)]
-  [code : (Array u8)]
-  [fixups : (Array u8)]
-  [entries : (Array u8)]
-  [symbols : (Array u8)]
-  [imports : (Array u8)]) : TlciImage
+  [rodata : (__tl_dyn-array u8)]
+  [code : (__tl_dyn-array u8)]
+  [fixups : (__tl_dyn-array u8)]
+  [entries : (__tl_dyn-array u8)]
+  [symbols : (__tl_dyn-array u8)]
+  [imports : (__tl_dyn-array u8)]) : TlciImage
   (TlciImage
     host-arch
     callback-abi-version
@@ -159,7 +159,7 @@
   (Err String))
 
 (defenum ResultTlciBytes
-  (Ok (Array u8))
+  (Ok (__tl_dyn-array u8))
   (Err String))
 
 ;; The container field historically named `compiler-build-hash` is the exact
@@ -231,7 +231,7 @@
 (defstruct TlciAuxSection
   (kind i64)
   (schema-version i64)
-  (payload (Array u8)))
+  (payload (__tl_dyn-array u8)))
 
 (defstruct TlciAuxDirectory
   (base-len i64)
@@ -245,12 +245,12 @@
   (Err String))
 
 (defenum ResultTlciAuxBytes
-  (Ok (Array u8))
+  (Ok (__tl_dyn-array u8))
   (Err String))
 
 (defenum ResultTlciAuxLookup
   (Missing)
-  (Ok i64 (Array u8))
+  (Ok i64 (__tl_dyn-array u8))
   (Err String))
 
 (defstruct TlciHostCallbackTable
@@ -262,8 +262,8 @@
   (reserved1 i64)
   (reserved2 i64)
   (abort-callback i64)
-  (import-names (Array String))
-  (import-callbacks (Array i64))
+  (import-names (__tl_dyn-array String))
+  (import-callbacks (__tl_dyn-array i64))
   (import-count i64))
 
 (defstruct TlciImageRegistration
@@ -1042,7 +1042,7 @@
         "tlci host ABI: macro entry table requires a count")]
     [else (ResultTlciHostAbi.Ok)]))
 
-(define (tlci-empty-bytes) : (Array u8)
+(define (tlci-empty-bytes) : (__tl_dyn-array u8)
   (make-array u8 0))
 
 (define (tlci-byte [value : i64]) : u8
@@ -1066,7 +1066,7 @@
     (tlci-push-u8! out (shr value 48))
     (tlci-push-u8! out (shr value 56))))
 
-(define (tlci-set-u64! [out : (Array u8)] [offset : i64] [value : i64]) : unit
+(define (tlci-set-u64! [out : (__tl_dyn-array u8)] [offset : i64] [value : i64]) : unit
   (begin
     (array-set! out offset (tlci-byte value))
     (array-set! out (+ offset 1) (tlci-byte (shr value 8)))
@@ -1077,7 +1077,10 @@
     (array-set! out (+ offset 6) (tlci-byte (shr value 48)))
     (array-set! out (+ offset 7) (tlci-byte (shr value 56)))))
 
-(define (tlci-put-string! [bytes : (Array u8)] [offset : i64] [text : String]) : unit
+(define (tlci-put-string!
+  [bytes : (__tl_dyn-array u8)]
+  [offset : i64]
+  [text : String]) : unit
   (let
     [index : i64 0]
     [count : i64 (tlci-string-length text)]
@@ -1095,17 +1098,17 @@
   "tlci_macro_table")
 
 (defstruct TlciNativePackageInput
-  (rodata (Array u8))
-  (code (Array u8))
-  (imports (Array u8))
-  (layout-fixup-offsets (Array i64))
+  (rodata (__tl_dyn-array u8))
+  (code (__tl_dyn-array u8))
+  (imports (__tl_dyn-array u8))
+  (layout-fixup-offsets (__tl_dyn-array i64))
   (layout-fixup-count i64)
-  (identities (Array String))
-  (entry-offsets (Array i64))
+  (identities (__tl_dyn-array String))
+  (entry-offsets (__tl_dyn-array i64))
   (macro-count i64))
 
 (define (tlci-native-package-name-blob-len
-  [identities : (Array String)]
+  [identities : (__tl_dyn-array String)]
   [count : i64]) : i64
   (let
     [index : i64 0]
@@ -1121,10 +1124,10 @@
 
 ;; Extend the layout code bytes with the name blob, the aligned count word,
 ;; and the zeroed macro table. Returns the extended code array.
-(define (tlci-native-package-extend-code [input : TlciNativePackageInput]) : (Array
+(define (tlci-native-package-extend-code [input : TlciNativePackageInput]) : (__tl_dyn-array
     u8)
   (let
-    [code : (Array u8) (struct-get input code)]
+    [code : (__tl_dyn-array u8) (struct-get input code)]
     [code-len : i64 (array-length code)]
     [count : i64 (struct-get input macro-count)]
     [names-len : i64
@@ -1132,7 +1135,7 @@
     [count-word : i64 (tlci-align-offset (+ code-len names-len) 8)]
     [table-offset : i64 (+ count-word 8)]
     [total : i64 (+ table-offset (* count tlci-macro-entry-record-size))]
-    [out : (Array u8) (make-array u8 total)]
+    [out : (__tl_dyn-array u8) (make-array u8 total)]
     [index : i64 0]
     [name-cursor : i64 code-len]
     (begin
@@ -1162,24 +1165,24 @@
         (struct-get input macro-count)))
     8))
 
-(define (tlci-native-package-entries [input : TlciNativePackageInput]) : (Array
+(define (tlci-native-package-entries [input : TlciNativePackageInput]) : (__tl_dyn-array
     u8)
   (let
-    [out : (Array u8) (make-array u8 tlci-section-entry-record-size)]
+    [out : (__tl_dyn-array u8) (make-array u8 tlci-section-entry-record-size)]
     (begin
       (tlci-set-u64! out 0 0)
       (tlci-set-u64! out 8 (tlci-string-length tlci-macro-table-symbol))
       (tlci-set-u64! out 16 (tlci-native-package-count-word input))
       out)))
 
-(define (tlci-native-package-symbols) : (Array u8)
+(define (tlci-native-package-symbols) : (__tl_dyn-array u8)
   (let
-    [out : (Array u8) (make-array u8 tlci-section-symbol-record-size)]
+    [out : (__tl_dyn-array u8) (make-array u8 tlci-section-symbol-record-size)]
     (begin
       (tlci-put-string! out 0 tlci-macro-table-symbol)
       out)))
 
-(define (tlci-native-package-fixups [input : TlciNativePackageInput]) : (Array
+(define (tlci-native-package-fixups [input : TlciNativePackageInput]) : (__tl_dyn-array
     u8)
   (make-array
     u8
@@ -1192,7 +1195,7 @@
 ;; Post-emit patch: resolve layout fixup slots and fill the macro table's name
 ;; and function slots plus their fixup records, then restamp the content hash.
 (define (tlci-native-package-patch!
-  [bytes : (Array u8)]
+  [bytes : (__tl_dyn-array u8)]
   [input : TlciNativePackageInput]) : unit
   (let
     [code-offset : i64 (tlci-read-u64 bytes 88)]
@@ -1296,10 +1299,10 @@
         (tlci-native-package-patch! bytes input)
         (ResultTlciBytes.Ok bytes))]))
 
-(define (tlci-byte-at [bytes : (Array u8)] [offset : i64]) : i64
+(define (tlci-byte-at [bytes : (__tl_dyn-array u8)] [offset : i64]) : i64
   (cast (array-ref bytes offset) : i64))
 
-(define (tlci-read-u64 [bytes : (Array u8)] [offset : i64]) : i64
+(define (tlci-read-u64 [bytes : (__tl_dyn-array u8)] [offset : i64]) : i64
   (+
     (tlci-byte-at bytes offset)
     (+
@@ -1353,7 +1356,7 @@
     (tlci-push-u8! out 26)
     (tlci-push-u8! out 10)))
 
-(define (tlci-magic-ok? [bytes : (Array u8)]) : bool
+(define (tlci-magic-ok? [bytes : (__tl_dyn-array u8)]) : bool
   (and
     (= (tlci-byte-at bytes 0) 84)
     (= (tlci-byte-at bytes 1) 76)
@@ -1379,16 +1382,19 @@
           (set! i (+ i 1))))
       unit)))
 
-(define (tlci-string->bytes [text : String]) : (Array u8)
+(define (tlci-string->bytes [text : String]) : (__tl_dyn-array u8)
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
       (tlci-push-string-bytes! (&mut out) text)
       (byte_buf_core.byte-buf-builder-finish-array (& out)))))
 
-(define (tlci-bytes->string [bytes : (Array u8)] [offset : i64] [len : i64]) : String
+(define (tlci-bytes->string
+  [bytes : (__tl_dyn-array u8)]
+  [offset : i64]
+  [len : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 len)]
+    [out : (__tl_dyn-array u8) (make-array u8 len)]
     [i : i64 0]
     (begin
       (while (< i len)
@@ -1398,10 +1404,12 @@
       (unsafe
         (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) len)))))
 
-(define (tlci-slice-bytes [bytes : (Array u8)] [offset : i64] [len : i64]) : (Array
-    u8)
+(define (tlci-slice-bytes
+  [bytes : (__tl_dyn-array u8)]
+  [offset : i64]
+  [len : i64]) : (__tl_dyn-array u8)
   (let
-    [out : (Array u8) (make-array u8 len)]
+    [out : (__tl_dyn-array u8) (make-array u8 len)]
     [i : i64 0]
     (begin
       (while (< i len)
@@ -1410,15 +1418,17 @@
           (set! i (+ i 1))))
       out)))
 
-(define (tlci-copy-bytes [bytes : (Array u8)]) : (Array u8)
+(define (tlci-copy-bytes [bytes : (__tl_dyn-array u8)]) : (__tl_dyn-array u8)
   (tlci-slice-bytes bytes 0 (array-length bytes)))
 
 (define (tlci-append-bytes!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [bytes : (Array u8)]) : unit
+  [bytes : (__tl_dyn-array u8)]) : unit
   (byte_buf_core.byte-buf-builder-append-array out (& bytes)))
 
-(define (tlci-bytes-eq? [left : (Array u8)] [right : (Array u8)]) : bool
+(define (tlci-bytes-eq?
+  [left : (__tl_dyn-array u8)]
+  [right : (__tl_dyn-array u8)]) : bool
   (let
     [n : i64 (array-length left)]
     [i : i64 0]
@@ -1430,7 +1440,7 @@
           (set! ok false)))
       ok)))
 
-(define (tlci-content-hash [bytes : (Array u8)]) : i64
+(define (tlci-content-hash [bytes : (__tl_dyn-array u8)]) : i64
   (let
     [n : i64 (array-length bytes)]
     [i : i64 0]
@@ -1449,7 +1459,10 @@
             (set! i (+ i 1)))))
       hash)))
 
-(define (tlci-range-hash [bytes : (Array u8)] [offset : i64] [len : i64]) : i64
+(define (tlci-range-hash
+  [bytes : (__tl_dyn-array u8)]
+  [offset : i64]
+  [len : i64]) : i64
   (let
     [i : i64 0]
     [hash : i64 1]
@@ -1463,16 +1476,16 @@
       hash)))
 
 (define (tlci-aux-pack-rodata
-  [base : (Array u8)]
-  [sections : (Array TlciAuxSection)]) : ResultTlciAuxBytes
+  [base : (__tl_dyn-array u8)]
+  [sections : (__tl_dyn-array TlciAuxSection)]) : ResultTlciAuxBytes
   (let
     [count : i64 (array-length sections)]
     (if (= count 0)
       (ResultTlciAuxBytes.Ok (tlci-copy-bytes base))
       (let
-        [offsets : (Array i64) (array.make-array i64 count)]
-        [lengths : (Array i64) (array.make-array i64 count)]
-        [hashes : (Array i64) (array.make-array i64 count)]
+        [offsets : (__tl_dyn-array i64) (array.make-array i64 count)]
+        [lengths : (__tl_dyn-array i64) (array.make-array i64 count)]
+        [hashes : (__tl_dyn-array i64) (array.make-array i64 count)]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
         [index : i64 0]
@@ -1486,7 +1499,7 @@
               [section : TlciAuxSection (array-ref sections index)]
               [kind : i64 (struct-get section kind)]
               [schema-version : i64 (struct-get section schema-version)]
-              [payload : (Array u8) (struct-get section payload)]
+              [payload : (__tl_dyn-array u8) (struct-get section payload)]
               (cond
                 [(<= kind previous-kind)
                   (begin
@@ -1544,7 +1557,7 @@
                   (ResultTlciAuxBytes.Ok
                     (byte_buf_core.byte-buf-builder-finish-array (& out))))))))))))
 
-(define (tlci-aux-directory [rodata : (Array u8)]) : ResultTlciAuxDirectory
+(define (tlci-aux-directory [rodata : (__tl_dyn-array u8)]) : ResultTlciAuxDirectory
   (let
     [rodata-len : i64 (array-length rodata)]
     (if (< rodata-len tlci-aux-trailer-size)
@@ -1595,7 +1608,7 @@
                     trailer-offset))])))))))
 
 (define (tlci-aux-records-valid?
-  [rodata : (Array u8)]
+  [rodata : (__tl_dyn-array u8)]
   [directory : TlciAuxDirectory]) : bool
   (let
     [index : i64 0]
@@ -1630,7 +1643,7 @@
             (set! ok false))))
       ok)))
 
-(define (tlci-aux-find [rodata : (Array u8)] [wanted-kind : i64]) : ResultTlciAuxLookup
+(define (tlci-aux-find [rodata : (__tl_dyn-array u8)] [wanted-kind : i64]) : ResultTlciAuxLookup
   (match (tlci-aux-directory rodata)
     [(ResultTlciAuxDirectory.Missing) (ResultTlciAuxLookup.Missing)]
     [(ResultTlciAuxDirectory.Err message) (ResultTlciAuxLookup.Err message)]
@@ -2737,7 +2750,7 @@
 (define (tlci-section-ordered? [cursor : i64] [offset : i64] [len : i64]) : bool
   (or (= len 0) (>= offset cursor)))
 
-(define (tlci-import-section-count [imports : (Array u8)]) : i64
+(define (tlci-import-section-count [imports : (__tl_dyn-array u8)]) : i64
   (let
     [len : i64 (array-length imports)]
     (cond
@@ -2746,7 +2759,7 @@
       [else (tlci-read-u64 imports 0)])))
 
 (define (tlci-import-section-validation-error
-  [imports : (Array u8)]
+  [imports : (__tl_dyn-array u8)]
   [expected-count : i64]) : String
   (let
     [len : i64 (array-length imports)]
@@ -2839,11 +2852,12 @@
             (tlci-import-section-count (struct-get image imports)))))]
     [else
       (let
-        [compiler-hash-bytes : (Array u8)
+        [compiler-hash-bytes : (__tl_dyn-array u8)
           (tlci-string->bytes (struct-get image compiler-build-hash))]
         [metadata-text : String
           (tlci-metadata-emit (struct-get image metadata))]
-        [metadata-bytes : (Array u8) (tlci-string->bytes metadata-text)]
+        [metadata-bytes : (__tl_dyn-array u8)
+          (tlci-string->bytes metadata-text)]
         [hash-offset : i64 tlci-header-size]
         [metadata-offset : i64
           (tlci-align-offset
@@ -2942,7 +2956,7 @@
               (tlci-append-bytes! (&mut out) (struct-get image imports)))
             unit)
           (let
-            [out-bytes : (Array u8)
+            [out-bytes : (__tl_dyn-array u8)
               (byte_buf_core.byte-buf-builder-finish-array (& out))]
             (begin
               (tlci-set-u64!
@@ -2970,7 +2984,7 @@
   (ResultTlciImage.Err
     (str_cat.str-cat "tlci: section `" name "` extends past end")))
 
-(define (tlci-parse-image [bytes : (Array u8)]) : ResultTlciImage
+(define (tlci-parse-image [bytes : (__tl_dyn-array u8)]) : ResultTlciImage
   (let
     [actual-size : i64 (array-length bytes)]
     (if (< actual-size tlci-header-size)
@@ -3205,7 +3219,7 @@
         alpha
         (tlci-spmd-callable-list-cons beta (tlci-spmd-callable-list-empty))))))
 
-(define (tlci-test-bytes3 [a : i64] [b : i64] [c : i64]) : (Array u8)
+(define (tlci-test-bytes3 [a : i64] [b : i64] [c : i64]) : (__tl_dyn-array u8)
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
@@ -3214,7 +3228,8 @@
       (tlci-push-u8! (&mut out) c)
       (byte_buf_core.byte-buf-builder-finish-array (& out)))))
 
-(define (tlci-test-zero-records [record-size : i64] [count : i64]) : (Array u8)
+(define (tlci-test-zero-records [record-size : i64] [count : i64]) : (__tl_dyn-array
+    u8)
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
@@ -3247,13 +3262,13 @@
     (tlci-empty-bytes)
     (tlci-empty-bytes)))
 
-(define (tlci-test-imports-bytes) : (Array u8)
+(define (tlci-test-imports-bytes) : (__tl_dyn-array u8)
   (let
     [name : String "fuel-check"]
     [name-len : i64 (tlci-string-length name)]
     [name-offset : i64
       (+ tlci-section-import-header-size tlci-section-import-record-size)]
-    [out : (Array u8) (make-array u8 (+ name-offset name-len))]
+    [out : (__tl_dyn-array u8) (make-array u8 (+ name-offset name-len))]
     (begin
       (tlci-set-u64! out 0 1)
       (tlci-set-u64! out tlci-section-import-header-size 8)
@@ -3738,7 +3753,9 @@
     [(ResultTlciMetadata.Err message) (string.eq message expected)]
     [(ResultTlciMetadata.Ok _) false]))
 
-(define (tlci-test-parse-rejects? [bytes : (Array u8)] [expected : String]) : bool
+(define (tlci-test-parse-rejects?
+  [bytes : (__tl_dyn-array u8)]
+  [expected : String]) : bool
   (match (tlci-parse-image bytes)
     [(ResultTlciImage.Err message) (string.eq message expected)]
     [(ResultTlciImage.Ok _) false]))
@@ -3749,11 +3766,11 @@
     [(ResultTlciBytes.Ok _) false]))
 
 (define (tlci-test-corrupt-byte
-  [bytes : (Array u8)]
+  [bytes : (__tl_dyn-array u8)]
   [offset : i64]
-  [value : i64]) : (Array u8)
+  [value : i64]) : (__tl_dyn-array u8)
   (let
-    [out : (Array u8) (tlci-copy-bytes bytes)]
+    [out : (__tl_dyn-array u8) (tlci-copy-bytes bytes)]
     (begin
       (array-set! out offset (tlci-byte value))
       out)))
@@ -3967,10 +3984,11 @@
 
 (define (tlci-test-aux-sections-ok?) : bool
   (let
-    [base : (Array u8) (tlci-string->bytes "native")]
-    [identity : (Array u8) (tlci-string->bytes "identity")]
-    [ast : (Array u8) (tlci-string->bytes "ast")]
-    [sections : (Array TlciAuxSection) (array.make-array TlciAuxSection 2)]
+    [base : (__tl_dyn-array u8) (tlci-string->bytes "native")]
+    [identity : (__tl_dyn-array u8) (tlci-string->bytes "identity")]
+    [ast : (__tl_dyn-array u8) (tlci-string->bytes "ast")]
+    [sections : (__tl_dyn-array TlciAuxSection)
+      (array.make-array TlciAuxSection 2)]
     (begin
       (array-set!
         sections
@@ -4002,7 +4020,8 @@
 
 (define (tlci-test-aux-corruption-rejected?) : bool
   (let
-    [sections : (Array TlciAuxSection) (array.make-array TlciAuxSection 1)]
+    [sections : (__tl_dyn-array TlciAuxSection)
+      (array.make-array TlciAuxSection 1)]
     (begin
       (array-set!
         sections
@@ -4017,7 +4036,7 @@
           (match (tlci-aux-directory packed)
             [(ResultTlciAuxDirectory.Ok directory)
               (let
-                [corrupt : (Array u8) (tlci-copy-bytes packed)]
+                [corrupt : (__tl_dyn-array u8) (tlci-copy-bytes packed)]
                 [record : i64 (struct-get directory directory-offset)]
                 [payload-offset : i64 (tlci-read-u64 corrupt (+ record 16))]
                 (begin

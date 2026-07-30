@@ -15,7 +15,7 @@
 ; Retaining the store's allocation arena keeps growth from making an older
 ; snapshot point into that scratch arena.
 (defstruct SymI64Store
-  (slots (Array SymI64Binding))
+  (slots (__tl_dyn-array SymI64Binding))
   (len i64)
   (arena i64))
 
@@ -29,13 +29,13 @@
 
 (define (sym-i64-store-new) : SymI64Store
   (let
-    [slots : (Array SymI64Binding) (make-array SymI64Binding 8)]
+    [slots : (__tl_dyn-array SymI64Binding) (make-array SymI64Binding 8)]
     [owner : i64 (arena.tl_arena_current)]
     (SymI64Store slots 0 owner)))
 
 (define (sym-i64-store-copy-range
-  [dst : (&mut dst (Array SymI64Binding))]
-  [src : (& src (Array SymI64Binding))]
+  [dst : (&mut dst (__tl_dyn-array SymI64Binding))]
+  [src : (& src (__tl_dyn-array SymI64Binding))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -54,7 +54,7 @@
       (unsafe
         (arena.tl_arena_set owner))
       (let
-        [bigger : (Array SymI64Binding)
+        [bigger : (__tl_dyn-array SymI64Binding)
           (make-array
             SymI64Binding
             (if (< capacity 1)
@@ -108,7 +108,8 @@
     [(SymI64Nil) SymI64ViewNil]
     [(SymI64Dense store head)
       (let
-        [slots : (Array SymI64Binding) (struct-get (box-get store) slots)]
+        [slots : (__tl_dyn-array SymI64Binding)
+          (struct-get (box-get store) slots)]
         ; Heads and parent indices are returned only by sym-i64-store-push!.
         [binding : SymI64Binding
           (unsafe
@@ -131,7 +132,8 @@
     [(SymI64Dense store head)
       (let
         [cursor : i64 head]
-        [slots : (Array SymI64Binding) (struct-get (box-get store) slots)]
+        [slots : (__tl_dyn-array SymI64Binding)
+          (struct-get (box-get store) slots)]
         [bindings : (Ptr SymI64Binding)
           (unsafe
             (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
@@ -152,7 +154,8 @@
     [(SymI64Dense store head)
       (let
         [cursor : i64 head]
-        [slots : (Array SymI64Binding) (struct-get (box-get store) slots)]
+        [slots : (__tl_dyn-array SymI64Binding)
+          (struct-get (box-get store) slots)]
         [bindings : (Ptr SymI64Binding)
           (unsafe
             (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
@@ -173,7 +176,8 @@
     [(SymI64Dense store head)
       (let
         [cursor : i64 head]
-        [slots : (Array SymI64Binding) (struct-get (box-get store) slots)]
+        [slots : (__tl_dyn-array SymI64Binding)
+          (struct-get (box-get store) slots)]
         [bindings : (Ptr SymI64Binding)
           (unsafe
             (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]

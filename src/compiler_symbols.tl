@@ -19,8 +19,8 @@
 ;; hashmap's enum-slot initialization pass and keep the lookup hot path to two
 ;; scalar loads per occupied probe.
 (defstruct CompilerSymbolMap
-  (keys (Array i64))
-  (values (Array i64))
+  (keys (__tl_dyn-array i64))
+  (values (__tl_dyn-array i64))
   (len i64)
   (deleted i64))
 
@@ -29,8 +29,8 @@
     CompilerSymbolMap
     CompilerSymbolMap
     CompilerSymbolMap
-    (Array AstDecl)
-    (Array i64)
+    (__tl_dyn-array AstDecl)
+    (__tl_dyn-array i64)
     i64))
 
 (defenum ResultCompilerSymbols
@@ -260,8 +260,8 @@
   [map : (& map CompilerSymbolMap)]
   [key : i64]) : i64
   (let
-    [keys : (Array i64) (struct-get map keys)]
-    [values : (Array i64) (struct-get map values)]
+    [keys : (__tl_dyn-array i64) (struct-get map keys)]
+    [values : (__tl_dyn-array i64) (struct-get map values)]
     [capacity : i64 (array-length keys)]
     (if (<= capacity 0)
       (compiler-symbol-map-missing-handle)
@@ -314,8 +314,8 @@
   [key : i64]
   [handle : i64]) : unit
   (let
-    [keys : (Array i64) (struct-get map keys)]
-    [values : (Array i64) (struct-get map values)]
+    [keys : (__tl_dyn-array i64) (struct-get map keys)]
+    [values : (__tl_dyn-array i64) (struct-get map values)]
     [key-data : (MutPtr i64)
       (unsafe
         (ptr-cast (array-data keys) : (MutPtr i64)))]
@@ -368,8 +368,8 @@
 
 (define (compiler-symbol-map-grow! [map : (&mut map CompilerSymbolMap)]) : unit
   (let
-    [old-keys : (Array i64) (struct-get map keys)]
-    [old-values : (Array i64) (struct-get map values)]
+    [old-keys : (__tl_dyn-array i64) (struct-get map keys)]
+    [old-values : (__tl_dyn-array i64) (struct-get map values)]
     [old-capacity : i64 (array-length old-keys)]
     [new-capacity : i64
       (if (> old-capacity 0)
@@ -582,11 +582,12 @@
     (compiler-symbols-lookup-type-id symbols name-id)
     fallback))
 
-(define (compiler-symbols-decls [symbols : CompilerSymbols]) : (Array AstDecl)
+(define (compiler-symbols-decls [symbols : CompilerSymbols]) : (__tl_dyn-array
+    AstDecl)
   (match symbols
     [(CompilerSymbols _ _ _ decls _ _) decls]))
 
-(define (compiler-symbols-owner-module-ids [symbols : CompilerSymbols]) : (Array
+(define (compiler-symbols-owner-module-ids [symbols : CompilerSymbols]) : (__tl_dyn-array
     i64)
   (match symbols
     [(CompilerSymbols _ _ _ _ owner-module-ids _) owner-module-ids]))
@@ -620,8 +621,10 @@
           (let
             [next-capacity : i64
               (compiler-symbols-growth-capacity capacity required)]
-            [next-decls : (Array AstDecl) (make-array AstDecl next-capacity)]
-            [next-owner-module-ids : (Array i64) (make-array i64 next-capacity)]
+            [next-decls : (__tl_dyn-array AstDecl)
+              (make-array AstDecl next-capacity)]
+            [next-owner-module-ids : (__tl_dyn-array i64)
+              (make-array i64 next-capacity)]
             [index : i64 0]
             (begin
               (while (< index decl-count)
@@ -1927,18 +1930,18 @@
 ;; both identical to the ordinals the previous whole-program scans produced.
 (defenum ModuleDeclIndex
   (ModuleDeclIndex
-    (Array i64)
-    (Array i64)
+    (__tl_dyn-array i64)
+    (__tl_dyn-array i64)
     i64
-    (Array i64)
-    (Array i64)
-    (Array i64)))
+    (__tl_dyn-array i64)
+    (__tl_dyn-array i64)
+    (__tl_dyn-array i64)))
 
 ;; Linear probe for `module-id` in the first `num-modules` slots of `mod-ids`;
 ;; returns its slot or -1. Extracted from the index builder so that hot loop
 ;; keeps fewer values live at once.
 (define (compiler-module-index-find-slot
-  [mod-ids : (Array i64)]
+  [mod-ids : (__tl_dyn-array i64)]
   [num-modules : i64]
   [module-id : i64]) : i64
   (let
@@ -1961,13 +1964,13 @@
         decl-count
         1)]
     [decl-offset : i64 (struct-get decls offset)]
-    [slots : (Array AstDecl) (struct-get decls slots)]
-    [mod-ids : (Array i64) (make-array i64 cap)]
-    [mod-head : (Array i64) (make-array i64 cap)]
-    [mod-tail : (Array i64) (make-array i64 cap)]
-    [ent-pos : (Array i64) (make-array i64 cap)]
-    [ent-ridx : (Array i64) (make-array i64 cap)]
-    [ent-next : (Array i64) (make-array i64 cap)]
+    [slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
+    [mod-ids : (__tl_dyn-array i64) (make-array i64 cap)]
+    [mod-head : (__tl_dyn-array i64) (make-array i64 cap)]
+    [mod-tail : (__tl_dyn-array i64) (make-array i64 cap)]
+    [ent-pos : (__tl_dyn-array i64) (make-array i64 cap)]
+    [ent-ridx : (__tl_dyn-array i64) (make-array i64 cap)]
+    [ent-next : (__tl_dyn-array i64) (make-array i64 cap)]
     [num-modules : i64 0]
     [num-entries : i64 0]
     [real-index : i64 0]
@@ -2122,7 +2125,7 @@
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
         [decl-offset : i64 (struct-get decls offset)]
-        [slots : (Array AstDecl) (struct-get decls slots)]
+        [slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
         [cur-symbols : CompilerSymbols symbols]
         [k : i64 (compiler-module-decl-index-head index target-module-id)]
         (begin
@@ -2155,7 +2158,7 @@
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
         [decl-offset : i64 (struct-get decls offset)]
-        [slots : (Array AstDecl) (struct-get decls slots)]
+        [slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
         [cur-symbols : CompilerSymbols symbols]
         [k : i64 (compiler-module-decl-index-head index target-module-id)]
         (begin
@@ -2528,7 +2531,8 @@
   [target : i64]
   [fallback : i64]) : i64
   (let
-    [owner-module-ids : (Array i64) (compiler-symbols-owner-module-ids symbols)]
+    [owner-module-ids : (__tl_dyn-array i64)
+      (compiler-symbols-owner-module-ids symbols)]
     (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       fallback
       (array-ref owner-module-ids target))))
@@ -2538,8 +2542,9 @@
   [target : i64]
   [fallback : i64]) : i64
   (let
-    [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
-    [owner-module-ids : (Array i64) (compiler-symbols-owner-module-ids symbols)]
+    [decls : (__tl_dyn-array AstDecl) (compiler-symbols-decls symbols)]
+    [owner-module-ids : (__tl_dyn-array i64)
+      (compiler-symbols-owner-module-ids symbols)]
     (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       fallback
       (let
@@ -2555,8 +2560,9 @@
   [symbols : CompilerSymbols]
   [target : i64]) : CompilerMaybeString
   (let
-    [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
-    [owner-module-ids : (Array i64) (compiler-symbols-owner-module-ids symbols)]
+    [decls : (__tl_dyn-array AstDecl) (compiler-symbols-decls symbols)]
+    [owner-module-ids : (__tl_dyn-array i64)
+      (compiler-symbols-owner-module-ids symbols)]
     (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       (CompilerNoString)
       (let
@@ -3407,7 +3413,7 @@
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
         [decl-offset : i64 (struct-get decls offset)]
-        [slots : (Array AstDecl) (struct-get decls slots)]
+        [slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
         [cur-registries : CompilerRegistries registries]
         [k : i64 (compiler-module-decl-index-head index target-module-id)]
         (begin
@@ -3959,7 +3965,7 @@
   [symbols : CompilerSymbols]
   [target : i64]) : ResultAstDecl
   (let
-    [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
+    [decls : (__tl_dyn-array AstDecl) (compiler-symbols-decls symbols)]
     (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       (ResultAstDecl.Err "symbols: declaration index not found")
       (ResultAstDecl.Ok (array-ref decls target)))))
@@ -4130,7 +4136,7 @@
   [symbols : CompilerSymbols]
   [target : i64]) : i64
   (let
-    [owners : (Array i64) (compiler-symbols-owner-module-ids symbols)]
+    [owners : (__tl_dyn-array i64) (compiler-symbols-owner-module-ids symbols)]
     (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       -1
       (array-ref owners target))))

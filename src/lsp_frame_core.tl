@@ -2474,7 +2474,8 @@
   [fallback-path : String]
   [edits : CompilerDiagnosticTextEditSeq]) : bool
   (let
-    [slots : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
+    [slots : (__tl_dyn-array CompilerDiagnosticTextEdit)
+      (struct-get edits slots)]
     [count : i64 (struct-get edits len)]
     [index : i64 0]
     [ok : bool (> count 0)]
@@ -4574,7 +4575,7 @@
           (LspValidationResult.Invalid line col msg (lsp-line-at text line)))]
       [(lexer.ResultSpannedTokens.Ok toks)
         (let
-          [cur : (Array i64) (make-array i64 1)]
+          [cur : (__tl_dyn-array i64) (make-array i64 1)]
           [dispatch : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
           [done : bool false]
           [result : LspValidationResult LspValidationResult.Valid]

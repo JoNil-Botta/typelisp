@@ -96,7 +96,7 @@ Summary:
       (tlci-inspect-spmd-callables (struct-get metadata spmd-callables)))
     ""))
 
-(define (tlci-inspect-render [bytes : (Array u8)] [image : TlciImage]) : String
+(define (tlci-inspect-render [bytes : (__tl_dyn-array u8)] [image : TlciImage]) : String
   (let
     [metadata : TlciMetadata (struct-get image metadata)]
     [host-arch : i64 (struct-get image host-arch)]
@@ -172,7 +172,9 @@ Summary:
 (define (tlci-inspect-error [path : String] [message : String]) : String
   (str_cat.str-cat "inspect: " path ": " message "\n"))
 
-(define (tlci-inspect-render-bytes [path : String] [bytes : (Array u8)]) : i64
+(define (tlci-inspect-render-bytes
+  [path : String]
+  [bytes : (__tl_dyn-array u8)]) : i64
   (match (tlci-parse-image bytes)
     [(ResultTlciImage.Err message)
       (begin

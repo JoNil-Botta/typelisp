@@ -55,14 +55,14 @@
   (parent i64)
   (emit bool))
 
-;; Deliberately a hand-grown `(Array LspFoldRange)` rather than a generated
-;; `(vector.vector LspFoldRange core)`: one family instantiation measures
-;; +87,721,964 Ir (+0.158%) of self_compile on its own, which is 31% of the
-;; CI-gated budget for a single collection type (#5646). This is the same growth
-;; shape `TlciNativeMacroCaptures` uses in the tlci producer. Revert to the
-;; generated vector once #5646 makes instantiation cheap.
+;; Deliberately a hand-grown `(__tl_dyn-array LspFoldRange)` rather than a
+;; generated `(vector.vector LspFoldRange core)`: one family instantiation
+;; measures +87,721,964 Ir (+0.158%) of self_compile on its own, which is 31% of
+;; the CI-gated budget for a single collection type (#5646). This is the same
+;; growth shape `TlciNativeMacroCaptures` uses in the tlci producer. Revert to
+;; the generated vector once #5646 makes instantiation cheap.
 (defstruct LspFoldRanges
-  (slots (Array LspFoldRange))
+  (slots (__tl_dyn-array LspFoldRange))
   (len i64))
 
 (define (lsp-fold-ranges-new) : LspFoldRanges
@@ -88,8 +88,8 @@
     unit))
 
 (define (lsp-fold-ranges-copy-range!
-  [dst : (&mut dst (Array LspFoldRange))]
-  [src : (& src (Array LspFoldRange))]
+  [dst : (&mut dst (__tl_dyn-array LspFoldRange))]
+  [src : (& src (__tl_dyn-array LspFoldRange))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -105,7 +105,8 @@
       (if (< old-cap 4)
         4
         (* old-cap 2))]
-    [bigger : (Array LspFoldRange) (array.make-array LspFoldRange new-cap)]
+    [bigger : (__tl_dyn-array LspFoldRange)
+      (array.make-array LspFoldRange new-cap)]
     (begin
       (lsp-fold-ranges-copy-range!
         (&mut bigger)

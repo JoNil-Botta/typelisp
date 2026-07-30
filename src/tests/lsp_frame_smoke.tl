@@ -912,7 +912,7 @@
   [second : CompilerDiagnosticTextEdit]
   [third : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditSeq
   (let
-    [slots : (Array CompilerDiagnosticTextEdit)
+    [slots : (__tl_dyn-array CompilerDiagnosticTextEdit)
       (make-array CompilerDiagnosticTextEdit 3)]
     (begin
       (array-set! slots 0 first)
@@ -1013,7 +1013,7 @@
         (lint-rule-single-begin-id)
         0
         span)]
-    [slots : (Array LintFinding) (make-array LintFinding 2)]
+    [slots : (__tl_dyn-array LintFinding) (make-array LintFinding 2)]
     [request-range : json.Json
       (lsp-json-object2 "start" (lsp-position 2 3) "end" (lsp-position 2 4))]
     [cursor-range : json.Json

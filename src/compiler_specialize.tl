@@ -13,9 +13,9 @@
 
 (defstruct GenRegistry
   (index spec_id_i64_map.Map)
-  (key-ids (Array i64))
-  (decls (Array AstDecl))
-  (next (Array i64))
+  (key-ids (__tl_dyn-array i64))
+  (decls (__tl_dyn-array AstDecl))
+  (next (__tl_dyn-array i64))
   (len i64))
 
 (defenum SpecTemplate
@@ -24,7 +24,7 @@
 ;; Templates are collected once per program and then only counted and indexed,
 ;; so the collection is one contiguous buffer plus a live count.
 (defstruct SpecTemplateList
-  (slots (Array SpecTemplate))
+  (slots (__tl_dyn-array SpecTemplate))
   (len i64))
 
 (defenum SpecTemplateShadowList
@@ -37,7 +37,7 @@
 
 (defstruct SpecTemplateEnv
   (index spec_id_i64_map.Map)
-  (values (Array SpecMaybeTemplate))
+  (values (__tl_dyn-array SpecMaybeTemplate))
   (shadowed SpecTemplateShadowList))
 
 ;; The specialization cache (key -> generated function name) is a
@@ -51,29 +51,29 @@
 ;; so an inner instantiation can never write into the slot of an outer subst
 ;; that is still in use; the lists are one entry per comptime parameter.
 (defstruct SpecValueList
-  (slots (Array CompilerCtfeValue))
+  (slots (__tl_dyn-array CompilerCtfeValue))
   (len i64))
 
 (defenum SpecValueBinding
   (Bind i64 CompilerCtfeValue))
 
 (defstruct SpecValueSubst
-  (slots (Array SpecValueBinding))
+  (slots (__tl_dyn-array SpecValueBinding))
   (len i64))
 
 (defenum SpecTypeBinding
   (Bind i64 AstType))
 
 (defstruct SpecTypeSubst
-  (slots (Array SpecTypeBinding))
+  (slots (__tl_dyn-array SpecTypeBinding))
   (len i64))
 
 (define (spec-template-list-new) : SpecTemplateList
   (SpecTemplateList (array.make-array SpecTemplate 0) 0))
 
 (define (spec-template-list-copy-range
-  [dst : (&mut dst (Array SpecTemplate))]
-  [src : (& src (Array SpecTemplate))]
+  [dst : (&mut dst (__tl_dyn-array SpecTemplate))]
+  [src : (& src (__tl_dyn-array SpecTemplate))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -86,7 +86,7 @@
   [templates : (&mut templates SpecTemplateList)]) : unit
   (let
     [count : i64 (struct-get templates len)]
-    [bigger : (Array SpecTemplate)
+    [bigger : (__tl_dyn-array SpecTemplate)
       (array.make-array SpecTemplate (+ (* count 2) 8))]
     (begin
       (spec-template-list-copy-range
@@ -117,7 +117,7 @@
 (define (spec-value-cons [head : CompilerCtfeValue] [rest : SpecValueList]) : SpecValueList
   (let
     [count : i64 (struct-get rest len)]
-    [slots : (Array CompilerCtfeValue)
+    [slots : (__tl_dyn-array CompilerCtfeValue)
       (array.make-array CompilerCtfeValue (+ count 1))]
     [at : i64 0]
     (begin
@@ -137,7 +137,7 @@
   [rest : SpecValueSubst]) : SpecValueSubst
   (let
     [count : i64 (struct-get rest len)]
-    [slots : (Array SpecValueBinding)
+    [slots : (__tl_dyn-array SpecValueBinding)
       (array.make-array SpecValueBinding (+ count 1))]
     [at : i64 0]
     (begin
@@ -157,7 +157,7 @@
   [rest : SpecTypeSubst]) : SpecTypeSubst
   (let
     [count : i64 (struct-get rest len)]
-    [slots : (Array SpecTypeBinding)
+    [slots : (__tl_dyn-array SpecTypeBinding)
       (array.make-array SpecTypeBinding (+ count 1))]
     [at : i64 0]
     (begin
@@ -437,7 +437,7 @@
         (spec-template-shadow-contains? (box-get rest) name-id))]))
 
 (define (spec-template-values-fill-empty
-  [values : (Array SpecMaybeTemplate)]
+  [values : (__tl_dyn-array SpecMaybeTemplate)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -449,7 +449,7 @@
 (define (spec-template-index-build
   [templates : SpecTemplateList]
   [index : spec_id_i64_map.Map]
-  [values : (Array SpecMaybeTemplate)]
+  [values : (__tl_dyn-array SpecMaybeTemplate)]
   [at : i64]
   [slot : i64]) : spec_id_i64_map.Map
   (if (>= at (struct-get templates len))
@@ -476,7 +476,7 @@
 (define (spec-template-env-from-list [templates : SpecTemplateList]) : SpecTemplateEnv
   (let
     [count : i64 (struct-get templates len)]
-    [values : (Array SpecMaybeTemplate)
+    [values : (__tl_dyn-array SpecMaybeTemplate)
       (array.make-array SpecMaybeTemplate count)]
     (begin
       (spec-template-values-fill-empty values 0 count)
@@ -878,9 +878,9 @@
 (define (gen-registry-empty) : GenRegistry
   (let
     [capacity : i64 64]
-    [key-ids : (Array i64) (array.make-array i64 capacity)]
-    [decls : (Array AstDecl) (array.make-array AstDecl capacity)]
-    [next : (Array i64) (array.make-array i64 capacity)]
+    [key-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [decls : (__tl_dyn-array AstDecl) (array.make-array AstDecl capacity)]
+    [next : (__tl_dyn-array i64) (array.make-array i64 capacity)]
     (GenRegistry (spec_id_i64_map.with-capacity capacity) key-ids decls next 0)))
 
 (define (gen-registry-name-key-id [module-id : i64] [name-id : i64]) : i64
@@ -913,8 +913,8 @@
     [(spec_id_i64_map.LookupMissing) (GenMaybeEntry.None)]))
 
 (define (gen-registry-copy-decls
-  [src : (Array AstDecl)]
-  [dst : (Array AstDecl)]
+  [src : (__tl_dyn-array AstDecl)]
+  [dst : (__tl_dyn-array AstDecl)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -924,8 +924,8 @@
       (gen-registry-copy-decls src dst (+ index 1) count))))
 
 (define (gen-registry-copy-i64s
-  [src : (Array i64)]
-  [dst : (Array i64)]
+  [src : (__tl_dyn-array i64)]
+  [dst : (__tl_dyn-array i64)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -937,18 +937,19 @@
 (define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
   (let
     [old-index : spec_id_i64_map.Map (struct-get registry index)]
-    [old-key-ids : (Array i64) (struct-get registry key-ids)]
-    [old-decls : (Array AstDecl) (struct-get registry decls)]
-    [old-next : (Array i64) (struct-get registry next)]
+    [old-key-ids : (__tl_dyn-array i64) (struct-get registry key-ids)]
+    [old-decls : (__tl_dyn-array AstDecl) (struct-get registry decls)]
+    [old-next : (__tl_dyn-array i64) (struct-get registry next)]
     [old-len : i64 (struct-get registry len)]
     [old-capacity : i64 (array.length old-decls)]
     [new-capacity : i64
       (if (< old-capacity 1)
         1
         (* old-capacity 2))]
-    [new-key-ids : (Array i64) (array.make-array i64 new-capacity)]
-    [new-decls : (Array AstDecl) (array.make-array AstDecl new-capacity)]
-    [new-next : (Array i64) (array.make-array i64 new-capacity)]
+    [new-key-ids : (__tl_dyn-array i64) (array.make-array i64 new-capacity)]
+    [new-decls : (__tl_dyn-array AstDecl)
+      (array.make-array AstDecl new-capacity)]
+    [new-next : (__tl_dyn-array i64) (array.make-array i64 new-capacity)]
     (begin
       (gen-registry-copy-i64s old-key-ids new-key-ids 0 old-len)
       (gen-registry-copy-decls old-decls new-decls 0 old-len)
@@ -968,9 +969,9 @@
         (gen-registry-grow registry)
         registry)]
     [slot : i64 (struct-get ready len)]
-    [key-ids : (Array i64) (struct-get ready key-ids)]
-    [decls : (Array AstDecl) (struct-get ready decls)]
-    [next : (Array i64) (struct-get ready next)]
+    [key-ids : (__tl_dyn-array i64) (struct-get ready key-ids)]
+    [decls : (__tl_dyn-array AstDecl) (struct-get ready decls)]
+    [next : (__tl_dyn-array i64) (struct-get ready next)]
     [index : spec_id_i64_map.Map (struct-get ready index)]
     [previous : i64
       (match (spec_id_i64_map.get (& index) name-key-id)
@@ -2234,7 +2235,7 @@
   (if (< (spec-value-subst-find subs name-id 0) 0)
     subs
     (let
-      [slots : (Array SpecValueBinding)
+      [slots : (__tl_dyn-array SpecValueBinding)
         (array.make-array SpecValueBinding (struct-get subs len))]
       [at : i64 0]
       [kept : i64 0]
@@ -2330,7 +2331,7 @@
   (if (< (spec-type-subst-find subs name-id 0) 0)
     subs
     (let
-      [slots : (Array SpecTypeBinding)
+      [slots : (__tl_dyn-array SpecTypeBinding)
         (array.make-array SpecTypeBinding (struct-get subs len))]
       [at : i64 0]
       [kept : i64 0]
@@ -6013,9 +6014,9 @@
           [_ (compiler-specialize-decl-list-defines? rest name)]))]))
 
 (define (compiler-specialize-type-param-source) : String
-  "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+  "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64)
   (make-array T n))
-(define (main) : (Array i64)
+(define (main) : (__tl_dyn-array i64)
   (alloc (type i64) 4))")
 
 (define (compiler-specialize-runtime-type-use-source) : String
@@ -6204,9 +6205,9 @@
 ;: Two call sites that request the SAME specialization (`alloc` at `type i64`)
 ;: must share one generated decl via the specialization cache, not emit two.
 (define (compiler-specialize-reuse-source) : String
-  "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+  "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64)
   (make-array T n))
-(define (main) : (Array i64)
+(define (main) : (__tl_dyn-array i64)
   (begin (alloc (type i64) 4) (alloc (type i64) 8)))")
 
 ;: Specialization reuse (mirrors src/specialize.rs reuse coverage): two

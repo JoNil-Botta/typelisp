@@ -26,26 +26,26 @@
 (cfg
   (any compile-profile compile-profile-summary test)
   (defstruct CompilerProfileStateStorage
-    (metrics (Array i64))
-    (summary-keys (Array i64))
-    (summary-names (Array String))
-    (summary-elapsed (Array i64))
-    (summary-calls (Array i64))
-    (summary-counts (Array i64))
-    (summary-total-elapsed (Array i64))
-    (summary-total-calls (Array i64))
-    (summary-exact-slots (Array i64))
-    (summary-exact-counts (Array i64))
-    (summary-exact-names (Array String))
-    (summary-exact-keys (Array i64))
-    (summary-exact-elapsed (Array i64))
-    (summary-exact-calls (Array i64))
-    (summary-exact-top (Array i64))))
+    (metrics (__tl_dyn-array i64))
+    (summary-keys (__tl_dyn-array i64))
+    (summary-names (__tl_dyn-array String))
+    (summary-elapsed (__tl_dyn-array i64))
+    (summary-calls (__tl_dyn-array i64))
+    (summary-counts (__tl_dyn-array i64))
+    (summary-total-elapsed (__tl_dyn-array i64))
+    (summary-total-calls (__tl_dyn-array i64))
+    (summary-exact-slots (__tl_dyn-array i64))
+    (summary-exact-counts (__tl_dyn-array i64))
+    (summary-exact-names (__tl_dyn-array String))
+    (summary-exact-keys (__tl_dyn-array i64))
+    (summary-exact-elapsed (__tl_dyn-array i64))
+    (summary-exact-calls (__tl_dyn-array i64))
+    (summary-exact-top (__tl_dyn-array i64))))
 
 (cfg
   (any compile-profile compile-profile-summary test)
   (defstruct CompilerProfileState
-    (storage (Array CompilerProfileStateStorage))))
+    (storage (__tl_dyn-array CompilerProfileStateStorage))))
 
 (cfg
   (not (any compile-profile compile-profile-summary test))
@@ -56,7 +56,7 @@
   (cfg
     (any compile-profile compile-profile-summary test)
     (let
-      [storage : (Array CompilerProfileStateStorage)
+      [storage : (__tl_dyn-array CompilerProfileStateStorage)
         (make-array CompilerProfileStateStorage 1)]
       (begin
         (array-set!
@@ -134,86 +134,86 @@
 
 (cfg
   (any compile-profile-summary test)
-  (define (compiler-profile-state-summary-keys [state : CompilerProfileState]) : (Array
+  (define (compiler-profile-state-summary-keys [state : CompilerProfileState]) : (__tl_dyn-array
       i64)
     (struct-get (compiler-profile-state-storage state) summary-keys)))
 
 (cfg
   (any compile-profile-summary test)
-  (define (compiler-profile-state-summary-names [state : CompilerProfileState]) : (Array
+  (define (compiler-profile-state-summary-names [state : CompilerProfileState]) : (__tl_dyn-array
       String)
     (struct-get (compiler-profile-state-storage state) summary-names)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-elapsed
-    [state : CompilerProfileState]) : (Array i64)
+    [state : CompilerProfileState]) : (__tl_dyn-array i64)
     (struct-get (compiler-profile-state-storage state) summary-elapsed)))
 
 (cfg
   (any compile-profile-summary test)
-  (define (compiler-profile-state-summary-calls [state : CompilerProfileState]) : (Array
+  (define (compiler-profile-state-summary-calls [state : CompilerProfileState]) : (__tl_dyn-array
       i64)
     (struct-get (compiler-profile-state-storage state) summary-calls)))
 
 (cfg
   (any compile-profile-summary test)
-  (define (compiler-profile-state-summary-counts [state : CompilerProfileState]) : (Array
+  (define (compiler-profile-state-summary-counts [state : CompilerProfileState]) : (__tl_dyn-array
       i64)
     (struct-get (compiler-profile-state-storage state) summary-counts)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-total-elapsed
-    [state : CompilerProfileState]) : (Array i64)
+    [state : CompilerProfileState]) : (__tl_dyn-array i64)
     (struct-get (compiler-profile-state-storage state) summary-total-elapsed)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-total-calls
-    [state : CompilerProfileState]) : (Array i64)
+    [state : CompilerProfileState]) : (__tl_dyn-array i64)
     (struct-get (compiler-profile-state-storage state) summary-total-calls)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-slots
-    [state : CompilerProfileState]) : (Array i64)
+    [state : CompilerProfileState]) : (__tl_dyn-array i64)
     (struct-get (compiler-profile-state-storage state) summary-exact-slots)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-counts
-    [state : CompilerProfileState]) : (Array i64)
+    [state : CompilerProfileState]) : (__tl_dyn-array i64)
     (struct-get (compiler-profile-state-storage state) summary-exact-counts)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-names
-    [state : CompilerProfileState]) : (Array String)
+    [state : CompilerProfileState]) : (__tl_dyn-array String)
     (struct-get (compiler-profile-state-storage state) summary-exact-names)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-keys
-    [state : CompilerProfileState]) : (Array i64)
+    [state : CompilerProfileState]) : (__tl_dyn-array i64)
     (struct-get (compiler-profile-state-storage state) summary-exact-keys)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-elapsed
-    [state : CompilerProfileState]) : (Array i64)
+    [state : CompilerProfileState]) : (__tl_dyn-array i64)
     (struct-get (compiler-profile-state-storage state) summary-exact-elapsed)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-calls
-    [state : CompilerProfileState]) : (Array i64)
+    [state : CompilerProfileState]) : (__tl_dyn-array i64)
     (struct-get (compiler-profile-state-storage state) summary-exact-calls)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-top
-    [state : CompilerProfileState]) : (Array i64)
+    [state : CompilerProfileState]) : (__tl_dyn-array i64)
     (struct-get (compiler-profile-state-storage state) summary-exact-top)))
 
 (cfg

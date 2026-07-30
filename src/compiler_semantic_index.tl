@@ -50,8 +50,8 @@
   (role CompilerSemanticRecordRole)
   (kind CompilerSemanticSymbolKind)
   (display-name String)
-  ;; Empty only when the checked AST does not retain a reusable local type
-  ;; fact (for example an unannotated let binding).
+  ;; Empty only when the checked walk cannot reproduce a reliable local type
+  ;; fact. Successful inferred lets, patterns, and resources are retained.
   (resolved-type String)
   ;; Adjacent `;:` and `;#` lines are attached to top-level definitions.
   (documentation String)
@@ -1058,6 +1058,73 @@
           (struct-get span end-byte)
           search-start)))))
 
+(define (compiler-semantic-bind-checked-let!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingList]
+  [env : TcTypeEnv]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]
+  [body-id : i64]
+  [name-id : i64]
+  [maybe-ty : AstMaybeType]
+  [init-id : i64]
+  [search-start : i64]
+  [search-limit : i64]) : CompilerSemanticBindResult
+  (let
+    [ctx : TcContext (struct-get state ctx)]
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
+    [init : AstExpr (ast-expr-segment-bases-get expr-bases init-id)]
+    [body : AstExpr (ast-expr-segment-bases-get expr-bases body-id)]
+    (match (tc-let-binding-init-type-at
+      ctx
+      env
+      (tc-env-key-name-text name-id)
+      maybe-ty
+      init-id
+      bindings
+      (+ binding-index 1)
+      body)
+      [(ResultTcType.Ok init-ty)
+        (let
+          [resolved-maybe-ty : AstMaybeType
+            (tc-let-binding-resolve-maybe-type ctx maybe-ty)]
+          [binding-ty : AstType
+            (tc-let-binding-plain-bind-type ctx resolved-maybe-ty init-ty)]
+          [recorded-maybe-ty : AstMaybeType
+            (match resolved-maybe-ty
+              [(AstMaybeType.Some ty) (AstMaybeType.Some ty)]
+              [(AstMaybeType.No)
+                (AstMaybeType.Some (tc-resolve-type ctx binding-ty))])]
+          [bound : CompilerSemanticBindResult
+            (compiler-semantic-bind-local!
+              state
+              scope
+              env
+              name-id
+              CompilerSemanticSymbolKind.Local
+              recorded-maybe-ty
+              search-start
+              search-limit)]
+          (CompilerSemanticBindResult
+            (struct-get bound scope)
+            ;; Reproduce the successful checker's special arena-owner,
+            ;; arena-phase, and raw C function-pointer binding transition so a
+            ;; later inferred binding sees the same exact lexical environment.
+            (tc-bind-c-abi-fnptr-if-needed-id ctx env name-id binding-ty init)
+            (struct-get bound next-search)))]
+      [(ResultTcType.Err _)
+        ;; A complete check reached this walk successfully, so this is only a
+        ;; fail-closed fallback for facts the replay cannot reproduce.
+        (compiler-semantic-bind-local!
+          state
+          scope
+          env
+          name-id
+          CompilerSemanticSymbolKind.Local
+          (tc-let-binding-resolve-maybe-type ctx maybe-ty)
+          search-start
+          search-limit)])))
+
 (define (compiler-semantic-expr-start-offset
   [state : CompilerSemanticWalkState]
   [expr-id : i64]
@@ -1525,20 +1592,17 @@
                     next-env
                     init-id)
                   (let
-                    [binding-ty : AstMaybeType
-                      (match maybe-ty
-                        [(AstMaybeType.Some ty)
-                          (AstMaybeType.Some
-                            (tc-resolve-type (struct-get state ctx) ty))]
-                        [(AstMaybeType.No) AstMaybeType.No])]
                     [bound : CompilerSemanticBindResult
-                      (compiler-semantic-bind-local!
+                      (compiler-semantic-bind-checked-let!
                         state
                         next-scope
                         next-env
+                        (& bindings)
+                        index
+                        body-id
                         name
-                        CompilerSemanticSymbolKind.Local
-                        binding-ty
+                        maybe-ty
+                        init-id
                         cursor
                         init-start)]
                     (begin
@@ -1752,38 +1816,65 @@
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingList]
   [env : TcTypeEnv]
+  [fact-env : TcTypeEnv]
+  [facts-available : bool]
+  [bound-names : TcNameIdList]
   [pattern : AstPattern]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (match pattern
     [(AstPattern.Var name maybe-ty)
-      (compiler-semantic-bind-local!
-        state
-        scope
-        env
-        name
-        CompilerSemanticSymbolKind.Local
-        (match maybe-ty
-          [(AstMaybeType.Some ty)
-            (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) ty))]
-          [(AstMaybeType.No) AstMaybeType.No])
-        search-start
-        search-limit)]
+      (if (tc-name-id-list-contains bound-names name)
+        (compiler-semantic-bind-local!
+          state
+          scope
+          env
+          name
+          CompilerSemanticSymbolKind.Local
+          (match maybe-ty
+            [(AstMaybeType.Some ty)
+              ;; Preserve the existing public annotation text while the arm
+              ;; body uses the checker's exact fact environment.
+              (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) ty))]
+            [(AstMaybeType.No)
+              (if facts-available
+                (match (tc-lookup-visible-id
+                  (struct-get state ctx)
+                  fact-env
+                  name)
+                  [(ResultTcType.Ok ty)
+                    (AstMaybeType.Some
+                      (tc-resolve-type (struct-get state ctx) ty))]
+                  [(ResultTcType.Err _) AstMaybeType.No])
+                AstMaybeType.No)])
+          search-start
+          search-limit)
+        (CompilerSemanticBindResult scope env search-start))]
     [(AstPattern.Binding name)
-      (compiler-semantic-bind-local!
-        state
-        scope
-        env
-        name
-        CompilerSemanticSymbolKind.Local
-        AstMaybeType.No
-        search-start
-        search-limit)]
+      (if (tc-name-id-list-contains bound-names name)
+        (compiler-semantic-bind-local!
+          state
+          scope
+          env
+          name
+          CompilerSemanticSymbolKind.Local
+          (if facts-available
+            (match (tc-lookup-visible-id (struct-get state ctx) fact-env name)
+              [(ResultTcType.Ok ty)
+                (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) ty))]
+              [(ResultTcType.Err _) AstMaybeType.No])
+            AstMaybeType.No)
+          search-start
+          search-limit)
+        (CompilerSemanticBindResult scope env search-start))]
     [(AstPattern.Tuple items)
       (compiler-semantic-bind-pattern-list!
         state
         scope
         env
+        fact-env
+        facts-available
+        bound-names
         (box-get items)
         search-start
         search-limit)]
@@ -1792,6 +1883,9 @@
         state
         scope
         env
+        fact-env
+        facts-available
+        bound-names
         (box-get items)
         search-start
         search-limit)]
@@ -1801,6 +1895,9 @@
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingList]
   [env : TcTypeEnv]
+  [fact-env : TcTypeEnv]
+  [facts-available : bool]
+  [bound-names : TcNameIdList]
   [patterns : AstPatternList]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
@@ -1817,6 +1914,9 @@
               state
               next-scope
               next-env
+              fact-env
+              facts-available
+              bound-names
               (ast-pattern-list-get (& patterns) index (ast-pattern-fallback))
               cursor
               search-limit)]
@@ -1827,10 +1927,21 @@
             (set! index (+ index 1)))))
       (CompilerSemanticBindResult next-scope next-env cursor))))
 
+(define (compiler-semantic-pattern-bound-names
+  [ctx : TcContext]
+  [scrutinee-ty : AstType]
+  [pattern : AstPattern]) : TcNameIdList
+  ;; An explicitly typed pattern variable is always a binder, including when
+  ;; the scrutinee is an enum. Bare enum variant names, by contrast, are not.
+  (match pattern
+    [(AstPattern.Var name _) (tc-name-id-list-add TcNameIdList.Nil name)]
+    [_ (tc-borrow-check-pattern-bound-names ctx scrutinee-ty pattern)]))
+
 (define (compiler-semantic-walk-match-arms!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingList]
   [env : TcTypeEnv]
+  [scrutinee-ty : AstMaybeType]
   [arms : AstMatchArmList]
   [search-start : i64]) : unit
   (let
@@ -1846,20 +1957,78 @@
                   state
                   body
                   (string.string-length (struct-get state source)))]
-              [bound : CompilerSemanticBindResult
-                (compiler-semantic-bind-pattern!
-                  state
-                  scope
-                  env
-                  pattern
-                  cursor
-                  body-start)]
+              [saved : TcTypeEnvScopedRuntimeSave
+                (tc-type-env-scoped-runtime-save)]
               (begin
-                (compiler-semantic-walk-node!
-                  state
-                  (struct-get bound scope)
-                  (struct-get bound env)
-                  body)
+                (match scrutinee-ty
+                  [(AstMaybeType.Some ty)
+                    (match (tc-bind-match-pattern
+                      (struct-get state ctx)
+                      env
+                      ty
+                      pattern)
+                      [(ResultTcEnv.Ok fact-env)
+                        (let
+                          [bound : CompilerSemanticBindResult
+                            (compiler-semantic-bind-pattern!
+                              state
+                              scope
+                              env
+                              fact-env
+                              true
+                              (compiler-semantic-pattern-bound-names
+                                (struct-get state ctx)
+                                ty
+                                pattern)
+                              pattern
+                              cursor
+                              body-start)]
+                          (compiler-semantic-walk-node!
+                            state
+                            (struct-get bound scope)
+                            fact-env
+                            body))]
+                      [(ResultTcEnv.Err _)
+                        (let
+                          [bound : CompilerSemanticBindResult
+                            (compiler-semantic-bind-pattern!
+                              state
+                              scope
+                              env
+                              env
+                              false
+                              (tc-pattern-add-bound-name-ids
+                                pattern
+                                TcNameIdList.Nil)
+                              pattern
+                              cursor
+                              body-start)]
+                          (compiler-semantic-walk-node!
+                            state
+                            (struct-get bound scope)
+                            (struct-get bound env)
+                            body))])]
+                  [(AstMaybeType.No)
+                    (let
+                      [bound : CompilerSemanticBindResult
+                        (compiler-semantic-bind-pattern!
+                          state
+                          scope
+                          env
+                          env
+                          false
+                          (tc-pattern-add-bound-name-ids
+                            pattern
+                            TcNameIdList.Nil)
+                          pattern
+                          cursor
+                          body-start)]
+                      (compiler-semantic-walk-node!
+                        state
+                        (struct-get bound scope)
+                        (struct-get bound env)
+                        body))])
+                (tc-type-env-scoped-runtime-restore! saved)
                 (set!
                   cursor
                   (compiler-semantic-expr-end-offset state body body-start))))])
@@ -1902,15 +2071,66 @@
                   (compiler-semantic-walk-node! state next-scope next-env init)
                   (let
                     [bound : CompilerSemanticBindResult
-                      (compiler-semantic-bind-local!
-                        state
-                        next-scope
-                        next-env
-                        name
-                        CompilerSemanticSymbolKind.Local
-                        AstMaybeType.No
-                        cursor
-                        init-start)]
+                      (let
+                        [ctx : TcContext (struct-get state ctx)]
+                        [expr-bases : i64 (tc-context-expr-bases ctx)]
+                        [cleanup-expr : AstExpr
+                          (ast-expr-segment-bases-get expr-bases cleanup)]
+                        (match (tc-resource-cleanup-resource-type
+                          ctx
+                          next-env
+                          cleanup-expr)
+                          [(ResultTcType.Ok expected-init-ty)
+                            (match (tc-expr-with-expected-or-actual-id
+                              ctx
+                              next-env
+                              init
+                              expected-init-ty)
+                              [(ResultTcType.Ok init-ty)
+                                (let
+                                  [binding-ty : AstType
+                                    (tc-type-without-regions init-ty)]
+                                  [recorded : CompilerSemanticBindResult
+                                    (compiler-semantic-bind-local!
+                                      state
+                                      next-scope
+                                      next-env
+                                      name
+                                      CompilerSemanticSymbolKind.Local
+                                      (AstMaybeType.Some
+                                        (tc-resolve-type ctx binding-ty))
+                                      cursor
+                                      init-start)]
+                                  (CompilerSemanticBindResult
+                                    (struct-get recorded scope)
+                                    (tc-bind-id
+                                      (tc-bind-id
+                                        next-env
+                                        (tc-cleanup-owner-marker-id)
+                                        (AstType.Var name))
+                                      name
+                                      binding-ty)
+                                    (struct-get recorded next-search)))]
+                              [(ResultTcType.Err _)
+                                (compiler-semantic-bind-local!
+                                  state
+                                  next-scope
+                                  next-env
+                                  name
+                                  CompilerSemanticSymbolKind.Local
+                                  AstMaybeType.No
+                                  cursor
+                                  init-start)])]
+                          [(ResultTcType.Err _)
+                            (compiler-semantic-bind-local!
+                              state
+                              next-scope
+                              next-env
+                              name
+                              CompilerSemanticSymbolKind.Local
+                              AstMaybeType.No
+                              cursor
+                              init-start)]))]
                     (begin
                       (set! next-scope (struct-get bound scope))
                       (set! next-env (struct-get bound env))
@@ -2066,6 +2286,9 @@
               state
               scope
               env
+              (match (tc-expr-id (struct-get state ctx) env scrutinee)
+                [(ResultTcType.Ok ty) (AstMaybeType.Some ty)]
+                [(ResultTcType.Err _) AstMaybeType.No])
               arms
               (compiler-semantic-expr-end-offset
                 state
@@ -2752,6 +2975,81 @@
             (set! record-index (+ record-index 1)))))
       found)))
 
+(define (compiler-semantic-source-index-find-name-occurrence
+  [index : (& index CompilerSemanticSourceIndex)]
+  [path : String]
+  [name : String]
+  [role : CompilerSemanticRecordRole]
+  [occurrence : i64]) : i64
+  (let
+    [record-index : i64 0]
+    [seen : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< record-index (struct-get index len)))
+        (let
+          [record : CompilerSemanticRecord
+            (array-ref (struct-get index records) record-index)]
+          (begin
+            (if (and
+              (string.eq (struct-get record display-name) name)
+              (match role
+                [(CompilerSemanticRecordRole.Definition)
+                  (match (struct-get record role)
+                    [(CompilerSemanticRecordRole.Definition) true]
+                    [_ false])]
+                [(CompilerSemanticRecordRole.Use)
+                  (match (struct-get record role)
+                    [(CompilerSemanticRecordRole.Use) true]
+                    [_ false])])
+              (or
+                (string.eq path "")
+                (string.eq (struct-get (struct-get record span) path) path)))
+              (if (= seen occurrence)
+                (set! found record-index)
+                (set! seen (+ seen 1)))
+              unit)
+            (set! record-index (+ record-index 1)))))
+      found)))
+
+(define (compiler-semantic-source-index-find-symbol-role
+  [index : (& index CompilerSemanticSourceIndex)]
+  [symbol : CompilerSemanticSymbolId]
+  [role : CompilerSemanticRecordRole]) : i64
+  (let
+    [record-index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< record-index (struct-get index len)))
+        (let
+          [record : CompilerSemanticRecord
+            (array-ref (struct-get index records) record-index)]
+          [record-symbol : CompilerSemanticSymbolId (struct-get record symbol)]
+          (begin
+            (if (and
+              (match role
+                [(CompilerSemanticRecordRole.Definition)
+                  (match (struct-get record role)
+                    [(CompilerSemanticRecordRole.Definition) true]
+                    [_ false])]
+                [(CompilerSemanticRecordRole.Use)
+                  (match (struct-get record role)
+                    [(CompilerSemanticRecordRole.Use) true]
+                    [_ false])])
+              (=
+                (struct-get record-symbol module-id)
+                (struct-get symbol module-id))
+              (=
+                (struct-get record-symbol declaration-ordinal)
+                (struct-get symbol declaration-ordinal))
+              (=
+                (struct-get record-symbol local-ordinal)
+                (struct-get symbol local-ordinal)))
+              (set! found record-index)
+              unit)
+            (set! record-index (+ record-index 1)))))
+      found)))
+
 (define (compiler-semantic-record-span-text-eq?
   [source : String]
   [record : CompilerSemanticRecord]
@@ -2785,7 +3083,7 @@
         (array-ref (struct-get records live) 1)
         (array-ref (struct-get records live) 2)))))
 
-(define (compiler-check-semantic-index-ok?) : bool
+(define (compiler-check-semantic-index-base-ok?) : bool
   (let
     [path : String "src/tests/semantic_index_entry.tl"]
     [source : String
@@ -3203,6 +3501,9 @@
                           pattern-use
                           "bound")
                         (string.eq
+                          (struct-get pattern-definition resolved-type)
+                          "i64")
+                        (string.eq
                           (struct-get import-definition documentation)
                           "Imported value documentation.\nAdditional import detail.")
                         (> (struct-get answer module-id) 0)
@@ -3238,3 +3539,271 @@
                     (compiler-semantic-source-index-release! (&mut first))
                     false)]))))]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-inferred-locals-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_inferred_locals.tl"]
+    [source : String
+      "(define (plus-one [x : i64]) : i64 (+ x 1))
+(define (drop-i64 [_value : i64]) : unit unit)
+(defenum SemanticChoice (SemanticEmpty) (SemanticFull i64))
+(define (enum-probe [value : SemanticChoice]) : i64
+  (match value
+    [SemanticEmpty 0]
+    [(SemanticFull item) item]))
+(define (resource-probe) : i64
+  (with ([resource 7 drop-i64]) (+ resource 1)))
+(define (probe) : i64
+  (let
+    [scalar true]
+    [closure (lambda ([x : i64]) : i64 (if scalar x x))]
+    [alias closure]
+    [callback plus-one]
+    [nested
+      (let
+        [callback (lambda ([flag : bool]) : bool flag)]
+        (callback scalar))]
+    (if nested (alias (callback 0)) 0)))"]
+    (match (compiler-check-source-index-with-roots path source (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
+        (let
+          [scalar-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "scalar"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [closure-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "closure"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [alias-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "alias"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [outer-callback-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "callback"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [inner-callback-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "callback"
+              CompilerSemanticRecordRole.Definition
+              1)]
+          [resource-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "resource"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [enum-variant-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticEmpty"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [enum-item-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "item"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          (if (or
+            (< scalar-definition-index 0)
+            (< closure-definition-index 0)
+            (< alias-definition-index 0)
+            (< outer-callback-definition-index 0)
+            (< inner-callback-definition-index 0)
+            (< resource-definition-index 0)
+            (>= enum-variant-definition-index 0)
+            (< enum-item-definition-index 0))
+            (begin
+              (compiler-semantic-source-index-release! (&mut first))
+              false)
+            (let
+              [scalar-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  scalar-definition-index)]
+              [closure-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  closure-definition-index)]
+              [alias-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  alias-definition-index)]
+              [outer-callback-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  outer-callback-definition-index)]
+              [inner-callback-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  inner-callback-definition-index)]
+              [resource-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  resource-definition-index)]
+              [enum-item-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  enum-item-definition-index)]
+              [closure-use-index : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get closure-definition symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [alias-use-index : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get alias-definition symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [outer-callback-use-index : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get outer-callback-definition symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [inner-callback-use-index : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get inner-callback-definition symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [resource-use-index : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get resource-definition symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [enum-item-use-index : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get enum-item-definition symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [closure-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) closure-use-index)]
+              [alias-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) alias-use-index)]
+              [outer-callback-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  outer-callback-use-index)]
+              [inner-callback-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  inner-callback-use-index)]
+              [resource-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  resource-use-index)]
+              [enum-item-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  enum-item-use-index)]
+              (match (compiler-check-source-index-with-roots
+                path
+                source
+                (svec.new))
+                [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
+                  (let
+                    [second-alias-index : i64
+                      (compiler-semantic-source-index-find-name-occurrence
+                        (& second)
+                        path
+                        "alias"
+                        CompilerSemanticRecordRole.Definition
+                        0)]
+                    [second-alias : CompilerSemanticRecord
+                      (compiler-semantic-source-index-get
+                        (& second)
+                        second-alias-index)]
+                    [ok : bool
+                      (and
+                        (>= closure-use-index 0)
+                        (>= alias-use-index 0)
+                        (>= outer-callback-use-index 0)
+                        (>= inner-callback-use-index 0)
+                        (>= resource-use-index 0)
+                        (>= enum-item-use-index 0)
+                        (string.eq
+                          (struct-get scalar-definition resolved-type)
+                          "bool")
+                        (string.eq
+                          (struct-get closure-definition resolved-type)
+                          "(-> i64 i64)")
+                        (string.eq
+                          (struct-get alias-definition resolved-type)
+                          "(-> i64 i64)")
+                        (string.eq
+                          (struct-get outer-callback-definition resolved-type)
+                          "(-> i64 i64)")
+                        (string.eq
+                          (struct-get inner-callback-definition resolved-type)
+                          "(-> bool bool)")
+                        (string.eq
+                          (struct-get resource-definition resolved-type)
+                          "i64")
+                        (string.eq
+                          (struct-get enum-item-definition resolved-type)
+                          "i64")
+                        (string.eq
+                          (struct-get closure-use resolved-type)
+                          "(-> i64 i64)")
+                        (string.eq
+                          (struct-get alias-use resolved-type)
+                          "(-> i64 i64)")
+                        (string.eq
+                          (struct-get outer-callback-use resolved-type)
+                          "(-> i64 i64)")
+                        (string.eq
+                          (struct-get inner-callback-use resolved-type)
+                          "(-> bool bool)")
+                        (string.eq
+                          (struct-get resource-use resolved-type)
+                          "i64")
+                        (string.eq
+                          (struct-get enum-item-use resolved-type)
+                          "i64")
+                        (not
+                          (compiler-semantic-symbol-id-eq?
+                            (struct-get outer-callback-definition symbol)
+                            (struct-get inner-callback-definition symbol)))
+                        (string.eq
+                          (struct-get second-alias resolved-type)
+                          "(-> i64 i64)")
+                        ;; The second complete check resets compiler state; the
+                        ;; first index must still own its rendered type text.
+                        (string.eq
+                          (struct-get alias-definition resolved-type)
+                          "(-> i64 i64)"))]
+                    (begin
+                      (compiler-semantic-source-index-release! (&mut second))
+                      (compiler-semantic-source-index-release! (&mut first))
+                      (and
+                        ok
+                        (= (compiler-semantic-source-index-len (& first)) 0)
+                        (= (compiler-semantic-source-index-len (& second)) 0))))]
+                [(ResultCompilerCheckWithSemanticIndex.Err _)
+                  (begin
+                    (compiler-semantic-source-index-release! (&mut first))
+                    false)]))))]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-ok?) : bool
+  (and
+    (compiler-check-semantic-index-base-ok?)
+    (compiler-check-semantic-index-inferred-locals-ok?)))

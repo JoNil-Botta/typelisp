@@ -72670,15 +72670,22 @@
     [(ResultMacroExprList.Err diag) (ResultMacroValue.Err diag)]))
 
 (define (macro-generated-type-param-expr-list
+  [pools : AstNodePoolContext]
   [env : CtfeEnv]
   [exprs : AstExprList]) : AstExprList
   (let
     [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
     (begin
-      (macro-generated-type-param-expr-list-into env (& exprs) 0 (&mut out))
+      (macro-generated-type-param-expr-list-into
+        pools
+        env
+        (& exprs)
+        0
+        (&mut out))
       out)))
 
 (define (macro-generated-type-param-expr-list-into
+  [pools : AstNodePoolContext]
   [env : CtfeEnv]
   [exprs : (& exprs AstExprList)]
   [index : i64]
@@ -72689,16 +72696,34 @@
       (ast-expr-list-push
         out
         (macro-generated-type-param-expr
+          pools
           env
-          (ast-node-get (ast-expr-list-get exprs index 0))))
-      (macro-generated-type-param-expr-list-into env exprs (+ index 1) out))))
+          (ast-node-pool-context-expr-get
+            pools
+            (ast-expr-list-get exprs index 0))))
+      (macro-generated-type-param-expr-list-into
+        pools
+        env
+        exprs
+        (+ index 1)
+        out))))
 
-(define (macro-generated-type-param-expr [env : CtfeEnv] [expr : AstExpr]) : i64
+;; Generated import operands and their existing child ids belong to the
+;; typechecker's syntax pool. Pass that pool explicitly so rewriting cannot
+;; consult or mutate whichever compatibility pool another compile job installed.
+(define (macro-generated-type-param-expr
+  [pools : AstNodePoolContext]
+  [env : CtfeEnv]
+  [expr : AstExpr]) : i64
   (match expr
     [(AstExpr.Spanned inner-box span)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-spanned (macro-generated-type-param-expr env inner) span))]
+        [inner : AstExpr (ast-node-pool-context-expr-get pools inner-box)]
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Spanned
+            (macro-generated-type-param-expr pools env inner)
+            span)))]
     [(AstExpr.Var name)
       (let
         [lookup-id : i64
@@ -72709,36 +72734,54 @@
           [(CtfeMaybeValue.Some value)
             (match value
               [(CompilerCtfeValue.Type ty)
-                (ast-node-push (AstExpr.TypeLiteral (ty-node-push ty)))]
-              [_ (ast-node-push expr)])]
-          [(CtfeMaybeValue.None) (ast-node-push expr)]))]
+                (ast-node-pool-context-expr-push
+                  pools
+                  (AstExpr.TypeLiteral
+                    (ast-node-pool-context-type-push pools ty)))]
+              [_ (ast-node-pool-context-expr-push pools expr)])]
+          [(CtfeMaybeValue.None) (ast-node-pool-context-expr-push pools expr)]))]
     [(AstExpr.Call func-box args)
-      (ast-expr-call func-box (macro-generated-type-param-expr-list env args))]
-    [_ (ast-node-push expr)]))
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Call
+          func-box
+          (macro-generated-type-param-expr-list pools env args)))]
+    [_ (ast-node-pool-context-expr-push pools expr)]))
 
-(define (macro-generated-call-func-for-lookup [expr : AstExpr]) : AstExpr
-  (match (ast-expr-unspan expr)
+(define (macro-generated-call-func-for-lookup
+  [pools : AstNodePoolContext]
+  [expr : AstExpr]) : AstExpr
+  (match (ast-expr-unspan-with-pools pools expr)
     [(AstExpr.Var name)
       (AstExpr.Var
         (macro-output-source-identity-id-at name "generated-call-func"))]
     [_ expr]))
 
 (define (macro-generated-import-type-arg
+  [pools : AstNodePoolContext]
   [ty : AstType]
   [arg : i64]
   [env : CtfeEnv]) : i64
   (if (tc-macro-type-param-kind? ty)
-    (macro-generated-type-param-expr env (ast-node-get arg))
+    (macro-generated-type-param-expr
+      pools
+      env
+      (ast-node-pool-context-expr-get pools arg))
     arg))
 
 (define (macro-generated-import-bracket-prefix-count
+  [pools : AstNodePoolContext]
   [args : (& args AstExprList)]
   [index : i64]) : i64
   (if (>= index (struct-get args len))
     0
-    (match (ast-expr-unspan (ast-node-get (ast-expr-list-get args index 0)))
+    (match (ast-expr-unspan-with-pools
+      pools
+      (ast-node-pool-context-expr-get pools (ast-expr-list-get args index 0)))
       [(AstExpr.BracketClause _)
-        (+ 1 (macro-generated-import-bracket-prefix-count args (+ index 1)))]
+        (+
+          1
+          (macro-generated-import-bracket-prefix-count pools args (+ index 1)))]
       [_ 0])))
 
 (define (macro-generated-import-prepend-range
@@ -72753,6 +72796,7 @@
       (macro-generated-import-prepend-range args (+ index 1) end tail))))
 
 (define (macro-generated-import-type-args-for-param
+  [pools : AstNodePoolContext]
   [param : AstMacroParam]
   [params : (& params AstMacroParamList)]
   [args : (& args AstExprList)]
@@ -72767,17 +72811,18 @@
             [remaining : AstExprList
               (ast-expr-list-tail-from-ref args arg-index)]
             (if (tc-macro-type-param-kind? ty)
-              (macro-generated-type-param-expr-list env remaining)
+              (macro-generated-type-param-expr-list pools env remaining)
               remaining))
           (let
             [prefix-count : i64
-              (macro-generated-import-bracket-prefix-count args arg-index)]
+              (macro-generated-import-bracket-prefix-count pools args arg-index)]
             [next-arg-index : i64 (+ arg-index prefix-count)]
             (macro-generated-import-prepend-range
               args
               arg-index
               next-arg-index
               (macro-generated-import-type-args-at
+                pools
                 params
                 args
                 (+ param-index 1)
@@ -72785,10 +72830,12 @@
                 env))))
         (ast-expr-cons
           (macro-generated-import-type-arg
+            pools
             ty
             (ast-expr-list-get args arg-index 0)
             env)
           (macro-generated-import-type-args-at
+            pools
             params
             args
             (+ param-index 1)
@@ -72796,12 +72843,14 @@
             env)))]))
 
 (define (macro-generated-import-type-args
+  [pools : AstNodePoolContext]
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]) : AstExprList
-  (macro-generated-import-type-args-at (& params) (& args) 0 0 env))
+  (macro-generated-import-type-args-at pools (& params) (& args) 0 0 env))
 
 (define (macro-generated-import-type-args-at
+  [pools : AstNodePoolContext]
   [params : (& params AstMacroParamList)]
   [args : (& args AstExprList)]
   [param-index : i64]
@@ -72812,6 +72861,7 @@
     (if (>= arg-index (struct-get args len))
       (ast-expr-list-new)
       (macro-generated-import-type-args-for-param
+        pools
         (ast-macro-param-list-get params param-index (ast-macro-param-fallback))
         params
         args
@@ -72820,7 +72870,7 @@
         env))))
 
 (define (macro-rewrite-generated-import-call-with-decl
-  [ctx : TcContext]
+  [pools : AstNodePoolContext]
   [func-box : i64]
   [args : AstExprList]
   [env : CtfeEnv]
@@ -72828,14 +72878,11 @@
   [maybe-decl : MacroMaybeDecl]) : i64
   (match maybe-decl
     [(MacroMaybeDecl.Some _ _ _ params _ _)
-      (let
-        [rewritten : i64
-          (ast-expr-call
-            func-box
-            (macro-generated-import-type-args params args env))]
-        (begin
-          (tc-context-capture-active-pools! ctx)
-          rewritten))]
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Call
+          func-box
+          (macro-generated-import-type-args pools params args env)))]
     [(MacroMaybeDecl.No) fallback]))
 
 (define (macro-rewrite-generated-import-direct-call
@@ -72849,47 +72896,52 @@
   [args : AstExprList]
   [env : CtfeEnv]
   [fallback : i64]) : i64
-  (match (ast-expr-unspan func)
-    [(AstExpr.Var name)
-      (let
-        [lookup-name : String
-          (macro-output-source-name-id-at name "generated-import-call")]
-        [source-id : i64
-          (macro-output-syntax-id-at name "generated-import-call")]
-        (if (or
-          (tc-name-qualified-id? source-id)
-          (tc-source-slash-qualified-id? lookup-name source-id)
-          (>= (tc-name-first-dot-id source-id) 0))
-          fallback
-          (match (macro-import-alias-target-cached-id decls module-id source-id)
-            [(TcMaybeNameId.Some target-id)
-              (match (macro-unqualified-imported-target-call-decl
-                ctx
-                target-id
-                source-id
-                call-expr)
-                [(ResultMacroCallDecl.Ok maybe-decl)
-                  (match maybe-decl
-                    [(MacroMaybeDecl.Some _ _ _ _ _ _)
-                      (macro-rewrite-generated-import-call-with-decl
-                        ctx
-                        func-box
-                        args
-                        env
-                        fallback
-                        maybe-decl)]
-                    [(MacroMaybeDecl.No)
-                      (let
-                        [rewritten : i64
-                          (ast-expr-call
+  (let
+    [pools : AstNodePoolContext (ctfe-env-pools env)]
+    (match (ast-expr-unspan-with-pools pools func)
+      [(AstExpr.Var name)
+        (let
+          [lookup-name : String
+            (macro-output-source-name-id-at name "generated-import-call")]
+          [source-id : i64
+            (macro-output-syntax-id-at name "generated-import-call")]
+          (if (or
+            (tc-name-qualified-id? source-id)
+            (tc-source-slash-qualified-id? lookup-name source-id)
+            (>= (tc-name-first-dot-id source-id) 0))
+            fallback
+            (match (macro-import-alias-target-cached-id
+              decls
+              module-id
+              source-id)
+              [(TcMaybeNameId.Some target-id)
+                (match (macro-unqualified-imported-target-call-decl
+                  ctx
+                  target-id
+                  source-id
+                  call-expr)
+                  [(ResultMacroCallDecl.Ok maybe-decl)
+                    (match maybe-decl
+                      [(MacroMaybeDecl.Some _ _ _ _ _ _)
+                        (macro-rewrite-generated-import-call-with-decl
+                          pools
+                          func-box
+                          args
+                          env
+                          fallback
+                          maybe-decl)]
+                      [(MacroMaybeDecl.No)
+                        (ast-node-pool-context-expr-push
+                          pools
+                          (AstExpr.Call
                             func-box
-                            (macro-generated-type-param-expr-list env args))]
-                        (begin
-                          (tc-context-capture-active-pools! ctx)
-                          rewritten))])]
-                [(ResultMacroCallDecl.Err _) fallback])]
-            [(TcMaybeNameId.No) fallback])))]
-    [_ fallback]))
+                            (macro-generated-type-param-expr-list
+                              pools
+                              env
+                              args)))])]
+                  [(ResultMacroCallDecl.Err _) fallback])]
+              [(TcMaybeNameId.No) fallback])))]
+      [_ fallback])))
 
 (define (macro-rewrite-generated-import-call-id
   [ctx : TcContext]
@@ -72900,55 +72952,64 @@
   [env : CtfeEnv]
   [call-id : i64]) : i64
   (let
-    [call-expr : AstExpr (tc-context-expr-get ctx call-id)]
-    (match (ast-expr-unspan-with-pools (tc-context-pools ctx) call-expr)
-      [(AstExpr.Call func-box args)
-        (let
-          [func : AstExpr (tc-context-expr-get ctx func-box)]
-          [lookup-func : AstExpr (macro-generated-call-func-for-lookup func)]
-          (match (macro-call-decl-with-context
-            ctx
-            lookup-func
-            orig-decls
-            module
-            module-id
-            (AstMaybeModuleName.Some definition-module-id)
-            call-expr)
-            [(ResultMacroCallDeclModule.Ok maybe-decl _ _)
-              (match maybe-decl
-                [(MacroMaybeDecl.Some _ _ _ _ _ _)
-                  (macro-rewrite-generated-import-call-with-decl
-                    ctx
-                    func-box
-                    args
-                    env
-                    call-id
-                    maybe-decl)]
-                [(MacroMaybeDecl.No)
-                  (macro-rewrite-generated-import-direct-call
-                    ctx
-                    orig-decls
-                    module
-                    module-id
-                    lookup-func
-                    call-expr
-                    func-box
-                    args
-                    env
-                    call-id)])]
-            [(ResultMacroCallDeclModule.Err _)
-              (macro-rewrite-generated-import-direct-call
-                ctx
-                orig-decls
-                module
-                module-id
-                lookup-func
-                call-expr
-                func-box
-                args
-                env
-                call-id)]))]
-      [_ call-id])))
+    [pools : AstNodePoolContext (ctfe-env-pools env)]
+    [call-expr : AstExpr (ast-node-pool-context-expr-get pools call-id)]
+    [rewritten : i64
+      (match (ast-expr-unspan-with-pools pools call-expr)
+        [(AstExpr.Call func-box args)
+          (let
+            [func : AstExpr (ast-node-pool-context-expr-get pools func-box)]
+            [lookup-func : AstExpr
+              (macro-generated-call-func-for-lookup pools func)]
+            (match (macro-call-decl-with-context
+              ctx
+              lookup-func
+              orig-decls
+              module
+              module-id
+              (AstMaybeModuleName.Some definition-module-id)
+              call-expr)
+              [(ResultMacroCallDeclModule.Ok maybe-decl _ _)
+                (match maybe-decl
+                  [(MacroMaybeDecl.Some _ _ _ _ _ _)
+                    (macro-rewrite-generated-import-call-with-decl
+                      pools
+                      func-box
+                      args
+                      env
+                      call-id
+                      maybe-decl)]
+                  [(MacroMaybeDecl.No)
+                    (macro-rewrite-generated-import-direct-call
+                      ctx
+                      orig-decls
+                      module
+                      module-id
+                      lookup-func
+                      call-expr
+                      func-box
+                      args
+                      env
+                      call-id)])]
+              [(ResultMacroCallDeclModule.Err _)
+                (macro-rewrite-generated-import-direct-call
+                  ctx
+                  orig-decls
+                  module
+                  module-id
+                  lookup-func
+                  call-expr
+                  func-box
+                  args
+                  env
+                  call-id)]))]
+        [_ call-id])]
+    (begin
+      ;; Explicit pushes update the context cell, while compatibility pushers
+      ;; still read the installed scalar state. Publish the rewritten context
+      ;; before the next declaration can append through that legacy surface.
+      (tc-install-pools! pools)
+      rewritten)))
 
 (define (macro-rewrite-generated-import-kind
   [ctx : TcContext]
@@ -73074,9 +73135,14 @@
   [env : CtfeEnv]
   [decls : AstDeclList]) : AstDeclList
   (let
+    ;; Parsing and hygiene may have appended generated syntax after `ctx` was
+    ;; captured. The installed live context owns those ids and shares its cells
+    ;; with compatibility pushers, so select it once at this migration
+    ;; boundary and keep every rewrite below explicit.
+    [rewrite-pools : AstNodePoolContext (ast-node-pool-context-active-live)]
     [rewrite-env : CtfeEnv
       (ctfe-env-extend-id
-        (ctfe-env-rebase-pools env (tc-context-pools ctx))
+        (ctfe-env-rebase-pools env rewrite-pools)
         (ctfe-hygiene-enabled-id)
         (CompilerCtfeValue.Bool true))]
     (macro-rewrite-generated-import-decls-with-env

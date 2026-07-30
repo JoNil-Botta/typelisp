@@ -2461,6 +2461,73 @@
   (seen-nonempty bool)
   (surface-summary-present bool))
 
+(define (compiler-typecheck-smoke-generated-type-param-pool-isolation-ok?) : bool
+  (let
+    [active-before : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities 4 4)]
+    [installed-pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities 4 4)]
+    [name-id : i64 (ci.intern "generated-type-param-pool-isolation")]
+    [env : CtfeEnv
+      (ctfe-env-extend-id
+        (ctfe-env-empty-with-pools source-pools)
+        name-id
+        (CompilerCtfeValue.Type (AstType.I64)))]
+    [installed-type-id : i64
+      (ast-node-pool-context-type-push installed-pools (AstType.Bool))]
+    [installed-expr-id : i64
+      (ast-node-pool-context-expr-push
+        installed-pools
+        (AstExpr.Literal (AstLiteral.Bool false)))]
+    (begin
+      (ast-node-pool-context-install! installed-pools)
+      (let
+        [result-id : i64
+          (macro-generated-type-param-expr
+            source-pools
+            env
+            (AstExpr.Var name-id))]
+        [installed-expr-bases : i64
+          (ast-node-pool-context-expr-segment-bases installed-pools)]
+        [installed-type-bases : i64
+          (ast-node-pool-context-type-segment-bases installed-pools)]
+        [ok : bool
+          (and
+            (= result-id installed-expr-id)
+            (= (ast-node-pool-context-expr-len source-pools) 1)
+            (= (ast-node-pool-context-type-len source-pools) 1)
+            (= (ast-node-pool-context-expr-len installed-pools) 1)
+            (= (ast-node-pool-context-type-len installed-pools) 1)
+            (match (ast-node-pool-context-expr-get source-pools result-id)
+              [(AstExpr.TypeLiteral source-type-id)
+                (and
+                  (= source-type-id installed-type-id)
+                  (match (ast-node-pool-context-type-get
+                    source-pools
+                    source-type-id)
+                    [(AstType.I64) true]
+                    [_ false]))]
+              [_ false])
+            (match (ast-node-pool-context-expr-get
+              installed-pools
+              installed-expr-id)
+              [(AstExpr.Literal (AstLiteral.Bool value)) (not value)]
+              [_ false])
+            (match (ast-node-pool-context-type-get
+              installed-pools
+              installed-type-id)
+              [(AstType.Bool) true]
+              [_ false])
+            (= (ast-node-pool-active-expr-segment-bases) installed-expr-bases)
+            (=
+              (ast-node-pool-context-type-segment-bases
+                (ast-node-pool-context-capture-active))
+              installed-type-bases))]
+        (begin
+          (ast-node-pool-context-install! active-before)
+          ok)))))
+
 (define (compiler-typecheck-smoke-generated-import-decl
   [source : String]
   [key : String]) : AstDecl
@@ -5232,6 +5299,9 @@
     (unless
       (compiler-typecheck-smoke-generated-moduleless-import-order-ok?)
       (io.panic "typecheck: generated moduleless import order smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-type-param-pool-isolation-ok?)
+      (io.panic "typecheck: generated type-param pool isolation smoke failed"))
     (unless
       (compiler-typecheck-smoke-generated-import-state-isolation-ok?)
       (io.panic "typecheck: generated import state isolation smoke failed"))

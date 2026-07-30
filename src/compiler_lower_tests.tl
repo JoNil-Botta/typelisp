@@ -11502,6 +11502,139 @@
     (compiler-lower-name-env-dense-snapshots-ok?)
     "dense lower-name snapshots preserve overlays, append order, and names"))
 
+;; The id-keyed compat prescan walker must agree with the two string-keyed
+;; walks it replaces on every env-key family the prescan can meet: pool ids,
+;; hygiene-local ids (post-splice trees), structural-local ids, and
+;; composite keys, including bound-name shadowing.
+(define (compiler-lower-compat-prescan-id-parity?
+  [expr-bases : i64]
+  [tree : AstExpr]
+  [when-id : i64]
+  [unless-id : i64]) : bool
+  (=
+    (tc-expr-uses-free-source-id?
+      expr-bases
+      tree
+      when-id
+      unless-id
+      TcNameIdList.Nil)
+    (or
+      (tc-expr-uses-free-name? expr-bases tree "when" TcStringList.Nil)
+      (tc-expr-uses-free-name? expr-bases tree "unless" TcStringList.Nil))))
+
+(define (compiler-lower-compat-prescan-test-let
+  [binder-id : i64]
+  [init-id : i64]
+  [body-id : i64]) : AstExpr
+  (let
+    [bindings : AstLetBindingList (ast-let-binding-list-with-capacity 1)]
+    (begin
+      (array-set!
+        (struct-get bindings slots)
+        0
+        (AstLetBinding.Binding binder-id (AstMaybeType.No) init-id))
+      (set! (struct-get bindings len) 1)
+      (AstExpr.Let (box (AstLet.Let bindings body-id))))))
+
+(define (compiler-lower-compat-prescan-id-parity-ok?) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-new-with-capacities 4 1)]
+    [expr-bases : i64 (ast-node-pool-context-expr-segment-bases pools)]
+    [when-id : i64 (ci.intern "when")]
+    [unless-id : i64 (ci.intern "unless")]
+    [x-id : i64 (ci.intern "x")]
+    [hygiene-ctx : MacroHygieneContext
+      (MacroHygieneContext
+        (ci.intern "test-macro")
+        (ci.intern "test-module")
+        1360
+        (compiler-symbols-empty))]
+    [hyg-when-id : i64 (macro-hygiene-local-id hygiene-ctx 1 when-id)]
+    [hyg-x-id : i64 (macro-hygiene-local-id hygiene-ctx 1 x-id)]
+    [struct-when-id : i64 (ci.intern-structural-local-id 1 when-id)]
+    [composite-id : i64
+      (tc-module-name-id-by-id (ci.intern "stdlib.io") when-id)]
+    [push-var
+      (lambda ([name-id : i64]) : i64
+        (ast-node-pool-context-expr-push pools (AstExpr.Var name-id)))]
+    [when-var : i64 (push-var when-id)]
+    [hyg-when-var : i64 (push-var hyg-when-id)]
+    [x-var : i64 (push-var x-id)]
+    (and
+      (compiler-lower-compat-prescan-id-parity?
+        expr-bases
+        (AstExpr.Var when-id)
+        when-id
+        unless-id)
+      (compiler-lower-compat-prescan-id-parity?
+        expr-bases
+        (AstExpr.Var x-id)
+        when-id
+        unless-id)
+      (compiler-lower-compat-prescan-id-parity?
+        expr-bases
+        (AstExpr.Var hyg-when-id)
+        when-id
+        unless-id)
+      (compiler-lower-compat-prescan-id-parity?
+        expr-bases
+        (AstExpr.Var hyg-x-id)
+        when-id
+        unless-id)
+      (compiler-lower-compat-prescan-id-parity?
+        expr-bases
+        (AstExpr.Var struct-when-id)
+        when-id
+        unless-id)
+      (compiler-lower-compat-prescan-id-parity?
+        expr-bases
+        (AstExpr.Var composite-id)
+        when-id
+        unless-id)
+      (compiler-lower-compat-prescan-id-parity?
+        expr-bases
+        (AstExpr.Var unless-id)
+        when-id
+        unless-id)
+      ;; A pool binder named `when` shadows a pool use of `when`.
+      (compiler-lower-compat-prescan-id-parity?
+        expr-bases
+        (compiler-lower-compat-prescan-test-let when-id x-var when-var)
+        when-id
+        unless-id)
+      ;; A differently-named binder does not shadow the use.
+      (compiler-lower-compat-prescan-id-parity?
+        expr-bases
+        (compiler-lower-compat-prescan-test-let x-id x-var when-var)
+        when-id
+        unless-id)
+      ;; A pool binder named `when` also shadows a hygiene-id use whose
+      ;; source name is `when` (the post-splice re-run shape).
+      (compiler-lower-compat-prescan-id-parity?
+        expr-bases
+        (compiler-lower-compat-prescan-test-let when-id x-var hyg-when-var)
+        when-id
+        unless-id)
+      ;; A hygiene binder whose source name is `when` shadows the hygiene
+      ;; use (the string walker cannot see this shape: intern-str traps on
+      ;; out-of-pool ids, so check the id walker directly).
+      (not
+        (tc-expr-uses-free-source-id?
+          expr-bases
+          (compiler-lower-compat-prescan-test-let
+            hyg-when-id
+            x-var
+            hyg-when-var)
+          when-id
+          unless-id
+          TcNameIdList.Nil)))))
+
+(test
+  compiler-lower-compat-prescan-id-parity
+  (test.assert-true
+    (compiler-lower-compat-prescan-id-parity-ok?)
+    "id-keyed compat prescan matches the string-keyed walks incl. hygiene ids"))
+
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
   (let
     [source-a-id : i64 (ci.intern-generated-canonical-name "source-a")]

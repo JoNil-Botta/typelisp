@@ -1774,6 +1774,13 @@
             6))
         90]
       [(not
+          (lint-driver-smoke-name-case-rule-at-line?
+            binder-findings
+            (lint-rule-local-name-case-id)
+            6
+            0))
+        191]
+      [(not
           (and
             (lint-driver-smoke-name-case-spans-positive? findings)
             (lint-driver-smoke-name-case-spans-positive? binder-findings)))

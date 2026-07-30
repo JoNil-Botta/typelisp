@@ -6756,6 +6756,268 @@
     [_reset-after : unit (compiler-backend-sweep-reset!)]
     (and (string.eq first-got first-want) (string.eq second-got second))))
 
+;; Pass 2's coverage bitmap serves the many-read tail: 50 live store+read
+;; pairs and 50 dead stores interleaved, so the dead stores are swept and the
+;; live ones kept, with the reads landing both before and after the stores.
+(define (compiler-backend-deadstore-sweep-coverage-many-reads-ok?) : bool
+  (let
+    [input-buf : text_buf.TextBuf (text_buf.empty)]
+    [want-buf : text_buf.TextBuf (text_buf.empty)]
+    [k : i64 0]
+    (begin
+      (set!
+        input-buf
+        (text_buf.append
+          input-buf
+          "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $808, %rsp\n"))
+      (set!
+        want-buf
+        (text_buf.append
+          want-buf
+          "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $808, %rsp\n"))
+      (while (< k 50)
+        (let
+          [a : i64 (+ 8 (* 16 k))]
+          [b : i64 (+ 16 (* 16 k))]
+          [reg : String
+            (if (= (% k 3) 0)
+              "%r10"
+              (if (= (% k 3) 1)
+                "%r11"
+                "%rax"))]
+          (begin
+            (set!
+              input-buf
+              (text_buf.append
+                input-buf
+                (str-cat
+                  "    movq $"
+                  (string.int->string k)
+                  ", "
+                  (string.int->string a)
+                  "(%rsp)\n    movq $"
+                  (string.int->string k)
+                  ", "
+                  (string.int->string b)
+                  "(%rsp)\n    movq "
+                  (string.int->string a)
+                  "(%rsp), "
+                  reg
+                  "\n")))
+            (set!
+              want-buf
+              (text_buf.append
+                want-buf
+                (str-cat
+                  "    movq $"
+                  (string.int->string k)
+                  ", "
+                  (string.int->string a)
+                  "(%rsp)\n    movq "
+                  (string.int->string a)
+                  "(%rsp), "
+                  reg
+                  "\n")))
+            (set! k (+ k 1)))))
+      (let
+        [input : String
+          (text_buf.render (text_buf.append input-buf "    leave\n    ret\n"))]
+        [want : String
+          (text_buf.render (text_buf.append want-buf "    leave\n    ret\n"))]
+        [_reset : unit (compiler-backend-sweep-reset!)]
+        [_record : unit
+          (compiler-backend-sweep-record-win64! "main" 808 100 0 0 0)]
+        [got : String (compiler-backend-peephole-asm input)]
+        [_reset-after : unit (compiler-backend-sweep-reset!)]
+        (string.eq got want)))))
+
+;; Byte-granular coverage: unaligned and wide reads overlap exactly by byte
+;; range, not by slot.
+(define (compiler-backend-deadstore-sweep-coverage-unaligned-ok?) : bool
+  (let
+    [head : String
+      "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $48, %rsp\n"]
+    [tail : String "    leave\n    ret\n"]
+    [no-overlap-input : String
+      (str-cat head "    movq $1, 8(%rsp)\n    movdqa 16(%rsp), %xmm0\n" tail)]
+    [wide-overlap-input : String
+      (str-cat head "    movq $1, 8(%rsp)\n    movdqa 12(%rsp), %xmm0\n" tail)]
+    [narrow-overlap-input : String
+      (str-cat head "    movq $1, 16(%rsp)\n    movq 20(%rsp), %rax\n" tail)]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 5 0 0 0)]
+    [no-overlap-got : String (compiler-backend-peephole-asm no-overlap-input)]
+    [wide-overlap-got : String
+      (compiler-backend-peephole-asm wide-overlap-input)]
+    [narrow-overlap-got : String
+      (compiler-backend-peephole-asm narrow-overlap-input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (and
+      (string.eq
+        no-overlap-got
+        (str-cat head "    movdqa 16(%rsp), %xmm0\n" tail))
+      (string.eq wide-overlap-got wide-overlap-input)
+      (string.eq narrow-overlap-got narrow-overlap-input))))
+
+;; A candidate at exactly c == hi: an adjacent read ending at hi does not
+;; cover [hi, hi+8), so the store is swept; a read of the slot keeps it.
+(define (compiler-backend-deadstore-sweep-coverage-hi-edge-ok?) : bool
+  (let
+    [head : String
+      "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $48, %rsp\n"]
+    [tail : String "    leave\n    ret\n"]
+    [adjacent-input : String
+      (str-cat head "    movq $1, 40(%rsp)\n    movq 32(%rsp), %rax\n" tail)]
+    [covered-input : String
+      (str-cat head "    movq $1, 40(%rsp)\n    movq 40(%rsp), %rax\n" tail)]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 5 0 0 0)]
+    [adjacent-got : String (compiler-backend-peephole-asm adjacent-input)]
+    [covered-got : String (compiler-backend-peephole-asm covered-input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (and
+      (string.eq adjacent-got (str-cat head "    movq 32(%rsp), %rax\n" tail))
+      (string.eq covered-got covered-input))))
+
+;; Both sides of the coverage-word cap produce the same decisions: the
+;; under-cap frame uses the bitmap, the over-cap frame falls back to the
+;; exact per-candidate scan.
+(define (compiler-backend-deadstore-sweep-coverage-cap-ok?) : bool
+  (let
+    [under-input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $262192, %rsp
+    movq $1, 262184(%rsp)
+    movq $2, 48(%rsp)
+    movq 48(%rsp), %rax
+    leave
+    ret
+"]
+    [under-want : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $262192, %rsp
+    movq $2, 48(%rsp)
+    movq 48(%rsp), %rax
+    leave
+    ret
+"]
+    [over-input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $262200, %rsp
+    movq $1, 262192(%rsp)
+    movq $2, 48(%rsp)
+    movq 48(%rsp), %rax
+    leave
+    ret
+"]
+    [over-want : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $262200, %rsp
+    movq $2, 48(%rsp)
+    movq 48(%rsp), %rax
+    leave
+    ret
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record-under : unit
+      (compiler-backend-sweep-record-win64! "main" 262192 32768 0 0 0)]
+    [under-got : String (compiler-backend-peephole-asm under-input)]
+    [_reset-mid : unit (compiler-backend-sweep-reset!)]
+    [_record-over : unit
+      (compiler-backend-sweep-record-win64! "main" 262200 32769 0 0 0)]
+    [over-got : String (compiler-backend-peephole-asm over-input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (and (string.eq under-got under-want) (string.eq over-got over-want))))
+
+;; A leaq watermark poisons upward: candidates at or above the leaq's offset
+;; stay even when no read names them; candidates below it are still swept.
+(define (compiler-backend-deadstore-sweep-leaq-watermark-ok?) : bool
+  (let
+    [input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq $1, 32(%rsp)
+    movq $2, 16(%rsp)
+    leaq 24(%rsp), %rax
+    leave
+    ret
+"]
+    [want : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq $1, 32(%rsp)
+    leaq 24(%rsp), %rax
+    leave
+    ret
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 5 0 0 0)]
+    [got : String (compiler-backend-peephole-asm input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (string.eq got want)))
+
+;; The reads set is region-wide: a read before the store keeps it just as a
+;; read after it does.
+(define (compiler-backend-deadstore-sweep-read-before-store-ok?) : bool
+  (let
+    [head : String
+      "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $48, %rsp\n"]
+    [tail : String "    leave\n    ret\n"]
+    [before-input : String
+      (str-cat head "    movq 40(%rsp), %rax\n    movq $1, 40(%rsp)\n" tail)]
+    [after-input : String
+      (str-cat head "    movq $1, 40(%rsp)\n    movq 40(%rsp), %rax\n" tail)]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 5 0 0 0)]
+    [before-got : String (compiler-backend-peephole-asm before-input)]
+    [after-got : String (compiler-backend-peephole-asm after-input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (and (string.eq before-got before-input) (string.eq after-got after-input))))
+
+;; The coverage window spans both eligibility windows: emergency-slot
+;; candidates are swept or kept by the same bitmap when the em window is
+;; non-empty (em-slot-offset -512, 2 slots -> em window [-528, -408]).
+(define (compiler-backend-deadstore-sweep-coverage-em-window-ok?) : bool
+  (let
+    [input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq $1, -520(%rsp)
+    movq $2, -512(%rsp)
+    movq -512(%rsp), %rax
+    leave
+    ret
+"]
+    [want : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq $2, -512(%rsp)
+    movq -512(%rsp), %rax
+    leave
+    ret
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 5 -512 2 0)]
+    [got : String (compiler-backend-peephole-asm input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (string.eq got want)))
+
 (define (compiler-backend-deadstore-sweep-win64-ok?) : bool
   (and
     (compiler-backend-deadstore-sweep-win64-rbp-frame-ok?)
@@ -6763,7 +7025,14 @@
     (compiler-backend-deadstore-sweep-win64-address-stays-ok?)
     (compiler-backend-deadstore-sweep-win64-pop-tail-ok?)
     (compiler-backend-deadstore-sweep-linux-leave-poisons-ok?)
-    (compiler-backend-deadstore-sweep-metadata-consumed-ok?)))
+    (compiler-backend-deadstore-sweep-metadata-consumed-ok?)
+    (compiler-backend-deadstore-sweep-coverage-many-reads-ok?)
+    (compiler-backend-deadstore-sweep-coverage-unaligned-ok?)
+    (compiler-backend-deadstore-sweep-coverage-hi-edge-ok?)
+    (compiler-backend-deadstore-sweep-coverage-cap-ok?)
+    (compiler-backend-deadstore-sweep-leaq-watermark-ok?)
+    (compiler-backend-deadstore-sweep-read-before-store-ok?)
+    (compiler-backend-deadstore-sweep-coverage-em-window-ok?)))
 
 (define (compiler-backend-r10-dead-scan-long-gap-ok?) : bool
   (let

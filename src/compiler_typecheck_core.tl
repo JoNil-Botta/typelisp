@@ -27730,45 +27730,47 @@
   [inner : AstExpr]
   [span : AstSourceSpan]
   [message : String]) : ResultTcType
-  (if (and
-    (tc-unbound-name-message? message)
-    (not (tc-rich-error? message))
-    (not (tc-located-error? message)))
-    (match inner
-      [(AstExpr.Var name-id)
-        (begin
-          (tc-unbound-suggestion-snapshot-record! ctx env name-id)
-          (ResultTcType.Err (tc-located-error span message)))]
-      [_ (tc-locate-spanned-error inner span message)])
-    (if (and
-      (string.eq
-        message
-        "typecheck: integer operator expects matching integer operands")
-      (not (tc-rich-error? message))
-      (not (tc-located-error? message)))
+  (cond
+    [(and
+        (tc-unbound-name-message? message)
+        (not (tc-rich-error? message))
+        (not (tc-located-error? message)))
+      (match inner
+        [(AstExpr.Var name-id)
+          (begin
+            (tc-unbound-suggestion-snapshot-record! ctx env name-id)
+            (ResultTcType.Err (tc-located-error span message)))]
+        [_ (tc-locate-spanned-error inner span message)])]
+    [(and
+        (string.eq
+          message
+          "typecheck: integer operator expects matching integer operands")
+        (not (tc-rich-error? message))
+        (not (tc-located-error? message)))
       (match inner
         [(AstExpr.Binary _ left-id right-id)
           (tc-locate-integer-binop-error ctx env left-id right-id span message)]
-        [_ (tc-locate-spanned-error inner span message)])
-      (if (and
+        [_ (tc-locate-spanned-error inner span message)])]
+    [(and
         (tc-diag-string-prefix? message "typecheck: unknown struct field ")
         (not (tc-rich-error? message))
         (not (tc-located-error? message)))
-        (match inner
-          [(AstExpr.Set _ _) (ResultTcType.Err (tc-located-error span message))]
-          [(AstExpr.StructSet _ _ _)
-            (ResultTcType.Err (tc-located-error span message))]
-          [(AstExpr.StructGet _ _)
-            (ResultTcType.Err (tc-located-error span message))]
-          [_ (tc-locate-spanned-error inner span message)])
-        (match inner
-          [(AstExpr.Set _ _) (ResultTcType.Err message)]
-          [(AstExpr.Spanned nested-box _)
-            (tc-locate-spanned-error
-              (tc-context-expr-get ctx nested-box)
-              span
-              message)]
-          [_ (tc-locate-spanned-error inner span message)])))))
+      (match inner
+        [(AstExpr.Set _ _) (ResultTcType.Err (tc-located-error span message))]
+        [(AstExpr.StructSet _ _ _)
+          (ResultTcType.Err (tc-located-error span message))]
+        [(AstExpr.StructGet _ _)
+          (ResultTcType.Err (tc-located-error span message))]
+        [_ (tc-locate-spanned-error inner span message)])]
+    [else
+      (match inner
+        [(AstExpr.Set _ _) (ResultTcType.Err message)]
+        [(AstExpr.Spanned nested-box _)
+          (tc-locate-spanned-error
+            (tc-context-expr-get ctx nested-box)
+            span
+            message)]
+        [_ (tc-locate-spanned-error inner span message)])]))
 
 (define (tc-call-arity-callee-name [func : AstExpr]) : String
   (let

@@ -5,6 +5,9 @@
 (define (profile-macro-detail-short-cat) : String
   (sc.str-cat "a" "b"))
 
+(define (profile-macro-detail-short-cat-second) : String
+  (sc.str-cat "c" "d"))
+
 (define (profile-macro-detail-packed-cat) : String
   (sc.str-cat "a" "b" "c" "d" "e" "f"))
 
@@ -14,7 +17,9 @@
 (define (main) : i64
   (if (cond
     [(profile-macro-detail-bool true)
-      (string.eq (profile-macro-detail-short-cat) "ab")]
+      (and
+        (string.eq (profile-macro-detail-short-cat) "ab")
+        (string.eq (profile-macro-detail-short-cat-second) "cd"))]
     [else false])
     (if (string.eq (profile-macro-detail-packed-cat) "abcdef")
       42

@@ -514,6 +514,19 @@ if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFI
     fail "profile-enabled CLI link failed"
 fi
 
+echo "[compile-profile] verify dense macro profile storage"
+if ! "$PROFILE_BIN" run src/tests/compiler_typecheck_smoke.tl \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    --cfg compile-profile \
+    --cfg test \
+    > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
+    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+    fail "dense macro profile storage smoke failed"
+fi
+
 echo "[compile-profile] verify native comptime host metadata parity"
 if ! "$PROFILE_BIN" compile src/tests/comptime_host_smoke.tl \
     -o "$COMPTIME_HOST_SMOKE_ASM" \
@@ -1180,8 +1193,16 @@ fi
 
 assert_contains "$CHECK_STDERR" "compile-profile-detail|typecheck.macro_expand|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro_materialize|"
-assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=2 calls=1"
+assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=2 calls=2"
 assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=6 calls=1"
+str_cat_arity_2_line=$(grep -nF \
+    "stdlib.str_cat/str-cat arity=2 calls=2" \
+    "$CHECK_STDERR" | sed -n '1s/:.*//p')
+str_cat_arity_6_line=$(grep -nF \
+    "stdlib.str_cat/str-cat arity=6 calls=1" \
+    "$CHECK_STDERR" | sed -n '1s/:.*//p')
+[ "$str_cat_arity_2_line" -lt "$str_cat_arity_6_line" ] ||
+    fail "macro profile detail rows lost deterministic first-seen order"
 # str-cat's six-plus-operand path now delegates packing to the bootstrap-safe
 # runtime implementation, so that module's str-cat-pack step appears in the
 # macro-expansion profile.

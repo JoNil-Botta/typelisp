@@ -9,6 +9,7 @@
 (import "compiler_object_coff.tl")
 (import "compiler_driver_core.tl")
 (import sym_i64_env)
+(cfg test (import stdlib.test))
 
 (defenum CompilerWindowsCoffLinkability
   (Linkable)
@@ -269,6 +270,7 @@
     ;; The object-only control-flow implementation still has differential
     ;; mismatches for conditions, early returns, and enum matches.
     [(CompilerIrInstr.Branch _ _ _) false]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) false]
     [(CompilerIrInstr.Return maybe)
       (match maybe
         [(CompilerIrMaybeValue.No) true]
@@ -315,7 +317,25 @@
     [(CompilerIrInstr.EntryArgc _) false]
     [(CompilerIrInstr.EntryArgv _) false]
     [(CompilerIrInstr.EntryEnvp _) false]
-    [(CompilerIrInstr.Switch _ _ _ _) false]))
+    [(CompilerIrInstr.Switch _ _ _ _) false]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) false]))
+
+(test
+  compiler-windows-coff-total-enum-control-flow-falls-back
+  (begin
+    (test.assert-false
+      (compiler-windows-coff-object-instr-supported?
+        (CompilerIrInstr.TotalEnumBranch (CompilerIrValue.I64 0) 1 2))
+      "total enum branches stay on the assembly path")
+    (test.assert-false
+      (compiler-windows-coff-object-instr-supported?
+        (CompilerIrInstr.TotalEnumSwitch
+          (CompilerIrValue.I64 0)
+          0
+          CompilerIrSwitchCaseList.Nil
+          1
+          2))
+      "total enum switches stay on the assembly path")))
 
 (define (compiler-windows-coff-object-instrs-supported?
   [instrs : CompilerIrInstrSeq]) : bool

@@ -2344,6 +2344,19 @@
                   params
                   (ast-expr-list-get (& args) 0 0)
                   tlci-host-callback-name-type-key
+                  "0"
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.type-nominal-module")
+                    (string.eq head "type-nominal-module"))
+                  (= argc 1))
+                (embedded-native-computed-type-query-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  tlci-host-callback-name-type-key
+                  "1"
                   ops
                   ops-count)]
               [(and
@@ -2355,6 +2368,7 @@
                   params
                   (ast-expr-list-get (& args) 0 0)
                   tlci-host-callback-name-type-kind
+                  "0"
                   ops
                   ops-count)]
               [(and
@@ -2366,6 +2380,7 @@
                   params
                   (ast-expr-list-get (& args) 0 0)
                   tlci-host-callback-name-array-element-type
+                  "0"
                   ops
                   ops-count)]
               [(and
@@ -3302,6 +3317,7 @@
   [params : (& params AstMacroParamList)]
   [arg-node : i64]
   [op : String]
+  [arg-a : String]
   [ops : (Array String)]
   [ops-count : (Array i64)]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr arg-node)
@@ -3318,7 +3334,7 @@
               (string.int->string param)
               "0"
               "0")
-            (embedded-native-template-push! ops ops-count op "0" "0" "0")
+            (embedded-native-template-push! ops ops-count op arg-a "0" "0")
             2)))]
     ;; `(type-kind (comptime.expr-type e))` in value position: push the Expr
     ;; operand, project its produced type, then run the query. Refs #5604.
@@ -3343,7 +3359,7 @@
               "0"
               "0"
               "0")
-            (embedded-native-template-push! ops ops-count op "0" "0" "0")
+            (embedded-native-template-push! ops ops-count op arg-a "0" "0")
             3)))]))
 
 ;; Compile an indexed reflection query whose type can be either a macro

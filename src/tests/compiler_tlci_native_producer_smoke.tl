@@ -1945,6 +1945,123 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; `type-nominal-module` must preserve the interpreted Name result, including
+;; a structural macro-global module id whose displayed text is its source name.
+;; Modes 0/1 dispatch struct/enum operands, mode 2 checks the interpreted
+;; non-nominal diagnostic, and mode 3 proves a missing operand fails closed.
+;; Refs #6000.
+(define (producer-test-nominal-reflections
+  [canonical-id : i64]
+  [module-text : String]
+  [name-text : String]
+  [enum? : bool]) : CtfeReflectInfoList
+  (ctfe-reflect-info-list-push-id
+    (ctfe-reflect-info-list-with-capacity 1)
+    (if enum?
+      (CtfeReflectInfo.Enum
+        (string.append module-text (string.append "/" name-text))
+        module-text
+        name-text
+        canonical-id
+        (CtfeReflectCleanup.No)
+        (ctfe-reflect-variant-list-with-capacity 0))
+      (CtfeReflectInfo.Struct
+        (string.append module-text (string.append "/" name-text))
+        module-text
+        name-text
+        canonical-id
+        (CtfeReflectCleanup.No)
+        (ctfe-reflect-field-list-with-capacity 0)))
+    canonical-id))
+
+(define (producer-test-nominal-result-eq? [expected : CompilerCtfeValue]) : bool
+  (match expected
+    [(CompilerCtfeValue.Name expected-text expected-id)
+      (match (compiler-comptime-host-result-value)
+        [(CompilerCtfeValue.Name actual-text actual-id)
+          (and (string.eq actual-text expected-text) (= actual-id expected-id))]
+        [_ false])]
+    [_ false]))
+
+(define (producer-test-dispatch-nominal-module?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]
+  [mode : i64]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-module-id : i64 (ci.intern "producer.nominal.module")]
+    [module-id : i64
+      (if (= mode 0)
+        (+ (ci.intern-macro-global-structural-base) source-module-id)
+        source-module-id)]
+    [name-id : i64 (ci.intern "Nominal")]
+    [canonical-id : i64 (intern-composite-pair-id module-id name-id)]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    [infos : CtfeReflectInfoList
+      (if (< mode 2)
+        (producer-test-nominal-reflections
+          canonical-id
+          "producer.nominal.module"
+          "Nominal"
+          (= mode 1))
+        (ctfe-reflect-info-list-empty))]
+    (begin
+      (array-set!
+        operands
+        0
+        (CompilerCtfeValue.Type
+          (cond
+            [(= mode 0) (AstType.Struct canonical-id)]
+            [(= mode 1) (AstType.Enum canonical-id)]
+            [else (AstType.I64)])))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        (if (= mode 3)
+          0
+          1)
+        64
+        producer-test-cookie
+        infos)
+      (let
+        [ok : bool
+          (match (tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(ResultTlciMacroDispatch.Err _) false]
+            [(ResultTlciMacroDispatch.Ok dispatch)
+              (cond
+                [(< mode 2)
+                  (and
+                    (=
+                      (struct-get dispatch status)
+                      tlci-host-callback-status-ok)
+                    (compiler-comptime-host-result-ready?)
+                    (producer-test-nominal-result-eq?
+                      (ctfe-name-value module-id)))]
+                [(= mode 2)
+                  (and
+                    (=
+                      (struct-get dispatch status)
+                      tlci-host-callback-status-diagnostic)
+                    (not (compiler-comptime-host-result-ready?))
+                    (string.eq
+                      (compiler-comptime-host-diagnostic-text)
+                      "type-nominal-module requires struct or enum type"))]
+                [else
+                  (and
+                    (=
+                      (struct-get dispatch status)
+                      tlci-host-callback-status-bad-request)
+                    (not (compiler-comptime-host-result-ready?)))])])]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
 (define (producer-test-dispatch-fold?
   [loaded : (& loaded TlciLoadedImage)]
   [identity : String]) : bool
@@ -2360,7 +2477,7 @@
     [source : String
       (string.append
         source-base
-        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n")]
+        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n")]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (match (parse-ast-source source)
@@ -2416,13 +2533,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 34)
-                              (= (struct-get captures len) 34)
+                              (= (array-length name-array) 35)
+                              (= (struct-get captures len) 35)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-count
                                   0)
-                                33)
+                                34)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-partial-count
@@ -2503,6 +2620,22 @@
                               (producer-test-dispatch-keyof?
                                 (& loaded)
                                 "package.macros/keyof")
+                              (producer-test-dispatch-nominal-module?
+                                (& loaded)
+                                "package.macros/nommod"
+                                0)
+                              (producer-test-dispatch-nominal-module?
+                                (& loaded)
+                                "package.macros/nommod"
+                                1)
+                              (producer-test-dispatch-nominal-module?
+                                (& loaded)
+                                "package.macros/nommod"
+                                2)
+                              (producer-test-dispatch-nominal-module?
+                                (& loaded)
+                                "package.macros/nommod"
+                                3)
                               (producer-test-dispatch-shape?
                                 (& loaded)
                                 "package.macros/places"

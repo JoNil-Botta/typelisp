@@ -2122,6 +2122,16 @@
 (define (tc-context-expr-get [ctx : TcContext] [id : i64]) : AstExpr
   (ast-node-pool-context-expr-get (tc-context-pools ctx) id))
 
+;; Type segment-bases for a pure read under `ctx`. Lifetime-elision walks may
+;; append reconstructed nodes, but never install a different pool; the table is
+;; stable across push/grow. Compatibility callers continue following the
+;; installed pool that their historical no-context API selected.
+(define (tc-context-type-bases [ctx : TcContext]) : i64
+  (if (ast-node-pool-compat-context-active?)
+    (ast-node-pool-context-type-segment-bases
+      (ast-node-pool-context-capture-active))
+    (ast-node-pool-context-type-segment-bases (tc-context-pools ctx))))
+
 ;; Expression segment-bases for a read-only walk under `ctx`, snapshotted once
 ;; at the walk's entry and threaded down as a scalar.
 ;;
@@ -14036,65 +14046,106 @@
       unit
       (io.panic "typecheck: elaborated lifetime leaked through type rendering"))))
 
-(define (tc-signature-input-lifetimes-into [ty : AstType] [out : TcNameIdList]) : TcNameIdList
+(define (tc-signature-input-lifetimes-into
+  [type-bases : i64]
+  [ty : AstType]
+  [out : TcNameIdList]) : TcNameIdList
   ;; A nested function type owns a separate signature scope. Its lifetimes are
   ;; intentionally not candidates for the enclosing function's elided return.
   (match ty
     [(AstType.Func _ _) out]
     [(AstType.Tuple elems)
-      (tc-signature-input-type-list-lifetimes-into (box-get elems) out)]
+      (tc-signature-input-type-list-lifetimes-into
+        type-bases
+        (box-get elems)
+        out)]
     [(AstType.Array elem _)
-      (tc-signature-input-lifetimes-into (ty-node-get elem) out)]
+      (tc-signature-input-lifetimes-into
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        out)]
     [(AstType.DynArray elem)
-      (tc-signature-input-lifetimes-into (ty-node-get elem) out)]
+      (tc-signature-input-lifetimes-into
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        out)]
     [(AstType.Box elem)
-      (tc-signature-input-lifetimes-into (ty-node-get elem) out)]
+      (tc-signature-input-lifetimes-into
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        out)]
     [(AstType.Ptr elem)
-      (tc-signature-input-lifetimes-into (ty-node-get elem) out)]
+      (tc-signature-input-lifetimes-into
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        out)]
     [(AstType.MutPtr elem)
-      (tc-signature-input-lifetimes-into (ty-node-get elem) out)]
+      (tc-signature-input-lifetimes-into
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        out)]
     [(AstType.Region _ inner)
-      (tc-signature-input-lifetimes-into (ty-node-get inner) out)]
+      (tc-signature-input-lifetimes-into
+        type-bases
+        (ast-type-segment-bases-get type-bases inner)
+        out)]
     [(AstType.Ref lifetime inner)
       (tc-signature-input-lifetimes-into
-        (ty-node-get inner)
+        type-bases
+        (ast-type-segment-bases-get type-bases inner)
         (tc-name-id-list-add out lifetime))]
     [(AstType.MutRef lifetime inner)
       (tc-signature-input-lifetimes-into
-        (ty-node-get inner)
+        type-bases
+        (ast-type-segment-bases-get type-bases inner)
         (tc-name-id-list-add out lifetime))]
     [_ out]))
 
 (define (tc-signature-input-type-list-lifetimes-into
+  [type-bases : i64]
   [types : AstTypeList]
   [out : TcNameIdList]) : TcNameIdList
-  (tc-signature-input-type-list-lifetimes-at (& types) 0 out))
+  (tc-signature-input-type-list-lifetimes-at type-bases (& types) 0 out))
 
 (define (tc-signature-input-type-list-lifetimes-at
+  [type-bases : i64]
   [types : (& types AstTypeList)]
   [index : i64]
   [out : TcNameIdList]) : TcNameIdList
   (if (>= index (ast-type-list-len types))
     out
     (tc-signature-input-type-list-lifetimes-at
+      type-bases
       types
       (+ index 1)
       (tc-signature-input-lifetimes-into
-        (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))
+        type-bases
+        (ast-type-segment-bases-get
+          type-bases
+          (ast-type-list-get types index (ast-type-id-fallback)))
         out))))
 
-(define (tc-signature-single-input-lifetime [types : AstTypeList]) : TcMaybeNameId
-  (match (tc-signature-input-type-list-lifetimes-into types TcNameIdList.Nil)
+(define (tc-signature-single-input-lifetime
+  [type-bases : i64]
+  [types : AstTypeList]) : TcMaybeNameId
+  (match (tc-signature-input-type-list-lifetimes-into
+    type-bases
+    types
+    TcNameIdList.Nil)
     [(TcNameIdList.Nil) (TcMaybeNameId.No)]
     [(TcNameIdList.Cons lifetime rest)
       (match (box-get rest)
         [(TcNameIdList.Nil) (TcMaybeNameId.Some lifetime)]
         [_ (TcMaybeNameId.No)])]))
 
-(define (tc-elide-input-type-list [types : AstTypeList] [index : i64]) : ResultTcElidedTypes
-  (tc-elide-input-type-list-at (& types) 0 index (ast-type-list-new)))
+(define (tc-elide-input-type-list
+  [type-bases : i64]
+  [types : AstTypeList]
+  [index : i64]) : ResultTcElidedTypes
+  (tc-elide-input-type-list-at type-bases (& types) 0 index (ast-type-list-new)))
 
 (define (tc-elide-input-type-list-at
+  [type-bases : i64]
   [types : (& types AstTypeList)]
   [offset : i64]
   [index : i64]
@@ -14102,7 +14153,10 @@
   (if (>= offset (ast-type-list-len types))
     (ResultTcElidedTypes.Ok (TcElidedTypes out index))
     (match (tc-elide-input-type
-      (ty-node-get (ast-type-list-get types offset (ast-type-id-fallback)))
+      type-bases
+      (ast-type-segment-bases-get
+        type-bases
+        (ast-type-list-get types offset (ast-type-id-fallback)))
       index)
       [(ResultTcElidedType.Ok item)
         (let
@@ -14112,6 +14166,7 @@
               (&mut next-out)
               (ty-node-push (struct-get item ty)))
             (tc-elide-input-type-list-at
+              type-bases
               types
               (+ offset 1)
               (struct-get item next-index)
@@ -14119,11 +14174,18 @@
       [(ResultTcElidedType.Err message) (ResultTcElidedTypes.Err message)])))
 
 (define (tc-elide-output-type-list
+  [type-bases : i64]
   [types : AstTypeList]
   [lifetime : TcMaybeNameId]) : ResultTcElidedTypes
-  (tc-elide-output-type-list-at (& types) 0 lifetime (ast-type-list-new)))
+  (tc-elide-output-type-list-at
+    type-bases
+    (& types)
+    0
+    lifetime
+    (ast-type-list-new)))
 
 (define (tc-elide-output-type-list-at
+  [type-bases : i64]
   [types : (& types AstTypeList)]
   [index : i64]
   [lifetime : TcMaybeNameId]
@@ -14131,7 +14193,10 @@
   (if (>= index (ast-type-list-len types))
     (ResultTcElidedTypes.Ok (TcElidedTypes out 0))
     (match (tc-elide-output-type
-      (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))
+      type-bases
+      (ast-type-segment-bases-get
+        type-bases
+        (ast-type-list-get types index (ast-type-id-fallback)))
       lifetime)
       [(ResultTcElidedType.Ok item)
         (let
@@ -14140,17 +14205,25 @@
             (ast-type-list-push
               (&mut next-out)
               (ty-node-push (struct-get item ty)))
-            (tc-elide-output-type-list-at types (+ index 1) lifetime next-out)))]
+            (tc-elide-output-type-list-at
+              type-bases
+              types
+              (+ index 1)
+              lifetime
+              next-out)))]
       [(ResultTcElidedType.Err message) (ResultTcElidedTypes.Err message)])))
 
-(define (tc-elide-function-type [args : AstTypeList] [ret : AstType]) : ResultTcElidedType
-  (match (tc-elide-input-type-list args 0)
+(define (tc-elide-function-type
+  [type-bases : i64]
+  [args : AstTypeList]
+  [ret : AstType]) : ResultTcElidedType
+  (match (tc-elide-input-type-list type-bases args 0)
     [(ResultTcElidedTypes.Ok inputs)
       (let
         [input-types : AstTypeList (struct-get inputs types)]
         [lifetime : TcMaybeNameId
-          (tc-signature-single-input-lifetime input-types)]
-        (match (tc-elide-output-type ret lifetime)
+          (tc-signature-single-input-lifetime type-bases input-types)]
+        (match (tc-elide-output-type type-bases ret lifetime)
           [(ResultTcElidedType.Ok output)
             (ResultTcElidedType.Ok
               (TcElidedType
@@ -14159,12 +14232,15 @@
           [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
     [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)]))
 
-(define (tc-elide-input-type [ty : AstType] [index : i64]) : ResultTcElidedType
+(define (tc-elide-input-type [type-bases : i64] [ty : AstType] [index : i64]) : ResultTcElidedType
   (match ty
     [(AstType.Func args ret)
-      (tc-elide-function-type (box-get args) (ty-node-get ret))]
+      (tc-elide-function-type
+        type-bases
+        (box-get args)
+        (ast-type-segment-bases-get type-bases ret))]
     [(AstType.Tuple elems)
-      (match (tc-elide-input-type-list (box-get elems) index)
+      (match (tc-elide-input-type-list type-bases (box-get elems) index)
         [(ResultTcElidedTypes.Ok items)
           (ResultTcElidedType.Ok
             (TcElidedType
@@ -14172,7 +14248,10 @@
               (struct-get items next-index)))]
         [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.Array elem count)
-      (match (tc-elide-input-type (ty-node-get elem) index)
+      (match (tc-elide-input-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType
@@ -14180,7 +14259,10 @@
               (struct-get inner next-index)))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.DynArray elem)
-      (match (tc-elide-input-type (ty-node-get elem) index)
+      (match (tc-elide-input-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType
@@ -14188,7 +14270,10 @@
               (struct-get inner next-index)))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.Box elem)
-      (match (tc-elide-input-type (ty-node-get elem) index)
+      (match (tc-elide-input-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType
@@ -14196,7 +14281,10 @@
               (struct-get inner next-index)))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.Ptr elem)
-      (match (tc-elide-input-type (ty-node-get elem) index)
+      (match (tc-elide-input-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType
@@ -14204,7 +14292,10 @@
               (struct-get inner next-index)))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.MutPtr elem)
-      (match (tc-elide-input-type (ty-node-get elem) index)
+      (match (tc-elide-input-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType
@@ -14212,7 +14303,10 @@
               (struct-get inner next-index)))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.Region region elem)
-      (match (tc-elide-input-type (ty-node-get elem) index)
+      (match (tc-elide-input-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        index)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType
@@ -14229,7 +14323,10 @@
           (if (tc-elided-lifetime? lifetime)
             (+ index 1)
             index)]
-        (match (tc-elide-input-type (ty-node-get elem) next-index)
+        (match (tc-elide-input-type
+          type-bases
+          (ast-type-segment-bases-get type-bases elem)
+          next-index)
           [(ResultTcElidedType.Ok inner)
             (ResultTcElidedType.Ok
               (TcElidedType
@@ -14246,7 +14343,10 @@
           (if (tc-elided-lifetime? lifetime)
             (+ index 1)
             index)]
-        (match (tc-elide-input-type (ty-node-get elem) next-index)
+        (match (tc-elide-input-type
+          type-bases
+          (ast-type-segment-bases-get type-bases elem)
+          next-index)
           [(ResultTcElidedType.Ok inner)
             (ResultTcElidedType.Ok
               (TcElidedType
@@ -14255,48 +14355,72 @@
           [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
     [_ (ResultTcElidedType.Ok (TcElidedType ty index))]))
 
-(define (tc-elide-output-type [ty : AstType] [lifetime : TcMaybeNameId]) : ResultTcElidedType
+(define (tc-elide-output-type
+  [type-bases : i64]
+  [ty : AstType]
+  [lifetime : TcMaybeNameId]) : ResultTcElidedType
   (match ty
     [(AstType.Func args ret)
-      (tc-elide-function-type (box-get args) (ty-node-get ret))]
+      (tc-elide-function-type
+        type-bases
+        (box-get args)
+        (ast-type-segment-bases-get type-bases ret))]
     [(AstType.Tuple elems)
-      (match (tc-elide-output-type-list (box-get elems) lifetime)
+      (match (tc-elide-output-type-list type-bases (box-get elems) lifetime)
         [(ResultTcElidedTypes.Ok items)
           (ResultTcElidedType.Ok
             (TcElidedType (ast-ty-tuple (struct-get items types)) 0))]
         [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.Array elem count)
-      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+      (match (tc-elide-output-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        lifetime)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType (ast-ty-array (struct-get inner ty) count) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.DynArray elem)
-      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+      (match (tc-elide-output-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        lifetime)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType (ast-ty-dyn-array (struct-get inner ty)) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.Box elem)
-      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+      (match (tc-elide-output-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        lifetime)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType (ast-ty-box (struct-get inner ty)) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.Ptr elem)
-      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+      (match (tc-elide-output-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        lifetime)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType (ast-ty-ptr (struct-get inner ty)) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.MutPtr elem)
-      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+      (match (tc-elide-output-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        lifetime)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType (ast-ty-mut-ptr (struct-get inner ty)) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(AstType.Region region elem)
-      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+      (match (tc-elide-output-type
+        type-bases
+        (ast-type-segment-bases-get type-bases elem)
+        lifetime)
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType (ast-ty-region region (struct-get inner ty)) 0))]
@@ -14307,14 +14431,20 @@
           (if (tc-elided-lifetime? name)
             (ResultTcElidedType.Err
               "typecheck: elided reference return is ambiguous; write an explicit lifetime")
-            (match (tc-elide-output-type (ty-node-get elem) lifetime)
+            (match (tc-elide-output-type
+              type-bases
+              (ast-type-segment-bases-get type-bases elem)
+              lifetime)
               [(ResultTcElidedType.Ok inner)
                 (ResultTcElidedType.Ok
                   (TcElidedType (ast-ty-ref name (struct-get inner ty)) 0))]
               [(ResultTcElidedType.Err message)
                 (ResultTcElidedType.Err message)]))]
         [(TcMaybeNameId.Some source)
-          (match (tc-elide-output-type (ty-node-get elem) lifetime)
+          (match (tc-elide-output-type
+            type-bases
+            (ast-type-segment-bases-get type-bases elem)
+            lifetime)
             [(ResultTcElidedType.Ok inner)
               (ResultTcElidedType.Ok
                 (TcElidedType
@@ -14331,14 +14461,20 @@
           (if (tc-elided-lifetime? name)
             (ResultTcElidedType.Err
               "typecheck: elided reference return is ambiguous; write an explicit lifetime")
-            (match (tc-elide-output-type (ty-node-get elem) lifetime)
+            (match (tc-elide-output-type
+              type-bases
+              (ast-type-segment-bases-get type-bases elem)
+              lifetime)
               [(ResultTcElidedType.Ok inner)
                 (ResultTcElidedType.Ok
                   (TcElidedType (ast-ty-mut-ref name (struct-get inner ty)) 0))]
               [(ResultTcElidedType.Err message)
                 (ResultTcElidedType.Err message)]))]
         [(TcMaybeNameId.Some source)
-          (match (tc-elide-output-type (ty-node-get elem) lifetime)
+          (match (tc-elide-output-type
+            type-bases
+            (ast-type-segment-bases-get type-bases elem)
+            lifetime)
             [(ResultTcElidedType.Ok inner)
               (ResultTcElidedType.Ok
                 (TcElidedType
@@ -14352,6 +14488,7 @@
     [_ (ResultTcElidedType.Ok (TcElidedType ty 0))]))
 
 (define (tc-elide-input-params-at
+  [type-bases : i64]
   [params : (& params AstParamList)]
   [offset : i64]
   [index : i64]
@@ -14360,7 +14497,7 @@
     (ResultTcElidedParams.Ok (TcElidedParams out index))
     (match (ast-param-list-get params offset (ast-param-fallback))
       [(AstParam.Param name ty is-comptime consume?)
-        (match (tc-elide-input-type ty index)
+        (match (tc-elide-input-type type-bases ty index)
           [(ResultTcElidedType.Ok item)
             (let
               [next-out : AstParamList out]
@@ -14373,6 +14510,7 @@
                     is-comptime
                     consume?))
                 (tc-elide-input-params-at
+                  type-bases
                   params
                   (+ offset 1)
                   (struct-get item next-index)
@@ -14395,15 +14533,23 @@
             ty)
           (tc-elided-param-type-list-at params (+ index 1)))])))
 
-(define (tc-elide-function-signature [params : AstParamList] [ret : AstType]) : ResultTcElidedSignature
-  (match (tc-elide-input-params-at (& params) 0 0 (ast-param-list-new))
+(define (tc-elide-function-signature
+  [type-bases : i64]
+  [params : AstParamList]
+  [ret : AstType]) : ResultTcElidedSignature
+  (match (tc-elide-input-params-at
+    type-bases
+    (& params)
+    0
+    0
+    (ast-param-list-new))
     [(ResultTcElidedParams.Ok inputs)
       (let
         [input-params : AstParamList (struct-get inputs params)]
         [input-types : AstTypeList (tc-elided-param-type-list input-params)]
         [lifetime : TcMaybeNameId
-          (tc-signature-single-input-lifetime input-types)]
-        (match (tc-elide-output-type ret lifetime)
+          (tc-signature-single-input-lifetime type-bases input-types)]
+        (match (tc-elide-output-type type-bases ret lifetime)
           [(ResultTcElidedType.Ok output)
             (ResultTcElidedSignature.Ok
               (TcElidedSignature input-params (struct-get output ty)))]
@@ -18800,7 +18946,7 @@
   [ctx : TcContext]
   [args : AstTypeList]
   [ret : AstType]) : ResultTcUnit
-  (match (tc-elide-function-type args ret)
+  (match (tc-elide-function-type (tc-context-type-bases ctx) args ret)
     [(ResultTcElidedType.Ok normalized)
       (match (struct-get normalized ty)
         [(AstType.Func normalized-args normalized-ret)
@@ -19942,7 +20088,10 @@
   [maybe-ret : AstMaybeType]) : ResultTcUnit
   (match maybe-ret
     [(AstMaybeType.Some ret)
-      (match (tc-elide-function-signature params ret)
+      (match (tc-elide-function-signature
+        (tc-context-type-bases ctx)
+        params
+        ret)
         [(ResultTcElidedSignature.Ok signature)
           (match (tc-source-param-list-policy-ok
             ctx
@@ -19952,7 +20101,12 @@
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
         [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
     [(AstMaybeType.No)
-      (match (tc-elide-input-params-at (& params) 0 0 (ast-param-list-new))
+      (match (tc-elide-input-params-at
+        (tc-context-type-bases ctx)
+        (& params)
+        0
+        0
+        (ast-param-list-new))
         [(ResultTcElidedParams.Ok inputs)
           (tc-source-param-list-policy-ok ctx (struct-get inputs params))]
         [(ResultTcElidedParams.Err message) (ResultTcUnit.Err message)])]))
@@ -20368,7 +20522,10 @@
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
       [(AstDecl.DefFn decl-meta _ params ret body-box _)
-        (match (tc-elide-function-signature params ret)
+        (match (tc-elide-function-signature
+          (tc-context-type-bases ctx)
+          params
+          ret)
           [(ResultTcElidedSignature.Ok signature)
             (let
               [signature-params : AstParamList (struct-get signature params)]
@@ -24139,7 +24296,10 @@
                 (ResultTcType.Err
                   "typecheck: top-level value requires annotation")])]))]
     [(AstDecl.DefFn decl-meta _ params ret _ _)
-      (match (tc-elide-function-signature params ret)
+      (match (tc-elide-function-signature
+        (tc-context-type-bases ctx)
+        params
+        ret)
         [(ResultTcElidedSignature.Ok signature)
           (ResultTcType.Ok
             (ast-ty-func
@@ -45635,7 +45795,10 @@
   [allow-immutable-reference-captures : bool]) : ResultTcType
   (match maybe-ret
     [(AstMaybeType.Some ret)
-      (match (tc-elide-function-signature params ret)
+      (match (tc-elide-function-signature
+        (tc-context-type-bases ctx)
+        params
+        ret)
         [(ResultTcElidedSignature.Ok signature)
           (tc-lambda-expr-normalized-with-capture-check
             ctx
@@ -45646,7 +45809,12 @@
             allow-immutable-reference-captures)]
         [(ResultTcElidedSignature.Err message) (ResultTcType.Err message)])]
     [(AstMaybeType.No)
-      (match (tc-elide-input-params-at (& params) 0 0 (ast-param-list-new))
+      (match (tc-elide-input-params-at
+        (tc-context-type-bases ctx)
+        (& params)
+        0
+        0
+        (ast-param-list-new))
         [(ResultTcElidedParams.Ok inputs)
           (tc-lambda-expr-normalized-with-capture-check
             ctx
@@ -79617,7 +79785,10 @@
     (tc-nominal-owner-cache-reset!)
     (match decl
       [(AstDecl.DefFn decl-meta name params ret body-box _)
-        (match (tc-elide-function-signature params ret)
+        (match (tc-elide-function-signature
+          (tc-context-type-bases ctx)
+          params
+          ret)
           [(ResultTcElidedSignature.Ok signature)
             (tc-check-fn-decl-scoped
               ctx
@@ -79681,7 +79852,10 @@
     [(AstDecl.DefFn decl-meta name params ret body-box _)
       ;; Unreachable via the dispatcher above; kept so a direct call can never
       ;; silently skip a function body check.
-      (match (tc-elide-function-signature params ret)
+      (match (tc-elide-function-signature
+        (tc-context-type-bases ctx)
+        params
+        ret)
         [(ResultTcElidedSignature.Ok signature)
           (tc-check-fn-decl-scoped
             ctx

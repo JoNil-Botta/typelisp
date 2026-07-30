@@ -1,7 +1,7 @@
 (import stdlib.io)
 
 ;; lint-allow: unused-import
-(import stdlib.string)
+(import stdlib.byte_buf)
 
 (define (main) : i64
-  (string.string-length (io.read-stdin-bytes -1)))
+  (byte_buf.len (io.read-stdin-bytes -1)))

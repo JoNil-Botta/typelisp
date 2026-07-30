@@ -49,6 +49,7 @@
 ;# FNV-1a fold with no division, so the printed decimal matches the C baseline's
 ;# `%lld` bit for bit.
 (import stdlib.array)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -588,7 +589,7 @@
 
 (define (cfg-bench [path : String] [rounds : i64]) : i64
   (let
-    [text : String (io.read-file path)]
+    [text : String (byte_buf.to-string (io.read-file path))]
     [capacity : i64 (+ (/ (string.string-length text) 2) 8)]
     [functions : i64 0]
     [cursor : i64 1]

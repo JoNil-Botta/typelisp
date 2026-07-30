@@ -25,6 +25,12 @@
 (import token)
 (import sym_i64_env)
 
+(define (lsp-read-file-text-or [path : (& source str)] [fallback : String]) : String
+  (byte_buf.to-string (io.read-file-or path (byte_buf.from-string fallback))))
+
+(define (lsp-write-file-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
+
 (define (lsp-str2 [a : String] [b : String]) : String
   (string.concat3 a b ""))
 
@@ -370,7 +376,7 @@
     (if (or lsp-frame-memory-eof (>= start n))
       (begin
         (set! lsp-frame-memory-eof true)
-        (io.StdinRead "" true))
+        (io.StdinRead (byte_buf.new) true))
       (let
         [end : i64 start]
         [found-newline : bool false]
@@ -383,13 +389,15 @@
             (begin
               (set! lsp-frame-memory-input-offset (+ end 1))
               (io.StdinRead
-                (string.substring lsp-frame-memory-input start (- end start))
+                (byte_buf.from-string
+                  (string.substring lsp-frame-memory-input start (- end start)))
                 false))
             (begin
               (set! lsp-frame-memory-input-offset n)
               (set! lsp-frame-memory-eof true)
               (io.StdinRead
-                (string.substring lsp-frame-memory-input start (- n start))
+                (byte_buf.from-string
+                  (string.substring lsp-frame-memory-input start (- n start)))
                 true))))))))
 
 (define (lsp-frame-memory-read-bytes [count : i64]) : io.StdinRead
@@ -409,7 +417,8 @@
         (set! lsp-frame-memory-eof true)
         unit)
       (io.StdinRead
-        (string.substring lsp-frame-memory-input start take)
+        (byte_buf.from-string
+          (string.substring lsp-frame-memory-input start take))
         lsp-frame-memory-eof))))
 
 (define (lsp-frame-input-read-line) : io.StdinRead
@@ -435,7 +444,8 @@
         (let
           [line-read : io.StdinRead (lsp-frame-input-read-line)]
           [line : String
-            (lsp-frame-trim-right-space-cr (io.stdin-read-text line-read))]
+            (lsp-frame-trim-right-space-cr
+              (byte_buf.to-string (io.stdin-read-buffer line-read)))]
           (if (io.stdin-read-eof? line-read)
             (if (= (string.string-length line) 0)
               (if saw-header
@@ -476,7 +486,8 @@
           (let
             [payload-read : io.StdinRead
               (lsp-frame-input-read-bytes content-length)]
-            [payload : String (io.stdin-read-text payload-read)]
+            [payload : String
+              (byte_buf.to-string (io.stdin-read-buffer payload-read))]
             (if (and
               (io.stdin-read-eof? payload-read)
               (< (string.string-length payload) content-length))
@@ -486,12 +497,12 @@
 (define (lsp-frame-stdout-write [text : String]) : unit
   (if lsp-frame-memory-active
     (lsp-frame-memory-stdout-append! text)
-    (io.stdout-write (& text))))
+    (io.stdout-write (byte_buf.str-as-bytes (& text)))))
 
 (define (lsp-frame-stderr-write [text : String]) : unit
   (if lsp-frame-memory-active
     (lsp-frame-memory-stderr-append! text)
-    (io.stderr-write (& text))))
+    (io.stderr-write (byte_buf.str-as-bytes (& text)))))
 
 (define (lsp-frame-stdout-flush) : unit
   (if lsp-frame-memory-active
@@ -1131,24 +1142,26 @@
     (if (string.eq path "")
       doc
       (match (io.try-read-file (& path))
-        [(io.OkIoString disk-text)
-          (if (string.eq disk-text (struct-get doc text))
-            doc
-            (let
-              [updated : LspDocument
-                (LspDocument
-                  (struct-get doc uri)
-                  path
-                  disk-text
-                  -1
-                  (struct-get doc diagnostic-uris)
-                  (lsp_decl_vec.new)
-                  false
-                  LspCheckCacheInvalid)]
-              (begin
-                (lsp_document_vec.set (&mut docs) index updated)
-                updated)))]
-        [(io.ErrIoString _) doc]))))
+        [(io.OkIoBytes disk-contents)
+          (let
+            [disk-text : String (byte_buf.to-string disk-contents)]
+            (if (string.eq disk-text (struct-get doc text))
+              doc
+              (let
+                [updated : LspDocument
+                  (LspDocument
+                    (struct-get doc uri)
+                    path
+                    disk-text
+                    -1
+                    (struct-get doc diagnostic-uris)
+                    (lsp_decl_vec.new)
+                    false
+                    LspCheckCacheInvalid)]
+                (begin
+                  (lsp_document_vec.set (&mut docs) index updated)
+                  updated))))]
+        [(io.ErrIoBytes _) doc]))))
 
 (define (lsp-documents-lookup-resynced
   [docs : lsp_document_vec.Vec]
@@ -1454,7 +1467,7 @@
     [path : String (compiler-diagnostic-span-path span)]
     (if (or (string.eq path "") (string.eq path fallback-path))
       fallback-text
-      (io.read-file-or (& path) ""))))
+      (lsp-read-file-text-or (& path) ""))))
 
 (define (lsp-position-from-byte-line-col
   [text : String]
@@ -3834,7 +3847,7 @@
       (not (lsp-string-vec-contains? paths resolved)))
       (LspModuleSet
         (lsp-string-vec-push-copy paths resolved)
-        (lsp-string-vec-push-copy texts (io.read-file-or (& resolved) "")))
+        (lsp-string-vec-push-copy texts (lsp-read-file-text-or (& resolved) "")))
       set)))
 
 ;; Add every module `text` imports (resolved like the loader) to the set.
@@ -3958,7 +3971,7 @@
         (if (string.eq resolved "")
           LspDefLocation.Missing
           (let
-            [src : String (io.read-file-or (& resolved) "")]
+            [src : String (lsp-read-file-text-or (& resolved) "")]
             [off : i64 (lsp-find-def-or-variant-offset-in src needle)]
             (if (>= off 0)
               (lsp-def-loc-from
@@ -4878,7 +4891,7 @@
         (if (string.eq resolved "")
           LspDefSource.Missing
           (let
-            [src : String (io.read-file-or (& resolved) "")]
+            [src : String (lsp-read-file-text-or (& resolved) "")]
             [off : i64 (lsp-find-def-form-in src needle)]
             (if (>= off 0)
               (LspDefSource.Found src off)
@@ -6538,7 +6551,7 @@
   [formatted : String]) : LspSaveResult
   (match (lsp-validate-edited-document formatted)
     [(LspEditResult.Ok _)
-      (match (io.try-write-file (& path) (& formatted))
+      (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& formatted)))
         [(io.OkIoUnit)
           (let
             [cached-uri : String (lsp-cache-string-copy uri)]
@@ -7036,7 +7049,7 @@
           (match (lsp-file-uri-to-path uri)
             [(LspUriPath.Ok path)
               (let
-                [text : String (io.read-file-or (& path) "")]
+                [text : String (lsp-read-file-text-or (& path) "")]
                 (if (string.eq text "")
                   (begin
                     (lsp-write-response
@@ -7732,9 +7745,10 @@
                                             (fs.path-join (& path) (& entry))]
                                           (match (io.try-read-file
                                             (& entry-path))
-                                            [(io.OkIoString source)
+                                            [(io.OkIoBytes contents)
                                               (if (lsp-decls-contain-name?
-                                                (lsp-scan-decls source)
+                                                (lsp-scan-decls
+                                                  (byte_buf.to-string contents))
                                                 name)
                                                 (let
                                                   [entry-uri : String
@@ -7752,7 +7766,7 @@
                                                         (json.JsonString name))
                                                       results)))
                                                 unit)]
-                                            [(io.ErrIoString _) unit]))
+                                            [(io.ErrIoBytes _) unit]))
                                         unit)
                                       (set! i (+ i 1)))))
                                 (lsp-write-response
@@ -8674,20 +8688,22 @@
                   (set! status 2))]
               [(ResultLspTranscriptBatchEntry.Ok entry)
                 (let
-                  [input : String (io.read-file (struct-get entry input-path))]
+                  [input : String
+                    (byte_buf.to-string
+                      (io.read-file (struct-get entry input-path)))]
                   [result : LspTranscriptResult
                     (lsp-frame-run-transcript
                       (& input)
                       stdlib-roots
                       prefix-cache-stats)]
                   (begin
-                    (io.write-file
+                    (lsp-write-file-text
                       (struct-get entry stdout-path)
                       (struct-get result stdout))
-                    (io.write-file
+                    (lsp-write-file-text
                       (struct-get entry stderr-path)
                       (struct-get result stderr))
-                    (io.write-file
+                    (lsp-write-file-text
                       (struct-get entry status-path)
                       (string.append
                         (string.int->string (struct-get result status))
@@ -8714,7 +8730,7 @@
       (io.print-error "\n")
       2)
     (let
-      [text : String (io.read-file manifest-path)]
+      [text : String (byte_buf.to-string (io.read-file manifest-path))]
       [error : String (lsp-transcript-batch-validate text)]
       (if (> (string.string-length error) 0)
         (begin

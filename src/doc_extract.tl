@@ -11,6 +11,7 @@
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -549,7 +550,7 @@
       (DocExtraction.Extraction module-doc (doc-item-array-to-list items)))))
 
 (define (doc-extract-file [path : String]) : DocExtraction
-  (doc-extract-source (io.read-file path)))
+  (doc-extract-source (byte_buf.to-string (io.read-file path))))
 
 (define (doc-extract-smoke-source) : String
   ";# Module title

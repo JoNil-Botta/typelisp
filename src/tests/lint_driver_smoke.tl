@@ -1,10 +1,14 @@
 ;; lint_driver_smoke.tl - Runnable smoke for lint_driver_core.tl: drives
 ;; the full load -> lint -> render path on an embedded source and returns 42.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as lint_svec)
 (import "../lint_driver_core.tl")
+
+(define (lint-driver-smoke-write-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (lint-driver-smoke-string-concat-source) : String
   "(define (main) : i64
@@ -1202,37 +1206,37 @@
 (define (lint-driver-smoke-unsafe-surface-self-test) : i64
   (begin
     (compiler-load-test-mkdir "target/lint_unsafe_surface")
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/dep.tl"
       (lint-driver-smoke-unsafe-surface-dep-source))
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/legacy_dep.tl"
       (lint-driver-smoke-unsafe-surface-legacy-dep-source))
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/required_a.tl"
       (lint-driver-smoke-unsafe-surface-required-source))
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/required_b.tl"
       (lint-driver-smoke-unsafe-surface-required-slash-source))
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/safe.tl"
       (lint-driver-smoke-unsafe-surface-safe-source))
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/shadow.tl"
       (lint-driver-smoke-unsafe-surface-shadow-source))
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/macro.tl"
       (lint-driver-smoke-unsafe-surface-macro-source))
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/local_value.tl"
       (lint-driver-smoke-unsafe-surface-local-value-source))
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/callable_value.tl"
       (lint-driver-smoke-unsafe-surface-callable-value-source))
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/legacy.tl"
       (lint-driver-smoke-unsafe-surface-legacy-source))
-    (io.write-file
+    (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/type_error.tl"
       (lint-driver-smoke-unsafe-surface-type-error-source))
     (let

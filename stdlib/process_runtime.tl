@@ -20,6 +20,7 @@
 ;#
 ;# Usage: imported by `tl` (which provides the public wrappers).
 (import stdlib.array)
+(import stdlib.byte_buf)
 (import stdlib.byte_buf_core)
 (import stdlib.env)
 
@@ -1269,9 +1270,11 @@
                   (stdlib.process_runtime.spawn-error))
                 (let
                   [stdout-text : String
-                    (io.read-fd-to-string (struct-get spawn stdout-fd))]
+                    (byte_buf.to-string
+                      (io.read-fd-to-byte-buf (struct-get spawn stdout-fd)))]
                   [stderr-text : String
-                    (io.read-fd-to-string (struct-get spawn stderr-fd))]
+                    (byte_buf.to-string
+                      (io.read-fd-to-byte-buf (struct-get spawn stderr-fd)))]
                   [status : i64
                     (stdlib.process_runtime.decode-status
                       (array-ref statusbuf 0))]
@@ -1481,11 +1484,13 @@
           (stdlib.process_runtime.linux-close-if stderr-fd)
           (stdlib.process_runtime.wait-error))
         (let
-          [stdout-text : String (io.read-fd-to-string stdout-fd)]
+          [stdout-text : String
+            (byte_buf.to-string (io.read-fd-to-byte-buf stdout-fd))]
           (begin
             (stdlib.process_runtime.linux-close-if stdout-fd)
             (let
-              [stderr-text : String (io.read-fd-to-string stderr-fd)]
+              [stderr-text : String
+                (byte_buf.to-string (io.read-fd-to-byte-buf stderr-fd))]
               (begin
                 (stdlib.process_runtime.linux-close-if stderr-fd)
                 (stdlib.process_runtime.output-ok

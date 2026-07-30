@@ -1,8 +1,9 @@
 ;# Lifetime-preserving I/O caller-result APIs.
 ;#
-;# This module stays separate from `io.tl` while the compatibility wrapper keeps
-;# the owned `String` API. It exposes helpers that may return caller-provided
-;# fallback text without copying.
+;# This module is the explicit text conversion boundary over binary `io.tl`
+;# reads. It exposes helpers that may return caller-provided fallback text
+;# without copying.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -39,7 +40,7 @@
   (ReadFileOrResult fallback owned true))
 
 ;: Materialize a result as an owned `String`. Borrowed branches are copied at
-;: this explicit compatibility boundary.
+;: this explicit binary-to-text materialization boundary.
 (define (read-file-or-result-string [result : (ReadFileOrResult fallback)]) : String
   (if (read-file-or-result-owned? result)
     (struct-get result owned)
@@ -55,9 +56,13 @@
       (read-file-or-borrowed-result fallback)]
     (begin
       (match (io.try-read-file path)
-        [(io.OkIoString contents)
-          (set! result (read-file-or-owned-result-like fallback contents))]
-        [(io.ErrIoString _) unit])
+        [(io.OkIoBytes contents)
+          (set!
+            result
+            (read-file-or-owned-result-like
+              fallback
+              (byte_buf.to-string contents)))]
+        [(io.ErrIoBytes _) unit])
       result)))
 
 ;: Inline test helper that forces an IO caller-result test failure.

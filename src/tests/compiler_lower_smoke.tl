@@ -1,4 +1,5 @@
 ;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.text_buf)
@@ -8,6 +9,9 @@
 (import "../compiler_driver_core.tl")
 (import "../compiler_lower_tests.tl")
 (import sym_i64_env)
+
+(define (compiler-lower-smoke-write-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (compiler-lower-smoke-foreach-multi-output-source) : String
   "(define (fill [a : (Array i64)] [b : (Array i64)] [out-x : (Array i64)] [out-y : (Array i64)] [n : i64] [scale : i64] [offset : i64]) : unit
@@ -180,13 +184,13 @@
           items))]
     (begin
       (compiler-load-test-mkdir root)
-      (io.write-file
+      (compiler-lower-smoke-write-text
         dep
         "(module stdlib.maybe_string)
 (defenum MaybeString (No) (Some String))
 (define (maybe-string-single [value : String]) : MaybeString
   (MaybeString.Some value))")
-      (io.write-file
+      (compiler-lower-smoke-write-text
         entry
         "(import stdlib.maybe_string)
 (define (main) : i64
@@ -269,7 +273,7 @@
           (svec.push (&mut items) "stdlib")
           items))]
     (begin
-      (io.write-file
+      (compiler-lower-smoke-write-text
         path
         (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
       (match (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
@@ -293,7 +297,9 @@
           (svec.push (&mut items) "stdlib")
           items))]
     (begin
-      (io.write-file path "(define (no-main-direct-helper) : i64 7)")
+      (compiler-lower-smoke-write-text
+        path
+        "(define (no-main-direct-helper) : i64 7)")
       (lower-no-main-entry-prune-set! true)
       (compiler-driver-reset-file-state!)
       (match (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg

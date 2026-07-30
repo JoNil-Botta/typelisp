@@ -1,3 +1,4 @@
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.str_cat)
 (import stdlib.test)
@@ -15,7 +16,7 @@
   [message : String]) : unit
   (begin
     (assert-owned-string-eq
-      (io.stdin-read-text read)
+      (byte_buf.to-string (io.stdin-read-buffer read))
       expected-text
       (str_cat.str-cat message " text"))
     (test.assert-bool-eq

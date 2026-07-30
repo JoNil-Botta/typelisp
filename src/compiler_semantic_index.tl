@@ -1,4 +1,5 @@
 ;; compiler_semantic_index.tl - Owned semantic source index for compiler tooling.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.string)
@@ -2620,7 +2621,7 @@
                         [(string.eq path entry-path)
                           (string.copy (& entry-source))]
                         [(and (not (string.eq path "")) (io.file-exists? path))
-                          (io.read-file path)]
+                          (byte_buf.to-string (io.read-file path))]
                         [else ""])))
                   unit)
                 (set! (struct-get walk-state ctx) decl-ctx)

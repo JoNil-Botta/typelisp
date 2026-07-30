@@ -3,6 +3,7 @@
 ;; Source-file runs build and execute in-process through stdlib fs/process
 ;; helpers. Package runs reuse the package build path, then execute the emitted
 ;; binary artifact. `--direct` remains accepted as a compatibility no-op.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.vector)
@@ -302,9 +303,10 @@
   [source : String]
   [stdlib-roots : cli_svec.Vec]) : i64
   (match (io.try-read-file (& source))
-    [(io.ErrIoString _) 0]
-    [(io.OkIoString text)
+    [(io.ErrIoBytes _) 0]
+    [(io.OkIoBytes contents)
       (let
+        [text : String (byte_buf.to-string contents)]
         [report : DocTestRunReport
           (doc-test-typecheck-source-with-roots source text stdlib-roots)]
         (if (doc-test-run-report-ok? report)

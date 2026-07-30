@@ -6,8 +6,9 @@
 ;; directly. Imported files provide runtime declarations but do not contribute
 ;; their own tests to this source's harness. Normal compile paths ignore
 ;; `AstDecl.Test`.
-(import stdlib.io)
 (import stdlib.arena)
+(import stdlib.byte_buf)
+(import stdlib.io)
 (import stdlib.process)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as tltest_name_map)
@@ -26,6 +27,9 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
+
+(define (tltest-write-text [path : String] [contents : String]) : unit
+  (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (defenum TestMode
   (Run)
@@ -330,9 +334,10 @@
 
 (define (tltest-batch-paths [list-path : String]) : ResultTestBatchPaths
   (match (io.try-read-file (& list-path))
-    [(io.OkIoString text)
-      (ResultTestBatchPaths.Ok (tltest-batch-paths-from-text text))]
-    [(io.ErrIoString error)
+    [(io.OkIoBytes contents)
+      (ResultTestBatchPaths.Ok
+        (tltest-batch-paths-from-text (byte_buf.to-string contents)))]
+    [(io.ErrIoBytes error)
       (ResultTestBatchPaths.Err
         (string.append
           "test: failed to read --batch list file: "
@@ -3491,7 +3496,7 @@
         [roots : cli_svec.Vec (tltest-roots-for-self-test)]
         [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
         (begin
-          (io.write-file source (tltest-nested-module-macro-vector-source))
+          (tltest-write-text source (tltest-nested-module-macro-vector-source))
           (match (compiler-driver-load-file-with-runtime
             source
             roots
@@ -3568,7 +3573,9 @@
         [roots : cli_svec.Vec (tltest-roots-for-self-test)]
         [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
         (begin
-          (io.write-file source (tltest-nested-generated-result-helper-source))
+          (tltest-write-text
+            source
+            (tltest-nested-generated-result-helper-source))
           (match (compiler-driver-load-file-with-runtime
             source
             roots
@@ -3613,7 +3620,9 @@
         [source : String (source-tool-fs-path-join dir "cfg_inline.tl")]
         [roots : cli_svec.Vec (tltest-roots-for-self-test)]
         (begin
-          (io.write-file source "(cfg test (test package-cfg-inline unit))\n")
+          (tltest-write-text
+            source
+            "(cfg test (test package-cfg-inline unit))\n")
           (let
             [legacy-roots : cli_svec.Vec (clone roots)]
             (match (compiler-driver-load-package-file-with-runtime-owned-cfg
@@ -3642,7 +3651,7 @@
     (tltest-package-cfg-inline-load-self-test?)
     (io.panic "test CLI package loader did not enable test cfg")))
 
-(define (tltest-stdlib-io-string-helper-lower-self-test?) : bool
+(define (tltest-stdlib-io-bytes-surface-lower-self-test?) : bool
   (match (source-tool-create-temp-dir "tltest-stdlib-io-lower")
     [(ResultSourceToolString.Err _) false]
     [(ResultSourceToolString.Ok dir)
@@ -3652,13 +3661,16 @@
         [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
         (begin
           (tltest-inline-reset-load-state!)
-          (io.write-file
+          (tltest-write-text
             source
             "(import \"stdlib/io.tl\")
+(import stdlib.byte_buf)
 
 (define (main) : i64
   (begin
-    (let [text : String \"ok\"] (stdout-write (& text)))
+    (let
+      [text : String \"ok\"]
+      (stdout-write (byte_buf.str-as-bytes (& text))))
     0))
 ")
           (match (compiler-driver-load-file-with-runtime
@@ -3689,9 +3701,9 @@
                     false)])])))]))
 
 (test
-  test-cli-stdlib-io-import-lowers-string-helper
+  test-cli-stdlib-io-import-lowers-bytes-surface
   (unless
-    (tltest-stdlib-io-string-helper-lower-self-test?)
+    (tltest-stdlib-io-bytes-surface-lower-self-test?)
     (io.panic "stdlib/io imported stdout-write failed to lower string helper")))
 
 (define (tltest-typecheck-cache-scope
@@ -4109,7 +4121,7 @@
 
 (define (tltest-source-has-inline-tests? [source : String]) : bool
   (let
-    [text : String (io.read-file source)]
+    [text : String (byte_buf.to-string (io.read-file source))]
     (tltest-source-has-inline-tests-from
       text
       0

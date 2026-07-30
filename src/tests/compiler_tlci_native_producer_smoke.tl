@@ -16,6 +16,7 @@
 (import compiler_intern as ci)
 (import stdlib.array)
 (import stdlib.arena)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as producer_test_svec)
@@ -2591,7 +2592,8 @@
 ;; macro instead of maintaining a simplified copy. Refs #5656.
 (define (producer-test-str-cat-scoped-native-image-ok?) : bool
   (let
-    [source : String (io.read-file "stdlib/str_cat_runtime.tl")]
+    [source : String
+      (byte_buf.to-string (io.read-file "stdlib/str_cat_runtime.tl"))]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (match (parse-ast-source source)
@@ -2991,7 +2993,7 @@
 (define (main) : i64
   (if (= (io.arg-count) 6)
     (if (producer-test-emitted-bytes-ok?
-      (tlci-string->bytes (io.read-file (io.arg 1)))
+      (byte_buf.to-array (io.read-file (io.arg 1)))
       (io.arg 2)
       (io.arg 3)
       (io.arg 4)

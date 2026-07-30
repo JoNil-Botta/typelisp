@@ -243,6 +243,23 @@
             (byte_buf.empty? (byte_buf.clear! text-buf))
             "clear empties buffer"))))))
 
+(define (assert-array-ownership-api) : unit
+  (let
+    [prefix : byte_buf.ByteBuf
+      (byte_buf.from-array-prefix
+        (make-array (make-u8 65) (make-u8 0) (make-u8 255))
+        2)]
+    [copied : (Array u8) (byte_buf.to-array prefix)]
+    [full : byte_buf.ByteBuf
+      (byte_buf.from-array (make-array (make-u8 7) (make-u8 8) (make-u8 9)))]
+    (begin
+      (test.assert-i64-eq (byte_buf.len prefix) 2 "array prefix len")
+      (test.assert-i64-eq (array-length copied) 2 "to-array live len")
+      (assert-u8-eq (array-ref copied 0) 65 "to-array first byte")
+      (assert-u8-eq (array-ref copied 1) 0 "to-array nul byte")
+      (test.assert-i64-eq (byte_buf.len full) 3 "from-array full len")
+      (assert-u8-eq (byte_buf.ref full 2) 9 "from-array final byte"))))
+
 (define (main) : i64
   (begin
     (assert-basic-growth)
@@ -254,4 +271,5 @@
     (assert-byte-buf-views)
     (assert-binary-string)
     (assert-public-copy-api)
+    (assert-array-ownership-api)
     42))

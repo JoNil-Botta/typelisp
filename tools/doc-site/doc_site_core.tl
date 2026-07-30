@@ -3,6 +3,7 @@
 ;; The TypeLisp site composition layer combines language guides and reusable API
 ;; trees. API pages still use the source/module documentation extractor and HTML
 ;; renderer without hard-coding TypeLisp guide-page knowledge into that path.
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.string)
@@ -1042,19 +1043,20 @@ pre {
   (let
     [status : i64 (io.read-file-status source)]
     (if (= status doc-site-status-ok)
-      (io.read-file source)
+      (byte_buf.to-string (io.read-file source))
       (io.panic (string.append "doc-site: missing input module: " source)))))
 
 (define (doc-site-read-markdown [source : String]) : String
   (let
     [status : i64 (io.read-file-status source)]
     (if (= status doc-site-status-ok)
-      (io.read-file source)
+      (byte_buf.to-string (io.read-file source))
       (io.panic (string.append "doc-site: missing language reference: " source)))))
 
 (define (doc-site-write-file [path : String] [contents : String]) : unit
   (let
-    [status : i64 (io.write-file-status path contents)]
+    [status : i64
+      (io.write-file-status path (byte_buf.str-as-bytes (& contents)))]
     (if (= status doc-site-status-ok)
       unit
       (doc-site-panic-unit (string.append "doc-site: could not write: " path)))))

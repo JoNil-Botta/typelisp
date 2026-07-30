@@ -6,6 +6,7 @@
 ;; lockfiles itself; build_cli_core.tl consumes these helpers for package build
 ;; cache reuse/refetch and lockfile integration.
 (import stdlib.fs)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -327,24 +328,29 @@
           "missing completion marker")]
       [else
         (match (io.try-read-file (& metadata-path))
-          [(io.ErrIoString error)
+          [(io.ErrIoBytes error)
             (PackageCacheEntryState.PartialOrCorrupt
               (string.copy entry-path)
               (string.append "metadata read failed: " (io.error-message error)))]
-          [(io.OkIoString metadata)
-            (if (not (string.eq metadata (package-cache-metadata-content key)))
+          [(io.OkIoBytes metadata)
+            (if (not
+              (string.eq
+                (byte_buf.to-string metadata)
+                (package-cache-metadata-content key)))
               (PackageCacheEntryState.PartialOrCorrupt
                 (string.copy entry-path)
                 "metadata mismatch")
               (match (io.try-read-file (& marker-path))
-                [(io.ErrIoString error)
+                [(io.ErrIoBytes error)
                   (PackageCacheEntryState.PartialOrCorrupt
                     (string.copy entry-path)
                     (string.append
                       "completion marker read failed: "
                       (io.error-message error)))]
-                [(io.OkIoString marker)
-                  (if (string.eq marker (package-cache-complete-marker-content))
+                [(io.OkIoBytes marker)
+                  (if (string.eq
+                    (byte_buf.to-string marker)
+                    (package-cache-complete-marker-content))
                     (PackageCacheEntryState.CompleteHit
                       (string.copy entry-path))
                     (PackageCacheEntryState.PartialOrCorrupt
@@ -413,9 +419,12 @@
     [marker-path : String (package-cache-complete-marker-path entry-path)]
     [metadata : String (package-cache-metadata-content key)]
     [marker : String (package-cache-complete-marker-content)]
-    (match (io.try-write-file (& metadata-path) (& metadata))
+    (match (io.try-write-file
+      (& metadata-path)
+      (byte_buf.str-as-bytes (& metadata)))
       [(io.ErrIoUnit error) (io.ErrIoUnit error)]
-      [(io.OkIoUnit) (io.try-write-file (& marker-path) (& marker))])))
+      [(io.OkIoUnit)
+        (io.try-write-file (& marker-path) (byte_buf.str-as-bytes (& marker)))])))
 
 (define (package-cache-parse-ok?
   [dep : String]
@@ -565,16 +574,22 @@
         (package-cache-prepare-entry-dir root (& partial-key))
         "prepare partial entry: ")
       (package-cache-expect-ok
-        (io.try-write-file (& partial-metadata-path) (& partial-metadata))
+        (io.try-write-file
+          (& partial-metadata-path)
+          (byte_buf.str-as-bytes (& partial-metadata)))
         "write partial metadata: ")
       (package-cache-expect-ok
         (package-cache-prepare-entry-dir root (& mismatch-key))
         "prepare mismatch entry: ")
       (package-cache-expect-ok
-        (io.try-write-file (& mismatch-metadata-path) (& wrong-metadata))
+        (io.try-write-file
+          (& mismatch-metadata-path)
+          (byte_buf.str-as-bytes (& wrong-metadata)))
         "write mismatch metadata: ")
       (package-cache-expect-ok
-        (io.try-write-file (& mismatch-marker-path) (& marker))
+        (io.try-write-file
+          (& mismatch-marker-path)
+          (byte_buf.str-as-bytes (& marker)))
         "write mismatch marker: ")
       (and
         (package-cache-state-miss? (package-cache-entry-state missing (& key)))

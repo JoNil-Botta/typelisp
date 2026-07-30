@@ -96,6 +96,18 @@
 (define (new) : ByteBuf
   (with-capacity 16))
 
+;: Take ownership of a dynamic byte array with every slot marked live.
+(define (from-array [slots : (__tl_dyn-array u8)]) : ByteBuf
+  (let
+    [n : i64 (array-length slots)]
+    (ByteBuf slots n)))
+
+;: Take ownership of a dynamic byte array with only its prefix marked live.
+(define (from-array-prefix [slots : (__tl_dyn-array u8)] [count : i64]) : ByteBuf
+  (begin
+    (check-range (array-length slots) 0 count)
+    (ByteBuf slots count)))
+
 ;: Trap when `[start, start + count)` is outside a sequence of `length` bytes.
 (define (check-range [length : i64] [start : i64] [count : i64]) : unit
   (cond
@@ -419,6 +431,15 @@
 (define (from-bytes [src : (& source bytes)]) : ByteBuf
   (from-bytes-range src 0 (bytes-length src)))
 
+;: Copy all live bytes into a fresh dynamic array.
+(define (to-array [buf : ByteBuf]) : (__tl_dyn-array u8)
+  (let
+    [n : i64 (len buf)]
+    [out : (__tl_dyn-array u8) (array.make-array u8 n)]
+    (begin
+      (byte-buf-copy-slots-range-into out 0 (struct-get buf slots) 0 n)
+      out)))
+
 ;: Copy all live bytes into a fresh `String`.
 (define (to-string [buf : ByteBuf]) : String
   (let
@@ -426,8 +447,6 @@
     (if (= n 0)
       ""
       (let
-        [out : (__tl_dyn-array u8) (array.make-array u8 n)]
-        (begin
-          (byte-buf-copy-slots-range-into out 0 (struct-get buf slots) 0 n)
-          (unsafe
-            (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) n)))))))
+        [out : (__tl_dyn-array u8) (to-array buf)]
+        (unsafe
+          (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) n))))))

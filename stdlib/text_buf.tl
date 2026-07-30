@@ -29,6 +29,9 @@
 ;# one.
 ;; lint-allow: unused-import
 (import stdlib.array)
+
+;; lint-allow: unused-import
+(import stdlib.byte_buf)
 (import stdlib.comptime)
 
 ;; lint-allow: unused-import

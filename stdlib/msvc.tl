@@ -16,6 +16,7 @@
 ;#   (msvc.find-tool (& target) (& tool)))
 ;# ```
 (import stdlib.env)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.process)
@@ -846,7 +847,8 @@
 
 ;: Inline test write-file helper.
 (define (test-write [path : String] [contents : String]) : unit
-  (test-assert-ok-unit (io.try-write-file (& path) (& contents))))
+  (test-assert-ok-unit
+    (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents)))))
 
 ;: Inline test helper to create a fake toolset bin directory.
 (define (test-mkdir-toolset-bin [toolset-root : String]) : String

@@ -8,6 +8,7 @@
 ;;   typelisp run selfhost/cli.tl -- doc --test input.tl
 ;;   typelisp run selfhost/cli.tl -- doc --test --batch inputs.txt
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as doc_svec)
@@ -55,13 +56,16 @@
 (define (doc-print-wrote [output-path : String]) : unit
   (io.print-string (string.append "Wrote " (string.append output-path "\n"))))
 
+(define (doc-write-text [output-path : String] [contents : String]) : unit
+  (io.write-file output-path (byte_buf.str-as-bytes (& contents))))
+
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
   (let
-    [source : String (io.read-file input-path)]
+    [source : String (byte_buf.to-string (io.read-file input-path))]
     [markdown : String
       (doc_render.doc-render-markdown (doc_extract.doc-extract-source source))]
     (begin
-      (io.write-file output-path markdown)
+      (doc-write-text output-path markdown)
       (doc-print-wrote output-path)
       0)))
 
@@ -215,7 +219,7 @@
                 [(ResultDocExpandedModules.Ok modules) modules]
                 [(ResultDocExpandedModules.Err _) (doc_module_vec.new)])]
             (begin
-              (io.write-file
+              (doc-write-text
                 output-path
                 (doc-render-loaded-markdown
                   input-path
@@ -245,7 +249,7 @@
         1)]
     [(ResultPackageSourceSet.Ok source-set)
       (begin
-        (io.write-file
+        (doc-write-text
           output-path
           (doc_render.doc-render-module-graph-markdown
             (doc-modules-from-package-sources (struct-get source-set sources))))
@@ -254,10 +258,10 @@
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
   (let
-    [source : String (io.read-file input-path)]
+    [source : String (byte_buf.to-string (io.read-file input-path))]
     [html : String (doc_html.doc-html-render-source input-path source)]
     (begin
-      (io.write-file output-path html)
+      (doc-write-text output-path html)
       (doc-print-wrote output-path)
       0)))
 
@@ -265,7 +269,7 @@
   (let
     [modules : doc_module_vec.Vec (doc-read-modules 2 (- (arg-count) 1))]
     (begin
-      (io.write-file
+      (doc-write-text
         output-path
         (doc_html.doc-html-render-module-graph modules))
       (doc-print-wrote output-path)
@@ -331,7 +335,7 @@
         0
         (- (doc_svec.len (& paths)) 1))]
     (begin
-      (io.write-file
+      (doc-write-text
         output-path
         (doc_render.doc-render-module-graph-markdown modules))
       (doc-print-wrote output-path)
@@ -386,9 +390,10 @@
 
 (define (doc-test-batch-paths [list-path : String]) : ResultDocTestBatchPaths
   (match (io.try-read-file (& list-path))
-    [(io.OkIoString text)
-      (ResultDocTestBatchPaths.Ok (doc-test-batch-paths-from-text text))]
-    [(io.ErrIoString error)
+    [(io.OkIoBytes contents)
+      (ResultDocTestBatchPaths.Ok
+        (doc-test-batch-paths-from-text (byte_buf.to-string contents)))]
+    [(io.ErrIoBytes error)
       (ResultDocTestBatchPaths.Err
         (string.append
           "doc: failed to read --batch list file: "

@@ -27827,6 +27827,7 @@
 (define (compiler-backend-fast-alloc-site-label
   [function : String]
   [current-label : i64]
+  [site : i64]
   [dst : i64]
   [suffix : String]) : String
   (compiler-backend-asm-label
@@ -27835,14 +27836,18 @@
       (str_cat.str-cat
         "alloc"
         (compiler-ir-label-text current-label)
-        "_v"
-        (string.int->string dst)
-        suffix))))
+        "_i"
+        (str_cat.str-cat
+          (string.int->string site)
+          "_v"
+          (string.int->string dst)
+          suffix)))))
 
 (define (compiler-backend-emit-inline-fast-alloc
   [target : CompilerBackendTarget]
   [function : String]
   [current-label : i64]
+  [site : i64]
   [dst : i64]
   [size : i64]
   [profile : bool]) : String
@@ -27852,18 +27857,21 @@
       (compiler-backend-fast-alloc-site-label
         function
         current-label
+        site
         dst
         "_slow")]
     [done-label : String
       (compiler-backend-fast-alloc-site-label
         function
         current-label
+        site
         dst
         "_done")]
     [profile-label : String
       (compiler-backend-fast-alloc-site-label
         function
         current-label
+        site
         dst
         "_profile_done")]
     [usable-end-offset : String
@@ -36086,6 +36094,7 @@
   [target : CompilerBackendTarget]
   [function : String]
   [current-label : i64]
+  [current-site : i64]
   [dst : i64]
   [name : i64]
   [args : CompilerIrCallArgs]
@@ -36123,6 +36132,7 @@
                 target
                 function
                 current-label
+                current-site
                 dst
                 fast-alloc-size
                 (compiler-backend-plan-provides-id?
@@ -38826,6 +38836,7 @@
           ctx.target
           ctx.function
           ctx.current-label
+          compiler-backend-emit-current-site
           dst
           name
           args
@@ -39954,6 +39965,7 @@
                   ctx.target
                   ctx.function
                   ctx.current-label
+                  compiler-backend-emit-current-site
                   dst
                   name
                   args
@@ -45819,6 +45831,14 @@
 (define compiler-backend-emit-current-count : i64
   0)
 
+;; Function-wide structural instruction ordinal of the current emit step. The
+;; optimizer may clone or reuse an IR destination vreg, so backend-local labels
+;; that surround one instruction need this site identity rather than assuming
+;; `(block, dst)` is unique. Unlike current-count, this is always exact even for
+;; stack-only plans because label identity is independent of register planning.
+(define compiler-backend-emit-current-site : i64
+  0)
+
 (define (compiler-backend-emit-needs-current-count?
   [plan-mask : i64]
   [const-hoist-sites : i64]
@@ -45871,6 +45891,11 @@
               ;; no const-hoist sites the point comparisons are unreachable.
               ;; AVX2 also uses this point to make predicated-store lane labels
               ;; unique and retains the count.
+              (set!
+                compiler-backend-emit-current-site
+                (-
+                  compiler-backend-emit-instr-post-base
+                  (- current-count current-index)))
               (set!
                 compiler-backend-emit-current-count
                 (if (compiler-backend-emit-needs-current-count?
@@ -53161,6 +53186,7 @@
     (set! compiler-backend-current-phi-target-count 0)
     (set! compiler-backend-emit-instr-post-base 0)
     (set! compiler-backend-emit-current-count 0)
+    (set! compiler-backend-emit-current-site 0)
     (set! compiler-backend-emit-instrs-loop-active false)
     (set! compiler-backend-emit-instrs-continue-pending false)
     (set! compiler-backend-shrinkwrap-bare-label "")

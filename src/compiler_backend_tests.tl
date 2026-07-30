@@ -14060,6 +14060,7 @@
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
+    [prev-current-site : i64 compiler-backend-emit-current-site]
     [prev-addr-forward-enabled : bool
       compiler-backend-addr-of-forwarding-enabled]
     [prev-addr-forward-src : (Array i64)
@@ -14137,6 +14138,7 @@
                 prev-vars)
               (set! compiler-backend-emit-instr-post-base prev-post-base)
               (set! compiler-backend-emit-current-count prev-current-count)
+              (set! compiler-backend-emit-current-site prev-current-site)
               (set!
                 compiler-backend-addr-of-forwarding-enabled
                 prev-addr-forward-enabled)
@@ -14167,6 +14169,7 @@
                 prev-vars)
               (set! compiler-backend-emit-instr-post-base prev-post-base)
               (set! compiler-backend-emit-current-count prev-current-count)
+              (set! compiler-backend-emit-current-site prev-current-site)
               (set!
                 compiler-backend-addr-of-forwarding-enabled
                 prev-addr-forward-enabled)
@@ -14200,6 +14203,7 @@
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
+    [prev-current-site : i64 compiler-backend-emit-current-site]
     [prev-addr-forward-enabled : bool
       compiler-backend-addr-of-forwarding-enabled]
     [prev-addr-forward-src : (Array i64)
@@ -14268,6 +14272,7 @@
                 prev-vars)
               (set! compiler-backend-emit-instr-post-base prev-post-base)
               (set! compiler-backend-emit-current-count prev-current-count)
+              (set! compiler-backend-emit-current-site prev-current-site)
               (set!
                 compiler-backend-addr-of-forwarding-enabled
                 prev-addr-forward-enabled)
@@ -14319,6 +14324,7 @@
                 prev-vars)
               (set! compiler-backend-emit-instr-post-base prev-post-base)
               (set! compiler-backend-emit-current-count prev-current-count)
+              (set! compiler-backend-emit-current-site prev-current-site)
               (set!
                 compiler-backend-addr-of-forwarding-enabled
                 prev-addr-forward-enabled)
@@ -23329,7 +23335,7 @@
       (and
         (compiler-backend-string-contains?
           asm
-          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_v0_slow\n")
+          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i0_v0_slow\n")
         (compiler-backend-string-contains?
           asm
           "    movq 16(%r8), %rax\n    leaq 16(%rax), %r10\n")
@@ -23380,6 +23386,87 @@
     (not (compiler-backend-inline-fast-alloc? 0))
     (not (compiler-backend-inline-fast-alloc? 10))
     (not (compiler-backend-inline-fast-alloc? 72))))
+
+(define (compiler-backend-inline-fast-alloc-reused-vreg-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Call
+      0
+      (ci.intern "tl_alloc")
+      (CompilerIrCallArgs.One (CompilerIrValue.I64 8))
+      (AstType.U64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Call
+        0
+        (ci.intern "tl_alloc")
+        (CompilerIrCallArgs.One (CompilerIrValue.I64 8))
+        (AstType.U64))
+      CompilerIrInstrList.Nil)))
+
+;; Optimizer cloning may retain a destination vreg. Exercise that shape
+;; directly so the regression stays two instructions instead of depending on
+;; the source size that happened to expose it in compiler_backend_tests.tl.
+(define (compiler-backend-inline-fast-alloc-reused-vreg-labels-ok?) : bool
+  (let
+    [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
+    [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+    [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+    [prev-current-count : i64 compiler-backend-emit-current-count]
+    [prev-current-site : i64 compiler-backend-emit-current-site]
+    [instrs : CompilerIrInstrList
+      (compiler-backend-inline-fast-alloc-reused-vreg-instrs)]
+    [count : i64 (compiler-ir-instr-list-count instrs)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
+        CompilerIrBlockList.Nil)]
+    [_position : unit
+      (begin
+        (compiler-backend-test-scavenge-install-ctx!
+          "_tl_test"
+          CompilerIrParamList.Nil
+          (AstType.U64)
+          1
+          blocks
+          CompilerRegAssignmentList.Nil)
+        (set! compiler-backend-emit-instr-post-base count)
+        (set! compiler-backend-emit-current-count count)
+        (set! compiler-backend-emit-current-site 0))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-test-instrs instrs CompilerRegAssignmentList.Nil 1)]
+    [_restore : unit
+      (begin
+        (compiler-backend-set-scavenge-ctx-ready!
+          prev-starts
+          prev-ends
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
+          prev-vars)
+        (set! compiler-backend-emit-instr-post-base prev-post-base)
+        (set! compiler-backend-emit-current-count prev-current-count)
+        (set! compiler-backend-emit-current-site prev-current-site))]
+    (match result
+      [(ResultCompilerBackend.Ok asm)
+        (backend-and4
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_test_allocentry_i0_v0_slow:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_test_allocentry_i1_v0_slow:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_test_allocentry_i0_v0_done:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_test_allocentry_i1_v0_done:\n"))]
+      [(ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-inline-fast-alloc-multi-size-source) : String
   "(define (make3 [x : i64]) : (Tuple i64 i64 i64)
@@ -29893,6 +29980,7 @@
         (compiler-backend-fast-alloc-next-load-ok?)
         (compiler-backend-fast-alloc-gate-ok?)
         (compiler-backend-inline-fast-alloc-result-ok?)
+        (compiler-backend-inline-fast-alloc-reused-vreg-labels-ok?)
         (compiler-backend-inline-fast-alloc-multi-size-ok?)
         (compiler-backend-inline-fast-alloc-emergency-preserved-ok?)
         (compiler-backend-inline-aggregate-storage-ok?)))

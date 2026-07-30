@@ -21845,18 +21845,6 @@
                         rhs-hoist)]
                     [lhs-reg : String
                       (compiler-backend-value-scalar-register assignments lhs)]
-                    ;; Exclude dst-home + lhs-reg: at this point the dst is not yet live
-                    ;; (so the query reads its home "free") and lhs goes into dst-home,
-                    ;; so the rhs scratch must avoid both or it collides (e.g. subq
-                    ;; %r8,%r8). Uses the emission's own homes (authoritative).
-                    [scav-rhs : String
-                      (compiler-backend-planned-or-scavenge-reg-here
-                        planned0
-                        (compiler-backend-scavenge-exclude-regs2
-                          dst-home
-                          lhs-reg)
-                        7
-                        "%r8")]
                     [rhs-operand : String
                       (if (string.eq rhs-hoist "")
                         (compiler-backend-binop-spill-source-operand
@@ -21954,37 +21942,50 @@
                                       operand-ty))))]
                             [(ResultCompilerBackend.Err message)
                               (ResultCompilerBackend.Err message)])
-                          (match (compiler-backend-emit-load-value-with-plan
-                            assignments
-                            rhs
-                            scav-rhs)
-                            [(ResultCompilerBackend.Ok rhs-asm)
-                              (match (compiler-backend-emit-load-value-with-plan
-                                assignments
-                                lhs
-                                dst-home)
-                                [(ResultCompilerBackend.Ok lhs-asm)
-                                  (ResultCompilerBackend.Ok
-                                    (string.append
-                                      rhs-asm
+                          ;; Only the staged fallback needs a scratch. Selecting
+                          ;; it before the commutative, LEA, and source-fold
+                          ;; branches can enqueue an emergency save for a
+                          ;; register absent from the chosen instruction.
+                          (let
+                            [scav-rhs : String
+                              (compiler-backend-planned-or-scavenge-reg-here
+                                planned0
+                                (compiler-backend-scavenge-exclude-regs2
+                                  dst-home
+                                  lhs-reg)
+                                7
+                                "%r8")]
+                            (match (compiler-backend-emit-load-value-with-plan
+                              assignments
+                              rhs
+                              scav-rhs)
+                              [(ResultCompilerBackend.Ok rhs-asm)
+                                (match (compiler-backend-emit-load-value-with-plan
+                                  assignments
+                                  lhs
+                                  dst-home)
+                                  [(ResultCompilerBackend.Ok lhs-asm)
+                                    (ResultCompilerBackend.Ok
                                       (string.append
-                                        lhs-asm
-                                        (compiler-backend-binop-reg-asm
-                                          type-segment-bases
-                                          mnem
-                                          operand-ty
-                                          (compiler-backend-sized-reg
+                                        rhs-asm
+                                        (string.append
+                                          lhs-asm
+                                          (compiler-backend-binop-reg-asm
                                             type-segment-bases
-                                            scav-rhs
-                                            operand-ty)
-                                          (compiler-backend-sized-reg
-                                            type-segment-bases
-                                            dst-home
-                                            operand-ty)))))]
-                                [(ResultCompilerBackend.Err message)
-                                  (ResultCompilerBackend.Err message)])]
-                            [(ResultCompilerBackend.Err message)
-                              (ResultCompilerBackend.Err message)])))))])])
+                                            mnem
+                                            operand-ty
+                                            (compiler-backend-sized-reg
+                                              type-segment-bases
+                                              scav-rhs
+                                              operand-ty)
+                                            (compiler-backend-sized-reg
+                                              type-segment-bases
+                                              dst-home
+                                              operand-ty)))))]
+                                  [(ResultCompilerBackend.Err message)
+                                    (ResultCompilerBackend.Err message)])]
+                              [(ResultCompilerBackend.Err message)
+                                (ResultCompilerBackend.Err message)]))))))])])
           (if (compiler-backend-signed-literal-divmod-src-shape?
             type-segment-bases
             op
@@ -22194,20 +22195,6 @@
                                   (and
                                     (compiler-backend-divmod-op? op)
                                     (string.eq rhs-reg staging))]
-                                [scav-rhs : String
-                                  (compiler-backend-planned-or-scavenge-reg-here
-                                    (if (compiler-backend-divmod-op? op)
-                                      planned2
-                                      planned1)
-                                    (if preserve-rhs-before-lhs?
-                                      (compiler-backend-scavenge-exclude-regs2
-                                        staging
-                                        lhs-reg)
-                                      (compiler-backend-scavenge-exclude-regs2
-                                        staging
-                                        ""))
-                                    7
-                                    "%r8")]
                                 (match (if (if (string.eq rhs-reg "")
                                   false
                                   (not (string.eq rhs-reg staging)))
@@ -22233,51 +22220,70 @@
                                             staging
                                             result-ty))))]
                                   [(CompilerBackendMaybeAsm.No)
-                                    (match (compiler-backend-emit-load-value-with-plan
-                                      assignments
-                                      rhs
-                                      scav-rhs)
-                                      [(ResultCompilerBackend.Ok rhs-asm)
-                                        (ResultCompilerBackend.Ok
+                                    ;; A directly encodable register source has
+                                    ;; already been selected above. Defer the
+                                    ;; side-effecting scratch request until this
+                                    ;; staged fallback is certain to consume it.
+                                    (let
+                                      [scav-rhs : String
+                                        (compiler-backend-planned-or-scavenge-reg-here
+                                          (if (compiler-backend-divmod-op? op)
+                                            planned2
+                                            planned1)
                                           (if preserve-rhs-before-lhs?
-                                            (string.append
-                                              rhs-asm
-                                              (string.append
-                                                lhs-asm
-                                                (string.append
-                                                  (compiler-backend-binop-asm-with-plan
-                                                    type-segment-bases
-                                                    op
-                                                    operand-ty
-                                                    scav-rhs
-                                                    staging
-                                                    planned3
-                                                    planned4)
-                                                  (compiler-backend-emit-store-typed-var-with-plan
-                                                    assignments
-                                                    dst
-                                                    staging
-                                                    result-ty))))
-                                            (string.append
-                                              lhs-asm
+                                            (compiler-backend-scavenge-exclude-regs2
+                                              staging
+                                              lhs-reg)
+                                            (compiler-backend-scavenge-exclude-regs2
+                                              staging
+                                              ""))
+                                          7
+                                          "%r8")]
+                                      (match (compiler-backend-emit-load-value-with-plan
+                                        assignments
+                                        rhs
+                                        scav-rhs)
+                                        [(ResultCompilerBackend.Ok rhs-asm)
+                                          (ResultCompilerBackend.Ok
+                                            (if preserve-rhs-before-lhs?
                                               (string.append
                                                 rhs-asm
                                                 (string.append
-                                                  (compiler-backend-binop-asm-with-plan
-                                                    type-segment-bases
-                                                    op
-                                                    operand-ty
-                                                    scav-rhs
-                                                    staging
-                                                    planned3
-                                                    planned4)
-                                                  (compiler-backend-emit-store-typed-var-with-plan
-                                                    assignments
-                                                    dst
-                                                    staging
-                                                    result-ty))))))]
-                                      [(ResultCompilerBackend.Err message)
-                                        (ResultCompilerBackend.Err message)])]))))])])]
+                                                  lhs-asm
+                                                  (string.append
+                                                    (compiler-backend-binop-asm-with-plan
+                                                      type-segment-bases
+                                                      op
+                                                      operand-ty
+                                                      scav-rhs
+                                                      staging
+                                                      planned3
+                                                      planned4)
+                                                    (compiler-backend-emit-store-typed-var-with-plan
+                                                      assignments
+                                                      dst
+                                                      staging
+                                                      result-ty))))
+                                              (string.append
+                                                lhs-asm
+                                                (string.append
+                                                  rhs-asm
+                                                  (string.append
+                                                    (compiler-backend-binop-asm-with-plan
+                                                      type-segment-bases
+                                                      op
+                                                      operand-ty
+                                                      scav-rhs
+                                                      staging
+                                                      planned3
+                                                      planned4)
+                                                    (compiler-backend-emit-store-typed-var-with-plan
+                                                      assignments
+                                                      dst
+                                                      staging
+                                                      result-ty))))))]
+                                        [(ResultCompilerBackend.Err message)
+                                          (ResultCompilerBackend.Err message)]))]))))])])]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))))))))
 

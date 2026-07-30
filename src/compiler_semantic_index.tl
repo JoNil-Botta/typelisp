@@ -1089,13 +1089,12 @@
           [resolved-maybe-ty : AstMaybeType
             (tc-let-binding-resolve-maybe-type ctx maybe-ty)]
           [binding-ty : AstType
-            (tc-resolve-type
-              ctx
-              (tc-let-binding-plain-bind-type ctx resolved-maybe-ty init-ty))]
+            (tc-let-binding-plain-bind-type ctx resolved-maybe-ty init-ty)]
           [recorded-maybe-ty : AstMaybeType
             (match resolved-maybe-ty
               [(AstMaybeType.Some ty) (AstMaybeType.Some ty)]
-              [(AstMaybeType.No) (AstMaybeType.Some binding-ty)])]
+              [(AstMaybeType.No)
+                (AstMaybeType.Some (tc-resolve-type ctx binding-ty))])]
           [bound : CompilerSemanticBindResult
             (compiler-semantic-bind-local!
               state
@@ -1819,48 +1818,55 @@
   [env : TcTypeEnv]
   [fact-env : TcTypeEnv]
   [facts-available : bool]
+  [bound-names : TcNameIdList]
   [pattern : AstPattern]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (match pattern
     [(AstPattern.Var name maybe-ty)
-      (compiler-semantic-bind-local!
-        state
-        scope
-        env
-        name
-        CompilerSemanticSymbolKind.Local
-        (if facts-available
-          (match (tc-lookup-visible-id (struct-get state ctx) fact-env name)
-            [(ResultTcType.Ok ty)
-              (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) ty))]
-            [(ResultTcType.Err _)
-              (match maybe-ty
-                [(AstMaybeType.Some ty)
-                  (AstMaybeType.Some
-                    (tc-resolve-type (struct-get state ctx) ty))]
-                [(AstMaybeType.No) AstMaybeType.No])])
+      (if (tc-name-id-list-contains bound-names name)
+        (compiler-semantic-bind-local!
+          state
+          scope
+          env
+          name
+          CompilerSemanticSymbolKind.Local
           (match maybe-ty
             [(AstMaybeType.Some ty)
+              ;; Preserve the existing public annotation text while the arm
+              ;; body uses the checker's exact fact environment.
               (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) ty))]
-            [(AstMaybeType.No) AstMaybeType.No]))
-        search-start
-        search-limit)]
+            [(AstMaybeType.No)
+              (if facts-available
+                (match (tc-lookup-visible-id
+                  (struct-get state ctx)
+                  fact-env
+                  name)
+                  [(ResultTcType.Ok ty)
+                    (AstMaybeType.Some
+                      (tc-resolve-type (struct-get state ctx) ty))]
+                  [(ResultTcType.Err _) AstMaybeType.No])
+                AstMaybeType.No)])
+          search-start
+          search-limit)
+        (CompilerSemanticBindResult scope env search-start))]
     [(AstPattern.Binding name)
-      (compiler-semantic-bind-local!
-        state
-        scope
-        env
-        name
-        CompilerSemanticSymbolKind.Local
-        (if facts-available
-          (match (tc-lookup-visible-id (struct-get state ctx) fact-env name)
-            [(ResultTcType.Ok ty)
-              (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) ty))]
-            [(ResultTcType.Err _) AstMaybeType.No])
-          AstMaybeType.No)
-        search-start
-        search-limit)]
+      (if (tc-name-id-list-contains bound-names name)
+        (compiler-semantic-bind-local!
+          state
+          scope
+          env
+          name
+          CompilerSemanticSymbolKind.Local
+          (if facts-available
+            (match (tc-lookup-visible-id (struct-get state ctx) fact-env name)
+              [(ResultTcType.Ok ty)
+                (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) ty))]
+              [(ResultTcType.Err _) AstMaybeType.No])
+            AstMaybeType.No)
+          search-start
+          search-limit)
+        (CompilerSemanticBindResult scope env search-start))]
     [(AstPattern.Tuple items)
       (compiler-semantic-bind-pattern-list!
         state
@@ -1868,6 +1874,7 @@
         env
         fact-env
         facts-available
+        bound-names
         (box-get items)
         search-start
         search-limit)]
@@ -1878,6 +1885,7 @@
         env
         fact-env
         facts-available
+        bound-names
         (box-get items)
         search-start
         search-limit)]
@@ -1889,6 +1897,7 @@
   [env : TcTypeEnv]
   [fact-env : TcTypeEnv]
   [facts-available : bool]
+  [bound-names : TcNameIdList]
   [patterns : AstPatternList]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
@@ -1907,6 +1916,7 @@
               next-env
               fact-env
               facts-available
+              bound-names
               (ast-pattern-list-get (& patterns) index (ast-pattern-fallback))
               cursor
               search-limit)]
@@ -1916,6 +1926,16 @@
             (set! cursor (struct-get bound next-search))
             (set! index (+ index 1)))))
       (CompilerSemanticBindResult next-scope next-env cursor))))
+
+(define (compiler-semantic-pattern-bound-names
+  [ctx : TcContext]
+  [scrutinee-ty : AstType]
+  [pattern : AstPattern]) : TcNameIdList
+  ;; An explicitly typed pattern variable is always a binder, including when
+  ;; the scrutinee is an enum. Bare enum variant names, by contrast, are not.
+  (match pattern
+    [(AstPattern.Var name _) (tc-name-id-list-add TcNameIdList.Nil name)]
+    [_ (tc-borrow-check-pattern-bound-names ctx scrutinee-ty pattern)]))
 
 (define (compiler-semantic-walk-match-arms!
   [state : CompilerSemanticWalkState]
@@ -1956,13 +1976,17 @@
                               env
                               fact-env
                               true
+                              (compiler-semantic-pattern-bound-names
+                                (struct-get state ctx)
+                                ty
+                                pattern)
                               pattern
                               cursor
                               body-start)]
                           (compiler-semantic-walk-node!
                             state
                             (struct-get bound scope)
-                            (struct-get bound env)
+                            fact-env
                             body))]
                       [(ResultTcEnv.Err _)
                         (let
@@ -1973,6 +1997,9 @@
                               env
                               env
                               false
+                              (tc-pattern-add-bound-name-ids
+                                pattern
+                                TcNameIdList.Nil)
                               pattern
                               cursor
                               body-start)]
@@ -1990,6 +2017,9 @@
                           env
                           env
                           false
+                          (tc-pattern-add-bound-name-ids
+                            pattern
+                            TcNameIdList.Nil)
                           pattern
                           cursor
                           body-start)]
@@ -2059,9 +2089,7 @@
                               [(ResultTcType.Ok init-ty)
                                 (let
                                   [binding-ty : AstType
-                                    (tc-resolve-type
-                                      ctx
-                                      (tc-type-without-regions init-ty))]
+                                    (tc-type-without-regions init-ty)]
                                   [recorded : CompilerSemanticBindResult
                                     (compiler-semantic-bind-local!
                                       state
@@ -2069,7 +2097,8 @@
                                       next-env
                                       name
                                       CompilerSemanticSymbolKind.Local
-                                      (AstMaybeType.Some binding-ty)
+                                      (AstMaybeType.Some
+                                        (tc-resolve-type ctx binding-ty))
                                       cursor
                                       init-start)]
                                   (CompilerSemanticBindResult
@@ -2258,9 +2287,7 @@
               scope
               env
               (match (tc-expr-id (struct-get state ctx) env scrutinee)
-                [(ResultTcType.Ok ty)
-                  (AstMaybeType.Some
-                    (tc-resolve-type (struct-get state ctx) ty))]
+                [(ResultTcType.Ok ty) (AstMaybeType.Some ty)]
                 [(ResultTcType.Err _) AstMaybeType.No])
               arms
               (compiler-semantic-expr-end-offset
@@ -3519,6 +3546,11 @@
     [source : String
       "(define (plus-one [x : i64]) : i64 (+ x 1))
 (define (drop-i64 [_value : i64]) : unit unit)
+(defenum SemanticChoice (SemanticEmpty) (SemanticFull i64))
+(define (enum-probe [value : SemanticChoice]) : i64
+  (match value
+    [SemanticEmpty 0]
+    [(SemanticFull item) item]))
 (define (resource-probe) : i64
   (with ([resource 7 drop-i64]) (+ resource 1)))
 (define (probe) : i64
@@ -3577,13 +3609,29 @@
               "resource"
               CompilerSemanticRecordRole.Definition
               0)]
+          [enum-variant-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticEmpty"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [enum-item-definition-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "item"
+              CompilerSemanticRecordRole.Definition
+              0)]
           (if (or
             (< scalar-definition-index 0)
             (< closure-definition-index 0)
             (< alias-definition-index 0)
             (< outer-callback-definition-index 0)
             (< inner-callback-definition-index 0)
-            (< resource-definition-index 0))
+            (< resource-definition-index 0)
+            (>= enum-variant-definition-index 0)
+            (< enum-item-definition-index 0))
             (begin
               (compiler-semantic-source-index-release! (&mut first))
               false)
@@ -3612,6 +3660,10 @@
                 (compiler-semantic-source-index-get
                   (& first)
                   resource-definition-index)]
+              [enum-item-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  enum-item-definition-index)]
               [closure-use-index : i64
                 (compiler-semantic-source-index-find-symbol-role
                   (& first)
@@ -3637,6 +3689,11 @@
                   (& first)
                   (struct-get resource-definition symbol)
                   CompilerSemanticRecordRole.Use)]
+              [enum-item-use-index : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get enum-item-definition symbol)
+                  CompilerSemanticRecordRole.Use)]
               [closure-use : CompilerSemanticRecord
                 (compiler-semantic-source-index-get (& first) closure-use-index)]
               [alias-use : CompilerSemanticRecord
@@ -3653,6 +3710,10 @@
                 (compiler-semantic-source-index-get
                   (& first)
                   resource-use-index)]
+              [enum-item-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  enum-item-use-index)]
               (match (compiler-check-source-index-with-roots
                 path
                 source
@@ -3677,6 +3738,7 @@
                         (>= outer-callback-use-index 0)
                         (>= inner-callback-use-index 0)
                         (>= resource-use-index 0)
+                        (>= enum-item-use-index 0)
                         (string.eq
                           (struct-get scalar-definition resolved-type)
                           "bool")
@@ -3696,6 +3758,9 @@
                           (struct-get resource-definition resolved-type)
                           "i64")
                         (string.eq
+                          (struct-get enum-item-definition resolved-type)
+                          "i64")
+                        (string.eq
                           (struct-get closure-use resolved-type)
                           "(-> i64 i64)")
                         (string.eq
@@ -3709,6 +3774,9 @@
                           "(-> bool bool)")
                         (string.eq
                           (struct-get resource-use resolved-type)
+                          "i64")
+                        (string.eq
+                          (struct-get enum-item-use resolved-type)
                           "i64")
                         (not
                           (compiler-semantic-symbol-id-eq?

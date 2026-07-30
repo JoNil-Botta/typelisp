@@ -50903,6 +50903,32 @@
 ;; store's record deleted. The line bytes are never re-read -- the per-record
 ;; summary already carries everything the byte walk derived, with the
 ;; delta-dependent offsets kept raw and rebased here.
+;; Fixed-size scratch bitmap for the region sweep's pass 2: one bit per byte
+;; of the eligibility coverage window, reused across regions (only the used
+;; prefix is zeroed per region). Pass 2's per-candidate decisions are
+;; mutually independent given the reads, watermark and windows, so the
+;; overlap test runs against this bitmap when the window fits the cap:
+;; candidate at c is swept iff no bit is set in [c-wlo, c+8-wlo). A set bit at
+;; x means some read covers byte x, and eligibility forces c into a window
+;; (hence [c,c+8) into the coverage window), so the query is literally the
+;; per-read predicate it replaces: any bit in [c,c+8) iff exists r with
+;; lo_r < c+8 and hi_r > c. Byte granularity keeps unaligned reads and
+;; 16/32/64-byte widths exact.
+;;
+;; The array is allocated once at module init, in the process arena, at the
+;; full cap size: pass 2 runs inside emission's scratch/raw arenas, so a
+;; grow-on-demand array reallocated there would dangle after the next arena
+;; rewind (the arena-transient rule of the operand-string caches applies to
+;; every module-level array).
+(define compiler-backend-sweep-coverage-bits : (Array i64)
+  (array.make-array i64 4096))
+
+;; Largest coverage window served by the bitmap, in i64 words (64 bytes per
+;; word). Wider frames keep the exact per-candidate read scan; the choice
+;; depends only on region metadata, never on results.
+(define compiler-backend-sweep-coverage-max-words : i64
+  4096)
+
 (define (compiler-backend-sweep-region-records!
   [recs : (Array CompilerBackendPeepholeLineRecord)]
   [live : (Array i64)]
@@ -51115,53 +51141,175 @@
                       unit)))])
             (set! i (+ i 1)))))
       ;; ---- pass 2 ----
+      ;; Coverage window over the eligibility windows (the em window's
+      ;; emptiness convention is em-lo=8 > em-hi=0; the var window is empty
+      ;; when slot-vars=0, i.e. lo > hi). whi gets +8 so a candidate at
+      ;; exactly c == hi has its whole [hi, hi+8) store covered. Both windows
+      ;; empty means no candidate can be eligible; a window wider than the
+      ;; cap keeps the exact per-candidate read scan.
       (if (or (not sweepable) (= cand-count 0))
         unit
         (let
-          [k : i64 0]
-          [swept : i64 0]
+          [em-nonempty? : bool (<= em-lo em-hi)]
+          [var-nonempty? : bool (<= lo hi)]
+          [wlo : i64
+            (if (and em-nonempty? (< em-lo lo))
+              em-lo
+              lo)]
+          [whi : i64
+            (+
+              (if (> hi em-hi)
+                hi
+                em-hi)
+              8)]
+          [words : i64 (/ (+ (- whi wlo) 63) 64)]
+          [use-bitmap? : bool
+            (and
+              (or em-nonempty? var-nonempty?)
+              (<= words compiler-backend-sweep-coverage-max-words))]
           (begin
-            (while (< k cand-count)
-              (let
-                [c : i64 (array-ref cand-off k)]
-                [pos : i64 (array-ref cand-pos k)]
-                (begin
-                  (if (and
-                    (or
-                      (and (>= c lo) (<= c hi) (= (bit-and (- c lo) 7) 0))
-                      (and
-                        (>= c em-lo)
-                        (<= c em-hi)
-                        (= (bit-and (- c em-lo) 7) 0)))
-                    (< c watermark))
-                    (let
-                      [r : i64 0]
-                      [read : bool false]
-                      (begin
-                        (while (and (not read) (< r read-count))
-                          (begin
-                            (if (and
-                              (< (array-ref reads-lo r) (+ c 8))
-                              (< c (array-ref reads-hi r)))
-                              (set! read true)
-                              unit)
-                            (set! r (+ r 1))))
-                        (if read
-                          unit
-                          (begin
-                            (array-set! live pos 0)
-                            (set! swept (+ swept 1))))))
-                    unit)
-                  (set! k (+ k 1)))))
-            (if (> swept 0)
+            (if use-bitmap?
               (begin
-                (set!
-                  compiler-backend-sweep-swept-stores
-                  (+ compiler-backend-sweep-swept-stores swept))
-                (set!
-                  compiler-backend-sweep-swept-funcs
-                  (+ compiler-backend-sweep-swept-funcs 1)))
-              unit)))))))
+                (let
+                  [w : i64 0]
+                  (while (< w words)
+                    (begin
+                      (array-set! compiler-backend-sweep-coverage-bits w 0)
+                      (set! w (+ w 1)))))
+                (let
+                  [r : i64 0]
+                  (while (< r read-count)
+                    (let
+                      [a : i64
+                        (-
+                          (if (> (array-ref reads-lo r) wlo)
+                            (array-ref reads-lo r)
+                            wlo)
+                          wlo)]
+                      [b : i64
+                        (-
+                          (if (< (array-ref reads-hi r) whi)
+                            (array-ref reads-hi r)
+                            whi)
+                          wlo)]
+                      (begin
+                        (if (< a b)
+                          (let
+                            [aw : i64 (shr a 6)]
+                            [bw : i64 (shr (- b 1) 6)]
+                            [w : i64 aw]
+                            (while (<= w bw)
+                              (let
+                                [lo-bit : i64
+                                  (if (= w aw)
+                                    (bit-and a 63)
+                                    0)]
+                                [hi-bit : i64
+                                  (if (= w bw)
+                                    (bit-and (- b 1) 63)
+                                    63)]
+                                [width : i64 (+ (- hi-bit lo-bit) 1)]
+                                [mask : i64
+                                  (if (= width 64)
+                                    -1
+                                    (shl (- (shl 1 width) 1) lo-bit))]
+                                (begin
+                                  (array-set!
+                                    compiler-backend-sweep-coverage-bits
+                                    w
+                                    (bit-or
+                                      (array-ref
+                                        compiler-backend-sweep-coverage-bits
+                                        w)
+                                      mask))
+                                  (set! w (+ w 1))))))
+                          unit)
+                        (set! r (+ r 1)))))))
+              unit)
+            (let
+              [k : i64 0]
+              [swept : i64 0]
+              (begin
+                (while (< k cand-count)
+                  (let
+                    [c : i64 (array-ref cand-off k)]
+                    [pos : i64 (array-ref cand-pos k)]
+                    (begin
+                      (if (and
+                        (or
+                          (and (>= c lo) (<= c hi) (= (bit-and (- c lo) 7) 0))
+                          (and
+                            (>= c em-lo)
+                            (<= c em-hi)
+                            (= (bit-and (- c em-lo) 7) 0)))
+                        (< c watermark))
+                        (let
+                          [read : bool
+                            (if use-bitmap?
+                              (let
+                                [a : i64 (- c wlo)]
+                                [aw : i64 (shr a 6)]
+                                [bw : i64 (shr (+ a 7) 6)]
+                                [w : i64 aw]
+                                [hit : bool false]
+                                (begin
+                                  (while (and (not hit) (<= w bw))
+                                    (let
+                                      [lo-bit : i64
+                                        (if (= w aw)
+                                          (bit-and a 63)
+                                          0)]
+                                      [hi-bit : i64
+                                        (if (= w bw)
+                                          (bit-and (+ a 7) 63)
+                                          63)]
+                                      [width : i64 (+ (- hi-bit lo-bit) 1)]
+                                      [mask : i64
+                                        (if (= width 64)
+                                          -1
+                                          (shl (- (shl 1 width) 1) lo-bit))]
+                                      (begin
+                                        (if (not
+                                          (=
+                                            (bit-and
+                                              (array-ref
+                                                compiler-backend-sweep-coverage-bits
+                                                w)
+                                              mask)
+                                            0))
+                                          (set! hit true)
+                                          unit)
+                                        (set! w (+ w 1)))))
+                                  hit))
+                              (let
+                                [r : i64 0]
+                                [hit : bool false]
+                                (begin
+                                  (while (and (not hit) (< r read-count))
+                                    (begin
+                                      (if (and
+                                        (< (array-ref reads-lo r) (+ c 8))
+                                        (< c (array-ref reads-hi r)))
+                                        (set! hit true)
+                                        unit)
+                                      (set! r (+ r 1))))
+                                hit)))]
+                          (if read
+                            unit
+                            (begin
+                              (array-set! live pos 0)
+                              (set! swept (+ swept 1)))))
+                        unit)
+                      (set! k (+ k 1)))))
+                (if (> swept 0)
+                  (begin
+                    (set!
+                      compiler-backend-sweep-swept-stores
+                      (+ compiler-backend-sweep-swept-stores swept))
+                    (set!
+                      compiler-backend-sweep-swept-funcs
+                      (+ compiler-backend-sweep-swept-funcs 1)))
+                  unit)))))))))
 
 (define (compiler-backend-borrowed-copy-to-owned
   [buf : (text_buf_borrowed.TextBufBorrowed asm)]) : text_buf.TextBuf

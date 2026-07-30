@@ -4906,9 +4906,168 @@
         [(ResultCompilerTypecheck.Ok _) true]
         [(ResultCompilerTypecheck.Err _) false]))))
 
+(cfg
+  compile-profile
+  (define (compiler-typecheck-smoke-macro-profile-entry-eq?
+    [index : i64]
+    [macro-id : i64]
+    [macro-name : String]
+    [arity : i64]
+    [calls : i64]
+    [total-ms : i64]) : bool
+    (if (and
+      (>= index 0)
+      (< index (struct-get compiler-tc-macro-profile-entries len)))
+      (let
+        [entry : CompilerTcMacroProfileEntry
+          (array-ref (struct-get compiler-tc-macro-profile-entries slots) index)]
+        (and
+          (= (struct-get entry macro-id) macro-id)
+          (string.eq (struct-get entry macro-name) macro-name)
+          (= (struct-get entry arity) arity)
+          (= (struct-get entry calls) calls)
+          (= (struct-get entry total-ms) total-ms)))
+      false)))
+
+(cfg
+  compile-profile
+  (define (compiler-typecheck-smoke-macro-profile-storage-ok?) : bool
+    (let
+      [module-a : i64 (ci.intern "profile-dense-module-a")]
+      [module-b : i64 (ci.intern "profile-dense-module-b")]
+      [name-id : i64 (ci.intern "profile-dense-macro")]
+      [macro-a : i64 (ci.intern-composite-pair-id module-a name-id)]
+      [macro-b : i64 (ci.intern-composite-pair-id module-b name-id)]
+      [growth-cursor : i64 0]
+      [ok : bool true]
+      (begin
+        (compiler-tc-macro-profile-reset)
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-a
+          "profile-dense-module-a/profile-dense-macro"
+          2
+          3)
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-a
+          "profile-dense-module-a/profile-dense-macro"
+          2
+          5)
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-a
+          "profile-dense-module-a/profile-dense-macro"
+          6
+          7)
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-b
+          "profile-dense-module-b/profile-dense-macro"
+          2
+          11)
+        (set!
+          ok
+          (and
+            (= (struct-get compiler-tc-macro-profile-entries len) 3)
+            (compiler-typecheck-smoke-macro-profile-entry-eq?
+              (compiler-tc-macro-profile-entry-index
+                (& compiler-tc-macro-profile-entries)
+                macro-a
+                2)
+              macro-a
+              "profile-dense-module-a/profile-dense-macro"
+              2
+              2
+              8)
+            (compiler-typecheck-smoke-macro-profile-entry-eq?
+              (compiler-tc-macro-profile-entry-index
+                (& compiler-tc-macro-profile-entries)
+                macro-a
+                6)
+              macro-a
+              "profile-dense-module-a/profile-dense-macro"
+              6
+              1
+              7)
+            (compiler-typecheck-smoke-macro-profile-entry-eq?
+              (compiler-tc-macro-profile-entry-index
+                (& compiler-tc-macro-profile-entries)
+                macro-b
+                2)
+              macro-b
+              "profile-dense-module-b/profile-dense-macro"
+              2
+              1
+              11)))
+        (while (< growth-cursor 32)
+          (begin
+            (compiler-tc-macro-profile-record-in!
+              (&mut compiler-tc-macro-profile-entries)
+              macro-b
+              "profile-dense-module-b/profile-dense-macro"
+              (+ growth-cursor 100)
+              growth-cursor)
+            (set! growth-cursor (+ growth-cursor 1))))
+        (set!
+          ok
+          (and
+            ok
+            (= (struct-get compiler-tc-macro-profile-entries len) 35)
+            (compiler-typecheck-smoke-macro-profile-entry-eq?
+              (compiler-tc-macro-profile-entry-index
+                (& compiler-tc-macro-profile-entries)
+                macro-b
+                131)
+              macro-b
+              "profile-dense-module-b/profile-dense-macro"
+              131
+              1
+              31)))
+        (compiler-tc-macro-profile-reset)
+        (set!
+          ok
+          (and
+            ok
+            compiler-tc-macro-profile-active
+            (= (struct-get compiler-tc-macro-profile-entries len) 0)
+            (=
+              (compiler-tc-macro-profile-entry-index
+                (& compiler-tc-macro-profile-entries)
+                macro-a
+                2)
+              -1)))
+        (compiler-tc-macro-profile-record-in!
+          (&mut compiler-tc-macro-profile-entries)
+          macro-b
+          "profile-dense-module-b/profile-dense-macro"
+          2
+          13)
+        (set!
+          ok
+          (and
+            ok
+            (compiler-typecheck-smoke-macro-profile-entry-eq?
+              0
+              macro-b
+              "profile-dense-module-b/profile-dense-macro"
+              2
+              1
+              13)))
+        (compiler-tc-macro-profile-clear)
+        (and
+          ok
+          (not compiler-tc-macro-profile-active)
+          (= (struct-get compiler-tc-macro-profile-entries len) 0))))))
+
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
+    (cfg
+      compile-profile
+      (if (compiler-typecheck-smoke-macro-profile-storage-ok?)
+        (return 0)
+        (return 1)))
     (compiler-typecheck-self-test)
     (unless
       (compiler-typecheck-core-macro-bodies-observed?)

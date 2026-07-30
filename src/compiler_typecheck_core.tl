@@ -1159,9 +1159,19 @@
 
 (cfg
   compile-profile
-  (defenum CompilerTcMacroProfileEntries
-    (Nil)
-    (Cons String i64 i64 i64 (Box CompilerTcMacroProfileEntries))))
+  (defstruct CompilerTcMacroProfileEntry
+    (macro-id i64)
+    (macro-name String)
+    (arity i64)
+    (calls i64)
+    (total-ms i64)))
+
+(cfg
+  compile-profile
+  (defstruct CompilerTcMacroProfileEntries
+    (slots (Array CompilerTcMacroProfileEntry))
+    (len i64)
+    (index tc_i64_i64_map.Map)))
 
 (defenum ResultTcStringList
   (Ok TcStringList)
@@ -3747,10 +3757,19 @@
   compile-profile
   (define compiler-tc-macro-walk-eval-live-bytes : i64
     0))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-entries-empty) : CompilerTcMacroProfileEntries
+    (CompilerTcMacroProfileEntries
+      (array.make-array CompilerTcMacroProfileEntry 0)
+      0
+      (tc_i64_i64_map.with-capacity 1))))
+
 (cfg
   compile-profile
   (define compiler-tc-macro-profile-entries : CompilerTcMacroProfileEntries
-    (CompilerTcMacroProfileEntries.Nil)))
+    (compiler-tc-macro-profile-entries-empty)))
 (cfg
   compile-profile
   (define compiler-tc-macro-profile-active : bool
@@ -3764,7 +3783,7 @@
       (set! compiler-tc-macro-profile-active true)
       (set!
         compiler-tc-macro-profile-entries
-        (CompilerTcMacroProfileEntries.Nil)))))
+        (compiler-tc-macro-profile-entries-empty)))))
 
 (cfg
   compile-profile
@@ -3773,7 +3792,7 @@
       (set! compiler-tc-macro-profile-active false)
       (set!
         compiler-tc-macro-profile-entries
-        (CompilerTcMacroProfileEntries.Nil)))))
+        (compiler-tc-macro-profile-entries-empty)))))
 
 (cfg
   compile-profile
@@ -3790,47 +3809,90 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-macro-profile-record-in
-    [entries : CompilerTcMacroProfileEntries]
+  (define (compiler-tc-macro-profile-copy-prefix!
+    [src : (& src (Array CompilerTcMacroProfileEntry))]
+    [dst : (&mut dst (Array CompilerTcMacroProfileEntry))]
+    [len : i64]) : unit
+    (let
+      [cursor : i64 0]
+      (while (< cursor len)
+        (begin
+          (array-set! dst cursor (array-ref src cursor))
+          (set! cursor (+ cursor 1)))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-ensure-capacity!
+    [entries : (&mut entries CompilerTcMacroProfileEntries)]) : unit
+    (let
+      [len : i64 (struct-get entries len)]
+      [old-capacity : i64 (array-length (struct-get entries slots))]
+      (if (< len old-capacity)
+        unit
+        (let
+          [next-capacity : i64
+            (if (< old-capacity 1)
+              16
+              (* old-capacity 2))]
+          [next : (Array CompilerTcMacroProfileEntry)
+            (array.make-array CompilerTcMacroProfileEntry next-capacity)]
+          (begin
+            (compiler-tc-macro-profile-copy-prefix!
+              (& (struct-get entries slots))
+              (&mut next)
+              len)
+            (set! (struct-get entries slots) next)))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-key-id [macro-id : i64] [arity : i64]) : i64
+    (ci.intern-composite-pair-id macro-id arity)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-record-in!
+    [entries : (&mut entries CompilerTcMacroProfileEntries)]
+    [macro-id : i64]
     [macro-name : String]
     [arity : i64]
-    [elapsed-ms : i64]) : CompilerTcMacroProfileEntries
-    (match entries
-      [(CompilerTcMacroProfileEntries.Nil)
-        (CompilerTcMacroProfileEntries.Cons
-          macro-name
-          arity
-          1
-          elapsed-ms
-          (box (CompilerTcMacroProfileEntries.Nil)))]
-      [(CompilerTcMacroProfileEntries.Cons
-          entry-name
-          entry-arity
-          calls
-          total-ms
-          rest)
-        (if (and (string.eq entry-name macro-name) (= entry-arity arity))
-          (CompilerTcMacroProfileEntries.Cons
-            entry-name
-            entry-arity
-            (+ calls 1)
-            (+ total-ms elapsed-ms)
-            rest)
-          (CompilerTcMacroProfileEntries.Cons
-            entry-name
-            entry-arity
-            calls
-            total-ms
-            (box
-              (compiler-tc-macro-profile-record-in
-                (box-get rest)
-                macro-name
-                arity
-                elapsed-ms))))])))
+    [elapsed-ms : i64]) : unit
+    (let
+      [key-id : i64 (compiler-tc-macro-profile-key-id macro-id arity)]
+      (match (tc_i64_i64_map.get (& (struct-get entries index)) key-id)
+        [(tc_i64_i64_map.LookupFound entry-index)
+          (let
+            [entry : (&mut entries CompilerTcMacroProfileEntry)
+              (&mut (array-ref (struct-get entries slots) entry-index))]
+            (begin
+              (set! (struct-get entry calls) (+ (struct-get entry calls) 1))
+              (set!
+                (struct-get entry total-ms)
+                (+ (struct-get entry total-ms) elapsed-ms))))]
+        [(tc_i64_i64_map.LookupMissing)
+          (begin
+            (compiler-tc-macro-profile-ensure-capacity! entries)
+            (let
+              [entry-index : i64 (struct-get entries len)]
+              (begin
+                (array-set!
+                  (struct-get entries slots)
+                  entry-index
+                  (CompilerTcMacroProfileEntry
+                    macro-id
+                    (string.copy (& macro-name))
+                    arity
+                    1
+                    elapsed-ms))
+                (tc_i64_i64_map.insert-ref!
+                  (&mut (struct-get entries index))
+                  key-id
+                  entry-index)
+                (set! (struct-get entries len) (+ entry-index 1)))))]))))
 
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-record
+    [macro-id : i64]
     [macro-name : String]
     [arity : i64]
     [elapsed-ms : i64]) : unit
@@ -3846,50 +3908,45 @@
           compiler-tc-macro-walk-eval-live-bytes
           (- (profile.alloc-live) compiler-tc-macro-walk-eval-live-start)))
       (if compiler-tc-macro-profile-active
-        (compiler-tc-macro-profile-record-entry! macro-name arity elapsed-ms)
+        (compiler-tc-macro-profile-record-entry!
+          macro-id
+          macro-name
+          arity
+          elapsed-ms)
         unit))))
 
-;; R3-P1: `compiler-tc-macro-profile-record-in` rebuilds the entry spine on
-;; every macro call, and the list outlives the declaration whose expansion
-;; appended to it -- so under the per-declaration macro generation it must not
-;; be built in the ambient arena, which is that declaration's generation.
-;; Its owner is the macro-expansion scratch arena, which is what
-;; `macro-expand-scratch-release!` already documents ("macro timing entries
-;; ... live in scratch") and which is cleared, by
-;; `compiler-tc-macro-profile-clear`, immediately before that arena is
-;; destroyed. Profile builds only; the shipped compiler compiles none of this.
+;; The dense entry arrays and pair index outlive the declaration whose
+;; expansion first appends to them. Under a per-declaration macro generation,
+;; grow and insert in the macro-expansion scratch arena rather than in that
+;; declaration's ambient generation. `compiler-tc-macro-profile-clear` drops
+;; every handle immediately before `macro-expand-scratch-release!` destroys the
+;; owner. Profile builds only; the shipped compiler compiles none of this.
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-record-entry!
+    [macro-id : i64]
     [macro-name : String]
     [arity : i64]
     [elapsed-ms : i64]) : unit
     (if (not (macro-generation-any-live?))
-      (set!
-        compiler-tc-macro-profile-entries
-        (compiler-tc-macro-profile-record-in
-          compiler-tc-macro-profile-entries
-          macro-name
-          arity
-          elapsed-ms))
+      (compiler-tc-macro-profile-record-in!
+        (&mut compiler-tc-macro-profile-entries)
+        macro-id
+        macro-name
+        arity
+        elapsed-ms)
       (let
         [enclosing : i64 (arena.tl_arena_current)]
         [scratch : i64 (macro-expand-scratch-arena-get)]
         (begin
           (unsafe
             (arena.tl_arena_set scratch))
-          ;; The name a new entry keeps is compared against on every later
-          ;; call, so it must be owned by the entry's arena and not by the
-          ;; generation the call site happened to be expanding in.
-          (let
-            [owned-name : String (string.copy (& macro-name))]
-            (set!
-              compiler-tc-macro-profile-entries
-              (compiler-tc-macro-profile-record-in
-                compiler-tc-macro-profile-entries
-                owned-name
-                arity
-                elapsed-ms)))
+          (compiler-tc-macro-profile-record-in!
+            (&mut compiler-tc-macro-profile-entries)
+            macro-id
+            macro-name
+            arity
+            elapsed-ms)
           (set! macro-expand-scratch-arena (arena.tl_arena_current))
           (unsafe
             (arena.tl_arena_set enclosing)))))))
@@ -3897,9 +3954,11 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-finish
+    [macro-id : i64]
     [macro-name : String]
     [args : AstExprList]) : unit
     (compiler-tc-macro-profile-record
+      macro-id
       macro-name
       (compiler-tc-macro-profile-arg-count args)
       (- (profile.now-ms) compiler-tc-macro-profile-start-ms))))
@@ -3907,7 +3966,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-detail
-    [macro-name : String]
+    [macro-name : (& macro-name str)]
     [arity : i64]
     [calls : i64]) : String
     (string.append
@@ -3921,7 +3980,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-emit-entry
-    [macro-name : String]
+    [macro-name : (& macro-name str)]
     [arity : i64]
     [calls : i64]
     [total-ms : i64]) : unit
@@ -3941,20 +4000,40 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-macro-profile-entry-index
+    [entries : (& entries CompilerTcMacroProfileEntries)]
+    [macro-id : i64]
+    [arity : i64]) : i64
+    (match (tc_i64_i64_map.get
+      (& (struct-get entries index))
+      (compiler-tc-macro-profile-key-id macro-id arity))
+      [(tc_i64_i64_map.LookupFound entry-index) entry-index]
+      [(tc_i64_i64_map.LookupMissing) -1])))
+
+(cfg
+  compile-profile
   (define (compiler-tc-macro-profile-emit-entries
-    [entries : CompilerTcMacroProfileEntries]) : unit
-    (match entries
-      [(CompilerTcMacroProfileEntries.Nil) unit]
-      [(CompilerTcMacroProfileEntries.Cons macro-name arity calls total-ms rest)
-        (begin
-          (compiler-tc-macro-profile-emit-entry macro-name arity calls total-ms)
-          (compiler-tc-macro-profile-emit-entries (box-get rest)))])))
+    [entries : (& entries CompilerTcMacroProfileEntries)]) : unit
+    (let
+      [cursor : i64 0]
+      (while (< cursor (struct-get entries len))
+        (let
+          [entry : CompilerTcMacroProfileEntry
+            (array-ref (struct-get entries slots) cursor)]
+          (begin
+            (compiler-tc-macro-profile-emit-entry
+              (& (struct-get entry macro-name))
+              (struct-get entry arity)
+              (struct-get entry calls)
+              (struct-get entry total-ms))
+            (set! cursor (+ cursor 1))))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-emit) : unit
     (begin
-      (compiler-tc-macro-profile-emit-entries compiler-tc-macro-profile-entries)
+      (compiler-tc-macro-profile-emit-entries
+        (& compiler-tc-macro-profile-entries))
       (set! compiler-tc-macro-profile-active false))))
 
 (cfg
@@ -72467,13 +72546,23 @@
                 (tc-context-install-pools! ctx)
                 (cfg
                   compile-profile
-                  (compiler-tc-macro-profile-finish macro-name expanded-args))
+                  (compiler-tc-macro-profile-finish
+                    (ci.intern-composite-pair-id
+                      fallback-module-id
+                      macro-name-id)
+                    macro-name
+                    expanded-args))
                 (ResultMacroValueEnv.Ok value env))]
             [(MacroNativeStdlibTlciResult.Err diag)
               (begin
                 (cfg
                   compile-profile
-                  (compiler-tc-macro-profile-finish macro-name expanded-args))
+                  (compiler-tc-macro-profile-finish
+                    (ci.intern-composite-pair-id
+                      fallback-module-id
+                      macro-name-id)
+                    macro-name
+                    expanded-args))
                 (ResultMacroValueEnv.Err (box diag)))]
             [(MacroNativeStdlibTlciResult.No)
               (begin
@@ -72495,6 +72584,9 @@
                       (cfg
                         compile-profile
                         (compiler-tc-macro-profile-finish
+                          (ci.intern-composite-pair-id
+                            fallback-module-id
+                            macro-name-id)
                           macro-name
                           expanded-args))
                       (ResultMacroValueEnv.Ok value env))]
@@ -72503,6 +72595,9 @@
                       (cfg
                         compile-profile
                         (compiler-tc-macro-profile-finish
+                          (ci.intern-composite-pair-id
+                            fallback-module-id
+                            macro-name-id)
                           macro-name
                           expanded-args))
                       (ResultMacroValueEnv.Err diag))]))]))]

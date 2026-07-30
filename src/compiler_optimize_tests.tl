@@ -15083,14 +15083,19 @@
         [(OptLoopPreheader.No) true]
         [(OptLoopPreheader.Some _) false])]))
 
-(define (opt-loop-rotation-top-test-blocks) : CompilerIrBlockList
+(define (opt-loop-rotation-top-test-blocks [constant-edge? : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
       (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
+          (if constant-edge?
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Bool true)
+              (compiler-ir-label "loop")
+              (compiler-ir-label "exit"))
+            (CompilerIrInstr.Jump (compiler-ir-label "loop")))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
@@ -18845,6 +18850,131 @@
     10
     (opt-unroll-mutable-vector-test-blocks loop-local-base?)))
 
+(define (opt-unroll-mutable-map-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "n" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "left" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "right" (AstType.I64) 2)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "out" (AstType.I64) 3)
+          (CompilerIrParamList.Nil))))))
+
+;; Mutable rotated map gang:
+;;   load left[i], load right[i], add, store out[i], i += 4.
+;; mode 1 aliases all three exact IR bases, mode 2 makes the output base
+;; loop-local, and mode 3 gives the store a noncanonical index.
+(define (opt-unroll-mutable-map-test-blocks [mode : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 0) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            5
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 4)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              6
+              (CompilerIrBinOp.Le)
+              (CompilerIrValue.Var 5)
+              (CompilerIrValue.Var 0)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 6)
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
+              (CompilerIrInstrList.Nil))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "body")
+        (compiler-ir-instr-cons
+          ;; Only mode 2 consumes this loop-local alias as a memory base.
+          (CompilerIrInstr.Mov 10 (CompilerIrValue.Var 3) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.VectorLoad
+              7
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 4)
+              4
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.VectorLoad
+                8
+                (if (= mode 1)
+                  (CompilerIrValue.Var 1)
+                  (CompilerIrValue.Var 2))
+                (CompilerIrValue.Var 4)
+                4
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (ir-instr-vector-bin-op
+                  9
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 7)
+                  (CompilerIrValue.Var 8)
+                  4
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (ir-instr-vector-store
+                    (cond
+                      [(= mode 1) (CompilerIrValue.Var 1)]
+                      [(= mode 2) (CompilerIrValue.Var 10)]
+                      [else (CompilerIrValue.Var 3)])
+                    (if (= mode 3)
+                      (CompilerIrValue.Var 5)
+                      (CompilerIrValue.Var 4))
+                    (CompilerIrValue.Var 9)
+                    4
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Mov
+                      4
+                      (CompilerIrValue.Var 5)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        5
+                        (CompilerIrBinOp.Add)
+                        (CompilerIrValue.Var 4)
+                        (CompilerIrValue.I64 4)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.BinOp
+                          6
+                          (CompilerIrBinOp.Le)
+                          (CompilerIrValue.Var 5)
+                          (CompilerIrValue.Var 0)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Branch
+                            (CompilerIrValue.Var 6)
+                            (compiler-ir-label "body")
+                            (compiler-ir-label "exit"))
+                          (CompilerIrInstrList.Nil)))))))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "exit")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+            (CompilerIrInstrList.Nil)))
+        (CompilerIrBlockList.Nil)))))
+
+(define (opt-unroll-mutable-map-test-function [mode : i64]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "unroll_mutable_map_fixture")
+    (opt-unroll-mutable-map-test-params)
+    (AstType.I64)
+    11
+    (opt-unroll-mutable-map-test-blocks mode)))
+
 (define (opt-unroll-test-count-add-instr-seq
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -18883,7 +19013,51 @@
           [(CompilerIrInstr.MaskBinOp _ _ _ _ _) 1]
           [(CompilerIrInstr.Select _) 1]
           [(CompilerIrInstr.VectorLoad _ _ _ _ _) 1]
+          [(CompilerIrInstr.VectorStore _) 1]
           [_ 0])))))
+
+(define (opt-unroll-test-count-store-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-unroll-test-count-store-instr-seq
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.VectorStore _) 1]
+          [_ 0])))))
+
+(define (opt-unroll-test-count-gep-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-unroll-test-count-gep-instr-seq
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.Gep _ _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-unroll-test-count-in-block
+  [blocks : CompilerIrBlockList]
+  [label : i64]
+  [stores? : bool]) : i64
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if stores?
+            (opt-unroll-test-count-store-instr-seq instrs 0 0)
+            (opt-unroll-test-count-gep-instr-seq instrs 0 0))])]))
 
 (define (opt-unroll-test-count-vector-in-block
   [blocks : CompilerIrBlockList]
@@ -18928,11 +19102,47 @@
         (opt-unroll-mutable-vector-test-function false))]
     [mutable-vector-out : CompilerIrBlockList
       (opt-function-blocks mutable-vector-func)]
+    [store-required-input : CompilerIrFunction
+      (opt-unroll-mutable-vector-test-function false)]
+    [store-required-func : CompilerIrFunction
+      (match (opt-unroll-simd-function-with-context-result
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-cfg-context-build (opt-function-blocks store-required-input))
+        store-required-input
+        true)
+        [(OptFunctionCtxResult.Result result _) result])]
     [local-base-func : CompilerIrFunction
       (opt-unroll-function
         (ast-node-pool-reader-type-segment-bases)
         (opt-unroll-mutable-vector-test-function true))]
     [local-base-out : CompilerIrBlockList (opt-function-blocks local-base-func)]
+    [map-func : CompilerIrFunction
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-map-test-function 0))]
+    [map-out : CompilerIrBlockList (opt-function-blocks map-func)]
+    [alias-map-func : CompilerIrFunction
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-map-test-function 1))]
+    [alias-map-out : CompilerIrBlockList (opt-function-blocks alias-map-func)]
+    [local-store-func : CompilerIrFunction
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-map-test-function 2))]
+    [local-store-out : CompilerIrBlockList
+      (opt-function-blocks local-store-func)]
+    [bad-store-index-func : CompilerIrFunction
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-map-test-function 3))]
+    [bad-store-index-out : CompilerIrBlockList
+      (opt-function-blocks bad-store-index-func)]
+    [pipeline-map-func : CompilerIrFunction
+      (optimize-function
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-map-test-function 0))]
     (cond
       [(not (opt-verify-ok? (opt-verify-function func))) 1]
       ;; entry, guard, unrolled body, remainder loop, exit.
@@ -18982,6 +19192,99 @@
       ;; A base defined inside the loop cannot feed the shared pre-body Gep.
       [(not (opt-verify-ok? (opt-verify-final-function local-base-func))) 14]
       [(not (= (compiler-ir-block-list-count local-base-out) 3)) 15]
+      ;; A store-bearing three-base map gets sixteen sequential gang copies.
+      [(not (opt-verify-ok? (opt-verify-final-function map-func))) 16]
+      [(not (= (compiler-ir-block-list-count map-out) 6)) 17]
+      [(not
+          (=
+            (opt-unroll-test-count-vector-in-block
+              map-out
+              (compiler-ir-label "body__unroll_body"))
+            64))
+        18]
+      [(not
+          (=
+            (opt-unroll-test-count-in-block
+              map-out
+              (compiler-ir-label "body__unroll_body")
+              true)
+            16))
+        19]
+      [(not
+          (=
+            (opt-unroll-test-count-in-block
+              map-out
+              (compiler-ir-label "body__unroll_body")
+              false)
+            3))
+        20]
+      ;; Exact duplicate bases deduplicate their group Gep. Runtime aliases
+      ;; between distinct parameters are still safe because copies stay ordered.
+      [(not (opt-verify-ok? (opt-verify-final-function alias-map-func))) 21]
+      [(not (= (compiler-ir-block-list-count alias-map-out) 6)) 22]
+      [(not
+          (=
+            (opt-unroll-test-count-in-block
+              alias-map-out
+              (compiler-ir-label "body__unroll_body")
+              true)
+            16))
+        23]
+      [(not
+          (=
+            (opt-unroll-test-count-in-block
+              alias-map-out
+              (compiler-ir-label "body__unroll_body")
+              false)
+            1))
+        24]
+      ;; Loop-local bases and noncanonical store indices remain rejected.
+      [(not (opt-verify-ok? (opt-verify-final-function local-store-func))) 25]
+      [(not (= (compiler-ir-block-list-count local-store-out) 3)) 26]
+      [(not (opt-verify-ok? (opt-verify-final-function bad-store-index-func)))
+        27]
+      [(not (= (compiler-ir-block-list-count bad-store-index-out) 3)) 28]
+      [(not
+          (opt-unroll-simd-body-instr-ok?
+            (ir-instr-vector-store
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.Var 9)
+              4
+              (AstType.I64))))
+        29]
+      [(opt-unroll-simd-body-instr-ok?
+          (ir-instr-predicated-store
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Var 9)
+            (CompilerIrValue.Var 6)
+            4
+            (AstType.I64)))
+        30]
+      [(opt-unroll-simd-body-instr-ok?
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 9)
+            (AstType.I64)))
+        31]
+      ;; The main pipeline must run this mutable-only path before scalar SSA.
+      [(not (opt-verify-ok? (opt-verify-final-function pipeline-map-func))) 32]
+      ;; Later CFG cleanup may merge the generated label, but it never shrinks
+      ;; the virtual-register frame allocated by the sixteen-copy rewrite.
+      [(not (> (opt-function-frame pipeline-map-func) 11)) 33]
+      ;; The speculative pre-SSA path is store-bearing only. Store-free
+      ;; reductions retain their established later-pipeline handling.
+      [(not (= (opt-function-frame store-required-func) 10)) 34]
+      [(opt-unroll-simd-body-instr-ok?
+          (ir-instr-predicated-load
+            8
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Bool true)
+            4
+            (AstType.I64)))
+        35]
       [else 42])))
 
 ;; --- bounds-check loop versioning self-test ------------------------------------
@@ -22360,9 +22663,14 @@
 
 (define (compiler-optimize-loop-rotation-self-test) : i64
   (let
-    [raw : CompilerIrBlockList (opt-loop-rotation-top-test-blocks)]
+    [raw : CompilerIrBlockList (opt-loop-rotation-top-test-blocks false)]
     [rotated : CompilerIrBlockList
       (opt-loop-rotation-blocks (ast-node-pool-reader-context-current) raw)]
+    [constant-edge-rotated : CompilerIrBlockList
+      (match (opt-loop-rotation-normalized-function-result
+        (ast-node-pool-reader-context-current)
+        (opt-cfg-test-function (opt-loop-rotation-top-test-blocks true)))
+        [(OptBlockCtxResult.Result blocks _ _) blocks])]
     [false-body-rotated : CompilerIrBlockList
       (opt-loop-rotation-blocks
         (ast-node-pool-reader-context-current)
@@ -22440,6 +22748,18 @@
               with-phi)
             with-phi))
         15]
+      [(not (= (compiler-ir-block-list-count constant-edge-rotated) 3)) 16]
+      [(opt-block-list-has-label?
+          constant-edge-rotated
+          (compiler-ir-label "loop"))
+        17]
+      [(not
+          (opt-loop-rotation-successors?
+            constant-edge-rotated
+            (compiler-ir-label "entry")
+            (compiler-ir-label "body")
+            (compiler-ir-label "exit")))
+        18]
       [else 42])))
 
 ;; Nested-loop SSA fixture: the inner-loop counter/accumulator phis at the

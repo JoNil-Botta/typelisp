@@ -32,6 +32,9 @@ compile and run in `avx2` and `avx512`.
   destinations while sharing `a[i] * 2`; covers empty, sub-gang, exact AVX2 and
   AVX-512 gangs, tails, ordered stores, common-subexpression reuse, and output
   sentinels. Exit 42.
+- `store_alias_i64.tl` - a 257-element map receives one array as both inputs and
+  output, exercising long unrolled gangs, runtime-alias load/store ordering,
+  and the scalar tail. Exit 42.
 - `multi_output_bounds_trap.tl` - a fused two-output map whose second
   destination is too short. The harness requires the ordinary bounds trap in
   scalar and every runnable SIMD mode, pinning all-destination safety checks.

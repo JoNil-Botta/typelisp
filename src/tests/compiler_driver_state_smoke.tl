@@ -87,6 +87,56 @@
           (ast-node-pool-context-install! active-before)
           (and found installed-unchanged))))))
 
+(define (driver-state-smoke-type-elision-token-ok?) : bool
+  (let
+    [active-before : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities 1 4)]
+    [installed-pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities 1 4)]
+    [source-leaf-id : i64
+      (ast-node-pool-context-type-push source-pools (AstType.I64))]
+    [installed-leaf-id : i64
+      (ast-node-pool-context-type-push installed-pools (AstType.Bytes))]
+    [nested-lifetime : i64 (ci.intern "driver-state/source-lifetime")]
+    [source-nested-id : i64
+      (ast-node-pool-context-type-push
+        source-pools
+        (AstType.Ref nested-lifetime source-leaf-id))]
+    [installed-nested-id : i64
+      (ast-node-pool-context-type-push installed-pools (AstType.Bool))]
+    (begin
+      (ast-node-pool-context-install! installed-pools)
+      (let
+        [installed-bases : i64
+          (ast-node-pool-context-type-segment-bases installed-pools)]
+        ;; The nested walk must see source-pools' Ref at id 1, not the
+        ;; installed pool's Bool at the same numeric id.
+        [source-elision-answer : bool
+          (match (tc-signature-input-lifetimes-into
+            (ast-node-pool-context-type-segment-bases source-pools)
+            (AstType.Array source-nested-id 1)
+            TcNameIdList.Nil)
+            [(TcNameIdList.Cons lifetime rest)
+              (and
+                (= lifetime nested-lifetime)
+                (match (box-get rest)
+                  [(TcNameIdList.Nil) true]
+                  [_ false]))]
+            [_ false])]
+        [installed-unchanged : bool
+          (=
+            (ast-node-pool-context-type-segment-bases
+              (ast-node-pool-context-capture-active))
+            installed-bases)]
+        (begin
+          (ast-node-pool-context-install! active-before)
+          (and
+            (= source-leaf-id installed-leaf-id)
+            (= source-nested-id installed-nested-id)
+            source-elision-answer
+            installed-unchanged))))))
+
 (define (main) : i64
   (if (not (= (compiler-driver-reader-context-smoke-main) 42))
     (begin
@@ -101,6 +151,7 @@
           (driver-state-smoke-non-installed-ok? a b)
           (driver-state-smoke-installed-ok? a)
           (driver-state-smoke-expr-token-ok?)
+          (driver-state-smoke-type-elision-token-ok?)
           (tc-body-state-isolation-self-test))
           0
           (begin

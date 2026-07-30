@@ -531,10 +531,9 @@
   (No)
   (Some AstTypeList AstType))
 
-(defenum CompilerBackendGlobalTypeList
-  (Nil)
-  (Cons i64 AstType (Box CompilerBackendGlobalTypeList))
-  (Cache backend_i64_i64_map.Map (Array AstType)))
+(defenum CompilerBackendGlobalTypeTable
+  (Empty)
+  (Dense backend_i64_i64_map.Map (Array AstType)))
 
 (defenum ResultCompilerBackend
   (Ok String)
@@ -1228,7 +1227,7 @@
   (assignments CompilerRegAssignmentList)
   (vars i64)
   (types CompilerRegVarTypeList)
-  (global-types CompilerBackendGlobalTypeList)
+  (global-types CompilerBackendGlobalTypeTable)
   (ret-ty AstType)
   (plan CompilerBackendRuntimePlan)
   (functions CompilerIrFunctionList)
@@ -1298,9 +1297,13 @@
   (slots (Array i64))
   (len i64))
 
-(defenum BackendFloatList
-  (Nil)
-  (Cons AstType u64 (Box BackendFloatList)))
+(defstruct BackendFloatEntry
+  (ty AstType)
+  (bits u64))
+
+(defstruct BackendFloatSeq
+  (slots (Array BackendFloatEntry))
+  (len i64))
 
 ;; Capacity-doubling growth for the array-backed backend sequences (same shape as
 ;; compiler-ir-instr-builder-*): copy the live prefix into a doubled array.
@@ -1379,11 +1382,40 @@
         (array-set! (struct-get seq slots) index head)
         (set! (struct-get seq len) (+ index 1))))))
 
-(define (compiler-backend-float-cons
-  [ty : AstType]
-  [bits : u64]
-  [rest : BackendFloatList]) : BackendFloatList
-  (BackendFloatList.Cons ty bits (box rest)))
+(define (compiler-backend-float-copy-range!
+  [dst : (&mut dst (Array BackendFloatEntry))]
+  [src : (& src (Array BackendFloatEntry))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-backend-float-push!
+  [seq : (&mut seq BackendFloatSeq)]
+  [entry : BackendFloatEntry]) : unit
+  (begin
+    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+      unit
+      (let
+        [bigger : (Array BackendFloatEntry)
+          (array.make-array
+            BackendFloatEntry
+            (compiler-backend-seq-capacity
+              (array-length (struct-get seq slots))))]
+        (begin
+          (compiler-backend-float-copy-range!
+            (&mut bigger)
+            (& (struct-get seq slots))
+            (struct-get seq len))
+          (set! (struct-get seq slots) bigger))))
+    (let
+      [index : i64 (struct-get seq len)]
+      (begin
+        (array-set! (struct-get seq slots) index entry)
+        (set! (struct-get seq len) (+ index 1))))))
 
 (define (compiler-backend-empty-label-seq) : BackendSymbolSeq
   (BackendSymbolSeq (array.make-array i64 0) 0))
@@ -1624,7 +1656,7 @@
 
 (defstruct BackendFloatSet
   (seen backend_string_i64_map.Map)
-  (items BackendFloatList))
+  (items BackendFloatSeq))
 
 (defstruct CompilerBackendProgramCollections
   (functions BackendSymbolSet)
@@ -1667,7 +1699,7 @@
 (define (compiler-backend-float-set-new [capacity : i64]) : BackendFloatSet
   (BackendFloatSet
     (backend_string_i64_map.with-capacity capacity)
-    BackendFloatList.Nil))
+    (BackendFloatSeq (array.make-array BackendFloatEntry 0) 0)))
 
 (define (compiler-backend-string-set-add
   [set : BackendStringSet]
@@ -1704,13 +1736,15 @@
     [payload-bits : u64 (compiler-backend-float-payload-bits ty bits)]
     [key : String (compiler-backend-float-key ty payload-bits)]
     [seen : backend_string_i64_map.Map (struct-get set seen)]
+    [items : BackendFloatSeq (struct-get set items)]
     (if (backend_string_i64_map.contains? (& seen) key)
       set
       (begin
         (backend_string_i64_map.insert-ref! (&mut seen) key 1)
-        (BackendFloatSet
-          seen
-          (compiler-backend-float-cons ty payload-bits (struct-get set items)))))))
+        (compiler-backend-float-push!
+          (&mut items)
+          (BackendFloatEntry ty payload-bits))
+        (BackendFloatSet seen items)))))
 
 (define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
@@ -15898,47 +15932,55 @@
     [_ false]))
 
 (define (compiler-backend-global-type-lookup
-  [types : CompilerBackendGlobalTypeList]
+  [types : CompilerBackendGlobalTypeTable]
   [name : i64]) : CompilerRegMaybeType
   (match types
-    [(CompilerBackendGlobalTypeList.Nil) (CompilerRegMaybeType.No)]
-    [(CompilerBackendGlobalTypeList.Cons key ty rest)
-      (if (compiler-ir-symbol-eq? key name)
-        (CompilerRegMaybeType.Some ty)
-        (compiler-backend-global-type-lookup (box-get rest) name))]
-    [(CompilerBackendGlobalTypeList.Cache ids values)
+    [(CompilerBackendGlobalTypeTable.Empty) (CompilerRegMaybeType.No)]
+    [(CompilerBackendGlobalTypeTable.Dense ids values)
       (match (backend_i64_i64_map.get (& ids) (compiler-ir-symbol-id name))
         [(backend_i64_i64_map.LookupFound index)
           (CompilerRegMaybeType.Some (array-ref values index))]
         [(backend_i64_i64_map.LookupMissing) (CompilerRegMaybeType.No)])]))
 
-(define (compiler-backend-global-type-list-boxed-ok?) : bool
+(define (compiler-backend-global-type-table-ok?) : bool
   (let
-    [types : CompilerBackendGlobalTypeList
-      (CompilerBackendGlobalTypeList.Cons
-        (compiler-ir-test-symbol "left")
-        (AstType.I64)
-        (box
-          (CompilerBackendGlobalTypeList.Cons
-            (compiler-ir-test-symbol "right")
-            (AstType.Bool)
-            (box CompilerBackendGlobalTypeList.Nil))))]
-    (and
-      (match (compiler-backend-global-type-lookup
-        types
-        (compiler-ir-test-symbol "left"))
-        [(CompilerRegMaybeType.Some (AstType.I64)) true]
-        [_ false])
-      (match (compiler-backend-global-type-lookup
-        types
-        (compiler-ir-test-symbol "right"))
-        [(CompilerRegMaybeType.Some (AstType.Bool)) true]
-        [_ false])
-      (match (compiler-backend-global-type-lookup
-        types
-        (compiler-ir-test-symbol "missing"))
-        [(CompilerRegMaybeType.No) true]
-        [_ false]))))
+    [left : i64 (compiler-ir-test-symbol "left")]
+    [right : i64 (compiler-ir-test-symbol "right")]
+    [ids : backend_i64_i64_map.Map (backend_i64_i64_map.with-capacity 16)]
+    [values : (Array AstType) (array.make-array AstType 3)]
+    (begin
+      (array-set! values 0 (AstType.I64))
+      (backend_i64_i64_map.insert-ref!
+        (&mut ids)
+        (compiler-ir-symbol-id left)
+        0)
+      (array-set! values 1 (AstType.Bool))
+      (backend_i64_i64_map.insert-ref!
+        (&mut ids)
+        (compiler-ir-symbol-id right)
+        1)
+      ;; Dense production fill preserves the cache's historical last-insert
+      ;; shadow behavior for duplicate global identities.
+      (array-set! values 2 (AstType.U8))
+      (backend_i64_i64_map.insert-ref!
+        (&mut ids)
+        (compiler-ir-symbol-id left)
+        2)
+      (let
+        [types : CompilerBackendGlobalTypeTable
+          (CompilerBackendGlobalTypeTable.Dense ids values)]
+        (and
+          (match (compiler-backend-global-type-lookup types left)
+            [(CompilerRegMaybeType.Some (AstType.U8)) true]
+            [_ false])
+          (match (compiler-backend-global-type-lookup types right)
+            [(CompilerRegMaybeType.Some (AstType.Bool)) true]
+            [_ false])
+          (match (compiler-backend-global-type-lookup
+            types
+            (compiler-ir-test-symbol "missing"))
+            [(CompilerRegMaybeType.No) true]
+            [_ false]))))))
 
 (define (compiler-backend-global-type-count [globals : CompilerIrGlobalList]) : i64
   (match globals
@@ -15975,21 +16017,23 @@
         values
         index)]))
 
-(define (compiler-backend-global-types [globals : CompilerIrGlobalList]) : CompilerBackendGlobalTypeList
+(define (compiler-backend-global-types [globals : CompilerIrGlobalList]) : CompilerBackendGlobalTypeTable
   (let
     [count : i64 (compiler-backend-global-type-count globals)]
     [values : (Array AstType) (array.make-array AstType count)]
-    (CompilerBackendGlobalTypeList.Cache
-      (compiler-backend-global-types-fill
-        globals
-        (backend_i64_i64_map.with-capacity (+ (* count 2) 16))
-        values
-        0)
-      values)))
+    (if (= count 0)
+      CompilerBackendGlobalTypeTable.Empty
+      (CompilerBackendGlobalTypeTable.Dense
+        (compiler-backend-global-types-fill
+          globals
+          (backend_i64_i64_map.with-capacity (+ (* count 2) 16))
+          values
+          0)
+        values))))
 
 (define (compiler-backend-value-type
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [value : CompilerIrValue]) : CompilerRegMaybeType
   (match value
     [(CompilerIrValue.Var id) (compiler-reg-var-type-lookup types id)]
@@ -16022,7 +16066,7 @@
 
 (define (compiler-backend-binop-operand-ty
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
@@ -16050,7 +16094,7 @@
 
 (define (compiler-backend-value-float?
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [value : CompilerIrValue]) : bool
   (match value
     [(CompilerIrValue.F64 _) true]
@@ -16070,7 +16114,7 @@
 ;; via compiler-backend-binop-operand-ty.
 (define (compiler-backend-binop-f64?
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]) : bool
@@ -21348,7 +21392,7 @@
 (define (compiler-backend-emit-binop-with-plan
   [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -22058,7 +22102,7 @@
 (define (compiler-backend-emit-binop
   [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -22100,7 +22144,7 @@
 
 (define (compiler-backend-rax-forwardable-binop?
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
@@ -22261,7 +22305,7 @@
 (define (compiler-backend-emit-binop-to-rax
   [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -22324,7 +22368,7 @@
 (define (compiler-backend-emit-binop-with-rax-value
   [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
   [dst : i64]
@@ -22634,7 +22678,7 @@
   [source-function : i64]
   [blocks : CompilerIrBlockList]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [op : CompilerIrBinOp]
@@ -23441,7 +23485,7 @@
   [source-function : i64]
   [blocks : CompilerIrBlockList]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [op : CompilerIrBinOp]
@@ -29195,7 +29239,7 @@
 
 (define (compiler-backend-call-actual-type
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [value : CompilerIrValue]) : AstType
   (match (compiler-backend-value-type types global-types value)
     [(CompilerRegMaybeType.Some ty) ty]
@@ -29204,7 +29248,7 @@
 (define (compiler-backend-call-actual-param-type-for-index
   [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [fixed-types : AstTypeList]
   [fixed-count : i64]
@@ -29227,7 +29271,7 @@
   [type-segment-bases : i64]
   [out : (&mut out AstTypeList)]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [fixed-types : AstTypeList]
   [fixed-count : i64]
@@ -29259,7 +29303,7 @@
 (define (compiler-backend-call-actual-param-types-from
   [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [fixed-types : AstTypeList]
   [fixed-count : i64]
@@ -29283,7 +29327,7 @@
   [type-segment-bases : i64]
   [out : (&mut out AstTypeList)]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [declared-types : AstTypeList]
   [decl-index : i64]
@@ -29396,7 +29440,7 @@
 (define (compiler-backend-call-c-abi-param-types-from
   [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [declared-types : AstTypeList]
   [arg-index : i64]
@@ -29419,7 +29463,7 @@
 
 (define (compiler-backend-call-actual-param-type-at
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [index : i64]) : AstType
   (if (< index (compiler-backend-call-args-count args))
@@ -29432,7 +29476,7 @@
 (define (compiler-backend-call-actual-param-types
   [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]) : AstTypeList
   (compiler-backend-call-actual-param-types-from
     type-segment-bases
@@ -29446,7 +29490,7 @@
 (define (compiler-backend-call-c-abi-param-types
   [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [declared-types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : AstTypeList
@@ -29489,7 +29533,7 @@
   [name : i64]
   [args : CompilerIrCallArgs]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [extern-call-info : i64]
   [index : CompilerBackendProgramIndex]) : AstTypeList
   (let
@@ -30690,20 +30734,28 @@
 (define (compiler-backend-arg-move-parallel-edges
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveSeq]
-  [index : i64]) : pmove.CompilerParallelMoveEdgeList
-  (if (>= index (struct-get moves len))
-    pmove.CompilerParallelMoveNil
-    (pmove.compiler-parallel-move-edge-cons
-      (compiler-backend-arg-move-parallel-edge
-        assignments
-        (array-ref (struct-get moves slots) index))
-      (compiler-backend-arg-move-parallel-edges assignments moves (+ index 1)))))
+  [index : i64]) : pmove.CompilerParallelMoveEdgeSeq
+  (let
+    [count : i64 (struct-get moves len)]
+    [cursor : i64 index]
+    [edges : pmove.CompilerParallelMoveEdgeSeq
+      (pmove.compiler-parallel-move-edge-seq-with-capacity (- count index))]
+    (begin
+      (while (< cursor count)
+        (begin
+          (pmove.compiler-parallel-move-edge-push!
+            (&mut edges)
+            (compiler-backend-arg-move-parallel-edge
+              assignments
+              (array-ref (struct-get moves slots) cursor)))
+          (set! cursor (+ cursor 1))))
+      edges)))
 
 (define (compiler-backend-arg-move-decision
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveSeq]) : pmove.CompilerParallelMoveDecision
   (let
-    [edges : pmove.CompilerParallelMoveEdgeList
+    [edges : pmove.CompilerParallelMoveEdgeSeq
       (compiler-backend-arg-move-parallel-edges assignments moves 0)]
     (pmove.compiler-parallel-move-decision edges edges)))
 
@@ -30711,7 +30763,7 @@
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveSeq]
   [all : CompilerBackendArgMoveSeq]) : bool
-  (pmove.compiler-parallel-move-list-has-blocked?
+  (pmove.compiler-parallel-move-seq-has-blocked?
     (compiler-backend-arg-move-parallel-edges assignments moves 0)
     (compiler-backend-arg-move-parallel-edges assignments all 0)))
 
@@ -32024,23 +32076,28 @@
 (define (compiler-backend-phi-copy-list-parallel-edges
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopySeq]
-  [index : i64]) : pmove.CompilerParallelMoveEdgeList
-  (if (>= index (struct-get copies len))
-    pmove.CompilerParallelMoveNil
-    (pmove.compiler-parallel-move-edge-cons
-      (compiler-backend-phi-copy-parallel-edge
-        assignments
-        (array-ref (struct-get copies slots) index))
-      (compiler-backend-phi-copy-list-parallel-edges
-        assignments
-        copies
-        (+ index 1)))))
+  [index : i64]) : pmove.CompilerParallelMoveEdgeSeq
+  (let
+    [count : i64 (struct-get copies len)]
+    [cursor : i64 index]
+    [edges : pmove.CompilerParallelMoveEdgeSeq
+      (pmove.compiler-parallel-move-edge-seq-with-capacity (- count index))]
+    (begin
+      (while (< cursor count)
+        (begin
+          (pmove.compiler-parallel-move-edge-push!
+            (&mut edges)
+            (compiler-backend-phi-copy-parallel-edge
+              assignments
+              (array-ref (struct-get copies slots) cursor)))
+          (set! cursor (+ cursor 1))))
+      edges)))
 
 (define (compiler-backend-phi-copy-list-decision
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopySeq]) : pmove.CompilerParallelMoveDecision
   (let
-    [edges : pmove.CompilerParallelMoveEdgeList
+    [edges : pmove.CompilerParallelMoveEdgeSeq
       (compiler-backend-phi-copy-list-parallel-edges assignments copies 0)]
     (pmove.compiler-parallel-move-decision edges edges)))
 
@@ -34604,7 +34661,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-stage : String]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
   [_functions : CompilerIrFunctionList]
@@ -35486,7 +35543,7 @@
   [args : CompilerIrCallArgs]
   [ty : AstType]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -35771,7 +35828,7 @@
   [args : CompilerIrCallArgs]
   [ty : AstType]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -35859,7 +35916,7 @@
   [arg-assignments : CompilerRegAssignmentList]
   [planned-stage : String]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -39615,7 +39672,7 @@
   [index : i64]
   [load-dst : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (Array i64)]) : bool
   (if (< index (struct-get instrs len))
     (let
@@ -39891,7 +39948,7 @@
 
 (define (compiler-backend-rax-forwardable-consumer?
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
   [instr : CompilerIrInstr]) : bool
@@ -39922,7 +39979,7 @@
 
 (define (compiler-backend-rest-starts-rax-forwardable-consumer?
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
   [instrs : CompilerIrInstrSeq]
@@ -40440,7 +40497,7 @@
   [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (Array i64)]
   [base : CompilerIrValue]
   [offset0 : CompilerIrValue]
@@ -40989,7 +41046,7 @@
   [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (Array i64)]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
@@ -41862,7 +41919,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-stage : String]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
   [_functions : CompilerIrFunctionList]
@@ -42002,7 +42059,7 @@
     [_
       (match (compiler-backend-value-type
         types
-        (CompilerBackendGlobalTypeList.Nil)
+        (CompilerBackendGlobalTypeTable.Empty)
         func)
         [(CompilerRegMaybeType.Some ty)
           (match ty
@@ -42419,7 +42476,7 @@
         (compiler-backend-call-c-abi-param-types
           type-segment-bases
           types
-          (CompilerBackendGlobalTypeList.Nil)
+          (CompilerBackendGlobalTypeTable.Empty)
           args
           declared-param-types
           program-index)
@@ -42430,7 +42487,7 @@
           (compiler-backend-call-actual-param-types
             type-segment-bases
             types
-            (CompilerBackendGlobalTypeList.Nil)
+            (CompilerBackendGlobalTypeTable.Empty)
             args)))]
     [call-space : i64
       (compiler-backend-call-arg-space
@@ -42534,7 +42591,7 @@
   [planned-target : String]
   [planned-stage : String]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
   [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -42659,7 +42716,7 @@
         (compiler-backend-call-c-abi-param-types
           type-segment-bases
           types
-          (CompilerBackendGlobalTypeList.Nil)
+          (CompilerBackendGlobalTypeTable.Empty)
           args
           declared-param-types
           program-index)
@@ -42670,7 +42727,7 @@
           (compiler-backend-call-actual-param-types
             type-segment-bases
             types
-            (CompilerBackendGlobalTypeList.Nil)
+            (CompilerBackendGlobalTypeTable.Empty)
             args)))]
     [call-space : i64
       (compiler-backend-call-stack-arg-layout-space
@@ -45798,7 +45855,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -45921,7 +45978,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -46003,7 +46060,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -46109,7 +46166,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -51690,7 +51747,7 @@
   [func : CompilerIrFunction]
   [functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -52959,7 +53016,7 @@
   [func : CompilerIrFunction]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -53007,7 +53064,7 @@
   [func : CompilerIrFunction]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -53093,7 +53150,7 @@
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -53189,7 +53246,7 @@
   [index : i64]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -53269,7 +53326,7 @@
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -53375,7 +53432,7 @@
   [index : i64]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -53462,7 +53519,7 @@
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
-  [global-types : CompilerBackendGlobalTypeList]
+  [global-types : CompilerBackendGlobalTypeTable]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -53884,27 +53941,14 @@
       program-index
       buf)))
 
-(define (compiler-backend-float-list-reverse-into
-  [floats : BackendFloatList]
-  [out : BackendFloatList]) : BackendFloatList
-  (match floats
-    [(BackendFloatList.Nil) out]
-    [(BackendFloatList.Cons ty bits rest)
-      (compiler-backend-float-list-reverse-into
-        (box-get rest)
-        (compiler-backend-float-cons ty bits out))]))
-
-(define (compiler-backend-float-list-reverse [floats : BackendFloatList]) : BackendFloatList
-  (compiler-backend-float-list-reverse-into floats BackendFloatList.Nil))
-
 (define (compiler-backend-string-set-list [set : BackendStringSet]) : BackendStringSeq
   (struct-get set items))
 
 (define (compiler-backend-symbol-set-list [set : BackendSymbolSet]) : BackendSymbolSeq
   (struct-get set items))
 
-(define (compiler-backend-float-set-list [set : BackendFloatSet]) : BackendFloatList
-  (compiler-backend-float-list-reverse (struct-get set items)))
+(define (compiler-backend-float-set-list [set : BackendFloatSet]) : BackendFloatSeq
+  (struct-get set items))
 
 (define (compiler-backend-program-collections-functions
   [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
@@ -53915,7 +53959,7 @@
   (compiler-backend-string-set-list (struct-get collections strings)))
 
 (define (compiler-backend-program-collections-floats
-  [collections : CompilerBackendProgramCollections]) : BackendFloatList
+  [collections : CompilerBackendProgramCollections]) : BackendFloatSeq
   (compiler-backend-float-set-list (struct-get collections floats)))
 
 (define (compiler-backend-program-collections-bytes
@@ -54559,24 +54603,36 @@
     (compiler-backend-float-bits-directive ty bits)))
 
 (define (compiler-backend-emit-float-entries-into
-  [floats : BackendFloatList]
+  [floats : BackendFloatSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match floats
-    [(BackendFloatList.Nil) buf]
-    [(BackendFloatList.Cons ty bits rest)
-      (compiler-backend-emit-float-entries-into
-        (box-get rest)
-        (text_buf.append buf (compiler-backend-emit-float-entry ty bits)))]))
+  (let
+    [slots : (Array BackendFloatEntry) (struct-get floats slots)]
+    [count : i64 (struct-get floats len)]
+    [index : i64 0]
+    [out : text_buf.TextBuf buf]
+    (begin
+      (while (< index count)
+        (let
+          [entry : BackendFloatEntry (array-ref slots index)]
+          (begin
+            (set!
+              out
+              (text_buf.append
+                out
+                (compiler-backend-emit-float-entry
+                  (struct-get entry ty)
+                  (struct-get entry bits))))
+            (set! index (+ index 1)))))
+      out)))
 
 (define (compiler-backend-emit-float-rodata-into
-  [floats : BackendFloatList]
+  [floats : BackendFloatSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match floats
-    [(BackendFloatList.Nil) buf]
-    [_
-      (compiler-backend-emit-float-entries-into
-        floats
-        (text_buf.append buf "    .section .rodata\n"))]))
+  (if (= (struct-get floats len) 0)
+    buf
+    (compiler-backend-emit-float-entries-into
+      floats
+      (text_buf.append buf "    .section .rodata\n"))))
 
 (define (compiler-backend-emit-f64-sign-bit-rodata-into
   [enabled : bool]
@@ -55941,7 +55997,7 @@
   [closure-names : BackendSymbolSeq]
   [strings : BackendStringSeq]
   [bytes : BackendStringSeq]
-  [floats : BackendFloatList]
+  [floats : BackendFloatSeq]
   [uses-avx2-i64-lane-id : bool]
   [uses-avx512-i64-lane-id : bool]
   [uses-f64-neg : bool]
@@ -56119,7 +56175,7 @@
       (compiler-backend-program-collections-strings collections)]
     [bytes : BackendStringSeq
       (compiler-backend-program-collections-bytes collections)]
-    [floats : BackendFloatList
+    [floats : BackendFloatSeq
       (compiler-backend-program-collections-floats collections)]
     [uses-avx2-i64-lane-id : bool
       (compiler-backend-program-collections-uses-avx2-i64-lane-id? collections)]
@@ -56130,7 +56186,7 @@
       (compiler-backend-program-collections-uses-f64-neg? collections)]
     [span-index : CompilerBackendSourceSpanIndex
       (compiler-backend-source-span-index-build spans)]
-    [global-types : CompilerBackendGlobalTypeList
+    [global-types : CompilerBackendGlobalTypeTable
       (compiler-backend-global-types globals)]
     [runtime-features : runtime_common.CompilerBackendRuntimeFeatures
       (compiler-backend-runtime-features plan)]
@@ -58933,30 +58989,42 @@
         items
         (+ index 1)))))
 
+(define (compiler-backend-object-float
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [entry : BackendFloatEntry]) : object_target.CompilerBackendObjectTargetParts
+  (let
+    [ty : AstType (struct-get entry ty)]
+    [bits : u64 (struct-get entry bits)]
+    [symbol : String (compiler-backend-float-label ty bits)]
+    (object_target.compiler-backend-object-add-rodata
+      (object_target.compiler-backend-object-add-rodata
+        (object_target.compiler-backend-object-add-rodata
+          (object_target.compiler-backend-object-symbol-local-section
+            parts
+            symbol
+            (cobj.CompilerObjectSectionKind.Rodata)
+            (cobj.CompilerObjectSymbolKind.Data))
+          (cobj.CompilerObjectDataRecord.Align
+            (if (compiler-backend-f64-type? ty)
+              8
+              4)))
+        (cobj.CompilerObjectDataRecord.Label symbol))
+      (compiler-backend-float-object-data ty bits))))
+
 (define (compiler-backend-object-floats
   [parts : object_target.CompilerBackendObjectTargetParts]
-  [floats : BackendFloatList]) : object_target.CompilerBackendObjectTargetParts
-  (match floats
-    [(BackendFloatList.Nil) parts]
-    [(BackendFloatList.Cons ty bits rest)
-      (let
-        [symbol : String (compiler-backend-float-label ty bits)]
-        (compiler-backend-object-floats
-          (object_target.compiler-backend-object-add-rodata
-            (object_target.compiler-backend-object-add-rodata
-              (object_target.compiler-backend-object-add-rodata
-                (object_target.compiler-backend-object-symbol-local-section
-                  parts
-                  symbol
-                  (cobj.CompilerObjectSectionKind.Rodata)
-                  (cobj.CompilerObjectSymbolKind.Data))
-                (cobj.CompilerObjectDataRecord.Align
-                  (if (compiler-backend-f64-type? ty)
-                    8
-                    4)))
-              (cobj.CompilerObjectDataRecord.Label symbol))
-            (compiler-backend-float-object-data ty bits))
-          (box-get rest)))]))
+  [floats : BackendFloatSeq]) : object_target.CompilerBackendObjectTargetParts
+  (let
+    [slots : (Array BackendFloatEntry) (struct-get floats slots)]
+    [count : i64 (struct-get floats len)]
+    [index : i64 0]
+    [out : object_target.CompilerBackendObjectTargetParts parts]
+    (begin
+      (while (< index count)
+        (begin
+          (set! out (compiler-backend-object-float out (array-ref slots index)))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-object-f64-sign-bit
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -59246,7 +59314,7 @@
       (compiler-backend-program-collections-strings collections)]
     [bytes : BackendStringSeq
       (compiler-backend-program-collections-bytes collections)]
-    [floats : BackendFloatList
+    [floats : BackendFloatSeq
       (compiler-backend-program-collections-floats collections)]
     [uses-f64-neg : bool
       (compiler-backend-program-collections-uses-f64-neg? collections)]

@@ -1463,26 +1463,27 @@
     (compiler-reg-move-parallel-resource (struct-get move src))
     0))
 
-(define (compiler-reg-move-list-parallel-edges [moves : CompilerRegMoveSeq]) : pmove.CompilerParallelMoveEdgeList
+(define (compiler-reg-move-list-parallel-edges [moves : CompilerRegMoveSeq]) : pmove.CompilerParallelMoveEdgeSeq
   (let
     [slots : (Array CompilerRegMove) (struct-get moves slots)]
     [count : i64 (struct-get moves len)]
-    [index : i64 0]
-    [edges : pmove.CompilerParallelMoveEdgeList pmove.CompilerParallelMoveNil]
+    [index : i64 (- count 1)]
+    [edges : pmove.CompilerParallelMoveEdgeSeq
+      (pmove.compiler-parallel-move-edge-seq-with-capacity count)]
     (begin
-      (while (< index count)
+      ;; The former loop consed each ascending move onto the head. Walk the
+      ;; dense source backward so decision order remains newest-first.
+      (while (>= index 0)
         (begin
-          (set!
-            edges
-            (pmove.compiler-parallel-move-edge-cons
-              (compiler-reg-move-parallel-edge (array-ref slots index))
-              edges))
-          (set! index (+ index 1))))
+          (pmove.compiler-parallel-move-edge-push!
+            (&mut edges)
+            (compiler-reg-move-parallel-edge (array-ref slots index)))
+          (set! index (- index 1))))
       edges)))
 
 (define (compiler-reg-move-list-parallel-decision [moves : CompilerRegMoveSeq]) : pmove.CompilerParallelMoveDecision
   (let
-    [edges : pmove.CompilerParallelMoveEdgeList
+    [edges : pmove.CompilerParallelMoveEdgeSeq
       (compiler-reg-move-list-parallel-edges moves)]
     (pmove.compiler-parallel-move-decision edges edges)))
 

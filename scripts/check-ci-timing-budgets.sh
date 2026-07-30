@@ -31,6 +31,11 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+BUILD_INVARIANCE_GATE='stage2 opt1/opt2 build-invariance'
+HOST_ACTION_GATE='stage2 CLI host-action smoke'
+CAPPED_TREND_GATES="$BUILD_INVARIANCE_GATE
+$HOST_ACTION_GATE"
+
 usage() {
     cat >&2 <<'EOF'
 usage: scripts/check-ci-timing-budgets.sh <ci-timing.tsv>
@@ -42,8 +47,61 @@ closed on missing, duplicate, malformed, or nonzero-exit rows.
 EOF
 }
 
+load_default_trend_denylist() {
+    analyzer="$ROOT/scripts/analyze-ci-timing-trends.sh"
+    if [ ! -x "$analyzer" ]; then
+        echo "[ci-timing-budget] trend analyzer is not executable: $analyzer" >&2
+        return 1
+    fi
+    if ! default_denylist=$("$analyzer" --print-default-denylist); then
+        echo "[ci-timing-budget] could not read the default trend denylist" >&2
+        return 1
+    fi
+    if [ -z "$default_denylist" ]; then
+        echo "[ci-timing-budget] default trend denylist is empty" >&2
+        return 1
+    fi
+    printf '%s\n' "$default_denylist"
+}
+
+check_denylist_caps() {
+    denylist=$1
+    errors=''
+    if ! errors=$(printf '%s\n' "$denylist" | awk \
+            -v capped="$CAPPED_TREND_GATES" '
+        BEGIN {
+            count = split(capped, names, "\n")
+            for (i = 1; i <= count; i += 1) {
+                if (names[i] != "") {
+                    has_cap[names[i]] = 1
+                }
+            }
+        }
+        {
+            sub(/\r$/, "")
+            if ($0 == "") {
+                print "[ci-timing-budget] default trend denylist has an empty gate name"
+                invalid = 1
+            } else if (seen[$0]++) {
+                print "[ci-timing-budget] default trend denylist repeats gate: " $0
+                invalid = 1
+            } else if (!has_cap[$0]) {
+                print "[ci-timing-budget] default trend denylist gate has no hard cap: " $0
+                invalid = 1
+            }
+        }
+        END { exit invalid }
+    '); then
+        printf '%s\n' "$errors" >&2
+        return 1
+    fi
+}
+
 check_budget() {
     timing_file=$1
+    default_denylist=$(load_default_trend_denylist) || return 1
+    check_denylist_caps "$default_denylist" || return 1
+
     if [ ! -f "$timing_file" ]; then
         echo "[ci-timing-budget] timing artifact not found: $timing_file" >&2
         return 1
@@ -54,7 +112,8 @@ check_budget() {
     fi
 
     awk -F '\t' \
-        -v required_gate='stage2 opt1/opt2 build-invariance' \
+        -v required_gate="$BUILD_INVARIANCE_GATE" \
+        -v host_action_gate="$HOST_ACTION_GATE" \
         -v opt2_opt1_cap=25000 \
         -v opt1_opt1_cap=35000 \
         -v opt2_opt2_cap=55000 \
@@ -97,7 +156,7 @@ check_budget() {
             if ($2 == "all" && $3 == "gate") {
                 if ($1 == "TypeLisp source lint") {
                     key = "lint-gate"
-                } else if ($1 == "stage2 CLI host-action smoke") {
+                } else if ($1 == host_action_gate) {
                     key = "host-action-smoke"
                 } else {
                     next
@@ -267,22 +326,22 @@ write_fixture() {
     host_action_ms=${7-13000}
     {
         printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost\n'
-        printf 'stage2 opt1/opt2 build-invariance\topt2-built:selfhost_main_opt1\tcompile\t%s\t0\tlinux\n' \
-            "$opt2_opt1"
-        printf 'stage2 opt1/opt2 build-invariance\topt1-built:selfhost_main_opt1\tcompile\t%s\t0\tlinux\n' \
-            "$opt1_opt1"
-        printf 'stage2 opt1/opt2 build-invariance\topt2-built:selfhost_main_opt2\tcompile\t%s\t0\tlinux\n' \
-            "$opt2_opt2"
+        printf '%s\topt2-built:selfhost_main_opt1\tcompile\t%s\t0\tlinux\n' \
+            "$BUILD_INVARIANCE_GATE" "$opt2_opt1"
+        printf '%s\topt1-built:selfhost_main_opt1\tcompile\t%s\t0\tlinux\n' \
+            "$BUILD_INVARIANCE_GATE" "$opt1_opt1"
+        printf '%s\topt2-built:selfhost_main_opt2\tcompile\t%s\t0\tlinux\n' \
+            "$BUILD_INVARIANCE_GATE" "$opt2_opt2"
         if [ -n "$opt1_opt2" ]; then
-            printf 'stage2 opt1/opt2 build-invariance\topt1-built:selfhost_main_opt2\tcompile\t%s\t0\tlinux\n' \
-                "$opt1_opt2"
+            printf '%s\topt1-built:selfhost_main_opt2\tcompile\t%s\t0\tlinux\n' \
+                "$BUILD_INVARIANCE_GATE" "$opt1_opt2"
         fi
         if [ -n "$lint_ms" ]; then
             printf 'TypeLisp source lint\tall\tgate\t%s\t0\tlinux\n' "$lint_ms"
         fi
         if [ -n "$host_action_ms" ]; then
-            printf 'stage2 CLI host-action smoke\tall\tgate\t%s\t0\tlinux\n' \
-                "$host_action_ms"
+            printf '%s\tall\tgate\t%s\t0\tlinux\n' \
+                "$HOST_ACTION_GATE" "$host_action_ms"
         fi
     } > "$fixture"
 }
@@ -301,8 +360,8 @@ append_host_action_row() {
     elapsed_ms=$2
     exit_status=$3
     host=$4
-    printf 'stage2 CLI host-action smoke\tall\tgate\t%s\t%s\t%s\n' \
-        "$elapsed_ms" "$exit_status" "$host" >> "$fixture"
+    printf '%s\tall\tgate\t%s\t%s\t%s\n' \
+        "$HOST_ACTION_GATE" "$elapsed_ms" "$exit_status" "$host" >> "$fixture"
 }
 
 expect_fixture() {
@@ -332,6 +391,19 @@ self_test() {
     workdir="$ROOT/target/ci-timing-budget-self-test"
     rm -rf "$workdir"
     mkdir -p "$workdir"
+
+    default_denylist=$(load_default_trend_denylist)
+    check_denylist_caps "$default_denylist"
+    mutated_denylist="$default_denylist
+self-test denylisted gate without cap"
+    if check_denylist_caps "$mutated_denylist" \
+            > "$workdir/denylist-cap.out" 2>&1; then
+        echo "[ci-timing-budget] unbudgeted denylist mutation unexpectedly passed" >&2
+        return 1
+    fi
+    grep -F \
+        'default trend denylist gate has no hard cap: self-test denylisted gate without cap' \
+        "$workdir/denylist-cap.out" >/dev/null
 
     write_fixture "$workdir/pass.tsv" 12800 18700 30300 50500
     expect_fixture pass pass "$workdir/pass.tsv" "$workdir/pass.out"

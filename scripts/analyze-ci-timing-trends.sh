@@ -28,6 +28,7 @@ usage() {
     cat >&2 <<'EOF'
 usage: scripts/analyze-ci-timing-trends.sh --offline HISTORY.tsv REPORT.md
        scripts/analyze-ci-timing-trends.sh --collect OWNER/REPO WORKDIR
+       scripts/analyze-ci-timing-trends.sh --print-default-denylist
        scripts/analyze-ci-timing-trends.sh --self-test
 
 History schema:
@@ -399,6 +400,19 @@ collect() {
 self_test() {
     work="$ROOT/target/ci-timing-trend-self-test"
     rm -rf "$work"; mkdir -p "$work"
+
+    printed_default=$("$0" --print-default-denylist)
+    if [ "$printed_default" != "$DEFAULT_DENYLIST" ]; then
+        echo "[ci-timing-trend] printed default denylist does not match the analyzer default" >&2
+        return 1
+    fi
+    printed_with_override=$(CI_TIMING_TREND_DENYLIST=none \
+        "$0" --print-default-denylist)
+    if [ "$printed_with_override" != "$DEFAULT_DENYLIST" ]; then
+        echo "[ci-timing-trend] denylist override changed the printed default" >&2
+        return 1
+    fi
+
     fixture="$work/history.tsv"
     printf '%s\n' "$HEADER" > "$fixture"
     i=1
@@ -576,6 +590,10 @@ self_test() {
 case "${1:-}" in
     --offline) [ "$#" -eq 3 ] || { usage; exit 2; }; analyze "$2" "$3" ;;
     --collect) [ "$#" -eq 3 ] || { usage; exit 2; }; collect "$2" "$3" ;;
+    --print-default-denylist)
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        printf '%s\n' "$DEFAULT_DENYLIST"
+        ;;
     --self-test) [ "$#" -eq 1 ] || { usage; exit 2; }; self_test ;;
     -h|--help) usage ;;
     *) usage; exit 2 ;;

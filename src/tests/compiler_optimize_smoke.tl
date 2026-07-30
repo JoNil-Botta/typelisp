@@ -2176,6 +2176,10 @@
       (compiler-optimize-self-test)
       42)
     (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dense-storage-self-test"
+      (compiler-optimize-dense-storage-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
       "compiler-optimize-typed-fold-self-test"
       (compiler-optimize-typed-fold-self-test)
       42)

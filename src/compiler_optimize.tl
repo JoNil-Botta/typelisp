@@ -39,6 +39,7 @@
 (cfg compile-profile-summary (import compiler_profile_summary as cps))
 (import stdlib.option)
 (import (option.option i64) as option_i64)
+(import (vector.vector i64 core) as opt_dense_i64_vec)
 
 (defenum ResultCompilerOptimizeLevel
   (Ok i64)
@@ -16942,9 +16943,10 @@
 (defstruct OptLicmRootEnv
   (map opt_i64_i64_map.Map))
 
-(defenum OptLicmStoreRootList
-  (Nil)
-  (Cons OptLicmRoot (Box OptLicmStoreRootList)))
+(import (vector.vector OptLicmRoot core) as opt_licm_store_root_vec)
+
+(defstruct OptLicmStoreRootList
+  (items opt_licm_store_root_vec.Vec))
 
 (defstruct OptLicmStoreState
   (summary OptLicmStoreSummary)
@@ -17036,15 +17038,35 @@
     [(OptLicmRoot.Shared _) false]
     [(OptLicmRoot.NoRoot) false]))
 
+(define (opt-licm-store-roots-new) : OptLicmStoreRootList
+  (OptLicmStoreRootList (opt_licm_store_root_vec.with-capacity 4)))
+
+(define (opt-licm-store-roots-add
+  [stores : OptLicmStoreRootList]
+  [root : OptLicmRoot]) : OptLicmStoreRootList
+  (let
+    [items : opt_licm_store_root_vec.Vec (struct-get stores items)]
+    (begin
+      (opt_licm_store_root_vec.push (&mut items) root)
+      (OptLicmStoreRootList items))))
+
 (define (opt-licm-store-roots-safe?
   [stores : OptLicmStoreRootList]
   [load-root : OptLicmRoot]) : bool
-  (match stores
-    [(OptLicmStoreRootList.Nil) true]
-    [(OptLicmStoreRootList.Cons store-root rest)
-      (and
-        (opt-licm-root-disjoint-store? store-root load-root)
-        (opt-licm-store-roots-safe? (box-get rest) load-root))]))
+  (let
+    [items : opt_licm_store_root_vec.Vec (struct-get stores items)]
+    [slots : (& items (Array OptLicmRoot))
+      (opt_licm_store_root_vec.slots (& items))]
+    [index : i64 (- (opt_licm_store_root_vec.len (& items)) 1)]
+    [safe? : bool true]
+    (begin
+      (while (and safe? (>= index 0))
+        (begin
+          (set!
+            safe?
+            (opt-licm-root-disjoint-store? (array-ref slots index) load-root))
+          (set! index (- index 1))))
+      safe?)))
 
 (define (opt-licm-body-map-capacity [body-blocks : CompilerIrBlockList]) : i64
   (+ 1 (compiler-ir-block-list-instruction-count body-blocks)))
@@ -17470,7 +17492,7 @@
     (opt-licm-store-summary-empty)
     ptrs
     roots
-    (OptLicmStoreRootList.Nil)
+    (opt-licm-store-roots-new)
     false))
 
 (define (opt-licm-store-state-add-summary
@@ -17513,7 +17535,7 @@
     (opt-licm-store-summary-merge (struct-get state rooted-summary) summary)
     (struct-get state ptrs)
     (struct-get state roots)
-    (OptLicmStoreRootList.Cons root (box (struct-get state store-roots)))
+    (opt-licm-store-roots-add (struct-get state store-roots) root)
     (struct-get state any-call?)))
 
 (define (opt-licm-store-state-mark-call [state : OptLicmStoreState]) : OptLicmStoreState
@@ -17837,7 +17859,7 @@
           (opt-licm-store-summary-empty)
           (OptLicmPtrEnv.Nil)
           (opt-licm-root-env-with-capacity 17)
-          (OptLicmStoreRootList.Nil)
+          (opt-licm-store-roots-new)
           false))]
     (opt-licm-store-summary-merge
       (struct-get state summary)
@@ -34676,9 +34698,14 @@
 ;; ordinary vector stores. Transient results are freshened while a destination
 ;; that reads itself remains mutable, so each copy consumes the preceding
 ;; copy's recurrence state. The original B remains the remainder loop.
-(defenum OptUnrollSimdMemoryList
-  (Nil)
-  (Cons CompilerIrValue AstType (Box OptUnrollSimdMemoryList)))
+(defstruct OptUnrollSimdMemory
+  (base CompilerIrValue)
+  (ty AstType))
+
+(import (vector.vector OptUnrollSimdMemory core) as opt_unroll_simd_memory_vec)
+
+(defstruct OptUnrollSimdMemoryList
+  (items opt_unroll_simd_memory_vec.Vec))
 
 (defstruct OptUnrollSimdShape
   (pred-label i64)
@@ -36031,23 +36058,45 @@
 ;; one vector-width step; no other body instruction may consume that counter.
 ;; Record every invariant base/type pair so the unrolled group can compute one
 ;; Gep(base, group-index) per array, then use literal lane-group offsets from it.
+(define (opt-unroll-simd-memory-new) : OptUnrollSimdMemoryList
+  (OptUnrollSimdMemoryList (opt_unroll_simd_memory_vec.with-capacity 4)))
+
+(define (opt-unroll-simd-memory-count [memory-bases : OptUnrollSimdMemoryList]) : i64
+  (opt_unroll_simd_memory_vec.len (& (struct-get memory-bases items))))
+
+;; Appends replace list prepends, so logical index zero remains the newest
+;; base/type pair and preserves the old Cons traversal order.
+(define (opt-unroll-simd-memory-at
+  [memory-bases : OptUnrollSimdMemoryList]
+  [index : i64]) : OptUnrollSimdMemory
+  (let
+    [items : opt_unroll_simd_memory_vec.Vec (struct-get memory-bases items)]
+    (array-ref
+      (opt_unroll_simd_memory_vec.slots (& items))
+      (- (- (opt_unroll_simd_memory_vec.len (& items)) index) 1))))
+
 (define (opt-unroll-simd-memory-contains?
   [type-segment-bases : i64]
   [memory-bases : OptUnrollSimdMemoryList]
   [base : CompilerIrValue]
   [ty : AstType]) : bool
-  (match memory-bases
-    [(OptUnrollSimdMemoryList.Nil) false]
-    [(OptUnrollSimdMemoryList.Cons item-base item-ty rest)
-      (or
-        (and
-          (opt-value-eq item-base base)
-          (opt-type-eq type-segment-bases item-ty ty))
-        (opt-unroll-simd-memory-contains?
-          type-segment-bases
-          (box-get rest)
-          base
-          ty))]))
+  (let
+    [count : i64 (opt-unroll-simd-memory-count memory-bases)]
+    [index : i64 0]
+    [found? : bool false]
+    (begin
+      (while (and (not found?) (< index count))
+        (let
+          [item : OptUnrollSimdMemory
+            (opt-unroll-simd-memory-at memory-bases index)]
+          (begin
+            (set!
+              found?
+              (and
+                (opt-value-eq (struct-get item base) base)
+                (opt-type-eq type-segment-bases (struct-get item ty) ty)))
+            (set! index (+ index 1)))))
+      found?)))
 
 (define (opt-unroll-simd-memory-add
   [type-segment-bases : i64]
@@ -36056,7 +36105,13 @@
   [ty : AstType]) : OptUnrollSimdMemoryList
   (if (opt-unroll-simd-memory-contains? type-segment-bases memory-bases base ty)
     memory-bases
-    (OptUnrollSimdMemoryList.Cons base ty (box memory-bases))))
+    (let
+      [items : opt_unroll_simd_memory_vec.Vec (struct-get memory-bases items)]
+      (begin
+        (opt_unroll_simd_memory_vec.push
+          (&mut items)
+          (OptUnrollSimdMemory base ty))
+        (OptUnrollSimdMemoryList items)))))
 
 (define (opt-unroll-simd-memory-shape
   [type-segment-bases : i64]
@@ -36274,7 +36329,7 @@
                                             index-var
                                             step
                                             (OptUnrollSimdMemoryShape.Some
-                                              (OptUnrollSimdMemoryList.Nil)
+                                              (opt-unroll-simd-memory-new)
                                               0
                                               0
                                               0))
@@ -36462,22 +36517,26 @@
   [base : CompilerIrValue]
   [ty : AstType]
   [index : i64]) : i64
-  (match memory-bases
-    ;; Shape validation guarantees that every cloned memory instruction is in
-    ;; this table. Returning -1 makes any violated internal invariant fail
-    ;; loudly at array access instead of silently changing an address.
-    [(OptUnrollSimdMemoryList.Nil) (- 0 1)]
-    [(OptUnrollSimdMemoryList.Cons item-base item-ty rest)
-      (if (and
-        (opt-value-eq item-base base)
-        (opt-type-eq type-segment-bases item-ty ty))
-        index
-        (opt-unroll-simd-memory-index
-          type-segment-bases
-          (box-get rest)
-          base
-          ty
-          (+ index 1)))]))
+  ;; Shape validation guarantees that every cloned memory instruction is in
+  ;; this table. Returning -1 makes any violated internal invariant fail
+  ;; loudly at array access instead of silently changing an address.
+  (let
+    [count : i64 (opt-unroll-simd-memory-count memory-bases)]
+    [scan : i64 index]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (< scan count))
+        (let
+          [item : OptUnrollSimdMemory
+            (opt-unroll-simd-memory-at memory-bases scan)]
+          (begin
+            (if (and
+              (opt-value-eq (struct-get item base) base)
+              (opt-type-eq type-segment-bases (struct-get item ty) ty))
+              (set! found scan)
+              unit)
+            (set! scan (+ scan 1)))))
+      found)))
 
 (define (opt-unroll-simd-clone-instr
   [type-segment-bases : i64]
@@ -36600,20 +36659,22 @@
   [group-bases : (Array i64)]
   [index : i64]
   [group-index : i64]) : CompilerIrInstrList
-  (match memory-bases
-    [(OptUnrollSimdMemoryList.Nil) (CompilerIrInstrList.Nil)]
-    [(OptUnrollSimdMemoryList.Cons base ty rest)
+  (if (>= index (opt-unroll-simd-memory-count memory-bases))
+    (CompilerIrInstrList.Nil)
+    (let
+      [item : OptUnrollSimdMemory
+        (opt-unroll-simd-memory-at memory-bases index)]
       (compiler-ir-instr-cons
         (CompilerIrInstr.Gep
           (array-ref group-bases index)
-          base
+          (struct-get item base)
           (CompilerIrValue.Var group-index)
-          ty)
+          (struct-get item ty))
         (opt-unroll-simd-group-geps
-          (box-get rest)
+          memory-bases
           group-bases
           (+ index 1)
-          group-index))]))
+          group-index)))))
 
 (define (opt-unroll-simd-rewrite-blocks
   [blocks : CompilerIrBlockList]
@@ -39888,9 +39949,20 @@
 ;; chain keeps a replacement value, so its readers survive under a new name; a
 ;; reinterpret cast that fed only the replaced first check has no reader left at
 ;; all once the synthesized subtraction reads the cast's source instead.
-(defenum OptLateBoundsPairDrop
-  (Nil)
-  (Cons i64 (Box OptLateBoundsPairDrop)))
+(defstruct OptLateBoundsPairDrop
+  (items opt_dense_i64_vec.Vec))
+
+(define (opt-late-bounds-pair-drops-new) : OptLateBoundsPairDrop
+  (OptLateBoundsPairDrop (opt_dense_i64_vec.with-capacity 4)))
+
+(define (opt-late-bounds-pair-drops-add
+  [drops : OptLateBoundsPairDrop]
+  [var : i64]) : OptLateBoundsPairDrop
+  (let
+    [items : opt_dense_i64_vec.Vec (struct-get drops items)]
+    (begin
+      (opt_dense_i64_vec.push (&mut items) var)
+      (OptLateBoundsPairDrop items))))
 
 (define (opt-late-bounds-pair-selected-length?
   [selected : CompilerIrMaybeValue]
@@ -40052,10 +40124,17 @@
         (opt-late-bounds-pair-subst-def? (box-get rest) dst))]))
 
 (define (opt-late-bounds-pair-drop? [drops : OptLateBoundsPairDrop] [dst : i64]) : bool
-  (match drops
-    [(OptLateBoundsPairDrop.Nil) false]
-    [(OptLateBoundsPairDrop.Cons var rest)
-      (or (= dst var) (opt-late-bounds-pair-drop? (box-get rest) dst))]))
+  (let
+    [items : opt_dense_i64_vec.Vec (struct-get drops items)]
+    [slots : (& items (Array i64)) (opt_dense_i64_vec.slots (& items))]
+    [index : i64 (- (opt_dense_i64_vec.len (& items)) 1)]
+    [found? : bool false]
+    (begin
+      (while (and (not found?) (>= index 0))
+        (begin
+          (set! found? (= dst (array-ref slots index)))
+          (set! index (- index 1))))
+      found?)))
 
 ;; The first check's index operand is often a width-64 reinterpret cast of the
 ;; real counter. i64 and u64 share their representation, so the pair-min
@@ -40422,7 +40501,7 @@
             (if (and
               (opt-late-bounds-pair-reinterpret-def? body-blocks var)
               (= (opt-late-bounds-pair-use-count uses var) 1))
-              (OptLateBoundsPairDrop.Cons var (box acc))
+              (opt-late-bounds-pair-drops-add acc var)
               acc)]
           [_ acc])])))
 
@@ -40490,7 +40569,7 @@
                             body-blocks
                             (opt-collect-blocks-uses-array frame blocks)
                             (struct-get collected plans)
-                            (OptLateBoundsPairDrop.Nil))]
+                            (opt-late-bounds-pair-drops-new))]
                         (match (opt-late-bounds-pair-const-short-length length)
                           [(CompilerIrMaybeValue.Some const-short-length)
                             (let
@@ -48984,9 +49063,39 @@
 ;; resolve a reference), but the index value is a plain slot, so no global intern
 ;; table is mutated -- IR names live in the transient optimize arena and interning
 ;; them would dangle a table pointer after the rewind.
-(defenum OptReachWorklist
-  (Nil)
-  (Cons i64 (Box OptReachWorklist)))
+(defstruct OptReachWorklist
+  (items opt_dense_i64_vec.Vec)
+  (len i64))
+
+(defenum OptReachWorklistPop
+  (Empty)
+  (Item i64 OptReachWorklist))
+
+(define (opt-reach-worklist-new) : OptReachWorklist
+  (OptReachWorklist (opt_dense_i64_vec.with-capacity 16) 0))
+
+(define (opt-reach-worklist-push [worklist : OptReachWorklist] [slot : i64]) : OptReachWorklist
+  (let
+    [items : opt_dense_i64_vec.Vec (struct-get worklist items)]
+    [len : i64 (struct-get worklist len)]
+    (begin
+      (if (< len (opt_dense_i64_vec.len (& items)))
+        (opt_dense_i64_vec.set (&mut items) len slot)
+        (opt_dense_i64_vec.push (&mut items) slot))
+      (OptReachWorklist items (+ len 1)))))
+
+(define (opt-reach-worklist-pop [worklist : OptReachWorklist]) : OptReachWorklistPop
+  (let
+    [len : i64 (struct-get worklist len)]
+    (if (<= len 0)
+      (OptReachWorklistPop.Empty)
+      (let
+        [next-len : i64 (- len 1)]
+        (OptReachWorklistPop.Item
+          (array-ref
+            (opt_dense_i64_vec.slots (& (struct-get worklist items)))
+            next-len)
+          (OptReachWorklist (struct-get worklist items) next-len))))))
 
 (defenum OptReachState
   (State opt_i64_i64_map.Map OptReachWorklist opt_i64_i64_map.Map i64))
@@ -54707,7 +54816,7 @@
             (opt_i64_i64_map.insert-ref! (&mut next-reachable) slot 1)
             (OptReachState.State
               next-reachable
-              (OptReachWorklist.Cons slot (box worklist))
+              (opt-reach-worklist-push worklist slot)
               globals
               runtime-helper-mask))))]))
 
@@ -55155,16 +55264,12 @@
 (define (opt-reach-process [index : OptFunctionIndex] [state : OptReachState]) : OptReachState
   (match state
     [(OptReachState.State reachable worklist globals runtime-helper-mask)
-      (match worklist
-        [(OptReachWorklist.Nil) state]
-        [(OptReachWorklist.Cons slot rest)
+      (match (opt-reach-worklist-pop worklist)
+        [(OptReachWorklistPop.Empty) state]
+        [(OptReachWorklistPop.Item slot rest)
           (let
             [popped : OptReachState
-              (OptReachState.State
-                reachable
-                (box-get rest)
-                globals
-                runtime-helper-mask)]
+              (OptReachState.State reachable rest globals runtime-helper-mask)]
             (opt-reach-process
               index
               (opt-reach-function
@@ -55417,7 +55522,7 @@
               index
               (OptReachState.State
                 reachable
-                (OptReachWorklist.Nil)
+                (opt-reach-worklist-new)
                 reachable-globals
                 0)
               "main"))
@@ -58447,9 +58552,11 @@
 ;; optimizer alias fact model, and records the first conservative blocker for a
 ;; function/block/loop scope. The result never rewrites IR; compile-profile
 ;; builds only emit deterministic detail rows to stderr.
+;; Roots are a membership-only set (never traversed), so keyed dense storage
+;; avoids the old linear scan as scopes accumulate allocation candidates.
 (defenum OptScratchRootList
-  (Nil)
-  (Cons i64 (Box OptScratchRootList)))
+  (Empty)
+  (Dense opt_i64_i64_map.Map))
 
 (defenum OptScratchBlockerReason
   (NoBlocker)
@@ -58510,18 +58617,33 @@
         type-segment-bases
         (ast-type-segment-bases-get type-segment-bases inner))]))
 
+(define (opt-scratch-root-list-new) : OptScratchRootList
+  (OptScratchRootList.Empty))
+
 (define (opt-scratch-root-list-contains?
   [roots : OptScratchRootList]
   [root : i64]) : bool
   (match roots
-    [(OptScratchRootList.Nil) false]
-    [(OptScratchRootList.Cons found rest)
-      (or (= found root) (opt-scratch-root-list-contains? (box-get rest) root))]))
+    [(OptScratchRootList.Empty) false]
+    [(OptScratchRootList.Dense items)
+      (opt_i64_i64_map.contains? (& items) root)]))
 
 (define (opt-scratch-root-list-add [roots : OptScratchRootList] [root : i64]) : OptScratchRootList
-  (if (opt-scratch-root-list-contains? roots root)
-    roots
-    (OptScratchRootList.Cons root (box roots))))
+  (match roots
+    [(OptScratchRootList.Empty)
+      (let
+        [items : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut items) root 1)
+          (OptScratchRootList.Dense items)))]
+    [(OptScratchRootList.Dense found)
+      (if (opt_i64_i64_map.contains? (& found) root)
+        roots
+        (let
+          [items : opt_i64_i64_map.Map found]
+          (begin
+            (opt_i64_i64_map.insert-ref! (&mut items) root 1)
+            (OptScratchRootList.Dense items))))]))
 
 (define (opt-scratch-direct-alloc
   [type-segment-bases : i64]
@@ -58859,7 +58981,7 @@
   (OptScratchScopeState.State
     0
     0
-    (OptScratchRootList.Nil)
+    (opt-scratch-root-list-new)
     (opt-alias-empty)
     (OptScratchBlockerReason.NoBlocker)))
 

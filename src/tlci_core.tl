@@ -412,6 +412,8 @@
   "pattern-list-empty")
 (define tlci-host-callback-name-pattern-list-cons : String
   "pattern-list-cons")
+(define tlci-host-callback-name-pattern-list-cons-from-values : String
+  "pattern-list-cons-from-values")
 (define tlci-host-callback-name-match-arm : String
   "match-arm")
 (define tlci-host-callback-name-match-arm-list-empty : String
@@ -538,6 +540,8 @@
 ;; Refs #5212.
 (define tlci-host-callback-name-expr-list-empty : String
   "expr-list-empty")
+(define tlci-host-callback-name-expr-list-cons : String
+  "expr-list-cons")
 (define tlci-host-callback-name-expr-list-append : String
   "expr-list-append")
 (define tlci-host-callback-name-push-operand : String
@@ -732,13 +736,15 @@
 (define tlci-host-callback-name-expr-float-literal : String
   "expr-float-literal")
 
-;; Computed-scrutinee probes and cast templates (refs #5604). The two probes
+;; Computed-scrutinee probes and cast/init templates (refs #5604, #5606). The
+;; two probes
 ;; share operand-type-kind-eq's shape -- operand index in `a`, caller bytes in
 ;; `b`/`c`, 1/0 as data and a negative malformed-request sentinel -- so they
 ;; bypass the status latch the same way: operand-expr-type-kind-eq compares
 ;; the type-kind of an Expr operand's produced type, and operand-type-key-eq
 ;; compares a type operand's canonical key. expr-cast pops the type value then
-;; the operand expression and pushes the cast node the parser produces. The
+;; the operand expression and pushes the cast node the parser produces.
+;; expr-init pops one type value and pushes the typed `(init : T)` node. The
 ;; embedded image and its consumer are always the same source-bound binary.
 (define tlci-host-callback-name-operand-expr-type-kind-eq : String
   "operand-expr-type-kind-eq")
@@ -746,6 +752,8 @@
   "operand-type-key-eq")
 (define tlci-host-callback-name-expr-cast : String
   "expr-cast")
+(define tlci-host-callback-name-expr-init : String
+  "expr-init")
 
 ;; Raw-pointer and `unsafe` template node kinds (refs #5605). expr-unsafe pops
 ;; an expression list and pushes the `(unsafe ...)` node; expr-ptr-read,
@@ -802,6 +810,17 @@
 ;; compile-time data local rather than a stack value. Refs #5700.
 (define tlci-host-callback-name-value-i64 : String
   "value-i64")
+
+;; A computed value-position unit literal must still occupy a session stack
+;; slot so conditional validation bindings can share the ordinary local-set
+;; continuation with their diagnostic alternative. Refs #5606.
+(define tlci-host-callback-name-value-unit : String
+  "value-unit")
+
+;; Select one of two already-computed session values from an i64 condition
+;; immediate. The producer only emits this for side-effect-free Var branches.
+(define tlci-host-callback-name-value-select : String
+  "value-select")
 
 ;; Comptime string scanning over a String session local (refs #5701). The
 ;; scanner bodies bind a String once -- from `comptime.expr-string-value` or

@@ -656,14 +656,18 @@
 (define (ctfe-generated-leading-dot-suffix-id [suffix-id : i64]) : i64
   (let
     [suffix : String (intern-str suffix-id)]
+    ;; This helper also runs through the native comptime host table, whose
+    ;; active intern table may differ from the compiler builtin cache (as in
+    ;; the standalone ABI smoke). Resolve the empty anchor in that table.
+    [empty-id : i64 (ci.intern "")]
     [prefix-id : i64
       (if (ci.intern-dotted? suffix-id)
         (ctfe-generated-leading-dot-suffix-id
           (ci.intern-dotted-prefix-id suffix-id))
-        cbi.compiler-builtin-id-fix-empty)]
+        empty-id)]
     (ci.intern-generated-canonical-dotted-name
       (string.append "." suffix)
-      cbi.compiler-builtin-id-fix-empty
+      empty-id
       prefix-id
       suffix-id)))
 

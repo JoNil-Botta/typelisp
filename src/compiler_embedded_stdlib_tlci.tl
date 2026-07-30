@@ -456,24 +456,56 @@
   (Some String)
   (None))
 
+(defenum CompilerCtfeMaybeStringIdentity
+  (Some String i64)
+  (None))
+
 (define (compiler-comptime-host-local-string [slot : i64]) : CompilerCtfeMaybeString
   (if (or
     (< slot 0)
     (>= slot compiler-comptime-host-locals-cap)
     (not (array-ref compiler-comptime-host-locals-live slot)))
     (CompilerCtfeMaybeString.None)
-    (match (array-ref compiler-comptime-host-locals slot)
-      [(CompilerCtfeValue.String text _) (CompilerCtfeMaybeString.Some text)]
-      [_ (CompilerCtfeMaybeString.None)])))
+    (compiler-comptime-host-value-string
+      (array-ref compiler-comptime-host-locals slot))))
 
 ;; Public CTFE String arguments also accept inspected Name values; this is how
 ;; reflection names flow through ordinary string helpers on the interpreted
 ;; route. Refs #5626.
-(define (compiler-comptime-host-value-string [value : CompilerCtfeValue]) : CompilerCtfeMaybeString
+(define (compiler-comptime-host-value-string-identity
+  [value : CompilerCtfeValue]) : CompilerCtfeMaybeStringIdentity
   (match value
-    [(CompilerCtfeValue.String text _) (CompilerCtfeMaybeString.Some text)]
-    [(CompilerCtfeValue.Name text _) (CompilerCtfeMaybeString.Some text)]
-    [_ (CompilerCtfeMaybeString.None)]))
+    [(CompilerCtfeValue.String text string-id)
+      (CompilerCtfeMaybeStringIdentity.Some text string-id)]
+    [(CompilerCtfeValue.Name text name-id)
+      (CompilerCtfeMaybeStringIdentity.Some text name-id)]
+    [_ (CompilerCtfeMaybeStringIdentity.None)]))
+
+(define (compiler-comptime-host-value-string [value : CompilerCtfeValue]) : CompilerCtfeMaybeString
+  (match (compiler-comptime-host-value-string-identity value)
+    [(CompilerCtfeMaybeStringIdentity.Some text _)
+      (CompilerCtfeMaybeString.Some text)]
+    [(CompilerCtfeMaybeStringIdentity.None) (CompilerCtfeMaybeString.None)]))
+
+(defenum CompilerCtfeMaybeNameId
+  (Some i64)
+  (None))
+
+;; Public syntax builders accept either generated Name identities or String
+;; values resolved through the current source-name session.
+(define (compiler-comptime-host-value-name-id [value : CompilerCtfeValue]) : CompilerCtfeMaybeNameId
+  (match value
+    [(CompilerCtfeValue.Name _ name-id) (CompilerCtfeMaybeNameId.Some name-id)]
+    [(CompilerCtfeValue.String text string-id)
+      (let
+        [env : CtfeEnv
+          (ctfe-env-empty-with-pools (array-ref compiler-comptime-host-pools 0))]
+        (CompilerCtfeMaybeNameId.Some
+          (ctfe-string-syntax-name-id
+            (ctfe-env-source-names env)
+            text
+            string-id)))]
+    [_ (CompilerCtfeMaybeNameId.None)]))
 
 ;; The pools that own an operand's expression nodes: a captured operand keeps
 ;; its caller pools, every other value reads the session pools. Refs #5602.
@@ -1263,6 +1295,168 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+;; Shared module-value lookup over the two already-validated String/Name stack
+;; values. Existence is returned as data; the type query replaces both names
+;; with the public signature and preserves interpreted missing-value diagnostics.
+(define (compiler-comptime-host-resolve-module-value!
+  [module : String]
+  [module-id : i64]
+  [name : String]
+  [name-id : i64]
+  [type-query : bool]) : i64
+  (match (ctfe-module-value-type-id module-id name-id)
+    [(CtfeMaybeModuleValueType.Some ty)
+      (begin
+        (set!
+          compiler-comptime-host-stack-len
+          (- compiler-comptime-host-stack-len 2))
+        (if type-query
+          (compiler-comptime-host-push! (CompilerCtfeValue.Type ty))
+          1))]
+    [(CtfeMaybeModuleValueType.None)
+      (if type-query
+        (begin
+          (array-set!
+            compiler-comptime-host-diagnostic
+            0
+            (ctfe-module-value-missing-message module name))
+          tlci-host-callback-status-diagnostic)
+        (begin
+          (set!
+            compiler-comptime-host-stack-len
+            (- compiler-comptime-host-stack-len 2))
+          0))]))
+
+;; `module-value?` is a data callback: 1/0 are the query result, while a
+;; negative return is a malformed stack request.
+(define (compiler-comptime-host-callback-module-value?
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (if (< compiler-comptime-host-stack-len 2)
+        -3
+        (let
+          [name-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [module-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          (match module-value
+            [(CompilerCtfeValue.String module module-id)
+              (match name-value
+                [(CompilerCtfeValue.String name name-id)
+                  (compiler-comptime-host-resolve-module-value!
+                    module
+                    module-id
+                    name
+                    name-id
+                    false)]
+                [(CompilerCtfeValue.Name name name-id)
+                  (compiler-comptime-host-resolve-module-value!
+                    module
+                    module-id
+                    name
+                    name-id
+                    false)]
+                [_ -3])]
+            [(CompilerCtfeValue.Name module module-id)
+              (match name-value
+                [(CompilerCtfeValue.String name name-id)
+                  (compiler-comptime-host-resolve-module-value!
+                    module
+                    module-id
+                    name
+                    name-id
+                    false)]
+                [(CompilerCtfeValue.Name name name-id)
+                  (compiler-comptime-host-resolve-module-value!
+                    module
+                    module-id
+                    name
+                    name-id
+                    false)]
+                [_ -3])]
+            [_ -3]))))))
+
+(define (compiler-comptime-host-callback-module-value-type
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 2)
+            tlci-host-callback-status-bad-request
+            (let
+              [name-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 1))]
+              [module-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 2))]
+              (match module-value
+                [(CompilerCtfeValue.String module module-id)
+                  (match name-value
+                    [(CompilerCtfeValue.String name name-id)
+                      (compiler-comptime-host-resolve-module-value!
+                        module
+                        module-id
+                        name
+                        name-id
+                        true)]
+                    [(CompilerCtfeValue.Name name name-id)
+                      (compiler-comptime-host-resolve-module-value!
+                        module
+                        module-id
+                        name
+                        name-id
+                        true)]
+                    [_ tlci-host-callback-status-bad-request])]
+                [(CompilerCtfeValue.Name module module-id)
+                  (match name-value
+                    [(CompilerCtfeValue.String name name-id)
+                      (compiler-comptime-host-resolve-module-value!
+                        module
+                        module-id
+                        name
+                        name-id
+                        true)]
+                    [(CompilerCtfeValue.Name name name-id)
+                      (compiler-comptime-host-resolve-module-value!
+                        module
+                        module-id
+                        name
+                        name-id
+                        true)]
+                    [_ tlci-host-callback-status-bad-request])]
+                [_ tlci-host-callback-status-bad-request])))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 (define (compiler-comptime-host-callback-expr-list-empty
   [session : i64]
   [_arg-a : i64]
@@ -1279,6 +1473,57 @@
         [result : i64
           (compiler-comptime-host-push!
             (CompilerCtfeValue.ExprList (ast-expr-list-new)))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+;; Public list cons keeps the computed head before every existing tail item;
+;; this differs from the append op used while walking quasiquote source order.
+(define (compiler-comptime-host-callback-expr-list-cons
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 2)
+            tlci-host-callback-status-bad-request
+            (let
+              [rest-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 1))]
+              [head-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 2))]
+              [head-node : i64 (compiler-comptime-host-value-node head-value)]
+              (if (< head-node 0)
+                tlci-host-callback-status-bad-request
+                (match rest-value
+                  [(CompilerCtfeValue.ExprList rest)
+                    (let
+                      [next : AstExprList
+                        (ast-expr-list-with-capacity
+                          (+ (struct-get (& rest) len) 1))]
+                      (begin
+                        (ast-expr-list-push (&mut next) head-node)
+                        (ast-expr-list-append-from (&mut next) (& rest) 0)
+                        (set!
+                          compiler-comptime-host-stack-len
+                          (- compiler-comptime-host-stack-len 2))
+                        (compiler-comptime-host-push!
+                          (CompilerCtfeValue.ExprList next))))]
+                  [_ tlci-host-callback-status-bad-request]))))]
         (begin
           (when
             (not (= result tlci-host-callback-status-ok))
@@ -1758,6 +2003,45 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+;; expr-init: pop a type value and push the typed `(init : T)` node produced by
+;; the parser. Contextual `(init)` remains outside the native template subset.
+(define (compiler-comptime-host-callback-expr-init
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 1)
+            tlci-host-callback-status-bad-request
+            (match (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))
+              [(CompilerCtfeValue.Type ty)
+                (begin
+                  (set!
+                    compiler-comptime-host-stack-len
+                    (- compiler-comptime-host-stack-len 1))
+                  (compiler-comptime-host-push!
+                    (CompilerCtfeValue.Expr
+                      (ast-expr-init-with-pools
+                        (array-ref compiler-comptime-host-pools 0)
+                        ty)
+                      (AstType.Expr))))]
+              [_ tlci-host-callback-status-bad-request]))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 (define (compiler-comptime-host-callback-expr-bool-literal
   [session : i64]
   [arg-a : i64]
@@ -1975,6 +2259,114 @@
           [(CompilerCtfeMaybeExprList.Some items) (ctfe-expr-list-length items)]
           [(CompilerCtfeMaybeExprList.None) -3])))))
 
+;; Item count of a variadic ExprBindingClauseList operand as data.
+(define (compiler-comptime-host-callback-expr-binding-clause-list-length
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        -3
+        (match (array-ref compiler-comptime-host-operands arg-a)
+          [(CompilerCtfeValue.ExprBindingClauseList clauses)
+            (ctfe-expr-binding-clause-list-length clauses)]
+          [_ -3])))))
+
+;; syntax-name-fresh: replace a comptime String/Name value with the generated
+;; syntax identity interpreted CTFE materializes for the same spelling.
+(define (compiler-comptime-host-callback-syntax-name-fresh
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 1)
+            tlci-host-callback-status-bad-request
+            (match (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))
+              [(CompilerCtfeValue.String text _)
+                (begin
+                  (set!
+                    compiler-comptime-host-stack-len
+                    (- compiler-comptime-host-stack-len 1))
+                  (compiler-comptime-host-push!
+                    (CompilerCtfeValue.Name
+                      text
+                      (ctfe-materialize-generated-name-id text))))]
+              [(CompilerCtfeValue.Name text _)
+                (begin
+                  (set!
+                    compiler-comptime-host-stack-len
+                    (- compiler-comptime-host-stack-len 1))
+                  (compiler-comptime-host-push!
+                    (CompilerCtfeValue.Name
+                      text
+                      (ctfe-materialize-generated-name-id text))))]
+              [_ tlci-host-callback-status-bad-request]))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+;; expr-begin-unit: replace an expression-list value with a begin node whose
+;; final expression is unit, matching the public builder used by `for`.
+(define (compiler-comptime-host-callback-expr-begin-unit
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 1)
+            tlci-host-callback-status-bad-request
+            (match (compiler-comptime-host-value-expr-list
+              (array-ref
+                compiler-comptime-host-stack
+                (- compiler-comptime-host-stack-len 1)))
+              [(CompilerCtfeMaybeExprList.Some items)
+                (begin
+                  (set!
+                    compiler-comptime-host-stack-len
+                    (- compiler-comptime-host-stack-len 1))
+                  (compiler-comptime-host-push!
+                    (CompilerCtfeValue.Expr
+                      (ctfe-expr-begin-unit-node
+                        items
+                        (array-ref compiler-comptime-host-pools 0))
+                      (AstType.Unit))))]
+              [(CompilerCtfeMaybeExprList.None)
+                tlci-host-callback-status-bad-request]))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 ;; Index a variadic ExprList operand: `a` names the operand and `b` the
 ;; element, mirroring the interpreted `expr-list-nth` builtin (an
 ;; out-of-range index is a bad request, and a captured operand keeps its
@@ -2023,6 +2415,134 @@
             (not (= result tlci-host-callback-status-ok))
             (set! compiler-comptime-host-session-status result))
           result)))))
+
+;; Index a variadic ExprBindingClauseList operand and push the selected clause.
+(define (compiler-comptime-host-callback-expr-binding-clause-list-nth
+  [session : i64]
+  [arg-a : i64]
+  [arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+            tlci-host-callback-status-bad-request
+            (match (array-ref compiler-comptime-host-operands arg-a)
+              [(CompilerCtfeValue.ExprBindingClauseList clauses)
+                (if (or
+                  (< arg-b 0)
+                  (>= arg-b (ctfe-expr-binding-clause-list-length clauses)))
+                  tlci-host-callback-status-bad-request
+                  (compiler-comptime-host-push!
+                    (CompilerCtfeValue.ExprBindingClause
+                      (ctfe-expr-binding-clause-list-nth clauses arg-b))))]
+              [_ tlci-host-callback-status-bad-request]))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+;; Project name/type/init from an ExprBindingClause on the session stack.
+;; selector: 0=name, 1=type syntax, 2=initializer expression.
+(define (compiler-comptime-host-expr-binding-clause-project! [selector : i64]) : i64
+  (if (< compiler-comptime-host-stack-len 1)
+    tlci-host-callback-status-bad-request
+    (match (array-ref
+      compiler-comptime-host-stack
+      (- compiler-comptime-host-stack-len 1))
+      [(CompilerCtfeValue.ExprBindingClause clause)
+        (let
+          [value : CompilerCtfeValue
+            (cond
+              [(= selector 0)
+                (ctfe-name-value (ctfe-expr-binding-clause-name-id clause))]
+              [(= selector 1)
+                (CompilerCtfeValue.Expr
+                  (ctfe-expr-binding-clause-type clause)
+                  (ctfe-untyped-expr-type))]
+              [else
+                (CompilerCtfeValue.Expr
+                  (ctfe-expr-binding-clause-init clause)
+                  (struct-get clause init-produced))])]
+          (begin
+            (set!
+              compiler-comptime-host-stack-len
+              (- compiler-comptime-host-stack-len 1))
+            (compiler-comptime-host-push! value)))]
+      [_ tlci-host-callback-status-bad-request])))
+
+(define (compiler-comptime-host-callback-expr-binding-clause-project
+  [session : i64]
+  [selector : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (compiler-comptime-host-expr-binding-clause-project! selector)]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-callback-expr-binding-clause-name
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-callback-expr-binding-clause-project session 0))
+
+(define (compiler-comptime-host-callback-expr-binding-clause-type
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-callback-expr-binding-clause-project session 1))
+
+(define (compiler-comptime-host-callback-expr-binding-clause-init
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-callback-expr-binding-clause-project session 2))
+
+;; Data probe for whether a clause stored in local slot `a` has an annotation.
+(define (compiler-comptime-host-callback-expr-binding-clause-has-type?
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (if (or
+        (< arg-a 0)
+        (>= arg-a compiler-comptime-host-locals-cap)
+        (not (array-ref compiler-comptime-host-locals-live arg-a)))
+        -3
+        (match (array-ref compiler-comptime-host-locals arg-a)
+          [(CompilerCtfeValue.ExprBindingClause clause)
+            (if (ctfe-expr-binding-clause-has-type? clause)
+              1
+              0)]
+          [_ -3])))))
 
 ;; Pop an expression list and push the begin node the parser produces.
 (define (compiler-comptime-host-callback-expr-begin
@@ -2431,9 +2951,9 @@
           result)))))
 
 ;; Type identity reflection shares one registered callback: selector 0 is the
-;; canonical type key and selector 1 is the nominal declaration module. Keeping
-;; this as one host-table row avoids rebuilding and relinking another callback
-;; for every macro dispatch. Refs #6000.
+;; canonical type key, selector 1 is the nominal declaration module, and
+;; selector 2 is its name. Keeping this as one host-table row avoids rebuilding
+;; and relinking another callback for every macro dispatch. Refs #6000, #5606.
 (define (compiler-comptime-host-callback-type-key
   [session : i64]
   [arg-a : i64]
@@ -2466,7 +2986,7 @@
                             (array-ref compiler-comptime-host-pools 0)
                             (array-ref compiler-comptime-host-reflections 0)
                             ty))))]
-                  [(= arg-a 1)
+                  [(or (= arg-a 1) (= arg-a 2))
                     (match (ctfe-reflect-info-for-type-with-pools
                       (array-ref compiler-comptime-host-pools 0)
                       (array-ref compiler-comptime-host-reflections 0)
@@ -2478,13 +2998,17 @@
                             (- compiler-comptime-host-stack-len 1))
                           (compiler-comptime-host-push!
                             (ctfe-name-value
-                              (ctfe-reflect-info-nominal-module-id info))))]
+                              (if (= arg-a 1)
+                                (ctfe-reflect-info-nominal-module-id info)
+                                (ctfe-reflect-info-nominal-name-id info)))))]
                       [(CtfeMaybeReflectInfo.None)
                         (begin
                           (array-set!
                             compiler-comptime-host-diagnostic
                             0
-                            "type-nominal-module requires struct or enum type")
+                            (if (= arg-a 1)
+                              "type-nominal-module requires struct or enum type"
+                              "type-nominal-name requires struct or enum type"))
                           tlci-host-callback-status-diagnostic)])]
                   [else tlci-host-callback-status-bad-request])]
               [_ tlci-host-callback-status-bad-request]))]
@@ -2653,9 +3177,10 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
-;; string-append: pop the second then the first comptime String value and
-;; push the concatenation, a generated string value like the interpreted
-;; operation's.
+;; string-append: pop the second then the first comptime String/Name value and
+;; push the concatenation with the identity-aware dotted-name construction
+;; used by interpretation. Generated-module protocol names depend on retaining
+;; their structural prefix through `module + "." + member`. Refs #5606.
 (define (compiler-comptime-host-callback-string-append
   [session : i64]
   [_arg-a : i64]
@@ -2681,20 +3206,24 @@
                 (array-ref
                   compiler-comptime-host-stack
                   (- compiler-comptime-host-stack-len 2))]
-              (match (compiler-comptime-host-value-string left-value)
-                [(CompilerCtfeMaybeString.Some left-text)
-                  (match (compiler-comptime-host-value-string right-value)
-                    [(CompilerCtfeMaybeString.Some right-text)
+              (match (compiler-comptime-host-value-string-identity left-value)
+                [(CompilerCtfeMaybeStringIdentity.Some left-text left-id)
+                  (match (compiler-comptime-host-value-string-identity
+                    right-value)
+                    [(CompilerCtfeMaybeStringIdentity.Some right-text right-id)
                       (begin
                         (set!
                           compiler-comptime-host-stack-len
                           (- compiler-comptime-host-stack-len 2))
                         (compiler-comptime-host-push!
-                          (ctfe-generated-string-value
-                            (string.append left-text right-text))))]
-                    [(CompilerCtfeMaybeString.None)
+                          (ctfe-generated-string-append-value
+                            left-text
+                            left-id
+                            right-text
+                            right-id)))]
+                    [(CompilerCtfeMaybeStringIdentity.None)
                       tlci-host-callback-status-bad-request])]
-                [(CompilerCtfeMaybeString.None)
+                [(CompilerCtfeMaybeStringIdentity.None)
                   tlci-host-callback-status-bad-request])))]
         (begin
           (when
@@ -2741,8 +3270,7 @@
       compiler-comptime-host-session-status
       (let
         [result : i64
-          (if (or (<= arg-a 0) (< arg-b 0))
-            tlci-host-callback-status-bad-request
+          (if (and (> arg-a 0) (>= arg-b 0))
             (let
               [name : String
                 (unsafe
@@ -2754,7 +3282,112 @@
                       (ci.intern-source-slice
                         name
                         0
-                        (string.string-length name))))))))]
+                        (string.string-length name)))))))
+            (if (< compiler-comptime-host-stack-len 1)
+              tlci-host-callback-status-bad-request
+              (match (array-ref
+                compiler-comptime-host-stack
+                (- compiler-comptime-host-stack-len 1))
+                [(CompilerCtfeValue.String text string-id)
+                  (let
+                    [env : CtfeEnv
+                      (ctfe-env-empty-with-pools
+                        (array-ref compiler-comptime-host-pools 0))]
+                    (begin
+                      (set!
+                        compiler-comptime-host-stack-len
+                        (- compiler-comptime-host-stack-len 1))
+                      (compiler-comptime-host-push!
+                        (CompilerCtfeValue.Pattern
+                          (ctfe-pat-binding-id
+                            (ctfe-string-syntax-name-id
+                              (ctfe-env-source-names env)
+                              text
+                              string-id))))))]
+                [(CompilerCtfeValue.Name _ name-id)
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 1))
+                    (compiler-comptime-host-push!
+                      (CompilerCtfeValue.Pattern (ctfe-pat-binding-id name-id))))]
+                [_ tlci-host-callback-status-bad-request])))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-build-pattern-binding-typed!
+  [name-id : i64]
+  [type-value : CompilerCtfeValue]) : i64
+  (let
+    [env : CtfeEnv
+      (ctfe-env-empty-with-pools (array-ref compiler-comptime-host-pools 0))]
+    (match (ctfe-pattern-binding-type-value
+      type-value
+      (AstExpr.Literal (AstLiteral.Unit))
+      env
+      compiler-comptime-host-session-fuel)
+      [(ResultCtfeQuoteType.Ok ty next-fuel)
+        (begin
+          (set! compiler-comptime-host-session-fuel next-fuel)
+          (set!
+            compiler-comptime-host-stack-len
+            (- compiler-comptime-host-stack-len 2))
+          (compiler-comptime-host-push!
+            (CompilerCtfeValue.Pattern
+              (AstPattern.Var name-id (AstMaybeType.Some ty)))))]
+      [(ResultCtfeQuoteType.Err diag)
+        (begin
+          (array-set!
+            compiler-comptime-host-diagnostic
+            0
+            (struct-get (box-get diag) message))
+          tlci-host-callback-status-diagnostic)])))
+
+(define (compiler-comptime-host-callback-pattern-binding-typed
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 2)
+            tlci-host-callback-status-bad-request
+            (let
+              [type-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 1))]
+              [name-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 2))]
+              (match name-value
+                [(CompilerCtfeValue.String text string-id)
+                  (let
+                    [env : CtfeEnv
+                      (ctfe-env-empty-with-pools
+                        (array-ref compiler-comptime-host-pools 0))]
+                    (compiler-comptime-host-build-pattern-binding-typed!
+                      (ctfe-string-syntax-name-id
+                        (ctfe-env-source-names env)
+                        text
+                        string-id)
+                      type-value))]
+                [(CompilerCtfeValue.Name _ name-id)
+                  (compiler-comptime-host-build-pattern-binding-typed!
+                    name-id
+                    type-value)]
+                [_ tlci-host-callback-status-bad-request])))]
         (begin
           (when
             (not (= result tlci-host-callback-status-ok))
@@ -2863,6 +3496,50 @@
                             (- compiler-comptime-host-stack-len 2))
                           (compiler-comptime-host-push!
                             (CompilerCtfeValue.PatternList next))))]
+                    [_ tlci-host-callback-status-bad-request])]
+                [_ tlci-host-callback-status-bad-request])))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-callback-pattern-list-cons-from-values
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 2)
+            tlci-host-callback-status-bad-request
+            (let
+              [rest-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 1))]
+              [head-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 2))]
+              (match head-value
+                [(CompilerCtfeValue.Pattern head)
+                  (match rest-value
+                    [(CompilerCtfeValue.PatternList rest)
+                      (begin
+                        (set!
+                          compiler-comptime-host-stack-len
+                          (- compiler-comptime-host-stack-len 2))
+                        (compiler-comptime-host-push!
+                          (CompilerCtfeValue.PatternList
+                            (ast-pattern-cons head rest))))]
                     [_ tlci-host-callback-status-bad-request])]
                 [_ tlci-host-callback-status-bad-request])))]
         (begin
@@ -3277,8 +3954,11 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
-;; string-eq: pop two comptime String values and answer 1/0 as data (a
+;; string-eq: pop two comptime String/Name values and answer 1/0 as data (a
 ;; negative value reports a bad request without touching session state).
+;; Reflected names are accepted by interpreted public string helpers and by
+;; native string-append, so comparisons must use the same conversion. Refs
+;; #5606.
 (define (compiler-comptime-host-callback-string-eq
   [session : i64]
   [_arg-a : i64]
@@ -3303,10 +3983,10 @@
             (array-ref
               compiler-comptime-host-stack
               (- compiler-comptime-host-stack-len 2))]
-          (match left-value
-            [(CompilerCtfeValue.String left-text _)
-              (match right-value
-                [(CompilerCtfeValue.String right-text _)
+          (match (compiler-comptime-host-value-string left-value)
+            [(CompilerCtfeMaybeString.Some left-text)
+              (match (compiler-comptime-host-value-string right-value)
+                [(CompilerCtfeMaybeString.Some right-text)
                   (begin
                     (set!
                       compiler-comptime-host-stack-len
@@ -3314,8 +3994,8 @@
                     (if (string.eq left-text right-text)
                       1
                       0))]
-                [_ -3])]
-            [_ -3]))))))
+                [(CompilerCtfeMaybeString.None) -3])]
+            [(CompilerCtfeMaybeString.None) -3]))))))
 
 ;; tuple-ref: pop the target expression and use the computed index in `a`.
 (define (compiler-comptime-host-callback-expr-tuple-ref
@@ -4135,6 +4815,224 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+(define (compiler-comptime-host-callback-reference-element-type
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 1)
+            tlci-host-callback-status-bad-request
+            (let
+              [env : CtfeEnv
+                (ctfe-env-empty-with-pools
+                  (array-ref compiler-comptime-host-pools 0))]
+              (match (array-ref
+                compiler-comptime-host-stack
+                (- compiler-comptime-host-stack-len 1))
+                [(CompilerCtfeValue.Type (AstType.Ref _ elem))
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 1))
+                    (compiler-comptime-host-push!
+                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))))]
+                [(CompilerCtfeValue.Type (AstType.MutRef _ elem))
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 1))
+                    (compiler-comptime-host-push!
+                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))))]
+                [_ tlci-host-callback-status-bad-request])))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+;; Function reflection used by the `for` protocol validator. Count is returned
+;; as data; return-type replaces the function value on the session stack.
+(define (compiler-comptime-host-callback-function-param-count
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (if (< compiler-comptime-host-stack-len 1)
+        -3
+        (match (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 1))
+          [(CompilerCtfeValue.Type (AstType.Func params _))
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 1))
+              (ctfe-type-list-count (box-get params)))]
+          [_ -3])))))
+
+(define (compiler-comptime-host-callback-function-return-type
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 1)
+            tlci-host-callback-status-bad-request
+            (let
+              [env : CtfeEnv
+                (ctfe-env-empty-with-pools
+                  (array-ref compiler-comptime-host-pools 0))]
+              (match (array-ref
+                compiler-comptime-host-stack
+                (- compiler-comptime-host-stack-len 1))
+                [(CompilerCtfeValue.Type (AstType.Func _ ret))
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 1))
+                    (compiler-comptime-host-push!
+                      (CompilerCtfeValue.Type (ctfe-ty-get env ret))))]
+                [_ tlci-host-callback-status-bad-request])))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+;; Cleanup ownership is a total boolean reflection query. The paired function
+;; lookup is value-producing and retains the interpreted diagnostic on a
+;; non-owning type.
+(define (compiler-comptime-host-callback-type-cleanup-owning?
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (if (< compiler-comptime-host-stack-len 1)
+        -3
+        (match (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 1))
+          [(CompilerCtfeValue.Type ty)
+            (let
+              [owning : bool
+                (match (ctfe-reflect-info-for-type-with-pools
+                  (array-ref compiler-comptime-host-pools 0)
+                  (array-ref compiler-comptime-host-reflections 0)
+                  ty)
+                  [(CtfeMaybeReflectInfo.Some info)
+                    (match info
+                      [(CtfeReflectInfo.Struct _ _ _ _ cleanup _)
+                        (match cleanup
+                          [(CtfeReflectCleanup.No) false]
+                          [(CtfeReflectCleanup.Fn _ _) true])]
+                      [(CtfeReflectInfo.Enum _ _ _ _ cleanup _)
+                        (match cleanup
+                          [(CtfeReflectCleanup.No) false]
+                          [(CtfeReflectCleanup.Fn _ _) true])])]
+                  [(CtfeMaybeReflectInfo.None) false])]
+              (begin
+                (set!
+                  compiler-comptime-host-stack-len
+                  (- compiler-comptime-host-stack-len 1))
+                (if owning
+                  1
+                  0)))]
+          [_ -3])))))
+
+(define (compiler-comptime-host-callback-type-cleanup-function
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 1)
+            tlci-host-callback-status-bad-request
+            (match (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))
+              [(CompilerCtfeValue.Type ty)
+                (match (ctfe-reflect-info-for-type-with-pools
+                  (array-ref compiler-comptime-host-pools 0)
+                  (array-ref compiler-comptime-host-reflections 0)
+                  ty)
+                  [(CtfeMaybeReflectInfo.Some info)
+                    (let
+                      [cleanup : CtfeReflectCleanup
+                        (match info
+                          [(CtfeReflectInfo.Struct _ _ _ _ value _) value]
+                          [(CtfeReflectInfo.Enum _ _ _ _ value _) value])]
+                      (match cleanup
+                        [(CtfeReflectCleanup.Fn cleanup-name cleanup-name-id)
+                          (begin
+                            (set!
+                              compiler-comptime-host-stack-len
+                              (- compiler-comptime-host-stack-len 1))
+                            (compiler-comptime-host-push!
+                              (CompilerCtfeValue.String
+                                cleanup-name
+                                cleanup-name-id)))]
+                        [(CtfeReflectCleanup.No)
+                          (begin
+                            (array-set!
+                              compiler-comptime-host-diagnostic
+                              0
+                              "type-cleanup-function requires cleanup-owning type")
+                            tlci-host-callback-status-diagnostic)]))]
+                  [(CtfeMaybeReflectInfo.None)
+                    (begin
+                      (array-set!
+                        compiler-comptime-host-diagnostic
+                        0
+                        "type-cleanup-function requires cleanup-owning type")
+                      tlci-host-callback-status-diagnostic)])]
+              [_ tlci-host-callback-status-bad-request]))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 ;; array-length: the fixed element count of an array type as data; a
 ;; dynamic type or non-array reports the negative sentinel.
 (define (compiler-comptime-host-callback-array-length
@@ -4656,6 +5554,65 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+;; value-unit: push the interpreted comptime unit value. This is distinct from
+;; expr-unit-literal, which constructs syntax rather than the value produced by
+;; evaluating a source-level `unit`. Refs #5606.
+(define (compiler-comptime-host-callback-value-unit
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64 (compiler-comptime-host-push! (CompilerCtfeValue.Unit))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+;; Both values are already on the stack (then below else); keep exactly the
+;; selected value. The producer restricts this eager form to local/operand Vars.
+(define (compiler-comptime-host-callback-value-select
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 2)
+            tlci-host-callback-status-bad-request
+            (let
+              [selected : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (if (= arg-a 0)
+                    (- compiler-comptime-host-stack-len 1)
+                    (- compiler-comptime-host-stack-len 2)))]
+              (begin
+                (set!
+                  compiler-comptime-host-stack-len
+                  (- compiler-comptime-host-stack-len 2))
+                (compiler-comptime-host-push! selected))))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 ;; int->string: pop a comptime i64 and push its decimal spelling as a
 ;; comptime String, mirroring the interpreted `comptime.int->string`
 ;; builtin. Refs #5700.
@@ -4692,10 +5649,10 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
-;; `comptime.Expr.Var` destructuring (refs #5700). The probe answers as data
-;; like the other operand shape probes; the accessor pushes the identifier's
-;; spelling as a comptime String, which is what the nested-alias bodies
-;; append to.
+;; `comptime.Expr.Var` destructuring (refs #5700, #5771). The probe answers as
+;; data like the other operand shape probes; the accessor must preserve the
+;; interpreted Name variant and original structural id. String consumers
+;; accept both Name and String values through compiler-comptime-host-value-string.
 (define (compiler-comptime-host-callback-operand-expr-var?
   [session : i64]
   [arg-a : i64]
@@ -4733,8 +5690,7 @@
             tlci-host-callback-status-bad-request
             (match (compiler-comptime-host-operand-expr arg-a)
               [(AstExpr.Var name-id)
-                (compiler-comptime-host-push!
-                  (ctfe-generated-string-value (intern-str name-id)))]
+                (compiler-comptime-host-push! (ctfe-name-value name-id))]
               [_ tlci-host-callback-status-bad-request]))]
         (begin
           (when
@@ -4895,9 +5851,214 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
-;; expr-set-var: pop the value expression and push the set! node for the
-;; place name in `a`/`b` (template-source marked like the interpreted
-;; quote).
+;; Dense public builders used by `for`: consume computed syntax values and
+;; reconstruct the same single-scope AST nodes as interpreted CTFE.
+(define (compiler-comptime-host-build-expr-resource-scope!
+  [name-id : i64]
+  [init-value : CompilerCtfeValue]
+  [cleanup-value : CompilerCtfeValue]
+  [body-value : CompilerCtfeValue]
+  [move-aware? : bool]) : i64
+  (let
+    [init-node : i64 (compiler-comptime-host-value-node init-value)]
+    [cleanup-node : i64 (compiler-comptime-host-value-node cleanup-value)]
+    [body-node : i64 (compiler-comptime-host-value-node body-value)]
+    (if (or (< init-node 0) (< cleanup-node 0) (< body-node 0))
+      tlci-host-callback-status-bad-request
+      (let
+        [bindings : AstResourceBindingList (ast-resource-binding-list-new)]
+        [body : AstExprList (ast-expr-list-with-capacity 1)]
+        (begin
+          (ast-resource-binding-list-push
+            (&mut bindings)
+            (AstResourceBinding.Binding
+              name-id
+              init-node
+              cleanup-node
+              move-aware?))
+          (ast-expr-list-push (&mut body) body-node)
+          (set!
+            compiler-comptime-host-stack-len
+            (- compiler-comptime-host-stack-len 4))
+          (compiler-comptime-host-push!
+            (CompilerCtfeValue.Expr
+              (ast-node-pool-context-expr-push
+                (array-ref compiler-comptime-host-pools 0)
+                (AstExpr.WithResource
+                  (box (AstWithResource.WithResource bindings body))))
+              (AstType.Expr))))))))
+
+(define (compiler-comptime-host-callback-expr-resource-scope
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 4)
+            tlci-host-callback-status-bad-request
+            (let
+              [body-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 1))]
+              [cleanup-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 2))]
+              [init-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 3))]
+              [name-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 4))]
+              (match (compiler-comptime-host-value-name-id name-value)
+                [(CompilerCtfeMaybeNameId.Some name-id)
+                  (compiler-comptime-host-build-expr-resource-scope!
+                    name-id
+                    init-value
+                    cleanup-value
+                    body-value
+                    (= arg-a 1))]
+                [(CompilerCtfeMaybeNameId.None)
+                  tlci-host-callback-status-bad-request])))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-callback-expr-let-scope
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 3)
+            tlci-host-callback-status-bad-request
+            (let
+              [body-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 1))]
+              [init-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 2))]
+              [name-value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 3))]
+              [body-node : i64 (compiler-comptime-host-value-node body-value)]
+              [init-node : i64 (compiler-comptime-host-value-node init-value)]
+              (match (compiler-comptime-host-value-name-id name-value)
+                [(CompilerCtfeMaybeNameId.Some name-id)
+                  (if (or (< init-node 0) (< body-node 0))
+                    tlci-host-callback-status-bad-request
+                    (let
+                      [bindings : AstLetBindingList (ast-let-binding-list-new)]
+                      (begin
+                        (ast-let-binding-list-push
+                          (&mut bindings)
+                          (ast-let-binding-id name-id AstMaybeType.No init-node))
+                        (set!
+                          compiler-comptime-host-stack-len
+                          (- compiler-comptime-host-stack-len 3))
+                        (compiler-comptime-host-push!
+                          (CompilerCtfeValue.Expr
+                            (ast-expr-let-with-pools
+                              (array-ref compiler-comptime-host-pools 0)
+                              bindings
+                              body-node)
+                            (AstType.Expr))))))]
+                [(CompilerCtfeMaybeNameId.None)
+                  tlci-host-callback-status-bad-request])))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-callback-expr-not
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 1)
+            tlci-host-callback-status-bad-request
+            (let
+              [value : CompilerCtfeValue
+                (array-ref
+                  compiler-comptime-host-stack
+                  (- compiler-comptime-host-stack-len 1))]
+              [node : i64 (compiler-comptime-host-value-node value)]
+              (if (< node 0)
+                tlci-host-callback-status-bad-request
+                (begin
+                  (set!
+                    compiler-comptime-host-stack-len
+                    (- compiler-comptime-host-stack-len 1))
+                  (compiler-comptime-host-push!
+                    (CompilerCtfeValue.Expr
+                      (ast-expr-unary-with-pools
+                        (array-ref compiler-comptime-host-pools 0)
+                        (AstUnOp.Not)
+                        node)
+                      (AstType.Expr)))))))]
+        (begin
+          (when
+            (not (= result tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-build-expr-set-var!
+  [name-id : i64]
+  [value-value : CompilerCtfeValue]
+  [pop-count : i64]) : i64
+  (let
+    [value-node : i64 (compiler-comptime-host-value-node value-value)]
+    (if (< value-node 0)
+      tlci-host-callback-status-bad-request
+      (begin
+        (set!
+          compiler-comptime-host-stack-len
+          (- compiler-comptime-host-stack-len pop-count))
+        (compiler-comptime-host-push!
+          (CompilerCtfeValue.Expr
+            (ast-expr-set-id-with-pools
+              (array-ref compiler-comptime-host-pools 0)
+              name-id
+              value-node)
+            (AstType.Expr)))))))
+
+;; Immediate names serve quasiquote construction; zero immediates select the
+;; public builder form with a computed String/Name below the value expression.
 (define (compiler-comptime-host-callback-expr-set-var
   [session : i64]
   [arg-a : i64]
@@ -4912,37 +6073,36 @@
       compiler-comptime-host-session-status
       (let
         [result : i64
-          (if (or
-            (<= arg-a 0)
-            (< arg-b 0)
-            (< compiler-comptime-host-stack-len 1))
+          (if (< compiler-comptime-host-stack-len 1)
             tlci-host-callback-status-bad-request
             (let
               [value-value : CompilerCtfeValue
                 (array-ref
                   compiler-comptime-host-stack
                   (- compiler-comptime-host-stack-len 1))]
-              [value-node : i64 (compiler-comptime-host-value-node value-value)]
-              (if (< value-node 0)
-                tlci-host-callback-status-bad-request
-                (begin
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 1))
-                  (compiler-comptime-host-push!
-                    (CompilerCtfeValue.Expr
-                      (ast-expr-set-id-with-pools
-                        (array-ref compiler-comptime-host-pools 0)
-                        (ci.intern-template-source-id
-                          (ci.intern-source-slice
-                            (unsafe
-                              (string-from-bytes
-                                (int->ptr arg-a : (Ptr u8))
-                                arg-b))
-                            0
-                            arg-b))
-                        value-node)
-                      (AstType.Expr)))))))]
+              (if (and (> arg-a 0) (>= arg-b 0))
+                (compiler-comptime-host-build-expr-set-var!
+                  (ci.intern-template-source-id
+                    (ci.intern-source-slice
+                      (unsafe
+                        (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))
+                      0
+                      arg-b))
+                  value-value
+                  1)
+                (if (< compiler-comptime-host-stack-len 2)
+                  tlci-host-callback-status-bad-request
+                  (match (compiler-comptime-host-value-name-id
+                    (array-ref
+                      compiler-comptime-host-stack
+                      (- compiler-comptime-host-stack-len 2)))
+                    [(CompilerCtfeMaybeNameId.Some name-id)
+                      (compiler-comptime-host-build-expr-set-var!
+                        name-id
+                        value-value
+                        2)]
+                    [(CompilerCtfeMaybeNameId.None)
+                      tlci-host-callback-status-bad-request])))))]
         (begin
           (when
             (not (= result tlci-host-callback-status-ok))
@@ -5395,8 +6555,20 @@
         compiler-comptime-host-callback-module-hook)
       (compiler-comptime-host-registry-add!
         (&mut registry)
+        tlci-host-callback-name-module-value?
+        compiler-comptime-host-callback-module-value?)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-module-value-type
+        compiler-comptime-host-callback-module-value-type)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
         tlci-host-callback-name-expr-list-empty
         compiler-comptime-host-callback-expr-list-empty)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-expr-list-cons
+        compiler-comptime-host-callback-expr-list-cons)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         tlci-host-callback-name-expr-list-append
@@ -5447,6 +6619,10 @@
         compiler-comptime-host-callback-expr-cast)
       (compiler-comptime-host-registry-add!
         (&mut registry)
+        tlci-host-callback-name-expr-init
+        compiler-comptime-host-callback-expr-init)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
         tlci-host-callback-name-expr-bool-literal
         compiler-comptime-host-callback-expr-bool-literal)
       (compiler-comptime-host-registry-add!
@@ -5471,8 +6647,40 @@
         compiler-comptime-host-callback-expr-list-length)
       (compiler-comptime-host-registry-add!
         (&mut registry)
+        tlci-host-callback-name-expr-binding-clause-list-length
+        compiler-comptime-host-callback-expr-binding-clause-list-length)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-syntax-name-fresh
+        compiler-comptime-host-callback-syntax-name-fresh)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-expr-begin-unit
+        compiler-comptime-host-callback-expr-begin-unit)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
         tlci-host-callback-name-expr-list-nth
         compiler-comptime-host-callback-expr-list-nth)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-expr-binding-clause-list-nth
+        compiler-comptime-host-callback-expr-binding-clause-list-nth)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-expr-binding-clause-name
+        compiler-comptime-host-callback-expr-binding-clause-name)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-expr-binding-clause-has-type?
+        compiler-comptime-host-callback-expr-binding-clause-has-type?)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-expr-binding-clause-type
+        compiler-comptime-host-callback-expr-binding-clause-type)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-expr-binding-clause-init
+        compiler-comptime-host-callback-expr-binding-clause-init)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         tlci-host-callback-name-expr-begin
@@ -5567,6 +6775,10 @@
         compiler-comptime-host-callback-pattern-binding)
       (compiler-comptime-host-registry-add!
         (&mut registry)
+        tlci-host-callback-name-pattern-binding-typed
+        compiler-comptime-host-callback-pattern-binding-typed)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
         tlci-host-callback-name-pattern-variant
         compiler-comptime-host-callback-pattern-variant)
       (compiler-comptime-host-registry-add!
@@ -5577,6 +6789,10 @@
         (&mut registry)
         tlci-host-callback-name-pattern-list-cons
         compiler-comptime-host-callback-pattern-list-cons)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-pattern-list-cons-from-values
+        compiler-comptime-host-callback-pattern-list-cons-from-values)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         tlci-host-callback-name-pattern-list-bindings
@@ -5719,6 +6935,26 @@
         compiler-comptime-host-callback-array-element-type)
       (compiler-comptime-host-registry-add!
         (&mut registry)
+        tlci-host-callback-name-reference-element-type
+        compiler-comptime-host-callback-reference-element-type)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-function-param-count
+        compiler-comptime-host-callback-function-param-count)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-function-return-type
+        compiler-comptime-host-callback-function-return-type)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-type-cleanup-owning?
+        compiler-comptime-host-callback-type-cleanup-owning?)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-type-cleanup-function
+        compiler-comptime-host-callback-type-cleanup-function)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
         tlci-host-callback-name-array-length
         compiler-comptime-host-callback-array-length)
       (compiler-comptime-host-registry-add!
@@ -5799,6 +7035,14 @@
         compiler-comptime-host-callback-value-i64)
       (compiler-comptime-host-registry-add!
         (&mut registry)
+        tlci-host-callback-name-value-unit
+        compiler-comptime-host-callback-value-unit)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-value-select
+        compiler-comptime-host-callback-value-select)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
         tlci-host-callback-name-int->string
         compiler-comptime-host-callback-int->string)
       (compiler-comptime-host-registry-add!
@@ -5831,8 +7075,20 @@
         compiler-comptime-host-callback-expr-int-from-data)
       (compiler-comptime-host-registry-add!
         (&mut registry)
+        tlci-host-callback-name-expr-resource-scope
+        compiler-comptime-host-callback-expr-resource-scope)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-expr-let-scope
+        compiler-comptime-host-callback-expr-let-scope)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
         tlci-host-callback-name-expr-set-var
         compiler-comptime-host-callback-expr-set-var)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-expr-not
+        compiler-comptime-host-callback-expr-not)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         tlci-host-callback-name-expr-while

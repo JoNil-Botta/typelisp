@@ -1251,6 +1251,91 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; `Expr.Var` destructuring binds an interpreted Name, not a generated String.
+;; A structural macro-global id is the non-vacuous case: its visible text is
+;; unwrapped to the source identifier while its original id remains intact.
+;; Assert the callback value directly, then dispatch a native entry that feeds
+;; that Name through `expr-var` and preserves the same id. Refs #5771.
+(define (producer-test-dispatch-var-name-identity?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-id : i64 (ci.intern "structural.alias")]
+    [structural-id : i64 (+ (ci.intern-macro-global-structural-base) source-id)]
+    [operand : i64
+      (ast-node-pool-context-expr-push pools (AstExpr.Var structural-id))]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    (begin
+      (array-set! operands 0 (CompilerCtfeValue.Expr operand (AstType.Expr)))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [callback-ok : bool
+          (and
+            (=
+              (compiler-comptime-host-callback-operand-expr-var-name
+                producer-test-cookie
+                0
+                0
+                0)
+              tlci-host-callback-status-ok)
+            (=
+              (compiler-comptime-host-callback-commit-result
+                producer-test-cookie
+                0
+                0
+                0)
+              tlci-host-callback-status-ok)
+            (match (compiler-comptime-host-result-value)
+              [(CompilerCtfeValue.Name text name-id)
+                (and
+                  (string.eq text "structural.alias")
+                  (= name-id structural-id))]
+              [_ false]))]
+        (begin
+          (compiler-comptime-host-session-close!)
+          (if (not callback-ok)
+            false
+            (begin
+              (compiler-comptime-host-session-open!
+                pools
+                operands
+                1
+                64
+                producer-test-cookie
+                (ctfe-reflect-info-list-empty))
+              (let
+                [dispatch-ok : bool
+                  (match (tlci-loader-dispatch-macro
+                    loaded
+                    identity
+                    producer-test-cookie
+                    (array.make-array i64 0)
+                    0)
+                    [(ResultTlciMacroDispatch.Err _) false]
+                    [(ResultTlciMacroDispatch.Ok dispatch)
+                      (and
+                        (=
+                          (struct-get dispatch status)
+                          tlci-host-callback-status-ok)
+                        (compiler-comptime-host-result-ready?)
+                        (match (compiler-comptime-host-result-value)
+                          [(CompilerCtfeValue.Expr node _)
+                            (match (ast-node-pool-context-expr-get pools node)
+                              [(AstExpr.Var name-id) (= name-id structural-id)]
+                              [_ false])]
+                          [_ false]))])]
+                (begin
+                  (compiler-comptime-host-session-close!)
+                  dispatch-ok)))))))))
+
 ;; Module operands are canonical identity Strings. `modname` routes that value
 ;; through module-name then expr-var, while `modhook` resolves a generated hook
 ;; to the same canonical qualified Var as interpreted CTFE. Refs #5699.
@@ -2062,6 +2147,141 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; Reflected module identities are Name values, while string literals are
+;; String values. Public string comparison accepts both on the interpreted
+;; path; keep the native callback compatible so a computed condition such as
+;; `(string-eq (type-nominal-module T) "")` is safe. Refs #5606.
+(define (producer-test-nominal-module-string-eq?) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-module-id : i64 (ci.intern "producer.nominal.module")]
+    [module-id : i64
+      (+ (ci.intern-macro-global-structural-base) source-module-id)]
+    [name-id : i64 (ci.intern "Nominal")]
+    [canonical-id : i64 (intern-composite-pair-id module-id name-id)]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    (begin
+      (array-set!
+        operands
+        0
+        (CompilerCtfeValue.Type (AstType.Struct canonical-id)))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (producer-test-nominal-reflections
+          canonical-id
+          "producer.nominal.module"
+          "Nominal"
+          false))
+      (let
+        [push-status : i64
+          (compiler-comptime-host-callback-push-operand
+            producer-test-cookie
+            0
+            0
+            0)]
+        [module-status : i64
+          (compiler-comptime-host-callback-type-key producer-test-cookie 1 0 0)]
+        [literal-status : i64
+          (compiler-comptime-host-push!
+            (ctfe-generated-string-value "producer.nominal.module"))]
+        [equal : i64
+          (compiler-comptime-host-callback-string-eq producer-test-cookie 0 0 0)]
+        [ok : bool
+          (and
+            (= push-status tlci-host-callback-status-ok)
+            (= module-status tlci-host-callback-status-ok)
+            (= literal-status tlci-host-callback-status-ok)
+            (= equal 1))]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
+;; Dotted append has identity semantics beyond its rendered text. A structural
+;; module Name plus a generated `.member` suffix must remain the canonical
+;; generated-module member identity, or syntax construction resolves the same
+;; spelling in the wrong module. Refs #5606.
+(define (producer-test-name-dotted-string-append?) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-module-id : i64 (ci.intern "producer.nominal.module")]
+    [module-id : i64
+      (+ (ci.intern-macro-global-structural-base) source-module-id)]
+    [dot-id : i64 (ci.intern ".")]
+    [member-id : i64 (ci.intern "into-iterator")]
+    [expected-suffix : CompilerCtfeValue
+      (ctfe-generated-string-append-value "." dot-id "into-iterator" member-id)]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 0)]
+    (match expected-suffix
+      [(CompilerCtfeValue.String suffix-text suffix-id)
+        (let
+          [expected : CompilerCtfeValue
+            (ctfe-generated-string-append-value
+              "producer.nominal.module"
+              module-id
+              suffix-text
+              suffix-id)]
+          (begin
+            (compiler-comptime-host-session-open!
+              pools
+              operands
+              0
+              64
+              producer-test-cookie
+              (ctfe-reflect-info-list-empty))
+            (let
+              [module-status : i64
+                (compiler-comptime-host-push! (ctfe-name-value module-id))]
+              [dot-status : i64
+                (compiler-comptime-host-push! (ctfe-source-string-value dot-id))]
+              [member-status : i64
+                (compiler-comptime-host-push!
+                  (ctfe-source-string-value member-id))]
+              [suffix-status : i64
+                (compiler-comptime-host-callback-string-append
+                  producer-test-cookie
+                  0
+                  0
+                  0)]
+              [full-status : i64
+                (compiler-comptime-host-callback-string-append
+                  producer-test-cookie
+                  0
+                  0
+                  0)]
+              [commit-status : i64
+                (compiler-comptime-host-callback-commit-result
+                  producer-test-cookie
+                  0
+                  0
+                  0)]
+              [ok : bool
+                (and
+                  (= module-status tlci-host-callback-status-ok)
+                  (= dot-status tlci-host-callback-status-ok)
+                  (= member-status tlci-host-callback-status-ok)
+                  (= suffix-status tlci-host-callback-status-ok)
+                  (= full-status tlci-host-callback-status-ok)
+                  (= commit-status tlci-host-callback-status-ok)
+                  (match expected
+                    [(CompilerCtfeValue.String expected-text expected-id)
+                      (match (compiler-comptime-host-result-value)
+                        [(CompilerCtfeValue.String actual-text actual-id)
+                          (and
+                            (string.eq actual-text expected-text)
+                            (= actual-id expected-id))]
+                        [_ false])]
+                    [_ false]))]
+              (begin
+                (compiler-comptime-host-session-close!)
+                ok))))]
+      [_ false])))
+
 (define (producer-test-dispatch-fold?
   [loaded : (& loaded TlciLoadedImage)]
   [identity : String]) : bool
@@ -2477,7 +2697,7 @@
     [source : String
       (string.append
         source-base
-        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n")]
+        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n")]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (match (parse-ast-source source)
@@ -2533,13 +2753,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 35)
-                              (= (struct-get captures len) 35)
+                              (= (array-length name-array) 36)
+                              (= (struct-get captures len) 36)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-count
                                   0)
-                                34)
+                                35)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-partial-count
@@ -2636,6 +2856,8 @@
                                 (& loaded)
                                 "package.macros/nommod"
                                 3)
+                              (producer-test-nominal-module-string-eq?)
+                              (producer-test-name-dotted-string-append?)
                               (producer-test-dispatch-shape?
                                 (& loaded)
                                 "package.macros/places"
@@ -2735,6 +2957,9 @@
                                 3
                                 false
                                 "")
+                              (producer-test-dispatch-var-name-identity?
+                                (& loaded)
+                                "package.macros/nameidentity")
                               (producer-test-dispatch-tuple-splice?
                                 (& loaded)
                                 "package.macros/tuplepack"

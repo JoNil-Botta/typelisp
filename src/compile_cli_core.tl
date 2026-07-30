@@ -27,6 +27,7 @@
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
 (import compiler_allocation_profile as allocation_profile)
+(import compiler_cfg_core as cfg_core)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "compiler_windows_coff_core.tl")
@@ -165,7 +166,7 @@
     (compile-cli-cfg-names-to-env-with-intern-state-from
       names
       (+ index 1)
-      (compiler-cfg-enable-with-intern-state
+      (cfg_core.compiler-cfg-enable-with-intern-state
         env
         (compile-cli-cfg-names-get names index)
         intern-state)

@@ -518,7 +518,7 @@ contains|parse: unknown extern ABI
 contains|parse: cfg declaration expects predicate and declaration
 contains|parse: malformed define
 contains|source-level generics or traits
-count-at-least|call _tl_compiler_parse_dispatch_env|1
+count-at-least|call _tl_parse_ast_program_dispatch|1
 end
 
 case|selfhost_compiler_regalloc|src/compiler_regalloc.tl|assembly|skip|direct

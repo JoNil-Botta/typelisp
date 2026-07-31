@@ -6,7 +6,7 @@
 (define sync-integration-count : i64
   64)
 
-(define (sync-integration-array-i64-addr [items : (Array i64)]) : i64
+(define (sync-integration-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
 
@@ -23,7 +23,8 @@
 
 (define (sync-integration-channel-from-ctx [ctx : i64] [offset : i64]) : channel_i64.Channel
   (let
-    [raw : (Array i64) (array.make-array i64 (channel_i64.raw-field-count))]
+    [raw : (__tl_dyn-array i64)
+      (array.make-array i64 (channel_i64.raw-field-count))]
     [i : i64 0]
     (begin
       (while (< i (channel_i64.raw-field-count))
@@ -83,7 +84,7 @@
     [(ThreadJoinErr _) -1]))
 
 (define (sync-integration-pack-context!
-  [ctx : (Array i64)]
+  [ctx : (__tl_dyn-array i64)]
   [channel : channel_i64.Channel]
   [base : i64]
   [count : i64]) : unit
@@ -134,9 +135,9 @@
 
 (define (sync-integration-run [channel : channel_i64.Channel]) : i64
   (let
-    [ctx-a : (Array i64)
+    [ctx-a : (__tl_dyn-array i64)
       (array.make-array i64 (+ (channel_i64.raw-field-count) 2))]
-    [ctx-b : (Array i64)
+    [ctx-b : (__tl_dyn-array i64)
       (array.make-array i64 (+ (channel_i64.raw-field-count) 2))]
     (begin
       (sync-integration-pack-context! ctx-a channel 100 sync-integration-count)

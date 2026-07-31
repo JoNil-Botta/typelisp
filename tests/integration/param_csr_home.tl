@@ -3,8 +3,8 @@
 ;; FORCING TEST for M-A (RC1): parameters become ordinary greedy candidates with
 ;; CALLEE-SAVED-only homes. `param-loop` has a REAL call in the loop (recursive
 ;; `bump`, so the leaf-inliner cannot delete it) plus two params -- a scalar
-;; `n` and a handle `xs : (Array i64)` -- read EVERY iteration. Under the old
-;; contract any clobber point stack-homed ALL params, so both were reloaded from
+;; `n` and a private dynamic-array handle `xs` -- read EVERY iteration. Under
+;; the old contract any clobber point stack-homed ALL params, so both were reloaded from
 ;; `-N(%rbp)` each iteration; under the new contract both must be copied ONCE at
 ;; entry into callee-saved registers (movq %rdi/%rsi, %r12..%r15/%rbx) and the
 ;; loop body must contain NO stack reload of either param. The runtime check
@@ -17,7 +17,7 @@
     1
     (+ 1 (bump (- x 1)))))
 
-(define (param-loop [xs : (Array i64)] [n : i64]) : i64
+(define (param-loop [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -36,7 +36,7 @@
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 3)]
-    [xs : (Array i64) (make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

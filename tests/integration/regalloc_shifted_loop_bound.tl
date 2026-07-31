@@ -37,7 +37,7 @@
 
 (define (main) : i64
   (let
-    [items : (Array u8) (array.make-array u8 80)]
+    [items : (__tl_dyn-array u8) (array.make-array u8 80)]
     [buf : (MutPtr u8)
       (unsafe
         (array-data items))]

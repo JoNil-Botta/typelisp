@@ -19,10 +19,10 @@
 
 ;; Built behind a call so the element payloads stay opaque to the walk loop and
 ;; the length remains a runtime descriptor load.
-(define (build-program) : (Array Step)
+(define (build-program) : (__tl_dyn-array Step)
   (make-array (Add 2) (Mul 3) (Add 4) (Mul 5)))
 
-(define (walk [prog : (Array Step)]) : i64
+(define (walk [prog : (__tl_dyn-array Step)]) : i64
   (let
     [n : i64 (array-length prog)]
     [i : i64 0]
@@ -38,7 +38,7 @@
 
 (define (main) : i64
   (let
-    [prog : (Array Step) (build-program)]
+    [prog : (__tl_dyn-array Step) (build-program)]
     [r : i64 (walk prog)]
     ;; ((1 + 2) * 3 + 4) * 5 = 65
     (if (= r 65)

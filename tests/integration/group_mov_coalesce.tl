@@ -24,7 +24,7 @@
     1
     (+ 1 (bump (- x 1)))))
 
-(define (run [ops : (Array Op)] [n : i64]) : i64
+(define (run [ops : (__tl_dyn-array Op)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -45,7 +45,7 @@
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 3)]
-    [ops : (Array Op) (make-array Op n)]
+    [ops : (__tl_dyn-array Op) (make-array Op n)]
     [i : i64 0]
     (begin
       (while (< i n)

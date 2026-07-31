@@ -29,7 +29,7 @@
     (string.append ":" (string.int->string idx))))
 
 (define (fill-items
-  [items : (Array String)]
+  [items : (__tl_dyn-array String)]
   [index : i64]
   [count : i64]
   [seed : i64]) : unit
@@ -39,15 +39,15 @@
       (array-set! items index (payload seed (- count index)))
       (fill-items items (+ index 1) count seed))))
 
-(define (make-items [count : i64] [seed : i64]) : (Array String)
+(define (make-items [count : i64] [seed : i64]) : (__tl_dyn-array String)
   (let
-    [items : (Array String) (array.make-array String count)]
+    [items : (__tl_dyn-array String) (array.make-array String count)]
     (begin
       (fill-items items 0 count seed)
       items)))
 
 (define (items-ok-from?
-  [items : (Array String)]
+  [items : (__tl_dyn-array String)]
   [index : i64]
   [count : i64]
   [seed : i64]) : bool
@@ -57,7 +57,7 @@
       (string.eq (array-ref items index) (payload seed (- count index)))
       (items-ok-from? items (+ index 1) count seed))))
 
-(define (items-ok? [items : (Array String)] [count : i64] [seed : i64]) : bool
+(define (items-ok? [items : (__tl_dyn-array String)] [count : i64] [seed : i64]) : bool
   (and (= (array-length items) count) (items-ok-from? items 0 count seed)))
 
 (define (escape-string [seed : i64]) : String
@@ -83,7 +83,7 @@
                     (arena.destroy scratch-head))
                   escaped)))))))))
 
-(define (escape-items [count : i64] [seed : i64]) : (Array String)
+(define (escape-items [count : i64] [seed : i64]) : (__tl_dyn-array String)
   (let
     [enclosing : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
@@ -91,7 +91,7 @@
       (unsafe
         (arena.set! scratch))
       (let
-        [raw : (Array String) (make-items count seed)]
+        [raw : (__tl_dyn-array String) (make-items count seed)]
         (begin
           (force-overflow)
           (let
@@ -100,13 +100,13 @@
               (unsafe
                 (arena.set! enclosing))
               (let
-                [escaped : (Array String) (clone raw)]
+                [escaped : (__tl_dyn-array String) (clone raw)]
                 (begin
                   (unsafe
                     (arena.destroy scratch-head))
                   escaped)))))))))
 
-(define (escape-items-rewind [scratch : arena.Arena] [count : i64] [seed : i64]) : (Array
+(define (escape-items-rewind [scratch : arena.Arena] [count : i64] [seed : i64]) : (__tl_dyn-array
     String)
   (let
     [enclosing : arena.Arena (arena.current)]
@@ -115,7 +115,7 @@
         (arena.set! scratch))
       (let
         [mark : arena.ArenaMark (arena.mark)]
-        [raw : (Array String) (make-items count seed)]
+        [raw : (__tl_dyn-array String) (make-items count seed)]
         (begin
           (force-overflow)
           (let
@@ -124,7 +124,7 @@
               (unsafe
                 (arena.set! enclosing))
               (let
-                [escaped : (Array String) (clone raw)]
+                [escaped : (__tl_dyn-array String) (clone raw)]
                 [new-enclosing : arena.Arena (arena.current)]
                 (begin
                   (unsafe
@@ -138,7 +138,7 @@
     acc
     (let
       [escaped : String (escape-string n)]
-      [noise : (Array String) (escape-items 8 (+ n 1000))]
+      [noise : (__tl_dyn-array String) (escape-items 8 (+ n 1000))]
       (if (and
         (string.eq escaped (payload n 999))
         (items-ok? noise 8 (+ n 1000)))
@@ -149,7 +149,7 @@
   (if (= n 0)
     acc
     (let
-      [items : (Array String) (escape-items 96 n)]
+      [items : (__tl_dyn-array String) (escape-items 96 n)]
       [after : String (escape-string (+ n 2000))]
       (if (and
         (items-ok? items 96 n)
@@ -161,8 +161,9 @@
   (if (= n 0)
     acc
     (let
-      [items : (Array String) (escape-items-rewind scratch 96 n)]
-      [after : (Array String) (escape-items-rewind scratch 8 (+ n 3000))]
+      [items : (__tl_dyn-array String) (escape-items-rewind scratch 96 n)]
+      [after : (__tl_dyn-array String)
+        (escape-items-rewind scratch 8 (+ n 3000))]
       (if (and (items-ok? after 8 (+ n 3000)) (items-ok? items 96 n))
         (rewind-item-cycles-inner scratch (- n 1) (+ acc 1))
         0))))

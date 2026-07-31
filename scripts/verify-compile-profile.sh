@@ -1041,8 +1041,8 @@ fi
 #
 # Current headroom, used against capacity, measured directly on Windows after
 # the AstExpr row narrowing landed:
-# expr macro_expand 2970871/3014656, expr typecheck 1712650/1769472,
-# type macro_expand 20858/21504, and type typecheck 6256/7168. #5980 added the
+# expr macro_expand 3047737/3080192, expr typecheck 1790988/1835008,
+# type macro_expand 21059/21504, and type typecheck 6374/7168. #5980 added the
 # LSP code-action source and transcript coverage. Transformer-owned hygiene
 # nodes still reuse their CTFE slots instead of retaining a second complete
 # expression tree. The combined #6012/#6035 main tree crossed the expr
@@ -1050,13 +1050,16 @@ fi
 # other three values are retained from their latest direct measurements.
 # #6090's dense macro type-kind storage crossed the expr macro_expand boundary
 # from 44 to 45 segments. #5606's remaining native producer support crossed it
-# from 45 to 46; the Windows probe measured the complete family directly,
-# including 96468992 physical payload bytes.
+# from 45 to 46. #5670's finer-grained diagnostic spans crossed it from 46 to
+# 47; the Windows probe measured the complete family directly, including
+# 98566144 physical payload bytes.
 # All four sit within a few percent of their next step, so expect these to move.
 # #5701 landed while
 # this was in review and consumed 4177 of the expr macro_expand headroom without
 # crossing, which is the normal case this shape is meant to make cheap. #6069's
 # load-CSE source crossed the expr typecheck boundary from 26 to 27 segments.
+# #5670's finer-grained diagnostic spans crossed it from 27 to 28; the same
+# Windows probe measured 58720256 physical payload bytes.
 #
 # type typecheck DID cross on the AstExpr row narrowing, 6 -> 7 segments. That
 # commit moves nine variants' inline AstType payloads into the type pool, so the
@@ -1097,10 +1100,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, so its macro-walk type footprint is part of the
     # intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 46 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 27 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 28 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 21 1024 24 \

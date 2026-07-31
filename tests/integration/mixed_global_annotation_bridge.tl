@@ -1,6 +1,6 @@
 (import mixed_global_annotation_provider as provider)
 
-(define (mixed-global-annotation-bridge-items) : (Array
+(define (mixed-global-annotation-bridge-items) : (__tl_dyn-array
     provider.MixedGlobalAnnotationItem)
   provider.mixed-global-annotation-items)
 

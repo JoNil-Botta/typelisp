@@ -3,7 +3,7 @@
 ;; FORCING TEST for SCAV2 (backend descriptor-CSE of repeated global-handle
 ;; loads via the owner-map peephole).
 ;;
-;; A module-level global `(Array i64)` holds a handle (a pointer to the array
+;; A module-level private dynamic array holds a handle (a pointer to the array
 ;; descriptor). Every access re-materialises the handle with `movq SYM(%rip),%rX`
 ;; -- there is no single-instruction RIP fold for the double indirection. A
 ;; bounds-checked read loads the handle TWICE within one access (once to read the
@@ -17,7 +17,7 @@
 ;; `probe` reads gtab[i] under a never-taken self-recursion that blocks the leaf
 ;; inliner + TCO so the named body survives for the gate to inspect
 ;; (target/global-handle-gate.sh; FAILS pre-SCAV2 which emits two handle loads).
-(define gtab : (Array i64)
+(define gtab : (__tl_dyn-array i64)
   (array.make-array i64 16))
 
 (define (probe [i : i64]) : i64

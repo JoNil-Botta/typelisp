@@ -25,7 +25,7 @@
   [width : i64]
   [height : i64]
   [limit : i32]
-  [output : (Array i32)]) : unit
+  [output : (__tl_dyn-array i32)]) : unit
   (let
     [dx : f32 (/ (- x1 x0) (cast width : f32))]
     [dy : f32 (/ (- y1 y0) (cast height : f32))]
@@ -50,7 +50,7 @@
 ;; an immediate escape, and a point that must reach its iteration limit.
 (define (main) : i64
   (let
-    [output : (Array i32) (make-array i32 1)]
+    [output : (__tl_dyn-array i32) (make-array i32 1)]
     [bounded : i32 0]
     [immediate : i32 0]
     [maxed : i32 0]

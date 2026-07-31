@@ -7,13 +7,11 @@
   16)
 
 (define (classify [value : i64]) : i64
-  (if (< value -1000)
-    -99
-    (if (< value 0)
-      -1
-      (if (= (bit-and value 1) 0)
-        2
-        3))))
+  (cond
+    [(< value -1000) -99]
+    [(< value 0) -1]
+    [(= (bit-and value 1) 0) 2]
+    [else 3]))
 
 (define (fill
   [xs : (Array i64)]
@@ -28,13 +26,11 @@
         ;; Parent-only accesses should be ordinary vector operations in full
         ;; gangs and predicated operations in the final partial gang.
         (array-set! copy i value)
-        (if (< value -1000)
-          (array-set! out i -99)
-          (if (< value 0)
-            (array-set! out i -1)
-            (if (= (bit-and value 1) 0)
-              (array-set! out i 2)
-              (array-set! out i 3))))))))
+        (cond
+          [(< value -1000) (array-set! out i -99)]
+          [(< value 0) (array-set! out i -1)]
+          [(= (bit-and value 1) 0) (array-set! out i 2)]
+          [else (array-set! out i 3)])))))
 
 (define (run-case [n : i64]) : bool
   (let

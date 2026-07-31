@@ -688,7 +688,9 @@
     [uri : String (lsp-resolved-path-to-file-uri path)]
     [stale-text : String "(define stale : i64 0)"]
     [disk-text : String "(define fresh : i64 1)"]
+    [overlay-text : String "(define overlay : i64 2)"]
     [fresh-name : String "fresh"]
+    [overlay-name : String "overlay"]
     [params : json.Json
       (lsp-json-object1
         "textDocument"
@@ -732,11 +734,42 @@
             [(LspDocumentDeclsLookup.Missing) false])]
         [cached-decls-doc : LspDocument
           (lsp_document_vec.get (& docs) 0 (lsp-document-fallback))]
+        [versioned-docs : lsp_document_vec.Vec
+          (lsp-documents-set-versioned
+            (lsp_document_vec.new)
+            uri
+            path
+            overlay-text
+            7
+            (lsp-diagnostic-uris-single uri))]
+        [versioned-lookup-ok : bool
+          (match (lsp-get-document params versioned-docs)
+            [(LspDocumentLookup.Found _ text _)
+              (string.contains (& text) (& overlay-name))]
+            [(LspDocumentLookup.Missing) false])]
+        [versioned-decls-ok : bool
+          (match (lsp-get-document-decls params versioned-docs)
+            [(LspDocumentDeclsLookup.Found _ text _ decls)
+              (let
+                [entry : LspDeclEntry
+                  (lsp_decl_vec.get (& decls) 0 (lsp-decl-entry-fallback))]
+                (and
+                  (string.contains (& text) (& overlay-name))
+                  (= (lsp_decl_vec.len (& decls)) 1)
+                  (string.eq (struct-get entry name) overlay-name)))]
+            [(LspDocumentDeclsLookup.Missing) false])]
+        [versioned-cached-doc : LspDocument
+          (lsp_document_vec.get (& versioned-docs) 0 (lsp-document-fallback))]
         (and
           lookup-ok
           cache-ok
           decls-ok
-          (struct-get cached-decls-doc decls-valid))))))
+          (struct-get cached-decls-doc decls-valid)
+          versioned-lookup-ok
+          versioned-decls-ok
+          (string.eq (struct-get versioned-cached-doc text) overlay-text)
+          (= (struct-get versioned-cached-doc version) 7)
+          (struct-get versioned-cached-doc decls-valid))))))
 
 (define (lsp-edit-save-doc-smoke-ok?) : bool
   (let
@@ -1411,6 +1444,8 @@
     [root-a-tests : String "target/lsp_workspace_index/a/tests"]
     [root-a-nested : String "target/lsp_workspace_index/a/nested"]
     [root-a-cycle : String "target/lsp_workspace_index/a/cycle"]
+    [root-a-cycle-source : String
+      "target/lsp_workspace_index/a/cycle/src/disk.tl"]
     [root-b : String "target/lsp_workspace_index/b"]
     [disk-path : String "target/lsp_workspace_index/a/src/disk.tl"]
     [explicit-path : String "target/lsp_workspace_index/a/src/explicit.tl"]
@@ -1545,6 +1580,12 @@
         unit
         (begin
           (io.print-error "workspace index smoke: initial discovery\n")
+          (set! ok false)))
+      (set! state (lsp-smoke-state-watch state root-a-cycle-source 2))
+      (if (= (lsp-smoke-state-name-count (& state) "disk-value") 1)
+        unit
+        (begin
+          (io.print-error "workspace index smoke: linked watcher path\n")
           (set! ok false)))
       (set!
         state

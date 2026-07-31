@@ -1143,7 +1143,9 @@
     [doc : LspDocument
       (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
     [path : String (struct-get doc path)]
-    (if (string.eq path "")
+    ;; Versioned documents are client-owned open buffers. Only unversioned
+    ;; entries loaded by tooling may be refreshed from disk.
+    (if (or (string.eq path "") (>= (struct-get doc version) 0))
       doc
       (match (io.try-read-file (& path))
         [(io.OkIoBytes disk-contents)

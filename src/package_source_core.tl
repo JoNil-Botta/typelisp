@@ -498,18 +498,28 @@
               (= (string.string-length name) 0)
               (package-source-skip-dir? name))
               (set! eligible false)
-              (begin
-                (set! prefix (package-source-relative-join prefix name))
-                (if (package-source-dir-has-manifest?
-                  (package-source-root-join root prefix))
-                  (set! eligible false)
-                  unit)))
+              (let
+                [next-prefix : String
+                  (package-source-relative-join prefix name)]
+                [parent : String (package-source-root-join root next-prefix)]
+                (begin
+                  (set! prefix next-prefix)
+                  ;; Match recursive discovery: every parent must be a real
+                  ;; directory, never a symlink or Windows reparse point.
+                  (match (fs.try-file-kind-no-follow (& parent))
+                    [(fs.ErrFsFileKind _) (set! eligible false)]
+                    [(fs.OkFsFileKind kind)
+                      (if (and
+                        (fs.file-kind-directory? kind)
+                        (not (package-source-dir-has-manifest? parent)))
+                        unit
+                        (set! eligible false))]))))
             (set! cursor (+ separator 1)))))
       eligible)))
 
-;; Lexical half of the single-path policy. This intentionally does not require
-;; the file to exist so an unsaved open document can still be associated with
-;; its workspace root.
+;; Parent-policy half of the single-path check. This intentionally does not
+;; require the file itself to exist so an unsaved open document can still be
+;; associated with its workspace root.
 (define (package-source-path-location-eligible-for-root?
   [root : String]
   [path : String]) : bool

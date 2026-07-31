@@ -3385,7 +3385,14 @@ Ordinary user-defined function parameters are by-value unless their type is a
 reference type, but an unmarked parameter does not opt a broad move-only value
 into call-site consumption. Use `(:consume)` when the callee takes ownership.
 This opt-in preserves compatibility for existing unmarked APIs. Types with an
-independent intrinsic consuming rule keep that rule.
+independent intrinsic consuming rule keep that rule. For a struct, enum, or
+fixed array too large for the register-value representation, an internal
+by-value call snapshots the aggregate's inline bytes into callee-private storage
+before evaluating the body. Assigning through the parameter, moving it to a
+local place, matching it, or taking `&mut` of it therefore cannot mutate the
+caller's aggregate place. This is a shallow value snapshot: handles stored
+inside the aggregate still identify the same referents. A reference-typed
+parameter is required when mutation of the caller's aggregate place is intended.
 
 **Whole-place and path moves.** The v1 checker accepts whole-place moves for
 locals, parameters, and whole constructor temporaries. It also tracks
@@ -6447,11 +6454,17 @@ and not a general manual memory management feature.
 
 ### 7.6 Aggregate handles, moves, and aliasing
 
-- The IR/ABI may represent `String`, dynamic-buffer, tuple, struct, enum, and
-  closure values as pointer-sized handles. Bit-copying such a handle aliases
-  the same backing storage, but the source language treats aggregate by-value
-  use as a move under section 4.7.2 rather than as a user-visible copy
-  operation.
+- The IR/ABI may represent `String`, dynamic-buffer, tuple, struct, enum, fixed
+  array, and closure values as pointer-sized handles. That representation is
+  not a source-level permission for a callee to mutate a caller's by-value
+  aggregate place. Internal memory-class struct, enum, and fixed-array
+  parameters receive a shallow inline-byte snapshot in callee-private storage
+  before the body runs; register-class aggregates are already transported as
+  values. Writes, moves, matches, and mutable borrows of the parameter operate
+  on that private value. Handles nested inside it remain shallow-copied, so
+  operations on their referents retain the aliasing behavior of the nested
+  handle type. Explicit reference parameters express borrowed access to the
+  caller's aggregate storage.
 - Non-consuming inspection builtins read an aggregate handle without moving
   it. A function parameter marked `(:consume)` transfers a move-only argument;
   unmarked parameters preserve compatibility behavior, while reference-typed

@@ -63285,9 +63285,9 @@
 
 ;; Index cursor rather than `ast-decl-list-step`. The list is already a flat
 ;; array slice, so the step's 104 B row copy and 144 B result exist only to give
-;; the walk a cons shape; the backing slot is handed to the per-declaration
-;; predicate directly, which costs nothing (aggregate arguments are passed by
-;; reference).
+;; the walk a cons shape. Handing the backing slot to the per-declaration
+;; predicate directly avoids an extra source-level copy before the callee's
+;; required by-value entry snapshot.
 (define (macro-decls-have-unqualified-import-of-module?
   [decls : AstDeclList]
   [module-id : i64]) : bool

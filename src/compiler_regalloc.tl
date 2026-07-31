@@ -17857,7 +17857,7 @@
   [interval-index : CompilerRegIntervalIndex]
   [pending : (__tl_dyn-array i64)]
   [evict-count : (__tl_dyn-array i64)]
-  [heap : CompilerRegGreedyHeap]
+  [heap : (&mut heap CompilerRegGreedyHeap)]
   [ref-counts : (__tl_dyn-array i64)]
   [var : i64]
   [reg-index : i64]
@@ -18017,7 +18017,7 @@
   [scratch-excluded : (__tl_dyn-array CompilerRegIdList)]
   [pending : (__tl_dyn-array i64)]
   [evict-count : (__tl_dyn-array i64)]
-  [heap : CompilerRegGreedyHeap]) : i64
+  [heap : (&mut heap CompilerRegGreedyHeap)]) : i64
   (if (or
     (compiler-reg-greedy-already-assigned? assignments var)
     (compiler-live-set-contains? group-vars var))
@@ -18326,7 +18326,7 @@
         false))))
 
 (define (compiler-reg-greedy-heap-swap!
-  [arr : (__tl_dyn-array i64)]
+  [arr : (&mut arr (__tl_dyn-array i64))]
   [a : i64]
   [b : i64]) : unit
   (let
@@ -18336,7 +18336,7 @@
       (array-set! arr b t))))
 
 (define (compiler-reg-greedy-heap-sift-up!
-  [arr : (__tl_dyn-array i64)]
+  [arr : (&mut arr (__tl_dyn-array i64))]
   [ref-counts : (__tl_dyn-array i64)]
   [index : i64]) : unit
   (if (<= index 0)
@@ -18353,7 +18353,7 @@
         unit))))
 
 (define (compiler-reg-greedy-heap-sift-down!
-  [arr : (__tl_dyn-array i64)]
+  [arr : (&mut arr (__tl_dyn-array i64))]
   [ref-counts : (__tl_dyn-array i64)]
   [len : i64]
   [index : i64]) : unit
@@ -18387,7 +18387,7 @@
 
 (define (compiler-reg-greedy-heap-copy-from!
   [next : (__tl_dyn-array i64)]
-  [old : (__tl_dyn-array i64)]
+  [old : (& old (__tl_dyn-array i64))]
   [index : i64]) : unit
   (if (>= index (array-length old))
     unit
@@ -18395,17 +18395,24 @@
       (array-set! next index (array-ref old index))
       (compiler-reg-greedy-heap-copy-from! next old (+ index 1)))))
 
-(define (compiler-reg-greedy-heap-grow! [heap : CompilerRegGreedyHeap]) : unit
+(define (compiler-reg-greedy-heap-grown-array
+  [old : (& old (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
   (let
-    [old : (__tl_dyn-array i64) (struct-get heap arr)]
     [next : (__tl_dyn-array i64)
       (array.make-array i64 (* (array-length old) 2))]
     (begin
       (compiler-reg-greedy-heap-copy-from! next old 0)
-      (set! (struct-get heap arr) next))))
+      next)))
+
+(define (compiler-reg-greedy-heap-grow!
+  [heap : (&mut heap CompilerRegGreedyHeap)]) : unit
+  (let
+    [next : (__tl_dyn-array i64)
+      (compiler-reg-greedy-heap-grown-array (& (struct-get heap arr)))]
+    (set! (struct-get heap arr) next)))
 
 (define (compiler-reg-greedy-heap-push!
-  [heap : CompilerRegGreedyHeap]
+  [heap : (&mut heap CompilerRegGreedyHeap)]
   [ref-counts : (__tl_dyn-array i64)]
   [v : i64]) : unit
   (begin
@@ -18418,25 +18425,31 @@
         (array-set! (struct-get heap arr) index v)
         (set! (struct-get heap len) (+ index 1))
         (compiler-reg-greedy-heap-sift-up!
-          (struct-get heap arr)
+          (&mut (struct-get heap arr))
           ref-counts
           index)))))
 
 (define (compiler-reg-greedy-heap-pop!
-  [heap : CompilerRegGreedyHeap]
+  [heap : (&mut heap CompilerRegGreedyHeap)]
   [ref-counts : (__tl_dyn-array i64)]
   [pending : (__tl_dyn-array i64)]) : i64
   (if (<= (struct-get heap len) 0)
     (- 0 1)
     (let
-      [arr : (__tl_dyn-array i64) (struct-get heap arr)]
-      [top : i64 (array-ref arr 0)]
+      [top : i64 (array-ref (struct-get heap arr) 0)]
       [last-index : i64 (- (struct-get heap len) 1)]
       (begin
-        (array-set! arr 0 (array-ref arr last-index))
+        (array-set!
+          (struct-get heap arr)
+          0
+          (array-ref (struct-get heap arr) last-index))
         (set! (struct-get heap len) last-index)
         (if (> last-index 0)
-          (compiler-reg-greedy-heap-sift-down! arr ref-counts last-index 0)
+          (compiler-reg-greedy-heap-sift-down!
+            (&mut (struct-get heap arr))
+            ref-counts
+            last-index
+            0)
           unit)
         (if (and
           (>= top 0)
@@ -18452,7 +18465,7 @@
   [i : i64]
   [count : i64]
   [pending : (__tl_dyn-array i64)]
-  [heap : CompilerRegGreedyHeap]
+  [heap : (&mut heap CompilerRegGreedyHeap)]
   [ref-counts : (__tl_dyn-array i64)]
   [scratch-base : i64]
   [scratch-phase : bool]) : unit
@@ -18494,7 +18507,7 @@
 (define (compiler-reg-greedy-worklist-run!
   [pending : (__tl_dyn-array i64)]
   [evict-count : (__tl_dyn-array i64)]
-  [heap : CompilerRegGreedyHeap]
+  [heap : (&mut heap CompilerRegGreedyHeap)]
   [assignments : CompilerRegAssignmentTable]
   [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
@@ -18650,14 +18663,14 @@
         i
         count
         pending
-        heap
+        (&mut heap)
         ref-counts
         unspillable-from
         false)
       (compiler-reg-greedy-worklist-run!
         pending
         evict-count
-        heap
+        (&mut heap)
         assignments
         occupancy
         interval-index
@@ -18685,14 +18698,14 @@
             i
             count
             pending
-            heap
+            (&mut heap)
             ref-counts
             unspillable-from
             true)
           (compiler-reg-greedy-worklist-run!
             pending
             evict-count
-            heap
+            (&mut heap)
             assignments
             occupancy
             interval-index

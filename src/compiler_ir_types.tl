@@ -1323,7 +1323,7 @@
         (set! index (+ index 1))))))
 
 (define (compiler-ir-instr-seq-compact!
-  [instrs : CompilerIrInstrSeq]
+  [instrs : (&mut instrs CompilerIrInstrSeq)]
   [keep? : (-> CompilerIrInstr bool)]) : unit
   (let
     [read : i64 0]
@@ -1332,13 +1332,13 @@
     (begin
       (while (< read count)
         (begin
-          (if (keep? (compiler-ir-instr-seq-ref instrs read))
+          (if (keep? (clone (array-ref (struct-get instrs slots) read)))
             (begin
               (if (not (= write read))
-                (compiler-ir-instr-seq-set!
-                  instrs
+                (array-set!
+                  (struct-get instrs slots)
                   write
-                  (compiler-ir-instr-seq-ref instrs read))
+                  (clone (array-ref (struct-get instrs slots) read)))
                 unit)
               (set! write (+ write 1)))
             unit)
@@ -7547,7 +7547,7 @@
     [roundtrip : CompilerIrInstrList CompilerIrInstrList.Nil]
     (begin
       (compiler-ir-instr-seq-compact!
-        seq
+        (&mut seq)
         compiler-ir-instr-seq-test-keep-non-alloc?)
       (set! roundtrip (compiler-ir-instr-seq-to-list seq))
       (and

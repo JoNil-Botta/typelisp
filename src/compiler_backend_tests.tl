@@ -16123,6 +16123,30 @@
           (compiler-backend-string-contains? asm "    movq -24(%rbp), %r10\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-forwarded-addr-of-register-home-refused-ok?) : bool
+  (let
+    [previous-enabled : bool compiler-backend-addr-of-forwarding-enabled]
+    [previous-src : (Array i64) compiler-backend-addr-of-forwarding-src]
+    [forwarded : (Array i64) (make-array i64 3)]
+    [_forward : unit
+      (begin
+        (compiler-backend-addr-of-forwarding-fill! forwarded 0)
+        (array-set! forwarded 2 1)
+        (set! compiler-backend-addr-of-forwarding-src forwarded)
+        (set! compiler-backend-addr-of-forwarding-enabled true))]
+    [home : String
+      (compiler-backend-value-register-home
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment
+            2
+            (CompilerRegLocation.Register compiler-reg-id-rax))
+          CompilerRegAssignmentList.Nil)
+        (CompilerIrValue.Var 2))]
+    (begin
+      (set! compiler-backend-addr-of-forwarding-enabled previous-enabled)
+      (set! compiler-backend-addr-of-forwarding-src previous-src)
+      (string.eq home ""))))
+
 (define (compiler-backend-addr-of-register-home-shape-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -17636,6 +17660,7 @@
 
 (define (compiler-backend-address-mode-fusion-ok?) : bool
   (and
+    (compiler-backend-forwarded-addr-of-register-home-refused-ok?)
     (backend-and8
       (compiler-backend-addr-of-forwarding-shape-ok?)
       (compiler-backend-addr-of-register-home-shape-ok?)

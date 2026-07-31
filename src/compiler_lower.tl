@@ -787,6 +787,10 @@
   (Ok LowerState sym_i64_env.SymI64Env TcTypeEnv)
   (Err (Box CompilerDiagnostic)))
 
+(defenum ResultLowerParamCopies
+  (Ok LowerState sym_i64_env.SymI64Env)
+  (Err (Box CompilerDiagnostic)))
+
 ;; The Ok variant carries the full module-local type env (top-env + local type
 ;; decls), the module-local-only type env, and the module-local-only name env.
 ;; The local-only envs build small cache overlays over the shared global caches.
@@ -4560,8 +4564,8 @@
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 initial-module-id]
     ;; Match the backing slot rather than binding the row to a local first: the
-    ;; local materialised a 104 B copy, while a projection match loads the tag
-    ;; and hands the slot straight on (aggregate arguments pass by reference).
+    ;; local materialised a 104 B copy before the call. Passing the projection
+    ;; directly leaves only the callee's required by-value entry snapshot.
     [decl-slots : (Array AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     (begin
@@ -13605,6 +13609,68 @@
     (lower-type-inline-storage? ctx ty)
     (not (lower-type-register-resident? ctx ty))))
 
+(define (lower-copy-memory-aggregate-params-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [params : (& params AstParamList)]
+  [index : i64]
+  [param-var-base : i64]
+  [env : sym_i64_env.SymI64Env]) : ResultLowerParamCopies
+  (if (>= index (ast-param-list-len params))
+    (ResultLowerParamCopies.Ok state env)
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name ty _ _)
+        (let
+          [resolved-ty : AstType
+            (tc-type-without-regions (tc-resolve-type ctx ty))]
+          (if (lower-inline-aggregate-abi-copy-needed? ctx state resolved-ty)
+            (match (lower-copy-inline-aggregate-to-inline
+              ctx
+              state
+              (CompilerIrValue.Var (+ param-var-base index))
+              resolved-ty)
+              [(ResultLowerExpr.Ok (LowerExpr.Expr copy-state copy-value _))
+                (match copy-value
+                  [(CompilerIrValue.Var copy-id)
+                    (lower-copy-memory-aggregate-params-at
+                      ctx
+                      copy-state
+                      params
+                      (+ index 1)
+                      param-var-base
+                      (sym_i64_env.sym-i64-bind-id env name copy-id))]
+                  [_
+                    (ResultLowerParamCopies.Err
+                      (box
+                        (lower-diagnostic
+                          "lower: aggregate parameter copy did not materialize a variable")))])]
+              [(ResultLowerExpr.Err message)
+                (ResultLowerParamCopies.Err message)])
+            (lower-copy-memory-aggregate-params-at
+              ctx
+              state
+              params
+              (+ index 1)
+              param-var-base
+              env)))])))
+
+(define (lower-copy-memory-aggregate-params
+  [ctx : TcContext]
+  [state : LowerState]
+  [params : AstParamList]
+  [param-var-base : i64]
+  [env : sym_i64_env.SymI64Env]) : ResultLowerParamCopies
+  ;; The internal ABI carries a memory-class aggregate as a pointer, but the
+  ;; source parameter is a value. Snapshot its inline bytes before the body can
+  ;; bind, move, match, or mutably borrow the parameter.
+  (lower-copy-memory-aggregate-params-at
+    ctx
+    state
+    (& params)
+    0
+    param-var-base
+    env))
+
 (define (lower-return-abi-value
   [ctx : TcContext]
   [state : LowerState]
@@ -18288,30 +18354,40 @@
             [env : sym_i64_env.SymI64Env
               (lower-bind-params params 1 captured-env)]
             [type-env : TcTypeEnv (tc-bind-params ctx captured-type-env params)]
-            (match (lower-tail-expr
+            (match (lower-copy-memory-aggregate-params
               ctx
               captured-state
-              env
-              type-env
-              body
-              ret-ty
-              sret-var)
-              [(ResultLowerState.Ok final-state)
-                (ResultLowerFunction.Ok
-                  (lower-state-build-functions-with
-                    final-state
-                    (CompilerIrFunction.Function
-                      logical-name
-                      (if (>= sret-var 0)
-                        (lower-param-list-append-sret
-                          (lower-captured-param-list ctx params)
-                          sret-var)
-                        (lower-captured-param-list ctx params))
-                      ret-ty
-                      (lower-state-next-var final-state)
-                      (lower-state-build-function-blocks final-state)))
-                  (lower-state-spans final-state))]
-              [(ResultLowerState.Err message) (ResultLowerFunction.Err message)]))]
+              params
+              1
+              env)
+              [(ResultLowerParamCopies.Ok param-state param-env)
+                (match (lower-tail-expr
+                  ctx
+                  param-state
+                  param-env
+                  type-env
+                  body
+                  ret-ty
+                  sret-var)
+                  [(ResultLowerState.Ok final-state)
+                    (ResultLowerFunction.Ok
+                      (lower-state-build-functions-with
+                        final-state
+                        (CompilerIrFunction.Function
+                          logical-name
+                          (if (>= sret-var 0)
+                            (lower-param-list-append-sret
+                              (lower-captured-param-list ctx params)
+                              sret-var)
+                            (lower-captured-param-list ctx params))
+                          ret-ty
+                          (lower-state-next-var final-state)
+                          (lower-state-build-function-blocks final-state)))
+                      (lower-state-spans final-state))]
+                  [(ResultLowerState.Err message)
+                    (ResultLowerFunction.Err message)])]
+              [(ResultLowerParamCopies.Err message)
+                (ResultLowerFunction.Err message)]))]
         [(ResultLowerEnv.Err message) (ResultLowerFunction.Err message)]))))
 
 (define (lower-lambda-noncapturing
@@ -21024,25 +21100,18 @@
 ;; Every `-into` path in this family materializes ALL constructor arguments to
 ;; values first (`lower-args-as` / `lower-args-as-at` runs to completion) and
 ;; only then writes the tag and payload bytes of `dst`. That order is what makes
-;; writing straight into an sret slot or a `set!` place correct WITHOUT any
-;; alias analysis, because of three properties of by-value aggregates:
+;; writing straight into an sret slot or a `set!` place correct WITHOUT general
+;; alias analysis. The internal ABI still transports a memory-class by-value
+;; argument as a pointer, but `lower-copy-memory-aggregate-params` snapshots its
+;; bytes into private callee storage before the body runs; writes through that
+;; parameter are therefore not caller-visible.
 ;;
-;;   1. a by-value aggregate argument is passed as a bare POINTER, with no
-;;      caller-side copy (the call site moves the address, never the bytes);
-;;   2. passing an aggregate by value does not move it out of the caller: the
-;;      move checker accepts the caller's continued use of it afterwards, and
-;;      only the local binding form is a hard move error;
-;;   3. the callee may WRITE through such a parameter and the caller observes
-;;      it, so "read-only" is not a property of the parameter's type.
-;;
-;; Therefore the hidden sret slot carries NO `noalias` guarantee against the
-;; by-value aggregate arguments of the same call: accumulator threading
-;; (`acc = (f acc x)`, tail recursion) makes a call site's own result slot the
-;; next iteration's argument pointer. Interleaving destination writes with
-;; argument evaluation MISCOMPILES whenever `dst` aliases an argument. That is
-;; not hypothetical: a full destination-forwarding version was implemented here
-;; (-282 `tl_memcpy` call sites) and it broke stage1, bisected to exactly this
-;; reordering inside `tc-name-id-list-add`.
+;; This does not make arbitrary constructor arguments disjoint from `dst`.
+;; Argument expressions may read the destination place or reach it through an
+;; explicit reference, dereference, field, or index. Interleaving destination
+;; writes with their evaluation can therefore still miscompile. A prior full
+;; destination-forwarding version here (-282 `tl_memcpy` call sites) broke
+;; stage1 in `tc-name-id-list-add`; keep the source order explicit.
 ;;
 ;; Destination forwarding belongs in `compiler_optimize.tl`, where the whole
 ;; window is visible and the alias side condition can actually be discharged --
@@ -55951,23 +56020,34 @@
           0
           param-count)]
       (if (lower-supported-function-return-type? ctx ret-ty)
-        (match (lower-tail-expr ctx state env type-env body ret-ty sret-var)
-          [(ResultLowerState.Ok final-state)
-            (ResultLowerFunction.Ok
-              (lower-state-build-functions-with
-                final-state
-                (CompilerIrFunction.Function
-                  logical-name
-                  (if (>= sret-var 0)
-                    (lower-param-list-append-sret
-                      (lower-param-list ctx params 0)
-                      sret-var)
-                    (lower-param-list ctx params 0))
-                  ret-ir-ty
-                  (lower-state-next-var final-state)
-                  (lower-state-build-function-blocks final-state)))
-              (lower-state-spans final-state))]
-          [(ResultLowerState.Err message) (ResultLowerFunction.Err message)])
+        (match (lower-copy-memory-aggregate-params ctx state params 0 env)
+          [(ResultLowerParamCopies.Ok param-state param-env)
+            (match (lower-tail-expr
+              ctx
+              param-state
+              param-env
+              type-env
+              body
+              ret-ty
+              sret-var)
+              [(ResultLowerState.Ok final-state)
+                (ResultLowerFunction.Ok
+                  (lower-state-build-functions-with
+                    final-state
+                    (CompilerIrFunction.Function
+                      logical-name
+                      (if (>= sret-var 0)
+                        (lower-param-list-append-sret
+                          (lower-param-list ctx params 0)
+                          sret-var)
+                        (lower-param-list ctx params 0))
+                      ret-ir-ty
+                      (lower-state-next-var final-state)
+                      (lower-state-build-function-blocks final-state)))
+                  (lower-state-spans final-state))]
+              [(ResultLowerState.Err message) (ResultLowerFunction.Err message)])]
+          [(ResultLowerParamCopies.Err message)
+            (ResultLowerFunction.Err message)])
         (ResultLowerFunction.Err
           (box (lower-diagnostic-at-expr body "lower: unsupported expression")))))))
 
@@ -57544,9 +57624,8 @@
     [name-cache : LowerNameCache (lower-name-cache-from-env names)]
     [cur-out : lower_i64_i64_map.Map out]
     ;; Feed the wrapper peel the backing slot directly. Binding the row to a
-    ;; local first materialised a 104 B copy that `ast-decl-unwrapped` then
-    ;; copied again; an aggregate argument is passed by reference, so the
-    ;; projection costs nothing.
+    ;; local first materialised a 104 B copy before the call; the projection
+    ;; avoids that redundant copy, leaving the callee's by-value entry snapshot.
     [decl-slots : (Array AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     (begin

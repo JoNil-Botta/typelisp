@@ -35427,13 +35427,18 @@
   [value : CompilerIrValue]) : String
   (match value
     [(CompilerIrValue.Var id)
-      (match (compiler-backend-emit-assignment-lookup assignments id)
-        [(CompilerRegMaybeLocation.Some location)
-          (match location
-            [(CompilerRegLocation.Register home)
-              (compiler-abi-register-spelling home)]
-            [_ ""])]
-        [(CompilerRegMaybeLocation.No) ""])]
+      ;; A single-use AddrOf definition is suppressed by forwarding. Its
+      ;; allocator home therefore never receives the address; consumers must
+      ;; materialize the source slot address through the ordinary load path.
+      (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
+        ""
+        (match (compiler-backend-emit-assignment-lookup assignments id)
+          [(CompilerRegMaybeLocation.Some location)
+            (match location
+              [(CompilerRegLocation.Register home)
+                (compiler-abi-register-spelling home)]
+              [_ ""])]
+          [(CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
 
 (define (compiler-backend-emit-mov

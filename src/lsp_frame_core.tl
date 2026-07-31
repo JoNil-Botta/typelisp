@@ -1120,7 +1120,9 @@
           docs))
       docs)))
 
-(define (lsp-documents-shift-left! [docs : lsp_document_vec.Vec] [index : i64]) : unit
+(define (lsp-documents-shift-left!
+  [docs : (&mut docs lsp_document_vec.Vec)]
+  [index : i64]) : unit
   (let
     [i : i64 index]
     [last : i64 (- (lsp_document_vec.len (& docs)) 1)]
@@ -1137,7 +1139,7 @@
     (< index (lsp_document_vec.len (& docs)))
     false)
     (begin
-      (lsp-documents-shift-left! docs index)
+      (lsp-documents-shift-left! (&mut docs) index)
       (lsp-documents-drop-last! (&mut docs))
       docs)
     docs))

@@ -28,7 +28,7 @@
 (define (fmt-render-buf-new) : FmtRenderBuf
   (FmtRenderBuf (make-array u8 1024) 0))
 
-(define (fmt-render-buf-reserve [buf : FmtRenderBuf] [needed : i64]) : unit
+(define (fmt-render-buf-reserve [buf : (&mut buf FmtRenderBuf)] [needed : i64]) : unit
   (let
     [cur : (__tl_dyn-array u8) (struct-get buf data)]
     [cap : i64 (array-length cur)]
@@ -54,7 +54,7 @@
                 unit)
               (set! (struct-get buf data) bigger))))))))
 
-(define (fmt-render-buf-append [buf : FmtRenderBuf] [s : String]) : unit
+(define (fmt-render-buf-append [buf : (&mut buf FmtRenderBuf)] [s : String]) : unit
   (let
     [slen : i64 (string.string-length s)]
     (if (= slen 0)
@@ -83,7 +83,7 @@
           n)))))
 
 ;; Append a newline plus `indent` spaces to the buffer in place.
-(define (render-newline-into! [buf : FmtRenderBuf] [indent : i64]) : unit
+(define (render-newline-into! [buf : (&mut buf FmtRenderBuf)] [indent : i64]) : unit
   (begin
     (fmt-render-buf-append buf "\n")
     (fmt-render-buf-append buf (spaces indent))))

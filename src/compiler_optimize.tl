@@ -7608,17 +7608,18 @@
 
 (define (opt-bounds-instr-seq-rewrite!
   [type-segment-bases : i64]
-  [instrs : CompilerIrInstrSeq]) : unit
+  [instrs : (&mut instrs CompilerIrInstrSeq)]) : unit
   (let
     [read : i64 0]
     [write : i64 0]
-    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [count : i64 (struct-get instrs len)]
     [state : OptBoundsSeqState
       (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) (OptBoundsCastEnv.Nil))]
     (begin
       (while (< read count)
         (let
-          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs read)]
+          [instr : CompilerIrInstr
+            (clone (array-ref (struct-get instrs slots) read))]
           [step : OptBoundsSeqStep
             (match state
               [(OptBoundsSeqState.Plain facts casts)
@@ -7637,7 +7638,7 @@
                 (if keep
                   (begin
                     (if (not (= write read))
-                      (compiler-ir-instr-seq-set! instrs write instr)
+                      (array-set! (struct-get instrs slots) write instr)
                       unit)
                     (set! write (+ write 1)))
                   unit)
@@ -17021,13 +17022,15 @@
 (define (opt-licm-root-eq? [a : OptLicmRoot] [b : OptLicmRoot]) : bool
   (= (opt-licm-root-encode a) (opt-licm-root-encode b)))
 
-(define (opt-licm-root-env-remove! [env : OptLicmRootEnv] [var : i64]) : unit
+(define (opt-licm-root-env-remove!
+  [env : (&mut env OptLicmRootEnv)]
+  [var : i64]) : unit
   (begin
     (opt_i64_i64_map.remove-ref! (&mut (struct-get env map)) var)
     unit))
 
 (define (opt-licm-root-env-bind!
-  [env : OptLicmRootEnv]
+  [env : (&mut env OptLicmRootEnv)]
   [var : i64]
   [root : OptLicmRoot]) : unit
   (match root
@@ -17054,7 +17057,9 @@
   [env : OptLicmRootEnv]
   [dst : i64]
   [src : CompilerIrValue]) : unit
-  (opt-licm-root-env-bind! env dst (opt-licm-root-of-value env src)))
+  (let
+    [root : OptLicmRoot (opt-licm-root-of-value env src)]
+    (opt-licm-root-env-bind! (&mut env) dst root)))
 
 (define (opt-licm-root-disjoint-store?
   [store-root : OptLicmRoot]
@@ -17353,7 +17358,7 @@
   (match param
     [(CompilerIrParam.Param _ ty var)
       (opt-licm-root-env-bind!
-        env
+        (&mut env)
         var
         (opt-licm-param-root type-segment-bases ty var))]))
 
@@ -17403,7 +17408,7 @@
   [instr : CompilerIrInstr]) : unit
   (match instr
     [(CompilerIrInstr.Alloc dst _)
-      (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))]
+      (opt-licm-root-env-bind! (&mut env) dst (OptLicmRoot.Fresh dst))]
     [(CompilerIrInstr.Gep dst base _ _) (opt-licm-root-env-copy! env dst base)]
     [(CompilerIrInstr.Mov dst src _) (opt-licm-root-env-copy! env dst src)]
     [(CompilerIrInstr.Cast dst src _ _) (opt-licm-root-env-copy! env dst src)]
@@ -17411,14 +17416,15 @@
       (opt-licm-root-env-copy! env dst src)]
     [(CompilerIrInstr.Phi dst inputs _)
       (match (opt-licm-phi-root env inputs (OptMaybeLicmRoot.No))
-        [(OptMaybeLicmRoot.No) (opt-licm-root-env-remove! env dst)]
-        [(OptMaybeLicmRoot.Some root) (opt-licm-root-env-bind! env dst root)])]
+        [(OptMaybeLicmRoot.No) (opt-licm-root-env-remove! (&mut env) dst)]
+        [(OptMaybeLicmRoot.Some root)
+          (opt-licm-root-env-bind! (&mut env) dst root)])]
     ;; A descriptor-data Load may be rebound by
     ;; opt-licm-provenance-state-instr immediately after this update.
-    [(CompilerIrInstr.Load dst _ _) (opt-licm-root-env-remove! env dst)]
+    [(CompilerIrInstr.Load dst _ _) (opt-licm-root-env-remove! (&mut env) dst)]
     [(CompilerIrInstr.Call dst name _ _)
       (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
-        (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
+        (opt-licm-root-env-bind! (&mut env) dst (OptLicmRoot.Fresh dst))
         unit)]
     [_ unit]))
 
@@ -17560,7 +17566,7 @@
   [var : i64]
   [root : OptLicmRoot]) : OptLicmStoreState
   (begin
-    (opt-licm-root-env-bind! (struct-get state roots) var root)
+    (opt-licm-root-env-bind! (&mut (struct-get state roots)) var root)
     state))
 
 (define (opt-licm-store-state-add-rooted-store
@@ -21832,7 +21838,7 @@
 (define (opt-cfg-filter-clean-block-seq-rewrite!
   [index : OptCfgIndex]
   [used : (__tl_dyn-array i64)]
-  [blocks : CompilerIrBlockSeq]) : unit
+  [blocks : (&mut blocks CompilerIrBlockSeq)]) : unit
   (let
     [slots : (__tl_dyn-array CompilerIrBlock) (struct-get blocks slots)]
     [reachable : (__tl_dyn-array bool) (struct-get index reachable)]
@@ -21844,14 +21850,14 @@
         (begin
           (if (array-ref reachable read)
             (let
-              [block : CompilerIrBlock (array-ref slots read)]
+              [block : CompilerIrBlock (clone (array-ref slots read))]
               (begin
                 (match block
                   [(CompilerIrBlock.Block label instrs)
                     (opt-cfg-clean-instr-seq-rewrite! index label used instrs)])
-                (if (not (= write read))
-                  (array-set! slots write block)
-                  unit)
+                ;; `block` is a private aggregate clone. Write it back even when
+                ;; compaction keeps the same slot so phi cleanup is observable.
+                (array-set! slots write block)
                 (set! write (+ write 1))))
             unit)
           (set! read (+ read 1))))
@@ -21873,7 +21879,11 @@
         (begin
           (match folded
             [(CompilerIrBlockList.Array seq)
-              (opt-cfg-filter-clean-block-seq-rewrite! index used seq)]
+              (begin
+                (opt-cfg-filter-clean-block-seq-rewrite! index used (&mut seq))
+                ;; The pattern binding is a private aggregate value. Rebuild the
+                ;; outer enum so the compacted sequence length is retained.
+                (set! folded (CompilerIrBlockList.Array seq)))]
             [_ unit])
           folded)))))
 
@@ -33870,7 +33880,7 @@
               load-kinds
               load-facts)
             work)
-          (opt-bounds-instr-seq-rewrite! type-segment-bases work)
+          (opt-bounds-instr-seq-rewrite! type-segment-bases (&mut work))
           (CompilerIrBlock.Block label work)))]))
 
 (define (optimize-block-hs-with-kinds
@@ -46499,15 +46509,15 @@
 ;; writes the destination BEFORE the instructions that used to sit between it
 ;; and the copy.
 ;;
-;; SOUNDNESS. Issue #5971: TypeLisp passes by-value aggregate parameters as bare
-;; pointers with no caller-side copy, and the hidden sret slot is ordinary
-;; caller storage, so THE SRET SLOT MAY ALIAS A BY-VALUE ARGUMENT of the same
-;; call (accumulator threading -- `acc = (f acc x)` -- produces exactly that at
-;; run time). "The destination cannot alias what the window reads" is therefore
-;; not derivable from types; a lowering-level version of this transform
-;; miscompiled the compiler (it broke `tc-name-id-list-add`) for precisely this
-;; reason. The guard below is the conservative alias proof that makes the
-;; reordering safe without any interprocedural fact:
+;; SOUNDNESS. Issue #5971 gives internal memory-class by-value parameters a
+;; private callee-entry snapshot, so their body-visible storage cannot alias the
+;; hidden sret slot even though the ABI transports the incoming value by
+;; pointer. That property is deliberately narrower than general `noalias`:
+;; explicit references, dereferences, fields, indexes, and arbitrary destination
+;; places may still alias storage read inside this rewrite window. A
+;; lowering-level version of this transform miscompiled the compiler (it broke
+;; `tc-name-id-list-add`) before the necessary proof was explicit. The guard
+;; below remains the conservative local alias proof:
 ;;
 ;;   (1) `%t` is a FRESH FRAME ALLOCATION whose address never escapes: the
 ;;       ALLOC var `%t` is used exactly once in the whole function (by the
@@ -46523,8 +46533,8 @@
 ;;       through a constant offset off the SAME base as the destination whose
 ;;       byte range is provably disjoint from `[J, J + S)` (two constant offsets
 ;;       off one pointer cannot overlap). Any load, call, or store through an
-;;       unrelated pointer aborts the match -- that is exactly the class the
-;;       sret-may-alias-an-argument hole makes unprovable.
+;;       unrelated pointer aborts the match -- precisely the class that cannot
+;;       be discharged from local IR use counts alone.
 ;;   (3) The destination base var `%B` is not redefined between the destination
 ;;       address computation (or the temp's `addr_of`, whichever is earlier) and
 ;;       the copy, so the address the retargeted geps compute is the address the
@@ -56380,10 +56390,10 @@
     [(option_i64.None) unit]
     [(option_i64.Some dst)
       (if (not (opt-gvn-stable-var? sources dst))
-        (opt-licm-root-env-remove! roots dst)
+        (opt-licm-root-env-remove! (&mut roots) dst)
         (match instr
           [(CompilerIrInstr.Alloc _ _)
-            (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))]
+            (opt-licm-root-env-bind! (&mut roots) dst (OptLicmRoot.Fresh dst))]
           [(CompilerIrInstr.Gep _ base _ _)
             (opt-licm-root-env-copy! roots dst base)]
           [(CompilerIrInstr.Mov _ src _)
@@ -56394,14 +56404,15 @@
             (opt-licm-root-env-copy! roots dst src)]
           [(CompilerIrInstr.Phi _ inputs _)
             (match (opt-licm-phi-root roots inputs (OptMaybeLicmRoot.No))
-              [(OptMaybeLicmRoot.No) (opt-licm-root-env-remove! roots dst)]
+              [(OptMaybeLicmRoot.No)
+                (opt-licm-root-env-remove! (&mut roots) dst)]
               [(OptMaybeLicmRoot.Some root)
-                (opt-licm-root-env-bind! roots dst root)])]
+                (opt-licm-root-env-bind! (&mut roots) dst root)])]
           [(CompilerIrInstr.Call _ name _ _)
             (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
-              (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))
-              (opt-licm-root-env-remove! roots dst))]
-          [_ (opt-licm-root-env-remove! roots dst)]))]))
+              (opt-licm-root-env-bind! (&mut roots) dst (OptLicmRoot.Fresh dst))
+              (opt-licm-root-env-remove! (&mut roots) dst))]
+          [_ (opt-licm-root-env-remove! (&mut roots) dst)]))]))
 
 (define (opt-call-memory-root-scan-instrs!
   [sources : opt_i64_i64_map.Map]
@@ -62145,7 +62156,7 @@
       [(option_i64.None) after-memory])))
 
 (define (opt-dead-store-compact!
-  [instrs : CompilerIrInstrSeq]
+  [instrs : (&mut instrs CompilerIrInstrSeq)]
   [dead : (__tl_dyn-array i64)]
   [count : i64]) : unit
   (let
@@ -62157,10 +62168,10 @@
           (if (= (array-ref dead read) 0)
             (begin
               (if (not (= write read))
-                (compiler-ir-instr-seq-set!
-                  instrs
+                (array-set!
+                  (struct-get instrs slots)
                   write
-                  (compiler-ir-instr-seq-ref instrs read))
+                  (clone (array-ref (struct-get instrs slots) read)))
                 unit)
               (set! write (+ write 1)))
             unit)
@@ -62213,7 +62224,7 @@
                 kinds
                 (opt-load-kinds-step type-segment-bases kinds hs instr))
               (set! index (+ index 1)))))
-        (opt-dead-store-compact! instrs dead count)
+        (opt-dead-store-compact! (&mut instrs) dead count)
         instrs))
     instrs))
 

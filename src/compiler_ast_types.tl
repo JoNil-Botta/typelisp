@@ -1780,44 +1780,12 @@
 (define ty-node-dedup-capacity : i64
   131072)
 (define ty-node-dedup-slots : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (array.make-array i64 131072))
 (define ty-node-dedup-count : i64
   0)
-(define ty-node-dedup-storage-arena : i64
-  0)
-
-;; The compatibility pool exists before the driver installs a state-owned
-;; pool. Keep its fixed dedup index lazy, but give first-touch storage an owner
-;; that cannot be reclaimed with the caller's transient parse arena.
-(define (ty-node-dedup-storage-ensure!) : unit
-  (if (= (array-length ty-node-dedup-slots) ty-node-dedup-capacity)
-    unit
-    (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64
-        (if (= ty-node-dedup-storage-arena 0)
-          (begin
-            (set! ty-node-dedup-storage-arena (arena.tl_arena_make_small))
-            ty-node-dedup-storage-arena)
-          ty-node-dedup-storage-arena)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (set! ty-node-dedup-slots (array.make-array i64 ty-node-dedup-capacity))
-        (let
-          [head : i64 (arena.tl_arena_current)]
-          (begin
-            (set! ty-node-dedup-storage-arena head)
-            (unsafe
-              (arena.tl_arena_set
-                (if (= previous owner)
-                  head
-                  previous)))))))))
 
 (define (ty-node-dedup-clear!) : unit
   (let
-    [_storage : unit (ty-node-dedup-storage-ensure!)]
     [i : i64 0]
     (begin
       (while (< i ty-node-dedup-capacity)
@@ -2112,29 +2080,27 @@
 ;: was already pushed. The table is probed before appending so the common
 ;: duplicate path does not churn the pool count or temporarily force growth.
 (define (ty-node-push-active [node : AstType]) : i64
-  (begin
-    (ty-node-dedup-storage-ensure!)
-    (if (>= (* ty-node-dedup-count 2) ty-node-dedup-capacity)
-      (ty-node-push-raw node)
-      (let
-        [mask : i64 (- ty-node-dedup-capacity 1)]
-        [idx : i64 (bit-and (ty-node-hash-value node) mask)]
-        [result : i64 (- 0 1)]
-        (begin
-          (while (< result 0)
-            (let
-              [slot : i64 (array-ref ty-node-dedup-slots idx)]
-              (if (= slot 0)
-                (let
-                  [id : i64 (ty-node-push-raw node)]
-                  (begin
-                    (array-set! ty-node-dedup-slots idx (+ id 1))
-                    (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
-                    (set! result id)))
-                (if (ty-node-shallow-eq? (- slot 1) node)
-                  (set! result (- slot 1))
-                  (set! idx (bit-and (+ idx 1) mask))))))
-          result)))))
+  (if (>= (* ty-node-dedup-count 2) ty-node-dedup-capacity)
+    (ty-node-push-raw node)
+    (let
+      [mask : i64 (- ty-node-dedup-capacity 1)]
+      [idx : i64 (bit-and (ty-node-hash-value node) mask)]
+      [result : i64 (- 0 1)]
+      (begin
+        (while (< result 0)
+          (let
+            [slot : i64 (array-ref ty-node-dedup-slots idx)]
+            (if (= slot 0)
+              (let
+                [id : i64 (ty-node-push-raw node)]
+                (begin
+                  (array-set! ty-node-dedup-slots idx (+ id 1))
+                  (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
+                  (set! result id)))
+              (if (ty-node-shallow-eq? (- slot 1) node)
+                (set! result (- slot 1))
+                (set! idx (bit-and (+ idx 1) mask))))))
+        result))))
 
 ;: Append `node` to the selected type pool.
 (define (ty-node-push [node : AstType]) : i64

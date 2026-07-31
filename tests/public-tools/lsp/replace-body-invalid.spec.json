@@ -1,0 +1,8 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"code\":-32600", "raw_contains": "replaceBody rejected before writing", "raw_contains": "\"operation\":\"replaceBody\"", "raw_contains": "\"parameter\":\"newBody\"", "raw_contains": "\"errorCode\":\"invalidBody\"", "raw_contains": "\"written\":false", "raw_contains": "\"parserMessage\"", "raw_contains": "No changes were written"},
+    {"jsonpath_id": 3, "raw_contains": "\"success\":true", "raw_contains": "(+ 1 1)"}
+  ]
+}

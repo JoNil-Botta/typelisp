@@ -102,6 +102,150 @@
       (+ next 1)
       last)))
 
+(define (opt-dense-test-global-copy-facts
+  [facts : OptGlobalCopyFacts (:consume)]
+  [next : i64]
+  [last : i64]) : OptGlobalCopyFacts
+  (if (> next last)
+    facts
+    (opt-dense-test-global-copy-facts
+      (opt-global-copy-facts-prepend
+        facts
+        (OptGlobalCopyFact.Fact next (CompilerIrValue.I64 next) 0 next))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-global-expr-facts
+  [facts : OptGlobalExprFacts (:consume)]
+  [next : i64]
+  [last : i64]) : OptGlobalExprFacts
+  (if (> next last)
+    facts
+    (opt-dense-test-global-expr-facts
+      (opt-global-expr-facts-prepend
+        facts
+        (OptGlobalExprFact.Fact
+          (OptGlobalExprKey.MovKey (CompilerIrValue.I64 next) (AstType.I64))
+          next
+          0
+          next))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-global-pack-word-facts
+  [facts : OptGlobalPackWordFacts (:consume)]
+  [next : i64]
+  [last : i64]) : OptGlobalPackWordFacts
+  (if (> next last)
+    facts
+    (opt-dense-test-global-pack-word-facts
+      (opt-global-pack-word-facts-prepend
+        facts
+        (OptGlobalPackWordFact.Fact next next (CompilerIrValue.I64 next) 0 next))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-global-copy-fact-is?
+  [facts : OptGlobalCopyFacts]
+  [index : i64]
+  [expected : i64]) : bool
+  (match (opt-global-copy-facts-ref facts index)
+    [(OptGlobalCopyFact.Fact dst src _ _)
+      (and
+        (= dst expected)
+        (match src
+          [(CompilerIrValue.I64 value) (= value expected)]
+          [_ false]))]))
+
+(define (opt-dense-test-global-expr-fact-is?
+  [facts : OptGlobalExprFacts]
+  [index : i64]
+  [expected : i64]) : bool
+  (match (opt-global-expr-facts-ref facts index)
+    [(OptGlobalExprFact.Fact _ dst _ _) (= dst expected)]))
+
+(define (opt-dense-test-global-pack-word-fact-is?
+  [facts : OptGlobalPackWordFacts]
+  [index : i64]
+  [expected : i64]) : bool
+  (match (opt-global-pack-word-facts-ref facts index)
+    [(OptGlobalPackWordFact.Fact group word-index value _ _)
+      (and
+        (= group expected)
+        (= word-index expected)
+        (match value
+          [(CompilerIrValue.I64 found) (= found expected)]
+          [_ false]))]))
+
+(define (opt-dense-test-var-defs
+  [defs : OptVarDefList (:consume)]
+  [next : i64]
+  [last : i64]) : OptVarDefList
+  (if (> next last)
+    defs
+    (opt-dense-test-var-defs
+      (opt-var-defs-prepend defs (OptVarDef.Def next next next))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-var-def-is?
+  [defs : OptVarDefList]
+  [index : i64]
+  [expected : i64]) : bool
+  (match (opt-var-defs-ref defs index)
+    [(OptVarDef.Def var block pos)
+      (and (= var expected) (= block expected) (= pos expected))]))
+
+(define (opt-dense-test-gvn-scope-push
+  [type-segment-bases : i64]
+  [table : OptGvnMap]
+  [changes : OptGvnScopeChanges (:consume)]
+  [next : i64]
+  [last : i64]) : OptGvnScopeChanges
+  (if (> next last)
+    changes
+    (opt-dense-test-gvn-scope-push
+      type-segment-bases
+      table
+      (opt-gvn-table-push!
+        type-segment-bases
+        table
+        (OptGvnEntry.Entry
+          (OptExprKey.BinKey
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.I64 next)
+            (CompilerIrValue.I64 0)
+            (AstType.I64))
+          next
+          0)
+        changes)
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-gvn-scope-rollback? [type-segment-bases : i64]) : bool
+  (let
+    [table : OptGvnMap (opt-gvn-map-empty 16)]
+    [changes : OptGvnScopeChanges
+      (opt-dense-test-gvn-scope-push
+        type-segment-bases
+        table
+        (opt-gvn-scope-changes-new)
+        1
+        16)]
+    [last-key : OptExprKey
+      (OptExprKey.BinKey
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.I64 16)
+        (CompilerIrValue.I64 0)
+        (AstType.I64))]
+    [before : i64 (opt-gvn-lookup type-segment-bases table last-key)]
+    (begin
+      (opt-gvn-table-restore! table changes)
+      (and
+        (= (opt-gvn-scope-changes-count changes) 16)
+        (= before 16)
+        (= (opt-gvn-lookup type-segment-bases table last-key) (- 0 1))))))
+
 (define (compiler-optimize-dense-storage-self-test) : i64
   (let
     [type-segment-bases : i64 (ast-node-pool-reader-type-segment-bases)]
@@ -145,6 +289,47 @@
       (opt-dense-test-late-drops (opt-late-bounds-pair-drops-new) 1 8)]
     [roots : OptScratchRootList
       (opt-dense-test-scratch-roots (opt-scratch-root-list-new) 1 32)]
+    [global-copy : OptGlobalCopyFacts
+      (opt-dense-test-global-copy-facts (opt-global-copy-facts-new) 1 8)]
+    [global-expr : OptGlobalExprFacts
+      (opt-dense-test-global-expr-facts (opt-global-expr-facts-new) 1 8)]
+    [global-pack-word : OptGlobalPackWordFacts
+      (opt-dense-test-global-pack-word-facts
+        (opt-global-pack-word-facts-new)
+        1
+        8)]
+    [var-defs : OptVarDefList (opt-dense-test-var-defs (opt-var-defs-new) 1 16)]
+    [doms : OptDomInfo
+      (opt-cfg-dominators
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "dense_storage")
+            (CompilerIrInstrList.Nil))
+          (CompilerIrBlockList.Nil)))]
+    [copy-precedence : OptGlobalCopyFactTable
+      (opt-global-copy-table-from-facts
+        (opt-global-copy-facts-prepend
+          (opt-global-copy-facts-prepend
+            (opt-global-copy-facts-new)
+            (OptGlobalCopyFact.Fact 7 (CompilerIrValue.I64 1) 0 1))
+          (OptGlobalCopyFact.Fact 7 (CompilerIrValue.I64 2) 0 2)))]
+    [expr-key : OptGlobalExprKey
+      (OptGlobalExprKey.MovKey (CompilerIrValue.I64 9) (AstType.I64))]
+    [expr-precedence : OptGlobalExprFactTable
+      (opt-global-expr-table-from-facts
+        type-segment-bases
+        (opt-global-expr-facts-prepend
+          (opt-global-expr-facts-prepend
+            (opt-global-expr-facts-new)
+            (OptGlobalExprFact.Fact expr-key 1 0 1))
+          (OptGlobalExprFact.Fact expr-key 2 0 2)))]
+    [pack-precedence : OptGlobalPackWordFactTable
+      (opt-global-pack-word-table-from-facts
+        (opt-global-pack-word-facts-prepend
+          (opt-global-pack-word-facts-prepend
+            (opt-global-pack-word-facts-new)
+            (OptGlobalPackWordFact.Fact 7 0 (CompilerIrValue.I64 1) 0 1))
+          (OptGlobalPackWordFact.Fact 7 0 (CompilerIrValue.I64 2) 0 2)))]
     (cond
       [(not (opt-licm-store-roots-safe? licm (OptLicmRoot.Fresh 99))) 1]
       [(opt-licm-store-roots-safe? licm (OptLicmRoot.Fresh 4)) 2]
@@ -170,6 +355,47 @@
       [(not (opt-scratch-root-list-contains? roots 1)) 13]
       [(not (opt-scratch-root-list-contains? roots 32)) 14]
       [(opt-scratch-root-list-contains? roots 33) 15]
+      [(not (= (opt-global-copy-facts-count global-copy) 8)) 16]
+      [(not (opt-dense-test-global-copy-fact-is? global-copy 0 8)) 17]
+      [(not (opt-dense-test-global-copy-fact-is? global-copy 7 1)) 18]
+      [(not (= (opt-global-expr-facts-count global-expr) 8)) 19]
+      [(not (opt-dense-test-global-expr-fact-is? global-expr 0 8)) 20]
+      [(not (opt-dense-test-global-expr-fact-is? global-expr 7 1)) 21]
+      [(not (= (opt-global-pack-word-facts-count global-pack-word) 8)) 22]
+      [(not (opt-dense-test-global-pack-word-fact-is? global-pack-word 0 8)) 23]
+      [(not (opt-dense-test-global-pack-word-fact-is? global-pack-word 7 1)) 24]
+      [(not (= (opt-var-defs-count var-defs) 16)) 25]
+      [(not (opt-dense-test-var-def-is? var-defs 0 16)) 26]
+      [(not (opt-dense-test-var-def-is? var-defs 15 1)) 27]
+      [(match (opt-global-copy-lookup copy-precedence 7 doms 0 3)
+          [(CompilerIrMaybeValue.Some value)
+            (match value
+              [(CompilerIrValue.I64 found) (not (= found 2))]
+              [_ true])]
+          [(CompilerIrMaybeValue.No) true])
+        28]
+      [(match (opt-global-expr-lookup
+          type-segment-bases
+          expr-precedence
+          expr-key
+          9
+          doms
+          0
+          3)
+          [(CompilerIrMaybeValue.Some value)
+            (match value
+              [(CompilerIrValue.Var found) (not (= found 2))]
+              [_ true])]
+          [(CompilerIrMaybeValue.No) true])
+        29]
+      [(match (opt-global-pack-word-lookup pack-precedence 7 0 doms 0 3)
+          [(CompilerIrMaybeValue.Some value)
+            (match value
+              [(CompilerIrValue.I64 found) (not (= found 2))]
+              [_ true])]
+          [(CompilerIrMaybeValue.No) true])
+        30]
+      [(not (opt-dense-test-gvn-scope-rollback? type-segment-bases)) 31]
       [else 42])))
 
 ;; --- self-test ---------------------------------------------------------------
@@ -12964,9 +13190,9 @@
       (array-set!
         buckets
         0
-        (OptGlobalExprFacts.Cons
-          (OptGlobalExprFact.Fact key 7 0 1)
-          (box (OptGlobalExprFacts.Nil))))
+        (opt-global-expr-facts-prepend
+          (opt-global-expr-facts-new)
+          (OptGlobalExprFact.Fact key 7 0 1)))
       (and
         (match (opt-global-expr-lookup
           (ast-node-pool-reader-type-segment-bases)

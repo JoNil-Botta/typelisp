@@ -1,18 +1,23 @@
 ;; Scalar lane identity semantics for foreach and spmd-reduce (#2761).
-(import stdlib.array)
+(import stdlib.vector)
+(import (vector.vector i64) as i64v)
+(import spmd_vec_support as spmdv)
+(import (spmdv.zeroed i64 0) as i64z)
 
 (define (foreach-checksum [n : i64]) : i64
   (let
-    [out : (Array i64) (array.make-array i64 n)]
+    [out : i64v.Vec (i64z.make n)]
     [i : i64 0]
     [acc : i64 0]
     (begin
-      (foreach
-        ([lane : i64 0 n])
-        (array-set! out lane (+ (* (program-count) 10) (program-index))))
+      (let
+        [out-slots (i64v.slots-mut (&mut out))]
+        (foreach
+          ([lane : i64 0 n])
+          (array-set! out-slots lane (+ (* (program-count) 10) (program-index)))))
       (while (< i n)
         (begin
-          (set! acc (+ acc (array-ref out i)))
+          (set! acc (+ acc (i64v.get (& out) i 0)))
           (set! i (+ i 1))))
       acc)))
 

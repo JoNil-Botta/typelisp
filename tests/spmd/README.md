@@ -143,10 +143,11 @@ compile and run in `avx2` and `avx512`.
 - `i8_mul_reject.tl` - scalar `foreach` byte multiplication fixture that
   compiles and exits 42 in scalar mode; explicit SIMD modes reject it with the
   documented 8-bit lane multiplication diagnostic.
-- `../integration/spmd_foreach.tl` - `foreach` add/sub maps over i64, u64,
-  i32, u32, i16, u16, i8, u8, f64, and f32 arrays, plus bit-or/bit-xor over
-  every integer width and multiplication where supported, self-checked against
-  scalar loops across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
+- `../integration/spmd_foreach.tl` - `foreach` add/sub maps over generated i64,
+  u64, i32, u32, i16, u16, i8, u8, f64, and f32 vectors. Kernels borrow each
+  vector's backing storage locally; bit-or/bit-xor cover every integer width
+  and multiplication where supported. Scalar loops self-check empty, sub-lane,
+  exact-lane, and tail lengths. Exit 42.
 - `map_shift_value_types.tl` - direct contiguous `shl`/`shr` maps over
   i32/u32/i64/u64 values with varying counts, signed/logical right shifts,
   full gangs, and partial tails whose inactive backing counts are invalid.
@@ -156,10 +157,11 @@ compile and run in `avx2` and `avx512`.
   plus unsigned and f32/f64 comparison lanes, producing bool-array masks.
   Scalar, AVX2, and AVX-512 modes exit 42.
 - `../integration/spmd_gather_read.tl` - scalar/AVX2/AVX-512 `foreach`
-  gather-read fixture that reads `xs[ix[i]]` into contiguous `out[i]` across
-  empty, sub-lane, tail, and repeated-index lengths for i32, i64, f32, and f64.
-  All modes exit 42; full SIMD gangs use native gathers and tails retain
-  active-lane-only scalar checks.
+  gather-read fixture that locally borrows generated Vec backing storage and
+  reads `xs[ix[i]]` into contiguous `out[i]` across empty, sub-lane, tail, and
+  repeated-index lengths for i32, i64, f32, and f64. All modes exit 42; full
+  SIMD gangs use native gathers and tails retain active-lane-only scalar
+  checks.
 - `bool_lanes.tl` - scalar/AVX2/AVX-512 bool dynamic-array lane fixture
   covering bool array copies and i64/i32/i16/i8 comparison results stored to
   bool arrays across empty, sub-lane, exact-lane, and tail lengths. All modes
@@ -213,8 +215,8 @@ Coverage map:
   `i8_mul_reject.tl` and `map_shift_i16_reject.tl`.
 - Vector/slice public-surface coverage for borrowed backing storage lives in
   `vector_slice_surface_i64.tl`.
-- Scalar and AVX2/AVX-512 gather-read coverage for dynamic arrays lives in
-  `../integration/spmd_gather_read.tl`.
+- Scalar and AVX2/AVX-512 gather-read coverage for generated Vec backing
+  storage lives in `../integration/spmd_gather_read.tl`.
 - Scalar and AVX2/AVX-512 bool dynamic-array lane coverage lives in
   `bool_lanes.tl`, including all AVX2 mask widths.
 - AVX2/AVX-512 masked varying `if` direct-index, shifted-contiguous-index,

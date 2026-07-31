@@ -1,15 +1,20 @@
 ; One full AVX2 gang may complete, but a short output must still trap at the
 ; first scalar-tail store instead of writing beyond the destination.
-(import stdlib.array)
+(import stdlib.vector)
+(import (vector.vector i64) as i64v)
+(import spmd_vec_support as spmdv)
+(import (spmdv.zeroed i64 0) as i64z)
 
 (define (main) : i64
   (let
-    [xs : (Array i64) (array.make-array i64 8)]
-    [out : (Array i64) (array.make-array i64 6)]
+    [xs : i64v.Vec (i64z.make 8)]
+    [out : i64v.Vec (i64z.make 6)]
+    [xs-slots (i64v.slots (& xs))]
+    [out-slots (i64v.slots-mut (&mut out))]
     (begin
       (spmd-scan
         sum
         ([i : i64 0 8] [prefix : i64 0])
-        (array-ref xs i)
-        (array-set! out i prefix))
+        (array-ref xs-slots i)
+        (array-set! out-slots i prefix))
       42)))

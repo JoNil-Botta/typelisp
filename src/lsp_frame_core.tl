@@ -15,6 +15,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_target_cfg_core as target_cfg)
 (import "compiler_check_core.tl")
+(import "compiler_semantic_index.tl")
 (import "compiler_load.tl")
 (import "format_rules.tl")
 (import "lint_driver_core.tl")
@@ -188,9 +189,16 @@
   (Valid)
   (Invalid i64 i64 String String))
 
+(defenum LspSemanticSnapshotStatus
+  (Missing)
+  (Current i64 bool)
+  (Stale i64 bool))
+
 (defstruct LspAnalyzeResult
   (diagnostic-uris LspDiagnosticUris)
-  (check-cache LspCheckCache))
+  (check-cache LspCheckCache)
+  (semantic-index CompilerSemanticSourceIndex)
+  (semantic-present bool))
 
 (define (lsp-frame-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -971,6 +979,71 @@
       (string.eq (lsp-diagnostic-uris-get many 0) "one")
       (string.eq (lsp-diagnostic-uris-get many 4) "five"))))
 
+(define (lsp-semantic-snapshot-empty) : LspSemanticSnapshot
+  (LspSemanticSnapshot (compiler-semantic-source-index-empty) -1 "" "" false))
+
+(define (lsp-semantic-snapshot-release!
+  [snapshot : (&mut snapshot LspSemanticSnapshot)]) : unit
+  (if (struct-get snapshot present)
+    (begin
+      (compiler-semantic-source-index-release!
+        (&mut (struct-get snapshot index)))
+      (set! (struct-get snapshot version) -1)
+      (set! (struct-get snapshot source-path) "")
+      (set! (struct-get snapshot source-text) "")
+      (set! (struct-get snapshot present) false))
+    unit))
+
+(define (lsp-document-semantic-snapshot-status [doc : (& doc LspDocument)]) : LspSemanticSnapshotStatus
+  (let
+    [snapshot : LspSemanticSnapshot (struct-get doc semantic)]
+    (if (not (struct-get snapshot present))
+      LspSemanticSnapshotStatus.Missing
+      (let
+        [index : CompilerSemanticSourceIndex (struct-get snapshot index)]
+        [version : i64 (struct-get snapshot version)]
+        [complete : bool (compiler-semantic-source-index-complete? (& index))]
+        [current : bool
+          (and
+            (= version (struct-get doc version))
+            (string.eq (struct-get snapshot source-path) (struct-get doc path))
+            (string.eq (struct-get snapshot source-text) (struct-get doc text)))]
+        (if current
+          (LspSemanticSnapshotStatus.Current version complete)
+          (LspSemanticSnapshotStatus.Stale version complete))))))
+
+(define (lsp-document-semantic-record-at
+  [doc : (& doc LspDocument)]
+  [byte-position : i64]) : i64
+  (match (lsp-document-semantic-snapshot-status doc)
+    [(LspSemanticSnapshotStatus.Current _ _)
+      (compiler-semantic-source-index-find-editable-record-at
+        (& (struct-get (struct-get doc semantic) index))
+        (& (struct-get doc path))
+        byte-position)]
+    [_ -1]))
+
+(define (lsp-document-semantic-find-symbol-role
+  [doc : (& doc LspDocument)]
+  [record-index : i64]
+  [role : CompilerSemanticRecordRole]) : i64
+  (match (lsp-document-semantic-snapshot-status doc)
+    [(LspSemanticSnapshotStatus.Current _ _)
+      (let
+        [index : CompilerSemanticSourceIndex
+          (struct-get (struct-get doc semantic) index)]
+        (if (or
+          (< record-index 0)
+          (>= record-index (compiler-semantic-source-index-len (& index))))
+          -1
+          (compiler-semantic-source-index-find-symbol-role
+            (& index)
+            (struct-get
+              (compiler-semantic-source-index-get (& index) record-index)
+              symbol)
+            role)))]
+    [_ -1]))
+
 (define (lsp-document-fallback) : LspDocument
   (LspDocument
     ""
@@ -980,7 +1053,8 @@
     (lsp-diagnostic-uris-empty)
     (lsp_decl_vec.new)
     false
-    LspCheckCacheInvalid))
+    LspCheckCacheInvalid
+    (lsp-semantic-snapshot-empty)))
 
 (define lsp-document-cache-arena : i64
   0)
@@ -1057,7 +1131,8 @@
               cached-diagnostic-uris
               new-decls
               new-decls-valid
-              new-check-cache))
+              new-check-cache
+              (struct-get old-doc semantic)))
           docs))
       (let
         [doc : LspDocument
@@ -1069,9 +1144,11 @@
             cached-diagnostic-uris
             (lsp_decl_vec.new)
             false
-            LspCheckCacheInvalid)]
+            LspCheckCacheInvalid
+            (lsp-semantic-snapshot-empty))]
         (if (>= (lsp_document_vec.len (& docs)) lsp-documents-max-capacity)
           (begin
+            (lsp-documents-release-index! docs 0)
             (lsp-documents-shift-left! docs 0)
             (lsp_document_vec.set
               (&mut docs)
@@ -1112,9 +1189,61 @@
               (struct-get doc diagnostic-uris)
               (struct-get doc decls)
               (struct-get doc decls-valid)
-              check-cache))
+              check-cache
+              (struct-get doc semantic)))
           docs))
       docs)))
+
+(define (lsp-documents-set-semantic-index
+  [docs : lsp_document_vec.Vec]
+  [uri : String]
+  [version : i64]
+  [semantic-index : CompilerSemanticSourceIndex]) : lsp_document_vec.Vec
+  (let
+    [index : i64 (lsp-documents-find-index docs uri)]
+    (if (>= index 0)
+      (let
+        [doc : LspDocument
+          (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
+        [source-path : String (struct-get doc path)]
+        [source-text : String (struct-get doc text)]
+        [snapshot-path : String (string.copy (& source-path))]
+        [snapshot-text : String (string.copy (& source-text))]
+        (begin
+          (lsp-semantic-snapshot-release! (&mut (struct-get doc semantic)))
+          (set!
+            (struct-get doc semantic)
+            (LspSemanticSnapshot
+              semantic-index
+              version
+              snapshot-path
+              snapshot-text
+              true))
+          (lsp_document_vec.set (&mut docs) index doc)
+          docs))
+      (begin
+        (compiler-semantic-source-index-release! (&mut semantic-index))
+        docs))))
+
+(define (lsp-documents-release-index!
+  [docs : lsp_document_vec.Vec]
+  [index : i64]) : unit
+  (if (and (>= index 0) (< index (lsp_document_vec.len (& docs))))
+    (let
+      [doc : LspDocument
+        (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
+      (begin
+        (lsp-semantic-snapshot-release! (&mut (struct-get doc semantic)))
+        (lsp_document_vec.set (&mut docs) index doc)))
+    unit))
+
+(define (lsp-documents-release-all! [docs : lsp_document_vec.Vec]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (lsp_document_vec.len (& docs)))
+      (begin
+        (lsp-documents-release-index! docs index)
+        (set! index (+ index 1))))))
 
 (define (lsp-documents-shift-left! [docs : lsp_document_vec.Vec] [index : i64]) : unit
   (let
@@ -1133,6 +1262,7 @@
     (< index (lsp_document_vec.len (& docs)))
     false)
     (begin
+      (lsp-documents-release-index! docs index)
       (lsp-documents-shift-left! docs index)
       (lsp-documents-drop-last! (&mut docs))
       docs)
@@ -1179,8 +1309,11 @@
                     (struct-get doc diagnostic-uris)
                     (lsp_decl_vec.new)
                     false
-                    LspCheckCacheInvalid)]
+                    LspCheckCacheInvalid
+                    (lsp-semantic-snapshot-empty))]
                 (begin
+                  (lsp-semantic-snapshot-release!
+                    (&mut (struct-get doc semantic)))
                   (lsp_document_vec.set (&mut docs) index updated)
                   updated))))]
         [(io.ErrIoBytes _) doc]))))
@@ -1337,6 +1470,271 @@
             (lsp-documents-smoke-missing? trimmed "file:///doc08.tl")
             (string.eq (struct-get shifted uri) "file:///doc09.tl")
             (string.eq (struct-get last uri) "file:///doc16.tl")))))))
+
+(cfg
+  test
+  (define (lsp-semantic-smoke-current?
+    [doc : (& doc LspDocument)]
+    [version : i64]) : bool
+    (match (lsp-document-semantic-snapshot-status doc)
+      [(LspSemanticSnapshotStatus.Current snapshot-version complete)
+        (and (= snapshot-version version) complete)]
+      [_ false])))
+
+(cfg
+  test
+  (define (lsp-semantic-smoke-stale?
+    [doc : (& doc LspDocument)]
+    [version : i64]) : bool
+    (match (lsp-document-semantic-snapshot-status doc)
+      [(LspSemanticSnapshotStatus.Stale snapshot-version complete)
+        (and (= snapshot-version version) complete)]
+      [_ false])))
+
+(cfg
+  test
+  (define (lsp-semantic-smoke-query-ok?
+    [docs : lsp_document_vec.Vec]
+    [uri : String]
+    [path : String]
+    [version : i64]) : bool
+    (let
+      [doc-index : i64 (lsp-documents-find-index docs uri)]
+      (if (< doc-index 0)
+        false
+        (let
+          [doc : LspDocument
+            (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+          [index : CompilerSemanticSourceIndex
+            (struct-get (struct-get doc semantic) index)]
+          [use-index : i64
+            (compiler-semantic-source-index-find-record
+              (& index)
+              path
+              "imported-value"
+              CompilerSemanticRecordRole.Use
+              -1)]
+          [use-record : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& index) use-index)]
+          [use-byte : i64 (struct-get (struct-get use-record span) start-byte)]
+          [position-index : i64
+            (lsp-document-semantic-record-at (& doc) use-byte)]
+          [definition-index : i64
+            (lsp-document-semantic-find-symbol-role
+              (& doc)
+              position-index
+              CompilerSemanticRecordRole.Definition)]
+          [definition-record : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& index) definition-index)]
+          (and
+            (lsp-semantic-smoke-current? (& doc) version)
+            (>= use-index 0)
+            (= position-index use-index)
+            (>= definition-index 0)
+            (compiler-semantic-symbol-id-eq?
+              (struct-get use-record symbol)
+              (struct-get definition-record symbol))
+            (not
+              (string.eq
+                (struct-get (struct-get definition-record span) path)
+                path))))))))
+
+(cfg
+  test
+  (define (lsp-semantic-smoke-install
+    [docs : lsp_document_vec.Vec]
+    [uri : String]
+    [path : String]
+    [source : String]
+    [version : i64]
+    [index : CompilerSemanticSourceIndex]) : lsp_document_vec.Vec
+    (lsp-documents-set-semantic-index
+      (lsp-documents-set-check-cache
+        (lsp-documents-set-versioned
+          docs
+          uri
+          path
+          source
+          version
+          (lsp-diagnostic-uris-empty))
+        uri
+        LspCheckCacheOk)
+      uri
+      version
+      index)))
+
+(cfg
+  test
+  (define (lsp-semantic-smoke-fill-capacity [docs : lsp_document_vec.Vec]) : lsp_document_vec.Vec
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index lsp-documents-max-capacity)
+          (begin
+            (set!
+              docs
+              (lsp-documents-smoke-add
+                docs
+                (string.append
+                  "file:///semantic-fill-"
+                  (string.int->string index))))
+            (set! index (+ index 1))))
+        docs))))
+
+(cfg
+  test
+  (define (lsp-semantic-snapshot-lifecycle-smoke-ok?) : bool
+    (let
+      [baseline : i64 (compiler-semantic-source-index-live-owner-count)]
+      [uri : String "file:///lsp-semantic-snapshot-smoke.tl"]
+      [path : String "src/tests/lsp_semantic_snapshot_smoke.tl"]
+      [source1 : String
+        "(module lsp.semantic.snapshot.smoke)\n(import \"semantic_index_import_dep.tl\" module semantic.index.import_dep as dep)\n(define answer : i64 1)\n(define (use) : i64 (+ answer dep.imported-value))\n"]
+      [invalid-source : String
+        "(module lsp.semantic.snapshot.smoke)\n(define answer : i64"]
+      [source2 : String
+        "(module lsp.semantic.snapshot.smoke)\n(import \"semantic_index_import_dep.tl\" module semantic.index.import_dep as dep)\n(define answer : i64 2)\n(define (use) : i64 (+ answer dep.imported-value))\n"]
+      [source3 : String
+        "(module lsp.semantic.snapshot.smoke)\n(import \"semantic_index_import_dep.tl\" module semantic.index.import_dep as dep)\n(define answer : i64 3)\n(define (use) : i64 (+ answer dep.imported-value))\n"]
+      [roots : lsp_svec.Vec (lsp_svec.new)]
+      [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
+      (match (compiler-check-source-index-with-roots-and-cfg
+        path
+        source1
+        roots
+        (lsp-language-cfgs))
+        [(ResultCompilerCheckWithSemanticIndex.Err _) false]
+        [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
+          (begin
+            (set!
+              docs
+              (lsp-semantic-smoke-install docs uri path source1 1 first))
+            (let
+              [first-ok : bool
+                (and
+                  (=
+                    (compiler-semantic-source-index-live-owner-count)
+                    (+ baseline 1))
+                  (lsp-semantic-smoke-query-ok? docs uri path 1))]
+              (begin
+                (set!
+                  docs
+                  (lsp-documents-set-versioned
+                    docs
+                    uri
+                    path
+                    invalid-source
+                    2
+                    (lsp-diagnostic-uris-empty)))
+                (let
+                  [stale-doc-index : i64 (lsp-documents-find-index docs uri)]
+                  [stale-doc : LspDocument
+                    (lsp_document_vec.get
+                      (& docs)
+                      stale-doc-index
+                      (lsp-document-fallback))]
+                  [stale-ok : bool
+                    (and
+                      (lsp-semantic-smoke-stale? (& stale-doc) 1)
+                      (= (lsp-document-semantic-record-at (& stale-doc) 0) -1)
+                      (=
+                        (compiler-semantic-source-index-live-owner-count)
+                        (+ baseline 1)))]
+                  [invalid-ok : bool
+                    (match (compiler-check-source-index-with-roots-and-cfg
+                      path
+                      invalid-source
+                      roots
+                      (lsp-language-cfgs))
+                      [(ResultCompilerCheckWithSemanticIndex.Err _)
+                        (=
+                          (compiler-semantic-source-index-live-owner-count)
+                          (+ baseline 1))]
+                      [(ResultCompilerCheckWithSemanticIndex.Ok _ unexpected)
+                        (begin
+                          (compiler-semantic-source-index-release!
+                            (&mut unexpected))
+                          false)])]
+                  (match (compiler-check-source-index-with-roots-and-cfg
+                    path
+                    source2
+                    roots
+                    (lsp-language-cfgs))
+                    [(ResultCompilerCheckWithSemanticIndex.Err _)
+                      (begin
+                        (lsp-documents-release-all! docs)
+                        false)]
+                    [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
+                      (begin
+                        (set!
+                          docs
+                          (lsp-semantic-smoke-install
+                            docs
+                            uri
+                            path
+                            source2
+                            3
+                            second))
+                        (let
+                          [replacement-ok : bool
+                            (and
+                              (=
+                                (compiler-semantic-source-index-live-owner-count)
+                                (+ baseline 1))
+                              (lsp-semantic-smoke-query-ok? docs uri path 3))]
+                          (begin
+                            (set! docs (lsp-documents-remove docs uri))
+                            (let
+                              [close-ok : bool
+                                (and
+                                  (lsp-documents-smoke-missing? docs uri)
+                                  (=
+                                    (compiler-semantic-source-index-live-owner-count)
+                                    baseline))]
+                              (match (compiler-check-source-index-with-roots-and-cfg
+                                path
+                                source3
+                                roots
+                                (lsp-language-cfgs))
+                                [(ResultCompilerCheckWithSemanticIndex.Err _)
+                                  false]
+                                [(ResultCompilerCheckWithSemanticIndex.Ok
+                                    _
+                                    third)
+                                  (begin
+                                    (set!
+                                      docs
+                                      (lsp-semantic-smoke-install
+                                        docs
+                                        uri
+                                        path
+                                        source3
+                                        4
+                                        third))
+                                    (set!
+                                      docs
+                                      (lsp-semantic-smoke-fill-capacity docs))
+                                    (let
+                                      [eviction-ok : bool
+                                        (and
+                                          (lsp-documents-smoke-missing?
+                                            docs
+                                            uri)
+                                          (=
+                                            (compiler-semantic-source-index-live-owner-count)
+                                            baseline))]
+                                      (begin
+                                        (lsp-documents-release-all! docs)
+                                        (and
+                                          first-ok
+                                          stale-ok
+                                          invalid-ok
+                                          replacement-ok
+                                          close-ok
+                                          eviction-ok
+                                          (=
+                                            (compiler-semantic-source-index-live-owner-count)
+                                            baseline)))))])))))])))))]))))
 
 (define (lsp-hex-value [c : char]) : i64
   (let
@@ -2134,21 +2532,27 @@
               (json.list-empty)))
           (LspAnalyzeResult
             (lsp-diagnostic-uris-empty)
-            (LspCheckCacheErr message))))]
+            (LspCheckCacheErr message)
+            (compiler-semantic-source-index-empty)
+            false)))]
     [(LspValidationResult.Valid)
       (let
         [lint-diags : json.JsonSeq
           (lsp-lint-diagnostics path text version stdlib-roots)]
-        (match (compiler-check-source-with-roots-and-cfg
+        (match (compiler-check-source-index-with-roots-and-cfg
           path
           text
           stdlib-roots
           (lsp-language-cfgs))
-          [(ResultCompilerCheck.Ok _)
+          [(ResultCompilerCheckWithSemanticIndex.Ok _ semantic-index)
             (begin
               (lsp-publish-diagnostics uri lint-diags)
-              (LspAnalyzeResult (lsp-diagnostic-uris-empty) LspCheckCacheOk))]
-          [(ResultCompilerCheck.Err diag)
+              (LspAnalyzeResult
+                (lsp-diagnostic-uris-empty)
+                LspCheckCacheOk
+                semantic-index
+                true))]
+          [(ResultCompilerCheckWithSemanticIndex.Err diag)
             (let
               [diagnostics : CompilerDiagnosticList (box-get diag)]
               [first-diag : CompilerDiagnostic
@@ -2175,7 +2579,9 @@
                     diagnostics
                     diagnostics
                     (lsp-diagnostic-uris-empty))
-                  check-cache)))]))]))
+                  check-cache
+                  (compiler-semantic-source-index-empty)
+                  false)))]))]))
 
 (define (lsp-first-change-text [params : json.Json]) : LspJsonText
   (let
@@ -2225,7 +2631,15 @@
                               (struct-get analysis diagnostic-uris))
                             uri
                             (struct-get analysis check-cache))]
-                        (LspHandleResult.Continue updated-docs))))]
+                        [semantic-docs : lsp_document_vec.Vec
+                          (if (struct-get analysis semantic-present)
+                            (lsp-documents-set-semantic-index
+                              updated-docs
+                              uri
+                              version
+                              (struct-get analysis semantic-index))
+                            updated-docs)]
+                        (LspHandleResult.Continue semantic-docs))))]
                 [(LspUriPath.Err message)
                   (begin
                     (lsp-publish-uri-diagnostic uri message)
@@ -2274,7 +2688,15 @@
                                   (struct-get analysis diagnostic-uris))
                                 uri
                                 (struct-get analysis check-cache))]
-                            (LspHandleResult.Continue updated-docs))))]
+                            [semantic-docs : lsp_document_vec.Vec
+                              (if (struct-get analysis semantic-present)
+                                (lsp-documents-set-semantic-index
+                                  updated-docs
+                                  uri
+                                  version
+                                  (struct-get analysis semantic-index))
+                                updated-docs)]
+                            (LspHandleResult.Continue semantic-docs))))]
                     [(LspUriPath.Err message)
                       (begin
                         (lsp-publish-uri-diagnostic uri message)
@@ -2297,11 +2719,20 @@
                             (struct-get doc text)
                             (struct-get doc version)
                             stdlib-roots)]
-                        (LspHandleResult.Continue
+                        [updated-docs : lsp_document_vec.Vec
                           (lsp-documents-set-check-cache
                             docs
                             uri
-                            (struct-get analysis check-cache))))))]))]
+                            (struct-get analysis check-cache))]
+                        [semantic-docs : lsp_document_vec.Vec
+                          (if (struct-get analysis semantic-present)
+                            (lsp-documents-set-semantic-index
+                              updated-docs
+                              uri
+                              (struct-get doc version)
+                              (struct-get analysis semantic-index))
+                            updated-docs)]
+                        (LspHandleResult.Continue semantic-docs))))]))]
           [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
       [(json.JsonMissing) (LspHandleResult.Continue docs)])))
 
@@ -5832,7 +6263,8 @@
               (struct-get doc diagnostic-uris)
               scanned
               true
-              (struct-get doc check-cache)))
+              (struct-get doc check-cache)
+              (struct-get doc semantic)))
           unit)
         unit)
       scanned)))
@@ -8533,6 +8965,7 @@
               (lsp-frame-stderr-write message)
               (set! status 1)
               (set! done true))]))
+      (lsp-documents-release-all! docs)
       (if prefix-cache-stats
         (tc-prefix-snapshot-cache-print-stats "lsp")
         unit)
@@ -9333,6 +9766,12 @@
   (unless
     (lsp-documents-cache-bound-smoke-ok?)
     (io.panic "lsp-documents-cache-bound failed")))
+
+(test
+  lsp-semantic-snapshot-lifecycle
+  (unless
+    (lsp-semantic-snapshot-lifecycle-smoke-ok?)
+    (io.panic "lsp-semantic-snapshot-lifecycle failed")))
 
 (define (lsp-declaration-context-smoke-ok?) : bool
   (let

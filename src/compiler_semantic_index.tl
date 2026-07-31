@@ -76,7 +76,7 @@
 
 (defenum ResultCompilerCheckWithSemanticIndex
   (Ok CompilerTypecheckSummary CompilerSemanticSourceIndex)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box CompilerDiagnosticList)))
 
 (defenum CompilerSemanticMaybeDecl
   (Some i64 CompilerSemanticSymbolKind)
@@ -136,6 +136,19 @@
     (CompilerSemanticSpan "" -1 -1 (ast-source-span 1 1 1 1))
     false
     CompilerSemanticProvenance.EditableSource))
+
+(define compiler-semantic-source-index-live-owners : i64
+  0)
+
+(define (compiler-semantic-source-index-live-owner-count) : i64
+  compiler-semantic-source-index-live-owners)
+
+(define (compiler-semantic-source-index-empty) : CompilerSemanticSourceIndex
+  (CompilerSemanticSourceIndex
+    0
+    (array.make-array CompilerSemanticRecord 0)
+    0
+    false))
 
 (define (compiler-semantic-record-vec-new [capacity : i64]) : CompilerSemanticRecordVec
   (CompilerSemanticRecordVec
@@ -218,6 +231,10 @@
       (begin
         (set! (struct-get index owner-arena) 0)
         (set! (struct-get index len) 0)
+        (set! (struct-get index complete) false)
+        (set!
+          compiler-semantic-source-index-live-owners
+          (- compiler-semantic-source-index-live-owners 1))
         (unsafe
           (arena.tl_arena_destroy owner)))
       unit)))
@@ -2564,6 +2581,9 @@
     [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
     (begin
+      (set!
+        compiler-semantic-source-index-live-owners
+        (+ compiler-semantic-source-index-live-owners 1))
       (unsafe
         (arena.tl_arena_set owner))
       (let
@@ -2633,14 +2653,14 @@
                           (string.copy (& entry-source))]
                         [(and (not (string.eq path "")) (io.file-exists? path))
                           (byte_buf.to-string (io.read-file path))]
-                        [else ""])))
+                        [else ""]))
+                    (set! (struct-get walk-state path) (string.copy (& path)))
+                    (set!
+                      (struct-get walk-state source)
+                      (string.copy (& cached-source))))
                   unit)
                 (set! (struct-get walk-state ctx) decl-ctx)
                 (set! (struct-get walk-state top-env) env)
-                (set! (struct-get walk-state path) (string.copy (& path)))
-                (set!
-                  (struct-get walk-state source)
-                  (string.copy (& cached-source)))
                 (set! (struct-get walk-state form-start) -1)
                 (set! (struct-get walk-state module-id) module-id)
                 (set! (struct-get walk-state declaration-ordinal) index)
@@ -2815,8 +2835,8 @@
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
           (ResultCompilerCheckWithSemanticIndex.Err
             (box
-              (compiler-check-diagnostic-with-fallback-path
-                (compiler-diagnostic-list-first (box-get diag))
+              (compiler-check-diagnostics-with-fallback-path
+                (box-get diag)
                 path))))])))
 
 (define (compiler-check-loaded-with-prelude-index-cache
@@ -2843,7 +2863,8 @@
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheckWithSemanticIndex.Err diag))]))
+        (ResultCompilerCheckWithSemanticIndex.Err
+          (compiler-diagnostic-list-box-single diag)))]))
 
 ;; Build a replacement index only after a complete semantic check. On error no
 ;; index is returned, which makes the last-good contract explicit: IDE clients
@@ -2852,13 +2873,24 @@
   [path : String]
   [source : String]
   [stdlib-roots : svec.Vec]) : ResultCompilerCheckWithSemanticIndex
+  (compiler-check-source-index-with-roots-and-cfg
+    path
+    source
+    stdlib-roots
+    (compiler-check-language-cfgs)))
+
+(define (compiler-check-source-index-with-roots-and-cfg
+  [path : String]
+  [source : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheckWithSemanticIndex
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
-      (compiler-check-language-cfgs))
+      cfgs)
       [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
@@ -2874,16 +2906,17 @@
             source
             prelude-seen
             stdlib-roots
-            (compiler-check-language-cfgs))
+            cfgs)
           stdlib-roots
           (compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-semantic-index"
             stdlib-roots
-            (compiler-check-language-cfgs)))]
+            cfgs))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ResultCompilerCheckWithSemanticIndex.Err diag))])))
+          (ResultCompilerCheckWithSemanticIndex.Err
+            (compiler-diagnostic-list-box-single diag)))])))
 
 (define (compiler-semantic-source-index-find-definition
   [index : (& index CompilerSemanticSourceIndex)]
@@ -2906,6 +2939,40 @@
               (string.eq (struct-get record display-name) name)
               (string.eq (struct-get (struct-get record span) path) path))
               (set! found record-index)
+              unit)
+            (set! record-index (+ record-index 1)))))
+      found)))
+
+(define (compiler-semantic-source-index-find-editable-record-at
+  [index : (& index CompilerSemanticSourceIndex)]
+  [wanted-path : (& wanted-path str)]
+  [byte-position : i64]) : i64
+  (let
+    [record-index : i64 0]
+    [found : i64 -1]
+    [found-width : i64 999999999]
+    (begin
+      (while (< record-index (struct-get index len))
+        (let
+          [record : CompilerSemanticRecord
+            (array-ref (struct-get index records) record-index)]
+          [span : CompilerSemanticSpan (struct-get record span)]
+          [start : i64 (struct-get span start-byte)]
+          [end : i64 (struct-get span end-byte)]
+          [width : i64 (- end start)]
+          (begin
+            (if (and
+              (struct-get record editable)
+              (match (struct-get record provenance)
+                [(CompilerSemanticProvenance.EditableSource) true]
+                [_ false])
+              (string.eq (& (struct-get span path)) wanted-path)
+              (>= byte-position start)
+              (< byte-position end)
+              (< width found-width))
+              (begin
+                (set! found record-index)
+                (set! found-width width))
               unit)
             (set! record-index (+ record-index 1)))))
       found)))

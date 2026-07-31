@@ -45,6 +45,13 @@
         (+ acc (digitsum n0 (- rounds 1)))
         acc))))
 
+(define (dividend-copy-pair [value : i64] [rounds : i64]) : i64
+  (let
+    [result : i64 (+ (/ value 7) (% value 10))]
+    (if (> rounds 1)
+      (+ result (dividend-copy-pair value (- rounds 1)))
+      result)))
+
 (define (main) : i64
   (let
     ;; n = 100 when run without args (io.arg-count = 1); (io.arg-count) blocks
@@ -52,9 +59,10 @@
     [n : i64 (+ 99 (io.arg-count))]
     [m : i64 (modsum n 1)]
     [d : i64 (digitsum m 1)]
+    [c : i64 (dividend-copy-pair (- n 1) 1)]
     ;; acc after 100 iterations = 926242213; its digit sum = 31.
-    (if (= m 926242213)
-      (if (= d 31)
-        42
-        2)
-      1)))
+    (begin
+      (unless (= m 926242213) (return 1))
+      (unless (= d 31) (return 2))
+      (unless (= c 23) (return 3))
+      42)))

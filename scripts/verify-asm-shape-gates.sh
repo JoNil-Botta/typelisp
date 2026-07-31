@@ -119,6 +119,38 @@ count_backward_jmp() {
     ' "$1"
 }
 
+# Count adjacent GP copy chains `movq SRC, TMP; movq TMP, %rax`. Constant
+# quotient lowering must not route a live dividend through its own destination
+# before seeding fixed %rax. A remainder still needs one mutable SRC copy, so
+# callers assert the exact irreducible count rather than requiring zero.
+count_adjacent_copy_chains_to_rax() {
+    awk '
+        {
+            if ($0 ~ /^    movq %[a-z0-9]+, %[a-z0-9]+$/) {
+                source = $2
+                sub(/,$/, "", source)
+                if (previous && source == previous_dst && $3 == "%rax") n++
+                previous = 1
+                previous_dst = $3
+            } else {
+                previous = 0
+                previous_dst = ""
+            }
+        }
+        END { print n + 0 }
+    ' "$1"
+}
+
+assert_adjacent_copy_chains_to_rax_eq() {
+    _file=$1
+    _want=$2
+    _label=$3
+    _got=$(count_adjacent_copy_chains_to_rax "$_file")
+    if [ "$_got" -ne "$_want" ]; then
+        fail "$_label expected $_want adjacent dividend copy chain(s) into %rax, got $_got"
+    fi
+}
+
 assert_no_fallthrough_jmp() {
     _file=$1
     _label=$2
@@ -220,11 +252,18 @@ check_divmagic_hoist() {
     _asm=$(compile_gate divmagic_hoist tests/integration/divmagic_hoist.tl)
     _modsum=$(function_body "$_asm" _tl_divmagic_hoist_modsum)
     _digitsum=$(function_body "$_asm" _tl_divmagic_hoist_digitsum)
+    _copy_pair=$(function_body "$_asm" _tl_divmagic_hoist_dividend_copy_pair)
     assert_not_contains "$_modsum" 'movabsq $1000000007' divmagic-modsum
     assert_regex_count_at_least "$_modsum" '^[[:space:]]+imulq \$1000000007, %r[a-z0-9]+, %r[a-z0-9]+$' 1 divmagic-modsum
     assert_fixed_count_eq "$_digitsum" 'movabsq $7378697629483820647' 1 divmagic-digitsum
     assert_not_contains "$_digitsum" 'movabsq $10' divmagic-digitsum
     assert_regex_count_at_least "$_digitsum" '^[[:space:]]+imulq \$10, %r[a-z0-9]+, %r[a-z0-9]+$' 1 divmagic-digitsum
+    # The `/7` quotient consumes the live dividend directly through %rax. The
+    # one surviving adjacent chain belongs to `%10`: its mutable SRC is the
+    # remainder result and must preserve the dividend across one-operand imul.
+    # Before #5615 both expansions produced a chain, so this exact count was 2.
+    assert_adjacent_copy_chains_to_rax_eq \
+        "$_copy_pair" 1 divmagic-dividend-copy-pair
 }
 
 check_hoist_priority() {

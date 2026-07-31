@@ -9,9 +9,118 @@
 (import sym_i64_env)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import stdlib.arena)
 
 (define (compiler-typecheck-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
+
+;; Importing the typechecker should leave large optional/cache tables empty.
+;; Their first-use storage belongs to a dedicated persistent arena, not to the
+;; transient arena active at the lookup that happened to initialize them.
+(define (compiler-typecheck-lazy-table-storage-ok?) : bool
+  (let
+    [caller : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
+    [initially-lazy? : bool
+      (and
+        (= tc-lazy-global-table-arena 0)
+        (= (array-length tc-type-needs-resolution-slots) 0)
+        (= (array-length tc-inlay-hint-lines) 0)
+        (= (array-length tc-inlay-hint-cols) 0)
+        (= (array-length tc-inlay-hint-types) 0)
+        (= (array-length tc-agg-size-cache) 0)
+        (= (array-length tc-agg-align-cache) 0)
+        (= (array-length tc-agg-regwords-cache) 0)
+        (= (array-length tc-lazy-import-stub-module-ids) 0)
+        (= (array-length tc-lazy-import-stub-alias-ids) 0)
+        (= (array-length tc-lazy-import-stub-target-ids) 0)
+        (= (array-length tc-lazy-import-stub-summary-backed) 0)
+        (= (array-length tc-lazy-import-stub-index-slots) 0)
+        (= (array-length tc-agg-layout-cache) 0)
+        (= (array-length macro-unqualified-import-cache-module-keys) 0)
+        (= (array-length macro-unqualified-import-cache-name-keys) 0)
+        (= (array-length macro-unqualified-import-cache-values) 0))]
+    [_set-scratch : unit
+      (unsafe
+        (arena.set! scratch))]
+    [_resolution : unit (tc-type-needs-resolution-storage-ensure!)]
+    [_inlay : unit (tc-inlay-hint-storage-ensure!)]
+    [_size : unit (tc-agg-size-cache-storage-ensure!)]
+    [_align : unit (tc-agg-align-cache-storage-ensure!)]
+    [_regwords : unit (tc-agg-regwords-cache-storage-ensure!)]
+    [_lazy-import : unit (tc-lazy-import-stub-storage-ensure!)]
+    [_layout : unit (tc-agg-layout-cache-table-storage-ensure!)]
+    [_macro-import : unit (macro-unqualified-import-cache-storage-ensure!)]
+    [restored-caller? : bool (arena.eq? (arena.current) scratch)]
+    [exact-capacities? : bool
+      (and
+        (= (array-length tc-type-needs-resolution-slots) 131072)
+        (= (array-length tc-inlay-hint-lines) tc-inlay-hint-capacity)
+        (= (array-length tc-inlay-hint-cols) tc-inlay-hint-capacity)
+        (= (array-length tc-inlay-hint-types) tc-inlay-hint-capacity)
+        (= (array-length tc-agg-size-cache) tc-agg-scalar-cache-capacity)
+        (= (array-length tc-agg-align-cache) tc-agg-scalar-cache-capacity)
+        (= (array-length tc-agg-regwords-cache) tc-agg-scalar-cache-capacity)
+        (=
+          (array-length tc-lazy-import-stub-module-ids)
+          tc-lazy-import-stub-capacity)
+        (=
+          (array-length tc-lazy-import-stub-alias-ids)
+          tc-lazy-import-stub-capacity)
+        (=
+          (array-length tc-lazy-import-stub-target-ids)
+          tc-lazy-import-stub-capacity)
+        (=
+          (array-length tc-lazy-import-stub-summary-backed)
+          tc-lazy-import-stub-capacity)
+        (=
+          (array-length tc-lazy-import-stub-index-slots)
+          tc-lazy-import-stub-capacity)
+        (= (array-length tc-agg-layout-cache) tc-agg-layout-cache-capacity)
+        (=
+          (array-length macro-unqualified-import-cache-module-keys)
+          macro-unqualified-import-cache-capacity)
+        (=
+          (array-length macro-unqualified-import-cache-name-keys)
+          macro-unqualified-import-cache-capacity)
+        (=
+          (array-length macro-unqualified-import-cache-values)
+          macro-unqualified-import-cache-capacity))]
+    (begin
+      (unsafe
+        (arena.set! caller))
+      (unsafe
+        (arena.destroy scratch))
+      (array-set! tc-type-needs-resolution-slots 0 17)
+      (array-set! tc-inlay-hint-lines 0 23)
+      (array-set! tc-agg-size-cache 0 29)
+      (array-set! tc-agg-align-cache 0 31)
+      (array-set! tc-agg-regwords-cache 0 37)
+      (array-set! tc-lazy-import-stub-module-ids 0 41)
+      (array-set! tc-agg-layout-cache 0 (TcAggLayoutCacheSlot.Empty))
+      (array-set! macro-unqualified-import-cache-module-keys 0 43)
+      (let
+        [survived? : bool
+          (and
+            (= (array-ref tc-type-needs-resolution-slots 0) 17)
+            (= (array-ref tc-inlay-hint-lines 0) 23)
+            (= (array-ref tc-agg-size-cache 0) 29)
+            (= (array-ref tc-agg-align-cache 0) 31)
+            (= (array-ref tc-agg-regwords-cache 0) 37)
+            (= (array-ref tc-lazy-import-stub-module-ids 0) 41)
+            (match (array-ref tc-agg-layout-cache 0)
+              [(TcAggLayoutCacheSlot.Empty) true]
+              [_ false])
+            (= (array-ref macro-unqualified-import-cache-module-keys 0) 43))]
+        (begin
+          (array-set! tc-type-needs-resolution-slots 0 0)
+          (array-set! tc-inlay-hint-lines 0 0)
+          (array-set! tc-agg-size-cache 0 0)
+          (array-set! tc-agg-align-cache 0 0)
+          (array-set! tc-agg-regwords-cache 0 0)
+          (array-set! tc-lazy-import-stub-module-ids 0 0)
+          (array-set! macro-unqualified-import-cache-module-keys 0 0)
+          (and initially-lazy? restored-caller? exact-capacities? survived?))))))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (string.append
@@ -11820,6 +11929,9 @@
 
 (define (compiler-typecheck-self-test) : i64
   (begin
+    (if (compiler-typecheck-lazy-table-storage-ok?)
+      unit
+      (io.panic "typecheck: lazy global table storage test failed"))
     (compiler-typecheck-self-test-basics)
     (compiler-typecheck-self-test-diagnostics)
     (compiler-typecheck-self-test-models)

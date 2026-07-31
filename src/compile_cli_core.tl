@@ -1933,6 +1933,25 @@
                 "\n"))
             status))))))
 
+;; Batch telemetry treats the live allocation count at entry 0 as the stable
+;; process baseline. Fixed compiler tables remain lazy for ordinary one-shot
+;; commands, but a batch will need these tables during its first entry and keep
+;; them for every later entry. Materialize them once before the first measured
+;; entry so that persistent compiler infrastructure is part of the batch
+;; baseline instead of being misattributed as leaked entry state.
+(define (compile-cli-batch-persistent-table-storage-ensure!) : unit
+  (begin
+    (compiler-backend-peephole-carry-safe-reset!)
+    (compiler-backend-peephole-owner-global-reset!)
+    (compiler-backend-slot-cache-reset!)
+    (tc-type-needs-resolution-storage-ensure!)
+    (tc-agg-size-cache-storage-ensure!)
+    (tc-agg-align-cache-storage-ensure!)
+    (tc-agg-regwords-cache-storage-ensure!)
+    (tc-lazy-import-stub-storage-ensure!)
+    (tc-agg-layout-cache-table-storage-ensure!)
+    (macro-unqualified-import-cache-storage-ensure!)))
+
 (define (compile-cli-run-batch-entries
   [state : CompilerDriverState]
   [entries : cli_svec.Vec]
@@ -1942,17 +1961,19 @@
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
-  (compile-cli-run-batch-entries-from
-    state
-    (& entries)
-    0
-    has-target
-    target
-    stdlib-roots
-    cfgs
-    backend-mode
-    opt-level
-    0))
+  (begin
+    (compile-cli-batch-persistent-table-storage-ensure!)
+    (compile-cli-run-batch-entries-from
+      state
+      (& entries)
+      0
+      has-target
+      target
+      stdlib-roots
+      cfgs
+      backend-mode
+      opt-level
+      0)))
 
 (define (compile-cli-run-windows-batch-entries-from
   [state : CompilerDriverState]
@@ -2141,6 +2162,7 @@
   [opt-level : i64]) : i64
   (let
     [results : cli_svec.Vec (cli_svec.new)]
+    [_tables : unit (compile-cli-batch-persistent-table-storage-ensure!)]
     [status : i64
       (compile-cli-run-windows-batch-entries-from
         state

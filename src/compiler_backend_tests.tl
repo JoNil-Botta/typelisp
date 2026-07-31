@@ -24,6 +24,101 @@
 
 (extern (compiler-backend-test-runtime-alloc [bytes : i64]) : i64 (:symbol "tl_alloc"))
 
+;; The large fixed-capacity peephole tables must start empty, allocate in their
+;; own arena on first use, and remain valid after the caller's active arena is
+;; destroyed. Calling this first in compiler-backend-self-test also guards the
+;; compile-start property: importing the backend alone must not allocate them.
+(define (compiler-backend-lazy-table-storage-ok?) : bool
+  (let
+    [caller : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
+    [initially-lazy? : bool
+      (and
+        (= compiler-backend-lazy-table-arena 0)
+        (= (array-length compiler-backend-peephole-carry-safe-offsets) 0)
+        (= (array-length compiler-backend-peephole-carry-safe-lengths) 0)
+        (= (array-length compiler-backend-peephole-carry-safe-bytes) 0)
+        (= (array-length compiler-backend-peephole-owner-global-offsets) 0)
+        (= (array-length compiler-backend-peephole-owner-global-lengths) 0)
+        (= (array-length compiler-backend-peephole-owner-global-bytes) 0)
+        (= (array-length compiler-backend-slot-cache-values) 0)
+        (= (array-length compiler-backend-slot-cache-epochs) 0)
+        (= (array-length compiler-backend-frame-offset-cache-values) 0)
+        (= (array-length compiler-backend-frame-offset-cache-epochs) 0)
+        (= (array-length compiler-backend-immediate-cache-values) 0)
+        (= (array-length compiler-backend-immediate-cache-epochs) 0))]
+    [_set-scratch : unit
+      (unsafe
+        (arena.set! scratch))]
+    [_carry : unit (compiler-backend-peephole-carry-safe-reset!)]
+    [carry-restored-caller? : bool (arena.eq? (arena.current) scratch)]
+    [_owner : unit (compiler-backend-peephole-owner-global-reset!)]
+    [owner-restored-caller? : bool (arena.eq? (arena.current) scratch)]
+    [_operand-caches : unit (compiler-backend-slot-cache-reset!)]
+    [caches-restored-caller? : bool (arena.eq? (arena.current) scratch)]
+    [exact-capacities? : bool
+      (and
+        (=
+          (array-length compiler-backend-peephole-carry-safe-offsets)
+          compiler-backend-peephole-carry-safe-capacity)
+        (=
+          (array-length compiler-backend-peephole-carry-safe-lengths)
+          compiler-backend-peephole-carry-safe-capacity)
+        (=
+          (array-length compiler-backend-peephole-carry-safe-bytes)
+          compiler-backend-peephole-carry-safe-bytes-capacity)
+        (=
+          (array-length compiler-backend-peephole-owner-global-offsets)
+          compiler-backend-peephole-owner-global-capacity)
+        (=
+          (array-length compiler-backend-peephole-owner-global-lengths)
+          compiler-backend-peephole-owner-global-capacity)
+        (=
+          (array-length compiler-backend-peephole-owner-global-bytes)
+          compiler-backend-peephole-owner-global-bytes-capacity)
+        (=
+          (array-length compiler-backend-slot-cache-values)
+          compiler-backend-slot-cache-capacity)
+        (=
+          (array-length compiler-backend-slot-cache-epochs)
+          compiler-backend-slot-cache-capacity)
+        (=
+          (array-length compiler-backend-frame-offset-cache-values)
+          compiler-backend-slot-cache-capacity)
+        (=
+          (array-length compiler-backend-frame-offset-cache-epochs)
+          compiler-backend-slot-cache-capacity)
+        (= (array-length compiler-backend-immediate-cache-values) 8192)
+        (= (array-length compiler-backend-immediate-cache-epochs) 8192))]
+    (begin
+      (unsafe
+        (arena.set! caller))
+      (unsafe
+        (arena.destroy scratch))
+      (array-set! compiler-backend-peephole-carry-safe-offsets 0 17)
+      (array-set! compiler-backend-peephole-owner-global-bytes 0 3)
+      (array-set! compiler-backend-slot-cache-epochs 0 47)
+      (array-set! compiler-backend-frame-offset-cache-epochs 0 53)
+      (array-set! compiler-backend-immediate-cache-epochs 0 59)
+      (let
+        [survived? : bool
+          (and
+            (= (array-ref compiler-backend-peephole-carry-safe-offsets 0) 17)
+            (= (array-ref compiler-backend-peephole-owner-global-bytes 0) 3)
+            (= (array-ref compiler-backend-slot-cache-epochs 0) 47)
+            (= (array-ref compiler-backend-frame-offset-cache-epochs 0) 53)
+            (= (array-ref compiler-backend-immediate-cache-epochs 0) 59))]
+        (begin
+          (compiler-backend-peephole-carry-safe-reset!)
+          (compiler-backend-peephole-owner-global-reset!)
+          (and
+            initially-lazy?
+            carry-restored-caller?
+            owner-restored-caller?
+            caches-restored-caller?
+            exact-capacities?
+            survived?))))))
+
 ;; String-returning shim for the outgoing stack-argument emitter, for the same
 ;; reason: its Ok payload is the planned stage register, not the emitted text.
 (define (compiler-backend-test-emit-scalar-stack-call-arg-text
@@ -30360,6 +30455,7 @@
 
 (define (compiler-backend-self-test) : i64
   (if (and
+    (compiler-backend-lazy-table-storage-ok?)
     (backend-and8
       (and
         (compiler-backend-global-type-table-ok?)

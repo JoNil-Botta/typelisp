@@ -15540,15 +15540,50 @@
 ;; the epoch bumps when the pool generation changes (truncation or a pool
 ;; swap), and growth drops warm entries, which the epoch guard treats as
 ;; unfilled.
-;; Fixed persistent capacity: the slots are allocated once at global init
-;; (growing under a caller's transient arena would leave the global
-;; dangling), and ids beyond it fall back to the uncached walk.
+;; Fixed persistent capacity: the slots are allocated on first use in a
+;; dedicated never-reset arena (allocating under a caller's transient arena
+;; would leave the global dangling), and ids beyond it fall back to the
+;; uncached walk.
+(define tc-lazy-global-table-arena : i64
+  0)
+
+(define (tc-lazy-global-table-arena-ensure!) : i64
+  (if (= tc-lazy-global-table-arena 0)
+    (begin
+      (set! tc-lazy-global-table-arena (arena.tl_arena_make_small))
+      tc-lazy-global-table-arena)
+    tc-lazy-global-table-arena))
+
+(define (tc-lazy-global-table-arena-finish! [previous : i64] [owner : i64]) : unit
+  (let
+    [head : i64 (arena.tl_arena_current)]
+    (begin
+      (set! tc-lazy-global-table-arena head)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous owner)
+            head
+            previous))))))
+
 (define tc-type-needs-resolution-slots : (__tl_dyn-array i64)
-  (array.make-array i64 131072))
+  (array.make-array i64 0))
 (define tc-type-needs-resolution-epoch : i64
   1)
 (define tc-type-needs-resolution-generation : i64
   -1)
+
+(define (tc-type-needs-resolution-storage-ensure!) : unit
+  (if (= (array-length tc-type-needs-resolution-slots) 131072)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set! tc-type-needs-resolution-slots (array.make-array i64 131072))
+        (tc-lazy-global-table-arena-finish! previous owner)))))
 
 (define (tc-type-needs-resolution-ensure-current!) : unit
   (if (= tc-type-needs-resolution-generation (ty-node-pool-generation-value))
@@ -15559,6 +15594,7 @@
 
 (define (tc-type-needs-resolution-id? [ty-id : i64]) : bool
   (begin
+    (tc-type-needs-resolution-storage-ensure!)
     (tc-type-needs-resolution-ensure-current!)
     (when
       (>= ty-id (array-length tc-type-needs-resolution-slots))
@@ -17283,15 +17319,15 @@
 (define tc-lazy-import-stub-capacity : i64
   65536)
 (define tc-lazy-import-stub-module-ids : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 0))
 (define tc-lazy-import-stub-alias-ids : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 0))
 (define tc-lazy-import-stub-target-ids : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 0))
 (define tc-lazy-import-stub-summary-backed : (__tl_dyn-array bool)
-  (array.make-array bool 65536))
+  (array.make-array bool 0))
 (define tc-lazy-import-stub-index-slots : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 0))
 (define tc-lazy-import-stub-record-count : i64
   0)
 (define tc-lazy-import-stub-generation : i64
@@ -17300,6 +17336,35 @@
   0)
 (define tc-lazy-import-summary-macro-force-record-count : i64
   0)
+
+(define (tc-lazy-import-stub-storage-ensure!) : unit
+  (if (=
+    (array-length tc-lazy-import-stub-index-slots)
+    tc-lazy-import-stub-capacity)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set!
+          tc-lazy-import-stub-module-ids
+          (array.make-array i64 tc-lazy-import-stub-capacity))
+        (set!
+          tc-lazy-import-stub-alias-ids
+          (array.make-array i64 tc-lazy-import-stub-capacity))
+        (set!
+          tc-lazy-import-stub-target-ids
+          (array.make-array i64 tc-lazy-import-stub-capacity))
+        (set!
+          tc-lazy-import-stub-summary-backed
+          (array.make-array bool tc-lazy-import-stub-capacity))
+        (set!
+          tc-lazy-import-stub-index-slots
+          (array.make-array i64 tc-lazy-import-stub-capacity))
+        (tc-lazy-global-table-arena-finish! previous owner)))))
 
 ;; Return either the matching record-index slot or the first empty slot. Slots
 ;; store record index + 1, so reset can clear the index without touching the
@@ -17367,6 +17432,7 @@
 
 (define (tc-lazy-import-stubs-reset!) : unit
   (begin
+    (tc-lazy-import-stub-storage-ensure!)
     (set! tc-lazy-import-stubs (tc-lazy-import-stub-list-empty))
     (set! tc-lazy-import-stub-record-count 0)
     (set! tc-lazy-import-summary-backed-count 0)
@@ -33647,14 +33713,32 @@
 (define tc-inlay-hint-count : i64
   0)
 (define tc-inlay-hint-lines : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 0))
 (define tc-inlay-hint-cols : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 0))
 (define tc-inlay-hint-types : (__tl_dyn-array String)
-  (array.make-array String 65536))
+  (array.make-array String 0))
+
+(define (tc-inlay-hint-storage-ensure!) : unit
+  (if (= (array-length tc-inlay-hint-lines) tc-inlay-hint-capacity)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set! tc-inlay-hint-lines (array.make-array i64 tc-inlay-hint-capacity))
+        (set! tc-inlay-hint-cols (array.make-array i64 tc-inlay-hint-capacity))
+        (set!
+          tc-inlay-hint-types
+          (array.make-array String tc-inlay-hint-capacity))
+        (tc-lazy-global-table-arena-finish! previous owner)))))
 
 (define (tc-inlay-hints-enable!) : unit
   (begin
+    (tc-inlay-hint-storage-ensure!)
     (set! tc-inlay-hint-count 0)
     (set! tc-inlay-hint-enabled true)))
 
@@ -41571,24 +41655,41 @@
 (define tc-agg-layout-cache-capacity : i64
   65536)
 (define tc-agg-layout-cache : (__tl_dyn-array TcAggLayoutCacheSlot)
-  (array.make-array TcAggLayoutCacheSlot 65536))
+  (array.make-array TcAggLayoutCacheSlot 0))
 (define tc-agg-layout-cache-generation : i64
   -1)
+
+(define (tc-agg-layout-cache-table-storage-ensure!) : unit
+  (if (= (array-length tc-agg-layout-cache) tc-agg-layout-cache-capacity)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set!
+          tc-agg-layout-cache
+          (array.make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity))
+        (tc-lazy-global-table-arena-finish! previous owner)))))
 
 ;; `make-array` does not produce valid Empty enum slots, so the fill is
 ;; mandatory before the first probe; generation -1 forces it on first use.
 (define (tc-agg-layout-cache-ensure!) : unit
-  (if (= tc-agg-layout-cache-generation (intern-generation))
-    unit
-    (let
-      [i : i64 0]
-      (begin
-        (tc-agg-layout-cache-storage-reset!)
-        (while (< i tc-agg-layout-cache-capacity)
-          (begin
-            (array-set! tc-agg-layout-cache i (TcAggLayoutCacheSlot.Empty))
-            (set! i (+ i 1))))
-        (set! tc-agg-layout-cache-generation (intern-generation))))))
+  (begin
+    (tc-agg-layout-cache-table-storage-ensure!)
+    (if (= tc-agg-layout-cache-generation (intern-generation))
+      unit
+      (let
+        [i : i64 0]
+        (begin
+          (tc-agg-layout-cache-storage-reset!)
+          (while (< i tc-agg-layout-cache-capacity)
+            (begin
+              (array-set! tc-agg-layout-cache i (TcAggLayoutCacheSlot.Empty))
+              (set! i (+ i 1))))
+          (set! tc-agg-layout-cache-generation (intern-generation)))))))
 
 ;; Cache key: the stable i64 identity of the nominal type name. Source intern
 ;; ids and structural/generated ids occupy different numeric domains, so hash
@@ -41907,7 +42008,7 @@
 (define tc-agg-scalar-cache-capacity : i64
   400000)
 (define tc-agg-size-cache : (__tl_dyn-array i64)
-  (array.make-array i64 400000))
+  (array.make-array i64 0))
 
 ;; These scalar caches used to be keyed by symbol-handle INDEX, which is
 ;; only meaningful for one snapshot of a program's symbol table. Specialization
@@ -41920,17 +42021,34 @@
 (define tc-agg-size-cache-generation : i64
   -1)
 
-(define (tc-agg-size-cache-ensure!) : unit
-  (if (= tc-agg-size-cache-generation (intern-generation))
+(define (tc-agg-size-cache-storage-ensure!) : unit
+  (if (= (array-length tc-agg-size-cache) tc-agg-scalar-cache-capacity)
     unit
     (let
-      [i : i64 0]
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
       (begin
-        (while (< i tc-agg-scalar-cache-capacity)
-          (begin
-            (array-set! tc-agg-size-cache i 0)
-            (set! i (+ i 1))))
-        (set! tc-agg-size-cache-generation (intern-generation))))))
+        (set!
+          tc-agg-size-cache
+          (array.make-array i64 tc-agg-scalar-cache-capacity))
+        (tc-lazy-global-table-arena-finish! previous owner)))))
+
+(define (tc-agg-size-cache-ensure!) : unit
+  (begin
+    (tc-agg-size-cache-storage-ensure!)
+    (if (= tc-agg-size-cache-generation (intern-generation))
+      unit
+      (let
+        [i : i64 0]
+        (begin
+          (while (< i tc-agg-scalar-cache-capacity)
+            (begin
+              (array-set! tc-agg-size-cache i 0)
+              (set! i (+ i 1))))
+          (set! tc-agg-size-cache-generation (intern-generation)))))))
 
 (define (tc-agg-scalar-cache-key-id [name-id : i64]) : i64
   (if (>= name-id tc-agg-scalar-cache-capacity)
@@ -41975,21 +42093,38 @@
 ;; asks for alignment on the same hot aggregate paths as size; rebuilding the full
 ;; layout here defeats the size/regword caches.
 (define tc-agg-align-cache : (__tl_dyn-array i64)
-  (array.make-array i64 400000))
+  (array.make-array i64 0))
 (define tc-agg-align-cache-generation : i64
   -1)
 
-(define (tc-agg-align-cache-ensure!) : unit
-  (if (= tc-agg-align-cache-generation (intern-generation))
+(define (tc-agg-align-cache-storage-ensure!) : unit
+  (if (= (array-length tc-agg-align-cache) tc-agg-scalar-cache-capacity)
     unit
     (let
-      [i : i64 0]
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
       (begin
-        (while (< i tc-agg-scalar-cache-capacity)
-          (begin
-            (array-set! tc-agg-align-cache i 0)
-            (set! i (+ i 1))))
-        (set! tc-agg-align-cache-generation (intern-generation))))))
+        (set!
+          tc-agg-align-cache
+          (array.make-array i64 tc-agg-scalar-cache-capacity))
+        (tc-lazy-global-table-arena-finish! previous owner)))))
+
+(define (tc-agg-align-cache-ensure!) : unit
+  (begin
+    (tc-agg-align-cache-storage-ensure!)
+    (if (= tc-agg-align-cache-generation (intern-generation))
+      unit
+      (let
+        [i : i64 0]
+        (begin
+          (while (< i tc-agg-scalar-cache-capacity)
+            (begin
+              (array-set! tc-agg-align-cache i 0)
+              (set! i (+ i 1))))
+          (set! tc-agg-align-cache-generation (intern-generation)))))))
 
 (define (tc-inline-aggregate-align-cached
   [ctx : TcContext]
@@ -42031,12 +42166,27 @@
 ;; construct / struct-get / copy (lower-name-register-words). Encoded as
 ;; words+1 (0 = uncached). Only fully-resolved layouts are cached.
 (define tc-agg-regwords-cache : (__tl_dyn-array i64)
-  (array.make-array i64 400000))
+  (array.make-array i64 0))
 
 ;; Same per-program keying as tc-agg-size-cache, so it is gated on
 ;; intern-generation and explicitly invalidated at lower boundaries.
 (define tc-agg-regwords-cache-generation : i64
   -1)
+
+(define (tc-agg-regwords-cache-storage-ensure!) : unit
+  (if (= (array-length tc-agg-regwords-cache) tc-agg-scalar-cache-capacity)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set!
+          tc-agg-regwords-cache
+          (array.make-array i64 tc-agg-scalar-cache-capacity))
+        (tc-lazy-global-table-arena-finish! previous owner)))))
 
 (define (tc-agg-caches-reset!) : unit
   (begin
@@ -42046,16 +42196,18 @@
     (set! tc-agg-regwords-cache-generation -1)))
 
 (define (tc-agg-regwords-cache-ensure!) : unit
-  (if (= tc-agg-regwords-cache-generation (intern-generation))
-    unit
-    (let
-      [i : i64 0]
-      (begin
-        (while (< i tc-agg-scalar-cache-capacity)
-          (begin
-            (array-set! tc-agg-regwords-cache i 0)
-            (set! i (+ i 1))))
-        (set! tc-agg-regwords-cache-generation (intern-generation))))))
+  (begin
+    (tc-agg-regwords-cache-storage-ensure!)
+    (if (= tc-agg-regwords-cache-generation (intern-generation))
+      unit
+      (let
+        [i : i64 0]
+        (begin
+          (while (< i tc-agg-scalar-cache-capacity)
+            (begin
+              (array-set! tc-agg-regwords-cache i 0)
+              (set! i (+ i 1))))
+          (set! tc-agg-regwords-cache-generation (intern-generation)))))))
 
 (define (tc-inline-aggregate-regwords-compute [ctx : TcContext] [name-id : i64]) : i64
   (match (tc-inline-aggregate-layout-for-with-stack
@@ -72034,11 +72186,11 @@
 (define macro-unqualified-import-cache-capacity : i64
   65536)
 (define macro-unqualified-import-cache-module-keys : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 0))
 (define macro-unqualified-import-cache-name-keys : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 0))
 (define macro-unqualified-import-cache-values : (__tl_dyn-array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 0))
 (define macro-unqualified-import-cache-count : i64
   0)
 (define macro-unqualified-import-cache-generation : i64
@@ -72071,6 +72223,29 @@
 (define macro-flat-import-target-cache-built-decl-offset : i64
   -1)
 
+(define (macro-unqualified-import-cache-storage-ensure!) : unit
+  (if (=
+    (array-length macro-unqualified-import-cache-module-keys)
+    macro-unqualified-import-cache-capacity)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set!
+          macro-unqualified-import-cache-module-keys
+          (array.make-array i64 macro-unqualified-import-cache-capacity))
+        (set!
+          macro-unqualified-import-cache-name-keys
+          (array.make-array i64 macro-unqualified-import-cache-capacity))
+        (set!
+          macro-unqualified-import-cache-values
+          (array.make-array i64 macro-unqualified-import-cache-capacity))
+        (tc-lazy-global-table-arena-finish! previous owner)))))
+
 (define (macro-decl-list-slots-data-addr [decls : AstDeclList]) : i64
   (cast
     (unsafe
@@ -72099,20 +72274,22 @@
   (macro-alias-derived-cache-reset!))
 
 (define (macro-unqualified-import-cache-ensure!) : unit
-  (if (if macro-unqualified-import-cache-ready
-    (= macro-unqualified-import-cache-generation (intern-generation))
-    false)
-    unit
-    (let
-      [i : i64 0]
-      (begin
-        (while (< i macro-unqualified-import-cache-capacity)
-          (begin
-            (array-set! macro-unqualified-import-cache-module-keys i 0)
-            (set! i (+ i 1))))
-        (set! macro-unqualified-import-cache-count 0)
-        (set! macro-unqualified-import-cache-generation (intern-generation))
-        (set! macro-unqualified-import-cache-ready true)))))
+  (begin
+    (macro-unqualified-import-cache-storage-ensure!)
+    (if (if macro-unqualified-import-cache-ready
+      (= macro-unqualified-import-cache-generation (intern-generation))
+      false)
+      unit
+      (let
+        [i : i64 0]
+        (begin
+          (while (< i macro-unqualified-import-cache-capacity)
+            (begin
+              (array-set! macro-unqualified-import-cache-module-keys i 0)
+              (set! i (+ i 1))))
+          (set! macro-unqualified-import-cache-count 0)
+          (set! macro-unqualified-import-cache-generation (intern-generation))
+          (set! macro-unqualified-import-cache-ready true))))))
 
 (define (macro-unqualified-import-cache-bucket
   [module-id : i64]

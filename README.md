@@ -1,10 +1,10 @@
 # TypeLisp
 
 TypeLisp is a statically typed Lisp dialect for native systems programming. It
-compiles directly to x86-64 assembly, uses ownership and borrowing to make safe
-code free of undefined behavior, and uses arenas instead of a garbage collector.
-The compiler, standard library, formatter, linter, documentation generator, and
-language server are written in TypeLisp.
+compiles directly to x86-64 assembly, is designed to keep safe code free of
+undefined behavior through ownership and borrowing, and uses arenas instead of
+a garbage collector. The compiler, standard library, formatter, linter,
+documentation generator, and language server are written in TypeLisp.
 
 The project is experimental. The compiler and toolchain are usable on Linux and
 Windows x86-64, but the language and standard library are still changing. Expect

@@ -21,6 +21,13 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+## Performance gates
+
+Generated code is compared with `clang -O2` using paired cases under
+[`../benchmarks/`](../benchmarks). Compiler and generated-code performance is
+tracked with deterministic executed-instruction baselines under
+[`../perf/`](../perf), avoiding wall-clock noise in required CI gates.
+
 ## CLI
 
 ```text

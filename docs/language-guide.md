@@ -223,3 +223,25 @@ inspection/parsing in `stdlib.string`, files and processes in `stdlib.io`
 and `stdlib.fs`, string building in `stdlib.str_cat`, `stdlib.format`, and `stdlib.text_buf`,
 binary buffers in `stdlib.byte_buf`, arenas in `stdlib.arena`, and threading
 in `stdlib.thread` / `stdlib.sync`.
+
+## Current source conventions
+
+Some transitional spellings survive while migrations finish. New code should
+use the end-state forms:
+
+- Use dotted module imports with aliases and qualified member access:
+  `(import stdlib.string)` and `(string.eq left right)`. Legacy string-path
+  imports are compatibility-only.
+- Prefer qualified short stdlib names such as `string.append`; flat
+  module-prefixed names such as `string-append` are transitional.
+- Use the prelude spellings `when`, `unless`, `and`, `or`, scalar `for`, and
+  bracket-arm `cond`: `(cond [test expr] ... [else fallback])`.
+- Build strings with `str-cat` or `text_buf`; do not add
+  `string-append`/`string-concat` chains.
+- Use `ByteBuf` and borrowed `bytes` views for mutable binary storage, not
+  mutable `str` or `(Array u8)`.
+- Use fixed `(Array T N)` values for fixed storage and vector/slice APIs for
+  runtime-sized collections. Unsized `(Array T)` remains only as a migration
+  compatibility surface.
+- Mutate places in place with `set!`, including struct fields and boxed
+  storage, instead of copy-on-update helpers.

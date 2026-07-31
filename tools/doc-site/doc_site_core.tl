@@ -1328,6 +1328,21 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
       (doc-site-require
         (doc-site-vector-core-growth-order?)
         "doc-site: canonical vector core growth/order mismatch")
+      (doc-site-require
+        (= (doc-site-guide-page-list-count (doc-site-language-guides)) 8)
+        "doc-site: language guide inventory mismatch")
+      (doc-site-require
+        (string.eq
+          (doc-site-rewrite-language-link-target sections "../SPEC.md")
+          "spec.html")
+        "doc-site: parent guide link rewrite missing")
+      (doc-site-require
+        (string.eq
+          (doc-site-rewrite-language-link-target
+            sections
+            "../tools/doc-site/doc_site.tl")
+          "https://github.com/JoNil-Botta/typelisp/blob/main/tools/doc-site/doc_site.tl")
+        "doc-site: parent repository link rewrite missing")
       (doc_bridge.bridge-doc-html-require-contains
         index
         "<nav class=\"tl-doc-site-nav\" aria-label=\"stdlib API\">"

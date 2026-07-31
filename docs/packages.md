@@ -2,6 +2,16 @@
 
 This page describes package manifests, dependency resolution, lockfiles, and package builds.
 
+## Creating a package
+
+Run `typelisp new hello-app`, then
+`typelisp run --manifest-path hello-app/typelisp.pkg`. The generated binary
+prints `Hello, TypeLisp!`; `typelisp test --manifest-path
+hello-app/typelisp.pkg` runs its included `answer-is-42` inline test. The
+generated `.gitignore` keeps package build output out of version control.
+
+## Package manifests
+
 Local packages are described by a std-only S-expression manifest named
 `typelisp.pkg`:
 

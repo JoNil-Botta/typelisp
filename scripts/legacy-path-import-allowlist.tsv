@@ -11,7 +11,7 @@ src/compiler_check_core.tl	2
 src/compiler_clone.tl	1
 src/compiler_ctfe.tl	3
 src/compiler_diagnostic.tl	1
-src/compiler_driver_core.tl	4
+src/compiler_driver_core.tl	5
 src/compiler_driver_smoke_tests.tl	1
 src/compiler_embedded_stdlib_tlci.tl	4
 src/compiler_float.tl	1
@@ -37,14 +37,14 @@ src/compiler_symbols.tl	2
 src/compiler_tlci_native_image.tl	2
 src/compiler_tlci_native_producer.tl	4
 src/compiler_typecheck_api.tl	3
-src/compiler_typecheck_core.tl	8
+src/compiler_typecheck_core.tl	9
 src/compiler_typecheck.tl	3
 src/compiler_windows_coff_core.tl	2
 src/doc_cli_core.tl	4
 src/doc_expand.tl	2
 src/doc_test.tl	3
 src/format_cli_core.tl	2
-src/inspect_cli_core.tl	1
+src/inspect_cli_core.tl	2
 src/lint_core.tl	1
 src/lint_driver_core.tl	4
 src/lsp_frame_core.tl	5

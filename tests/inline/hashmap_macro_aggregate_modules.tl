@@ -2,8 +2,8 @@
 (import stdlib.test)
 (import stdlib.hashmap)
 (import stdlib.string as string_mod)
-(import "hashmap_macro_clone_collision_first.tl" module tests.hashmap_macro_clone_collision_first as collision_first)
-(import "hashmap_macro_clone_collision_second.tl" module tests.hashmap_macro_clone_collision_second as collision_second)
+(import tests.hashmap_macro_clone_collision_first as collision_first)
+(import tests.hashmap_macro_clone_collision_second as collision_second)
 
 (defenum GenericHashKeyTag
   (GenericHashKeyNone)

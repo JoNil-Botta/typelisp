@@ -1,7 +1,7 @@
 ;; Module B for compile_profile_cross_file_single_compilation.tl - imports the
 ;; shared (vector i64) instantiation.
-;; The short explicit identity is intentional: the entry imports this file by
-;; a legacy module clause while checking cross-file specialization reuse.
+;; The short explicit identity is intentional: the entry imports this sibling
+;; by canonical dotted identity while checking cross-file specialization reuse.
 (module cross_single_b)
 
 (import stdlib.vector)

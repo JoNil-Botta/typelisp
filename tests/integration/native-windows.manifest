@@ -33,7 +33,7 @@ compile_profile_macro_detail|tests/integration/compile_profile_macro_detail.tl|4
 compile_profile_generated_replay_lazy|tests/integration/compile_profile_generated_replay_lazy.tl|42|-|-|-
 compile_profile_generated_import|tests/integration/compile_profile_generated_import.tl|42|-|-|stdlib/string.tl
 compile_profile_generated_import_inert|tests/integration/compile_profile_generated_import_inert.tl|42|-|-|compile_profile_generated_import_inert_dep.tl
-compile_profile_cross_file_single_compilation|tests/integration/compile_profile_cross_file_single_compilation.tl|42|-|-|compile_profile_cross_file_single_compilation_a.tl compile_profile_cross_file_single_compilation_b.tl compile_profile_cross_file_single_compilation_c.tl
+compile_profile_cross_file_single_compilation|tests/integration/compile_profile_cross_file_single_compilation.tl|42|-|-|cross_single_a.tl cross_single_b.tl cross_single_c.tl
 compile_profile_vector_core|tests/integration/compile_profile_vector_core.tl|42|-|-|stdlib/vector.tl
 compile_profile_vector_five_core|tests/integration/compile_profile_vector_five_core.tl|42|-|-|stdlib/vector.tl
 compile_profile_vector_full|tests/integration/compile_profile_vector_full.tl|42|-|-|stdlib/vector.tl
@@ -44,7 +44,7 @@ compile_profile_optimizer_escape|tests/integration/compile_profile_optimizer_esc
 compile_profile_result_import|tests/integration/compile_profile_result_import.tl|42|-|-|-
 call_eval_order|tests/integration/call_eval_order.tl|42|-|-|-
 include_bin|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin
-include_str_comptime|tests/integration/include_str_comptime.tl|42|-|-|include_str_comptime_owner.tl include_str_comptime_payload.txt include_bin_payload.bin stdlib/comptime.tl
+include_str_comptime|tests/integration/include_str_comptime.tl|42|-|-|include/str/comptime/owner.tl include_str_comptime_payload.txt include_bin_payload.bin stdlib/comptime.tl
 embedded_stdlib_exact_include|tests/integration/embedded_stdlib_exact_include.tl|42|-|-|stdlib/array.tl stdlib/string.tl
 c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
 c_abi_f32_scalar|tests/integration/c_abi_f32_scalar.tl|42|-|-|benchmarks/c_abi_f32_scalar/baseline.c
@@ -368,8 +368,8 @@ sync_channel_string_thread_runtime|tests/integration/sync_channel_string_thread_
 sync_mutex_thread_runtime|tests/integration/sync_mutex_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 box_take_set|tests/integration/box_take_set.tl|42|-|-|-
 function_lifetime_elision|tests/integration/function_lifetime_elision.tl|42|-|-|stdlib/io.tl
-consume_parameters|tests/integration/consume_parameters.tl|0|-|-|consume_parameters_helper.tl stdlib/string.tl
-comptime_module_value_reflection|tests/integration/comptime_module_value_reflection.tl|42|-|-|comptime_module_value_reflection_provider.tl stdlib/comptime.tl
+consume_parameters|tests/integration/consume_parameters.tl|0|-|-|consume/parameters/helper.tl stdlib/string.tl
+comptime_module_value_reflection|tests/integration/comptime_module_value_reflection.tl|42|-|-|reflection/signature/provider.tl stdlib/comptime.tl
 str_cat_scoped_region|tests/integration/str_cat_scoped_region.tl|42|-|-|-
 tlci_native_index_folds|tests/integration/tlci_native_index_folds.tl|42|-|-|stdlib/fs.tl stdlib/string.tl stdlib/str_cat.tl
 tlci_native_wildcard_arms|tests/integration/tlci_native_wildcard_arms.tl|42|-|-|stdlib/eq.tl stdlib/hash.tl

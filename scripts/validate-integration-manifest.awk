@@ -29,6 +29,13 @@ function integration_source(path) {
     return path ~ /^tests\/integration\/.+\.tl$/
 }
 
+function integration_name(path, value) {
+    value = path
+    sub(/^tests\/integration\//, "", value)
+    sub(/\.tl$/, "", value)
+    return value
+}
+
 function file_contains(path, needle, line) {
     while ((getline line < path) > 0) {
         if (index(line, needle) != 0) {
@@ -140,7 +147,7 @@ FILENAME == catalog {
         }
     }
 
-    if (integration_source(source)) known[base_name(source)] = 1
+    if (integration_source(source)) known[integration_name(source)] = 1
     source_dir = directory_name(source)
     if (deps != "" && deps != "-") {
         dep_count = split(deps, dependency, /[[:space:]]+/)
@@ -153,7 +160,7 @@ FILENAME == catalog {
             if (resolved == "") {
                 fail("manifest line " FNR " names missing dependency for " name ": " dep)
             }
-            if (integration_source(resolved)) known[base_name(resolved)] = 1
+            if (integration_source(resolved)) known[integration_name(resolved)] = 1
         }
     }
 }

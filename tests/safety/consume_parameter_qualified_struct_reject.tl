@@ -1,4 +1,4 @@
-(import "../integration/consume_parameters_helper.tl" module consume.parameters.helper as helper)
+(import consume.parameters.helper)
 
 (define (main) : i64
   (let

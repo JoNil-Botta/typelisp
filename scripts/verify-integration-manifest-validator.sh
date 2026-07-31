@@ -14,6 +14,7 @@ mkdir -p "$WORKDIR"
 cat > "$CATALOG" <<'EOF'
 tests/integration/good.tl
 tests/integration/helper.tl
+tests/integration/nested/provider.tl
 src/tests/compiler_frontend_smoke_suite.tl
 src/tests/compiler_codegen_smoke_suite.tl
 src/tests/compiler_symbols_smoke.tl
@@ -45,6 +46,13 @@ awk -v root="$ROOT" -v catalog="$CATALOG" -v known_out="$KNOWN" \
     -f "$VALIDATOR" "$CATALOG" "$MANIFEST"
 grep -Fx good "$KNOWN" >/dev/null
 grep -Fx helper "$KNOWN" >/dev/null
+
+printf '%s\n' 'nested|tests/integration/good.tl|0|-|-|nested/provider.tl' > "$MANIFEST"
+: > "$KNOWN"
+awk -v root="$ROOT" -v catalog="$CATALOG" -v known_out="$KNOWN" \
+    -f "$VALIDATOR" "$CATALOG" "$MANIFEST"
+grep -Fx good "$KNOWN" >/dev/null
+grep -Fx nested/provider "$KNOWN" >/dev/null
 
 expect_failure field-count 'manifest line 1 must have 6 fields' \
     'bad|tests/integration/good.tl|0|-|-'

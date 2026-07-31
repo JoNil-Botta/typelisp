@@ -97,14 +97,11 @@
 ;;
 ;; The one-word representation is pinned by
 ;; `compiler-backend-source-span-symbol-provenance-ok?` in
-;; `compiler_backend_tests.tl`, not here: `size-of` needs a `(type T)` literal,
-;; and a `(type T)` literal anywhere in a compiled program sets the parse
-;; state's type-literal flag, which makes the driver defer the whole
-;; source-pool/frontend release at the macro handoff
-;; (`defer-source-destroy?` in `compiler_driver_core.tl`). In a module that is
-;; part of `main.tl`'s closure that costs the self-compile ~214MB of peak live
-;; memory (#5872), so layout assertions for compiler types belong in the
-;; test-only modules outside that closure.
+;; `compiler_backend_tests.tl`, not here: `size-of` needs a `(type T)`
+;; literal. Layout assertions for compiler types still belong in the
+;; test-only modules outside `main.tl`'s closure: a literal anywhere in the
+;; compiled program forces the tens-of-MB CTFE reflection/layout metadata
+;; build for the whole compile (#5872, #5875).
 (defstruct CompilerIrSymbolId
   (value i64))
 

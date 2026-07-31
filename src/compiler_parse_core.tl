@@ -796,8 +796,6 @@
   6)
 (define compiler-parse-state-control-ready : i64
   7)
-(define compiler-parse-state-control-has-type-literal : i64
-  8)
 (define compiler-parse-state-control-reserved : i64
   9)
 (define compiler-parse-state-marker-id : i64
@@ -862,7 +860,6 @@
       (array-set! control compiler-parse-state-control-cache-table-id -1)
       (array-set! control compiler-parse-state-control-marker-id -1)
       (array-set! control compiler-parse-state-control-ready 0)
-      (array-set! control compiler-parse-state-control-has-type-literal 0)
       (array-set! control compiler-parse-state-control-reserved 0)
       (CompilerParseState control keys tags cache cache-handle owner))))
 
@@ -946,20 +943,6 @@
     cfgs
     compiler-parse-state-marker-id
     (compiler-parse-state-control-addr state)))
-
-(define (compiler-parse-state-type-literal-reset! [state : CompilerParseState]) : unit
-  (array-set!
-    (struct-get state control)
-    compiler-parse-state-control-has-type-literal
-    0))
-
-(define (compiler-parse-state-has-type-literal? [state : CompilerParseState]) : bool
-  (not
-    (=
-      (array-ref
-        (struct-get state control)
-        compiler-parse-state-control-has-type-literal)
-      0)))
 
 ;; Compatibility state for direct parser helpers and parser-only tests. Driver
 ;; paths always attach their own state with compiler-parse-state-cfgs.
@@ -1459,20 +1442,6 @@
 
 (define (compiler-parse-tag-expr-type-literal) : i64
   249)
-
-;; Legacy parser-only adapters operate on the default state. Production load
-;; paths reset and inspect their CompilerDriverState-owned parser state.
-(define (compiler-parse-type-literal-tracking-mark!
-  [dispatch : sym_i64_env.SymI64Env]) : unit
-  (let
-    [control : i64
-      (compiler-parse-env-marker-value dispatch compiler-parse-state-marker-id)]
-    (if (= control 0)
-      unit
-      (compiler-parse-raw-i64-set!
-        control
-        compiler-parse-state-control-has-type-literal
-        1))))
 
 (define (compiler-parse-tag-expr-init) : i64
   288)
@@ -5467,13 +5436,11 @@
         [(reader.SpannedSexprView.Nil _)
           (match (parse-ast-type-spanned dispatch pools ty)
             [(ResultAstType.Ok parsed-ty)
-              (begin
-                (compiler-parse-type-literal-tracking-mark! dispatch)
-                (ResultAstExpr.Ok
-                  (ast-node-pool-context-expr-push
-                    pools
-                    (AstExpr.TypeLiteral
-                      (ast-node-pool-context-type-push pools parsed-ty)))))]
+              (ResultAstExpr.Ok
+                (ast-node-pool-context-expr-push
+                  pools
+                  (AstExpr.TypeLiteral
+                    (ast-node-pool-context-type-push pools parsed-ty))))]
             [(ResultAstType.Err message) (ResultAstExpr.Err message)])]
         [_ (ResultAstExpr.Err "parse: type expects exactly one type")])]
     [_ (ResultAstExpr.Err "parse: type expects exactly one type")]))

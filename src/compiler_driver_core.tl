@@ -3230,8 +3230,6 @@
         unit)]
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
     [parser-state : CompilerParseState (struct-get state parser-state)]
-    [_reset-type-literal-tracking : unit
-      (compiler-parse-state-type-literal-reset! parser-state)]
     [parse-cfgs : sym_i64_env.SymI64Env
       (compiler-parse-state-cfgs parser-state cfgs)]
     (match (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
@@ -3274,10 +3272,6 @@
               (ci.intern-source-name-session-handle
                 (ci.intern-source-name-session-from-state
                   (compiler-driver-state-owned-interns state)))]
-            [defer-source-destroy? : bool
-              (and
-                release-source-pools?
-                (compiler-parse-state-has-type-literal? parser-state))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -3297,14 +3291,6 @@
             ;; its head, so destroying the root leaks every overflow segment (the
             ;; whole-program parsed AST), which accumulates across batch entries.
             [source-pools-arena : i64 (ast-node-pool-context-base-arena pools)]
-            ;; `compiler-driver-state-adopt-pools!` mutates the state's shared
-            ;; cells. Preserve the retiring storage handles before adoption so
-            ;; the type-literal deferred path cannot mistake the new pool for
-            ;; its source and unmap live segments.
-            [source-expr-storage-arena : i64
-              (ast-node-pool-context-expr-storage-arena pools)]
-            [source-type-storage-arena : i64
-              (ast-node-pool-context-type-storage-arena pools)]
             [_clear-source-floors : unit
               (if release-source-pools?
                 (compiler-load-session-state-floors-set!
@@ -3317,18 +3303,10 @@
               (if release-source-pools?
                 (compiler-lower-checked-dest-pools-use!
                   dest-pools
-                  (if defer-source-destroy?
-                    0
-                    source-pools-arena)
-                  (if defer-source-destroy?
-                    0
-                    (ast-node-pool-context-expr-storage-arena pools))
-                  (if defer-source-destroy?
-                    0
-                    (ast-node-pool-context-type-storage-arena pools))
-                  (if (and
-                    route-source-allocations?
-                    (not defer-source-destroy?))
+                  source-pools-arena
+                  (ast-node-pool-context-expr-storage-arena pools)
+                  (ast-node-pool-context-type-storage-arena pools)
+                  (if route-source-allocations?
                     frontend-arena
                     0))
                 (compiler-lower-checked-dest-pools-clear!))]
@@ -3365,17 +3343,6 @@
                 (begin
                   (compiler-lower-checked-dest-pools-abort-uncommitted!)
                   (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
-                unit)]
-            [_destroy-deferred-source : unit
-              (if (and defer-source-destroy? dest-committed?)
-                (begin
-                  (compiler-typecheck-ctfe-env-cache-clear!)
-                  (ast-node-pool-storage-arenas-destroy!
-                    source-expr-storage-arena
-                    source-type-storage-arena
-                    source-pools-arena)
-                  (unsafe
-                    (arena.tl_arena_destroy source-pools-arena)))
                 unit)]
             [_restore-entry-arena : unit
               (if release-source-pools?
@@ -3488,8 +3455,6 @@
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
     [parser-state : CompilerParseState (struct-get state parser-state)]
-    [_reset-type-literal-tracking : unit
-      (compiler-parse-state-type-literal-reset! parser-state)]
     [parse-cfgs : sym_i64_env.SymI64Env
       (compiler-parse-state-cfgs parser-state cfgs)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
@@ -3529,10 +3494,6 @@
             [release-source-pools? : bool
               (compiler-driver-state-can-release-checked-lower-source-pools?
                 state)]
-            [defer-source-destroy? : bool
-              (and
-                release-source-pools?
-                (compiler-parse-state-has-type-literal? parser-state))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -3552,12 +3513,6 @@
             ;; its head, so destroying the root leaks every overflow segment (the
             ;; whole-program parsed AST), which accumulates across batch entries.
             [source-pools-arena : i64 (ast-node-pool-context-base-arena pools)]
-            ;; These must remain source identities after the state cells adopt
-            ;; the compacted destination below.
-            [source-expr-storage-arena : i64
-              (ast-node-pool-context-expr-storage-arena pools)]
-            [source-type-storage-arena : i64
-              (ast-node-pool-context-type-storage-arena pools)]
             [_clear-source-floors : unit
               (if release-source-pools?
                 (compiler-load-session-state-floors-set!
@@ -3570,15 +3525,9 @@
               (if release-source-pools?
                 (compiler-lower-checked-dest-pools-use!
                   dest-pools
-                  (if defer-source-destroy?
-                    0
-                    source-pools-arena)
-                  (if defer-source-destroy?
-                    0
-                    (ast-node-pool-context-expr-storage-arena pools))
-                  (if defer-source-destroy?
-                    0
-                    (ast-node-pool-context-type-storage-arena pools))
+                  source-pools-arena
+                  (ast-node-pool-context-expr-storage-arena pools)
+                  (ast-node-pool-context-type-storage-arena pools)
                   0)
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
@@ -3612,17 +3561,6 @@
                 (begin
                   (compiler-lower-checked-dest-pools-abort-uncommitted!)
                   (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
-                unit)]
-            [_destroy-deferred-source : unit
-              (if (and defer-source-destroy? dest-committed?)
-                (begin
-                  (compiler-typecheck-ctfe-env-cache-clear!)
-                  (ast-node-pool-storage-arenas-destroy!
-                    source-expr-storage-arena
-                    source-type-storage-arena
-                    source-pools-arena)
-                  (unsafe
-                    (arena.tl_arena_destroy source-pools-arena)))
                 unit)]
             [_restore-entry-arena : unit
               (if release-source-pools?

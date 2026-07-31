@@ -18752,9 +18752,10 @@
         (str_cat.str-cat quotient-asm "    negq %rax\n")
         quotient-asm))))
 
-;; clang-shaped signed constant division.  `src-reg` owns the dividend for the
-;; duration of the expansion and is never %rax/%rdx.  The multiply may clobber
-;; only the fixed pair, so SRC survives without a saved-dividend temporary.  The
+;; Clang-shaped signed constant division. Normally `src-reg` owns the dividend
+;; for the duration of the expansion and is never %rax/%rdx. A low-magic or
+;; power-of-two quotient that only seeds %rax may instead pass `%rax` itself;
+;; remainder and high-magic shapes still need a surviving non-fixed SRC. The
 ;; truncation correction is the sign bit of the pre-shift quotient word, staged
 ;; through %rax after the multiply, rather than a second scratch holding the
 ;; dividend's sign mask.
@@ -18817,9 +18818,8 @@
           (str_cat.str-cat "    andq " scratch-reg ", %rdx\n")))]
     [quotient-asm : String
       (str-cat
-        "    movq "
-        src-reg
-        ", %rax\n    movq %rax, %rdx\n    sarq $63, %rdx\n"
+        (compiler-backend-divmod-result-move src-reg "%rax")
+        "    movq %rax, %rdx\n    sarq $63, %rdx\n"
         mask-asm
         "    addq %rdx, %rax\n"
         (compiler-backend-divmod-shift-rax "sar" shift))]
@@ -18873,9 +18873,7 @@
         home)]
     [quotient-asm : String
       (str-cat
-        "    movq "
-        src-reg
-        ", %rax\n"
+        (compiler-backend-divmod-result-move src-reg "%rax")
         magic-load
         "    imulq "
         magic-src
@@ -19246,6 +19244,42 @@
                     (struct-get plan magic))
                   ""))))))]
     [(option_i64.None) true]))
+
+;; May a quotient load its dividend straight into fixed %rax? One-operand imul
+;; destroys %rax, so this is legal only when the expansion never reads SRC
+;; again: power-of-two quotients and low-bit magic quotients. Remainders need
+;; SRC for `dividend - quotient*divisor`; high-bit magic needs it for
+;; `addq SRC, %rdx`; divisor 1 is already a direct result move and gains nothing.
+(define (compiler-backend-signed-literal-divmod-direct-rax-src?
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : bool
+  (and
+    (not (compiler-backend-binop-wants-remainder? op))
+    (match (compiler-backend-value-as-i64 rhs)
+      [(option_i64.Some n)
+        (let
+          [divisor : i64 (compiler-backend-normalized-signed-immediate n ty)]
+          (if (or
+            (not (compiler-backend-divmod-safe-literal-i64? n ty))
+            (= divisor (compiler-backend-i64-min-value)))
+            false
+            (let
+              [abs-divisor : i64
+                (if (< divisor 0)
+                  (- 0 divisor)
+                  divisor)]
+              [abs-u64 : u64 (cast abs-divisor : u64)]
+              (and
+                (not (= abs-divisor 1))
+                (or
+                  (compiler-backend-u64-power-of-two? abs-u64)
+                  (not
+                    (compiler-backend-u64-high-bit?
+                      (struct-get
+                        (compiler-backend-signed-divisor-magic abs-divisor)
+                        magic))))))))]
+      [(option_i64.None) false])))
 
 (define (compiler-backend-signed-literal-divmod-src-asm
   [op : CompilerIrBinOp]
@@ -21399,10 +21433,11 @@
             compiler-backend-emit-instr-post-base
             compiler-backend-emit-current-count))))))
 
-;; Register-aware entry for ordinary BinOp emission.  A dead non-fixed LHS home
-;; is SRC directly.  Otherwise the destination home, when available, is the
-;; natural one-copy SRC; only a fixed/memory/live dividend needs a scavenged
-;; source register.
+;; Register-aware entry for ordinary BinOp emission. A dead non-fixed LHS home
+;; is SRC directly. A live dividend whose quotient expansion only seeds %rax
+;; loads there directly and keeps its ordinary home intact. Otherwise the
+;; destination home, when available, is the natural one-copy SRC; only a
+;; fixed/memory/live dividend needs a scavenged source register.
 (define (compiler-backend-emit-signed-literal-divmod-dst-with-plan
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -21441,8 +21476,18 @@
     [lhs-home : String (compiler-backend-value-scalar-register assignments lhs)]
     [lhs-live-after : bool (compiler-backend-value-live-after-here? lhs)]
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    [direct-rax-src? : bool
+      (and
+        lhs-live-after
+        (not (string.eq lhs-home "%rax"))
+        (not (string.eq lhs-home "%rdx"))
+        (compiler-backend-signed-literal-divmod-direct-rax-src?
+          op
+          rhs
+          operand-ty))]
     [own-src? : bool
       (and
+        (not direct-rax-src?)
         (compiler-backend-divmod-src-register? lhs-home)
         (not (string.eq lhs-home magic))
         (not (string.eq lhs-home hoist-reg))
@@ -21460,10 +21505,11 @@
         (not (and lhs-live-after (string.eq dst-home lhs-home))))]
     [src-excl : (Array String) (compiler-backend-divmod-dividend-exclude magic)]
     [src : String
-      (if own-src?
-        lhs-home
-        (if dst-src?
-          dst-home
+      (cond
+        [direct-rax-src? "%rax"]
+        [own-src? lhs-home]
+        [dst-src? dst-home]
+        [else
           (compiler-backend-planned-or-scavenge-divmod-src-reg
             planned-src
             dst
@@ -21472,7 +21518,7 @@
               (compiler-backend-scavenge-exclude-append src-excl 5 hoist-reg))
             (if (string.eq hoist-reg "")
               5
-              6))))]
+              6))])]
     [result-reg : String
       (if (string.eq dst-home "")
         (if (compiler-backend-binop-wants-remainder? op)

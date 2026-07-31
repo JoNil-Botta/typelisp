@@ -5,7 +5,7 @@ benchmark/c-scalar/arith_loop	500001471
 benchmark/typelisp/array_sum	1426229775
 benchmark/c/array_sum	2101310930
 benchmark/c-scalar/array_sum	1651021946
-benchmark/typelisp/borrowed_disjoint_store	1300000258
+benchmark/typelisp/borrowed_disjoint_store	1300000257
 benchmark/c/borrowed_disjoint_store	1400001545
 benchmark/c-scalar/borrowed_disjoint_store	1400001545
 benchmark/typelisp/hashmap_churn	4077482

@@ -10286,39 +10286,50 @@
   (let
     [store-handle : i64 (struct-get env store)]
     [head : i64 (struct-get env head)]
-    (cond
-      [(= head -1) (AstMaybeType.No)]
-      [(< head -1)
-        (let
-          [cache : TcTypeEnvCache
-            (tc-type-env-cache-at
-              (tc-type-env-cache-ptr
-                store-handle
-                (tc-type-env-cache-index head)))]
-          [ids : tc_i64_i64_map.Map (struct-get cache ids)]
-          (if (struct-get cache scan-through)
-            (match (tc_i64_i64_map.get (& ids) name-id)
-              [(tc_i64_i64_map.LookupFound index)
-                (AstMaybeType.Some (array-ref (struct-get cache values) index))]
-              [(tc_i64_i64_map.LookupMissing)
-                (if (struct-get cache partial)
-                  (tc-env-marker-type-scan
-                    (TcTypeEnv store-handle (struct-get cache below) 0)
-                    name-id)
-                  (AstMaybeType.No))])
-            (AstMaybeType.No)))]
-      [else
-        (let
-          [binding-ptr : (Ptr TcTypeEnvBinding)
-            (tc-type-env-binding-ptr store-handle head)]
-          (if (= (tc-type-env-binding-name-at binding-ptr) name-id)
-            (AstMaybeType.Some (tc-type-env-binding-type-at binding-ptr))
-            (tc-env-marker-type-scan
-              (TcTypeEnv
-                store-handle
-                (tc-type-env-binding-parent-at binding-ptr)
-                0)
-              name-id)))])))
+    [result : AstMaybeType (AstMaybeType.No)]
+    [done : bool false]
+    ;; A source-level by-value `TcTypeEnv` now receives a private entry
+    ;; snapshot. Keep this potentially very deep persistent-env walk iterative
+    ;; so one snapshot frame is not retained for every binding.
+    (begin
+      (while (not done)
+        (cond
+          [(= head -1) (set! done true)]
+          [(< head -1)
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr
+                    store-handle
+                    (tc-type-env-cache-index head)))]
+              [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+              (if (struct-get cache scan-through)
+                (match (tc_i64_i64_map.get (& ids) name-id)
+                  [(tc_i64_i64_map.LookupFound index)
+                    (begin
+                      (set!
+                        result
+                        (AstMaybeType.Some
+                          (array-ref (struct-get cache values) index)))
+                      (set! done true))]
+                  [(tc_i64_i64_map.LookupMissing)
+                    (if (struct-get cache partial)
+                      (set! head (struct-get cache below))
+                      (set! done true))])
+                (set! done true)))]
+          [else
+            (let
+              [binding-ptr : (Ptr TcTypeEnvBinding)
+                (tc-type-env-binding-ptr store-handle head)]
+              (if (= (tc-type-env-binding-name-at binding-ptr) name-id)
+                (begin
+                  (set!
+                    result
+                    (AstMaybeType.Some
+                      (tc-type-env-binding-type-at binding-ptr)))
+                  (set! done true))
+                (set! head (tc-type-env-binding-parent-at binding-ptr))))]))
+      result)))
 
 (define (tc-env-marker-type [env : TcTypeEnv] [name-id : i64]) : AstMaybeType
   (let
@@ -13471,25 +13482,58 @@
   (tc-push-region-id env region))
 
 (define (tc-string-list-contains [items : TcStringList] [name : String]) : bool
-  (match items
-    [(TcStringList.Nil) false]
-    [(TcStringList.Cons item rest)
-      (if (string.eq item name)
-        true
-        (tc-string-list-contains (box-get rest) name))]))
+  (let
+    [cursor : TcStringList items]
+    [found : bool false]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(TcStringList.Nil) (set! done true)]
+          [(TcStringList.Cons item rest)
+            (if (string.eq item name)
+              (begin
+                (set! found true)
+                (set! done true))
+              (set! cursor (box-get rest)))]))
+      found)))
 
 (define (tc-string-list-add [items : TcStringList] [name : String]) : TcStringList
   (if (tc-string-list-contains items name)
     items
     (TcStringList.Cons name (box items))))
 
+(define (tc-string-list-reverse [items : TcStringList]) : TcStringList
+  (let
+    [cursor : TcStringList items]
+    [out : TcStringList TcStringList.Nil]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(TcStringList.Nil) (set! done true)]
+          [(TcStringList.Cons name rest)
+            (begin
+              (set! out (TcStringList.Cons name (box out)))
+              (set! cursor (box-get rest)))]))
+      out)))
+
 (define (tc-name-id-list-contains [items : TcNameIdList] [name : i64]) : bool
-  (match items
-    [(TcNameIdList.Nil) false]
-    [(TcNameIdList.Cons item rest)
-      (if (= item name)
-        true
-        (tc-name-id-list-contains (box-get rest) name))]))
+  (let
+    [cursor : TcNameIdList items]
+    [found : bool false]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(TcNameIdList.Nil) (set! done true)]
+          [(TcNameIdList.Cons item rest)
+            (if (= item name)
+              (begin
+                (set! found true)
+                (set! done true))
+              (set! cursor (box-get rest)))]))
+      found)))
 
 (define (tc-name-id-list-add [items : TcNameIdList] [name : i64]) : TcNameIdList
   (if (tc-name-id-list-contains items name)
@@ -13497,39 +13541,76 @@
     (TcNameIdList.Cons name (box items))))
 
 (define (tc-name-id-list-add-all [items : TcNameIdList] [names : TcNameIdList]) : TcNameIdList
-  (match names
-    [(TcNameIdList.Nil) items]
-    [(TcNameIdList.Cons name rest)
-      (tc-name-id-list-add-all (tc-name-id-list-add items name) (box-get rest))]))
+  (let
+    [out : TcNameIdList items]
+    [cursor : TcNameIdList names]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(TcNameIdList.Nil) (set! done true)]
+          [(TcNameIdList.Cons name rest)
+            (begin
+              (set! out (tc-name-id-list-add out name))
+              (set! cursor (box-get rest)))]))
+      out)))
 
 (define (tc-name-id-list-overlaps? [a : TcNameIdList] [b : TcNameIdList]) : bool
-  (match a
-    [(TcNameIdList.Nil) false]
-    [(TcNameIdList.Cons item rest)
-      (if (tc-name-id-list-contains b item)
-        true
-        (tc-name-id-list-overlaps? (box-get rest) b))]))
+  (let
+    [cursor : TcNameIdList a]
+    [overlap : bool false]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(TcNameIdList.Nil) (set! done true)]
+          [(TcNameIdList.Cons item rest)
+            (if (tc-name-id-list-contains b item)
+              (begin
+                (set! overlap true)
+                (set! done true))
+              (set! cursor (box-get rest)))]))
+      overlap)))
 
 (define (tc-name-id-list-eq [a : TcNameIdList] [b : TcNameIdList]) : bool
-  (match a
-    [(TcNameIdList.Nil)
-      (match b
-        [(TcNameIdList.Nil) true]
-        [_ false])]
-    [(TcNameIdList.Cons item rest)
+  (let
+    [cursor : TcNameIdList a]
+    [same : bool true]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(TcNameIdList.Nil) (set! done true)]
+          [(TcNameIdList.Cons item rest)
+            (if (tc-name-id-list-contains b item)
+              (set! cursor (box-get rest))
+              (begin
+                (set! same false)
+                (set! done true)))]))
       (and
-        (tc-name-id-list-contains b item)
-        (tc-name-id-list-eq (box-get rest) b))]))
+        same
+        (match b
+          [(TcNameIdList.Nil) true]
+          [_ false])))))
 
 (define (tc-name-id-list-all-in?
   [items : TcNameIdList]
   [allowed : TcNameIdList]) : bool
-  (match items
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons item rest)
-      (and
-        (tc-name-id-list-contains allowed item)
-        (tc-name-id-list-all-in? (box-get rest) allowed))]))
+  (let
+    [cursor : TcNameIdList items]
+    [all-in : bool true]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(TcNameIdList.Nil) (set! done true)]
+          [(TcNameIdList.Cons item rest)
+            (if (tc-name-id-list-contains allowed item)
+              (set! cursor (box-get rest))
+              (begin
+                (set! all-in false)
+                (set! done true)))]))
+      all-in)))
 
 (define (tc-bind-cleanup-owner [env : TcTypeEnv] [name-id : i64]) : TcTypeEnv
   (tc-bind-runtime-marker-id
@@ -13865,42 +13946,46 @@
   (let
     [store-handle : i64 (struct-get env store)]
     [head : i64 (struct-get env head)]
-    (cond
-      [(= head -1) TcStringList.Nil]
-      [(< head -1)
-        (let
-          [cache : TcTypeEnvCache
-            (tc-type-env-cache-at
-              (tc-type-env-cache-ptr
-                store-handle
-                (tc-type-env-cache-index head)))]
-          (if (struct-get cache scan-through)
-            (tc-active-cleanup-owners-scan
-              root
-              (TcTypeEnv store-handle (struct-get cache rest) 0))
-            TcStringList.Nil))]
-      [else
-        (let
-          [binding-ptr : (Ptr TcTypeEnvBinding)
-            (tc-type-env-binding-ptr store-handle head)]
-          [key : i64 (tc-type-env-binding-name-at binding-ptr)]
-          [ty : AstType (tc-type-env-binding-type-at binding-ptr)]
-          [rest : TcTypeEnv
-            (TcTypeEnv
-              store-handle
-              (tc-type-env-binding-parent-at binding-ptr)
-              0)]
-          [owners : TcStringList (tc-active-cleanup-owners-scan root rest)]
-          (if (= key (tc-cleanup-owner-marker-id))
-            (match ty
-              [(AstType.Var owner)
-                (let
-                  [owner-str : String (intern-str owner)]
-                  (if (tc-cleanup-owner-active-id? root owner)
-                    (tc-string-list-add owners owner-str)
-                    owners))]
-              [_ owners])
-            owners))])))
+    [owners-reversed : TcStringList TcStringList.Nil]
+    [done : bool false]
+    ;; Preserve the old newest-first result order, but do not retain one
+    ;; recursive frame per persistent environment binding. Large macro modules
+    ;; can legitimately carry hundreds of thousands of bindings here.
+    (begin
+      (while (not done)
+        (cond
+          [(= head -1) (set! done true)]
+          [(< head -1)
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr
+                    store-handle
+                    (tc-type-env-cache-index head)))]
+              (if (struct-get cache scan-through)
+                (set! head (struct-get cache rest))
+                (set! done true)))]
+          [else
+            (let
+              [binding-ptr : (Ptr TcTypeEnvBinding)
+                (tc-type-env-binding-ptr store-handle head)]
+              [key : i64 (tc-type-env-binding-name-at binding-ptr)]
+              [ty : AstType (tc-type-env-binding-type-at binding-ptr)]
+              (begin
+                (if (= key (tc-cleanup-owner-marker-id))
+                  (match ty
+                    [(AstType.Var owner)
+                      (let
+                        [owner-str : String (intern-str owner)]
+                        (if (tc-cleanup-owner-active-id? root owner)
+                          (set!
+                            owners-reversed
+                            (tc-string-list-add owners-reversed owner-str))
+                          unit))]
+                    [_ unit])
+                  unit)
+                (set! head (tc-type-env-binding-parent-at binding-ptr))))]))
+      (tc-string-list-reverse owners-reversed))))
 
 (define (tc-active-cleanup-owners [env : TcTypeEnv]) : TcStringList
   (begin
@@ -55722,14 +55807,22 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [expr-id : i64]) : TcMoveResult
-  (tc-move-check-expr
-    ctx
-    expr-bases
-    env
-    locals
-    loop-carried
-    moved
-    (ast-expr-segment-bases-get expr-bases expr-id)))
+  (let
+    [current-id : i64 expr-id]
+    [current : AstExpr (ast-expr-segment-bases-get expr-bases current-id)]
+    [done : bool false]
+    ;; Spans are transparent to move checking. Strip them in this small
+    ;; trampoline so deeply nested source expressions do not retain one full
+    ;; `tc-move-check-expr` frame for every span wrapper.
+    (begin
+      (while (not done)
+        (match current
+          [(AstExpr.Spanned inner-id _)
+            (begin
+              (set! current-id inner-id)
+              (set! current (ast-expr-segment-bases-get expr-bases current-id)))]
+          [_ (set! done true)]))
+      (tc-move-check-expr ctx expr-bases env locals loop-carried moved current))))
 
 (define (tc-move-check-ptr-addr-of-place
   [ctx : TcContext]

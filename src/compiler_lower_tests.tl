@@ -1760,7 +1760,7 @@
                         (lower-test-function-copy-bytes-count
                           mixed-functions
                           "id-mixed")
-                        1))])]
+                        2))])]
               [(ResultCompilerLower.Err _) false]))])]
     [(ResultCompilerLower.Err _) false]))
 
@@ -1850,8 +1850,8 @@
           (and
             (=
               (lower-test-function-copy-bytes-count functions "direct-field")
-              0)
-            (= (lower-test-function-copy-bytes-count functions "direct-init") 0)
+              1)
+            (= (lower-test-function-copy-bytes-count functions "direct-init") 1)
             (=
               (lower-test-function-copy-bytes-count
                 functions
@@ -1861,7 +1861,7 @@
               (lower-test-function-copy-bytes-count
                 functions
                 "direct-fixed-array")
-              0)
+              1)
             (>
               (lower-test-function-copy-bytes-count
                 functions
@@ -5952,18 +5952,21 @@
             (= (lower-test-function-call-count functions "step" "finish") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
+;; A memory-class by-value parameter names its private callee-entry snapshot.
+;; Passing that stack-backed snapshot onward cannot use a tail jump: the current
+;; frame must remain live until the callee has copied the argument.
 (define (compiler-lower-tail-aggregate-param-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-aggregate-param-source))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-tail-call-count functions "step" "step") 1)
-            (= (lower-test-function-call-count functions "step" "step") 0)
+            (= (lower-test-function-tail-call-count functions "step" "step") 0)
+            (> (lower-test-function-call-count functions "step" "step") 0)
             (=
               (lower-test-function-tail-call-count functions "step" "finish")
-              1)
-            (= (lower-test-function-call-count functions "step" "finish") 0))])]
+              0)
+            (> (lower-test-function-call-count functions "step" "finish") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-aggregate-local-shape-ok?) : bool
@@ -6003,6 +6006,7 @@
             (= (lower-test-function-indirect-call-count functions "step") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
+;; The same snapshot lifetime rule applies when the callee is indirect.
 (define (compiler-lower-tail-indirect-aggregate-param-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-tail-indirect-aggregate-param-source))
@@ -6012,8 +6016,8 @@
           (and
             (=
               (lower-test-function-indirect-tail-call-count functions "step")
-              1)
-            (= (lower-test-function-indirect-call-count functions "step") 0))])]
+              0)
+            (> (lower-test-function-indirect-call-count functions "step") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-indirect-aggregate-return-shape-ok?) : bool

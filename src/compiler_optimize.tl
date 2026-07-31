@@ -17492,11 +17492,23 @@
     [_ false]))
 
 (define (opt-licm-header-slot-source?
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
   [ptrs : OptLicmPtrEnv]
+  [late? : bool]
   [src : CompilerIrValue]) : bool
   (match src
     [(CompilerIrValue.Var ptr-var)
-      (opt-licm-header-slot-ptr-kind? (opt-licm-ptr-lookup ptrs ptr-var))]
+      (or
+        ;; GVN canonicalizes a zero-offset descriptor Gep back to the
+        ;; descriptor handle itself. Preserve the same header-slot fact for
+        ;; that direct `load %array` spelling. Enable this only in the
+        ;; post-BCE LICM run so moving the length cannot hide the identity an
+        ;; enclosing loop's bounds-check elimination still needs.
+        (and
+          late?
+          (opt-licm-array-header-var? type-segment-bases types ptr-var))
+        (opt-licm-header-slot-ptr-kind? (opt-licm-ptr-lookup ptrs ptr-var)))]
     [_ false]))
 
 (define (opt-licm-gep-kind
@@ -17664,7 +17676,21 @@
                     (OptLicmPtrKind.DataBuffer object))
                   dst
                   (opt-licm-root-env-lookup (struct-get invalid roots) object))]
-              [_ invalid])]
+              [_
+                (if (opt-licm-array-header-var?
+                  type-segment-bases
+                  types
+                  ptr-var)
+                  (opt-licm-store-state-bind-root
+                    (opt-licm-store-state-bind-ptr
+                      invalid
+                      dst
+                      (OptLicmPtrKind.DataBuffer ptr-var))
+                    dst
+                    (opt-licm-root-env-lookup
+                      (struct-get invalid roots)
+                      ptr-var))
+                  invalid)])]
           [_ invalid])]
       [_ invalid])))
 
@@ -17721,6 +17747,52 @@
             (opt-licm-store-summary-for-storeptr
               (struct-get provenance ptrs)
               ptr)]
+          (match root
+            [(OptLicmRoot.Fresh _)
+              (opt-licm-store-state-add-rooted-store
+                provenance
+                root
+                legacy-summary)]
+            [(OptLicmRoot.Exclusive _)
+              (opt-licm-store-state-add-rooted-store
+                provenance
+                root
+                legacy-summary)]
+            [_ (opt-licm-store-state-add-summary provenance legacy-summary)]))]
+      ;; Vector stores use the same base-pointer provenance as StorePtr. Treat
+      ;; them as element writes so descriptor data/length loads can move out of
+      ;; an enclosing repetition loop while remaining blocked by an aliasing
+      ;; store to that descriptor.
+      [(CompilerIrInstr.VectorStore payload-box)
+        (let
+          [base : CompilerIrValue (struct-get (box-get payload-box) base)]
+          [root : OptLicmRoot
+            (opt-licm-root-of-value (struct-get provenance roots) base)]
+          [legacy-summary : OptLicmStoreSummary
+            (opt-licm-store-summary-for-storeptr
+              (struct-get provenance ptrs)
+              base)]
+          (match root
+            [(OptLicmRoot.Fresh _)
+              (opt-licm-store-state-add-rooted-store
+                provenance
+                root
+                legacy-summary)]
+            [(OptLicmRoot.Exclusive _)
+              (opt-licm-store-state-add-rooted-store
+                provenance
+                root
+                legacy-summary)]
+            [_ (opt-licm-store-state-add-summary provenance legacy-summary)]))]
+      [(CompilerIrInstr.PredicatedStore payload-box)
+        (let
+          [base : CompilerIrValue (struct-get (box-get payload-box) base)]
+          [root : OptLicmRoot
+            (opt-licm-root-of-value (struct-get provenance roots) base)]
+          [legacy-summary : OptLicmStoreSummary
+            (opt-licm-store-summary-for-storeptr
+              (struct-get provenance ptrs)
+              base)]
           (match root
             [(OptLicmRoot.Fresh _)
               (opt-licm-store-state-add-rooted-store
@@ -17931,6 +18003,43 @@
             (opt-licm-store-summary-clean? root-summary)
             (opt-licm-store-roots-safe? store-roots load-root))))]))
 
+(define (opt-licm-vector-memory-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.VectorLoad _ _ _ _ _) true]
+    [(CompilerIrInstr.VectorStore _) true]
+    [(CompilerIrInstr.PredicatedLoad _) true]
+    [(CompilerIrInstr.PredicatedStore _) true]
+    [_ false]))
+
+(define (opt-licm-vector-memory-instrs?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-licm-vector-memory-instr? (compiler-ir-instr-seq-ref instrs index))
+      (opt-licm-vector-memory-instrs? instrs (+ index 1)))))
+
+(define (opt-licm-vector-memory-blocks? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-licm-vector-memory-instrs? instrs 0)
+            (opt-licm-vector-memory-blocks? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-licm-vector-memory-blocks? (compiler-ir-block-seq-to-list seq))]))
+
+;; LICM modes: 0 is the ordinary pre-BCE pass, 1 is the scalar post-LFTR pass,
+;; and 2 is the post-LFTR pass for a loop with vector memory operations.
+(define (opt-licm-mode-late? [mode : i64]) : bool
+  (> mode 0))
+
+(define (opt-licm-mode-vector? [mode : i64]) : bool
+  (= mode 2))
+
 (define (opt-licm-candidate?
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
@@ -17943,8 +18052,41 @@
   [roots : OptLicmRootEnv]
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
+  [licm-mode : i64]
   [instr : CompilerIrInstr]) : bool
   (match instr
+    [(CompilerIrInstr.Mov _ src _)
+      (and
+        (opt-licm-mode-late? licm-mode)
+        (opt-licm-value-invariant? loop-defs hoisted src)
+        ;; In scalar loops, do not lengthen an arbitrary outside value's live
+        ;; range merely to move its copy (the quicksort copy-c-string
+        ;; regression). Literal seeds still unlock folding/motion. Vector loops
+        ;; also keep copies: splitting their data-pointer live ranges prevents
+        ;; the backend from reloading each pointer for every unrolled access.
+        (match src
+          [(CompilerIrValue.Var _) (opt-licm-mode-vector? licm-mode)]
+          [_ true]))]
+    [(CompilerIrInstr.Cast _ src _ _)
+      (and
+        (opt-licm-mode-late? licm-mode)
+        (opt-licm-value-invariant? loop-defs hoisted src)
+        (match src
+          [(CompilerIrValue.Var var)
+            (or
+              (opt-licm-mode-vector? licm-mode)
+              (opt-used-contains hoisted var))]
+          [_ true]))]
+    [(CompilerIrInstr.Bitcast _ src _ _)
+      (and
+        (opt-licm-mode-late? licm-mode)
+        (opt-licm-value-invariant? loop-defs hoisted src)
+        (match src
+          [(CompilerIrValue.Var var)
+            (or
+              (opt-licm-mode-vector? licm-mode)
+              (opt-used-contains hoisted var))]
+          [_ true]))]
     [(CompilerIrInstr.BinOp _ op lhs rhs _)
       (and
         (not (opt-binop-traps? op))
@@ -17954,16 +18096,40 @@
     [(CompilerIrInstr.Gep dst base offset ty)
       (and
         (opt-gvn-stable-var? sources dst)
-        (opt-licm-values-invariant? loop-defs hoisted base offset)
-        (opt-licm-memory-safe?
-          store-summary
-          legacy-store-summary
-          store-roots
-          any-call?
-          (opt-licm-root-of-value roots base)
+        ;; Keep an address calculation out of an unknown-call-spanning live
+        ;; range. The backend otherwise has to preserve it across the call,
+        ;; which can spill the descriptor base used by every loop iteration.
+        ;; A direct call proven memory-clean retains the established LICM
+        ;; behavior and cannot introduce that borrowed-root regression.
+        (or
+          (not any-call?)
           (and
-            (opt-licm-store-summary-header-load-safe? legacy-store-summary)
-            (opt-licm-header-slot-gep? type-segment-bases types base offset ty))))]
+            (not (struct-get store-summary call-or-unknown?))
+            (not (struct-get legacy-store-summary call-or-unknown?))))
+        ;; Gep computes an address from SSA values; it does not read through
+        ;; that address. Hidden mutable-global reads are already rejected by
+        ;; opt-licm-value-invariant?, so intervening stores cannot invalidate
+        ;; this pure address calculation. Before BCE, retain the older memory
+        ;; gate: moving a descriptor-length address too early can hide the
+        ;; shared bound identity BCE needs. The post-LFTR run can use purity
+        ;; after BCE and unrolling have consumed that fact.
+        (opt-licm-values-invariant? loop-defs hoisted base offset)
+        (or
+          (opt-licm-mode-late? licm-mode)
+          (opt-licm-memory-safe?
+            store-summary
+            legacy-store-summary
+            store-roots
+            any-call?
+            (opt-licm-root-of-value roots base)
+            (and
+              (opt-licm-store-summary-header-load-safe? legacy-store-summary)
+              (opt-licm-header-slot-gep?
+                type-segment-bases
+                types
+                base
+                offset
+                ty)))))]
     [(CompilerIrInstr.Load dst src _)
       (and
         (opt-gvn-stable-var? sources dst)
@@ -17977,7 +18143,12 @@
           (opt-licm-root-of-value roots src)
           (and
             (opt-licm-store-summary-header-load-safe? legacy-store-summary)
-            (opt-licm-header-slot-source? ptrs src))))]
+            (opt-licm-header-slot-source?
+              type-segment-bases
+              types
+              ptrs
+              (opt-licm-mode-late? licm-mode)
+              src))))]
     [_ false]))
 
 (define (opt-licm-add-hoisted-def
@@ -18000,6 +18171,7 @@
   [roots : OptLicmRootEnv]
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
+  [licm-mode : i64]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult.Result
@@ -18021,6 +18193,7 @@
         roots
         store-roots
         any-call?
+        licm-mode
         instr)
         (match (opt-licm-filter-instr-seq-from
           type-segment-bases
@@ -18035,6 +18208,7 @@
           roots
           store-roots
           any-call?
+          licm-mode
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult.Result kept moved next-hoisted _)
             (OptLicmInstrsResult.Result
@@ -18055,6 +18229,7 @@
           roots
           store-roots
           any-call?
+          licm-mode
           hoisted)
           [(OptLicmInstrsResult.Result kept moved next-hoisted changed)
             (OptLicmInstrsResult.Result
@@ -18075,6 +18250,7 @@
   [roots : OptLicmRootEnv]
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
+  [licm-mode : i64]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     type-segment-bases
@@ -18089,6 +18265,7 @@
     roots
     store-roots
     any-call?
+    licm-mode
     hoisted))
 
 (define (opt-licm-filter-body-blocks
@@ -18103,6 +18280,7 @@
   [roots : OptLicmRootEnv]
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
+  [licm-mode : i64]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmBlocksResult
   (match blocks
     [(CompilerIrBlockList.Nil)
@@ -18126,6 +18304,7 @@
             roots
             store-roots
             any-call?
+            licm-mode
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
@@ -18140,6 +18319,7 @@
                 roots
                 store-roots
                 any-call?
+                licm-mode
                 next-hoisted)
                 [(OptLicmBlocksResult.Result
                     rest-blocks
@@ -18166,6 +18346,7 @@
         roots
         store-roots
         any-call?
+        licm-mode
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -18639,6 +18820,7 @@
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [late? : bool]
   [blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]) : OptBlockListPassResult
   (match (opt-natural-loop-preheader loop)
@@ -18714,6 +18896,11 @@
           roots
           store-roots
           any-call?
+          (if late?
+            (if (opt-licm-vector-memory-blocks? body-blocks)
+              2
+              1)
+            0)
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             (if changed
@@ -18753,6 +18940,7 @@
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [late? : bool]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : OptBlockListPassResult
   (match loops
@@ -18764,6 +18952,7 @@
         types
         provenance
         direct-call-clean
+        late?
         blocks
         loop)
         [(OptBlockListPassResult.Result loop-blocks loop-changed)
@@ -18773,6 +18962,7 @@
             types
             provenance
             direct-call-clean
+            late?
             (box-get rest)
             loop-blocks)
             [(OptBlockListPassResult.Result rest-blocks rest-changed)
@@ -18786,6 +18976,7 @@
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [late? : bool]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : OptBlockListPassResult
   (opt-licm-apply-loops
@@ -18794,6 +18985,7 @@
     types
     provenance
     direct-call-clean
+    late?
     loops
     blocks))
 
@@ -18802,6 +18994,7 @@
   [context : OptCfgContext]
   [verified? : bool]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [late? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match (opt-verify-gate verified? func context)
@@ -18836,6 +19029,7 @@
                     types
                     provenance
                     direct-call-clean
+                    late?
                     loops
                     blocks)
                     [(OptBlockListPassResult.Result
@@ -18880,6 +19074,7 @@
     context
     false
     (opt_i64_i64_map.with-capacity 1)
+    false
     func))
 
 (define (opt-licm-function-with-context
@@ -18900,6 +19095,7 @@
         (opt-cfg-context-build blocks)
         false
         direct-call-clean
+        false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
@@ -18912,6 +19108,869 @@
         type-segment-bases
         (opt-cfg-context-build blocks)
         func)]))
+
+;; --- invariant nested-loop entry unswitch ------------------------------------
+;;
+;; Inlining and compiler-generated foreach lowering can put an inner loop's
+;; entry guard inside an enclosing repetition loop. Ordinary LICM moves the
+;; guard operands but cannot move the Branch terminator, so the same invariant
+;; decision is still made on every outer iteration. Specialize the enclosing
+;; loop once on that decision:
+;;
+;;   guarded outer preheader -> true original outer body
+;;                           -> false clone of outer body
+;;
+;; Keeping the original as the true path preserves the hot nested loop's SSA
+;; identities and register allocation. CFG cleanup removes the nested-loop
+;; blocks from the false clone, leaving only its cold bypass skeleton. The
+;; chosen branch becomes a Jump in each version. Both branch targets must remain
+;; inside the outer loop, and one must enter a nested natural loop. The outer
+;; header may not have an exit edge: that proves its preheader is already behind
+;; the outer zero-trip guard, so unswitching does no work when the outer loop
+;; executes zero times. The transform is deliberately bounded and accepts only
+;; the scalar instruction subset its cloner handles.
+(defstruct OptLicmUnswitchShape
+  (header i64)
+  (preheader i64)
+  (body-labels OptLabelSet)
+  (body-blocks CompilerIrBlockList)
+  (branch-label i64)
+  (branch-index i64)
+  (cond CompilerIrValue)
+  (true-label i64)
+  (false-label i64))
+
+(defenum OptMaybeLicmUnswitchShape
+  (No)
+  (Some OptLicmUnswitchShape))
+
+(define (opt-licm-unswitch-suffix) : String
+  "__licm_false")
+
+(define (opt-licm-unswitch-clone-label
+  [body-labels : OptLabelSet]
+  [label : i64]) : i64
+  (if (opt-label-contains body-labels label)
+    (compiler-ir-label
+      (string.append (compiler-ir-label-text label) (opt-licm-unswitch-suffix)))
+    label))
+
+(define (opt-licm-unswitch-labels-contained?
+  [labels : OptLabelSet]
+  [container : OptLabelSet]) : bool
+  (match labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (and
+        (opt-label-contains container (opt-label-ref labels 0))
+        (opt-licm-unswitch-labels-contained? (opt-label-tail labels) container))]))
+
+(define (opt-licm-unswitch-target-enters-nested-loop?
+  [loops : OptNaturalLoopList]
+  [outer-header : i64]
+  [outer-body : OptLabelSet]
+  [target : i64]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons loop rest)
+      (let
+        [header : i64 (opt-natural-loop-header loop)]
+        [enters? : bool
+          (and
+            (not (= header outer-header))
+            (opt-label-contains outer-body header)
+            (or
+              (= target header)
+              (match (opt-natural-loop-preheader loop)
+                [(OptLoopPreheader.Some preheader) (= target preheader)]
+                [(OptLoopPreheader.No) false])))]
+        (or
+          enters?
+          (opt-licm-unswitch-target-enters-nested-loop?
+            (box-get rest)
+            outer-header
+            outer-body
+            target)))]))
+
+(define (opt-licm-unswitch-instr-supported? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ _ _) true]
+    [(CompilerIrInstr.Cast _ _ _ _) true]
+    [(CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.UnOp _ _ _ _) true]
+    [(CompilerIrInstr.Gep _ _ _ _) true]
+    [(CompilerIrInstr.Load _ _ _) true]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(CompilerIrInstr.Phi _ _ _) true]
+    [(CompilerIrInstr.Jump _) true]
+    [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) true]
+    [(CompilerIrInstr.Switch _ _ _ _) true]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
+    [_ false]))
+
+(define (opt-licm-unswitch-instrs-supported?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (and
+      (opt-licm-unswitch-instr-supported?
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-licm-unswitch-instrs-supported? instrs (+ index 1)))))
+
+(define (opt-licm-unswitch-blocks-supported? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) true]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (and
+            (not (opt-cfg-instr-seq-can-fallthrough? instrs))
+            (opt-licm-unswitch-instrs-supported? instrs 0)
+            (opt-licm-unswitch-blocks-supported? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-licm-unswitch-blocks-supported? (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-licm-unswitch-labels-fresh?
+  [blocks : CompilerIrBlockList]
+  [labels : OptLabelSet]) : bool
+  (match labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (and
+        (not
+          (opt-cfg-block-exists?
+            blocks
+            (opt-licm-unswitch-clone-label labels (opt-label-ref labels 0))))
+        (opt-licm-unswitch-labels-fresh? blocks (opt-label-tail labels)))]))
+
+(define (opt-licm-unswitch-has-versioned-label? [labels : OptLabelSet]) : bool
+  (match labels
+    [(OptLabelSet.Nil) false]
+    [(OptLabelSet.Dense _ _)
+      (let
+        [text : String (compiler-ir-label-text (opt-label-ref labels 0))]
+        [marker : String "__bce_"]
+        (or
+          (string.contains (& text) (& marker))
+          (opt-licm-unswitch-has-versioned-label? (opt-label-tail labels))))]))
+
+(define (opt-licm-unswitch-preheader-jumps-to?
+  [blocks : CompilerIrBlockList]
+  [preheader : i64]
+  [header : i64]) : bool
+  (match (opt-cfg-find-block blocks preheader)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (and
+              (> count 0)
+              (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                [(CompilerIrInstr.Jump target) (= target header)]
+                [_ false])))])]))
+
+(define (opt-licm-unswitch-find-instrs
+  [loops : OptNaturalLoopList]
+  [header : i64]
+  [body-labels : OptLabelSet]
+  [loop-defs : opt_i64_i64_map.Map]
+  [label : i64]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptMaybeLicmUnswitchShape
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptMaybeLicmUnswitchShape.No)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Branch cond true-label false-label)
+        (let
+          [candidate? : bool
+            (and
+              (opt-label-contains body-labels true-label)
+              (opt-label-contains body-labels false-label)
+              (or
+                (opt-licm-unswitch-target-enters-nested-loop?
+                  loops
+                  header
+                  body-labels
+                  true-label)
+                (opt-licm-unswitch-target-enters-nested-loop?
+                  loops
+                  header
+                  body-labels
+                  false-label))
+              (match cond
+                [(CompilerIrValue.Var var)
+                  (not (opt-used-contains loop-defs var))]
+                [_ false]))]
+          (if candidate?
+            ;; The caller fills the loop-wide fields after this local scan.
+            (OptMaybeLicmUnswitchShape.Some
+              (OptLicmUnswitchShape
+                header
+                (- 0 1)
+                body-labels
+                CompilerIrBlockList.Nil
+                label
+                index
+                cond
+                true-label
+                false-label))
+            (opt-licm-unswitch-find-instrs
+              loops
+              header
+              body-labels
+              loop-defs
+              label
+              instrs
+              (+ index 1))))]
+      [_
+        (opt-licm-unswitch-find-instrs
+          loops
+          header
+          body-labels
+          loop-defs
+          label
+          instrs
+          (+ index 1))])))
+
+(define (opt-licm-unswitch-find-blocks
+  [loops : OptNaturalLoopList]
+  [header : i64]
+  [latch : i64]
+  [body-labels : OptLabelSet]
+  [loop-defs : opt_i64_i64_map.Map]
+  [blocks : CompilerIrBlockList]) : OptMaybeLicmUnswitchShape
+  (match blocks
+    [(CompilerIrBlockList.Nil) (OptMaybeLicmUnswitchShape.No)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (if (or (= label header) (= label latch))
+            (opt-licm-unswitch-find-blocks
+              loops
+              header
+              latch
+              body-labels
+              loop-defs
+              (box-get rest))
+            (match (opt-licm-unswitch-find-instrs
+              loops
+              header
+              body-labels
+              loop-defs
+              label
+              instrs
+              0)
+              [(OptMaybeLicmUnswitchShape.Some shape)
+                (OptMaybeLicmUnswitchShape.Some shape)]
+              [(OptMaybeLicmUnswitchShape.No)
+                (opt-licm-unswitch-find-blocks
+                  loops
+                  header
+                  latch
+                  body-labels
+                  loop-defs
+                  (box-get rest))]))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-licm-unswitch-find-blocks
+        loops
+        header
+        latch
+        body-labels
+        loop-defs
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-licm-unswitch-loop-shape
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [loops : OptNaturalLoopList]
+  [loop : OptNaturalLoop]) : OptMaybeLicmUnswitchShape
+  (match (opt-natural-loop-preheader loop)
+    [(OptLoopPreheader.No) (OptMaybeLicmUnswitchShape.No)]
+    [(OptLoopPreheader.Some preheader)
+      (let
+        [header : i64 (opt-natural-loop-header loop)]
+        [latch : i64 (opt-natural-loop-latch loop)]
+        [body-labels : OptLabelSet (opt-natural-loop-body loop)]
+        [body-blocks : CompilerIrBlockList
+          (opt-natural-loop-current-body-blocks loop blocks)]
+        [successors : OptLabelSet
+          (opt-pred-map-successors (struct-get context pred-map) header)]
+        [loop-defs : opt_i64_i64_map.Map
+          (opt-licm-collect-defs-blocks
+            body-blocks
+            (opt_i64_i64_map.with-capacity
+              (opt-licm-body-map-capacity body-blocks)))]
+        (if (or
+          (< (opt-label-count body-labels) 3)
+          (> (opt-label-count body-labels) 16)
+          (> (compiler-ir-block-list-instruction-count body-blocks) 192)
+          ;; Do not clone an already BCE-versioned nested loop. Its fast/slow
+          ;; dispatch is not a zero-trip entry guard, and duplicating both
+          ;; versions inflates function-wide live-range weights enough to spill
+          ;; the hot scalar SPMD loop.
+          (opt-licm-unswitch-has-versioned-label? body-labels)
+          (not (opt-licm-unswitch-labels-contained? successors body-labels))
+          (not (opt-licm-unswitch-preheader-jumps-to? blocks preheader header))
+          (not (opt-licm-unswitch-labels-fresh? blocks body-labels))
+          (not (opt-licm-unswitch-blocks-supported? body-blocks)))
+          (OptMaybeLicmUnswitchShape.No)
+          (match (opt-licm-unswitch-find-blocks
+            loops
+            header
+            latch
+            body-labels
+            loop-defs
+            body-blocks)
+            [(OptMaybeLicmUnswitchShape.No) (OptMaybeLicmUnswitchShape.No)]
+            [(OptMaybeLicmUnswitchShape.Some candidate)
+              (OptMaybeLicmUnswitchShape.Some
+                (OptLicmUnswitchShape
+                  header
+                  preheader
+                  body-labels
+                  body-blocks
+                  (struct-get candidate branch-label)
+                  (struct-get candidate branch-index)
+                  (struct-get candidate cond)
+                  (struct-get candidate true-label)
+                  (struct-get candidate false-label)))])))]))
+
+(define (opt-licm-unswitch-switch-cases
+  [cases : CompilerIrSwitchCaseList]
+  [body-labels : OptLabelSet]) : CompilerIrSwitchCaseList
+  (match (compiler-ir-switch-case-list-force-cons cases)
+    [(CompilerIrSwitchCaseList.Nil) CompilerIrSwitchCaseList.Nil]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-licm-unswitch-switch-cases
+        (compiler-ir-switch-case-seq-to-list seq)
+        body-labels)]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(CompilerIrSwitchCase.Case tag label)
+          (compiler-ir-switch-case-cons-linked
+            tag
+            (opt-licm-unswitch-clone-label body-labels label)
+            (opt-licm-unswitch-switch-cases (box-get rest) body-labels))])]))
+
+(define (opt-licm-unswitch-clone-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [remap : (__tl_dyn-array CompilerIrValue)]
+  [body-labels : OptLabelSet]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) CompilerIrPhiInputList.Nil]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-licm-unswitch-clone-phi-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        remap
+        body-labels)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (compiler-ir-phi-input-cons
+        (opt-unroll-subst-value remap value)
+        (opt-licm-unswitch-clone-label body-labels label)
+        (opt-licm-unswitch-clone-phi-inputs (box-get rest) remap body-labels))]))
+
+(define (opt-licm-unswitch-clone-instr
+  [instr : CompilerIrInstr]
+  [remap : (__tl_dyn-array CompilerIrValue)]
+  [body-labels : OptLabelSet]
+  [all-labels : OptLabelSet]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Mov dst src ty)
+      (CompilerIrInstr.Mov
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        ty)]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (CompilerIrInstr.Cast
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (CompilerIrInstr.Bitcast
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (CompilerIrInstr.BinOp
+        (opt-bce-mb-remap-dst remap dst)
+        op
+        (opt-unroll-subst-value remap lhs)
+        (opt-unroll-subst-value remap rhs)
+        ty)]
+    [(CompilerIrInstr.UnOp dst op src ty)
+      (CompilerIrInstr.UnOp
+        (opt-bce-mb-remap-dst remap dst)
+        op
+        (opt-unroll-subst-value remap src)
+        ty)]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (CompilerIrInstr.Gep
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap base)
+        (opt-unroll-subst-value remap offset)
+        ty)]
+    [(CompilerIrInstr.Load dst src ty)
+      (CompilerIrInstr.Load
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        ty)]
+    [(CompilerIrInstr.StorePtr ptr value ty)
+      (CompilerIrInstr.StorePtr
+        (opt-unroll-subst-value remap ptr)
+        (opt-unroll-subst-value remap value)
+        ty)]
+    [(CompilerIrInstr.BoundsCheck index length ok-label)
+      (CompilerIrInstr.BoundsCheck
+        (opt-unroll-subst-value remap index)
+        (opt-unroll-subst-value remap length)
+        (if (opt-label-contains body-labels ok-label)
+          (opt-licm-unswitch-clone-label body-labels ok-label)
+          (if (opt-label-contains all-labels ok-label)
+            ok-label
+            (compiler-ir-label
+              (string.append
+                (compiler-ir-label-text ok-label)
+                (opt-licm-unswitch-suffix))))))]
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (CompilerIrInstr.Phi
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-licm-unswitch-clone-phi-inputs inputs remap body-labels)
+        ty)]
+    [(CompilerIrInstr.Jump target)
+      (CompilerIrInstr.Jump (opt-licm-unswitch-clone-label body-labels target))]
+    [(CompilerIrInstr.Branch cond true-label false-label)
+      (CompilerIrInstr.Branch
+        (opt-unroll-subst-value remap cond)
+        (opt-licm-unswitch-clone-label body-labels true-label)
+        (opt-licm-unswitch-clone-label body-labels false-label))]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (CompilerIrInstr.TotalEnumBranch
+        (opt-unroll-subst-value remap cond)
+        (opt-licm-unswitch-clone-label body-labels true-label)
+        (opt-licm-unswitch-clone-label body-labels false-label))]
+    [(CompilerIrInstr.Switch index base cases default-label)
+      (CompilerIrInstr.Switch
+        (opt-unroll-subst-value remap index)
+        base
+        (opt-licm-unswitch-switch-cases cases body-labels)
+        (opt-licm-unswitch-clone-label body-labels default-label))]
+    [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
+      (CompilerIrInstr.TotalEnumSwitch
+        (opt-unroll-subst-value remap index)
+        base
+        (opt-licm-unswitch-switch-cases cases body-labels)
+        (opt-licm-unswitch-clone-label body-labels default-label)
+        (opt-licm-unswitch-clone-label body-labels trap-label))]
+    [_ instr]))
+
+(define (opt-licm-unswitch-clone-instrs
+  [shape : OptLicmUnswitchShape]
+  [label : i64]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [remap : (__tl_dyn-array CompilerIrValue)]
+  [all-labels : OptLabelSet]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    CompilerIrInstrList.Nil
+    (compiler-ir-instr-cons
+      (if (and
+        (= label (struct-get shape branch-label))
+        (= index (struct-get shape branch-index)))
+        (CompilerIrInstr.Jump
+          (opt-licm-unswitch-clone-label
+            (struct-get shape body-labels)
+            (struct-get shape false-label)))
+        (opt-licm-unswitch-clone-instr
+          (compiler-ir-instr-seq-ref instrs index)
+          remap
+          (struct-get shape body-labels)
+          all-labels))
+      (opt-licm-unswitch-clone-instrs
+        shape
+        label
+        instrs
+        (+ index 1)
+        remap
+        all-labels))))
+
+(define (opt-licm-unswitch-clone-blocks
+  [shape : OptLicmUnswitchShape]
+  [blocks : CompilerIrBlockList]
+  [remap : (__tl_dyn-array CompilerIrValue)]
+  [all-labels : OptLabelSet]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (opt-licm-unswitch-clone-label
+                (struct-get shape body-labels)
+                label)
+              (opt-licm-unswitch-clone-instrs
+                shape
+                label
+                instrs
+                0
+                remap
+                all-labels))
+            (opt-licm-unswitch-clone-blocks
+              shape
+              (box-get rest)
+              remap
+              all-labels))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-licm-unswitch-clone-blocks
+        shape
+        (compiler-ir-block-seq-to-list seq)
+        remap
+        all-labels)]))
+
+(define (opt-licm-unswitch-clone-param-moves!
+  [params : CompilerIrParamList]
+  [remap : (__tl_dyn-array CompilerIrValue)]
+  [cell : (__tl_dyn-array i64)]) : CompilerIrInstrList
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) CompilerIrInstrList.Nil]
+    [(CompilerIrParamList.Array seq)
+      (opt-licm-unswitch-clone-param-moves!
+        (compiler-ir-param-seq-to-list seq)
+        remap
+        cell)]
+    [(CompilerIrParamList.Cons param rest)
+      (match param
+        [(CompilerIrParam.Param _ ty var)
+          (let
+            [fresh : i64 (array-ref cell 0)]
+            (begin
+              (array-set! cell 0 (+ fresh 1))
+              (array-set! remap var (CompilerIrValue.Var fresh))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Mov fresh (CompilerIrValue.Var var) ty)
+                (opt-licm-unswitch-clone-param-moves! (box-get rest) remap cell))))])]))
+
+(define (opt-licm-unswitch-instrs-onto
+  [prefix : CompilerIrInstrList]
+  [tail : CompilerIrInstrList]) : CompilerIrInstrList
+  (match prefix
+    [(CompilerIrInstrList.Nil) tail]
+    [(CompilerIrInstrList.Cons instr rest)
+      (compiler-ir-instr-cons
+        instr
+        (opt-licm-unswitch-instrs-onto (box-get rest) tail))]))
+
+(define (opt-licm-unswitch-original-instrs
+  [shape : OptLicmUnswitchShape]
+  [label : i64]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    CompilerIrInstrList.Nil
+    (compiler-ir-instr-cons
+      (if (and
+        (= label (struct-get shape branch-label))
+        (= index (struct-get shape branch-index)))
+        (CompilerIrInstr.Jump (struct-get shape true-label))
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-licm-unswitch-original-instrs shape label instrs (+ index 1)))))
+
+(define (opt-licm-unswitch-preheader-instrs
+  [shape : OptLicmUnswitchShape]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [clone-param-moves : CompilerIrInstrList]) : CompilerIrInstrList
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (if (>= index count)
+      CompilerIrInstrList.Nil
+      (if (= index (- count 1))
+        (opt-licm-unswitch-instrs-onto
+          clone-param-moves
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (struct-get shape cond)
+              (struct-get shape header)
+              (opt-licm-unswitch-clone-label
+                (struct-get shape body-labels)
+                (struct-get shape header)))
+            CompilerIrInstrList.Nil))
+        (compiler-ir-instr-cons
+          (compiler-ir-instr-seq-ref instrs index)
+          (opt-licm-unswitch-preheader-instrs
+            shape
+            instrs
+            (+ index 1)
+            clone-param-moves))))))
+
+(define (opt-licm-unswitch-extend-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [body-labels : OptLabelSet]
+  [remap : (__tl_dyn-array CompilerIrValue)]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) CompilerIrPhiInputList.Nil]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-licm-unswitch-extend-phi-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        body-labels
+        remap)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (let
+        [tail : CompilerIrPhiInputList
+          (opt-licm-unswitch-extend-phi-inputs (box-get rest) body-labels remap)]
+        (if (opt-label-contains body-labels label)
+          (compiler-ir-phi-input-cons
+            value
+            label
+            (compiler-ir-phi-input-cons
+              (opt-unroll-subst-value remap value)
+              (opt-licm-unswitch-clone-label body-labels label)
+              tail))
+          (compiler-ir-phi-input-cons value label tail)))]))
+
+(define (opt-licm-unswitch-extend-exit-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [body-labels : OptLabelSet]
+  [remap : (__tl_dyn-array CompilerIrValue)]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    CompilerIrInstrList.Nil
+    (compiler-ir-instr-cons
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.Phi dst inputs ty)
+          (CompilerIrInstr.Phi
+            dst
+            (opt-licm-unswitch-extend-phi-inputs inputs body-labels remap)
+            ty)]
+        [_ (compiler-ir-instr-seq-ref instrs index)])
+      (opt-licm-unswitch-extend-exit-instrs
+        instrs
+        (+ index 1)
+        body-labels
+        remap))))
+
+(define (opt-licm-unswitch-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [shape : OptLicmUnswitchShape]
+  [cloned : CompilerIrBlockList]
+  [remap : (__tl_dyn-array CompilerIrValue)]
+  [clone-param-moves : CompilerIrInstrList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (let
+            [tail : CompilerIrBlockList
+              (opt-licm-unswitch-rewrite-blocks
+                (box-get rest)
+                shape
+                cloned
+                remap
+                clone-param-moves)]
+            (cond
+              [(= label (struct-get shape preheader))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    label
+                    (opt-licm-unswitch-preheader-instrs
+                      shape
+                      instrs
+                      0
+                      clone-param-moves))
+                  tail)]
+              [(= label (struct-get shape header))
+                (opt-bce-mb-blocks-cons-onto
+                  cloned
+                  (compiler-ir-block-cons
+                    (compiler-ir-block
+                      label
+                      (opt-licm-unswitch-original-instrs shape label instrs 0))
+                    tail))]
+              [(opt-label-contains (struct-get shape body-labels) label)
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    label
+                    (opt-licm-unswitch-original-instrs shape label instrs 0))
+                  tail)]
+              [else
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    label
+                    (opt-licm-unswitch-extend-exit-instrs
+                      instrs
+                      0
+                      (struct-get shape body-labels)
+                      remap))
+                  tail)]))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-licm-unswitch-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        shape
+        cloned
+        remap
+        clone-param-moves)]))
+
+(define (opt-licm-unswitch-apply
+  [blocks : CompilerIrBlockList]
+  [shape : OptLicmUnswitchShape]
+  [params : CompilerIrParamList]
+  [frame : i64]) : OptUnrollResult
+  (let
+    [outside : opt_i64_i64_map.Map
+      (opt-bce-mb-outside-uses
+        (opt_i64_i64_map.with-capacity 64)
+        blocks
+        (struct-get shape body-labels))]
+    (if (opt-bce-mb-defs-escape? (struct-get shape body-blocks) outside)
+      (OptUnrollResult.Result blocks frame false)
+      (let
+        [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [_cell : unit (array-set! cell 0 frame)]
+        [remap : (__tl_dyn-array CompilerIrValue)
+          (array.make-array CompilerIrValue frame)]
+        [_fill : unit (opt-unroll-remap-fill remap 0)]
+        [clone-param-moves : CompilerIrInstrList
+          (opt-licm-unswitch-clone-param-moves! params remap cell)]
+        [_alloc : unit
+          (opt-bce-mb-alloc-defs! (struct-get shape body-blocks) remap cell)]
+        [all-labels : OptLabelSet
+          (opt-bce-mb-all-labels-from blocks (OptLabelSet.Nil))]
+        [cloned : CompilerIrBlockList
+          (opt-licm-unswitch-clone-blocks
+            shape
+            (struct-get shape body-blocks)
+            remap
+            all-labels)]
+        (OptUnrollResult.Result
+          (opt-licm-unswitch-rewrite-blocks
+            blocks
+            shape
+            cloned
+            remap
+            clone-param-moves)
+          (array-ref cell 0)
+          true)))))
+
+(define (opt-licm-unswitch-loops
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [all-loops : OptNaturalLoopList]
+  [remaining : OptNaturalLoopList]
+  [params : CompilerIrParamList]
+  [frame : i64]) : OptUnrollResult
+  (match remaining
+    [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-licm-unswitch-loop-shape blocks context all-loops loop)
+        [(OptMaybeLicmUnswitchShape.Some shape)
+          (match (opt-licm-unswitch-apply blocks shape params frame)
+            [(OptUnrollResult.Result next next-frame changed)
+              (if changed
+                (OptUnrollResult.Result next next-frame true)
+                (opt-licm-unswitch-loops
+                  blocks
+                  context
+                  all-loops
+                  (box-get rest)
+                  params
+                  frame))])]
+        [(OptMaybeLicmUnswitchShape.No)
+          (opt-licm-unswitch-loops
+            blocks
+            context
+            all-loops
+            (box-get rest)
+            params
+            frame)])]))
+
+(define (opt-licm-unswitch-function-with-context-result
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (match (opt-verify-gate verified? func context)
+    [(ResultCompilerOptimizeVerify.Err _)
+      (OptFunctionCtxResult.Result func context)]
+    [(ResultCompilerOptimizeVerify.Ok)
+      (match func
+        [(CompilerIrFunction.Function name params ret-ty frame blocks)
+          (let
+            [loops : OptNaturalLoopList
+              (opt-cfg-natural-loops-with-context blocks context)]
+            (match (opt-licm-unswitch-loops
+              blocks
+              context
+              loops
+              loops
+              params
+              frame)
+              [(OptUnrollResult.Result next next-frame changed)
+                (if (not changed)
+                  (OptFunctionCtxResult.Result func context)
+                  (let
+                    [simplified : CompilerIrBlockList
+                      (opt-cfg-simplify-blocks next)]
+                    [rewritten : CompilerIrFunction
+                      (CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        next-frame
+                        simplified)]
+                    [next-context : OptCfgContext
+                      (opt-cfg-context-build simplified)]
+                    (match (opt-verify-function-with-context
+                      rewritten
+                      next-context)
+                      [(ResultCompilerOptimizeVerify.Ok)
+                        (OptFunctionCtxResult.Result rewritten next-context)]
+                      [(ResultCompilerOptimizeVerify.Err _)
+                        (OptFunctionCtxResult.Result func context)])))]))])]))
+
+;; Run specialization only after the opt2 fixpoint. Besides avoiding repeated
+;; cloning, this preserves the deliberately split false-path parameter copies:
+;; an intervening copy-propagation pass would merge them back into the hot
+;; values, inflate those live-range weights, and make the backend spill the
+;; outer accumulator. A final DCE removes computations made dead in the cold
+;; bypass clone without rewriting those copies.
+(define (opt-licm-unswitch-final
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (match (opt-licm-unswitch-function-with-context-result
+        (opt-cfg-context-build blocks)
+        false
+        func)
+        [(OptFunctionCtxResult.Result next _)
+          (if (opt-function-eq type-segment-bases func next)
+            func
+            (match next
+              [(CompilerIrFunction.Function
+                  name
+                  params
+                  ret-ty
+                  frame
+                  next-blocks)
+                (let
+                  [used : (__tl_dyn-array i64)
+                    (opt-collect-blocks-uses-array frame next-blocks)]
+                  [dced : CompilerIrBlockList
+                    (match (opt-dce-block-list-array-pass used next-blocks)
+                      [(OptBlockListPassResult.Result result _) result])]
+                  [candidate : CompilerIrFunction
+                    (CompilerIrFunction.Function name params ret-ty frame dced)]
+                  (match (opt-verify-function candidate)
+                    [(ResultCompilerOptimizeVerify.Ok) candidate]
+                    [(ResultCompilerOptimizeVerify.Err _) func]))]))])]))
 
 ;; --- simple induction-derived cleanup --------------------------------------
 ;;
@@ -48069,6 +49128,7 @@
                             scratch-reset-context
                             loop-cluster-verified?
                             (struct-get summaries direct-call-clean)
+                            false
                             scratch-reset)
                           scratch-reset-result)]
                       [licm : CompilerIrFunction
@@ -48234,24 +49294,62 @@
                             name
                             _t-lftr)
                           unit)]
-                      [unroll-frame : i64 (opt-function-frame lftr)]
+                      ;; LFTR materializes an end pointer in an inner loop's
+                      ;; preheader after the ordinary LICM run. Give that fresh
+                      ;; invariant (and any induction-created address recipe)
+                      ;; one motion opportunity in the same pipeline iteration;
+                      ;; otherwise an enclosing repetition loop recomputes it
+                      ;; forever because the fixpoint rebuilds the LFTR shape
+                      ;; after each earlier LICM run.
+                      [_t-post-lftr-licm : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [post-lftr-licm-result : OptFunctionCtxResult
+                        (if run-loop?
+                          (opt-licm-function-with-context-result-and-direct-call-clean
+                            type-segment-bases
+                            lftr-context
+                            loop-cluster-verified?
+                            (struct-get summaries direct-call-clean)
+                            true
+                            lftr)
+                          lftr-result)]
+                      [post-lftr-licm : CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "post_lftr_licm"
+                          (match post-lftr-licm-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
+                      [post-lftr-licm-context : OptCfgContext
+                        (match post-lftr-licm-result
+                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
+                      [_p-post-lftr-licm : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "post_lftr_licm"
+                            name
+                            _t-post-lftr-licm)
+                          unit)]
+                      [unroll-frame : i64 (opt-function-frame post-lftr-licm)]
                       ;; Affine chain folding must see the unroller's output
                       ;; INSIDE the same pipeline iteration: a lowered while
                       ;; loop spends iteration 1 on SSA+rotation and unrolls in
                       ;; iteration 2 (the fixpoint cap), so the fold-position
                       ;; run above never sees the fresh copies. The pass only
                       ;; rewrites instructions in place (no CFG change), so the
-                      ;; unroll context stays valid for the passes below.
+                      ;; post-LFTR LICM context stays valid below.
                       [unroll-blocks : CompilerIrBlockList
                         (opt-affine-fold-blocks
-                          (opt-function-frame lftr)
-                          (opt-function-blocks lftr))]
+                          (opt-function-frame post-lftr-licm)
+                          (opt-function-blocks post-lftr-licm))]
                       ;; Cross-block global value numbering + copy propagation
                       ;; runs after local GVN/SCCP/CFG/LICM cleanup, on
                       ;; the post-stack-promotion frame so its slots stay
                       ;; consistent with the promoted blocks. It reuses the
-                      ;; context unroll handed back: unroll's output
-                      ;; blocks are global_gvn's input blocks unchanged.
+                      ;; context the post-LFTR LICM handed back: affine folding
+                      ;; only rewrites instructions, so that pass's output
+                      ;; blocks preserve the same CFG.
                       ;; Its entry verify rides the loop-cluster verification:
                       ;; every pass in between post-verifies its own rewrite
                       ;; (falling back to its verified input), so a verified
@@ -48264,7 +49362,7 @@
                           (if run-heavy?
                             (opt-global-value-number-function-with-context
                               type-segment-bases
-                              lftr-context
+                              post-lftr-licm-context
                               loop-cluster-verified?
                               (CompilerIrFunction.Function
                                 name
@@ -48293,13 +49391,15 @@
                       ;; their literals before divrem-safety, so the literal
                       ;; divisor both enables the backend magic-multiply path and
                       ;; lets divrem-safety drop the zero/overflow guards. This
-                      ;; only rewrites a binop's RHS operand value, leaving the
-                      ;; CFG structure intact, so the unroll context stays
+                      ;; only rewrites operand values, leaving the CFG
+                      ;; structure intact, so the post-LFTR LICM context stays
                       ;; valid for the divrem-safety pass below.
                       [const-div-blocks : CompilerIrBlockList
-                        (opt-const-divisor-rewrite-summary-blocks
+                        (opt-const-global-move-rewrite-summary-blocks
                           summaries
-                          global-blocks)]
+                          (opt-const-divisor-rewrite-summary-blocks
+                            summaries
+                            global-blocks))]
                       [_t-divrem-safety : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [divrem-safe : CompilerIrBlockList
@@ -48313,7 +49413,7 @@
                           (if run-heavy?
                             (opt-divrem-safety-blocks-with-context
                               type-segment-bases
-                              lftr-context
+                              post-lftr-licm-context
                               params
                               const-div-blocks)
                             const-div-blocks))]
@@ -48794,9 +49894,17 @@
         [(OptFunctionPassResult.Result fixed fixed-changed)
           (match (opt-if-convert-final-pass type-segment-bases fixed)
             [(OptFunctionPassResult.Result final if-convert-changed)
-              (OptFunctionPassResult.Result
-                final
-                (or fixed-changed if-convert-changed))])]))))
+              (let
+                [unswitched : CompilerIrFunction
+                  (compiler-opt-debug-observe-function
+                    type-segment-bases
+                    "licm_unswitch"
+                    (opt-licm-unswitch-final type-segment-bases final))]
+                [unswitch-changed : bool
+                  (not (opt-function-eq type-segment-bases final unswitched))]
+                (OptFunctionPassResult.Result
+                  unswitched
+                  (or fixed-changed if-convert-changed unswitch-changed)))])]))))
 
 (define (optimize-function-with-level-and-summaries
   [pools : AstNodePoolContext]
@@ -57479,9 +58587,11 @@
 ;; instead of emitting a per-use rip-relative load (the opt_crc32/opt_quicksort
 ;; mask-load win). For a div/mod divisor it produces a literal `CompilerIrValue.I64`, which
 ;; `compiler-backend-binop-literal-divmod-asm` strength-reduces with the existing
-;; magic-multiply path (matching clang). Binops are the const uses in the hot
-;; loops of all three optimization benchmarks (masks via bit-and/bit-xor, the
-;; modulo divisor); other instruction kinds keep the global's hidden-load form.
+;; magic-multiply path (matching clang). Binops are rewritten before local
+;; folding. Lowering-time Moves are rewritten separately after BCE and
+;; unrolling: doing so at the start of the iteration can hide the symbolic
+;; descriptor-length identity before BCE consumes it. Other instruction kinds
+;; keep the global's hidden-load form.
 ;; (The map is named `const-divisors` for historical reasons but now holds every
 ;; proven-constant global, not only divisors.)
 (define (opt-const-global-subst-value
@@ -57566,6 +58676,131 @@
     (if (= (opt_i64_i64_map.len (& const-divisors)) 0)
       blocks
       (opt-const-divisor-rewrite-blocks const-divisors blocks))))
+
+;; Rewrite proven constant globals in lowering-time Moves only after the loop
+;; BCE and unroll passes for this iteration have consumed their symbolic bound
+;; identities. The following iteration's ordinary fold sees the literal and
+;; simplifies its dependent arithmetic before late LICM. Restrict this to Moves
+;; feeding non-comparison arithmetic: replacing a global used only as a loop
+;; limit with an immediate can increase register pressure without enabling a
+;; fold, while branchless min/bound recipes include bit/arithmetic uses.
+(define (opt-const-global-move-fold-vars-instr
+  [vars : opt_i64_i64_map.Map]
+  [instr : CompilerIrInstr]) : opt_i64_i64_map.Map
+  (match instr
+    [(CompilerIrInstr.BinOp _ op lhs rhs _)
+      (if (compiler-ir-binop-compare? op)
+        vars
+        (opt-collect-value-uses (opt-collect-value-uses vars lhs) rhs))]
+    [_ vars]))
+
+(define (opt-const-global-move-fold-vars-seq
+  [vars : opt_i64_i64_map.Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : opt_i64_i64_map.Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    vars
+    (opt-const-global-move-fold-vars-seq
+      (opt-const-global-move-fold-vars-instr
+        vars
+        (compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-const-global-move-fold-vars-blocks
+  [vars : opt_i64_i64_map.Map]
+  [blocks : CompilerIrBlockList]) : opt_i64_i64_map.Map
+  (match blocks
+    [(CompilerIrBlockList.Nil) vars]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-const-global-move-fold-vars-blocks
+            (opt-const-global-move-fold-vars-seq vars instrs 0)
+            (box-get rest))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-const-global-move-fold-vars-blocks
+        vars
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-const-global-move-rewrite-instr
+  [const-divisors : opt_i64_i64_map.Map]
+  [fold-vars : opt_i64_i64_map.Map]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Mov dst src ty)
+      (if (opt-used-contains fold-vars dst)
+        (CompilerIrInstr.Mov
+          dst
+          (opt-const-global-subst-value const-divisors src)
+          ty)
+        instr)]
+    [_ instr]))
+
+(define (opt-const-global-move-rewrite-seq
+  [const-divisors : opt_i64_i64_map.Map]
+  [fold-vars : opt_i64_i64_map.Map]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array CompilerIrInstr)
+      (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (opt-const-global-move-rewrite-instr
+              const-divisors
+              fold-vars
+              (compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq slots count))))
+
+(define (opt-const-global-move-rewrite-block
+  [const-divisors : opt_i64_i64_map.Map]
+  [fold-vars : opt_i64_i64_map.Map]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (CompilerIrBlock.Block
+        label
+        (opt-const-global-move-rewrite-seq const-divisors fold-vars instrs))]))
+
+(define (opt-const-global-move-rewrite-blocks
+  [const-divisors : opt_i64_i64_map.Map]
+  [fold-vars : opt_i64_i64_map.Map]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-const-global-move-rewrite-block const-divisors fold-vars block)
+        (opt-const-global-move-rewrite-blocks
+          const-divisors
+          fold-vars
+          (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-const-global-move-rewrite-blocks
+        const-divisors
+        fold-vars
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-const-global-move-rewrite-summary-blocks
+  [summaries : OptLoopBceSummaries]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [const-divisors : opt_i64_i64_map.Map (struct-get summaries const-divisors)]
+    (if (= (opt_i64_i64_map.len (& const-divisors)) 0)
+      blocks
+      (opt-const-global-move-rewrite-blocks
+        const-divisors
+        (opt-const-global-move-fold-vars-blocks
+          (opt_i64_i64_map.with-capacity 64)
+          blocks)
+        blocks))))
 
 (define (optimize-program [program : CompilerIrProgram]) : CompilerIrProgram
   (optimize-program-with-level program (compiler-optimize-default-level)))

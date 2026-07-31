@@ -2279,6 +2279,10 @@
       "compiler-optimize-licm-self-test"
       (compiler-optimize-licm-self-test)
       42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-unswitch-self-test"
+      (compiler-optimize-licm-unswitch-self-test)
+      42)
     (cfg
       test
       (compiler-optimize-self-test-require-i64!

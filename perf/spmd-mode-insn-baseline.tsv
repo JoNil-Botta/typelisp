@@ -21,7 +21,7 @@ spmd_shuffle	avx2	typelisp	supported	18760590336
 spmd_shuffle	avx2	clang	supported	847922794
 spmd_short_tail	scalar	typelisp	supported	13058017521
 spmd_short_tail	scalar	clang	supported	6030127932
-spmd_short_tail	avx2	typelisp	supported	2384018899
+spmd_short_tail	avx2	typelisp	supported	1799018402
 spmd_short_tail	avx2	clang	supported	985118676
 spmd_mask	scalar	typelisp	supported	13523754076
 spmd_mask	scalar	clang	supported	9833559425

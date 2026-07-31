@@ -1,0 +1,14 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "stdout_contains": [
+    "\"code\":\"E0206\""
+  ],
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"success\":true"},
+    {"jsonpath_id": 3, "raw_contains": "\"success\":false", "raw_contains": "\"error\""},
+    {"jsonpath_id": 4, "raw_contains": "\"success\":true"},
+    {"jsonpath_id": 5, "raw_contains": "\"uri\":\"${{TMP_URI}}/snapshot.tl\"", "raw_contains": "\"line\":0", "raw_contains": "\"character\":8", "raw_contains": "\"character\":14"},
+    {"jsonpath_id": 6, "json_contains": "\"result\":null", "jsonpath_result": null}
+  ]
+}

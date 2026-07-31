@@ -28,6 +28,13 @@
   (slots (Array String))
   (len i64))
 
+(defstruct LspSemanticSnapshot
+  (index CompilerSemanticSourceIndex)
+  (version i64)
+  (source-path String)
+  (source-text String)
+  (present bool))
+
 (defstruct LspDocument
   (uri String)
   (path String)
@@ -39,7 +46,8 @@
   (diagnostic-uris LspDiagnosticUris)
   (decls lsp_decl_vec.Vec)
   (decls-valid bool)
-  (check-cache LspCheckCache))
+  (check-cache LspCheckCache)
+  (semantic LspSemanticSnapshot))
 
 (import (vector.vector LspDocument core) as lsp_document_vec)
 

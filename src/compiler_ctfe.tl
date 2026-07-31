@@ -9837,7 +9837,7 @@
         env)]
     [(AstType.DynArray elem)
       (ctfe-type-syntax-call-id
-        (ctfe-builtin-ref 109)
+        (ctfe-builtin-ref 280)
         (ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
           (ast-expr-list-new))
@@ -9979,7 +9979,9 @@
         [(ResultCtfeQuoteType.Ok elem-ty next-fuel)
           (ResultCtfeQuoteType.Ok
             (cond
-              [(= name (ctfe-builtin-ref 109))
+              [(or
+                  (= name (ctfe-builtin-ref 109))
+                  (= name (ctfe-builtin-ref 280)))
                 (ast-ty-dyn-array-with-pools (ctfe-env-pools env) elem-ty)]
               [(= name cbi.compiler-builtin-id-fix-Box)
                 (ast-ty-box-with-pools (ctfe-env-pools env) elem-ty)]
@@ -10209,6 +10211,7 @@
               [(= name (ctfe-builtin-ref 109))
                 (ctfe-expr-array-type args origin env fuel)]
               [(or
+                  (= name (ctfe-builtin-ref 280))
                   (= name cbi.compiler-builtin-id-fix-Box)
                   (= name (ctfe-builtin-ref 177))
                   (= name (ctfe-builtin-ref 178)))
@@ -13874,6 +13877,82 @@
         [(ResultCtfeQuoteType.Err _) true]
         [(ResultCtfeQuoteType.Ok _ _) false]))))
 
+(define (compiler-ctfe-type-expr-is?
+  [env : CtfeEnv]
+  [expr-id : i64]
+  [origin : AstExpr]
+  [expected : AstType]) : bool
+  (match (ctfe-expr-to-type
+    (ctfe-ast-get env expr-id)
+    origin
+    env
+    (ctfe-fuel-limit))
+    [(ResultCtfeQuoteType.Ok actual _)
+      (ctfe-type-eq-in-env env actual expected)]
+    [(ResultCtfeQuoteType.Err _) false]))
+
+(define (compiler-ctfe-type-expr-rejected?
+  [env : CtfeEnv]
+  [expr-id : i64]
+  [origin : AstExpr]) : bool
+  (match (ctfe-expr-to-type
+    (ctfe-ast-get env expr-id)
+    origin
+    env
+    (ctfe-fuel-limit))
+    [(ResultCtfeQuoteType.Err _) true]
+    [(ResultCtfeQuoteType.Ok _ _) false]))
+
+(define (compiler-ctfe-dyn-array-type-head-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [i64-expr : i64 (ctfe-ast-push env (AstExpr.Var (ctfe-builtin-ref 159)))]
+    [count-expr : i64 (ctfe-ast-push env (AstExpr.Literal (ast-lit-int 2)))]
+    [private-call : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 280) i64-expr)]
+    [private-empty-call : i64
+      (ast-expr-call-with-pools
+        (ctfe-env-pools env)
+        (ctfe-ast-push env (AstExpr.Var (ctfe-builtin-ref 280)))
+        (ast-expr-list-new))]
+    [private-two-call : i64
+      (compiler-ctfe-call2-in-env
+        env
+        (ctfe-builtin-ref 280)
+        i64-expr
+        count-expr)]
+    [fixed-call : i64
+      (compiler-ctfe-call2-in-env
+        env
+        (ctfe-builtin-ref 109)
+        i64-expr
+        count-expr)]
+    [generated-private : i64
+      (ctfe-materialize-generated-name-id "__tl_dyn-array")]
+    [generated-private-call : i64
+      (compiler-ctfe-call1-in-env env generated-private i64-expr)]
+    [dyn-array-ty : AstType
+      (ast-ty-dyn-array-with-pools (ctfe-env-pools env) (AstType.I64))]
+    [fixed-array-ty : AstType
+      (ast-ty-array-with-pools (ctfe-env-pools env) (AstType.I64) 2)]
+    [roundtrip-call : i64 (ctfe-type-to-expr dyn-array-ty env)]
+    [origin : AstExpr (ctfe-ast-get env private-call)]
+    (and
+      (compiler-ctfe-type-expr-is? env private-call origin dyn-array-ty)
+      (compiler-ctfe-type-expr-rejected? env private-empty-call origin)
+      (compiler-ctfe-type-expr-rejected? env private-two-call origin)
+      (compiler-ctfe-type-expr-is? env fixed-call origin fixed-array-ty)
+      (compiler-ctfe-type-expr-rejected? env generated-private-call origin)
+      (compiler-ctfe-type-expr-is? env roundtrip-call origin dyn-array-ty)
+      (match (ctfe-expr-unspan env (ctfe-ast-get env roundtrip-call))
+        [(AstExpr.Call func-box args)
+          (and
+            (= (struct-get (& args) len) 1)
+            (match (ctfe-expr-unspan env (ctfe-ast-get env func-box))
+              [(AstExpr.Var name) (= name (ctfe-builtin-ref 280))]
+              [_ false]))]
+        [_ false]))))
+
 (define (compiler-ctfe-eval-i64-ok? [expr : i64] [env : CtfeEnv] [want : i64]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
     [(ResultCtfe.Ok value _)
@@ -16447,6 +16526,7 @@
     (unless (compiler-ctfe-type-comparison-ok?) (return 1))
     (unless (compiler-ctfe-raw-pointer-type-comparison-ok?) (return 1))
     (unless (compiler-ctfe-fixed-type-head-name-provenance-ok?) (return 1))
+    (unless (compiler-ctfe-dyn-array-type-head-ok?) (return 1))
     (unless (compiler-ctfe-f64-ok?) (return 1))
     (unless (compiler-ctfe-layout-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-query-ok?) (return 1))

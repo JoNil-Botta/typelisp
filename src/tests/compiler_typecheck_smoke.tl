@@ -1860,10 +1860,6 @@
     [pv : pvec.Vec (pvec.new)]
     (+ (sliceish.len-of v) (psliceish.len-of pv))))")
 
-;; CTFE's type-expression bridge currently recognizes the legacy `Array` head
-;; but not `__tl_dyn-array` when a type parameter is unquoted. Keep these two
-;; spellings as explicit bootstrap compatibility coverage; ordinary private
-;; alias parsing and identity are covered elsewhere in this smoke.
 (define (compiler-typecheck-smoke-type-macro-param-source) : String
   "(import stdlib.array)
 (defstruct Pair (value i64))
@@ -1872,8 +1868,8 @@
     (define (typed-id [v : ,T]) : ,T
       (let [x : ,T v] (ann x : ,T)))
     (define (typed-init) : ,T (init : ,T))
-    (define (typed-array [v : ,T]) : (Array ,T)
-      (let [items : (Array ,T) (array.make-array ,T 1)]
+    (define (typed-array [v : ,T]) : (__tl_dyn-array ,T)
+      (let [items : (__tl_dyn-array ,T) (array.make-array ,T 1)]
         (begin
           (array-set! items 0 v)
           items)))))

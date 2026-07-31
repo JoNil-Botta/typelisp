@@ -229,6 +229,57 @@
   "(define (main) : unit
   (let [items : (__tl_dyn-array (& n i64)) (make-array (& n i64) 0)] unit))")
 
+(define (compiler-typecheck-signature-lifetime-alias-positive-source) : String
+  "(defstruct SignatureAliasRec
+  (value i64))
+(defstruct SignatureAliasStored
+  (field i64)
+  (pair (Tuple i64 i64))
+  (fixed (Array i64 1)))
+(define (signature-alias-touch!
+  [items : (&mut source (Array SignatureAliasRec))]
+  [index : i64]) : unit
+  (let
+    [item : (&mut source SignatureAliasRec)
+      (&mut (array-ref items index))]
+    (begin
+      (set! item.value (+ item.value 1))
+      unit)))
+(define (signature-alias-read-copy [value : (& source i64)]) : unit
+  (let [copy : (& source i64) value] unit))
+(define (signature-alias-project
+  [stored : (& source SignatureAliasStored)]) : unit
+  (let
+    [field : (& source i64) (& (struct-get stored field))]
+    [tuple-item : (& source i64)
+      (& (tuple-ref (struct-get stored pair) 0))]
+    [array-item : (& source i64)
+      (& (array-ref (struct-get stored fixed) 0))]
+    unit))
+(define (signature-alias-same-input
+  [left : (& same i64)]
+  [right : (& same i64)]) : unit
+  (let
+    [left-copy : (& same i64) left]
+    [right-copy : (& same i64) right]
+    unit))
+(define (signature-alias-value-lookup
+  [item : (& source i64)]
+  [source : i64]) : i64
+  (let [copy : (& source i64) item] source))
+(define (main [value : i64]) : i64
+  (begin
+    (signature-alias-same-input (& value) (& value))
+    (signature-alias-value-lookup (& value) 42)))")
+
+(define (compiler-typecheck-signature-lifetime-alias-unknown-source) : String
+  "(define (bad [value : (& source i64)]) : unit
+  (let [copy : (& missing i64) value] unit))")
+
+(define (compiler-typecheck-signature-lifetime-alias-local-return-source) : String
+  "(define (bad [value : (& source i64)]) : (& source i64)
+  (let [local : i64 1] (& source local)))")
+
 (define (compiler-typecheck-bytes-borrowed-source) : String
   "(defstruct ByteViews
   (:lifetimes data)
@@ -1126,6 +1177,17 @@
       (compiler-typecheck-reference-dyn-array-hidden-source)
       "typecheck: make-array element type is not supported")))
 
+(define (compiler-typecheck-signature-lifetime-alias-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-signature-lifetime-alias-positive-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-signature-lifetime-alias-unknown-source)
+      "typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-signature-lifetime-alias-local-return-source)
+      "typecheck: borrow lifetime mismatch")))
+
 (define (compiler-typecheck-bytes-referent-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-bytes-borrowed-source))
@@ -1199,6 +1261,7 @@
     (compiler-typecheck-reference-lambda-capture-tests-ok?)
     (compiler-typecheck-reference-return-container-tests-ok?)
     (compiler-typecheck-reference-dyn-array-tests-ok?)
+    (compiler-typecheck-signature-lifetime-alias-tests-ok?)
     (compiler-typecheck-bytes-referent-tests-ok?)))
 
 (define (compiler-typecheck-macro-alias-cache-collision-ok?) : bool

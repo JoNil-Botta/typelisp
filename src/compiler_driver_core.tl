@@ -634,8 +634,19 @@
     (ci.intern-compat-state-persistent-arena-reset!
       (array-ref (struct-get state intern-state) 0))))
 
+;; Compatibility/test install of the state's builtin table into the process
+;; globals. Production driver paths no longer install builtins: parse derives
+;; the table and state-owned reset validates against the state's own cells.
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
   (cbi.state-install! (array-ref (struct-get state builtin-ids) 0)))
+
+;; The state's owned builtin/CTFE id snapshot.
+(define (compiler-driver-state-owned-builtins [state : CompilerDriverState]) : cbi.CompilerBuiltinIdsState
+  (array-ref (struct-get state builtin-ids) 0))
+
+;; The state's owned lower scratch/IR arena carrier.
+(define (compiler-driver-state-owned-lower-arenas [state : CompilerDriverState]) : CompilerLowerArenaState
+  (array-ref (struct-get state lower-arenas) 0))
 
 (define (compiler-driver-state-install-lower-arenas!
   [state : CompilerDriverState]) : unit
@@ -659,22 +670,29 @@
   [state : CompilerDriverState]) : unit
   (cbi.state-capture-from-globals! (array-ref (struct-get state builtin-ids) 0)))
 
+;; State-owned builtin reset: clears the state's own metadata and, only when
+;; this state's table is the installed one, invalidates the compatibility
+;; globals (CTFE builtin ids share the table and invalidate with it). No
+;; install bridge: the next parse of this state re-derives the table.
 (define (compiler-driver-state-reset-builtins! [state : CompilerDriverState]) : unit
-  (begin
-    (cbi.state-reset! (array-ref (struct-get state builtin-ids) 0))
-    (compiler-driver-state-install-builtins! state)))
+  (cbi.state-reset! (compiler-driver-state-owned-builtins state)))
+
+;; State-owned lower-arena release: destroys the arenas named by the state's
+;; own cells, zeroing the compatibility selectors only while they still name
+;; this state's handles. No install/capture bridge.
+(define (compiler-driver-state-release-lower-arenas!
+  [state : CompilerDriverState]) : unit
+  (compiler-lower-arena-state-release!
+    (compiler-driver-state-owned-lower-arenas state)))
 
 (define (compiler-driver-state-capture-active-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler-lower-arena-state-capture-from-globals!
     (array-ref (struct-get state lower-arenas) 0)))
 
-(define (compiler-driver-state-install-transients!
-  [state : CompilerDriverState]) : unit
-  (begin
-    (compiler-driver-state-install-builtins! state)
-    (compiler-driver-state-install-lower-arenas! state)))
-
+;; Session-floor snapshot after a batch entry: refresh the state's builtin and
+;; lower-arena cells from the compatibility globals the phases just used, so a
+;; later state-owned reset/release sees the current (possibly grown) handles.
 (define (compiler-driver-state-capture-active-transients!
   [state : CompilerDriverState]) : unit
   (begin
@@ -823,15 +841,16 @@
           (array-ref (struct-get state intern-state) 0))
         (compiler-driver-state-reset-typecheck! state)
         (compiler-typecheck-reset-intern-owned-state!)
-        (compiler-driver-state-install-transients! state)
+        ;; Builtin/CTFE ids and lowerer arenas are state-owned: reset/release
+        ;; through the state's own cells with no install/capture bridge. The
+        ;; compatibility selectors are only touched while they name this
+        ;; state's handles.
         (compiler-driver-state-reset-builtins! state)
-        (ctfe-builtin-reset!)
         (compiler-typecheck-reset-file-state!)
         (lower-reset-file-state!)
         ;; Drop the previous entry's lowerer arenas. At opt level 0
         ;; the escaped IR stays alive until the next file reset.
-        (lower-arenas-release!)
-        (compiler-driver-state-capture-active-transients! state)))))
+        (compiler-driver-state-release-lower-arenas! state)))))
 
 ;; Post-emission batch cleanup. This runs while the caller-owned entry scratch
 ;; arena is still live, so it performs the same cache/intern/lower teardown as a
@@ -855,13 +874,12 @@
           (array-ref (struct-get state intern-state) 0))
         (compiler-driver-state-reset-typecheck! state)
         (compiler-typecheck-reset-intern-owned-state!)
-        (compiler-driver-state-install-transients! state)
+        ;; State-owned builtin/CTFE reset and lowerer-arena release, exactly as
+        ;; in `compiler-driver-state-reset-file-state!`.
         (compiler-driver-state-reset-builtins! state)
-        (ctfe-builtin-reset!)
         (compiler-typecheck-reset-file-state!)
         (lower-reset-file-state!)
-        (lower-arenas-release!)
-        (compiler-driver-state-capture-active-transients! state)))))
+        (compiler-driver-state-release-lower-arenas! state)))))
 
 (cfg
   compile-profile
@@ -890,21 +908,18 @@
             (array-ref (struct-get state intern-state) 0))
           (compiler-driver-state-reset-typecheck! state)
           (compiler-typecheck-reset-intern-owned-state!)
-          (compiler-driver-state-install-transients! state)
           (compiler-driver-state-reset-builtins! state)
-          (ctfe-builtin-reset!)
           (compiler-typecheck-reset-file-state!)
           (compiler-driver-batch-profile-mark!
             (compiler-driver-state-profile state)
             ordinal
             "intern-session-cleanup")
           (lower-reset-file-state!)
-          (lower-arenas-release!)
+          (compiler-driver-state-release-lower-arenas! state)
           (compiler-driver-batch-profile-mark!
             (compiler-driver-state-profile state)
             ordinal
-            "lower-cleanup")
-          (compiler-driver-state-capture-active-transients! state))))))
+            "lower-cleanup"))))))
 
 (cfg
   compile-profile
@@ -3851,16 +3866,18 @@
           mode
           (compiler-driver-state-target-cfgs state target cfgs)
           (>= opt-level 1))]
-      (begin
-        (compiler-driver-state-install-builtins! state)
-        (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
-          input-path
-          lowered
-          target
-          has-target
-          mode
-          opt-level
-          true)))))
+      ;; No builtin reinstall here: this state's parse already derived the
+      ;; installed table, and nothing between parse and emission invalidates
+      ;; it. Builtin id values are spelling-derived and identical across
+      ;; states, so the backend reads valid ids whichever job parsed last.
+      (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
+        input-path
+        lowered
+        target
+        has-target
+        mode
+        opt-level
+        true))))
 
 (define (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
@@ -3886,17 +3903,16 @@
           mode
           (compiler-driver-state-target-cfgs state target cfgs)
           (>= opt-level 1))]
-      (begin
-        (compiler-driver-state-install-builtins! state)
-        (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
-          input-path
-          lowered
-          target
-          has-target
-          mode
-          opt-level
-          false
-          false)))))
+      ;; No builtin reinstall here; see the normal emit wrapper above.
+      (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
+        input-path
+        lowered
+        target
+        has-target
+        mode
+        opt-level
+        false
+        false))))
 
 (define (compiler-driver-emit-package-loaded
   [input-path : String]

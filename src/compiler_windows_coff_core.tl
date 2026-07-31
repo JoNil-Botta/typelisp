@@ -628,11 +628,11 @@
           mode
           (compiler-driver-state-target-cfgs state target cfgs)
           (>= opt-level 1))]
-      (begin
-        (compiler-driver-state-install-builtins! state)
-        (compiler-windows-batch-emit-lowered-result
-          input-path
-          lowered
-          mode
-          opt-level
-          force-assembly)))))
+      ;; No builtin reinstall here; this state's parse-derived table is still
+      ;; installed and id values are spelling-derived and state-independent.
+      (compiler-windows-batch-emit-lowered-result
+        input-path
+        lowered
+        mode
+        opt-level
+        force-assembly))))

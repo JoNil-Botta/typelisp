@@ -56185,6 +56185,48 @@
     (set! lower-scratch-arena (compiler-lower-arena-state-scratch-arena state))
     (set! lower-ir-arena (compiler-lower-arena-state-ir-arena state))))
 
+;; State-owned release: destroy the arenas named by the state's own cells and
+;; zero them. The compatibility-global selectors are zeroed only when they
+;; still name this state's handles (the state is the installed owner);
+;; releasing an uninstalled state must not disturb another state's installed
+;; arenas. Destroying an older head still reclaims the whole chain -- the
+;; runtime root tracks the newest live segment -- but callers must refresh the
+;; state's cells from the globals after any phase that can grow a chain
+;; (post-emission session-floor capture), so a stored head never trails the
+;; installed selector by the time a release runs.
+(define (compiler-lower-arena-state-release-scratch!
+  [state : CompilerLowerArenaState]) : unit
+  (let
+    [scratch : i64 (compiler-lower-arena-state-scratch-arena state)]
+    (if (= scratch 0)
+      unit
+      (begin
+        (array-set! (struct-get state scratch-arena) 0 0)
+        (if (= lower-scratch-arena scratch)
+          (set! lower-scratch-arena 0)
+          unit)
+        (unsafe
+          (arena.tl_arena_destroy scratch))))))
+
+(define (compiler-lower-arena-state-release-ir!
+  [state : CompilerLowerArenaState]) : unit
+  (let
+    [ir : i64 (compiler-lower-arena-state-ir-arena state)]
+    (if (= ir 0)
+      unit
+      (begin
+        (array-set! (struct-get state ir-arena) 0 0)
+        (if (= lower-ir-arena ir)
+          (set! lower-ir-arena 0)
+          unit)
+        (unsafe
+          (arena.tl_arena_destroy ir))))))
+
+(define (compiler-lower-arena-state-release! [state : CompilerLowerArenaState]) : unit
+  (begin
+    (compiler-lower-arena-state-release-scratch! state)
+    (compiler-lower-arena-state-release-ir! state)))
+
 (define (lower-function-list-escape-to-ir-arena
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (let

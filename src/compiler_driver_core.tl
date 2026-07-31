@@ -709,16 +709,6 @@
     spans
     (profile_state.compiler-profile-state-new)))
 
-(define (compiler-driver-lowered-from-pools
-  [program : CompilerIrProgram]
-  [spans : CompilerSourceSpans]
-  [pools : AstNodePoolContext]) : ResultCompilerDriverLowered
-  (ResultCompilerDriverLowered.Ok
-    program
-    spans
-    (ast-node-pool-context-snapshot pools)
-    (profile_state.compiler-profile-state-new)))
-
 (define (compiler-driver-lowered-from-pools-and-profile-state
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
@@ -2044,54 +2034,6 @@
 
 ;; Serial/test compatibility adapters. Driver-owned compile paths carry the
 ;; state from ResultCompilerDriverLowered into the explicit variants above.
-(define (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
-  [pools : AstNodePoolContext]
-  [input-path : String]
-  [program : CompilerIrProgram]
-  [spans : CompilerSourceSpans]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [mode : CompilerBackendMode]
-  [opt-level : i64]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerDriver
-  (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state
-    pools
-    input-path
-    program
-    spans
-    target
-    has-target
-    mode
-    opt-level
-    emit-entry
-    crt-entry
-    (profile_state.compiler-profile-state-new)))
-
-(define (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt
-  [pools : AstNodePoolContext]
-  [input-path : String]
-  [program : CompilerIrProgram]
-  [spans : CompilerSourceSpans]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [mode : CompilerBackendMode]
-  [opt-level : i64]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerDriverBuffer
-  (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state
-    pools
-    input-path
-    program
-    spans
-    target
-    has-target
-    mode
-    opt-level
-    emit-entry
-    crt-entry
-    (profile_state.compiler-profile-state-new)))
-
 (define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
   [pools : AstNodePoolContext]
   [input-path : String]
@@ -2104,30 +2046,6 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverObject
   (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state
-    pools
-    input-path
-    program
-    spans
-    target
-    has-target
-    mode
-    opt-level
-    emit-entry
-    crt-entry
-    (profile_state.compiler-profile-state-new)))
-
-(define (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
-  [pools : AstNodePoolContext]
-  [input-path : String]
-  [program : CompilerIrProgram]
-  [spans : CompilerSourceSpans]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [mode : CompilerBackendMode]
-  [opt-level : i64]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerDriverPic
-  (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state
     pools
     input-path
     program

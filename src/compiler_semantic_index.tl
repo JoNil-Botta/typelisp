@@ -1940,6 +1940,14 @@
     [(AstPattern.Var name _) (tc-name-id-list-add TcNameIdList.Nil name)]
     [_ (tc-borrow-check-pattern-bound-names ctx scrutinee-ty pattern)]))
 
+(define (compiler-semantic-match-body-source-expr-id [body : i64]) : i64
+  (match (ast-node-get body)
+    [(AstExpr.Spanned inner _)
+      (match (ast-node-get inner)
+        [(AstExpr.Spanned _ _) inner]
+        [_ body])]
+    [_ body]))
+
 (define (compiler-semantic-walk-match-arms!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingList]
@@ -1958,7 +1966,7 @@
               [body-start : i64
                 (compiler-semantic-expr-start-offset
                   state
-                  body
+                  (compiler-semantic-match-body-source-expr-id body)
                   (string.string-length (struct-get state source)))]
               [saved : TcTypeEnvScopedRuntimeSave
                 (tc-type-env-scoped-runtime-save)]
@@ -2034,7 +2042,10 @@
                 (tc-type-env-scoped-runtime-restore! saved)
                 (set!
                   cursor
-                  (compiler-semantic-expr-end-offset state body body-start))))])
+                  (compiler-semantic-expr-end-offset
+                    state
+                    (compiler-semantic-match-body-source-expr-id body)
+                    body-start))))])
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-walk-with-resources!

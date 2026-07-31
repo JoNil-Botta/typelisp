@@ -9866,6 +9866,16 @@
         start)
       0)))
 
+(define (lint-match-body-source-expr [body : AstExpr]) : AstExpr
+  (match body
+    [(AstExpr.Spanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match inner
+          [(AstExpr.Spanned _ _) inner]
+          [_ body]))]
+    [_ body]))
+
 (define (lint-unused-variable-match-arms-at
   [arms : (& arms AstMatchArmList)]
   [state : LintUnusedVariableState]
@@ -9876,7 +9886,8 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body)
         (let
-          [body-expr : AstExpr (ast-node-get body)]
+          [body-expr : AstExpr
+            (lint-match-body-source-expr (ast-node-get body))]
           [body-span : AstSourceSpan (lint-no-effect-span body-expr)]
           [body-start : i64
             (lint-source-span-start-index (struct-get state source) body-span)]

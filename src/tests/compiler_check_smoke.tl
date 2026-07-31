@@ -128,6 +128,151 @@
           len)
         0)]))
 
+(define (compiler-check-first-diagnostic-exact?
+  [path : String]
+  [source : String]
+  [message : String]
+  [line : i64]
+  [col : i64]
+  [end-line : i64]
+  [end-col : i64]) : bool
+  (match (compiler-check-source path source)
+    [(ResultCompilerCheck.Ok _) false]
+    [(ResultCompilerCheck.Err diagnostics-box)
+      (let
+        [diagnostics : CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostic : CompilerDiagnostic
+          (compiler-diagnostic-list-first diagnostics)]
+        (and
+          (= (compiler-diagnostic-list-count diagnostics) 1)
+          (string.eq (compiler-diagnostic-message diagnostic) message)
+          (string.eq (compiler-diagnostic-path diagnostic) path)
+          (= (compiler-diagnostic-line diagnostic) line)
+          (= (compiler-diagnostic-col diagnostic) col)
+          (= (compiler-diagnostic-end-line diagnostic) end-line)
+          (= (compiler-diagnostic-end-col diagnostic) end-col)))]))
+
+(define (compiler-check-subform-diagnostic-spans-ok?) : bool
+  (and
+    (compiler-check-first-diagnostic-exact?
+      "tests/field_subform.tl"
+      "(defstruct Point
+  (x i64)
+  (y i64))
+
+(define (main) : i64
+  (let
+    [p : Point (Point 1 2)]
+    (begin
+      (set! p.z 5)
+      0)))"
+      "typecheck: unknown struct field Point.z; available fields: x, y"
+      9
+      13
+      9
+      13)
+    (compiler-check-first-diagnostic-exact?
+      "tests/binding_subform.tl"
+      "(define (main) : i64
+  (let
+    [first : i64 1]
+    [wrong : i64 true]
+    [last : i64 3]
+    (+ first (+ wrong last))))"
+      "typecheck: let binding `wrong` type mismatch: expected i64, found bool"
+      4
+      18
+      4
+      18)
+    (compiler-check-first-diagnostic-exact?
+      "tests/pattern_subform.tl"
+      "(defenum Choice
+  (A i64)
+  (B i64))
+
+(define (main) : i64
+  (match (A 1)
+    [(A value) value]
+    [(B) 2]))"
+      "typecheck: pattern arity mismatch: expected 1, found 0"
+      8
+      6
+      8
+      8)
+    (compiler-check-first-diagnostic-exact?
+      "tests/operand_subform.tl"
+      "(define (main) : i64
+  (let
+    [x : i64 1]
+    [y : bool true]
+    (+ x y)))"
+      "typecheck: integer operator expects matching integer operands: expected i64, found bool"
+      5
+      10
+      5
+      10)))
+
+(define (compiler-check-qualified-near-miss-ok?) : bool
+  (match (typecheck-compiler-source
+    "(module data)
+(define (print [text : String]) : unit unit)
+(module main)
+(import \"data.tl\" module data :as io)
+(define (main) : i64
+  (begin
+    (io.prnit \"hello\")
+    0))")
+    [(ResultCompilerTypecheck.Ok _) false]
+    [(ResultCompilerTypecheck.Err diagnostics-box)
+      (let
+        [diagnostics : CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostic : CompilerDiagnostic
+          (compiler-diagnostic-list-first diagnostics)]
+        [fixes : CompilerDiagnosticFixSeq
+          (compiler-diagnostic-fixes diagnostic)]
+        (and
+          (= (compiler-diagnostic-list-count diagnostics) 1)
+          (string.eq
+            (compiler-diagnostic-message diagnostic)
+            "typecheck: unbound name io.prnit")
+          (= (struct-get fixes len) 1)
+          (let
+            [fix : CompilerDiagnosticFix (array-ref (struct-get fixes slots) 0)]
+            [edits : CompilerDiagnosticTextEditSeq
+              (compiler-diagnostic-fix-edits fix)]
+            (and
+              (string.eq
+                (compiler-diagnostic-fix-title fix)
+                "Replace misspelled name")
+              (= (struct-get edits len) 1)
+              (string.eq
+                (compiler-diagnostic-text-edit-replacement
+                  (array-ref (struct-get edits slots) 0))
+                "io.print")))))]))
+
+(define (compiler-check-qualified-unbound-display-ok?) : bool
+  (match (typecheck-compiler-source
+    "(module data)
+(define (print [text : String]) : unit unit)
+(module main)
+(import \"data.tl\" module data :as io)
+(define (main) : i64
+  (begin
+    (io.missing \"hello\")
+    0))")
+    [(ResultCompilerTypecheck.Ok _) false]
+    [(ResultCompilerTypecheck.Err diagnostics-box)
+      (let
+        [diagnostics : CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostic : CompilerDiagnostic
+          (compiler-diagnostic-list-first diagnostics)]
+        (and
+          (= (compiler-diagnostic-list-count diagnostics) 1)
+          (string.eq
+            (compiler-diagnostic-message diagnostic)
+            "typecheck: unbound name io.missing")
+          (= (struct-get (compiler-diagnostic-fixes diagnostic) len) 0)))]))
+
 (define (compiler-check-duplicate-type-location-ok?) : bool
   (let
     [path : String "tests/duplicate_type_location.tl"]
@@ -218,6 +363,9 @@
           (compiler-check-duplicate-type-location-ok?)
           (compiler-check-independent-diagnostics-ok?)
           (compiler-check-poison-suppresses-derived-diagnostics-ok?)
-          (compiler-check-semantic-index-ok?))
+          (compiler-check-semantic-index-ok?)
+          (compiler-check-subform-diagnostic-spans-ok?)
+          (compiler-check-qualified-near-miss-ok?)
+          (compiler-check-qualified-unbound-display-ok?))
         42]
       [else 1])))

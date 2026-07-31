@@ -10176,9 +10176,10 @@
 ;; Span keys are a one-word handle, and identical spellings from different
 ;; provenance stay distinct. The `size-of` check lives here rather than beside
 ;; `CompilerIrSymbolId` because `size-of` needs a `(type T)` literal, and a
-;; `(type T)` literal anywhere in a compiled program makes the driver defer the
-;; macro-handoff source/frontend release (#5872). This module is outside
-;; `main.tl`'s closure, so the assertion costs the self-compile nothing.
+;; literal anywhere in a compiled program forces the tens-of-MB CTFE
+;; reflection/layout metadata build for that compile (#5872, #5875). This
+;; module is outside `main.tl`'s closure, so the assertion costs the
+;; self-compile nothing.
 (define (compiler-backend-source-span-symbol-provenance-ok?) : bool
   (let
     [symbol-id-bytes : i64 (comptime (size-of (type CompilerIrSymbolId)))]

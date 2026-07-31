@@ -8790,12 +8790,12 @@
             [tail-store-count : i64
               (lower-test-function-store-ptr-count functions "fill")]
             (compiler-lower-and8
-              (= load-count 0)
+              (= load-count 1)
               (= store-count 0)
               (>= binop-count 2)
-              (>= pred-load-count 4)
+              (>= pred-load-count 3)
               (>= pred-store-count 4)
-              (= tail-mask-count 2)
+              (= tail-mask-count 1)
               (> tail-store-count 0)
               true))])]
     [(ResultCompilerLower.Err _) false]))
@@ -8842,8 +8842,8 @@
               (>= binop-count 3)
               (= pred-load-count 0)
               (>= pred-store-count 4)
-              (= tail-mask-count 2)
-              (>= shape-count 6)
+              (= tail-mask-count 1)
+              (>= shape-count 5)
               (> tail-store-count 0)))])]
     [(ResultCompilerLower.Err _) false]))
 
@@ -8881,8 +8881,8 @@
               (>= binop-count 6)
               (= pred-load-count 0)
               (>= pred-store-count 4)
-              (= tail-mask-count 2)
-              (>= shape-count 10)
+              (= tail-mask-count 1)
+              (>= shape-count 9)
               (> tail-store-count 0)))])]
     [(ResultCompilerLower.Err _) false]))
 
@@ -8917,14 +8917,14 @@
             [tail-store-count : i64
               (lower-test-function-store-ptr-count functions "fill")]
             (compiler-lower-and8
-              (= load-count 0)
-              (= store-count 0)
+              (= load-count 1)
+              (= store-count 1)
               (>= binop-count 2)
-              (>= pred-load-count 4)
-              (= pred-store-count 2)
+              (>= pred-load-count 3)
+              (= pred-store-count 1)
               (= select-count 2)
-              (= tail-mask-count 2)
-              (and (>= shape-count 8) (> tail-store-count 0))))])]
+              (= tail-mask-count 1)
+              (and (>= shape-count 7) (> tail-store-count 0))))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-masked-if-bitand-value-shape-ok?
@@ -8958,14 +8958,14 @@
                 lanes
                 (AstType.I64))]
             (compiler-lower-and8
-              (= load-count 0)
-              (= store-count 0)
+              (= load-count 1)
+              (= store-count 1)
               (>= binop-count 6)
-              (>= pred-load-count 6)
-              (= pred-store-count 2)
+              (>= pred-load-count 5)
+              (= pred-store-count 1)
               (= select-count 2)
-              (= tail-mask-count 2)
-              (>= shape-count 16)))])]
+              (= tail-mask-count 1)
+              (>= shape-count 15)))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-masked-if-bitwise-value-shape-ok?
@@ -9006,10 +9006,10 @@
               (>= binop-count 8)
               (>= bit-or-count 4)
               (>= bit-xor-count 4)
-              (>= pred-load-count 2)
-              (= pred-store-count 2)
+              (>= pred-load-count 1)
+              (= pred-store-count 1)
               (>= select-count 4)
-              (>= shape-count 18)))])]
+              (>= shape-count 16)))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-masked-if-shift-value-shape-ok?
@@ -9116,11 +9116,11 @@
             [tail-store-count : i64
               (lower-test-function-store-ptr-count functions "fill")]
             (compiler-lower-and8
-              (= load-count 0)
+              (= load-count 1)
               (= store-count 0)
               (> pred-load-count 0)
               (> pred-store-count 0)
-              (= tail-mask-count 2)
+              (= tail-mask-count 1)
               (> shape-count 0)
               (> tail-store-count 0)
               true))])]
@@ -9145,10 +9145,12 @@
             [tail-mask-count : i64
               (lower-test-function-tail-mask-count functions "fill")]
             (and
-              (= load-count 0)
-              (= store-count 0)
-              (> (+ (+ pred-load-count pred-store-count) select-count) 0)
-              (= tail-mask-count 2)))])]
+              (>
+                (+
+                  (+ (+ load-count store-count) pred-load-count)
+                  (+ pred-store-count select-count))
+                0)
+              (= tail-mask-count 1)))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx2-masked-if-shape-ok?) : bool

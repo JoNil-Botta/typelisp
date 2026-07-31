@@ -45662,6 +45662,81 @@
         expr
         (string.append "lower: SPMD masked if does not support " detail)))))
 
+;; `No` is the proven all-active state for a full SIMD gang. Keep that proof
+;; symbolic through masked lowering so parent-only memory operations can use
+;; ordinary vector loads/stores. Materialize an actual mask only at operations
+;; such as varying loops and private calls whose IR requires one.
+(define (lower-masked-active-mask-value
+  [state : LowerState]
+  [active-mask : CompilerIrMaybeValue]
+  [lanes : i64]) : LowerExpr
+  (match active-mask
+    [(CompilerIrMaybeValue.Some mask)
+      (LowerExpr.Expr state mask (AstType.Bool))]
+    [(CompilerIrMaybeValue.No)
+      (lower-emit-tail-mask
+        state
+        (CompilerIrValue.I64 0)
+        (CompilerIrValue.I64 lanes)
+        lanes)]))
+
+(define (lower-masked-active-intersect
+  [state : LowerState]
+  [active-mask : CompilerIrMaybeValue]
+  [mask : CompilerIrValue]
+  [lanes : i64]) : LowerExpr
+  (match active-mask
+    [(CompilerIrMaybeValue.No) (LowerExpr.Expr state mask (AstType.Bool))]
+    [(CompilerIrMaybeValue.Some parent-mask)
+      (lower-emit-mask-binop
+        state
+        (CompilerIrMaskBinOp.And)
+        parent-mask
+        mask
+        lanes)]))
+
+(define (lower-emit-active-load
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerExpr
+  (if (lower-type-bool? elem-ty)
+    (match (lower-masked-active-mask-value state active-mask lanes)
+      [(LowerExpr.Expr mask-state mask _)
+        (lower-emit-predicated-load mask-state base index mask lanes elem-ty)])
+    (match active-mask
+      [(CompilerIrMaybeValue.No)
+        (lower-emit-vector-load state base index lanes elem-ty)]
+      [(CompilerIrMaybeValue.Some mask)
+        (lower-emit-predicated-load state base index mask lanes elem-ty)])))
+
+(define (lower-emit-active-store
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerState
+  (if (lower-type-bool? elem-ty)
+    (match (lower-masked-active-mask-value state active-mask lanes)
+      [(LowerExpr.Expr mask-state mask _)
+        (lower-emit-predicated-store
+          mask-state
+          base
+          index
+          value
+          mask
+          lanes
+          elem-ty)])
+    (match active-mask
+      [(CompilerIrMaybeValue.No)
+        (lower-emit-vector-store state base index value lanes elem-ty)]
+      [(CompilerIrMaybeValue.Some mask)
+        (lower-emit-predicated-store state base index value mask lanes elem-ty)])))
+
 (define (lower-avx512-masked-index-value
   [ctx : TcContext]
   [state : LowerState]
@@ -45687,12 +45762,14 @@
 
 (define (lower-avx512-masked-bool-literal
   [state : LowerState]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [value : bool]) : LowerExpr
-  (if value
-    (LowerExpr.Expr state active-mask (AstType.Bool))
-    (lower-emit-mask-not state active-mask lanes)))
+  (match (lower-masked-active-mask-value state active-mask lanes)
+    [(LowerExpr.Expr mask-state mask _)
+      (if value
+        (LowerExpr.Expr mask-state mask (AstType.Bool))
+        (lower-emit-mask-not mask-state mask lanes))]))
 
 (define (lower-avx512-masked-var
   [_ctx : TcContext]
@@ -45763,7 +45840,7 @@
   [type-env : TcTypeEnv]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [expr : AstExpr]
   [arr : AstExpr]
@@ -45778,7 +45855,7 @@
               (match idx-lowered
                 [(LowerExpr.Expr idx-state idx-value _)
                   (ResultLowerExpr.Ok
-                    (lower-emit-predicated-load
+                    (lower-emit-active-load
                       idx-state
                       (CompilerIrValue.Var array-var)
                       idx-value
@@ -45799,7 +45876,7 @@
                 (match idx-lowered
                   [(LowerExpr.Expr idx-state idx-value _)
                     (ResultLowerExpr.Ok
-                      (lower-emit-predicated-load
+                      (lower-emit-active-load
                         idx-state
                         (CompilerIrValue.Var array-var)
                         idx-value
@@ -45823,7 +45900,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [expr : AstExpr]
   [arr : AstExpr]
@@ -45855,7 +45932,7 @@
                         [(LowerExpr.Expr value-state value-ir _)
                           (ResultLowerExpr.Ok
                             (LowerExpr.Expr
-                              (lower-emit-predicated-store
+                              (lower-emit-active-store
                                 value-state
                                 (CompilerIrValue.Var array-var)
                                 idx-value
@@ -45897,7 +45974,7 @@
                           [(LowerExpr.Expr value-state value-ir _)
                             (ResultLowerExpr.Ok
                               (LowerExpr.Expr
-                                (lower-emit-predicated-store
+                                (lower-emit-active-store
                                   value-state
                                   (CompilerIrValue.Var array-var)
                                   idx-value
@@ -46041,7 +46118,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [bindings : AstLetBindingList]) : ResultLowerEnv
   (lower-avx512-masked-let-bindings-at
@@ -46065,7 +46142,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : ResultLowerEnv
@@ -46169,7 +46246,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [exprs : AstExprList]) : ResultLowerExpr
   (lower-avx512-masked-begin-at
@@ -46193,7 +46270,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : ResultLowerExpr
@@ -46251,125 +46328,127 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [cond : AstExpr]
   [body : AstExpr]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc.Alloc mask-alloc loop-mask-var)
-      (let
-        [s : LowerState
-          (lower-state-emit
-            mask-alloc
-            (CompilerIrInstr.MaskBinOp
-              loop-mask-var
-              (CompilerIrMaskBinOp.Or)
-              active-mask
-              active-mask
-              lanes))]
-        [header-label : i64 (compiler-ir-label-none)]
-        [body-label : i64 (compiler-ir-label-none)]
-        [exit-label : i64 (compiler-ir-label-none)]
-        [cond-active : CompilerIrValue CompilerIrValue.Unit]
-        [any-active : CompilerIrValue CompilerIrValue.Unit]
-        (begin
-          (match (lower-state-fresh-label s "spmd_vwhile_header")
-            [(LowerLabel.Label next-s label)
-              (begin
-                (set! s next-s)
-                (set! header-label label))])
-          (match (lower-state-fresh-label s "spmd_vwhile_body")
-            [(LowerLabel.Label next-s label)
-              (begin
-                (set! s next-s)
-                (set! body-label label))])
-          (match (lower-state-fresh-label s "spmd_vwhile_exit")
-            [(LowerLabel.Label next-s label)
-              (begin
-                (set! s next-s)
-                (set! exit-label label))])
-          (set!
-            s
-            (lower-state-finish-block
-              (lower-state-emit s (CompilerIrInstr.Jump header-label))
-              header-label))
-          (match (lower-avx512-masked-expr
-            ctx
-            s
-            env
-            type-env
-            lane-locals
-            index
-            index-var
-            (CompilerIrValue.Var loop-mask-var)
-            lanes
-            cond)
-            [(ResultLowerExpr.Ok cond-lowered)
-              (match cond-lowered
-                [(LowerExpr.Expr cond-state cond-mask _)
-                  (begin
-                    (match (lower-emit-mask-binop
-                      cond-state
-                      (CompilerIrMaskBinOp.And)
-                      (CompilerIrValue.Var loop-mask-var)
-                      cond-mask
-                      lanes)
-                      [(LowerExpr.Expr next-s value _)
-                        (begin
-                          (set! s next-s)
-                          (set! cond-active value))])
-                    (match (lower-emit-mask-reduce
-                      s
-                      (CompilerIrMaskReduceOp.Any)
-                      cond-active
-                      lanes)
-                      [(LowerExpr.Expr next-s value _)
-                        (begin
-                          (set! s next-s)
-                          (set! any-active value))]))])]
-            [(ResultLowerExpr.Err message)
-              (return (ResultLowerExpr.Err message))])
-          (set!
-            s
-            (lower-state-finish-block
+  (match (lower-masked-active-mask-value state active-mask lanes)
+    [(LowerExpr.Expr active-state active-value _)
+      (match (lower-state-alloc-var active-state)
+        [(LowerAlloc.Alloc mask-alloc loop-mask-var)
+          (let
+            [s : LowerState
               (lower-state-emit
+                mask-alloc
+                (CompilerIrInstr.MaskBinOp
+                  loop-mask-var
+                  (CompilerIrMaskBinOp.Or)
+                  active-value
+                  active-value
+                  lanes))]
+            [header-label : i64 (compiler-ir-label-none)]
+            [body-label : i64 (compiler-ir-label-none)]
+            [exit-label : i64 (compiler-ir-label-none)]
+            [cond-active : CompilerIrValue CompilerIrValue.Unit]
+            [any-active : CompilerIrValue CompilerIrValue.Unit]
+            (begin
+              (match (lower-state-fresh-label s "spmd_vwhile_header")
+                [(LowerLabel.Label next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! header-label label))])
+              (match (lower-state-fresh-label s "spmd_vwhile_body")
+                [(LowerLabel.Label next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! body-label label))])
+              (match (lower-state-fresh-label s "spmd_vwhile_exit")
+                [(LowerLabel.Label next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! exit-label label))])
+              (set!
                 s
-                (CompilerIrInstr.Branch any-active body-label exit-label))
-              body-label))
-          (match (lower-avx512-masked-expr-expected
-            ctx
-            s
-            env
-            type-env
-            lane-locals
-            index
-            index-var
-            cond-active
-            lanes
-            body
-            (AstType.Unit))
-            [(ResultLowerExpr.Ok body-lowered)
-              (match body-lowered
-                [(LowerExpr.Expr body-state _ _)
-                  (set!
+                (lower-state-finish-block
+                  (lower-state-emit s (CompilerIrInstr.Jump header-label))
+                  header-label))
+              (match (lower-avx512-masked-expr
+                ctx
+                s
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var loop-mask-var))
+                lanes
+                cond)
+                [(ResultLowerExpr.Ok cond-lowered)
+                  (match cond-lowered
+                    [(LowerExpr.Expr cond-state cond-mask _)
+                      (begin
+                        (match (lower-emit-mask-binop
+                          cond-state
+                          (CompilerIrMaskBinOp.And)
+                          (CompilerIrValue.Var loop-mask-var)
+                          cond-mask
+                          lanes)
+                          [(LowerExpr.Expr next-s value _)
+                            (begin
+                              (set! s next-s)
+                              (set! cond-active value))])
+                        (match (lower-emit-mask-reduce
+                          s
+                          (CompilerIrMaskReduceOp.Any)
+                          cond-active
+                          lanes)
+                          [(LowerExpr.Expr next-s value _)
+                            (begin
+                              (set! s next-s)
+                              (set! any-active value))]))])]
+                [(ResultLowerExpr.Err message)
+                  (return (ResultLowerExpr.Err message))])
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit
                     s
-                    (lower-state-emit
-                      body-state
-                      (CompilerIrInstr.MaskBinOp
-                        loop-mask-var
-                        (CompilerIrMaskBinOp.Or)
-                        cond-active
-                        cond-active
-                        lanes)))])]
-            [(ResultLowerExpr.Err message)
-              (return (ResultLowerExpr.Err message))])
-          (ResultLowerExpr.Ok
-            (LowerExpr.Expr
-              (lower-state-finish-block
-                (lower-state-emit s (CompilerIrInstr.Jump header-label))
-                exit-label)
-              CompilerIrValue.Unit
-              (AstType.Unit)))))]))
+                    (CompilerIrInstr.Branch any-active body-label exit-label))
+                  body-label))
+              (match (lower-avx512-masked-expr-expected
+                ctx
+                s
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                (CompilerIrMaybeValue.Some cond-active)
+                lanes
+                body
+                (AstType.Unit))
+                [(ResultLowerExpr.Ok body-lowered)
+                  (match body-lowered
+                    [(LowerExpr.Expr body-state _ _)
+                      (set!
+                        s
+                        (lower-state-emit
+                          body-state
+                          (CompilerIrInstr.MaskBinOp
+                            loop-mask-var
+                            (CompilerIrMaskBinOp.Or)
+                            cond-active
+                            cond-active
+                            lanes)))])]
+                [(ResultLowerExpr.Err message)
+                  (return (ResultLowerExpr.Err message))])
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr
+                  (lower-state-finish-block
+                    (lower-state-emit s (CompilerIrInstr.Jump header-label))
+                    exit-label)
+                  CompilerIrValue.Unit
+                  (AstType.Unit)))))])]))
 
 (define (lower-avx512-masked-if
   [ctx : TcContext]
@@ -46379,7 +46458,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [result-ty : AstType]
   [expr : AstExpr]
@@ -46400,18 +46479,16 @@
     [(ResultLowerExpr.Ok cond-lowered)
       (match cond-lowered
         [(LowerExpr.Expr cond-state cond-mask _)
-          (match (lower-emit-mask-binop
+          (match (lower-masked-active-intersect
             cond-state
-            (CompilerIrMaskBinOp.And)
             active-mask
             cond-mask
             lanes)
             [(LowerExpr.Expr then-mask-state then-mask _)
               (match (lower-emit-mask-not then-mask-state cond-mask lanes)
                 [(LowerExpr.Expr not-state not-mask _)
-                  (match (lower-emit-mask-binop
+                  (match (lower-masked-active-intersect
                     not-state
-                    (CompilerIrMaskBinOp.And)
                     active-mask
                     not-mask
                     lanes)
@@ -46424,7 +46501,7 @@
                         lane-locals
                         index
                         index-var
-                        then-mask
+                        (CompilerIrMaybeValue.Some then-mask)
                         lanes
                         then-branch
                         result-ty)
@@ -46439,7 +46516,7 @@
                                 lane-locals
                                 index
                                 index-var
-                                else-mask
+                                (CompilerIrMaybeValue.Some else-mask)
                                 lanes
                                 else-branch
                                 result-ty)
@@ -46586,7 +46663,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [expr : AstExpr]
   [op : CompilerIrBinOp]
@@ -46676,7 +46753,7 @@
 
 (define (lower-avx512-masked-shift-guard-and-emit
   [state : LowerState (:consume)]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [op : CompilerIrBinOp]
   [left-value : CompilerIrValue]
@@ -46686,7 +46763,7 @@
   (ResultLowerExpr.Ok
     (lower-emit-checked-vector-shift
       state
-      (CompilerIrMaybeValue.Some active-mask)
+      active-mask
       lanes
       op
       left-value
@@ -46702,7 +46779,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [expr : AstExpr]
   [ast-op : AstBinOp]
@@ -46792,7 +46869,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [expr : AstExpr]
   [op : AstBinOp]
@@ -47150,7 +47227,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [_expr : AstExpr]
   [op : CompilerIrBinOp]
@@ -47953,7 +48030,7 @@
                         bound-lane-locals
                         index
                         index-var
-                        arm-mask
+                        (CompilerIrMaybeValue.Some arm-mask)
                         lanes
                         body
                         result-ty)
@@ -48276,7 +48353,7 @@
           lane-locals
           index
           index-var
-          active-mask
+          (CompilerIrMaybeValue.Some active-mask)
           lanes
           body
           result-ty)
@@ -48298,7 +48375,7 @@
                   lane-locals
                   index
                   index-var
-                  arm-mask
+                  (CompilerIrMaybeValue.Some arm-mask)
                   lanes
                   body
                   result-ty)
@@ -48335,7 +48412,7 @@
         lane-locals
         index
         index-var
-        active-mask
+        (CompilerIrMaybeValue.Some active-mask)
         lanes
         body
         result-ty)]
@@ -48350,7 +48427,7 @@
             (lower-id-set-insert lane-locals name)
             index
             index-var
-            active-mask
+            (CompilerIrMaybeValue.Some active-mask)
             lanes
             body
             result-ty)]
@@ -48369,7 +48446,7 @@
             (lower-id-set-insert lane-locals name)
             index
             index-var
-            active-mask
+            (CompilerIrMaybeValue.Some active-mask)
             lanes
             body
             result-ty)]
@@ -48429,7 +48506,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [result-ty : AstType]
   [expr : AstExpr]
@@ -48443,20 +48520,22 @@
     scrutinee)
     [(ResultTcType.Ok scrut-ty) (lower-spmd-enum-type? scrut-ty)]
     [(ResultTcType.Err _) false])
-    (lower-avx2-masked-enum-match
-      ctx
-      state
-      env
-      type-env
-      lane-locals
-      index
-      index-var
-      active-mask
-      lanes
-      result-ty
-      expr
-      scrutinee
-      arms)
+    (match (lower-masked-active-mask-value state active-mask lanes)
+      [(LowerExpr.Expr mask-state mask _)
+        (lower-avx2-masked-enum-match
+          ctx
+          mask-state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          mask
+          lanes
+          result-ty
+          expr
+          scrutinee
+          arms)])
     (match (lower-avx512-masked-expr
       ctx
       state
@@ -48471,21 +48550,26 @@
       [(ResultLowerExpr.Ok scrut-lowered)
         (match scrut-lowered
           [(LowerExpr.Expr scrut-state scrut-value scrut-ty)
-            (lower-avx512-masked-match-arms
-              ctx
+            (match (lower-masked-active-mask-value
               scrut-state
-              env
-              type-env
-              lane-locals
-              index
-              index-var
               active-mask
-              lanes
-              result-ty
-              expr
-              scrut-value
-              scrut-ty
-              arms)])]
+              lanes)
+              [(LowerExpr.Expr mask-state mask _)
+                (lower-avx512-masked-match-arms
+                  ctx
+                  mask-state
+                  env
+                  type-env
+                  lane-locals
+                  index
+                  index-var
+                  mask
+                  lanes
+                  result-ty
+                  expr
+                  scrut-value
+                  scrut-ty
+                  arms)])])]
       [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
 
 (define (lower-spmd-ir-value-class [ty : AstType] [varying : bool]) : CompilerIrSpmdValueClass
@@ -48503,7 +48587,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [params : AstParamList]
   [args : AstExprList]) : ResultLowerSpmdCallArgs
@@ -48531,7 +48615,7 @@
   [analysis-locals : lower_i64_i64_map.Map]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [params : (& params AstParamList)]
   [args : (& args AstExprList)]
@@ -49590,7 +49674,7 @@
         (if (>= helper-index-source-param 0)
           (+ helper-index-source-param 1)
           source-param-count))
-      (CompilerIrValue.Var 0)
+      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0))
       lanes
       body
       ret-ty)
@@ -50095,6 +50179,29 @@
                 lanes
                 result-ty))))])))
 
+(define (lower-avx512-emit-spmd-call-active
+  [state : LowerState (:consume)]
+  [hidden-name : i64]
+  [backend : CompilerIrSpmdBackend]
+  [active-mask : CompilerIrMaybeValue]
+  [lanes : i64]
+  [call-args : CompilerIrSpmdCallArgList]
+  [result-ty : AstType]
+  [result-varying : bool]
+  [expr : AstExpr]) : ResultLowerExpr
+  (match (lower-masked-active-mask-value state active-mask lanes)
+    [(LowerExpr.Expr mask-state mask _)
+      (lower-avx512-emit-spmd-call
+        mask-state
+        hidden-name
+        backend
+        mask
+        lanes
+        call-args
+        result-ty
+        result-varying
+        expr)]))
+
 (define (lower-avx512-uniform-spmd-call
   [ctx : TcContext]
   [state : LowerState]
@@ -50125,7 +50232,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [expr : AstExpr]
   [func : AstExpr]
@@ -50210,7 +50317,7 @@
                           (ResultLowerExpr.Err message)]
                         [(ResultLowerImportedSpmdSpecialization.Ok
                             specialization)
-                          (lower-avx512-emit-spmd-call
+                          (lower-avx512-emit-spmd-call-active
                             args-state
                             (lower-imported-spmd-ir-symbol specialization)
                             (CompilerIrSpmdBackend.Avx512)
@@ -50235,7 +50342,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [expr : AstExpr]
   [func : AstExpr]
@@ -50354,7 +50461,7 @@
                                 (lower-state-names named-state)
                                 (lower-state-mode named-state))
                                 [(ResultLowerFunction.Ok functions helper-spans)
-                                  (lower-avx512-emit-spmd-call
+                                  (lower-avx512-emit-spmd-call-active
                                     (lower-state-add-functions
                                       named-state
                                       functions
@@ -50412,7 +50519,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [expr : AstExpr]) : ResultLowerExpr
   (match expr
@@ -50697,7 +50804,7 @@
   [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [expr : AstExpr]
   [expected-ty : AstType]) : ResultLowerExpr
@@ -50913,7 +51020,7 @@
   [index : String]
   [index-ty : AstType]
   [index-var : i64]
-  [active-mask : CompilerIrValue]
+  [active-mask : CompilerIrMaybeValue]
   [lanes : i64]
   [body : AstExpr]) : ResultLowerExpr
   (lower-avx512-masked-expr
@@ -51054,15 +51161,6 @@
                       body-label
                       tail-header-label))
                   body-label))
-              (match (lower-emit-tail-mask
-                s
-                (CompilerIrValue.Var index-var)
-                next-index
-                lanes)
-                [(LowerExpr.Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! active-mask value))])
               (match (lower-avx512-masked-map-body
                 ctx
                 s
@@ -51072,7 +51170,7 @@
                 index
                 index-ty
                 index-var
-                active-mask
+                (CompilerIrMaybeValue.No)
                 lanes
                 body)
                 [(ResultLowerExpr.Ok lowered-body)
@@ -51142,7 +51240,7 @@
                 index
                 index-ty
                 index-var
-                active-mask
+                (CompilerIrMaybeValue.Some active-mask)
                 lanes
                 body)
                 [(ResultLowerExpr.Ok lowered-tail)

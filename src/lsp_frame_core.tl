@@ -4597,18 +4597,29 @@
     (lsp-skip-paren-group text i n)
     (lsp-scan-ident text i n)))
 
-;; Validate that text contains one or more complete parenthesized forms.
-;; Returns true if all non-whitespace content consists of valid forms.
-;; Now uses the real compiler parser for accurate error reporting.
-(define (lsp-text-is-valid-forms [text : String]) : bool
+(define (lsp-text-has-form-content? [text : String]) : bool
   (let
     [n : i64 (string.string-length text)]
-    [i : i64 (lsp-skip-space text 0 n)]
-    (if (= i n)
-      false
-      (match (lsp-validate-forms-result text)
-        [(LspValidationResult.Valid) true]
-        [(LspValidationResult.Invalid _ _ _ _) false]))))
+    [i : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (begin
+          (set! i (lsp-skip-space text i n))
+          (if (and (< i n) (= (string.string-ref text i) ';'))
+            (set! i (lsp-skip-line text i n))
+            (set! done true))))
+      (< i n))))
+
+;; Validate that text contains one or more complete parenthesized forms.
+;; Returns true if all non-comment content consists of valid forms.
+;; Now uses the real compiler parser for accurate error reporting.
+(define (lsp-text-is-valid-forms [text : String]) : bool
+  (if (not (lsp-text-has-form-content? text))
+    false
+    (match (lsp-validate-forms-result text)
+      [(LspValidationResult.Valid) true]
+      [(LspValidationResult.Invalid _ _ _ _) false])))
 
 (define (lsp-validation-error-message
   [line : i64]
@@ -4625,49 +4636,73 @@
     ctx))
 
 (define (lsp-replace-body-validation-message [new-body : String]) : String
-  (match (lsp-validate-forms-result new-body)
-    [(LspValidationResult.Valid) ""]
-    [(LspValidationResult.Invalid line col msg ctx)
+  (let
+    [detail : String
+      (if (lsp-text-has-form-content? new-body)
+        (match (lsp-validate-forms-result new-body)
+          [(LspValidationResult.Valid) ""]
+          [(LspValidationResult.Invalid line col msg ctx)
+            (lsp-validation-error-message line col msg ctx)])
+        (lsp-validation-error-message
+          1
+          1
+          "expected one or more complete TypeLisp expressions"
+          "<empty body>"))]
+    (if (= (string.string-length detail) 0)
+      ""
       (lsp-str3
         "replaceBody rejected before writing: newBody is not a complete TypeLisp body. "
-        (lsp-validation-error-message line col msg ctx)
-        " No changes were written.")]))
+        detail
+        " No changes were written."))))
+
+(define (lsp-replace-body-validation-data-at
+  [line : i64]
+  [col : i64]
+  [msg : String]
+  [ctx : String]) : json.Json
+  (lsp-json-object
+    (lsp-json-member
+      "operation"
+      (json.JsonString "replaceBody")
+      (lsp-json-member
+        "parameter"
+        (json.JsonString "newBody")
+        (lsp-json-member
+          "expected"
+          (json.JsonString
+            "one or more complete TypeLisp expression(s), without the define/defmacro header")
+          (lsp-json-member
+            "errorCode"
+            (json.JsonString "invalidBody")
+            (lsp-json-member
+              "location"
+              (lsp-json-object2
+                "line"
+                (lsp-json-number line)
+                "column"
+                (lsp-json-number col))
+              (lsp-json-member
+                "parserMessage"
+                (json.JsonString msg)
+                (lsp-json-member
+                  "context"
+                  (json.JsonString ctx)
+                  (lsp-json-member
+                    "written"
+                    (json.JsonBool false)
+                    (json.member-list-empty)))))))))))
 
 (define (lsp-replace-body-validation-data [new-body : String]) : json.Json
-  (match (lsp-validate-forms-result new-body)
-    [(LspValidationResult.Valid) json.JsonNull]
-    [(LspValidationResult.Invalid line col msg ctx)
-      (lsp-json-object
-        (lsp-json-member
-          "operation"
-          (json.JsonString "replaceBody")
-          (lsp-json-member
-            "parameter"
-            (json.JsonString "newBody")
-            (lsp-json-member
-              "expected"
-              (json.JsonString
-                "one or more complete TypeLisp expression(s), without the define/defmacro header")
-              (lsp-json-member
-                "errorCode"
-                (json.JsonString "invalidBody")
-                (lsp-json-member
-                  "location"
-                  (lsp-json-object2
-                    "line"
-                    (lsp-json-number line)
-                    "column"
-                    (lsp-json-number col))
-                  (lsp-json-member
-                    "parserMessage"
-                    (json.JsonString msg)
-                    (lsp-json-member
-                      "context"
-                      (json.JsonString ctx)
-                      (lsp-json-member
-                        "written"
-                        (json.JsonBool false)
-                        (json.member-list-empty))))))))))]))
+  (if (lsp-text-has-form-content? new-body)
+    (match (lsp-validate-forms-result new-body)
+      [(LspValidationResult.Valid) json.JsonNull]
+      [(LspValidationResult.Invalid line col msg ctx)
+        (lsp-replace-body-validation-data-at line col msg ctx)])
+    (lsp-replace-body-validation-data-at
+      1
+      1
+      "expected one or more complete TypeLisp expressions"
+      "<empty body>")))
 
 ;; Return a formatted error message, or empty string if valid.
 (define (lsp-validate-forms-error [text : String]) : String

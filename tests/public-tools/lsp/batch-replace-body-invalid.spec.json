@@ -2,6 +2,7 @@
   "exit": 0,
   "stderr_exact": "",
   "message_checks": [
-    {"jsonpath_id": 2, "raw_contains": "\"success\":false", "raw_contains": "\"failedIndex\":0", "raw_contains": "replaceBody rejected before writing", "raw_contains": "\"operation\":\"replaceBody\"", "raw_contains": "\"parameter\":\"newBody\"", "raw_contains": "\"errorCode\":\"invalidBody\"", "raw_contains": "\"written\":false", "raw_contains": "No changes were written"}
+    {"jsonpath_id": 2, "raw_contains": "\"success\":false", "raw_contains": "\"failedIndex\":0", "raw_contains": "replaceBody rejected before writing", "raw_contains": "\"operation\":\"replaceBody\"", "raw_contains": "\"parameter\":\"newBody\"", "raw_contains": "\"errorCode\":\"invalidBody\"", "raw_contains": "\"written\":false", "raw_contains": "No changes were written"},
+    {"jsonpath_id": 3, "raw_contains": "\"success\":false", "raw_contains": "\"failedIndex\":0", "raw_contains": "expected one or more complete TypeLisp expressions", "raw_contains": "\"line\":1", "raw_contains": "\"column\":1", "raw_contains": "\"context\":\"<empty body>\"", "raw_contains": "\"written\":false"}
   ]
 }

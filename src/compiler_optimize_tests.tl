@@ -4142,22 +4142,51 @@
                       (CompilerIrValue.Global (struct-get symbols big))
                       (AstType.I64))
                     (compiler-ir-instr-cons
-                      ;; taking the address disqualifies "borrowed"
+                      ;; A proven constant Move feeding arithmetic is rewritten
+                      ;; after BCE so the next fold can simplify the chain.
                       (CompilerIrInstr.Mov
-                        20
-                        (CompilerIrValue.GlobalAddr
-                          (struct-get symbols borrowed))
-                        (AstType.U64))
+                        17
+                        (CompilerIrValue.Global (struct-get symbols konst))
+                        (AstType.I64))
                       (compiler-ir-instr-cons
-                        ;; the store disqualifies "mut"
-                        (CompilerIrInstr.Store
-                          (struct-get symbols mutable)
-                          (CompilerIrValue.I64 9)
+                        (CompilerIrInstr.BinOp
+                          18
+                          (CompilerIrBinOp.BitXor)
+                          (CompilerIrValue.Var 17)
+                          (CompilerIrValue.I64 1)
                           (AstType.I64))
                         (compiler-ir-instr-cons
-                          (CompilerIrInstr.Return
-                            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 10)))
-                          CompilerIrInstrList.Nil)))))))))))
+                          ;; A global Move used only as a comparison bound stays
+                          ;; symbolic to avoid a register-pressure regression.
+                          (CompilerIrInstr.Mov
+                            19
+                            (CompilerIrValue.Global (struct-get symbols konst))
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.BinOp
+                              21
+                              (CompilerIrBinOp.Lt)
+                              (CompilerIrValue.Var 0)
+                              (CompilerIrValue.Var 19)
+                              (AstType.I64))
+                            (compiler-ir-instr-cons
+                              ;; taking the address disqualifies "borrowed"
+                              (CompilerIrInstr.Mov
+                                20
+                                (CompilerIrValue.GlobalAddr
+                                  (struct-get symbols borrowed))
+                                (AstType.U64))
+                              (compiler-ir-instr-cons
+                                ;; the store disqualifies "mut"
+                                (CompilerIrInstr.Store
+                                  (struct-get symbols mutable)
+                                  (CompilerIrValue.I64 9)
+                                  (AstType.I64))
+                                (compiler-ir-instr-cons
+                                  (CompilerIrInstr.Return
+                                    (CompilerIrMaybeValue.Some
+                                      (CompilerIrValue.Var 10)))
+                                  CompilerIrInstrList.Nil)))))))))))))))
     CompilerIrBlockList.Nil))
 
 (define (opt-const-divisor-test-rhs-in-seq
@@ -4188,6 +4217,36 @@
     [(CompilerIrBlockList.Array seq)
       (opt-const-divisor-test-rhs (compiler-ir-block-seq-to-list seq) dst)]))
 
+(define (opt-const-divisor-test-mov-src-in-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [dst : i64]) : CompilerIrValue
+  (if (>= index count)
+    (CompilerIrValue.Unit)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Mov d src _)
+        (if (= d dst)
+          src
+          (opt-const-divisor-test-mov-src-in-seq instrs (+ index 1) count dst))]
+      [_ (opt-const-divisor-test-mov-src-in-seq instrs (+ index 1) count dst)])))
+
+(define (opt-const-divisor-test-mov-src
+  [blocks : CompilerIrBlockList]
+  [dst : i64]) : CompilerIrValue
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrValue.Unit)]
+    [(CompilerIrBlockList.Cons block _)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-const-divisor-test-mov-src-in-seq
+            instrs
+            0
+            (compiler-ir-instr-seq-count instrs)
+            dst)])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-const-divisor-test-mov-src (compiler-ir-block-seq-to-list seq) dst)]))
+
 (define (opt-const-divisor-test-is-i64? [v : CompilerIrValue] [n : i64]) : bool
   (match v
     [(CompilerIrValue.I64 m) (= m n)]
@@ -4217,6 +4276,13 @@
     [table : opt_i64_i64_map.Map (opt-const-divisors-build globals functions)]
     [rewritten : CompilerIrBlockList
       (opt-const-divisor-rewrite-blocks table blocks)]
+    [move-rewritten : CompilerIrBlockList
+      (opt-const-global-move-rewrite-blocks
+        table
+        (opt-const-global-move-fold-vars-blocks
+          (opt_i64_i64_map.with-capacity 8)
+          blocks)
+        blocks)]
     (cond
       [(not (opt_i64_i64_map.contains? (& table) (struct-get symbols konst))) 1]
       [(not
@@ -4267,6 +4333,16 @@
             (opt-const-divisor-test-rhs rewritten 16)
             "big"))
         14]
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-divisor-test-mov-src move-rewritten 17)
+            1000000007))
+        15]
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-mov-src move-rewritten 19)
+            "konst"))
+        16]
       [else 42])))
 
 (define (compiler-optimize-cse-self-test) : i64
@@ -15373,6 +15449,18 @@
     (ast-node-pool-reader-type-segment-bases)
     (opt-licm-test-function blocks)))
 
+(define (opt-licm-late-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (let
+    [func : CompilerIrFunction (opt-licm-test-function blocks)]
+    (match (opt-licm-function-with-context-result-and-direct-call-clean
+      (ast-node-pool-reader-type-segment-bases)
+      (opt-cfg-context-build blocks)
+      false
+      (opt_i64_i64_map.with-capacity 1)
+      true
+      func)
+      [(OptFunctionCtxResult.Result next _) next])))
+
 (define (opt-licm-array-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "cond" (AstType.Bool) 0)
@@ -15394,6 +15482,18 @@
   (opt-licm-function
     (ast-node-pool-reader-type-segment-bases)
     (opt-licm-array-test-function blocks)))
+
+(define (opt-licm-array-late-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (let
+    [func : CompilerIrFunction (opt-licm-array-test-function blocks)]
+    (match (opt-licm-function-with-context-result-and-direct-call-clean
+      (ast-node-pool-reader-type-segment-bases)
+      (opt-cfg-context-build blocks)
+      false
+      (opt_i64_i64_map.with-capacity 1)
+      true
+      func)
+      [(OptFunctionCtxResult.Result next _) next])))
 
 (define (opt-licm-array-optimized-function-with-direct-call-clean
   [blocks : CompilerIrBlockList]
@@ -15451,11 +15551,34 @@
                 (CompilerIrValue.I64 2)
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch
-                  (CompilerIrValue.Var 0)
-                  (compiler-ir-label "body")
-                  (compiler-ir-label "exit"))
-                (CompilerIrInstrList.Nil))))))
+                (CompilerIrInstr.Mov
+                  12
+                  (CompilerIrValue.I64 4096)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Cast
+                    13
+                    (CompilerIrValue.Var 12)
+                    (AstType.I64)
+                    (AstType.U64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Bitcast
+                      14
+                      (CompilerIrValue.Var 13)
+                      (AstType.U64)
+                      (AstType.U64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Gep
+                        15
+                        (CompilerIrValue.Var 14)
+                        (CompilerIrValue.Var 2)
+                        (AstType.U8))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Branch
+                          (CompilerIrValue.Var 0)
+                          (compiler-ir-label "body")
+                          (compiler-ir-label "exit"))
+                        (CompilerIrInstrList.Nil))))))))))
       (compiler-ir-block-cons
         (compiler-ir-block
           (compiler-ir-label "body")
@@ -16068,6 +16191,41 @@
                     (CompilerIrValue.I64 100)
                     (AstType.I64))
                   (opt-licm-loop-finish-instrs))))))))
+    8))
+
+;; Vector and predicated stores through a descriptor's loaded data pointer
+;; mutate only its separately allocated elements. The direct `%array` load is
+;; the zero-offset data-slot form left after GVN folds `gep %array, 0`.
+(define (opt-licm-header-load-vector-store-blocks [mode : i64]) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        7
+        (CompilerIrValue.Var 1)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 8 (CompilerIrValue.Var 7) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 10 (CompilerIrValue.Var 1) (AstType.U64))
+          (compiler-ir-instr-cons
+            (if (= mode 1)
+              (ir-instr-predicated-store
+                (CompilerIrValue.Var 10)
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.I64 100)
+                (CompilerIrValue.I64 15)
+                4
+                (AstType.I64))
+              (ir-instr-vector-store
+                (if (= mode 2)
+                  (CompilerIrValue.Var 2)
+                  (CompilerIrValue.Var 10))
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.I64 100)
+                4
+                (AstType.I64)))
+            (opt-licm-loop-finish-instrs)))))
     8))
 
 (define (opt-licm-header-load-header-store-blocks) : CompilerIrBlockList
@@ -16928,7 +17086,7 @@
   (let
     [symbols : OptLicmTestSymbols (opt-licm-test-symbols)]
     [arith-func : CompilerIrFunction
-      (opt-licm-optimized-function (opt-licm-arithmetic-blocks))]
+      (opt-licm-late-optimized-function (opt-licm-arithmetic-blocks))]
     [arith : CompilerIrBlockList (opt-function-blocks arith-func)]
     [trap-func : CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-trap-blocks))]
@@ -16964,6 +17122,20 @@
         (opt-licm-header-load-element-gep-chain-store-blocks))]
     [header-element-chain : CompilerIrBlockList
       (opt-function-blocks header-element-chain-func)]
+    [header-vector-func : CompilerIrFunction
+      (opt-licm-array-late-optimized-function
+        (opt-licm-header-load-vector-store-blocks 0))]
+    [header-vector : CompilerIrBlockList
+      (opt-function-blocks header-vector-func)]
+    [header-predicated-func : CompilerIrFunction
+      (opt-licm-array-late-optimized-function
+        (opt-licm-header-load-vector-store-blocks 1))]
+    [header-predicated : CompilerIrBlockList
+      (opt-function-blocks header-predicated-func)]
+    [raw-vector-func : CompilerIrFunction
+      (opt-licm-array-late-optimized-function
+        (opt-licm-header-load-vector-store-blocks 2))]
+    [raw-vector : CompilerIrBlockList (opt-function-blocks raw-vector-func)]
     [header-store-func : CompilerIrFunction
       (opt-licm-array-optimized-function
         (opt-licm-header-load-header-store-blocks))]
@@ -17047,6 +17219,13 @@
       [(not
           (= (opt-count-arith-label-blocks arith (compiler-ir-label "body")) 1))
         4]
+      ;; Pure address formation follows invariant Mov/Cast/Bitcast chains even
+      ;; when the base is not a dereference-safe allocation.
+      [(not
+          (= (opt-count-gep-label-blocks arith (compiler-ir-label "entry")) 1))
+        71]
+      [(not (= (opt-count-gep-label-blocks arith (compiler-ir-label "loop")) 0))
+        72]
       [(not (opt-verify-ok? (opt-verify-function trap-func))) 5]
       [(not
           (= (opt-count-arith-label-blocks trap (compiler-ir-label "loop")) 1))
@@ -17299,6 +17478,235 @@
               (compiler-ir-label "loop"))
             1))
         70]
+      [(not (opt-verify-ok? (opt-verify-function header-vector-func))) 73]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-vector
+              (compiler-ir-label "entry"))
+            2))
+        74]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-vector
+              (compiler-ir-label "loop"))
+            0))
+        75]
+      [(not (opt-verify-ok? (opt-verify-function header-predicated-func))) 76]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-predicated
+              (compiler-ir-label "entry"))
+            2))
+        77]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-predicated
+              (compiler-ir-label "loop"))
+            0))
+        78]
+      [(not (opt-verify-ok? (opt-verify-function raw-vector-func))) 79]
+      [(not
+          (=
+            (opt-count-load-label-blocks raw-vector (compiler-ir-label "entry"))
+            0))
+        80]
+      [(not
+          (=
+            (opt-count-load-label-blocks raw-vector (compiler-ir-label "loop"))
+            2))
+        81]
+      [else 42])))
+
+(define (opt-licm-unswitch-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "outer-cond" (AstType.Bool) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "entry-cond" (AstType.Bool) 1)
+      (CompilerIrParamList.Nil))))
+
+;; The positive form is already rotated: the outer loop header has no exit
+;; edge, and `entry` supplies the zero-trip guard. The negative form puts that
+;; exit edge back on the header to pin the zero-trip-preservation gate.
+(define (opt-licm-unswitch-test-blocks [rotated? : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (if rotated?
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "outer-pre")
+            (compiler-ir-label "exit"))
+          (CompilerIrInstr.Jump (compiler-ir-label "outer-pre")))
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "outer-pre")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump (compiler-ir-label "outer"))
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "outer")
+          (compiler-ir-instr-cons
+            (if rotated?
+              (CompilerIrInstr.Jump (compiler-ir-label "inner-entry"))
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 0)
+                (compiler-ir-label "inner-entry")
+                (compiler-ir-label "exit")))
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "inner-entry")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 1)
+                (compiler-ir-label "inner-pre")
+                (compiler-ir-label "inner-exit"))
+              (CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (compiler-ir-label "inner-pre")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump (compiler-ir-label "inner"))
+                (CompilerIrInstrList.Nil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                (compiler-ir-label "inner")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var 0)
+                    (compiler-ir-label "inner-body")
+                    (compiler-ir-label "inner-exit"))
+                  (CompilerIrInstrList.Nil)))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  (compiler-ir-label "inner-body")
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump (compiler-ir-label "inner"))
+                    (CompilerIrInstrList.Nil)))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    (compiler-ir-label "inner-exit")
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump (compiler-ir-label "outer-latch"))
+                      (CompilerIrInstrList.Nil)))
+                  (compiler-ir-block-cons
+                    (compiler-ir-block
+                      (compiler-ir-label "outer-latch")
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Branch
+                          (CompilerIrValue.Var 0)
+                          (compiler-ir-label "outer")
+                          (compiler-ir-label "exit"))
+                        (CompilerIrInstrList.Nil)))
+                    (compiler-ir-block-cons
+                      (compiler-ir-block
+                        (compiler-ir-label "exit")
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Return
+                            (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+                          (CompilerIrInstrList.Nil)))
+                      (CompilerIrBlockList.Nil))))))))))))
+
+(define (opt-licm-unswitch-test-function [rotated? : bool]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "licm_unswitch")
+    (opt-licm-unswitch-test-params)
+    (AstType.I64)
+    2
+    (opt-licm-unswitch-test-blocks rotated?)))
+
+(define (opt-licm-unswitch-test-run [func : CompilerIrFunction]) : CompilerIrFunction
+  (opt-licm-unswitch-final (ast-node-pool-reader-type-segment-bases) func))
+
+(define (opt-licm-unswitch-one-successor?
+  [blocks : CompilerIrBlockList]
+  [label : i64]
+  [target : i64]) : bool
+  (let
+    [successors : OptLabelSet
+      (opt-cfg-index-successors (opt-cfg-index-build blocks) label)]
+    (and
+      (= (opt-label-count successors) 1)
+      (opt-label-contains successors target))))
+
+(define (compiler-optimize-licm-unswitch-self-test) : i64
+  (let
+    [positive : CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-licm-unswitch-test-function true))]
+    [positive-blocks : CompilerIrBlockList (opt-function-blocks positive)]
+    [repeat : CompilerIrFunction (opt-licm-unswitch-test-run positive)]
+    [repeat-blocks : CompilerIrBlockList (opt-function-blocks repeat)]
+    [negative : CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-licm-unswitch-test-function false))]
+    [negative-blocks : CompilerIrBlockList (opt-function-blocks negative)]
+    [outer : i64 (compiler-ir-label "outer")]
+    [outer-clone : i64 (compiler-ir-label "outer__licm_false")]
+    [inner-entry : i64 (compiler-ir-label "inner-entry")]
+    [inner-entry-clone : i64 (compiler-ir-label "inner-entry__licm_false")]
+    [versioned-labels : OptLabelSet
+      (opt-label-add (OptLabelSet.Nil) (compiler-ir-label "inner__bce_fast"))]
+    [plain-labels : OptLabelSet
+      (opt-label-add (OptLabelSet.Nil) (compiler-ir-label "inner"))]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function positive))) 1]
+      [(not (opt-block-list-has-label? positive-blocks outer-clone)) 2]
+      [(not
+          (opt-block-list-has-label?
+            positive-blocks
+            (compiler-ir-label "inner")))
+        3]
+      [(opt-block-list-has-label?
+          positive-blocks
+          (compiler-ir-label "inner__licm_false"))
+        4]
+      ;; The outer zero-trip edge still bypasses the one-time specialization.
+      [(not
+          (opt-loop-rotation-successors?
+            positive-blocks
+            (compiler-ir-label "entry")
+            (compiler-ir-label "outer-pre")
+            (compiler-ir-label "exit")))
+        5]
+      [(not
+          (opt-loop-rotation-successors?
+            positive-blocks
+            (compiler-ir-label "outer-pre")
+            outer-clone
+            outer))
+        6]
+      [(not
+          (opt-licm-unswitch-one-successor?
+            positive-blocks
+            inner-entry
+            (compiler-ir-label "inner-pre")))
+        7]
+      [(not
+          (opt-licm-unswitch-one-successor?
+            positive-blocks
+            inner-entry-clone
+            (compiler-ir-label "inner-exit__licm_false")))
+        8]
+      [(not (opt-verify-ok? (opt-verify-function repeat))) 9]
+      [(not
+          (=
+            (compiler-ir-block-list-count positive-blocks)
+            (compiler-ir-block-list-count repeat-blocks)))
+        10]
+      [(opt-block-list-has-label?
+          repeat-blocks
+          (compiler-ir-label "outer__licm_false__licm_false"))
+        11]
+      [(not (opt-verify-ok? (opt-verify-function negative))) 12]
+      [(opt-block-list-has-label? negative-blocks outer-clone) 13]
+      [(not (opt-licm-unswitch-has-versioned-label? versioned-labels)) 14]
+      [(opt-licm-unswitch-has-versioned-label? plain-labels) 15]
       [else 42])))
 
 (define (opt-induction-params) : CompilerIrParamList

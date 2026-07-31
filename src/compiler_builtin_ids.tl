@@ -786,7 +786,7 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (make-array i64 280))
+  (make-array i64 281))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -798,7 +798,7 @@
   (let
     [metadata : (__tl_dyn-array i64) (make-array i64 4)]
     [ids : (__tl_dyn-array i64) (make-array i64 315)]
-    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 280)]
+    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 281)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)
@@ -810,7 +810,7 @@
           (array-set! ids i -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 280)
+      (while (< i 281)
         (begin
           (array-set! ctfe-ids i -1)
           (set! i (+ i 1))))
@@ -866,7 +866,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 280)
+    (while (< i 281)
       (begin
         (array-set! (struct-get state ctfe-ids) i (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -874,7 +874,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 280)
+    (while (< i 281)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
         (set! i (+ i 1))))))
@@ -2027,7 +2027,10 @@
     (compiler-builtin-load-ctfe-id! insert-missing 276 "expr-begin-unit")
     (compiler-builtin-load-ctfe-id! insert-missing 277 "expr-not")
     (compiler-builtin-load-ctfe-id! insert-missing 278 "expr-while")
-    (compiler-builtin-load-ctfe-id! insert-missing 279 "syntax-name-fresh")))
+    (compiler-builtin-load-ctfe-id! insert-missing 279 "syntax-name-fresh")
+    ;; CTFE type syntax appends after all shipped IDs so generated names with
+    ;; the same display text cannot acquire the private source-head identity.
+    (compiler-builtin-load-ctfe-id! insert-missing 280 "__tl_dyn-array")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin

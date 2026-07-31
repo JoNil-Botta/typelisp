@@ -52,6 +52,9 @@ mkdir -p "$WORKDIR"
 
 LEGACY_PATH_IMPORT_ALLOWLIST="$ROOT/scripts/legacy-path-import-allowlist.tsv"
 LEGACY_PATH_IMPORT_EXEMPTIONS="$ROOT/scripts/legacy-path-import-exemptions.tsv"
+LEGACY_PATH_IMPORT_AUDIT="$ROOT/src/legacy_path_import_audit.tl"
+LEGACY_PATH_IMPORT_CANDIDATES="$WORKDIR/legacy-path-imports.candidates"
+LEGACY_PATH_IMPORT_EXEMPT_CANDIDATES="$WORKDIR/legacy-path-imports.exempt-candidates"
 LEGACY_PATH_IMPORT_RAW="$WORKDIR/legacy-path-imports.raw"
 LEGACY_PATH_IMPORT_ACTUAL_UNSORTED="$WORKDIR/legacy-path-imports.actual.unsorted.tsv"
 LEGACY_PATH_IMPORT_ACTUAL="$WORKDIR/legacy-path-imports.actual.tsv"
@@ -66,15 +69,49 @@ if [ ! -f "$LEGACY_PATH_IMPORT_EXEMPTIONS" ]; then
     echo "missing legacy path import exemptions: $LEGACY_PATH_IMPORT_EXEMPTIONS" >&2
     exit 1
 fi
+if [ ! -f "$LEGACY_PATH_IMPORT_AUDIT" ]; then
+    echo "missing legacy path import audit: $LEGACY_PATH_IMPORT_AUDIT" >&2
+    exit 1
+fi
+
+if ! awk -F '\t' '
+    $0 !~ /^#/ && NF > 0 {
+        if (NF < 2 || $1 == "" || $2 == "") {
+            print "invalid legacy path import exemption row: " $0 > "/dev/stderr"
+            invalid = 1
+        } else {
+            print $1
+        }
+    }
+    END {
+        if (invalid) {
+            exit 1
+        }
+    }
+' "$LEGACY_PATH_IMPORT_EXEMPTIONS" \
+    > "$LEGACY_PATH_IMPORT_EXEMPT_CANDIDATES"; then
+    exit 1
+fi
 
 set +e
-git grep -n -E '^[[:space:]]*\(import[[:space:]]+"' -- '*.tl' \
-    > "$LEGACY_PATH_IMPORT_RAW"
+git grep -l -E '\(import([[:space:]]|$)' -- '*.tl' \
+    > "$LEGACY_PATH_IMPORT_CANDIDATES"
 legacy_scan_status=$?
 set -e
 if [ "$legacy_scan_status" -ne 0 ] && [ "$legacy_scan_status" -ne 1 ]; then
     echo "legacy path import audit could not scan tracked TypeLisp files" >&2
     exit "$legacy_scan_status"
+fi
+
+if ! "$COMPILER" run "$LEGACY_PATH_IMPORT_AUDIT" \
+    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/src" \
+    -- \
+    "$LEGACY_PATH_IMPORT_CANDIDATES" \
+    "$LEGACY_PATH_IMPORT_EXEMPT_CANDIDATES" \
+    > "$LEGACY_PATH_IMPORT_RAW"; then
+    echo "legacy path import audit failed" >&2
+    exit 1
 fi
 
 if ! awk -F '\t' '
@@ -90,11 +127,15 @@ if ! awk -F '\t' '
         next
     }
     {
-        split($0, fields, ":")
-        path = fields[1]
-        seen[path] += 1
+        if (NF != 2 || $1 == "" || $2 !~ /^[1-9][0-9]*$/) {
+            print "invalid legacy path import audit row: " $0 > "/dev/stderr"
+            invalid = 1
+            next
+        }
+        path = $1
+        seen[path] += $2
         if (!(path in exempt)) {
-            count[path] += 1
+            count[path] += $2
         }
     }
     END {

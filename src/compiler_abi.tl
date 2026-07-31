@@ -80,9 +80,6 @@
     (+ compiler-reg-id-mask-base index)
     compiler-reg-id-invalid))
 
-(define (compiler-abi-gp-register-id? [reg-id : i64]) : bool
-  (and (>= reg-id compiler-reg-id-rax) (<= reg-id compiler-reg-id-r15)))
-
 (define (compiler-abi-xmm-register-id? [reg-id : i64]) : bool
   (and
     (>= reg-id compiler-reg-id-xmm-base)
@@ -360,12 +357,6 @@
         [(= idx 6) compiler-reg-id-r11]
         [else compiler-reg-id-invalid])]))
 
-(define (compiler-abi-caller-saved-gp-register
-  [abi : CompilerRegTargetAbi]
-  [idx : i64]) : String
-  (compiler-abi-register-spelling
-    (compiler-abi-caller-saved-gp-register-id abi idx)))
-
 (define (compiler-abi-callee-saved-gp-register-count
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
@@ -395,12 +386,6 @@
         [(= idx 6) compiler-reg-id-r15]
         [else compiler-reg-id-invalid])]))
 
-(define (compiler-abi-callee-saved-gp-register
-  [abi : CompilerRegTargetAbi]
-  [idx : i64]) : String
-  (compiler-abi-register-spelling
-    (compiler-abi-callee-saved-gp-register-id abi idx)))
-
 (define (compiler-abi-caller-saved-xmm-register-count
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
@@ -422,12 +407,6 @@
           (compiler-abi-xmm-register-id idx)
           compiler-reg-id-invalid)])))
 
-(define (compiler-abi-caller-saved-xmm-register
-  [abi : CompilerRegTargetAbi]
-  [idx : i64]) : String
-  (compiler-abi-register-spelling
-    (compiler-abi-caller-saved-xmm-register-id abi idx)))
-
 (define (compiler-abi-callee-saved-xmm-register-count
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
@@ -443,9 +422,3 @@
       (if (and (>= idx 0) (< idx 10))
         (compiler-abi-xmm-register-id (+ idx 6))
         compiler-reg-id-invalid)]))
-
-(define (compiler-abi-callee-saved-xmm-register
-  [abi : CompilerRegTargetAbi]
-  [idx : i64]) : String
-  (compiler-abi-register-spelling
-    (compiler-abi-callee-saved-xmm-register-id abi idx)))

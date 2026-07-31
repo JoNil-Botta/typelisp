@@ -709,29 +709,6 @@
           (compiler-backend-asm-copy-part! dst ob b nb)))
       (set! (struct-get buf len) (+ off total)))))
 
-(define (compiler-backend-asm-append3
-  [buf : (&mut buf CompilerBackendAsmBuf)]
-  [a : String]
-  [b : String]
-  [c : String]) : unit
-  (let
-    [na : i64 (string-length a)]
-    [nb : i64 (string-length b)]
-    [nc : i64 (string-length c)]
-    [total : i64 (+ na (+ nb nc))]
-    [off : i64 (struct-get buf len)]
-    (begin
-      (compiler-backend-asm-buf-reserve! buf (+ off total))
-      (let
-        [dst : (MutPtr u8) (struct-get buf data)]
-        [ob : i64 (+ off na)]
-        [oc : i64 (+ ob nb)]
-        (begin
-          (compiler-backend-asm-copy-part! dst off a na)
-          (compiler-backend-asm-copy-part! dst ob b nb)
-          (compiler-backend-asm-copy-part! dst oc c nc)))
-      (set! (struct-get buf len) (+ off total)))))
-
 (define (compiler-backend-asm-append4
   [buf : (&mut buf CompilerBackendAsmBuf)]
   [a : String]
@@ -11100,9 +11077,6 @@
         acc
         ""))))
 
-(define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
-  (str_cat.str-cat "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
-
 (define (compiler-backend-float-type? [ty : AstType]) : bool
   (match ty
     [(AstType.F64) true]
@@ -11380,12 +11354,6 @@
 ;; same order, same indices (r12=0 .. rbx=4).
 (define compiler-backend-scavenge-callee-list : CompilerRegIdList
   (compiler-reg-sysv-integer-registers))
-
-(define (compiler-backend-scavenge-callee-idx [reg : String]) : i64
-  (compiler-reg-id-list-index-of
-    compiler-backend-scavenge-callee-list
-    (compiler-abi-register-id-from-spelling reg)
-    0))
 
 ;; Emergency spill: when the scavenge finds NO free candidate (all pool registers
 ;; occupied -- genuine register pressure, not param pressure), it must not silently
@@ -60638,23 +60606,6 @@
     emit-entry
     crt-entry))
 
-(define (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt
-  [pools : AstNodePoolContext]
-  [program : CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendObject
-  (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt
-    (ast-node-pool-context-type-segment-bases pools)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry))
-
 (define (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
   [pools : AstNodePoolContext]
   [program : CompilerIrProgram]
@@ -65574,23 +65525,6 @@
   [crt-entry : bool]) : ResultCompilerBackendPic
   (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt
     (ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry))
-
-(define (compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt
-  [pools : AstNodePoolContext]
-  [program : CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendPic
-  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt
-    (ast-node-pool-context-type-segment-bases pools)
     program
     target
     mode

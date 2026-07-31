@@ -1219,7 +1219,7 @@
   (array.ref (struct-get items slots) index))
 
 (define (ctfe-layout-info-list-push-id
-  [items : CtfeLayoutInfoList]
+  [items : CtfeLayoutInfoList (:consume)]
   [value : CtfeLayoutInfo]
   [name-id : i64]) : CtfeLayoutInfoList
   (let
@@ -1280,7 +1280,7 @@
   (array.ref (struct-get items slots) index))
 
 (define (ctfe-reflect-info-list-push-id
-  [items : CtfeReflectInfoList]
+  [items : CtfeReflectInfoList (:consume)]
   [value : CtfeReflectInfo]
   [key-id : i64]) : CtfeReflectInfoList
   (let

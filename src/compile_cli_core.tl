@@ -136,7 +136,9 @@
     (array-ref (struct-get names slots) index)
     ""))
 
-(define (compile-cli-cfg-names-add [names : CompileCliCfgNames] [name : String]) : CompileCliCfgNames
+(define (compile-cli-cfg-names-add
+  [names : CompileCliCfgNames (:consume)]
+  [name : String]) : CompileCliCfgNames
   (let
     [next : CompileCliCfgNames names]
     (begin
@@ -329,7 +331,7 @@
   [has-output : bool]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
+  [stdlib-roots : cli_svec.Vec (:consume)]
   [cfgs : CompileCliCfgNames]
   [emit-ir : bool]
   [pic : bool]
@@ -698,7 +700,7 @@
   [batch-path : String]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
+  [stdlib-roots : cli_svec.Vec (:consume)]
   [cfgs : CompileCliCfgNames]
   [has-opt-level : bool]
   [opt-level : i64]
@@ -1033,7 +1035,7 @@
   [idx : i64]
   [count : i64]
   [input-path : String]
-  [stdlib-roots : cli_svec.Vec]) : ResultCompileCliCheckConfig
+  [stdlib-roots : cli_svec.Vec (:consume)]) : ResultCompileCliCheckConfig
   (if (>= idx count)
     (ResultCompileCliCheckConfig.Ok input-path stdlib-roots)
     (let

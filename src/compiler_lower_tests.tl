@@ -654,7 +654,7 @@
 ;; dynamic-array fat `{ptr, len}` layout.
 (define (compiler-lower-fixed-array-access-source) : String
   "(define (get [a : (Array i64 3)] [i : i64]) : i64 (array-ref a i))
-(define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (array-set! a i v))
+(define (put [a : (Array i64 3) (:consume)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
 (define (compiler-lower-mut-ref-array-access-source) : String
@@ -1563,17 +1563,17 @@
 (define (compiler-lower-inline-direct-store-source) : String
   "(defstruct Wide (a i64) (b i64) (c i64))
 (defstruct Holder (wide Wide) (tail i64))
-(define (direct-field [h : Holder]) : i64
+(define (direct-field [h : Holder (:consume)]) : i64
   (begin
     (set! (struct-get h wide) (Wide 1 2 3))
     0))
-(define (direct-init [h : Holder]) : i64
+(define (direct-init [h : Holder (:consume)]) : i64
   (begin
     (set! (struct-get h wide) (init : Wide))
     0))
 (define (direct-dyn-array [items : (Array Wide)] [i : i64]) : unit
   (array-set! items i (Wide 4 5 6)))
-(define (direct-fixed-array [items : (Array Wide 2)] [i : i64]) : unit
+(define (direct-fixed-array [items : (Array Wide 2) (:consume)] [i : i64]) : unit
   (array-set! items i (Wide 7 8 9)))
 (define (direct-fixed-literal) : (Array Wide 2)
   (array (Wide 10 11 12) (Wide 13 14 15)))")

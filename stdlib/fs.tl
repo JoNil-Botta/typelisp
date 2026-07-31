@@ -405,7 +405,7 @@
         (array-push! (struct-get out slots) (cast '\n' : u8))))))
 
 ;: Convert the accumulated newline-delimited bytes into a String.
-(define (read-dir-bytes-string [out : byte_buf_core.ByteBufBuilder]) : String
+(define (read-dir-bytes-string [out : (&mut out byte_buf_core.ByteBufBuilder)]) : String
   (begin
     (set! (struct-get out len) (array-length (struct-get out slots)))
     (byte_buf_core.byte-buf-builder-finish-string (& out))))
@@ -502,7 +502,7 @@
                     (linux-read-dir-append-page! buf read-count (&mut out))))))
             (io.linux-syscall-close fd)
             (if ok
-              (read-dir-bytes-string out)
+              (read-dir-bytes-string (&mut out))
               "")))))))
 
 ;: Map Windows `GetLastError` values to errno-style stdlib statuses.
@@ -602,7 +602,7 @@
                   (set! done true)
                   unit)))
             (fs-win-find-close handle)
-            (read-dir-bytes-string out)))))))
+            (read-dir-bytes-string (&mut out))))))))
 
 ;: Return the host status code for reading a directory listing.
 (define (read-dir-status [path : String]) : i64
@@ -1056,33 +1056,28 @@
 ;: Fold one lexical path segment into the normalized segment stack.
 (define (path-normalize-segment
   [segment : String]
-  [segments : svec.Vec]
-  [rooted : bool]) : svec.Vec
+  [segments : (&mut segments svec.Vec)]
+  [rooted : bool]) : unit
   (cond
-    [(string.eq segment "") segments]
-    [(string.eq segment ".") segments]
-    [(not (string.eq segment ".."))
-      (begin
-        (svec.push (&mut segments) segment)
-        segments)]
+    [(string.eq segment "") unit]
+    [(string.eq segment ".") unit]
+    [(not (string.eq segment "..")) (svec.push (&mut segments) segment)]
     [(<= (svec.len (& segments)) 0)
       (if rooted
-        segments
-        (begin
-          (svec.push (&mut segments) segment)
-          segments))]
+        unit
+        (svec.push (&mut segments) segment))]
     [else
       (let
         [top : String (svec.last (& segments) "")]
         (if (string.eq top "..")
           (begin
             (svec.push (&mut segments) segment)
-            segments)
+            unit)
           (begin
             (match (svec.pop (&mut segments))
               [(svec.Pop.Ok _) unit]
               [svec.Pop.Empty unit])
-            segments)))]))
+            unit)))]))
 
 ;: Lexically normalize `path` without resolving symlinks or touching the host FS.
 ;:
@@ -1119,21 +1114,17 @@
         (begin
           (if (stdlib.fs.path-separator? (string-ref path i))
             (begin
-              (set!
-                segments
-                (stdlib.fs.path-normalize-segment
-                  (string.substring path segment-start (- i segment-start))
-                  segments
-                  rooted))
+              (stdlib.fs.path-normalize-segment
+                (string.substring path segment-start (- i segment-start))
+                (&mut segments)
+                rooted)
               (set! segment-start (+ i 1)))
             (set! segment-start segment-start))
           (set! i (+ i 1))))
-      (set!
-        segments
-        (stdlib.fs.path-normalize-segment
-          (string.substring path segment-start (- n segment-start))
-          segments
-          rooted))
+      (stdlib.fs.path-normalize-segment
+        (string.substring path segment-start (- n segment-start))
+        (&mut segments)
+        rooted)
       (let
         [body : String (stdlib.fs.path-segment-vec-render segments)]
         (cond

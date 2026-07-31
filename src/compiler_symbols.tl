@@ -839,7 +839,7 @@
     [(option_i64.None) fallback]))
 
 (define (compiler-symbols-add-value-alias-key-id
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [key-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
@@ -851,7 +851,7 @@
           (CompilerSymbols values types macros decls owner-names decl-count)))]))
 
 (define (compiler-symbols-add-type-alias-key-id
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [key-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
@@ -863,7 +863,7 @@
           (CompilerSymbols values types macros decls owner-names decl-count)))]))
 
 (define (compiler-symbols-add-macro-alias-key-id
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [key-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
@@ -875,7 +875,7 @@
           (CompilerSymbols values types macros decls owner-names decl-count)))]))
 
 (define (compiler-symbols-remove-macro-alias-if-handle
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [name-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
@@ -894,7 +894,7 @@
         [(option_i64.None) symbols])]))
 
 (define (compiler-registries-add-variant-alias-key-id
-  [registries : CompilerRegistries]
+  [registries : CompilerRegistries (:consume)]
   [key-id : i64]
   [handle : i64]) : CompilerRegistries
   (match registries
@@ -906,7 +906,7 @@
           (CompilerRegistries variants fields identity)))]))
 
 (define (compiler-symbols-add-value-id
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [name-id : i64]
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
@@ -924,7 +924,7 @@
               (CompilerSymbols values types macros decls owner-names decl-count)))))]))
 
 (define (compiler-symbols-add-type-id
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [name-id : i64]
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
@@ -939,7 +939,7 @@
             (CompilerSymbols values types macros decls owner-names decl-count))))]))
 
 (define (compiler-symbols-add-macro-id
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [name-id : i64]
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
@@ -967,7 +967,7 @@
         (compiler-symbol-root-module-id)))))
 
 (define (compiler-symbols-add-root-macro-id
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [name-id : i64]
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
@@ -1007,7 +1007,7 @@
                   decl-count))))])]))
 
 (define (compiler-symbols-add-root-value-id
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [name-id : i64]
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
@@ -1092,7 +1092,7 @@
       [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
 
 (define (compiler-symbols-add-variant-value-key-in-module-id
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [key-id : i64]
   [module-id : i64]
   [display-name-id : i64]
@@ -1127,7 +1127,7 @@
                   decl-count))))])]))
 
 (define (compiler-symbols-add-variant-flat-value-alias-key-in-module-id
-  [symbols : CompilerSymbols]
+  [symbols : CompilerSymbols (:consume)]
   [key-id : i64]
   [module-id : i64]
   [display-name-id : i64]
@@ -3146,7 +3146,7 @@
     fallback))
 
 (define (compiler-registries-add-variant-in-module-id
-  [registries : CompilerRegistries]
+  [registries : CompilerRegistries (:consume)]
   [module-id : i64]
   [enum-name-id : i64]
   [name-id : i64]
@@ -3198,7 +3198,7 @@
               (ResultCompilerRegistries.Ok aliases2))))])))
 
 (define (compiler-registries-add-field-in-module-id
-  [registries : CompilerRegistries]
+  [registries : CompilerRegistries (:consume)]
   [module-id : i64]
   [struct-name-id : i64]
   [field-name-id : i64]
@@ -3229,7 +3229,7 @@
               (CompilerRegistries variants fields identity)))))]))
 
 (define (compiler-registries-add-field-alias
-  [registries : CompilerRegistries]
+  [registries : CompilerRegistries (:consume)]
   [module-id : i64]
   [struct-name-id : i64]
   [field-name-id : i64]
@@ -3777,7 +3777,7 @@
           (set! index (+ index 1)))))))
 
 (define (compiler-registries-shift-owner-indices
-  [registries : CompilerRegistries]
+  [registries : CompilerRegistries (:consume)]
   [insertion-index : i64]
   [delta : i64]) : CompilerRegistries
   (match registries

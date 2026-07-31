@@ -3387,6 +3387,21 @@ into call-site consumption. Use `(:consume)` when the callee takes ownership.
 This opt-in preserves compatibility for existing unmarked APIs. Types with an
 independent intrinsic consuming rule keep that rule.
 
+The internal ABI passes a struct, enum, or fixed array too large for the
+register-value representation by address. Such an unmarked by-value parameter
+is read-only through that storage path: the checker rejects field or
+fixed-array element assignment and mutable borrowing of the parameter. The
+restriction follows same-storage aliases introduced by local binding and match
+patterns. Reassigning the whole parameter binding establishes an independent
+local value and is permitted. Projections that produce shallow handle values,
+such as a dynamic array, tuple, `Box`, or reference field, are not storage
+aliases for this rule; their own mutation and borrowing rules still apply.
+Declare the parameter as a mutable reference and pass an explicit mutable
+borrow when mutation of the caller's aggregate place is intended.
+A `(:consume)` parameter is excluded from this restriction and explicitly
+opts the callee into ownership-style access to the whole value under the
+existing consume and move rules.
+
 **Whole-place and path moves.** The v1 checker accepts whole-place moves for
 locals, parameters, and whole constructor temporaries. It also tracks
 owner-consuming direct and nested paths through struct fields, tuple elements,
@@ -6447,11 +6462,16 @@ and not a general manual memory management feature.
 
 ### 7.6 Aggregate handles, moves, and aliasing
 
-- The IR/ABI may represent `String`, dynamic-buffer, tuple, struct, enum, and
-  closure values as pointer-sized handles. Bit-copying such a handle aliases
-  the same backing storage, but the source language treats aggregate by-value
-  use as a move under section 4.7.2 rather than as a user-visible copy
-  operation.
+- The IR/ABI may represent `String`, dynamic-buffer, tuple, struct, enum, fixed
+  array, and closure values as pointer-sized handles. Bit-copying such a handle
+  can alias the same backing storage; representation alone is not a
+  source-level copy or mutation permission. The checker therefore treats
+  storage reached through a memory-class struct, enum, or fixed-array by-value
+  parameter as read-only, including through same-storage local and match
+  aliases. Register-class aggregates are transported as values. Shallow handle
+  projections retain the aliasing behavior of their own types. Explicit
+  reference parameters express borrowed access to the caller's aggregate
+  storage.
 - Non-consuming inspection builtins read an aggregate handle without moving
   it. A function parameter marked `(:consume)` transfers a move-only argument;
   unmarked parameters preserve compatibility behavior, while reference-typed

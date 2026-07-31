@@ -98,7 +98,7 @@
   [indent : i64]
   [col : i64]
   [flat : bool]
-  [buf : fmt_buf.FmtRenderBuf]) : i64
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
   (match doc
     [(Doc.Empty) col]
     [(Doc.Text text)
@@ -135,7 +135,7 @@
   (let
     [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
     (begin
-      (render-doc-into doc width 0 0 false buf)
+      (render-doc-into doc width 0 0 false (&mut buf))
       (fmt_buf.fmt-render-buf-string buf))))
 
 (define (render-doc [doc : Doc]) : String

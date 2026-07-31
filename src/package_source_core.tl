@@ -73,7 +73,7 @@
 
 (define (package-source-vec-copy-range
   [items : svec.Vec]
-  [out : svec.Vec]
+  [out : svec.Vec (:consume)]
   [start : i64]
   [end : i64]) : svec.Vec
   (let

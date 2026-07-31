@@ -318,8 +318,7 @@
           (struct-get buf slots)
           0
           (len buf))
-        (set! (struct-get buf slots) bigger)
-        buf))))
+        (ByteBuf bigger (len buf))))))
 
 ;: Grow `buf` to at least twice its current capacity.
 (define (grow [buf : ByteBuf]) : ByteBuf
@@ -337,9 +336,7 @@
 
 ;: Clear all live bytes while retaining the backing capacity for reuse.
 (define (clear! [buf : ByteBuf]) : ByteBuf
-  (begin
-    (set! (struct-get buf len) 0)
-    buf))
+  (ByteBuf (struct-get buf slots) 0))
 
 ;: Clear all live bytes while retaining the backing capacity for reuse.
 (define (clear [buf : ByteBuf]) : ByteBuf

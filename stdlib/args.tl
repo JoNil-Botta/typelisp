@@ -389,7 +389,9 @@
   (ArgsParseState (option-list-empty) (svec.new) false))
 
 ;: Add a positional token to a parse state.
-(define (parse-state-add-positional [state : ArgsParseState] [value : String]) : ArgsParseState
+(define (parse-state-add-positional
+  [state : ArgsParseState (:consume)]
+  [value : String]) : ArgsParseState
   (let
     [positionals : svec.Vec (struct-get state positionals)]
     (begin
@@ -513,7 +515,7 @@
   [index : i64]
   [end : i64]
   [options : ArgsOptionList]
-  [positionals : svec.Vec]
+  [positionals : svec.Vec (:consume)]
   [stop-options : bool]) : ResultArgsParsed
   (if (>= index end)
     (OkArgsParsed (parse-finish-fields options positionals))
@@ -689,7 +691,7 @@
   [index : i64]
   [end : i64]
   [options : ArgsOptionList]
-  [positionals : svec.Vec]
+  [positionals : svec.Vec (:consume)]
   [stop-options : bool]) : ResultArgsParsed
   (if (>= index end)
     (OkArgsParsed (parse-finish-fields options positionals))

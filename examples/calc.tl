@@ -140,33 +140,40 @@
 ;;
 ;; `*`/`/` bind tighter than `+`/`-` because `term` sits one level below `expr`
 ;; in the descent, so the tree shape encodes precedence. The cursor is a
-;; single-cell fixed array holding the index of the token.Token under it; the helpers
-;; read and bump that cell, and the mutation is visible across the recursive
-;; calls. The parser reads tokens STRAIGHT out of the lexer's token.Token vector -
+;; mutable reference to a single-cell fixed array holding the index of the
+;; token.Token under it; the helpers read and bump that cell, and the mutation is
+;; visible across the recursive calls. The parser reads tokens STRAIGHT out of
+;; the lexer's token.Token vector -
 ;; there is no separate token.Token representation to keep in sync.
 ;; Current cursor position.
-(define (cur-pos [cur : (Array i64 1)]) : i64
+(define (cur-pos [cur : (& cur (Array i64 1))]) : i64
   ;; lint-allow: single-element-array-cell
   (array-ref cur 0))
 
 ;; Kind tag of the token.Token under the cursor.
-(define (current-tag [toks : (& toks token-vec.Vec)] [cur : (Array i64 1)]) : i64
+(define (current-tag
+  [toks : (& toks token-vec.Vec)]
+  [cur : (& cur (Array i64 1))]) : i64
   (token.token-tag (token-vec.get toks (cur-pos cur) token.Token.End)))
 
 ;; Integer value of the token.Token under the cursor (meaningful only for `token.Token.Int`).
-(define (current-val [toks : (& toks token-vec.Vec)] [cur : (Array i64 1)]) : i64
+(define (current-val
+  [toks : (& toks token-vec.Vec)]
+  [cur : (& cur (Array i64 1))]) : i64
   (token.token-int (token-vec.get toks (cur-pos cur) token.Token.End)))
 
 ;; Consume the current token.Token: advance the cursor by one.
-(define (advance [cur : (Array i64 1)]) : unit
-  (array-set! cur 0 (+ (cur-pos cur) 1)))
+(define (advance [cur : (&mut cur (Array i64 1))]) : unit
+  (let
+    [next : i64 (+ (array-ref cur 0) 1)]
+    (array-set! cur 0 next)))
 
 ;; `expect`: assert the cursor is on `want`, aborting via `io.panic` (#45) on a
 ;; grammar violation - exactly how a real parser reports a syntax error - then
 ;; consume the matched token.
 (define (expect
   [toks : (& toks token-vec.Vec)]
-  [cur : (Array i64 1)]
+  [cur : (&mut cur (Array i64 1))]
   [want : i64]) : unit
   (if (= (current-tag toks cur) want)
     (advance cur)
@@ -174,7 +181,9 @@
 
 ;; factor := int | '(' expr ')'
 ;; Parse one factor under the cursor and return its `Expr` node.
-(define (parse-factor [toks : (& toks token-vec.Vec)] [cur : (Array i64 1)]) : Expr
+(define (parse-factor
+  [toks : (& toks token-vec.Vec)]
+  [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [t : i64 (current-tag toks cur)]
     (if (= t (token.tag-int))
@@ -198,7 +207,9 @@
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
 ;; Parse a factor, then fold left-associative `Expr.Mul`/`Expr.Div` nodes over the
 ;; following `*`/`/` factors, giving them higher precedence than `+`/`-`.
-(define (parse-term [toks : (& toks token-vec.Vec)] [cur : (Array i64 1)]) : Expr
+(define (parse-term
+  [toks : (& toks token-vec.Vec)]
+  [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [acc : Expr (parse-factor toks cur)]
     (begin
@@ -218,7 +229,9 @@
 ;; Parse a term, then fold left-associative `Expr.Add`/`Expr.Sub` nodes over the
 ;; following `+`/`-` terms. Because each `term` is a full `*`/`/` chain, the tree
 ;; shape gives `*`/`/` higher precedence than `+`/`-`.
-(define (parse-expr [toks : (& toks token-vec.Vec)] [cur : (Array i64 1)]) : Expr
+(define (parse-expr
+  [toks : (& toks token-vec.Vec)]
+  [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [acc : Expr (parse-term toks cur)]
     (begin
@@ -240,7 +253,7 @@
 (define (parse [toks : (& toks token-vec.Vec)]) : Expr
   (let
     [cur : (Array i64 1) (array 0)]
-    (parse-expr toks cur)))
+    (parse-expr toks (&mut cur))))
 
 ;; ============================ Evaluator ===================================
 ;; A recursive tree walk over the real `Expr` AST. `Expr.Num` yields its literal;

@@ -23748,6 +23748,11 @@
       (opt-cfg-simplify-blocks (opt-cfg-loop-guard-blocks))]
     [phi-cfg : CompilerIrBlockList
       (opt-cfg-simplify-blocks (opt-cfg-phi-blocks))]
+    [phi-cfg-in-place-used : (__tl_dyn-array i64) (opt-used-array-new 16)]
+    [phi-cfg-in-place : CompilerIrBlockList
+      (opt-cfg-simplify-blocks-in-place
+        (opt-cfg-phi-blocks)
+        phi-cfg-in-place-used)]
     [folded-edge-phi : CompilerIrBlockList
       (opt-cfg-simplify-blocks (opt-cfg-folded-edge-phi-blocks))]
     [phi-blocks : CompilerIrBlockList
@@ -23931,6 +23936,12 @@
         (return 9))
       (unless (= (opt-count-phi-blocks phi-blocks) 0) (return 10))
       (unless (= (opt-count-mov-dst-blocks phi-cfg 3) 1) (return 11))
+      ;; The level-1 dense path owns private aggregate copies of the block and
+      ;; sequence metadata; both the rewritten block and compacted length must
+      ;; be written back to the returned block list.
+      (unless (= (compiler-ir-block-list-count phi-cfg-in-place) 3) (return 60))
+      (unless (= (opt-count-phi-blocks phi-cfg-in-place) 0) (return 61))
+      (unless (= (opt-count-mov-dst-blocks phi-cfg-in-place 3) 1) (return 62))
       (unless (= (compiler-ir-block-list-count trap-blocks) 3) (return 12))
       (unless
         (opt-block-list-has-label? trap-blocks (compiler-ir-label "trap"))

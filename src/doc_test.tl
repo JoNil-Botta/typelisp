@@ -95,7 +95,7 @@
     (DocTestExample.Example 0 0 (DocTestExpectation.Pass) "")))
 
 (define (doc-test-example-list-append
-  [examples : doc_example_vec.Vec]
+  [examples : doc_example_vec.Vec (:consume)]
   [example : DocTestExample]) : doc_example_vec.Vec
   (begin
     (doc_example_vec.push (&mut examples) example)
@@ -111,7 +111,7 @@
   (doc_error_vec.get (& errors) index (DocTestError.Error 0 "")))
 
 (define (doc-test-error-list-append
-  [errors : doc_error_vec.Vec]
+  [errors : doc_error_vec.Vec (:consume)]
   [err : DocTestError]) : doc_error_vec.Vec
   (begin
     (doc_error_vec.push (&mut errors) err)
@@ -573,7 +573,7 @@
   [lines : doc_line_vec.Vec]
   [index : i64]
   [code : String]
-  [collected : doc_line_vec.Vec]) : DocTestCodeCollect
+  [collected : doc_line_vec.Vec (:consume)]) : DocTestCodeCollect
   (if (>= index (doc_line_vec.len (& lines)))
     (DocTestCodeCollect.Collect
       (doc_line_vec.len (& lines))
@@ -1055,7 +1055,7 @@
     (doc-test-run-report-failures report)))
 
 (define (doc-test-run-failure-list-append
-  [failures : doc_run_failure_vec.Vec]
+  [failures : doc_run_failure_vec.Vec (:consume)]
   [failure : DocTestRunFailure]) : doc_run_failure_vec.Vec
   (begin
     (doc_run_failure_vec.push (&mut failures) failure)
@@ -1070,11 +1070,9 @@
     (begin
       (while (<= index 5)
         (begin
-          (set!
-            errors
-            (doc-test-error-list-append
-              errors
-              (DocTestError.Error index (string.int->string index))))
+          (doc_error_vec.push
+            (&mut errors)
+            (DocTestError.Error index (string.int->string index)))
           (set! index (+ index 1))))
       (and
         (= (doc-test-error-list-count errors) 5)
@@ -1116,15 +1114,13 @@
     (begin
       (while (<= index 5)
         (begin
-          (set!
-            examples
-            (doc-test-example-list-append
-              examples
-              (DocTestExample.Example
-                index
-                (+ index 10)
-                (DocTestExpectation.Pass)
-                (string.int->string index))))
+          (doc_example_vec.push
+            (&mut examples)
+            (DocTestExample.Example
+              index
+              (+ index 10)
+              (DocTestExpectation.Pass)
+              (string.int->string index)))
           (set! index (+ index 1))))
       (and
         (= (doc-test-example-list-count examples) 5)
@@ -1141,15 +1137,13 @@
     (begin
       (while (<= index 5)
         (begin
-          (set!
-            failures
-            (doc-test-run-failure-list-append
-              failures
-              (DocTestRunFailure.Failure
-                (string.int->string index)
-                (+ index 10)
-                index
-                (string.int->string index))))
+          (doc_run_failure_vec.push
+            (&mut failures)
+            (DocTestRunFailure.Failure
+              (string.int->string index)
+              (+ index 10)
+              index
+              (string.int->string index)))
           (set! index (+ index 1))))
       (and
         (= (doc-test-run-failure-list-count failures) 5)

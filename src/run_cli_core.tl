@@ -89,7 +89,7 @@
   [source : String]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [stdlib-roots : cli_svec.Vec]
+  [stdlib-roots : cli_svec.Vec (:consume)]
   [cfgs : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]

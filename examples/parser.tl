@@ -33,11 +33,11 @@
 ;;
 ;; Cursor threading: a TypeLisp function returns a single value, and the parse
 ;; routines must both *return an `Expr`* and *advance the input position*. The
-;; position is therefore a single-cell fixed array (`cur`) whose element is the
-;; index of the token under the cursor. `current`/`advance`/`expect` read and
-;; bump that cell, and the mutation is visible to the caller across the
-;; recursive calls. This is the standard "parser threads a mutable cursor while
-;; returning a node" pattern.
+;; position is therefore a mutable reference to a single-cell fixed array
+;; (`cur`) whose element is the index of the token under the cursor.
+;; `current`/`advance`/`expect` read and bump that cell, and the mutation is
+;; visible to the caller across the recursive calls. This is the standard
+;; "parser threads a mutable cursor while returning a node" pattern.
 ;;
 ;; Token stream representation (mirrors `lexer.tl`): the tokens are stored as a
 ;; parallel pair of generated `i64` vectors - a tag vector (the Token kind, via
@@ -121,28 +121,34 @@
 ;; The cursor position lives in `cur`; `current-*` peek the token under it
 ;; without consuming, `advance` bumps it.
 ;; Current cursor position.
-(define (cur-pos [cur : (Array i64 1)]) : i64
+(define (cur-pos [cur : (& cur (Array i64 1))]) : i64
   ;; lint-allow: single-element-array-cell
   (array-ref cur 0))
 
 ;; Kind tag of the token under the cursor.
-(define (current-tag [tags : (& tags i64-vec.Vec)] [cur : (Array i64 1)]) : i64
+(define (current-tag
+  [tags : (& tags i64-vec.Vec)]
+  [cur : (& cur (Array i64 1))]) : i64
   (i64-vec.get tags (cur-pos cur) (tag-end)))
 
 ;; Integer value of the token under the cursor (meaningful only for `Token.Int`).
-(define (current-val [vals : (& vals i64-vec.Vec)] [cur : (Array i64 1)]) : i64
+(define (current-val
+  [vals : (& vals i64-vec.Vec)]
+  [cur : (& cur (Array i64 1))]) : i64
   (i64-vec.get vals (cur-pos cur) 0))
 
 ;; Consume the current token: advance the cursor by one.
-(define (advance [cur : (Array i64 1)]) : unit
-  (array-set! cur 0 (+ (cur-pos cur) 1)))
+(define (advance [cur : (&mut cur (Array i64 1))]) : unit
+  (let
+    [next : i64 (+ (array-ref cur 0) 1)]
+    (array-set! cur 0 next)))
 
 ;; `expect`: assert the cursor is on `want`, aborting via `io.panic` (#45) on a
 ;; grammar violation - exactly how a real parser reports a syntax error - then
 ;; consume the matched token.
 (define (expect
   [tags : (& tags i64-vec.Vec)]
-  [cur : (Array i64 1)]
+  [cur : (&mut cur (Array i64 1))]
   [want : i64]) : unit
   (if (= (current-tag tags cur) want)
     (advance cur)
@@ -160,7 +166,7 @@
 (define (parse-factor
   [tags : (& tags i64-vec.Vec)]
   [vals : (& vals i64-vec.Vec)]
-  [cur : (Array i64 1)]) : Expr
+  [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [t : i64 (current-tag tags cur)]
     (if (= t (tag-int))
@@ -189,7 +195,7 @@
 (define (parse-term
   [tags : (& tags i64-vec.Vec)]
   [vals : (& vals i64-vec.Vec)]
-  [cur : (Array i64 1)]) : Expr
+  [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [acc : Expr (parse-factor tags vals cur)]
     (begin
@@ -214,7 +220,7 @@
 (define (parse-expr
   [tags : (& tags i64-vec.Vec)]
   [vals : (& vals i64-vec.Vec)]
-  [cur : (Array i64 1)]) : Expr
+  [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [acc : Expr (parse-term tags vals cur)]
     (begin
@@ -283,7 +289,7 @@
       (build-sample-tags (&mut tags))
       (build-sample-vals (&mut vals))
       (let
-        [result : i64 (eval (parse-expr (& tags) (& vals) cur))]
+        [result : i64 (eval (parse-expr (& tags) (& vals) (&mut cur)))]
         (begin
           (io.print-string "parser result: ")
           (io.print result)

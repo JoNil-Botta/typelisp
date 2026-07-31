@@ -9901,7 +9901,7 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (owner-array-ref-reinit [items : (Array FileHandle 1)]) : unit
+(define (owner-array-ref-reinit [items : (Array FileHandle 1) (:consume)]) : unit
   (begin
     (take-handle (array-ref items 0))
     (array-set! items 0 (FileHandle 7))
@@ -9913,7 +9913,7 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (owner-array-ref-reinit-root [items : (Array FileHandle 1)]) : unit
+(define (owner-array-ref-reinit-root [items : (Array FileHandle 1) (:consume)]) : unit
   (begin
     (take-handle (array-ref items 0))
     (array-set! items 0 (FileHandle 7))
@@ -9925,7 +9925,7 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (bad-owner-array-ref-reinit-sibling [items : (Array FileHandle 2)]) : unit
+(define (bad-owner-array-ref-reinit-sibling [items : (Array FileHandle 2) (:consume)]) : unit
   (begin
     (take-handle (array-ref items 0))
     (array-set! items 1 (FileHandle 7))
@@ -9938,7 +9938,7 @@
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-owner-array-ref-reinit-nonliteral
-  [items : (Array FileHandle 2)]
+  [items : (Array FileHandle 2) (:consume)]
   [index : i64]) : unit
   (begin
     (take-handle (array-ref items 0))
@@ -10471,6 +10471,108 @@
         unit
         (set! ok false))
       ok)))
+
+(define (compiler-typecheck-param-storage-direct-struct-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (bad [value : Big]) : unit
+  (set! (struct-get value a) 7))")
+
+(define (compiler-typecheck-param-storage-fixed-array-source) : String
+  "(define (bad [items : (Array i64 3)]) : unit
+  (array-set! items 0 7))")
+
+(define (compiler-typecheck-param-storage-let-alias-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (bad [value : Big]) : unit
+  (let [alias : Big value]
+    (set! (struct-get alias a) 7)))")
+
+(define (compiler-typecheck-param-storage-match-alias-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(defenum Carrier (Some Big) (None))
+(define (bad [value : Carrier]) : unit
+  (match value
+    [(Some payload) (set! (struct-get payload a) 7)]
+    [None unit]))")
+
+(define (compiler-typecheck-param-storage-mut-borrow-root-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (touch [value : (&mut value Big)]) : unit unit)
+(define (bad [value : Big]) : unit
+  (touch (&mut value)))")
+
+(define (compiler-typecheck-param-storage-mut-borrow-projection-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (touch [value : (&mut value i64)]) : unit unit)
+(define (bad [value : Big]) : unit
+  (touch (&mut (struct-get value a))))")
+
+(define (compiler-typecheck-param-storage-register-resident-source) : String
+  "(defstruct Pair (a i64) (b i64))
+(define (change [value : Pair]) : i64
+  (begin
+    (set! (struct-get value a) 7)
+    (struct-get value a)))")
+
+(define (compiler-typecheck-param-storage-whole-rebind-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (reset [value : Big]) : i64
+  (begin
+    (set! value (Big 7 8 9))
+    (struct-get value a)))")
+
+(define (compiler-typecheck-param-storage-explicit-mut-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (change [value : (&mut value Big)]) : unit
+  (set! (struct-get value a) 7))
+(define (main) : i64
+  (let [value : Big (Big 1 2 3)]
+    (begin
+      (change (&mut value))
+      (struct-get value a))))")
+
+(define (compiler-typecheck-param-storage-shallow-handle-source) : String
+  "(defstruct Bag
+  (items (__tl_dyn-array i64))
+  (pad0 i64)
+  (pad1 i64))
+(define (change [value : Bag]) : unit
+  (array-set! (struct-get value items) 0 7))")
+
+(define (compiler-typecheck-param-storage-consuming-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (change [value : Big (:consume)]) : unit
+  (set! (struct-get value a) 7))")
+
+(define (compiler-typecheck-param-storage-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-param-storage-direct-struct-source)
+      "typecheck: cannot mutate storage derived from by-value memory-aggregate parameter `value`; declare the parameter as `&mut` and pass an explicit mutable borrow")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-param-storage-fixed-array-source)
+      "typecheck: cannot mutate storage derived from by-value memory-aggregate parameter `items`; declare the parameter as `&mut` and pass an explicit mutable borrow")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-param-storage-let-alias-source)
+      "typecheck: cannot mutate storage derived from by-value memory-aggregate parameter `value`; declare the parameter as `&mut` and pass an explicit mutable borrow")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-param-storage-match-alias-source)
+      "typecheck: cannot mutate storage derived from by-value memory-aggregate parameter `value`; declare the parameter as `&mut` and pass an explicit mutable borrow")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-param-storage-mut-borrow-root-source)
+      "typecheck: cannot mutably borrow storage derived from by-value memory-aggregate parameter `value`; declare the parameter as `&mut` and pass an explicit mutable borrow")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-param-storage-mut-borrow-projection-source)
+      "typecheck: cannot mutably borrow storage derived from by-value memory-aggregate parameter `value`; declare the parameter as `&mut` and pass an explicit mutable borrow")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-param-storage-register-resident-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-param-storage-whole-rebind-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-param-storage-explicit-mut-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-param-storage-shallow-handle-source))
+    (compiler-typecheck-ok? (compiler-typecheck-param-storage-consuming-source))))
 
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
@@ -11317,6 +11419,9 @@
     (if (compiler-typecheck-live-borrow-tests-ok?)
       unit
       (io.panic "typecheck: live borrow checker tests failed"))
+    (if (compiler-typecheck-param-storage-tests-ok?)
+      unit
+      (io.panic "typecheck: by-value parameter storage tests failed"))
     (if (compiler-typecheck-diagnostic-code-tests-ok?)
       unit
       (io.panic "typecheck: diagnostic code tests failed"))

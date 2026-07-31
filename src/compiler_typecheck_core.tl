@@ -195,7 +195,7 @@
   (slot-count i64)
   ;; Latest slot per out-of-range name. Dense intern ids use the shared
   ;; epoch-keyed arrays below; this map preserves the unbounded fallback.
-  (lookup-cache tc_i64_i64_map.Map)
+  (lookup-cache (Box tc_i64_i64_map.Map))
   (lookup-epoch i64)
   (marks (__tl_dyn-array TcTypeEnvScopedMark))
   (mark-count i64)
@@ -7665,8 +7665,9 @@
           TcTypeEnvScopedSlot
           (tc-type-env-scoped-capacity slot-capacity))
         0
-        (tc_i64_i64_map.with-capacity
-          (tc-type-env-scoped-capacity slot-capacity))
+        (box
+          (tc_i64_i64_map.with-capacity
+            (tc-type-env-scoped-capacity slot-capacity)))
         lookup-epoch
         (array.make-array
           TcTypeEnvScopedMark
@@ -7741,12 +7742,12 @@
             (array-set! tc-type-env-scoped-dense-lookup-epochs old-name-id 0)
             unit)
           (match (tc_i64_i64_map.get
-            (& (struct-get stack lookup-cache))
+            (& (box-get (struct-get stack lookup-cache)))
             old-name-id)
             [(tc_i64_i64_map.LookupFound old-index)
               (if (= old-index index)
                 (tc_i64_i64_map.insert-ref!
-                  (&mut (struct-get stack lookup-cache))
+                  (&mut (box-get (struct-get stack lookup-cache)))
                   old-name-id
                   -1)
                 unit)]
@@ -7771,7 +7772,7 @@
             name-id
             (struct-get stack lookup-epoch)))
         (tc_i64_i64_map.insert-ref!
-          (&mut (struct-get stack lookup-cache))
+          (&mut (box-get (struct-get stack lookup-cache)))
           name-id
           index))
       (cfg compile-profile (compiler-tc-env-profile-note-scoped-bind))
@@ -7905,12 +7906,14 @@
     [(tc_i64_i64_map.LookupMissing) -2]))
 
 (define (tc-type-env-scoped-stack-map-lookup-id
-  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [stack : TcTypeEnvScopedStack]
   [name-id : i64]) : i64
   (let
-    [lookup-cache : tc_i64_i64_map.Map (struct-get stack lookup-cache)]
+    [lookup-cache : (Box tc_i64_i64_map.Map) (struct-get stack lookup-cache)]
     [index : i64
-      (tc-type-env-scoped-stack-map-cached-index (& lookup-cache) name-id)]
+      (tc-type-env-scoped-stack-map-cached-index
+        (& (box-get lookup-cache))
+        name-id)]
     (if (= index -2)
       (begin
         (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
@@ -7934,13 +7937,13 @@
                 (- (struct-get stack slot-count) 1))]
             (begin
               (tc_i64_i64_map.insert-ref!
-                (&mut lookup-cache)
+                (&mut (box-get lookup-cache))
                 name-id
                 repaired-index)
               repaired-index)))))))
 
 (define (tc-type-env-scoped-stack-lookup-index
-  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [stack : TcTypeEnvScopedStack]
   [name-id : i64]) : i64
   (if (and (>= name-id 0) (< name-id tc-type-env-scoped-dense-lookup-capacity))
     (if (=
@@ -7961,8 +7964,8 @@
                 compile-profile
                 (compiler-tc-env-profile-note-scoped-cache-hit))
               index)
-            (tc-type-env-scoped-stack-dense-lookup-id-refresh stack name-id))))
-      (tc-type-env-scoped-stack-dense-lookup-id-refresh stack name-id))
+            (tc-type-env-scoped-stack-dense-lookup-id-refresh (& stack) name-id))))
+      (tc-type-env-scoped-stack-dense-lookup-id-refresh (& stack) name-id))
     (tc-type-env-scoped-stack-map-lookup-id stack name-id)))
 
 (define (tc-type-env-scoped-stack-lookup-id
@@ -7970,7 +7973,7 @@
   [name-id : i64]) : TcTypeEnvScopedLookup
   (tc-type-env-scoped-stack-lookup-id-at
     stack
-    (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)))
+    (tc-type-env-scoped-stack-lookup-index stack name-id)))
 
 (define (tc-type-env-scoped-stack-marker-lookup-from
   [stack : TcTypeEnvScopedStack]
@@ -8218,7 +8221,7 @@
       (struct-get mark stack-mark))))
 
 (define (tc-type-env-scoped-sidecar-bind-id
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnvScopedSidecar
   (let
@@ -8231,7 +8234,7 @@
       next)))
 
 (define (tc-type-env-scoped-sidecar-bind-marker-id
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]
   [ty : AstType]
   [marker-kind : TcTypeEnvScopedMarkerKind]) : TcTypeEnvScopedSidecar
@@ -8246,7 +8249,7 @@
       next)))
 
 (define (tc-type-env-scoped-sidecar-enter-unsafe
-  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
     (tc-unsafe-marker-id)
@@ -8254,7 +8257,7 @@
     TcTypeEnvScopedMarkerKind.UnsafeContext))
 
 (define (tc-type-env-scoped-sidecar-bind-return-type
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [ty : AstType]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
@@ -8263,7 +8266,7 @@
     TcTypeEnvScopedMarkerKind.Other))
 
 (define (tc-type-env-scoped-sidecar-bind-default-boundary
-  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
     (tc-default-boundary-id)
@@ -8271,7 +8274,7 @@
     TcTypeEnvScopedMarkerKind.DefaultBoundary))
 
 (define (tc-type-env-scoped-sidecar-push-region
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [region : i64]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
@@ -8280,7 +8283,7 @@
     TcTypeEnvScopedMarkerKind.Region))
 
 (define (tc-type-env-scoped-sidecar-bind-cleanup-owner
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
@@ -8289,7 +8292,7 @@
     TcTypeEnvScopedMarkerKind.CleanupOwner))
 
 (define (tc-type-env-scoped-sidecar-bind-ordinary-arena-owner
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
@@ -8298,7 +8301,7 @@
     TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner))
 
 (define (tc-type-env-scoped-sidecar-bind-atomic-arena-owner
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
@@ -8307,7 +8310,7 @@
     TcTypeEnvScopedMarkerKind.AtomicArenaOwner))
 
 (define (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnvScopedSidecar
   (let
@@ -8402,7 +8405,8 @@
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedCarrier
   (TcTypeEnvScopedCarrier (struct-get carrier env) sidecar true))
 
-(define (tc-type-env-scoped-carrier-save [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierSave
+(define (tc-type-env-scoped-carrier-save
+  [carrier : TcTypeEnvScopedCarrier (:consume)]) : TcTypeEnvScopedCarrierSave
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack-mark : TcTypeEnvScopedMark
@@ -8434,7 +8438,7 @@
       (struct-get carrier dirty))))
 
 (define (tc-type-env-scoped-carrier-restore
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [mark : TcTypeEnvScopedCarrierMark]) : TcTypeEnvScopedCarrier
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
@@ -8456,13 +8460,13 @@
     (tc-type-env-scoped-sidecar-bind-id (struct-get carrier sidecar) name-id ty)))
 
 (define (tc-type-env-scoped-carrier-enter-unsafe
-  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
+  [carrier : TcTypeEnvScopedCarrier (:consume)]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
     (tc-type-env-scoped-sidecar-enter-unsafe (struct-get carrier sidecar))))
 
 (define (tc-type-env-scoped-carrier-bind-return-type
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [ty : AstType]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
@@ -8471,21 +8475,21 @@
       ty)))
 
 (define (tc-type-env-scoped-carrier-bind-default-boundary
-  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
+  [carrier : TcTypeEnvScopedCarrier (:consume)]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
     (tc-type-env-scoped-sidecar-bind-default-boundary
       (struct-get carrier sidecar))))
 
 (define (tc-type-env-scoped-carrier-push-region
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [region : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
     (tc-type-env-scoped-sidecar-push-region (struct-get carrier sidecar) region)))
 
 (define (tc-type-env-scoped-carrier-bind-cleanup-owner
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
@@ -8494,7 +8498,7 @@
       name-id)))
 
 (define (tc-type-env-scoped-carrier-bind-ordinary-arena-owner
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
@@ -8503,7 +8507,7 @@
       name-id)))
 
 (define (tc-type-env-scoped-carrier-bind-atomic-arena-owner
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
@@ -8512,7 +8516,7 @@
       name-id)))
 
 (define (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
@@ -8528,7 +8532,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
     (if (>= index 0)
       (ResultTcType.Ok
         (struct-get (array-ref (struct-get stack slots) index) ty))
@@ -8546,7 +8550,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    (if (>= (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id) 0)
+    (if (>= (tc-type-env-scoped-stack-lookup-index stack name-id) 0)
       true
       (begin
         (cfg
@@ -8557,7 +8561,7 @@
           name-id)))))
 
 (define (tc-type-env-scoped-carrier-bind-alias-id-if-free
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnvScopedCarrier
   (if (tc-type-env-scoped-carrier-name-bound-id? carrier name-id)
@@ -8570,7 +8574,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
     (if (>= index 0)
       (let
         [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
@@ -8600,7 +8604,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
     (if (>= index 0)
       (tc-type-env-scoped-slot-c-abi-fnptr?
         (array-ref (struct-get stack slots) index))
@@ -8944,7 +8948,7 @@
         (struct-get
           (struct-get tc-type-env-scoped-runtime-carrier sidecar)
           stack)]
-      (tc-type-env-scoped-stack-map-lookup-id (&mut stack) name-id))))
+      (tc-type-env-scoped-stack-map-lookup-id stack name-id))))
 
 (define (tc-type-env-scoped-runtime-save) : TcTypeEnvScopedRuntimeSave
   (if tc-type-env-scoped-runtime-active
@@ -9419,7 +9423,7 @@
 
 (define (tc-env-cache-fill
   [env : TcTypeEnv]
-  [ids : tc_i64_i64_map.Map]
+  [ids : tc_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array AstType)]
   [unsafe-flags : (__tl_dyn-array i64)]
   [c-abi-fnptr-flags : (__tl_dyn-array i64)]
@@ -9495,7 +9499,7 @@
 (define (tc-env-cache-fill-prefix
   [env : TcTypeEnv]
   [remaining : i64]
-  [ids : tc_i64_i64_map.Map]
+  [ids : tc_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array AstType)]
   [unsafe-flags : (__tl_dyn-array i64)]
   [c-abi-fnptr-flags : (__tl_dyn-array i64)]
@@ -14749,7 +14753,7 @@
   [types : (& types AstTypeList)]
   [offset : i64]
   [index : i64]
-  [out : AstTypeList]) : ResultTcElidedTypes
+  [out : AstTypeList (:consume)]) : ResultTcElidedTypes
   (if (>= offset (ast-type-list-len types))
     (ResultTcElidedTypes.Ok (TcElidedTypes out index))
     (match (tc-elide-input-type
@@ -14789,7 +14793,7 @@
   [types : (& types AstTypeList)]
   [index : i64]
   [lifetime : TcMaybeNameId]
-  [out : AstTypeList]) : ResultTcElidedTypes
+  [out : AstTypeList (:consume)]) : ResultTcElidedTypes
   (if (>= index (ast-type-list-len types))
     (ResultTcElidedTypes.Ok (TcElidedTypes out 0))
     (match (tc-elide-output-type
@@ -15092,7 +15096,7 @@
   [params : (& params AstParamList)]
   [offset : i64]
   [index : i64]
-  [out : AstParamList]) : ResultTcElidedParams
+  [out : AstParamList (:consume)]) : ResultTcElidedParams
   (if (>= offset (ast-param-list-len params))
     (ResultTcElidedParams.Ok (TcElidedParams out index))
     (match (ast-param-list-get params offset (ast-param-fallback))
@@ -23472,7 +23476,7 @@
                     [_ false])]
                 [repaired-index : i64
                   (match (tc_i64_i64_map.get
-                    (& (struct-get stack lookup-cache))
+                    (& (box-get (struct-get stack lookup-cache)))
                     name-id)
                     [(tc_i64_i64_map.LookupFound index) index]
                     [(tc_i64_i64_map.LookupMissing) -1])]
@@ -24434,13 +24438,13 @@
 
 (define (tc-type-env-scoped-carrier-bind-params
   [ctx : TcContext]
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [params : AstParamList]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-bind-params-at ctx carrier (& params) 0))
 
 (define (tc-type-env-scoped-carrier-bind-params-at
   [ctx : TcContext]
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [params : (& params AstParamList)]
   [index : i64]) : TcTypeEnvScopedCarrier
   (if (>= index (ast-param-list-len params))
@@ -42412,7 +42416,7 @@
       (CtfeLayoutInfo.Info type-name false 8 8 (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-layout-add-alias
-  [layouts : CtfeLayoutInfoList]
+  [layouts : CtfeLayoutInfoList (:consume)]
   [info : CtfeLayoutInfo]
   [alias : String]
   [alias-id : i64]) : CtfeLayoutInfoList
@@ -42424,7 +42428,7 @@
         alias-id)]))
 
 (define (tc-ctfe-layout-add-names
-  [layouts : CtfeLayoutInfoList]
+  [layouts : CtfeLayoutInfoList (:consume)]
   [info : CtfeLayoutInfo]
   [key-id : i64]
   [name : String]
@@ -42474,7 +42478,7 @@
   [decls : AstDeclList]
   [module : String]
   [module-id : i64]
-  [layouts : CtfeLayoutInfoList]) : CtfeLayoutInfoList
+  [layouts : CtfeLayoutInfoList (:consume)]) : CtfeLayoutInfoList
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
@@ -51995,12 +51999,22 @@
   (next (__tl_dyn-array i64))
   (len i64))
 
+(defstruct TcParamStorageOriginNode
+  (name-id i64)
+  (parameter-id i64)
+  (parent i64))
+
 (defstruct TcMovedSet
   (roots tc_i64_i64_map.Map)
   (partials tc_i64_i64_map.Map)
   (paths TcMovedPathFacts)
   (exact-path-index TcMovedExactPathIndex)
-  (hidden-atomic-users tc_i64_i64_map.Map))
+  (hidden-atomic-users tc_i64_i64_map.Map)
+  ;; Persistent one-word head for the rare local aliases that still point into
+  ;; a memory-class by-value parameter's ABI backing storage. Keeping this out
+  ;; of the broad type environment avoids copying another hash-map value
+  ;; through every move-check frame.
+  (param-storage-origins i64))
 
 (defenum TcMoveResult
   (Ok TcMovedSet)
@@ -52123,7 +52137,8 @@
       (make-array TcMovedPathFact 8)
       (make-array i64 8)
       0)
-    tc-moved-shared-empty-id-map))
+    tc-moved-shared-empty-id-map
+    0))
 
 (define (tc-moved-roots [set : TcMovedSet]) : tc_i64_i64_map.Map
   (struct-get set roots))
@@ -52145,6 +52160,114 @@
 
 (define (tc-moved-hidden-atomic-users [set : TcMovedSet]) : tc_i64_i64_map.Map
   (struct-get set hidden-atomic-users))
+
+(define (tc-moved-param-storage-origins [set : TcMovedSet]) : i64
+  (struct-get set param-storage-origins))
+
+(define (tc-param-storage-origin-node-read [address : i64]) : TcParamStorageOriginNode
+  (unsafe
+    (ptr-read (int->ptr (cast address : u64) : (Ptr TcParamStorageOriginNode)))))
+
+(define (tc-param-storage-origin-node-new
+  [name-id : i64]
+  [parameter-id : i64]
+  [parent : i64]) : i64
+  (let
+    [cell : (__tl_dyn-array TcParamStorageOriginNode)
+      (array.make-array TcParamStorageOriginNode 1)]
+    (begin
+      (array-set! cell 0 (TcParamStorageOriginNode name-id parameter-id parent))
+      (unsafe
+        (cast
+          (ptr->int
+            (ptr-cast (array-data cell) : (Ptr TcParamStorageOriginNode)))
+          : i64)))))
+
+(define (tc-param-storage-origin-lookup [head : i64] [name-id : i64]) : TcMaybeNameId
+  (let
+    [cursor : i64 head]
+    [result : TcMaybeNameId TcMaybeNameId.No]
+    [done : bool false]
+    (begin
+      (while (and (not done) (not (= cursor 0)))
+        (let
+          [node : TcParamStorageOriginNode
+            (tc-param-storage-origin-node-read cursor)]
+          (if (= (struct-get node name-id) name-id)
+            (begin
+              (if (>= (struct-get node parameter-id) 0)
+                (set!
+                  result
+                  (TcMaybeNameId.Some (struct-get node parameter-id)))
+                unit)
+              (set! done true))
+            (set! cursor (struct-get node parent)))))
+      result)))
+
+(define (tc-param-storage-origin-bind
+  [head : i64]
+  [name-id : i64]
+  [parameter-id : i64]) : i64
+  (tc-param-storage-origin-node-new name-id parameter-id head))
+
+(define (tc-param-storage-origin-clear [head : i64] [name-id : i64]) : i64
+  (match (tc-param-storage-origin-lookup head name-id)
+    [(TcMaybeNameId.Some _) (tc-param-storage-origin-node-new name-id -1 head)]
+    [(TcMaybeNameId.No) head]))
+
+(define (tc-param-storage-origins-union-at
+  [cursor : i64]
+  [seen : TcNameIdList]
+  [out : i64]) : i64
+  (if (= cursor 0)
+    out
+    (let
+      [node : TcParamStorageOriginNode
+        (tc-param-storage-origin-node-read cursor)]
+      [name-id : i64 (struct-get node name-id)]
+      (if (tc-name-id-list-contains seen name-id)
+        (tc-param-storage-origins-union-at (struct-get node parent) seen out)
+        (tc-param-storage-origins-union-at
+          (struct-get node parent)
+          (TcNameIdList.Cons name-id (box seen))
+          (if (and
+            (>= (struct-get node parameter-id) 0)
+            (match (tc-param-storage-origin-lookup out name-id)
+              [(TcMaybeNameId.Some _) false]
+              [(TcMaybeNameId.No) true]))
+            (tc-param-storage-origin-bind
+              out
+              name-id
+              (struct-get node parameter-id))
+            out))))))
+
+(define (tc-param-storage-origins-union [a : i64] [b : i64]) : i64
+  (if (= a b)
+    a
+    (tc-param-storage-origins-union-at a TcNameIdList.Nil b)))
+
+(define (tc-moved-with-param-storage-origins [set : TcMovedSet] [origins : i64]) : TcMovedSet
+  (TcMovedSet
+    (tc-moved-roots set)
+    (tc-moved-partials set)
+    (tc-moved-paths set)
+    (tc-moved-exact-path-index set)
+    (tc-moved-hidden-atomic-users set)
+    origins))
+
+(define (tc-param-storage-origin-in-set [set : TcMovedSet] [name-id : i64]) : TcMaybeNameId
+  (tc-param-storage-origin-lookup (tc-moved-param-storage-origins set) name-id))
+
+(define (tc-param-storage-origin-bind-in-set
+  [set : TcMovedSet]
+  [name-id : i64]
+  [parameter-id : i64]) : TcMovedSet
+  (tc-moved-with-param-storage-origins
+    set
+    (tc-param-storage-origin-bind
+      (tc-moved-param-storage-origins set)
+      name-id
+      parameter-id)))
 
 (define (tc-moved-len [set : TcMovedSet]) : i64
   (let
@@ -52217,7 +52340,8 @@
       (tc-moved-clone-id-map-or-shared (& partials))
       paths
       (tc-moved-exact-path-index-from-facts paths)
-      (tc-moved-clone-id-map-or-shared (& hidden)))))
+      (tc-moved-clone-id-map-or-shared (& hidden))
+      (tc-moved-param-storage-origins set))))
 
 (define (tc-moved-contains? [set : TcMovedSet] [name-id : i64]) : bool
   (let
@@ -52237,7 +52361,8 @@
         (tc-moved-partials set)
         (tc-moved-paths set)
         (tc-moved-exact-path-index set)
-        (tc-moved-hidden-atomic-users set)))))
+        (tc-moved-hidden-atomic-users set)
+        (tc-moved-param-storage-origins set)))))
 
 (define (tc-moved-add-value [set : TcMovedSet] [name-id : i64] [value : i64]) : TcMovedSet
   (let
@@ -52249,7 +52374,8 @@
         (tc-moved-partials set)
         (tc-moved-paths set)
         (tc-moved-exact-path-index set)
-        (tc-moved-hidden-atomic-users set)))))
+        (tc-moved-hidden-atomic-users set)
+        (tc-moved-param-storage-origins set)))))
 
 (define (tc-moved-add-origin
   [set : TcMovedSet]
@@ -52271,7 +52397,8 @@
           (tc-moved-partials set)
           (tc-moved-paths set)
           (tc-moved-exact-path-index set)
-          (tc-moved-hidden-atomic-users set))))))
+          (tc-moved-hidden-atomic-users set)
+          (tc-moved-param-storage-origins set))))))
 
 (define (tc-moved-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
   (let
@@ -52786,7 +52913,8 @@
         partials
         (tc-moved-paths set)
         (tc-moved-exact-path-index set)
-        (tc-moved-hidden-atomic-users set)))))
+        (tc-moved-hidden-atomic-users set)
+        (tc-moved-param-storage-origins set)))))
 
 (define (tc-moved-remove-partial [set : TcMovedSet] [name-id : i64]) : TcMovedSet
   (let
@@ -52802,7 +52930,8 @@
           partials
           (tc-moved-paths set)
           (tc-moved-exact-path-index set)
-          (tc-moved-hidden-atomic-users set))))))
+          (tc-moved-hidden-atomic-users set)
+          (tc-moved-param-storage-origins set))))))
 
 (define (tc-moved-partial-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
   (let
@@ -52861,7 +52990,8 @@
           (tc-moved-partials set)
           (TcMovedPathFacts.Cons fact (box (tc-moved-paths set)))
           next-index
-          (tc-moved-hidden-atomic-users set))))))
+          (tc-moved-hidden-atomic-users set)
+          (tc-moved-param-storage-origins set))))))
 
 (define (tc-moved-remove-path-kind
   [set : TcMovedSet]
@@ -52875,7 +53005,8 @@
         (tc-moved-partials set)
         facts
         (tc-moved-exact-path-index-from-facts facts)
-        (tc-moved-hidden-atomic-users set))]))
+        (tc-moved-hidden-atomic-users set)
+        (tc-moved-param-storage-origins set))]))
 
 (define (tc-moved-path-exact-conflict-kind
   [set : TcMovedSet]
@@ -53202,7 +53333,10 @@
       (tc-moved-partials without-root)
       facts
       (tc-moved-exact-path-index-from-facts facts)
-      (tc-moved-hidden-atomic-users without-root))))
+      (tc-moved-hidden-atomic-users without-root)
+      (tc-param-storage-origin-clear
+        (tc-moved-param-storage-origins without-root)
+        name-id))))
 
 (define (tc-moved-any-root-path-at? [facts : TcMovedPathFacts] [root-id : i64]) : bool
   (match facts
@@ -53309,20 +53443,26 @@
     [b-partials : tc_i64_i64_map.Map (tc-moved-partials b)]
     [b-paths : TcMovedPathFacts (tc-moved-paths b)]
     [b-hidden : tc_i64_i64_map.Map (tc-moved-hidden-atomic-users b)]
+    [origins : i64
+      (tc-param-storage-origins-union
+        (tc-moved-param-storage-origins a)
+        (tc-moved-param-storage-origins b))]
     [with-a-paths : TcMovedSet
       (TcMovedSet
         b-roots
         b-partials
         a-paths
         (tc-moved-exact-path-index-from-facts a-paths)
-        b-hidden)]
+        b-hidden
+        origins)]
     [with-paths : TcMovedSet (tc-moved-union-path-loop b-paths with-a-paths)]
     (TcMovedSet
       (tc-moved-union-id-loop (& a-roots) 0 b-roots)
       (tc-moved-union-id-loop (& a-partials) 0 b-partials)
       (tc-moved-paths with-paths)
       (tc-moved-exact-path-index with-paths)
-      (tc-moved-union-id-loop (& a-hidden) 0 b-hidden))))
+      (tc-moved-union-id-loop (& a-hidden) 0 b-hidden)
+      origins)))
 
 (define (tc-move-var-move-only-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match (tc-lookup-id env name-id)
@@ -53907,6 +54047,198 @@
       [(AstParam.Param name _ _ _)
         (tc-move-params-locals-at params (+ index 1) (tc-moved-add acc name))])))
 
+(define (tc-param-storage-memory-class-type? [ctx : TcContext] [ty : AstType]) : bool
+  (let
+    [unwrapped : AstType
+      (ast-type-strip-consuming-param-with-pools (tc-context-pools ctx) ty)]
+    (if (tc-poison-type? unwrapped)
+      false
+      (match (tc-type-strip-region (tc-resolve-type ctx unwrapped))
+        [(AstType.Struct name) (not (tc-name-register-resident-id? ctx name))]
+        [(AstType.StructArgs name _)
+          (not (tc-name-register-resident-id? ctx name))]
+        [(AstType.Enum name) (not (tc-name-register-resident-id? ctx name))]
+        [(AstType.EnumArgs name _)
+          (not (tc-name-register-resident-id? ctx name))]
+        [(AstType.Array _ _) true]
+        [_ false]))))
+
+(define (tc-param-storage-seed-params
+  [ctx : TcContext]
+  [params : AstParamList]
+  [moved : TcMovedSet]) : TcMovedSet
+  (tc-param-storage-seed-params-at ctx (& params) 0 moved))
+
+(define (tc-param-storage-seed-params-at
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [index : i64]
+  [moved : TcMovedSet]) : TcMovedSet
+  (if (>= index (ast-param-list-len params))
+    moved
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name ty is-comptime consume?)
+        (tc-param-storage-seed-params-at
+          ctx
+          params
+          (+ index 1)
+          (if (and
+            (not is-comptime)
+            (not consume?)
+            (tc-param-storage-memory-class-type? ctx ty))
+            (tc-param-storage-origin-bind-in-set moved name name)
+            moved))])))
+
+(define (tc-param-storage-fixed-array-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstType.Array _ _) true]
+    [_ false]))
+
+;; Return the original by-value parameter whose ABI backing storage contains
+;; this place. Struct fields and fixed-array elements remain inside that
+;; storage; tuple/dynamic-array/box projections cross a shallow handle and must
+;; not inherit the parameter provenance.
+(define (tc-param-storage-place-origin
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [place : AstExpr]) : TcMaybeNameId
+  (match (ast-expr-unspan place)
+    [(AstExpr.Var name)
+      (if (tc-dotted-local-field-name-id? env name)
+        (match (tc-dotted-local-field-expr-id env name)
+          [(ResultTcExprId.Ok virtual-id)
+            (tc-param-storage-place-origin
+              ctx
+              expr-bases
+              env
+              moved
+              (ast-expr-segment-bases-get expr-bases virtual-id))]
+          [(ResultTcExprId.Err _) TcMaybeNameId.No])
+        (tc-param-storage-origin-in-set moved name))]
+    [(AstExpr.Ann inner-box _)
+      (tc-param-storage-place-origin
+        ctx
+        expr-bases
+        env
+        moved
+        (ast-expr-segment-bases-get expr-bases inner-box))]
+    [(AstExpr.Cast inner-box _)
+      (tc-param-storage-place-origin
+        ctx
+        expr-bases
+        env
+        moved
+        (ast-expr-segment-bases-get expr-bases inner-box))]
+    [(AstExpr.StructGet receiver-box _)
+      (let
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        (match (tc-expr ctx env receiver)
+          [(ResultTcType.Ok receiver-ty)
+            (if (tc-param-storage-memory-class-type? ctx receiver-ty)
+              (tc-param-storage-place-origin ctx expr-bases env moved receiver)
+              TcMaybeNameId.No)]
+          [(ResultTcType.Err _) TcMaybeNameId.No]))]
+    [(AstExpr.ArrayRef array-box _)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (match (tc-expr ctx env array)
+          [(ResultTcType.Ok array-ty)
+            (if (tc-param-storage-fixed-array-type? ctx array-ty)
+              (tc-param-storage-place-origin ctx expr-bases env moved array)
+              TcMaybeNameId.No)]
+          [(ResultTcType.Err _) TcMaybeNameId.No]))]
+    [_ TcMaybeNameId.No]))
+
+(define (tc-param-storage-origin-id
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [place : AstExpr]) : i64
+  (match (tc-param-storage-place-origin ctx expr-bases env moved place)
+    [(TcMaybeNameId.Some parameter-id) parameter-id]
+    [(TcMaybeNameId.No) -1]))
+
+(define (tc-param-storage-write-message
+  [operation : String]
+  [parameter-id : i64]) : String
+  (str_cat.str-cat
+    "typecheck: cannot "
+    operation
+    " storage derived from by-value memory-aggregate parameter `"
+    (tc-hygiene-name-text-id parameter-id)
+    "`; declare the parameter as `&mut` and pass an explicit mutable borrow"))
+
+(define (tc-param-storage-check-write
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [place : AstExpr]
+  [operation : String]) : ResultTcUnit
+  (match (tc-param-storage-place-origin ctx expr-bases env moved place)
+    [(TcMaybeNameId.Some parameter-id)
+      (ResultTcUnit.Err (tc-param-storage-write-message operation parameter-id))]
+    [(TcMaybeNameId.No) ResultTcUnit.Ok]))
+
+(define (tc-param-storage-check-array-write
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [array : AstExpr]) : ResultTcUnit
+  (match (tc-expr ctx env array)
+    [(ResultTcType.Ok array-ty)
+      (if (tc-param-storage-fixed-array-type? ctx array-ty)
+        (tc-param-storage-check-write ctx expr-bases env moved array "mutate")
+        ResultTcUnit.Ok)]
+    [(ResultTcType.Err _) ResultTcUnit.Ok]))
+
+(define (tc-param-storage-rebind-from-init
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [name-id : i64]
+  [binding-ty : AstType]
+  [init : AstExpr]) : TcMovedSet
+  (let
+    [origin : TcMaybeNameId
+      (if (tc-param-storage-memory-class-type? ctx binding-ty)
+        (tc-param-storage-place-origin ctx expr-bases env moved init)
+        TcMaybeNameId.No)]
+    [cleared : TcMovedSet (tc-moved-remove-root-state moved name-id)]
+    (match origin
+      [(TcMaybeNameId.Some parameter-id)
+        (tc-param-storage-origin-bind-in-set cleared name-id parameter-id)]
+      [(TcMaybeNameId.No) cleared])))
+
+(define (tc-param-storage-bind-pattern-names
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [names : TcNameIdList]
+  [parameter-id : i64]) : TcMovedSet
+  (if (< parameter-id 0)
+    moved
+    (match names
+      [(TcNameIdList.Nil) moved]
+      [(TcNameIdList.Cons name-id rest)
+        (tc-param-storage-bind-pattern-names
+          ctx
+          env
+          (match (tc-lookup-id env name-id)
+            [(ResultTcType.Ok ty)
+              (if (tc-param-storage-memory-class-type? ctx ty)
+                (tc-param-storage-origin-bind-in-set moved name-id parameter-id)
+                moved)]
+            [(ResultTcType.Err _) moved])
+          (box-get rest)
+          parameter-id)])))
+
 (define (tc-move-after-consuming-projection
   [ctx : TcContext]
   [expr-bases : i64]
@@ -54396,7 +54728,8 @@
         (tc-moved-partials set)
         (tc-moved-paths set)
         (tc-moved-exact-path-index set)
-        hidden))))
+        hidden
+        (tc-moved-param-storage-origins set)))))
 
 (define (tc-moved-hidden-atomic-user? [set : TcMovedSet] [owner-id : i64]) : bool
   (let
@@ -55454,7 +55787,14 @@
                         init)
                       (tc-moved-add locals name)
                       (tc-moved-remove-root-state loop-carried name)
-                      (tc-moved-remove-root-state moved2 name)
+                      (tc-param-storage-rebind-from-init
+                        ctx
+                        expr-bases
+                        env
+                        moved2
+                        name
+                        binding-ty
+                        init)
                       bindings
                       (+ index 1))]
                   [(TcMoveResult.Err message) (TcMoveBindings.Err message)]))]
@@ -55500,7 +55840,7 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding name init-box _ move-aware?)
         (let
-          [_init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
           (match (tc-move-check-expr-id
             ctx
             expr-bases
@@ -55537,7 +55877,14 @@
                           (tc-type-without-regions init-ty))
                         (tc-moved-add locals name)
                         (tc-moved-remove-root-state loop-carried name)
-                        (tc-moved-remove-root-state moved2 name)
+                        (tc-param-storage-rebind-from-init
+                          ctx
+                          expr-bases
+                          env
+                          moved2
+                          name
+                          init-ty
+                          init)
                         bindings
                         (+ index 1))
                         [(TcMoveResourceBindings.Ok
@@ -55649,6 +55996,7 @@
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
+  [parameter-id : i64]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : TcMoveResult
   (tc-move-check-arms-at
@@ -55658,6 +56006,7 @@
     locals
     loop-carried
     moved
+    parameter-id
     scrut-ty
     (& arms)
     0))
@@ -55669,6 +56018,7 @@
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
+  [parameter-id : i64]
   [scrut-ty : AstType]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : TcMoveResult
@@ -55690,7 +56040,14 @@
                 (tc-move-remove-bound-root-states
                   (tc-moved-clone loop-carried)
                   bound)
-                (tc-move-remove-bound-root-states (tc-moved-clone moved) bound)
+                (tc-param-storage-bind-pattern-names
+                  ctx
+                  arm-env
+                  (tc-move-remove-bound-root-states
+                    (tc-moved-clone moved)
+                    bound)
+                  bound
+                  parameter-id)
                 body)
                 [(TcMoveResult.Ok arm-moved)
                   (let
@@ -55705,6 +56062,7 @@
                       (tc-moved-clone locals)
                       (tc-moved-clone loop-carried)
                       (tc-moved-clone moved)
+                      parameter-id
                       scrut-ty
                       arms
                       (+ index 1))
@@ -56017,7 +56375,7 @@
               lambda-env
               lambda-locals
               (tc-moved-empty)
-              (tc-moved-clone moved)
+              (tc-param-storage-seed-params ctx params (tc-moved-clone moved))
               body-box)
               [(TcMoveResult.Ok _)
                 (tc-move-check-lambda-owner-captures
@@ -56167,43 +56525,51 @@
         [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
         [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-move-check-expr
+        (match (tc-param-storage-check-array-write
           ctx
           expr-bases
           env
-          locals
-          loop-carried
           moved
           array)
-          [(TcMoveResult.Ok moved1)
+          [(ResultTcUnit.Ok)
             (match (tc-move-check-expr
               ctx
               expr-bases
               env
               locals
               loop-carried
-              moved1
-              index)
-              [(TcMoveResult.Ok moved2)
+              moved
+              array)
+              [(TcMoveResult.Ok moved1)
                 (match (tc-move-check-expr
                   ctx
                   expr-bases
                   env
                   locals
                   loop-carried
-                  moved2
-                  value)
-                  [(TcMoveResult.Ok moved3)
-                    (TcMoveResult.Ok
-                      (tc-move-reinitialize-array-set-path
-                        expr-bases
-                        locals
-                        moved3
-                        array
-                        index))]
+                  moved1
+                  index)
+                  [(TcMoveResult.Ok moved2)
+                    (match (tc-move-check-expr
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      loop-carried
+                      moved2
+                      value)
+                      [(TcMoveResult.Ok moved3)
+                        (TcMoveResult.Ok
+                          (tc-move-reinitialize-array-set-path
+                            expr-bases
+                            locals
+                            moved3
+                            array
+                            index))]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+          [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.ArrayTake array-box live-box index-box)
       (begin
         ;; The legacy lower scan conservatively classified ArrayTake as an
@@ -56242,33 +56608,42 @@
         [receiver : AstExpr
           (ast-expr-segment-bases-get expr-bases receiver-box)]
         [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
-        (match (tc-move-check-expr
+        (match (tc-param-storage-check-write
           ctx
           expr-bases
           env
-          locals
-          loop-carried
           moved
-          receiver)
-          [(TcMoveResult.Ok moved1)
+          receiver
+          "mutate")
+          [(ResultTcUnit.Ok)
             (match (tc-move-check-expr
               ctx
               expr-bases
               env
               locals
               loop-carried
-              moved1
-              value)
-              [(TcMoveResult.Ok moved2)
-                (TcMoveResult.Ok
-                  (tc-move-reinitialize-struct-set-path
-                    expr-bases
-                    locals
-                    moved2
-                    receiver
-                    field))]
+              moved
+              receiver)
+              [(TcMoveResult.Ok moved1)
+                (match (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  loop-carried
+                  moved1
+                  value)
+                  [(TcMoveResult.Ok moved2)
+                    (TcMoveResult.Ok
+                      (tc-move-reinitialize-struct-set-path
+                        expr-bases
+                        locals
+                        moved2
+                        receiver
+                        field))]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+          [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
@@ -56346,7 +56721,7 @@
       (tc-move-check-exprs ctx expr-bases env locals loop-carried moved exprs)]
     [(AstExpr.Set name rhs-box)
       (let
-        [_rhs : AstExpr (ast-expr-segment-bases-get expr-bases rhs-box)]
+        [rhs : AstExpr (ast-expr-segment-bases-get expr-bases rhs-box)]
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-set-expr-id env name rhs-box)
             [(ResultTcExprId.Ok virtual-id)
@@ -56377,7 +56752,19 @@
                 moved1
                 rhs-box)
                 [(TcMoveResult.Ok moved2)
-                  (TcMoveResult.Ok (tc-moved-remove-root-state moved2 name))]
+                  (match (tc-lookup-id env name)
+                    [(ResultTcType.Ok binding-ty)
+                      (TcMoveResult.Ok
+                        (tc-param-storage-rebind-from-init
+                          ctx
+                          expr-bases
+                          env
+                          moved2
+                          name
+                          binding-ty
+                          rhs))]
+                    [(ResultTcType.Err _)
+                      (TcMoveResult.Ok (tc-moved-remove-root-state moved2 name))])]
                 [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
             [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
     [(AstExpr.Ann inner-box _)
@@ -56388,10 +56775,35 @@
       (let
         [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
-    [(AstExpr.Borrow _ _ inner-box)
+    [(AstExpr.Borrow mutable _ inner-box)
       (let
         [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
+        (if mutable
+          (match (tc-param-storage-check-write
+            ctx
+            expr-bases
+            env
+            moved
+            inner
+            "mutably borrow")
+            [(ResultTcUnit.Ok)
+              (tc-move-check-expr
+                ctx
+                expr-bases
+                env
+                locals
+                loop-carried
+                moved
+                inner)]
+            [(ResultTcUnit.Err message) (TcMoveResult.Err message)])
+          (tc-move-check-expr
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            inner)))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
@@ -56425,6 +56837,12 @@
                         moveds
                         scrut
                         scrut-ty)
+                      (tc-param-storage-origin-id
+                        ctx
+                        expr-bases
+                        env
+                        moveds
+                        scrut)
                       scrut-ty
                       arms)]
                   [(ResultTcType.Err _)
@@ -56435,6 +56853,12 @@
                       locals
                       loop-carried
                       moveds
+                      (tc-param-storage-origin-id
+                        ctx
+                        expr-bases
+                        env
+                        moveds
+                        scrut)
                       (AstType.Unit)
                       arms)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
@@ -57118,7 +57542,7 @@
     env
     (tc-move-params-locals params (tc-moved-empty))
     (tc-moved-empty)
-    (tc-moved-empty)
+    (tc-param-storage-seed-params ctx params (tc-moved-empty))
     body-id)
     [(TcMoveResult.Ok _) ResultTcUnit.Ok]
     [(TcMoveResult.Err message) (ResultTcUnit.Err message)]))
@@ -57340,7 +57764,8 @@
       (tc-moved-partials without-two-phase)
       facts
       (tc-moved-exact-path-index-from-facts facts)
-      (tc-moved-hidden-atomic-users without-two-phase))))
+      (tc-moved-hidden-atomic-users without-two-phase)
+      (tc-moved-param-storage-origins without-two-phase))))
 
 (define (tc-borrow-check-two-phase-mut-conflict
   [borrowed : TcMovedSet]
@@ -57398,18 +57823,24 @@
   [ctx : TcContext]
   [ty : AstType]
   [lifetime : i64]) : bool
-  (tc-name-id-list-contains
-    (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ty))
-    lifetime))
+  ;; A primary body error can leave poison bindings in the diagnostic env.
+  ;; Secondary borrow analysis must not try to intern the poison sentinel.
+  (if (tc-poison-type? ty)
+    false
+    (tc-name-id-list-contains
+      (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ty))
+      lifetime)))
 
 (define (tc-borrow-check-binding-stores-lifetime?
   [ctx : TcContext]
   [ty : AstType]
   [lifetime : i64]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstType.Func _ ret)
-      (tc-borrow-check-type-contains-lifetime? ctx (ty-node-get ret) lifetime)]
-    [_ (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)]))
+  (if (tc-poison-type? ty)
+    false
+    (match (tc-type-strip-region (tc-resolve-type ctx ty))
+      [(AstType.Func _ ret)
+        (tc-borrow-check-type-contains-lifetime? ctx (ty-node-get ret) lifetime)]
+      [_ (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)])))
 
 (define (tc-borrow-check-env-lifetime-used-in-exprs?
   [expr-bases : i64]
@@ -64214,6 +64645,7 @@
   (let
     [left-len : i64 (ast-decl-list-len (& left))]
     [right-len : i64 (ast-decl-list-len (& right))]
+    [right-slots : (__tl_dyn-array AstDecl) (struct-get right slots)]
     (if (and
       (<= left-len (struct-get right offset))
       (struct-get right prependable)
@@ -64233,17 +64665,13 @@
           ;; fresh whole-program copy for every splice. Distinct backing storage
           ;; is required because the left copy may otherwise overlap the writes.
           (ast-decl-list-copy-to
-            (&mut (struct-get right slots))
+            (&mut right-slots)
             (& (struct-get left slots))
             (struct-get left offset)
             new-offset
             0
             left-len)
-          (AstDeclList
-            (struct-get right slots)
-            new-offset
-            (+ left-len right-len)
-            true)))
+          (AstDeclList right-slots new-offset (+ left-len right-len) true)))
       (let
         [out : AstDeclList (ast-decl-list-with-capacity (+ left-len right-len))]
         (begin
@@ -64254,12 +64682,11 @@
 (define (macro-flatten-module-body-decls-into-with-origins
   [decls : AstDeclList]
   [module-id : i64]
-  [out : AstDeclList]
-  [out-origins : (&mut out-origins CompilerParseDeclOriginAliasVec)]) : AstDeclList
+  [result : (&mut result AstDeclList)]
+  [out-origins : (&mut out-origins CompilerParseDeclOriginAliasVec)]) : unit
   (let
     [cursor : AstDeclList decls]
     [current-module-id : i64 module-id]
-    [result : AstDeclList out]
     [done : bool false]
     (begin
       (while (not done)
@@ -64270,10 +64697,10 @@
               (match decl
                 [(AstDecl.Module next-module)
                   (begin
-                    (ast-decl-list-push (&mut result) decl)
+                    (ast-decl-list-push result decl)
                     (compiler-parse-decl-origin-alias-vec-push-key-slot!
                       out-origins
-                      (- (ast-decl-list-len (& result)) 1)
+                      (- (ast-decl-list-len result) 1)
                       1
                       (compiler-parse-decl-list-storage-key (& rest))
                       (- (struct-get rest offset) 1)
@@ -64283,29 +64710,27 @@
                 [(AstDecl.ModuleBody target-module-id body-box)
                   (begin
                     (ast-decl-list-push
-                      (&mut result)
+                      result
                       (ast-decl-module-id target-module-id))
                     (compiler-parse-decl-origin-alias-vec-push-key-slot!
                       out-origins
-                      (- (ast-decl-list-len (& result)) 1)
+                      (- (ast-decl-list-len result) 1)
                       1
                       (compiler-parse-decl-list-storage-key (& rest))
                       (- (struct-get rest offset) 1)
                       decl
                       false)
-                    (set!
+                    (macro-flatten-module-body-decls-into-with-origins
+                      (box-get body-box)
+                      target-module-id
                       result
-                      (macro-flatten-module-body-decls-into-with-origins
-                        (box-get body-box)
-                        target-module-id
-                        result
-                        out-origins))
+                      out-origins)
                     (ast-decl-list-push
-                      (&mut result)
+                      result
                       (ast-decl-module-id current-module-id))
                     (compiler-parse-decl-origin-alias-vec-push-key-slot!
                       out-origins
-                      (- (ast-decl-list-len (& result)) 1)
+                      (- (ast-decl-list-len result) 1)
                       1
                       (compiler-parse-decl-list-storage-key (& rest))
                       (- (struct-get rest offset) 1)
@@ -64313,33 +64738,33 @@
                       false))]
                 [_
                   (begin
-                    (ast-decl-list-push (&mut result) decl)
+                    (ast-decl-list-push result decl)
                     (compiler-parse-decl-origin-alias-vec-push-key-slot!
                       out-origins
-                      (- (ast-decl-list-len (& result)) 1)
+                      (- (ast-decl-list-len result) 1)
                       1
                       (compiler-parse-decl-list-storage-key (& rest))
                       (- (struct-get rest offset) 1)
                       decl
                       false))])
               (set! cursor rest))]))
-      result)))
+      unit)))
 
 (define (macro-flatten-module-body-decls-into
   [decls : AstDeclList]
   [module-id : i64]
-  [out : AstDeclList]) : AstDeclList
+  [out : AstDeclList (:consume)]) : AstDeclList
   (let
     [out-origins : CompilerParseDeclOriginAliasVec
       (compiler-parse-decl-origin-alias-vec-with-capacity
         (ast-decl-list-len (& decls)))]
-    [result : AstDeclList
+    [result : AstDeclList out]
+    (begin
       (macro-flatten-module-body-decls-into-with-origins
         decls
         module-id
-        out
-        (&mut out-origins))]
-    (begin
+        (&mut result)
+        (&mut out-origins))
       (compiler-parse-decl-origin-alias-vec-register!
         (& result)
         (& out-origins))
@@ -64446,6 +64871,8 @@
   (let
     [left-len : i64 (ast-decl-path-list-len (& left))]
     [right-len : i64 (ast-decl-path-list-len (& right))]
+    [right-slots : (__tl_dyn-array String) (struct-get right slots)]
+    [right-owner-ids : (__tl_dyn-array i64) (struct-get right owner-ids)]
     (if (and
       (<= left-len (struct-get right offset))
       (struct-get right prependable)
@@ -64460,22 +64887,22 @@
         [new-offset : i64 (- (struct-get right offset) left-len)]
         (begin
           (ast-decl-path-list-copy-to
-            (&mut (struct-get right slots))
+            (&mut right-slots)
             (& (struct-get left slots))
             (struct-get left offset)
             new-offset
             0
             left-len)
           (ast-decl-module-list-copy-to
-            (&mut (struct-get right owner-ids))
+            (&mut right-owner-ids)
             (& (struct-get left owner-ids))
             (struct-get left offset)
             new-offset
             0
             left-len)
           (AstDeclPathList
-            (struct-get right slots)
-            (struct-get right owner-ids)
+            right-slots
+            right-owner-ids
             new-offset
             (+ left-len right-len)
             true)))
@@ -82501,7 +82928,7 @@
 (define (tc-prefix-candidate
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.Vec]
+  [stdlib-roots : svec.Vec (:consume)]
   [cache-scope : String]) : TcPrefixCandidate
   (let
     [entry-path : String (tc-decl-path-list-last paths "")]
@@ -82719,7 +83146,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [summary : CompilerTypecheckSummary]
-  [stdlib-roots : svec.Vec]
+  [stdlib-roots : svec.Vec (:consume)]
   [cache-scope : String]) : ResultCompilerTypecheck
   ;; A cached prefix contains only its summary, not semantic observations from
   ;; the declarations it skipped. Clone-root collection therefore takes the

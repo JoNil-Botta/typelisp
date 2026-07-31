@@ -874,10 +874,18 @@
   176)
 (define tlci-page-align : i64
   4096)
+(define tlci-format-version-field-offset : i64
+  8)
 (define tlci-hash-field-offset : i64
   48)
 (define tlci-hash-field-size : i64
   8)
+(define tlci-import-section-field-offset : i64
+  152)
+(define tlci-import-count-field-offset : i64
+  160)
+(define tlci-file-size-field-offset : i64
+  168)
 (define tlci-section-fixup-record-size : i64
   8)
 (define tlci-section-entry-record-size : i64
@@ -3008,7 +3016,7 @@
       (if (not (tlci-magic-ok? bytes))
         (ResultTlciImage.Err "tlci: bad magic")
         (let
-          [version : i64 (tlci-read-u64 bytes 8)]
+          [version : i64 (tlci-read-u64 bytes tlci-format-version-field-offset)]
           [host-arch : i64 (tlci-read-u64 bytes 16)]
           [callback-abi : i64 (tlci-read-u64 bytes 24)]
           [hash-offset : i64 (tlci-read-u64 bytes 32)]
@@ -3026,9 +3034,12 @@
           [entries-count : i64 (tlci-read-u64 bytes 128)]
           [symbols-offset : i64 (tlci-read-u64 bytes 136)]
           [symbols-count : i64 (tlci-read-u64 bytes 144)]
-          [imports-offset : i64 (tlci-read-u64 bytes 152)]
-          [imports-count : i64 (tlci-read-u64 bytes 160)]
-          [declared-size : i64 (tlci-read-u64 bytes 168)]
+          [imports-offset : i64
+            (tlci-read-u64 bytes tlci-import-section-field-offset)]
+          [imports-count : i64
+            (tlci-read-u64 bytes tlci-import-count-field-offset)]
+          [declared-size : i64
+            (tlci-read-u64 bytes tlci-file-size-field-offset)]
           [fixups-len : i64 (* fixups-count tlci-section-fixup-record-size)]
           [entries-len : i64 (* entries-count tlci-section-entry-record-size)]
           [symbols-len : i64 (* symbols-count tlci-section-symbol-record-size)]

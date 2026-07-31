@@ -10,20 +10,21 @@ version 1 has been removed — there were no external consumers — so the parse
 and emitter target v2 only.
 
 The checked-in `.tlci` files pin the current format. `valid-metadata-only.tlci`
-pins the minimal container, while `valid-sections.tlci` pins page-aligned
-rodata/code and one fixup, entry, and symbol record without executing its inert
-code bytes. Malformed fixtures pin parser diagnostics for magic, truncation,
-version, hash, layout, and metadata failures.
+pins the minimal container, `valid-sections.tlci` pins page-aligned rodata/code
+and one fixup, entry, and symbol record without executing its inert code bytes,
+and `valid-imports.tlci` pins a named import record and its packed name.
+Malformed fixtures pin parser diagnostics for magic, truncation, version, hash,
+layout, and metadata failures.
 `scripts/verify-tlci-corpus.sh` passes these files to the public inspector on
 Linux and Windows and compares exact stdout/stderr.
 
-The gate also runs `corpus_emit.tl` and byte-compares its two outputs with the
+The gate also runs `corpus_emit.tl` and byte-compares its three outputs with the
 checked-in valid images. A synchronized emitter/parser change therefore cannot
 silently redefine the format.
 
 ## Regenerating the corpus
 
-The fixtures are reproducible. `corpus_emit.tl` emits the two valid images; the
+The fixtures are reproducible. `corpus_emit.tl` emits the three valid images; the
 malformed fixtures are those images with a single documented corruption applied
 (bad magic, truncation, an unsupported version field, a broken content hash, a
 misaligned or overlapping metadata section, and corrupt metadata text). When a
@@ -37,3 +38,4 @@ The valid fixture layout is summarized for review:
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `valid-metadata-only.tlci` | `tlci-v2-corpus` | `corpus.empty` 1.0.0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `valid-sections.tlci` | `tlci-v2-corpus` | `corpus.sections` 1.0.0 | 4 bytes at 4096 | 3 bytes at 8192 | 1 | 1 | 1 | 0 |
+| `valid-imports.tlci` | `tlci-v2-corpus` | `corpus.imports` 1.0.0 | 0 | 0 | 0 | 0 | 0 | 1 |

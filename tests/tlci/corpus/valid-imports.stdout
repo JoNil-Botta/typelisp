@@ -1,0 +1,19 @@
+tlci image
+format-version: 2
+host-arch: x86_64 (1)
+callback-abi-version: 2
+producer-compiler-identity: tlci-v2-corpus
+content-hash: 952085129
+file-size: 330
+metadata-version: v1
+package-name: corpus.imports
+package-version: 1.0.0
+sections:
+  compiler-build-hash: offset=176 bytes=14
+  metadata: offset=192 bytes=96
+  rodata: offset=0 bytes=0
+  code: offset=0 bytes=0
+  fixups: offset=0 records=0 bytes=0
+  entries: offset=0 records=0 bytes=0
+  symbols: offset=0 records=0 bytes=0
+  imports: offset=288 records=1 bytes=42

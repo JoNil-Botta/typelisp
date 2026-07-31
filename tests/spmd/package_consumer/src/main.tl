@@ -1,7 +1,7 @@
 (module spmd_consumer)
 
 (import stdlib.array)
-(import "pkg:fixture/src/lib.tl" module spmd_fixture as fixture)
+(import fixture.src.lib as fixture)
 
 (define (fill [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n]) (array-set! out i (fixture.helper i 3))))

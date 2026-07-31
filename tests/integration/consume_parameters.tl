@@ -1,7 +1,7 @@
 ;; Opt-in consuming parameters are a static callable effect with unchanged ABI.
 ;; lint-allow: unused-import
 (import stdlib.string)
-(import "consume_parameters_helper.tl" module consume.parameters.helper as helper)
+(import consume.parameters.helper)
 
 (defmacro (generated-consumer-module) : Module
   `(begin

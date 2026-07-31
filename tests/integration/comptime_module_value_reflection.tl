@@ -1,4 +1,4 @@
-(import "comptime_module_value_reflection_provider.tl" module reflection.signature.provider as provider)
+(import reflection.signature.provider)
 (import stdlib.comptime)
 
 (defmacro (generated-provider) : Module

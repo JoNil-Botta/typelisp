@@ -828,12 +828,12 @@ validate_manifest() {
     spmd_simd_manifest_cases >> "$_known"
     compiler_cfg_native_fixture_cases >> "$_known"
 
-    find tests/integration -maxdepth 1 -type f -name '*.tl' |
+    find tests/integration -type f -name '*.tl' |
         sed 's#^tests/integration/##; s#\.tl$##' | sort > "$_actual"
     sort -u "$_known" > "$_known_sorted"
     if ! cmp -s "$_actual" "$_known_sorted"; then
         echo "integration manifest is out of date for $HOST_OS" >&2
-        echo "every tests/integration/*.tl file must be a manifest case, dependency, or documented host exception" >&2
+        echo "every tests/integration/**/*.tl file must be a manifest case, dependency, or documented host exception" >&2
         if command -v diff >/dev/null 2>&1; then
             diff -u "$_known_sorted" "$_actual" >&2 || true
         fi

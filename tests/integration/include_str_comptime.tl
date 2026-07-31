@@ -1,5 +1,5 @@
 (import stdlib.comptime)
-(import "include_str_comptime_owner.tl" module include.str.comptime.owner as owner)
+(import include.str.comptime.owner)
 
 ;; The comptime binary-data constructor is an internal compiler primitive and
 ;; emits private dynamic byte storage by design.

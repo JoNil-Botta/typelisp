@@ -226,6 +226,7 @@ build_case_program() {
             --target "$BUILD_TARGET" \
             $TARGET_CFG_ARGS \
             --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/tests/integration" \
             -o "$asm"
         if [ "$code" -ne 0 ]; then
             show_stream_if_nonempty stdout "$build_out"
@@ -242,6 +243,7 @@ build_case_program() {
             --target "$BUILD_TARGET" \
             $TARGET_CFG_ARGS \
             --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/tests/integration" \
             -o "$asm"
         if [ "$code" -ne 0 ]; then
             show_stream_if_nonempty stdout "$build_out"
@@ -296,13 +298,19 @@ run_manifest_case() {
     case "$mode" in
         check-ok)
             echo "[safety-corpus] check-ok $case_id"
-            run_case "$out" "$err" 0 "$CHECK_BIN" check "$source" --stdlib-root "$ROOT/stdlib"
+            run_case "$out" "$err" 0 \
+                "$CHECK_BIN" check "$source" \
+                --stdlib-root "$ROOT/stdlib" \
+                --stdlib-root "$ROOT/tests/integration"
             [ "$code" -eq 0 ] || fail "$case_id expected check success, got $code"
             assert_empty "$err" || fail "$case_id expected empty check stderr"
             ;;
         check-fail)
             echo "[safety-corpus] check-fail $case_id"
-            run_case "$out" "$err" - "$CHECK_BIN" check "$source" --stdlib-root "$ROOT/stdlib"
+            run_case "$out" "$err" - \
+                "$CHECK_BIN" check "$source" \
+                --stdlib-root "$ROOT/stdlib" \
+                --stdlib-root "$ROOT/tests/integration"
             [ "$code" -ne 0 ] || fail "$case_id expected check failure"
             [ "$stderr_contains" != "-" ] || fail "$case_id check-fail missing stderr expectation"
             assert_contains "$err" "$stderr_contains" || fail "$case_id stderr did not match expectation"

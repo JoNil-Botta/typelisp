@@ -1063,6 +1063,10 @@
       "typecheck: use of moved value `p.inner.handle`"
       "move of `p.inner.handle` happened here")
     (compiler-typecheck-labeled-move-error-ok?
+      (compiler-typecheck-move-owner-projection-deep-mixed-repeat-source)
+      "typecheck: use of moved value `p.mixed.0[1].0.handle`"
+      "move of `p.mixed.0[1].0.handle` happened here")
+    (compiler-typecheck-labeled-move-error-ok?
       (compiler-typecheck-move-owner-projection-nested-parent-after-child-source)
       "typecheck: use of moved value `p.inner`"
       "move of `p.inner.handle` happened here")

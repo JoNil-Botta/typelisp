@@ -9617,6 +9617,38 @@
     (take-handle (struct-get (struct-get p inner) handle))
     (take-handle (struct-get (struct-get p inner) backup))))")
 
+(define (compiler-typecheck-move-owner-projection-deep-mixed-repeat-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Leaf
+  (:cleanup cleanup-leaf)
+  (handle FileHandle (:owned))
+  (tag i64))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (mixed (Tuple (Array (Tuple Leaf i64) 2) i64)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-projection-deep-mixed-repeat [p : Holder]) : unit
+  (begin
+    (take-handle
+      (struct-get
+        (tuple-ref
+          (array-ref
+            (tuple-ref (struct-get p mixed) 0)
+            1)
+          0)
+        handle))
+    (take-handle
+      (struct-get
+        (tuple-ref
+          (array-ref
+            (tuple-ref (struct-get p mixed) 0)
+            1)
+          0)
+        handle))))")
+
 (define (compiler-typecheck-move-owner-projection-nested-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -10451,13 +10483,15 @@
     [items0 : TcMovePath
       (TcMovePath
         items-id
-        (TcMovePathSegments.ArrayIndex 0 (box TcMovePathSegments.Nil)))]
+        (tc-move-path-segments-append-array (tc-move-path-segments-empty) 0))]
     [items1 : TcMovePath
       (TcMovePath
         items-id
-        (TcMovePathSegments.ArrayIndex 1 (box TcMovePathSegments.Nil)))]
-    [items-root : TcMovePath (TcMovePath items-id TcMovePathSegments.Nil)]
-    [shadowed-root : TcMovePath (TcMovePath shadowed-id TcMovePathSegments.Nil)]
+        (tc-move-path-segments-append-array (tc-move-path-segments-empty) 1))]
+    [items-root : TcMovePath
+      (TcMovePath items-id (tc-move-path-segments-empty))]
+    [shadowed-root : TcMovePath
+      (TcMovePath shadowed-id (tc-move-path-segments-empty))]
     [origin-a : AstExpr (AstExpr.Var (intern "origin-a"))]
     [origin-b : AstExpr (AstExpr.Var (intern "origin-b"))]
     [empty : TcMovedSet (tc-moved-empty)]
@@ -10670,6 +10704,11 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-projection-nested-repeat-source)
         "typecheck: use of moved value `p.inner.handle`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-projection-deep-mixed-repeat-source)
+        "typecheck: use of moved value `p.mixed.0[1].0.handle`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

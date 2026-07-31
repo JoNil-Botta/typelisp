@@ -59,9 +59,8 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
 
 Public vector/mask value types are deferred by design. Numeric `spmd-shuffle`
 maps and reduction values have native AVX2/AVX-512 lowering.
-Non-inlined varying helper calls compile and run through the private
-scalar/AVX-512 ABI; AVX2 native emission remains tracked under
-[#5151](https://github.com/JoNil-Botta/typelisp/issues/5151). Package imports
-can use the same ABI when the dependency's TLCI v2 metadata advertises an exact
-matching specialization in its runtime archive. See [SPEC.md](../SPEC.md)
-sections 5.15 and 8.
+Non-inlined varying helper calls within one program compile and run through the
+private scalar/AVX2/AVX-512 ABI. Package imports support the scalar/AVX-512
+private ABI when the dependency's TLCI v2 metadata advertises an exact matching
+specialization in its runtime archive. See [SPEC.md](../SPEC.md) sections 5.15
+and 8.

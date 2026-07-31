@@ -58,10 +58,10 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : cli_svec.Vec]
+  [stdlib-roots : cli_svec.Vec (:consume)]
   [target : target_cfg.CompilerTargetCfg]
   [has-target : bool]
-  [cfg-names : cli_svec.Vec]) : ResultSelfhostCheckConfig
+  [cfg-names : cli_svec.Vec (:consume)]) : ResultSelfhostCheckConfig
   (if (>= idx count)
     (selfhost-check-config-finish
       input-path

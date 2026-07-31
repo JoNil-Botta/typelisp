@@ -1703,7 +1703,7 @@
 (define (opt-used-contains [set : opt_i64_i64_map.Map] [var : i64]) : bool
   (opt_i64_i64_map.contains? (& set) var))
 
-(define (opt-used-add [set : opt_i64_i64_map.Map] [var : i64]) : opt_i64_i64_map.Map
+(define (opt-used-add [set : opt_i64_i64_map.Map (:consume)] [var : i64]) : opt_i64_i64_map.Map
   (let
     [out : opt_i64_i64_map.Map set]
     (begin
@@ -1718,7 +1718,7 @@
     [_ set]))
 
 (define (opt-collect-value-list-uses
-  [set : opt_i64_i64_map.Map]
+  [set : opt_i64_i64_map.Map (:consume)]
   [values : CompilerIrValueList]) : opt_i64_i64_map.Map
   (match values
     [(CompilerIrValueList.Nil) set]
@@ -1730,7 +1730,7 @@
         (box-get rest))]))
 
 (define (opt-collect-call-args-array-uses
-  [set : opt_i64_i64_map.Map]
+  [set : opt_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array CompilerIrValue)]
   [index : i64]) : opt_i64_i64_map.Map
   (if (>= index (array-length values))
@@ -1741,7 +1741,7 @@
       (+ index 1))))
 
 (define (opt-collect-call-args-uses
-  [set : opt_i64_i64_map.Map]
+  [set : opt_i64_i64_map.Map (:consume)]
   [args : CompilerIrCallArgs]) : opt_i64_i64_map.Map
   (match args
     [(CompilerIrCallArgs.Nil) set]
@@ -1752,7 +1752,7 @@
       (opt-collect-call-args-array-uses set values 0)]))
 
 (define (opt-collect-spmd-call-args-uses
-  [set : opt_i64_i64_map.Map]
+  [set : opt_i64_i64_map.Map (:consume)]
   [args : CompilerIrSpmdCallArgList]) : opt_i64_i64_map.Map
   (match args
     [(CompilerIrSpmdCallArgList.Nil) set]
@@ -1778,7 +1778,7 @@
           out))]))
 
 (define (opt-collect-phi-uses
-  [set : opt_i64_i64_map.Map]
+  [set : opt_i64_i64_map.Map (:consume)]
   [inputs : CompilerIrPhiInputList]) : opt_i64_i64_map.Map
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) set]
@@ -2751,7 +2751,7 @@
 
 (define (opt-dce-instr-seq-array-in-place!
   [items : (__tl_dyn-array i64)]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  [instrs : CompilerIrInstrSeq (:consume)]) : CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
@@ -3430,8 +3430,8 @@
   [ty : AstType]
   [size : i64]
   [instrs : CompilerIrInstrList]
-  [ptrs : opt_aggregate_pointer_vec.Vec]
-  [accesses : opt_aggregate_access_vec.Vec]
+  [ptrs : opt_aggregate_pointer_vec.Vec (:consume)]
+  [accesses : opt_aggregate_access_vec.Vec (:consume)]
   [seen-alloc : bool]) : OptAggregateScanResult
   (match instrs
     [(CompilerIrInstrList.Nil)
@@ -3614,7 +3614,7 @@
 (define (opt-aggregate-candidates-from-instrs
   [type-segment-bases : i64]
   [scan : CompilerIrInstrList]
-  [candidates : opt_aggregate_candidate_vec.Vec]) : opt_aggregate_candidate_vec.Vec
+  [candidates : opt_aggregate_candidate_vec.Vec (:consume)]) : opt_aggregate_candidate_vec.Vec
   (match scan
     [(CompilerIrInstrList.Nil) candidates]
     [(CompilerIrInstrList.Cons instr rest)
@@ -3698,7 +3698,7 @@
             opt-aggregate-list-initial-capacity)))]))
 
 (define (opt-aggregate-candidate-list-append
-  [left : opt_aggregate_candidate_vec.Vec]
+  [left : opt_aggregate_candidate_vec.Vec (:consume)]
   [right : opt_aggregate_candidate_vec.Vec]) : opt_aggregate_candidate_vec.Vec
   (let
     [right-count : i64 (opt_aggregate_candidate_vec.len (& right))]
@@ -7608,17 +7608,18 @@
 
 (define (opt-bounds-instr-seq-rewrite!
   [type-segment-bases : i64]
-  [instrs : CompilerIrInstrSeq]) : unit
+  [instrs : (&mut instrs CompilerIrInstrSeq)]) : unit
   (let
     [read : i64 0]
     [write : i64 0]
-    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [count : i64 (struct-get instrs len)]
     [state : OptBoundsSeqState
       (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) (OptBoundsCastEnv.Nil))]
     (begin
       (while (< read count)
         (let
-          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs read)]
+          [instr : CompilerIrInstr
+            (clone (array-ref (struct-get instrs slots) read))]
           [step : OptBoundsSeqStep
             (match state
               [(OptBoundsSeqState.Plain facts casts)
@@ -7637,7 +7638,7 @@
                 (if keep
                   (begin
                     (if (not (= write read))
-                      (compiler-ir-instr-seq-set! instrs write instr)
+                      (array-set! (struct-get instrs slots) write instr)
                       unit)
                     (set! write (+ write 1)))
                   unit)
@@ -7810,7 +7811,7 @@
 ;; O(blocks^2) string comparisons on large functions.
 (define (opt-cfg-block-labels-unique-map?
   [blocks : CompilerIrBlockList]
-  [seen : opt_string_i64_map.Map]) : bool
+  [seen : opt_string_i64_map.Map (:consume)]) : bool
   (match blocks
     [(CompilerIrBlockList.Nil) true]
     [(CompilerIrBlockList.Cons block rest)
@@ -7833,7 +7834,7 @@
 
 (define (opt-cfg-block-label-map
   [blocks : CompilerIrBlockList]
-  [seen : opt_string_i64_map.Map]) : opt_string_i64_map.Map
+  [seen : opt_string_i64_map.Map (:consume)]) : opt_string_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) seen]
     [(CompilerIrBlockList.Cons block rest)
@@ -8691,7 +8692,7 @@
   [index : OptCfgIndex]
   [id : i64]
   [labels : OptLabelSet]
-  [seen : opt_string_i64_map.Map]) : OptLabelSet
+  [seen : opt_string_i64_map.Map (:consume)]) : OptLabelSet
   (if (>= id (opt-cfg-index-block-count index))
     labels
     (opt-cfg-index-reachable-labels-from-seen
@@ -10746,7 +10747,9 @@
     [(opt_i64_i64_map.LookupFound n) n]
     [(opt_i64_i64_map.LookupMissing) 0]))
 
-(define (opt-ssa-count-add [counts : opt_i64_i64_map.Map] [var : i64]) : opt_i64_i64_map.Map
+(define (opt-ssa-count-add
+  [counts : opt_i64_i64_map.Map (:consume)]
+  [var : i64]) : opt_i64_i64_map.Map
   (let
     [next-count : i64 (+ 1 (opt-ssa-count counts var))]
     [out : opt_i64_i64_map.Map counts]
@@ -10782,12 +10785,12 @@
         (OptMaybeAstType.Some ty)
         (opt-ssa-var-type-lookup (box-get rest) var))]))
 
-(define (opt-ssa-facts-bad-var [facts : OptSsaFacts] [var : i64]) : OptSsaFacts
+(define (opt-ssa-facts-bad-var [facts : OptSsaFacts (:consume)] [var : i64]) : OptSsaFacts
   (match facts
     [(OptSsaFacts.Facts counts bad types)
       (OptSsaFacts.Facts counts (opt-used-add bad var) types)]))
 
-(define (opt-ssa-facts-add-def-bad [facts : OptSsaFacts] [var : i64]) : OptSsaFacts
+(define (opt-ssa-facts-add-def-bad [facts : OptSsaFacts (:consume)] [var : i64]) : OptSsaFacts
   (match facts
     [(OptSsaFacts.Facts counts bad types)
       (OptSsaFacts.Facts
@@ -10797,7 +10800,7 @@
 
 (define (opt-ssa-facts-add-def-ty
   [type-segment-bases : i64]
-  [facts : OptSsaFacts]
+  [facts : OptSsaFacts (:consume)]
   [var : i64]
   [ty : AstType]) : OptSsaFacts
   (match facts
@@ -10822,7 +10825,7 @@
 
 (define (opt-ssa-facts-add-param
   [type-segment-bases : i64]
-  [facts : OptSsaFacts]
+  [facts : OptSsaFacts (:consume)]
   [param : CompilerIrParam]) : OptSsaFacts
   (match param
     [(CompilerIrParam.Param _ ty var)
@@ -10831,7 +10834,7 @@
 (define (opt-ssa-facts-add-params
   [type-segment-bases : i64]
   [params : CompilerIrParamList]
-  [facts : OptSsaFacts]) : OptSsaFacts
+  [facts : OptSsaFacts (:consume)]) : OptSsaFacts
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) facts]
     [(CompilerIrParamList.Array seq)
@@ -10847,7 +10850,7 @@
 
 (define (opt-ssa-facts-add-instr
   [type-segment-bases : i64]
-  [facts : OptSsaFacts]
+  [facts : OptSsaFacts (:consume)]
   [instr : CompilerIrInstr]) : OptSsaFacts
   (match instr
     [(CompilerIrInstr.Mov dst _ ty)
@@ -10944,7 +10947,7 @@
   [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [facts : OptSsaFacts]) : OptSsaFacts
+  [facts : OptSsaFacts (:consume)]) : OptSsaFacts
   (if (>= index (compiler-ir-instr-seq-count instrs))
     facts
     (opt-ssa-facts-add-instr-seq-from
@@ -10959,7 +10962,7 @@
 (define (opt-ssa-facts-add-blocks
   [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
-  [facts : OptSsaFacts]) : OptSsaFacts
+  [facts : OptSsaFacts (:consume)]) : OptSsaFacts
   (match blocks
     [(CompilerIrBlockList.Nil) facts]
     [(CompilerIrBlockList.Cons block rest)
@@ -14441,7 +14444,7 @@
 
 (define (opt-cfg-switch-seen-seed
   [set : OptLabelSet]
-  [seen : opt_string_i64_map.Map]) : opt_string_i64_map.Map
+  [seen : opt_string_i64_map.Map (:consume)]) : opt_string_i64_map.Map
   (match set
     [(OptLabelSet.Nil) seen]
     [(OptLabelSet.Dense _ _)
@@ -14452,7 +14455,7 @@
 (define (opt-cfg-switch-case-successors-hashed
   [set : OptLabelSet]
   [cases : CompilerIrSwitchCaseList]
-  [seen : opt_string_i64_map.Map]) : OptLabelSet
+  [seen : opt_string_i64_map.Map (:consume)]) : OptLabelSet
   (match cases
     [(CompilerIrSwitchCaseList.Nil) set]
     [(CompilerIrSwitchCaseList.Cons case rest)
@@ -17021,13 +17024,15 @@
 (define (opt-licm-root-eq? [a : OptLicmRoot] [b : OptLicmRoot]) : bool
   (= (opt-licm-root-encode a) (opt-licm-root-encode b)))
 
-(define (opt-licm-root-env-remove! [env : OptLicmRootEnv] [var : i64]) : unit
+(define (opt-licm-root-env-remove!
+  [env : (&mut env OptLicmRootEnv)]
+  [var : i64]) : unit
   (begin
     (opt_i64_i64_map.remove-ref! (&mut (struct-get env map)) var)
     unit))
 
 (define (opt-licm-root-env-bind!
-  [env : OptLicmRootEnv]
+  [env : (&mut env OptLicmRootEnv)]
   [var : i64]
   [root : OptLicmRoot]) : unit
   (match root
@@ -17038,23 +17043,25 @@
         var
         (opt-licm-root-encode root))]))
 
-(define (opt-licm-root-env-lookup [env : OptLicmRootEnv] [var : i64]) : OptLicmRoot
+(define (opt-licm-root-env-lookup [env : (& env OptLicmRootEnv)] [var : i64]) : OptLicmRoot
   (match (opt_i64_i64_map.get (& (struct-get env map)) var)
     [(opt_i64_i64_map.LookupFound value) (opt-licm-root-decode value)]
     [(opt_i64_i64_map.LookupMissing) (OptLicmRoot.NoRoot)]))
 
 (define (opt-licm-root-of-value
-  [env : OptLicmRootEnv]
+  [env : (& env OptLicmRootEnv)]
   [value : CompilerIrValue]) : OptLicmRoot
   (match value
     [(CompilerIrValue.Var var) (opt-licm-root-env-lookup env var)]
     [_ (OptLicmRoot.NoRoot)]))
 
 (define (opt-licm-root-env-copy!
-  [env : OptLicmRootEnv]
+  [env : (&mut env OptLicmRootEnv)]
   [dst : i64]
   [src : CompilerIrValue]) : unit
-  (opt-licm-root-env-bind! env dst (opt-licm-root-of-value env src)))
+  (let
+    [root : OptLicmRoot (opt-licm-root-of-value env src)]
+    (opt-licm-root-env-bind! env dst root)))
 
 (define (opt-licm-root-disjoint-store?
   [store-root : OptLicmRoot]
@@ -17079,7 +17086,7 @@
   (OptLicmStoreRootList (opt_licm_store_root_vec.with-capacity 4)))
 
 (define (opt-licm-store-roots-add
-  [stores : OptLicmStoreRootList]
+  [stores : OptLicmStoreRootList (:consume)]
   [root : OptLicmRoot]) : OptLicmStoreRootList
   (let
     [items : opt_licm_store_root_vec.Vec (struct-get stores items)]
@@ -17111,7 +17118,7 @@
 (define (opt-licm-collect-defs-instr-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [set : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     set
     (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
@@ -17125,12 +17132,12 @@
 
 (define (opt-licm-collect-defs-instr-seq
   [instrs : CompilerIrInstrSeq]
-  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [set : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (opt-licm-collect-defs-instr-seq-from instrs 0 set))
 
 (define (opt-licm-collect-defs-blocks
   [blocks : CompilerIrBlockList]
-  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [set : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) set]
     [(CompilerIrBlockList.Cons block rest)
@@ -17348,7 +17355,7 @@
 
 (define (opt-licm-root-env-seed-param!
   [type-segment-bases : i64]
-  [env : OptLicmRootEnv]
+  [env : (&mut env OptLicmRootEnv)]
   [param : CompilerIrParam]) : unit
   (match param
     [(CompilerIrParam.Param _ ty var)
@@ -17359,7 +17366,7 @@
 
 (define (opt-licm-root-env-seed-params!
   [type-segment-bases : i64]
-  [env : OptLicmRootEnv]
+  [env : (&mut env OptLicmRootEnv)]
   [params : CompilerIrParamList]) : unit
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) unit]
@@ -17374,7 +17381,7 @@
         (opt-licm-root-env-seed-params! type-segment-bases env (box-get rest)))]))
 
 (define (opt-licm-phi-root
-  [env : OptLicmRootEnv]
+  [env : (& env OptLicmRootEnv)]
   [inputs : CompilerIrPhiInputList]
   [found : OptMaybeLicmRoot]) : OptMaybeLicmRoot
   (match (compiler-ir-phi-input-list-force-cons inputs)
@@ -17399,7 +17406,7 @@
                   (OptMaybeLicmRoot.No))])]))]))
 
 (define (opt-licm-root-env-update-instr!
-  [env : OptLicmRootEnv]
+  [env : (&mut env OptLicmRootEnv)]
   [instr : CompilerIrInstr]) : unit
   (match instr
     [(CompilerIrInstr.Alloc dst _)
@@ -17556,11 +17563,11 @@
     (struct-get state any-call?)))
 
 (define (opt-licm-store-state-bind-root
-  [state : OptLicmStoreState]
+  [state : OptLicmStoreState (:consume)]
   [var : i64]
   [root : OptLicmRoot]) : OptLicmStoreState
   (begin
-    (opt-licm-root-env-bind! (struct-get state roots) var root)
+    (opt-licm-root-env-bind! (&mut (struct-get state roots)) var root)
     state))
 
 (define (opt-licm-store-state-add-rooted-store
@@ -17624,7 +17631,7 @@
     [invalid : OptLicmStoreState
       (opt-licm-store-state-invalidate-ptr-instr state instr)]
     [_roots : unit
-      (opt-licm-root-env-update-instr! (struct-get invalid roots) instr)]
+      (opt-licm-root-env-update-instr! (&mut (struct-get invalid roots)) instr)]
     (match instr
       [(CompilerIrInstr.Mov dst src _)
         (match src
@@ -17872,7 +17879,7 @@
     ;; only when a function actually carries many checked/fresh roots.
     [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
     [_params : unit
-      (opt-licm-root-env-seed-params! type-segment-bases roots params)]
+      (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)]
     [initial : OptLicmStoreState
       (opt-licm-store-state-with-provenance (OptLicmPtrEnv.Nil) roots)]
     [first : OptLicmStoreState
@@ -17974,7 +17981,7 @@
     [_ false]))
 
 (define (opt-licm-add-hoisted-def
-  [hoisted : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map (:consume)]
   [instr : CompilerIrInstr]) : opt_i64_i64_map.Map
   (match (opt-instr-def-var instr)
     [(option_i64.Some var) (opt-used-add hoisted var)]
@@ -17993,7 +18000,7 @@
   [roots : OptLicmRootEnv]
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
-  [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
+  [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult.Result
       (CompilerIrInstrList.Nil)
@@ -18068,7 +18075,7 @@
   [roots : OptLicmRootEnv]
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
-  [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
+  [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     type-segment-bases
     loop-defs
@@ -18096,7 +18103,7 @@
   [roots : OptLicmRootEnv]
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
-  [hoisted : opt_i64_i64_map.Map]) : OptLicmBlocksResult
+  [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmBlocksResult
   (match blocks
     [(CompilerIrBlockList.Nil)
       (OptLicmBlocksResult.Result
@@ -19416,7 +19423,7 @@
     [_ (option_i64.None)]))
 
 (define (opt-induction-affine-offset-env-instr
-  [env : opt_i64_i64_map.Map]
+  [env : opt_i64_i64_map.Map (:consume)]
   [phi-var : i64]
   [instr : CompilerIrInstr]) : opt_i64_i64_map.Map
   (match instr
@@ -19437,7 +19444,7 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [phi-var : i64]
-  [env : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [env : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     env
     (opt-induction-affine-offset-env-instr-seq-from
@@ -19452,13 +19459,13 @@
 (define (opt-induction-affine-offset-env-instr-seq
   [instrs : CompilerIrInstrSeq]
   [phi-var : i64]
-  [env : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [env : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (opt-induction-affine-offset-env-instr-seq-from instrs 0 phi-var env))
 
 (define (opt-induction-affine-offset-env-blocks
   [body-blocks : CompilerIrBlockList]
   [phi-var : i64]
-  [env : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [env : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match body-blocks
     [(CompilerIrBlockList.Nil) env]
     [(CompilerIrBlockList.Cons block rest)
@@ -19563,7 +19570,7 @@
   [loop-defs : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [vars : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [vars : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     vars
     (match (compiler-ir-instr-seq-ref instrs index)
@@ -19597,7 +19604,7 @@
 (define (opt-induction-gep-offset-vars-blocks-from
   [loop-defs : opt_i64_i64_map.Map]
   [body-blocks : CompilerIrBlockList]
-  [vars : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [vars : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match body-blocks
     [(CompilerIrBlockList.Nil) vars]
     [(CompilerIrBlockList.Cons block rest)
@@ -19634,7 +19641,7 @@
   [feeders : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [env : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [env : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     env
     (match (compiler-ir-instr-seq-ref instrs index)
@@ -19702,7 +19709,7 @@
   [step : i64]
   [feeders : opt_i64_i64_map.Map]
   [body-blocks : CompilerIrBlockList]
-  [env : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [env : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match body-blocks
     [(CompilerIrBlockList.Nil) env]
     [(CompilerIrBlockList.Cons block rest)
@@ -21832,7 +21839,7 @@
 (define (opt-cfg-filter-clean-block-seq-rewrite!
   [index : OptCfgIndex]
   [used : (__tl_dyn-array i64)]
-  [blocks : CompilerIrBlockSeq]) : unit
+  [blocks : (&mut blocks CompilerIrBlockSeq)]) : unit
   (let
     [slots : (__tl_dyn-array CompilerIrBlock) (struct-get blocks slots)]
     [reachable : (__tl_dyn-array bool) (struct-get index reachable)]
@@ -21844,14 +21851,14 @@
         (begin
           (if (array-ref reachable read)
             (let
-              [block : CompilerIrBlock (array-ref slots read)]
+              [block : CompilerIrBlock (clone (array-ref slots read))]
               (begin
                 (match block
                   [(CompilerIrBlock.Block label instrs)
                     (opt-cfg-clean-instr-seq-rewrite! index label used instrs)])
-                (if (not (= write read))
-                  (array-set! slots write block)
-                  unit)
+                ;; `block` is a private aggregate clone. Write it back even when
+                ;; compaction keeps the same slot so phi cleanup is observable.
+                (array-set! slots write block)
                 (set! write (+ write 1))))
             unit)
           (set! read (+ read 1))))
@@ -21873,7 +21880,11 @@
         (begin
           (match folded
             [(CompilerIrBlockList.Array seq)
-              (opt-cfg-filter-clean-block-seq-rewrite! index used seq)]
+              (begin
+                (opt-cfg-filter-clean-block-seq-rewrite! index used (&mut seq))
+                ;; The pattern binding is a private aggregate value. Rebuild the
+                ;; outer enum so the compacted sequence length is retained.
+                (set! folded (CompilerIrBlockList.Array seq)))]
             [_ unit])
           folded)))))
 
@@ -26878,7 +26889,9 @@
     [(opt_i64_i64_map.LookupMissing) 0]))
 
 ;; Record one more definition of `var` in the value-source multiset.
-(define (opt-gvn-defs-add [sources : opt_i64_i64_map.Map] [var : i64]) : opt_i64_i64_map.Map
+(define (opt-gvn-defs-add
+  [sources : opt_i64_i64_map.Map (:consume)]
+  [var : i64]) : opt_i64_i64_map.Map
   (let
     [next-count : i64 (+ 1 (opt-gvn-count sources var))]
     [out : opt_i64_i64_map.Map sources]
@@ -26997,7 +27010,7 @@
 
 (define (opt-gvn-sources-params
   [params : CompilerIrParamList]
-  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [acc : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) acc]
     [(CompilerIrParamList.Array seq)
@@ -27011,7 +27024,7 @@
   [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
-  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [acc : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (if (>= index count)
     acc
     (let
@@ -27031,7 +27044,7 @@
 
 (define (opt-gvn-sources-blocks
   [blocks : CompilerIrBlockList]
-  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [acc : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) acc]
     [(CompilerIrBlockList.Cons block rest)
@@ -27667,7 +27680,7 @@
 
 (define (opt-bounds-dom-copies-add-instr
   [sources : opt_i64_i64_map.Map]
-  [copies : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map (:consume)]
   [instr : CompilerIrInstr]) : opt_i64_i64_map.Map
   (match instr
     [(CompilerIrInstr.Mov dst src _)
@@ -27699,9 +27712,29 @@
         [_ copies])]
     [_ copies]))
 
+(define (opt-bounds-dom-copies-add-instr!
+  [sources : opt_i64_i64_map.Map]
+  [copies : (&mut copies opt_i64_i64_map.Map)]
+  [instr : CompilerIrInstr]) : unit
+  (match instr
+    [(CompilerIrInstr.Mov dst (CompilerIrValue.Var src) _)
+      (if (and
+        (opt-gvn-stable-var? sources dst)
+        (opt-gvn-stable-var? sources src))
+        (opt_i64_i64_map.insert-ref! copies dst src)
+        unit)]
+    [(CompilerIrInstr.Cast dst (CompilerIrValue.Var src) from-ty to-ty)
+      (if (and
+        (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+        (opt-gvn-stable-var? sources dst)
+        (opt-gvn-stable-var? sources src))
+        (opt_i64_i64_map.insert-ref! copies dst src)
+        unit)]
+    [_ unit]))
+
 (define (opt-bounds-dom-copies-add-blocks
   [sources : opt_i64_i64_map.Map]
-  [copies : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map (:consume)]
   [blocks : CompilerIrBlockList]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) copies]
@@ -27715,12 +27748,10 @@
             (begin
               (while (< i count)
                 (begin
-                  (set!
-                    acc
-                    (opt-bounds-dom-copies-add-instr
-                      sources
-                      acc
-                      (compiler-ir-instr-seq-ref instrs i)))
+                  (opt-bounds-dom-copies-add-instr!
+                    sources
+                    (&mut acc)
+                    (compiler-ir-instr-seq-ref instrs i))
                   (set! i (+ i 1))))
               (opt-bounds-dom-copies-add-blocks sources acc (box-get rest))))])]
     [(CompilerIrBlockList.Array seq)
@@ -33870,7 +33901,7 @@
               load-kinds
               load-facts)
             work)
-          (opt-bounds-instr-seq-rewrite! type-segment-bases work)
+          (opt-bounds-instr-seq-rewrite! type-segment-bases (&mut work))
           (CompilerIrBlock.Block label work)))]))
 
 (define (optimize-block-hs-with-kinds
@@ -34879,7 +34910,7 @@
   [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
-  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [acc : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (if (>= index count)
     acc
     (let
@@ -36182,7 +36213,7 @@
 
 (define (opt-unroll-simd-memory-add
   [type-segment-bases : i64]
-  [memory-bases : OptUnrollSimdMemoryList]
+  [memory-bases : OptUnrollSimdMemoryList (:consume)]
   [base : CompilerIrValue]
   [ty : AstType]) : OptUnrollSimdMemoryList
   (if (opt-unroll-simd-memory-contains? type-segment-bases memory-bases base ty)
@@ -38380,7 +38411,7 @@
 ;; Uses of loop defs anywhere outside the loop block, except as the loop-edge
 ;; inputs of the exit block's phis (those get the parallel fast input).
 (define (opt-bce-version-outside-phi-uses
-  [set : opt_i64_i64_map.Map]
+  [set : opt_i64_i64_map.Map (:consume)]
   [inputs : CompilerIrPhiInputList]
   [loop-label : i64]) : opt_i64_i64_map.Map
   (match (compiler-ir-phi-input-list-force-cons inputs)
@@ -39083,7 +39114,7 @@
 
 (define (opt-bce-mb-collect-defs
   [blocks : CompilerIrBlockList]
-  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [acc : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) acc]
     [(CompilerIrBlockList.Cons block rest)
@@ -39483,7 +39514,7 @@
 ;; Uses of loop defs anywhere outside the loop, except as the loop-edge
 ;; inputs of exit blocks' phis (those gain a parallel fast-edge input).
 (define (opt-bce-mb-outside-phi-uses
-  [set : opt_i64_i64_map.Map]
+  [set : opt_i64_i64_map.Map (:consume)]
   [inputs : CompilerIrPhiInputList]
   [body-labels : OptLabelSet]) : opt_i64_i64_map.Map
   (match (compiler-ir-phi-input-list-force-cons inputs)
@@ -40041,7 +40072,7 @@
   (OptLateBoundsPairDrop (opt_dense_i64_vec.with-capacity 4)))
 
 (define (opt-late-bounds-pair-drops-add
-  [drops : OptLateBoundsPairDrop]
+  [drops : OptLateBoundsPairDrop (:consume)]
   [var : i64]) : OptLateBoundsPairDrop
   (let
     [items : opt_dense_i64_vec.Vec (struct-get drops items)]
@@ -40577,7 +40608,7 @@
   [label : i64]
   [first : i64]
   [first-smaller : bool]
-  [acc : OptLateBoundsPairDrop]) : OptLateBoundsPairDrop
+  [acc : OptLateBoundsPairDrop (:consume)]) : OptLateBoundsPairDrop
   (if first-smaller
     acc
     (match (opt-late-bounds-pair-check-index body-blocks label first)
@@ -40596,7 +40627,7 @@
   [body-blocks : CompilerIrBlockList]
   [uses : (__tl_dyn-array i64)]
   [plans : OptLateBoundsPairPlan]
-  [acc : OptLateBoundsPairDrop]) : OptLateBoundsPairDrop
+  [acc : OptLateBoundsPairDrop (:consume)]) : OptLateBoundsPairDrop
   (match plans
     [(OptLateBoundsPairPlan.Nil) acc]
     [(OptLateBoundsPairPlan.Dense _ _)
@@ -42902,7 +42933,7 @@
 (define (opt-unroll-mb-remove-defs-instrs
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [uses : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [uses : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     uses
     (let
@@ -42918,7 +42949,7 @@
 
 (define (opt-unroll-mb-remove-defs
   [blocks : CompilerIrBlockList]
-  [uses : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [uses : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) uses]
     [(CompilerIrBlockList.Cons block rest)
@@ -46499,15 +46530,15 @@
 ;; writes the destination BEFORE the instructions that used to sit between it
 ;; and the copy.
 ;;
-;; SOUNDNESS. Issue #5971: TypeLisp passes by-value aggregate parameters as bare
-;; pointers with no caller-side copy, and the hidden sret slot is ordinary
-;; caller storage, so THE SRET SLOT MAY ALIAS A BY-VALUE ARGUMENT of the same
-;; call (accumulator threading -- `acc = (f acc x)` -- produces exactly that at
-;; run time). "The destination cannot alias what the window reads" is therefore
-;; not derivable from types; a lowering-level version of this transform
-;; miscompiled the compiler (it broke `tc-name-id-list-add`) for precisely this
-;; reason. The guard below is the conservative alias proof that makes the
-;; reordering safe without any interprocedural fact:
+;; SOUNDNESS. Issue #5971 gives internal memory-class by-value parameters a
+;; private callee-entry snapshot, so their body-visible storage cannot alias the
+;; hidden sret slot even though the ABI transports the incoming value by
+;; pointer. That property is deliberately narrower than general `noalias`:
+;; explicit references, dereferences, fields, indexes, and arbitrary destination
+;; places may still alias storage read inside this rewrite window. A
+;; lowering-level version of this transform miscompiled the compiler (it broke
+;; `tc-name-id-list-add`) before the necessary proof was explicit. The guard
+;; below remains the conservative local alias proof:
 ;;
 ;;   (1) `%t` is a FRESH FRAME ALLOCATION whose address never escapes: the
 ;;       ALLOC var `%t` is used exactly once in the whole function (by the
@@ -46523,8 +46554,8 @@
 ;;       through a constant offset off the SAME base as the destination whose
 ;;       byte range is provably disjoint from `[J, J + S)` (two constant offsets
 ;;       off one pointer cannot overlap). Any load, call, or store through an
-;;       unrelated pointer aborts the match -- that is exactly the class the
-;;       sret-may-alias-an-argument hole makes unprovable.
+;;       unrelated pointer aborts the match -- precisely the class that cannot
+;;       be discharged from local IR use counts alone.
 ;;   (3) The destination base var `%B` is not redefined between the destination
 ;;       address computation (or the temp's `addr_of`, whichever is earlier) and
 ;;       the copy, so the address the retargeted geps compute is the address the
@@ -49173,7 +49204,9 @@
 (define (opt-reach-worklist-new) : OptReachWorklist
   (OptReachWorklist (opt_dense_i64_vec.with-capacity 16) 0))
 
-(define (opt-reach-worklist-push [worklist : OptReachWorklist] [slot : i64]) : OptReachWorklist
+(define (opt-reach-worklist-push
+  [worklist : OptReachWorklist (:consume)]
+  [slot : i64]) : OptReachWorklist
   (let
     [items : opt_dense_i64_vec.Vec (struct-get worklist items)]
     [len : i64 (struct-get worklist len)]
@@ -49227,7 +49260,7 @@
     [(CompilerIrFunctionList.Array seq) (compiler-ir-function-seq-count seq)]))
 
 (define (opt-function-name-index-add
-  [names : OptFunctionNameIndex]
+  [names : OptFunctionNameIndex (:consume)]
   [name : i64]
   [slot : i64]) : OptFunctionNameIndex
   (let
@@ -49241,7 +49274,7 @@
 
 (define (opt-function-index-fill
   [functions : CompilerIrFunctionList]
-  [names : OptFunctionNameIndex]
+  [names : OptFunctionNameIndex (:consume)]
   [values : (__tl_dyn-array CompilerIrFunction)]
   [leaf-starts : (__tl_dyn-array i64)]
   [index : i64]) : OptFunctionNameIndex
@@ -49458,7 +49491,9 @@
 (define (opt-inline-census-capacity [index : OptFunctionIndex]) : i64
   (opt-function-index-capacity (opt-function-index-count index)))
 
-(define (opt-inline-census-bump-map [map : opt_i64_i64_map.Map] [slot : i64]) : opt_i64_i64_map.Map
+(define (opt-inline-census-bump-map
+  [map : opt_i64_i64_map.Map (:consume)]
+  [slot : i64]) : opt_i64_i64_map.Map
   (begin
     (match (opt_i64_i64_map.get (& map) slot)
       [(opt_i64_i64_map.LookupFound count)
@@ -49469,7 +49504,7 @@
 
 (define (opt-inline-census-add-ref
   [index : OptFunctionIndex]
-  [census : OptInlineCensus]
+  [census : OptInlineCensus (:consume)]
   [name : i64]) : OptInlineCensus
   (match (opt-function-index-slot index name)
     [(option_i64.Some slot)
@@ -49480,7 +49515,7 @@
 
 (define (opt-inline-census-add-address
   [index : OptFunctionIndex]
-  [census : OptInlineCensus]
+  [census : OptInlineCensus (:consume)]
   [name : i64]) : OptInlineCensus
   (match (opt-function-index-slot index name)
     [(option_i64.Some slot)
@@ -49502,7 +49537,7 @@
 
 (define (opt-inline-census-args-array
   [index : OptFunctionIndex]
-  [census : OptInlineCensus]
+  [census : OptInlineCensus (:consume)]
   [values : (__tl_dyn-array CompilerIrValue)]
   [arg-index : i64]) : OptInlineCensus
   (if (>= arg-index (array-length values))
@@ -49515,7 +49550,7 @@
 
 (define (opt-inline-census-args
   [index : OptFunctionIndex]
-  [census : OptInlineCensus]
+  [census : OptInlineCensus (:consume)]
   [args : CompilerIrCallArgs]) : OptInlineCensus
   (match args
     [(CompilerIrCallArgs.Nil) census]
@@ -49528,7 +49563,7 @@
 
 (define (opt-inline-census-spmd-args
   [index : OptFunctionIndex]
-  [census : OptInlineCensus]
+  [census : OptInlineCensus (:consume)]
   [args : CompilerIrSpmdCallArgList]) : OptInlineCensus
   (match args
     [(CompilerIrSpmdCallArgList.Nil) census]
@@ -49556,7 +49591,7 @@
 
 (define (opt-inline-census-maybe-value
   [index : OptFunctionIndex]
-  [census : OptInlineCensus]
+  [census : OptInlineCensus (:consume)]
   [maybe : CompilerIrMaybeValue]) : OptInlineCensus
   (match maybe
     [(CompilerIrMaybeValue.No) census]
@@ -49565,7 +49600,7 @@
 
 (define (opt-inline-census-phi-inputs
   [index : OptFunctionIndex]
-  [census : OptInlineCensus]
+  [census : OptInlineCensus (:consume)]
   [inputs : CompilerIrPhiInputList]) : OptInlineCensus
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) census]
@@ -49582,7 +49617,7 @@
 
 (define (opt-inline-census-value-list
   [index : OptFunctionIndex]
-  [census : OptInlineCensus]
+  [census : OptInlineCensus (:consume)]
   [values : CompilerIrValueList]) : OptInlineCensus
   (match values
     [(CompilerIrValueList.Nil) census]
@@ -53797,7 +53832,7 @@
 (define (opt-inline-bounds-labels-unique-instrs-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [seen : opt_string_i64_map.Map]) : OptInlineBoundsLabelScan
+  [seen : opt_string_i64_map.Map (:consume)]) : OptInlineBoundsLabelScan
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptInlineBoundsLabelScan.Ok seen)
     (match (compiler-ir-instr-seq-ref instrs index)
@@ -53814,7 +53849,7 @@
 
 (define (opt-inline-bounds-labels-unique-blocks?
   [blocks : CompilerIrBlockList]
-  [seen : opt_string_i64_map.Map]) : bool
+  [seen : opt_string_i64_map.Map (:consume)]) : bool
   (match blocks
     [(CompilerIrBlockList.Nil) true]
     [(CompilerIrBlockList.Cons block rest)
@@ -54902,13 +54937,15 @@
 ;; strings, so interning them would dangle a table pointer after the rewind).
 (define (opt-reach-add-function
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [name : i64]) : OptReachState
   (match (opt-function-index-slot index name)
     [(option_i64.None) state]
     [(option_i64.Some slot) (opt-reach-add-function-slot state slot)]))
 
-(define (opt-reach-add-function-slot [state : OptReachState] [slot : i64]) : OptReachState
+(define (opt-reach-add-function-slot
+  [state : OptReachState (:consume)]
+  [slot : i64]) : OptReachState
   (match state
     [(OptReachState.State reachable worklist globals runtime-helper-mask)
       (if (opt_i64_i64_map.contains? (& reachable) slot)
@@ -54923,7 +54960,7 @@
               globals
               runtime-helper-mask))))]))
 
-(define (opt-reach-add-global [state : OptReachState] [name : i64]) : OptReachState
+(define (opt-reach-add-global [state : OptReachState (:consume)] [name : i64]) : OptReachState
   (match state
     [(OptReachState.State reachable worklist globals runtime-helper-mask)
       (let
@@ -54936,7 +54973,7 @@
 
 (define (opt-reach-add-function-leaf-from
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [leaf : String]
   [slot : i64]
   [count : i64]) : OptReachState
@@ -54958,7 +54995,7 @@
 
 (define (opt-reach-add-function-leaf
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [leaf : String]) : OptReachState
   (opt-reach-add-function-leaf-from
     index
@@ -54999,7 +55036,7 @@
 
 (define (opt-reach-add-runtime-prelude-string-helper
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [source-name : String]) : OptReachState
   (match (opt-runtime-prelude-string-helper source-name)
     [(OptRuntimeStringHelper.No) state]
@@ -55021,7 +55058,7 @@
 
 (define (opt-reach-add-call-target
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [name : i64]) : OptReachState
   (opt-reach-add-runtime-prelude-string-helper
     index
@@ -55044,7 +55081,7 @@
 
 (define (opt-reach-call-args-array
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [values : (__tl_dyn-array CompilerIrValue)]
   [arg-index : i64]) : OptReachState
   (if (>= arg-index (array-length values))
@@ -55057,7 +55094,7 @@
 
 (define (opt-reach-call-args
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [args : CompilerIrCallArgs]) : OptReachState
   (match args
     [(CompilerIrCallArgs.Nil) state]
@@ -55069,7 +55106,7 @@
 
 (define (opt-reach-spmd-call-args
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [args : CompilerIrSpmdCallArgList]) : OptReachState
   (match args
     [(CompilerIrSpmdCallArgList.Nil) state]
@@ -55097,7 +55134,7 @@
 
 (define (opt-reach-maybe-value
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [maybe : CompilerIrMaybeValue]) : OptReachState
   (match maybe
     [(CompilerIrMaybeValue.No) state]
@@ -55105,7 +55142,7 @@
 
 (define (opt-reach-phi-inputs
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [inputs : CompilerIrPhiInputList]) : OptReachState
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) state]
@@ -55382,7 +55419,7 @@
 
 (define (opt-reach-global
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [global : CompilerIrGlobal]) : OptReachState
   (match global
     [(CompilerIrGlobal.Global name _ value)
@@ -55396,7 +55433,7 @@
 
 (define (opt-reach-globals
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [globals : CompilerIrGlobalList]) : OptReachState
   (match globals
     [(CompilerIrGlobalList.Nil) state]
@@ -55409,7 +55446,7 @@
 
 (define (opt-reach-global-seq
   [index : OptFunctionIndex]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [globals : CompilerIrGlobalSeq]
   [seq-index : i64]) : OptReachState
   (if (>= seq-index (compiler-ir-global-seq-count globals))
@@ -55494,7 +55531,7 @@
 (define (opt-reach-add-provided-externs
   [index : OptFunctionIndex]
   [externs : CompilerIrExternList]
-  [state : OptReachState]) : OptReachState
+  [state : OptReachState (:consume)]) : OptReachState
   (match externs
     [(CompilerIrExternList.Nil) state]
     [(CompilerIrExternList.Cons ext rest)
@@ -55515,7 +55552,7 @@
 (define (opt-reach-add-provided-extern-seq
   [index : OptFunctionIndex]
   [externs : CompilerIrExternSeq]
-  [state : OptReachState]
+  [state : OptReachState (:consume)]
   [seq-index : i64]) : OptReachState
   (if (>= seq-index (compiler-ir-extern-seq-count externs))
     state
@@ -55838,7 +55875,7 @@
 (define (opt-loop-bce-argc-return-map
   [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
-  [map : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [map : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match functions
     [(CompilerIrFunctionList.Nil) map]
     [(CompilerIrFunctionList.Cons func rest)
@@ -56185,7 +56222,7 @@
 
 (define (opt-loop-bce-direct-call-clean-all-functions
   [functions : CompilerIrFunctionList]
-  [map : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [map : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match functions
     [(CompilerIrFunctionList.Nil) map]
     [(CompilerIrFunctionList.Cons func rest)
@@ -56205,7 +56242,7 @@
 (define (opt-loop-bce-direct-call-clean-filter
   [functions : CompilerIrFunctionList]
   [current : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
   [changed : bool]) : OptLoopBceIdCleanPass
   (match functions
     [(CompilerIrFunctionList.Nil) (OptLoopBceIdCleanPass.Pass out changed)]
@@ -56310,7 +56347,7 @@
 
 (define (opt-call-memory-function-set
   [functions : CompilerIrFunctionList]
-  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [set : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match functions
     [(CompilerIrFunctionList.Nil) set]
     [(CompilerIrFunctionList.Cons func rest)
@@ -56374,7 +56411,7 @@
 ;; and later-listed definitions without weakening that single-source gate.
 (define (opt-call-memory-root-update-instr!
   [sources : opt_i64_i64_map.Map]
-  [roots : OptLicmRootEnv]
+  [roots : (&mut roots OptLicmRootEnv)]
   [instr : CompilerIrInstr]) : unit
   (match (opt-instr-def-var instr)
     [(option_i64.None) unit]
@@ -56405,7 +56442,7 @@
 
 (define (opt-call-memory-root-scan-instrs!
   [sources : opt_i64_i64_map.Map]
-  [roots : OptLicmRootEnv]
+  [roots : (&mut roots OptLicmRootEnv)]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : unit
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -56419,7 +56456,7 @@
 
 (define (opt-call-memory-root-scan-blocks!
   [sources : opt_i64_i64_map.Map]
-  [roots : OptLicmRootEnv]
+  [roots : (&mut roots OptLicmRootEnv)]
   [blocks : CompilerIrBlockList]) : unit
   (match blocks
     [(CompilerIrBlockList.Nil) unit]
@@ -56446,9 +56483,9 @@
         (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 32)))]
     [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
     (begin
-      (opt-licm-root-env-seed-params! type-segment-bases roots params)
-      (opt-call-memory-root-scan-blocks! sources roots blocks)
-      (opt-call-memory-root-scan-blocks! sources roots blocks)
+      (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)
+      (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
+      (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
       roots)))
 
 (define (opt-call-memory-arg-at [args : CompilerIrCallArgs] [index : i64]) : CompilerIrMaybeValue
@@ -56737,7 +56774,7 @@
   [functions : CompilerIrFunctionList]
   [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
   [changed : bool]) : OptCallMemoryBuildPass
   (match functions
     [(CompilerIrFunctionList.Nil) (OptCallMemoryBuildPass.Pass out changed)]
@@ -56808,7 +56845,7 @@
 ;; An uninitialized builtin id is -1 and is never a call-site name, so it is
 ;; skipped rather than seeded (mirroring `compiler-ir-runtime-memory-write-id?`).
 (define (opt-call-memory-seed-builtin
-  [out : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
   [name-id : i64]
   [summary : i64]) : opt_i64_i64_map.Map
   (if (< name-id 0)
@@ -56822,7 +56859,7 @@
           summary)
         next))))
 
-(define (opt-call-memory-seed-builtins [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+(define (opt-call-memory-seed-builtins [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (begin
     (cbi.compiler-builtin-refresh!)
     (opt-call-memory-seed-builtin
@@ -56896,7 +56933,7 @@
 ;; new IR instruction fails to compile until it is handled here -- a new operand
 ;; position can never silently escape the address-taken check.
 (define (opt-const-globals-disq-value
-  [disq : opt_i64_i64_map.Map]
+  [disq : opt_i64_i64_map.Map (:consume)]
   [value : CompilerIrValue]) : opt_i64_i64_map.Map
   (match value
     [(CompilerIrValue.GlobalAddr name)
@@ -56905,8 +56942,16 @@
         disq)]
     [_ disq]))
 
+(define (opt-const-globals-disq-value!
+  [disq : (&mut disq opt_i64_i64_map.Map)]
+  [value : CompilerIrValue]) : unit
+  (match value
+    [(CompilerIrValue.GlobalAddr name)
+      (opt_i64_i64_map.insert-ref! disq (compiler-ir-symbol-id name) 1)]
+    [_ unit]))
+
 (define (opt-const-globals-disq-args-array
-  [disq : opt_i64_i64_map.Map]
+  [disq : opt_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array CompilerIrValue)]
   [index : i64]) : opt_i64_i64_map.Map
   (if (>= index (array-length values))
@@ -56917,7 +56962,7 @@
       (+ index 1))))
 
 (define (opt-const-globals-disq-args
-  [disq : opt_i64_i64_map.Map]
+  [disq : opt_i64_i64_map.Map (:consume)]
   [args : CompilerIrCallArgs]) : opt_i64_i64_map.Map
   (match args
     [(CompilerIrCallArgs.Nil) disq]
@@ -56928,7 +56973,7 @@
       (opt-const-globals-disq-args-array disq values 0)]))
 
 (define (opt-const-globals-disq-spmd-args
-  [disq : opt_i64_i64_map.Map]
+  [disq : opt_i64_i64_map.Map (:consume)]
   [args : CompilerIrSpmdCallArgList]) : opt_i64_i64_map.Map
   (match args
     [(CompilerIrSpmdCallArgList.Nil) disq]
@@ -56949,12 +56994,12 @@
             (begin
               (match (array-ref slots i)
                 [(CompilerIrSpmdCallArg.Arg _ value _)
-                  (set! out (opt-const-globals-disq-value out value))])
+                  (opt-const-globals-disq-value! (&mut out) value)])
               (set! i (+ i 1))))
           out))]))
 
 (define (opt-const-globals-disq-maybe
-  [disq : opt_i64_i64_map.Map]
+  [disq : opt_i64_i64_map.Map (:consume)]
   [maybe : CompilerIrMaybeValue]) : opt_i64_i64_map.Map
   (match maybe
     [(CompilerIrMaybeValue.No) disq]
@@ -56962,7 +57007,7 @@
       (opt-const-globals-disq-value disq value)]))
 
 (define (opt-const-globals-disq-phi
-  [disq : opt_i64_i64_map.Map]
+  [disq : opt_i64_i64_map.Map (:consume)]
   [inputs : CompilerIrPhiInputList]) : opt_i64_i64_map.Map
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) disq]
@@ -56978,7 +57023,7 @@
 ;; differences are that `CompilerIrInstr.Store` also records its target name and call/tail
 ;; targets (function names, never const-global candidates) are not scanned.
 (define (opt-const-globals-disq-instr
-  [disq : opt_i64_i64_map.Map]
+  [disq : opt_i64_i64_map.Map (:consume)]
   [instr : CompilerIrInstr]) : opt_i64_i64_map.Map
   (match instr
     [(CompilerIrInstr.Mov _ src _) (opt-const-globals-disq-value disq src)]
@@ -57188,7 +57233,7 @@
       count)))
 
 (define (opt-const-globals-disq-blocks
-  [disq : opt_i64_i64_map.Map]
+  [disq : opt_i64_i64_map.Map (:consume)]
   [blocks : CompilerIrBlockList]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) disq]
@@ -57260,7 +57305,7 @@
 (define (opt-const-globals-from-globals
   [globals : CompilerIrGlobalList]
   [disq : opt_i64_i64_map.Map]
-  [map : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [map : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (match globals
     [(CompilerIrGlobalList.Nil) map]
     [(CompilerIrGlobalList.Cons global rest)
@@ -57292,7 +57337,7 @@
   [globals : CompilerIrGlobalSeq]
   [index : i64]
   [disq : opt_i64_i64_map.Map]
-  [map : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [map : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-global-seq-count globals))
     map
     (opt-const-globals-from-global-seq
@@ -58244,7 +58289,7 @@
           (OptMaybeAliasKind.Some (opt-alias-kind-decode value))]
         [(opt_i64_i64_map.LookupMissing) (OptMaybeAliasKind.No)])]))
 
-(define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+(define (opt-alias-remove-var [facts : OptAliasFacts (:consume)] [var : i64]) : OptAliasFacts
   (match facts
     [(OptAliasFacts.Facts map)
       (let
@@ -58254,7 +58299,7 @@
           (OptAliasFacts.Facts out)))]))
 
 (define (opt-alias-bind
-  [facts : OptAliasFacts]
+  [facts : OptAliasFacts (:consume)]
   [var : i64]
   [kind : OptAliasKind]) : OptAliasFacts
   (match facts
@@ -58269,28 +58314,39 @@
           (OptAliasFacts.Facts out)))]))
 
 (define (opt-alias-mark-unique
-  [facts : OptAliasFacts]
+  [facts : OptAliasFacts (:consume)]
   [var : i64]
   [epoch : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasKind.Unique epoch)))
 
-(define (opt-alias-mark-exclusive-ref [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+(define (opt-alias-mark-exclusive-ref
+  [facts : OptAliasFacts (:consume)]
+  [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasKind.ExclusiveRef)))
 
-(define (opt-alias-mark-shared-ref [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+(define (opt-alias-mark-shared-ref
+  [facts : OptAliasFacts (:consume)]
+  [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasKind.SharedRef)))
 
-(define (opt-alias-mark-may-alias [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+(define (opt-alias-mark-may-alias
+  [facts : OptAliasFacts (:consume)]
+  [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasKind.MayAlias)))
 
-(define (opt-alias-mark-invalidated [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+(define (opt-alias-mark-invalidated
+  [facts : OptAliasFacts (:consume)]
+  [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasKind.Invalidated)))
 
 ;; Copy a value's fact onto `dst` (Mov/Cast of a tracked var). Root facts become
 ;; Derived(root) so aliases of one root retain one canonical identity; blindly
 ;; copying Unique/ExclusiveRef would incorrectly make the copy look disjoint.
 ;; An untracked source conservatively yields a MayAlias destination.
-(define (opt-alias-copy-var [facts : OptAliasFacts] [dst : i64] [src : i64]) : OptAliasFacts
+(define (opt-alias-copy-var
+  [facts : OptAliasFacts (:consume)]
+  [dst : i64]
+  [src : i64]) : OptAliasFacts
   (match (opt-alias-lookup facts src)
     [(OptMaybeAliasKind.Some kind)
       (if (= dst src)
@@ -58311,7 +58367,10 @@
 ;; Derive `dst` through safe pointer arithmetic (Gep) from base var `base`.
 ;; A unique or already-derived base propagates the underlying root; anything
 ;; else is conservatively MayAlias.
-(define (opt-alias-derive-var [facts : OptAliasFacts] [dst : i64] [base : i64]) : OptAliasFacts
+(define (opt-alias-derive-var
+  [facts : OptAliasFacts (:consume)]
+  [dst : i64]
+  [base : i64]) : OptAliasFacts
   (match (opt-alias-lookup facts base)
     [(OptMaybeAliasKind.Some kind)
       (match kind
@@ -58421,7 +58480,7 @@
 
 (define (opt-alias-seed-param
   [type-segment-bases : i64]
-  [facts : OptAliasFacts]
+  [facts : OptAliasFacts (:consume)]
   [param : CompilerIrParam]) : OptAliasFacts
   (match param
     [(CompilerIrParam.Param _ ty var)
@@ -58436,7 +58495,7 @@
   [type-segment-bases : i64]
   [params : CompilerIrParamSeq]
   [index : i64]
-  [facts : OptAliasFacts]) : OptAliasFacts
+  [facts : OptAliasFacts (:consume)]) : OptAliasFacts
   (if (>= index (compiler-ir-param-seq-count params))
     facts
     (opt-alias-seed-param-seq
@@ -58451,7 +58510,7 @@
 (define (opt-alias-seed-params-from
   [type-segment-bases : i64]
   [params : CompilerIrParamList]
-  [facts : OptAliasFacts]) : OptAliasFacts
+  [facts : OptAliasFacts (:consume)]) : OptAliasFacts
   (match params
     [(CompilerIrParamList.Nil) facts]
     [(CompilerIrParamList.Array seq)
@@ -58475,7 +58534,9 @@
       (match b
         [(OptAliasFacts.Facts bmap)
           (let
-            [out : OptAliasFacts (opt-alias-empty)]
+            [out : opt_i64_i64_map.Map
+              (opt_i64_i64_map.with-capacity
+                (+ (* (opt_i64_i64_map.len (& amap)) 2) 17))]
             [capacity : i64 (opt_i64_i64_map.capacity (& amap))]
             [i : i64 (opt_i64_i64_map.next-occupied (& amap) 0)]
             (begin
@@ -58486,17 +58547,12 @@
                       (match (opt_i64_i64_map.get (& bmap) var)
                         [(opt_i64_i64_map.LookupFound bvalue)
                           (if (= value bvalue)
-                            (set!
-                              out
-                              (opt-alias-bind
-                                out
-                                var
-                                (opt-alias-kind-decode value)))
+                            (opt_i64_i64_map.insert-ref! (&mut out) var value)
                             unit)]
                         [(opt_i64_i64_map.LookupMissing) unit])]
                     [(opt_i64_i64_map.EntryNone) unit])
                   (set! i (opt_i64_i64_map.next-occupied (& amap) (+ i 1)))))
-              out))])]))
+              (OptAliasFacts.Facts out)))])]))
 
 (define (opt-alias-facts-len [facts : OptAliasFacts]) : i64
   (match facts
@@ -58554,7 +58610,7 @@
     [_ (opt-alias-effect-clears-facts? (compiler-ir-instr-effect instr))]))
 
 (define (opt-alias-update-gep
-  [facts : OptAliasFacts]
+  [facts : OptAliasFacts (:consume)]
   [dst : i64]
   [base : CompilerIrValue]) : OptAliasFacts
   (match base
@@ -58562,7 +58618,7 @@
     [_ (opt-alias-mark-may-alias facts dst)]))
 
 (define (opt-alias-update-copy
-  [facts : OptAliasFacts]
+  [facts : OptAliasFacts (:consume)]
   [dst : i64]
   [value : CompilerIrValue]) : OptAliasFacts
   (match value
@@ -58589,7 +58645,7 @@
 ;; allocation's epoch is strictly greater than every load-table entry created
 ;; before it; the counter-free scratch/report consumer passes 0.
 (define (opt-alias-update-value-facts
-  [facts : OptAliasFacts]
+  [facts : OptAliasFacts (:consume)]
   [instr : CompilerIrInstr]
   [epoch : i64]) : OptAliasFacts
   (let
@@ -58637,13 +58693,15 @@
 ;; unknown instructions still clear every fact; load GVN uses the provenance-
 ;; preserving transfer defined beside its pointer-kind model below.
 (define (opt-alias-update-facts
-  [facts : OptAliasFacts]
+  [facts : OptAliasFacts (:consume)]
   [instr : CompilerIrInstr]) : OptAliasFacts
   (if (opt-alias-instr-clears-all? instr)
     (opt-alias-empty)
     (opt-alias-update-value-facts facts instr 0)))
 
-(define (opt-alias-run [facts : OptAliasFacts] [instrs : CompilerIrInstrList]) : OptAliasFacts
+(define (opt-alias-run
+  [facts : OptAliasFacts (:consume)]
+  [instrs : CompilerIrInstrList]) : OptAliasFacts
   (match instrs
     [(CompilerIrInstrList.Nil) facts]
     [(CompilerIrInstrList.Cons instr rest)
@@ -58732,7 +58790,9 @@
     [(OptScratchRootList.Dense items)
       (opt_i64_i64_map.contains? (& items) root)]))
 
-(define (opt-scratch-root-list-add [roots : OptScratchRootList] [root : i64]) : OptScratchRootList
+(define (opt-scratch-root-list-add
+  [roots : OptScratchRootList (:consume)]
+  [root : i64]) : OptScratchRootList
   (match roots
     [(OptScratchRootList.Empty)
       (let
@@ -59016,7 +59076,7 @@
         state)]))
 
 (define (opt-scratch-state-record-alloc
-  [state : OptScratchScopeState]
+  [state : OptScratchScopeState (:consume)]
   [dst : i64]
   [bytes : i64]) : OptScratchScopeState
   (match state
@@ -59047,7 +59107,7 @@
     (not (opt-scratch-value-derived? roots facts value))))
 
 (define (opt-scratch-update-nonalloc-facts
-  [state : OptScratchScopeState]
+  [state : OptScratchScopeState (:consume)]
   [instr : CompilerIrInstr]) : OptScratchScopeState
   (match state
     [(OptScratchScopeState.State _ _ roots facts _)
@@ -60042,7 +60102,7 @@
       (OptLoadHeaderSet.Dense items))))
 
 (define (opt-load-header-set-mark
-  [set : OptLoadHeaderSet]
+  [set : OptLoadHeaderSet (:consume)]
   [var : i64]
   [header? : bool]) : OptLoadHeaderSet
   (match set
@@ -60115,7 +60175,7 @@
 (define (opt-load-header-set-add-param-seq
   [type-segment-bases : i64]
   [params : CompilerIrParamSeq]
-  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  [set : OptLoadHeaderSet (:consume)]) : OptLoadHeaderSet
   (let
     [index : i64 0]
     [count : i64 (compiler-ir-param-seq-count params)]
@@ -60594,7 +60654,7 @@
         (array-set! refs base (+ old delta))))))
 
 (define (opt-load-kinds-ref-add
-  [refs : opt_i64_i64_map.Map]
+  [refs : opt_i64_i64_map.Map (:consume)]
   [base : i64]
   [delta : i64]) : opt_i64_i64_map.Map
   (let
@@ -60635,7 +60695,7 @@
     [_ unit]))
 
 ;; Remove a var's binding (refcount-adjusting). Absent vars return unchanged.
-(define (opt-load-kinds-remove [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
+(define (opt-load-kinds-remove [kinds : OptLoadPtrKinds (:consume)] [var : i64]) : OptLoadPtrKinds
   (match kinds
     [(OptLoadPtrKinds.Sparse map refs cap)
       (match (opt_i64_i64_map.get (& map) var)
@@ -60759,7 +60819,7 @@
 ;; references it as a base -- refcount-gated) sweep out every binding whose
 ;; base is `var`, because base-var identity must mean base-VALUE identity.
 (define (opt-load-kinds-dense-drop-base-from
-  [kinds : OptLoadPtrKinds]
+  [kinds : OptLoadPtrKinds (:consume)]
   [base : i64]
   [index : i64]) : OptLoadPtrKinds
   (match kinds
@@ -60786,7 +60846,9 @@
             [_ (opt-load-kinds-dense-drop-base-from kinds base (+ index 1))])))]
     [_ kinds]))
 
-(define (opt-load-kinds-invalidate-def [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
+(define (opt-load-kinds-invalidate-def
+  [kinds : OptLoadPtrKinds (:consume)]
+  [var : i64]) : OptLoadPtrKinds
   (let
     [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
     (match removed
@@ -60834,7 +60896,7 @@
 (define (opt-load-kinds-dense-clone-from
   [kinds : OptLoadPtrKinds]
   [index : i64]
-  [out : OptLoadPtrKinds]) : OptLoadPtrKinds
+  [out : OptLoadPtrKinds (:consume)]) : OptLoadPtrKinds
   (match kinds
     [(OptLoadPtrKinds.Dense work _ len _)
       (if (>= index len)
@@ -62145,7 +62207,7 @@
       [(option_i64.None) after-memory])))
 
 (define (opt-dead-store-compact!
-  [instrs : CompilerIrInstrSeq]
+  [instrs : (&mut instrs CompilerIrInstrSeq)]
   [dead : (__tl_dyn-array i64)]
   [count : i64]) : unit
   (let
@@ -62157,10 +62219,10 @@
           (if (= (array-ref dead read) 0)
             (begin
               (if (not (= write read))
-                (compiler-ir-instr-seq-set!
-                  instrs
+                (array-set!
+                  (struct-get instrs slots)
                   write
-                  (compiler-ir-instr-seq-ref instrs read))
+                  (clone (array-ref (struct-get instrs slots) read)))
                 unit)
               (set! write (+ write 1)))
             unit)
@@ -62186,7 +62248,7 @@
   [hs : OptLoadHeaderSet]
   [store-capacity : i64]
   [initial-kinds : OptLoadPtrKinds]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  [instrs : CompilerIrInstrSeq (:consume)]) : CompilerIrInstrSeq
   (if (>= store-capacity 2)
     (let
       [count : i64 (compiler-ir-instr-seq-count instrs)]
@@ -62213,7 +62275,7 @@
                 kinds
                 (opt-load-kinds-step type-segment-bases kinds hs instr))
               (set! index (+ index 1)))))
-        (opt-dead-store-compact! instrs dead count)
+        (opt-dead-store-compact! (&mut instrs) dead count)
         instrs))
     instrs))
 
@@ -62460,7 +62522,7 @@
   [hs : OptLoadHeaderSet]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
-  [state : OptLoadCseState]
+  [state : OptLoadCseState (:consume)]
   [ptr : CompilerIrValue]
   [value : CompilerIrValue]
   [ty : AstType]
@@ -62546,7 +62608,7 @@
   [type-segment-bases : i64]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
-  [state : OptLoadCseState]
+  [state : OptLoadCseState (:consume)]
   [dst : CompilerIrValue]
   [src : CompilerIrValue]
   [size : i64]

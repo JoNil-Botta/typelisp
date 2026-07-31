@@ -72,13 +72,16 @@
   (array-ref (tlci_specialization_vec.slots (& (struct-get seq items))) index))
 
 (define (tlci-spmd-specializations-push
-  [items : TlciSpmdSpecializations]
+  [items : TlciSpmdSpecializations (:consume)]
   [item : TlciSpmdSpecialization]) : TlciSpmdSpecializations
-  (let
-    [values : tlci_specialization_vec.Vec (struct-get items items)]
-    (begin
-      (tlci_specialization_vec.push (&mut values) item)
-      (TlciSpmdSpecializations values))))
+  (begin
+    (tlci_specialization_vec.push (&mut (struct-get items items)) item)
+    items))
+
+(define (tlci-spmd-specializations-push!
+  [items : (&mut items TlciSpmdSpecializations)]
+  [item : TlciSpmdSpecialization]) : unit
+  (tlci_specialization_vec.push (&mut (struct-get items items)) item))
 
 (define (tlci-make-spmd-callable
   [name : String]
@@ -99,13 +102,16 @@
   (array-ref (tlci_callable_vec.slots (& (struct-get seq items))) index))
 
 (define (tlci-spmd-callables-push
-  [items : TlciSpmdCallables]
+  [items : TlciSpmdCallables (:consume)]
   [item : TlciSpmdCallable]) : TlciSpmdCallables
-  (let
-    [values : tlci_callable_vec.Vec (struct-get items items)]
-    (begin
-      (tlci_callable_vec.push (&mut values) item)
-      (TlciSpmdCallables values))))
+  (begin
+    (tlci_callable_vec.push (&mut (struct-get items items)) item)
+    items))
+
+(define (tlci-spmd-callables-push!
+  [items : (&mut items TlciSpmdCallables)]
+  [item : TlciSpmdCallable]) : unit
+  (tlci_callable_vec.push (&mut (struct-get items items)) item))
 
 (defstruct TlciMetadata
   (version String)
@@ -3715,26 +3721,22 @@
       ;; Cross several vector growth boundaries for both metadata sequences.
       (while (< index 33)
         (begin
-          (set!
-            specializations
-            (tlci-spmd-specializations-push
-              specializations
-              (tlci-make-spmd-specialization
-                "spmd-call-v1"
-                "scalar"
-                (+ index 1)
-                "u"
-                "u"
-                -1
-                (str_cat.str-cat "specialization-" (string.int->string index)))))
-          (set!
-            callables
-            (tlci-spmd-callables-push
-              callables
-              (tlci-make-spmd-callable
-                (str_cat.str-cat "helper-" (string.int->string index))
-                "(-> i64 i64)"
-                (tlci-spmd-specializations-empty))))
+          (tlci-spmd-specializations-push!
+            (&mut specializations)
+            (tlci-make-spmd-specialization
+              "spmd-call-v1"
+              "scalar"
+              (+ index 1)
+              "u"
+              "u"
+              -1
+              (str_cat.str-cat "specialization-" (string.int->string index))))
+          (tlci-spmd-callables-push!
+            (&mut callables)
+            (tlci-make-spmd-callable
+              (str_cat.str-cat "helper-" (string.int->string index))
+              "(-> i64 i64)"
+              (tlci-spmd-specializations-empty)))
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index 33)

@@ -195,7 +195,7 @@
   (slot-count i64)
   ;; Latest slot per out-of-range name. Dense intern ids use the shared
   ;; epoch-keyed arrays below; this map preserves the unbounded fallback.
-  (lookup-cache tc_i64_i64_map.Map)
+  (lookup-cache (Box tc_i64_i64_map.Map))
   (lookup-epoch i64)
   (marks (__tl_dyn-array TcTypeEnvScopedMark))
   (mark-count i64)
@@ -7665,8 +7665,9 @@
           TcTypeEnvScopedSlot
           (tc-type-env-scoped-capacity slot-capacity))
         0
-        (tc_i64_i64_map.with-capacity
-          (tc-type-env-scoped-capacity slot-capacity))
+        (box
+          (tc_i64_i64_map.with-capacity
+            (tc-type-env-scoped-capacity slot-capacity)))
         lookup-epoch
         (array.make-array
           TcTypeEnvScopedMark
@@ -7741,12 +7742,12 @@
             (array-set! tc-type-env-scoped-dense-lookup-epochs old-name-id 0)
             unit)
           (match (tc_i64_i64_map.get
-            (& (struct-get stack lookup-cache))
+            (& (box-get (struct-get stack lookup-cache)))
             old-name-id)
             [(tc_i64_i64_map.LookupFound old-index)
               (if (= old-index index)
                 (tc_i64_i64_map.insert-ref!
-                  (&mut (struct-get stack lookup-cache))
+                  (&mut (box-get (struct-get stack lookup-cache)))
                   old-name-id
                   -1)
                 unit)]
@@ -7771,7 +7772,7 @@
             name-id
             (struct-get stack lookup-epoch)))
         (tc_i64_i64_map.insert-ref!
-          (&mut (struct-get stack lookup-cache))
+          (&mut (box-get (struct-get stack lookup-cache)))
           name-id
           index))
       (cfg compile-profile (compiler-tc-env-profile-note-scoped-bind))
@@ -7905,12 +7906,14 @@
     [(tc_i64_i64_map.LookupMissing) -2]))
 
 (define (tc-type-env-scoped-stack-map-lookup-id
-  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [stack : TcTypeEnvScopedStack]
   [name-id : i64]) : i64
   (let
-    [lookup-cache : tc_i64_i64_map.Map (struct-get stack lookup-cache)]
+    [lookup-cache : (Box tc_i64_i64_map.Map) (struct-get stack lookup-cache)]
     [index : i64
-      (tc-type-env-scoped-stack-map-cached-index (& lookup-cache) name-id)]
+      (tc-type-env-scoped-stack-map-cached-index
+        (& (box-get lookup-cache))
+        name-id)]
     (if (= index -2)
       (begin
         (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
@@ -7934,13 +7937,13 @@
                 (- (struct-get stack slot-count) 1))]
             (begin
               (tc_i64_i64_map.insert-ref!
-                (&mut lookup-cache)
+                (&mut (box-get lookup-cache))
                 name-id
                 repaired-index)
               repaired-index)))))))
 
 (define (tc-type-env-scoped-stack-lookup-index
-  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [stack : TcTypeEnvScopedStack]
   [name-id : i64]) : i64
   (if (and (>= name-id 0) (< name-id tc-type-env-scoped-dense-lookup-capacity))
     (if (=
@@ -7961,8 +7964,8 @@
                 compile-profile
                 (compiler-tc-env-profile-note-scoped-cache-hit))
               index)
-            (tc-type-env-scoped-stack-dense-lookup-id-refresh stack name-id))))
-      (tc-type-env-scoped-stack-dense-lookup-id-refresh stack name-id))
+            (tc-type-env-scoped-stack-dense-lookup-id-refresh (& stack) name-id))))
+      (tc-type-env-scoped-stack-dense-lookup-id-refresh (& stack) name-id))
     (tc-type-env-scoped-stack-map-lookup-id stack name-id)))
 
 (define (tc-type-env-scoped-stack-lookup-id
@@ -7970,7 +7973,7 @@
   [name-id : i64]) : TcTypeEnvScopedLookup
   (tc-type-env-scoped-stack-lookup-id-at
     stack
-    (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)))
+    (tc-type-env-scoped-stack-lookup-index stack name-id)))
 
 (define (tc-type-env-scoped-stack-marker-lookup-from
   [stack : TcTypeEnvScopedStack]
@@ -8218,7 +8221,7 @@
       (struct-get mark stack-mark))))
 
 (define (tc-type-env-scoped-sidecar-bind-id
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnvScopedSidecar
   (let
@@ -8231,7 +8234,7 @@
       next)))
 
 (define (tc-type-env-scoped-sidecar-bind-marker-id
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]
   [ty : AstType]
   [marker-kind : TcTypeEnvScopedMarkerKind]) : TcTypeEnvScopedSidecar
@@ -8246,7 +8249,7 @@
       next)))
 
 (define (tc-type-env-scoped-sidecar-enter-unsafe
-  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
     (tc-unsafe-marker-id)
@@ -8254,7 +8257,7 @@
     TcTypeEnvScopedMarkerKind.UnsafeContext))
 
 (define (tc-type-env-scoped-sidecar-bind-return-type
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [ty : AstType]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
@@ -8263,7 +8266,7 @@
     TcTypeEnvScopedMarkerKind.Other))
 
 (define (tc-type-env-scoped-sidecar-bind-default-boundary
-  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
     (tc-default-boundary-id)
@@ -8271,7 +8274,7 @@
     TcTypeEnvScopedMarkerKind.DefaultBoundary))
 
 (define (tc-type-env-scoped-sidecar-push-region
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [region : i64]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
@@ -8280,7 +8283,7 @@
     TcTypeEnvScopedMarkerKind.Region))
 
 (define (tc-type-env-scoped-sidecar-bind-cleanup-owner
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
@@ -8289,7 +8292,7 @@
     TcTypeEnvScopedMarkerKind.CleanupOwner))
 
 (define (tc-type-env-scoped-sidecar-bind-ordinary-arena-owner
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
@@ -8298,7 +8301,7 @@
     TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner))
 
 (define (tc-type-env-scoped-sidecar-bind-atomic-arena-owner
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
@@ -8307,7 +8310,7 @@
     TcTypeEnvScopedMarkerKind.AtomicArenaOwner))
 
 (define (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
-  [sidecar : TcTypeEnvScopedSidecar]
+  [sidecar : TcTypeEnvScopedSidecar (:consume)]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnvScopedSidecar
   (let
@@ -8402,7 +8405,8 @@
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedCarrier
   (TcTypeEnvScopedCarrier (struct-get carrier env) sidecar true))
 
-(define (tc-type-env-scoped-carrier-save [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierSave
+(define (tc-type-env-scoped-carrier-save
+  [carrier : TcTypeEnvScopedCarrier (:consume)]) : TcTypeEnvScopedCarrierSave
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack-mark : TcTypeEnvScopedMark
@@ -8434,7 +8438,7 @@
       (struct-get carrier dirty))))
 
 (define (tc-type-env-scoped-carrier-restore
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [mark : TcTypeEnvScopedCarrierMark]) : TcTypeEnvScopedCarrier
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
@@ -8456,13 +8460,13 @@
     (tc-type-env-scoped-sidecar-bind-id (struct-get carrier sidecar) name-id ty)))
 
 (define (tc-type-env-scoped-carrier-enter-unsafe
-  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
+  [carrier : TcTypeEnvScopedCarrier (:consume)]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
     (tc-type-env-scoped-sidecar-enter-unsafe (struct-get carrier sidecar))))
 
 (define (tc-type-env-scoped-carrier-bind-return-type
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [ty : AstType]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
@@ -8471,21 +8475,21 @@
       ty)))
 
 (define (tc-type-env-scoped-carrier-bind-default-boundary
-  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
+  [carrier : TcTypeEnvScopedCarrier (:consume)]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
     (tc-type-env-scoped-sidecar-bind-default-boundary
       (struct-get carrier sidecar))))
 
 (define (tc-type-env-scoped-carrier-push-region
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [region : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
     (tc-type-env-scoped-sidecar-push-region (struct-get carrier sidecar) region)))
 
 (define (tc-type-env-scoped-carrier-bind-cleanup-owner
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
@@ -8494,7 +8498,7 @@
       name-id)))
 
 (define (tc-type-env-scoped-carrier-bind-ordinary-arena-owner
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
@@ -8503,7 +8507,7 @@
       name-id)))
 
 (define (tc-type-env-scoped-carrier-bind-atomic-arena-owner
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     carrier
@@ -8512,7 +8516,7 @@
       name-id)))
 
 (define (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
@@ -8528,7 +8532,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
     (if (>= index 0)
       (ResultTcType.Ok
         (struct-get (array-ref (struct-get stack slots) index) ty))
@@ -8546,7 +8550,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    (if (>= (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id) 0)
+    (if (>= (tc-type-env-scoped-stack-lookup-index stack name-id) 0)
       true
       (begin
         (cfg
@@ -8557,7 +8561,7 @@
           name-id)))))
 
 (define (tc-type-env-scoped-carrier-bind-alias-id-if-free
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnvScopedCarrier
   (if (tc-type-env-scoped-carrier-name-bound-id? carrier name-id)
@@ -8570,7 +8574,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
     (if (>= index 0)
       (let
         [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
@@ -8600,7 +8604,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
     (if (>= index 0)
       (tc-type-env-scoped-slot-c-abi-fnptr?
         (array-ref (struct-get stack slots) index))
@@ -8944,7 +8948,7 @@
         (struct-get
           (struct-get tc-type-env-scoped-runtime-carrier sidecar)
           stack)]
-      (tc-type-env-scoped-stack-map-lookup-id (&mut stack) name-id))))
+      (tc-type-env-scoped-stack-map-lookup-id stack name-id))))
 
 (define (tc-type-env-scoped-runtime-save) : TcTypeEnvScopedRuntimeSave
   (if tc-type-env-scoped-runtime-active
@@ -9419,7 +9423,7 @@
 
 (define (tc-env-cache-fill
   [env : TcTypeEnv]
-  [ids : tc_i64_i64_map.Map]
+  [ids : tc_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array AstType)]
   [unsafe-flags : (__tl_dyn-array i64)]
   [c-abi-fnptr-flags : (__tl_dyn-array i64)]
@@ -9495,7 +9499,7 @@
 (define (tc-env-cache-fill-prefix
   [env : TcTypeEnv]
   [remaining : i64]
-  [ids : tc_i64_i64_map.Map]
+  [ids : tc_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array AstType)]
   [unsafe-flags : (__tl_dyn-array i64)]
   [c-abi-fnptr-flags : (__tl_dyn-array i64)]
@@ -14749,7 +14753,7 @@
   [types : (& types AstTypeList)]
   [offset : i64]
   [index : i64]
-  [out : AstTypeList]) : ResultTcElidedTypes
+  [out : AstTypeList (:consume)]) : ResultTcElidedTypes
   (if (>= offset (ast-type-list-len types))
     (ResultTcElidedTypes.Ok (TcElidedTypes out index))
     (match (tc-elide-input-type
@@ -14789,7 +14793,7 @@
   [types : (& types AstTypeList)]
   [index : i64]
   [lifetime : TcMaybeNameId]
-  [out : AstTypeList]) : ResultTcElidedTypes
+  [out : AstTypeList (:consume)]) : ResultTcElidedTypes
   (if (>= index (ast-type-list-len types))
     (ResultTcElidedTypes.Ok (TcElidedTypes out 0))
     (match (tc-elide-output-type
@@ -15092,7 +15096,7 @@
   [params : (& params AstParamList)]
   [offset : i64]
   [index : i64]
-  [out : AstParamList]) : ResultTcElidedParams
+  [out : AstParamList (:consume)]) : ResultTcElidedParams
   (if (>= offset (ast-param-list-len params))
     (ResultTcElidedParams.Ok (TcElidedParams out index))
     (match (ast-param-list-get params offset (ast-param-fallback))
@@ -23472,7 +23476,7 @@
                     [_ false])]
                 [repaired-index : i64
                   (match (tc_i64_i64_map.get
-                    (& (struct-get stack lookup-cache))
+                    (& (box-get (struct-get stack lookup-cache)))
                     name-id)
                     [(tc_i64_i64_map.LookupFound index) index]
                     [(tc_i64_i64_map.LookupMissing) -1])]
@@ -24434,13 +24438,13 @@
 
 (define (tc-type-env-scoped-carrier-bind-params
   [ctx : TcContext]
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [params : AstParamList]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-bind-params-at ctx carrier (& params) 0))
 
 (define (tc-type-env-scoped-carrier-bind-params-at
   [ctx : TcContext]
-  [carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
   [params : (& params AstParamList)]
   [index : i64]) : TcTypeEnvScopedCarrier
   (if (>= index (ast-param-list-len params))
@@ -42412,7 +42416,7 @@
       (CtfeLayoutInfo.Info type-name false 8 8 (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-layout-add-alias
-  [layouts : CtfeLayoutInfoList]
+  [layouts : CtfeLayoutInfoList (:consume)]
   [info : CtfeLayoutInfo]
   [alias : String]
   [alias-id : i64]) : CtfeLayoutInfoList
@@ -42424,7 +42428,7 @@
         alias-id)]))
 
 (define (tc-ctfe-layout-add-names
-  [layouts : CtfeLayoutInfoList]
+  [layouts : CtfeLayoutInfoList (:consume)]
   [info : CtfeLayoutInfo]
   [key-id : i64]
   [name : String]
@@ -42474,7 +42478,7 @@
   [decls : AstDeclList]
   [module : String]
   [module-id : i64]
-  [layouts : CtfeLayoutInfoList]) : CtfeLayoutInfoList
+  [layouts : CtfeLayoutInfoList (:consume)]) : CtfeLayoutInfoList
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
@@ -52160,14 +52164,9 @@
 (define (tc-moved-param-storage-origins [set : TcMovedSet]) : i64
   (struct-get set param-storage-origins))
 
-(define (tc-param-storage-origin-node-read
-  [address : i64]) : TcParamStorageOriginNode
+(define (tc-param-storage-origin-node-read [address : i64]) : TcParamStorageOriginNode
   (unsafe
-    (ptr-read
-      (int->ptr
-        (cast address : u64)
-        :
-        (Ptr TcParamStorageOriginNode)))))
+    (ptr-read (int->ptr (cast address : u64) : (Ptr TcParamStorageOriginNode)))))
 
 (define (tc-param-storage-origin-node-new
   [name-id : i64]
@@ -52177,23 +52176,14 @@
     [cell : (__tl_dyn-array TcParamStorageOriginNode)
       (array.make-array TcParamStorageOriginNode 1)]
     (begin
-      (array-set!
-        cell
-        0
-        (TcParamStorageOriginNode name-id parameter-id parent))
+      (array-set! cell 0 (TcParamStorageOriginNode name-id parameter-id parent))
       (unsafe
         (cast
           (ptr->int
-            (ptr-cast
-              (array-data cell)
-              :
-              (Ptr TcParamStorageOriginNode)))
-          :
-          i64)))))
+            (ptr-cast (array-data cell) : (Ptr TcParamStorageOriginNode)))
+          : i64)))))
 
-(define (tc-param-storage-origin-lookup
-  [head : i64]
-  [name-id : i64]) : TcMaybeNameId
+(define (tc-param-storage-origin-lookup [head : i64] [name-id : i64]) : TcMaybeNameId
   (let
     [cursor : i64 head]
     [result : TcMaybeNameId TcMaybeNameId.No]
@@ -52222,8 +52212,7 @@
 
 (define (tc-param-storage-origin-clear [head : i64] [name-id : i64]) : i64
   (match (tc-param-storage-origin-lookup head name-id)
-    [(TcMaybeNameId.Some _)
-      (tc-param-storage-origin-node-new name-id -1 head)]
+    [(TcMaybeNameId.Some _) (tc-param-storage-origin-node-new name-id -1 head)]
     [(TcMaybeNameId.No) head]))
 
 (define (tc-param-storage-origins-union-at
@@ -52237,10 +52226,7 @@
         (tc-param-storage-origin-node-read cursor)]
       [name-id : i64 (struct-get node name-id)]
       (if (tc-name-id-list-contains seen name-id)
-        (tc-param-storage-origins-union-at
-          (struct-get node parent)
-          seen
-          out)
+        (tc-param-storage-origins-union-at (struct-get node parent) seen out)
         (tc-param-storage-origins-union-at
           (struct-get node parent)
           (TcNameIdList.Cons name-id (box seen))
@@ -52260,9 +52246,7 @@
     a
     (tc-param-storage-origins-union-at a TcNameIdList.Nil b)))
 
-(define (tc-moved-with-param-storage-origins
-  [set : TcMovedSet]
-  [origins : i64]) : TcMovedSet
+(define (tc-moved-with-param-storage-origins [set : TcMovedSet] [origins : i64]) : TcMovedSet
   (TcMovedSet
     (tc-moved-roots set)
     (tc-moved-partials set)
@@ -52271,12 +52255,8 @@
     (tc-moved-hidden-atomic-users set)
     origins))
 
-(define (tc-param-storage-origin-in-set
-  [set : TcMovedSet]
-  [name-id : i64]) : TcMaybeNameId
-  (tc-param-storage-origin-lookup
-    (tc-moved-param-storage-origins set)
-    name-id))
+(define (tc-param-storage-origin-in-set [set : TcMovedSet] [name-id : i64]) : TcMaybeNameId
+  (tc-param-storage-origin-lookup (tc-moved-param-storage-origins set) name-id))
 
 (define (tc-param-storage-origin-bind-in-set
   [set : TcMovedSet]
@@ -54067,9 +54047,7 @@
       [(AstParam.Param name _ _ _)
         (tc-move-params-locals-at params (+ index 1) (tc-moved-add acc name))])))
 
-(define (tc-param-storage-memory-class-type?
-  [ctx : TcContext]
-  [ty : AstType]) : bool
+(define (tc-param-storage-memory-class-type? [ctx : TcContext] [ty : AstType]) : bool
   (let
     [unwrapped : AstType
       (ast-type-strip-consuming-param-with-pools (tc-context-pools ctx) ty)]
@@ -54080,7 +54058,8 @@
         [(AstType.StructArgs name _)
           (not (tc-name-register-resident-id? ctx name))]
         [(AstType.Enum name) (not (tc-name-register-resident-id? ctx name))]
-        [(AstType.EnumArgs name _) (not (tc-name-register-resident-id? ctx name))]
+        [(AstType.EnumArgs name _)
+          (not (tc-name-register-resident-id? ctx name))]
         [(AstType.Array _ _) true]
         [_ false]))))
 
@@ -54098,20 +54077,19 @@
   (if (>= index (ast-param-list-len params))
     moved
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name ty is-comptime _)
+      [(AstParam.Param name ty is-comptime consume?)
         (tc-param-storage-seed-params-at
           ctx
           params
           (+ index 1)
           (if (and
             (not is-comptime)
+            (not consume?)
             (tc-param-storage-memory-class-type? ctx ty))
             (tc-param-storage-origin-bind-in-set moved name name)
             moved))])))
 
-(define (tc-param-storage-fixed-array-type?
-  [ctx : TcContext]
-  [ty : AstType]) : bool
+(define (tc-param-storage-fixed-array-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstType.Array _ _) true]
     [_ false]))
@@ -54160,12 +54138,7 @@
         (match (tc-expr ctx env receiver)
           [(ResultTcType.Ok receiver-ty)
             (if (tc-param-storage-memory-class-type? ctx receiver-ty)
-              (tc-param-storage-place-origin
-                ctx
-                expr-bases
-                env
-                moved
-                receiver)
+              (tc-param-storage-place-origin ctx expr-bases env moved receiver)
               TcMaybeNameId.No)]
           [(ResultTcType.Err _) TcMaybeNameId.No]))]
     [(AstExpr.ArrayRef array-box _)
@@ -54174,12 +54147,7 @@
         (match (tc-expr ctx env array)
           [(ResultTcType.Ok array-ty)
             (if (tc-param-storage-fixed-array-type? ctx array-ty)
-              (tc-param-storage-place-origin
-                ctx
-                expr-bases
-                env
-                moved
-                array)
+              (tc-param-storage-place-origin ctx expr-bases env moved array)
               TcMaybeNameId.No)]
           [(ResultTcType.Err _) TcMaybeNameId.No]))]
     [_ TcMaybeNameId.No]))
@@ -54213,8 +54181,7 @@
   [operation : String]) : ResultTcUnit
   (match (tc-param-storage-place-origin ctx expr-bases env moved place)
     [(TcMaybeNameId.Some parameter-id)
-      (ResultTcUnit.Err
-        (tc-param-storage-write-message operation parameter-id))]
+      (ResultTcUnit.Err (tc-param-storage-write-message operation parameter-id))]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
 (define (tc-param-storage-check-array-write
@@ -54226,13 +54193,7 @@
   (match (tc-expr ctx env array)
     [(ResultTcType.Ok array-ty)
       (if (tc-param-storage-fixed-array-type? ctx array-ty)
-        (tc-param-storage-check-write
-          ctx
-          expr-bases
-          env
-          moved
-          array
-          "mutate")
+        (tc-param-storage-check-write ctx expr-bases env moved array "mutate")
         ResultTcUnit.Ok)]
     [(ResultTcType.Err _) ResultTcUnit.Ok]))
 
@@ -54252,10 +54213,7 @@
     [cleared : TcMovedSet (tc-moved-remove-root-state moved name-id)]
     (match origin
       [(TcMaybeNameId.Some parameter-id)
-        (tc-param-storage-origin-bind-in-set
-          cleared
-          name-id
-          parameter-id)]
+        (tc-param-storage-origin-bind-in-set cleared name-id parameter-id)]
       [(TcMaybeNameId.No) cleared])))
 
 (define (tc-param-storage-bind-pattern-names
@@ -54275,10 +54233,7 @@
           (match (tc-lookup-id env name-id)
             [(ResultTcType.Ok ty)
               (if (tc-param-storage-memory-class-type? ctx ty)
-                (tc-param-storage-origin-bind-in-set
-                  moved
-                  name-id
-                  parameter-id)
+                (tc-param-storage-origin-bind-in-set moved name-id parameter-id)
                 moved)]
             [(ResultTcType.Err _) moved])
           (box-get rest)
@@ -56420,10 +56375,7 @@
               lambda-env
               lambda-locals
               (tc-moved-empty)
-              (tc-param-storage-seed-params
-                ctx
-                params
-                (tc-moved-clone moved))
+              (tc-param-storage-seed-params ctx params (tc-moved-clone moved))
               body-box)
               [(TcMoveResult.Ok _)
                 (tc-move-check-lambda-owner-captures
@@ -56614,8 +56566,7 @@
                             moved3
                             array
                             index))]
-                      [(TcMoveResult.Err message)
-                        (TcMoveResult.Err message)])]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
@@ -56690,8 +56641,7 @@
                         moved2
                         receiver
                         field))]
-                  [(TcMoveResult.Err message)
-                    (TcMoveResult.Err message)])]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.ArrayPush array-box value-box)
@@ -56814,8 +56764,7 @@
                           binding-ty
                           rhs))]
                     [(ResultTcType.Err _)
-                      (TcMoveResult.Ok
-                        (tc-moved-remove-root-state moved2 name))])]
+                      (TcMoveResult.Ok (tc-moved-remove-root-state moved2 name))])]
                 [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
             [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
     [(AstExpr.Ann inner-box _)
@@ -64696,6 +64645,7 @@
   (let
     [left-len : i64 (ast-decl-list-len (& left))]
     [right-len : i64 (ast-decl-list-len (& right))]
+    [right-slots : (__tl_dyn-array AstDecl) (struct-get right slots)]
     (if (and
       (<= left-len (struct-get right offset))
       (struct-get right prependable)
@@ -64715,17 +64665,13 @@
           ;; fresh whole-program copy for every splice. Distinct backing storage
           ;; is required because the left copy may otherwise overlap the writes.
           (ast-decl-list-copy-to
-            (&mut (struct-get right slots))
+            (&mut right-slots)
             (& (struct-get left slots))
             (struct-get left offset)
             new-offset
             0
             left-len)
-          (AstDeclList
-            (struct-get right slots)
-            new-offset
-            (+ left-len right-len)
-            true)))
+          (AstDeclList right-slots new-offset (+ left-len right-len) true)))
       (let
         [out : AstDeclList (ast-decl-list-with-capacity (+ left-len right-len))]
         (begin
@@ -64736,12 +64682,11 @@
 (define (macro-flatten-module-body-decls-into-with-origins
   [decls : AstDeclList]
   [module-id : i64]
-  [out : AstDeclList]
-  [out-origins : (&mut out-origins CompilerParseDeclOriginAliasVec)]) : AstDeclList
+  [result : (&mut result AstDeclList)]
+  [out-origins : (&mut out-origins CompilerParseDeclOriginAliasVec)]) : unit
   (let
     [cursor : AstDeclList decls]
     [current-module-id : i64 module-id]
-    [result : AstDeclList out]
     [done : bool false]
     (begin
       (while (not done)
@@ -64752,10 +64697,10 @@
               (match decl
                 [(AstDecl.Module next-module)
                   (begin
-                    (ast-decl-list-push (&mut result) decl)
+                    (ast-decl-list-push result decl)
                     (compiler-parse-decl-origin-alias-vec-push-key-slot!
                       out-origins
-                      (- (ast-decl-list-len (& result)) 1)
+                      (- (ast-decl-list-len result) 1)
                       1
                       (compiler-parse-decl-list-storage-key (& rest))
                       (- (struct-get rest offset) 1)
@@ -64765,29 +64710,27 @@
                 [(AstDecl.ModuleBody target-module-id body-box)
                   (begin
                     (ast-decl-list-push
-                      (&mut result)
+                      result
                       (ast-decl-module-id target-module-id))
                     (compiler-parse-decl-origin-alias-vec-push-key-slot!
                       out-origins
-                      (- (ast-decl-list-len (& result)) 1)
+                      (- (ast-decl-list-len result) 1)
                       1
                       (compiler-parse-decl-list-storage-key (& rest))
                       (- (struct-get rest offset) 1)
                       decl
                       false)
-                    (set!
+                    (macro-flatten-module-body-decls-into-with-origins
+                      (box-get body-box)
+                      target-module-id
                       result
-                      (macro-flatten-module-body-decls-into-with-origins
-                        (box-get body-box)
-                        target-module-id
-                        result
-                        out-origins))
+                      out-origins)
                     (ast-decl-list-push
-                      (&mut result)
+                      result
                       (ast-decl-module-id current-module-id))
                     (compiler-parse-decl-origin-alias-vec-push-key-slot!
                       out-origins
-                      (- (ast-decl-list-len (& result)) 1)
+                      (- (ast-decl-list-len result) 1)
                       1
                       (compiler-parse-decl-list-storage-key (& rest))
                       (- (struct-get rest offset) 1)
@@ -64795,33 +64738,33 @@
                       false))]
                 [_
                   (begin
-                    (ast-decl-list-push (&mut result) decl)
+                    (ast-decl-list-push result decl)
                     (compiler-parse-decl-origin-alias-vec-push-key-slot!
                       out-origins
-                      (- (ast-decl-list-len (& result)) 1)
+                      (- (ast-decl-list-len result) 1)
                       1
                       (compiler-parse-decl-list-storage-key (& rest))
                       (- (struct-get rest offset) 1)
                       decl
                       false))])
               (set! cursor rest))]))
-      result)))
+      unit)))
 
 (define (macro-flatten-module-body-decls-into
   [decls : AstDeclList]
   [module-id : i64]
-  [out : AstDeclList]) : AstDeclList
+  [out : AstDeclList (:consume)]) : AstDeclList
   (let
     [out-origins : CompilerParseDeclOriginAliasVec
       (compiler-parse-decl-origin-alias-vec-with-capacity
         (ast-decl-list-len (& decls)))]
-    [result : AstDeclList
+    [result : AstDeclList out]
+    (begin
       (macro-flatten-module-body-decls-into-with-origins
         decls
         module-id
-        out
-        (&mut out-origins))]
-    (begin
+        (&mut result)
+        (&mut out-origins))
       (compiler-parse-decl-origin-alias-vec-register!
         (& result)
         (& out-origins))
@@ -64928,6 +64871,8 @@
   (let
     [left-len : i64 (ast-decl-path-list-len (& left))]
     [right-len : i64 (ast-decl-path-list-len (& right))]
+    [right-slots : (__tl_dyn-array String) (struct-get right slots)]
+    [right-owner-ids : (__tl_dyn-array i64) (struct-get right owner-ids)]
     (if (and
       (<= left-len (struct-get right offset))
       (struct-get right prependable)
@@ -64942,22 +64887,22 @@
         [new-offset : i64 (- (struct-get right offset) left-len)]
         (begin
           (ast-decl-path-list-copy-to
-            (&mut (struct-get right slots))
+            (&mut right-slots)
             (& (struct-get left slots))
             (struct-get left offset)
             new-offset
             0
             left-len)
           (ast-decl-module-list-copy-to
-            (&mut (struct-get right owner-ids))
+            (&mut right-owner-ids)
             (& (struct-get left owner-ids))
             (struct-get left offset)
             new-offset
             0
             left-len)
           (AstDeclPathList
-            (struct-get right slots)
-            (struct-get right owner-ids)
+            right-slots
+            right-owner-ids
             new-offset
             (+ left-len right-len)
             true)))
@@ -82983,7 +82928,7 @@
 (define (tc-prefix-candidate
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.Vec]
+  [stdlib-roots : svec.Vec (:consume)]
   [cache-scope : String]) : TcPrefixCandidate
   (let
     [entry-path : String (tc-decl-path-list-last paths "")]
@@ -83201,7 +83146,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [summary : CompilerTypecheckSummary]
-  [stdlib-roots : svec.Vec]
+  [stdlib-roots : svec.Vec (:consume)]
   [cache-scope : String]) : ResultCompilerTypecheck
   ;; A cached prefix contains only its summary, not semantic observations from
   ;; the declarations it skipped. Clone-root collection therefore takes the

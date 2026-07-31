@@ -3915,7 +3915,7 @@
   [lifetimes : AstLifetimeList]
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
-  [fields : AstFieldDefList]
+  [fields : AstFieldDefList (:consume)]
   [seen-lifetimes : bool]
   [seen-repr : bool]
   [seen-cleanup : bool]) : ResultAstStructDefParts
@@ -7204,7 +7204,7 @@
 
 (define (parse-ast-spmd-param-classes
   [items : reader.Sexpr]
-  [out : AstSpmdParamClassList]) : ResultAstSpmdParamClassList
+  [out : AstSpmdParamClassList (:consume)]) : ResultAstSpmdParamClassList
   (match (reader.sexpr-view items)
     [(reader.SexprView.Nil) (ResultAstSpmdParamClassList.Ok out)]
     [(reader.SexprView.Cons head rest)
@@ -7509,7 +7509,7 @@
 (define (parse-ast-spmd-specializations
   [items : reader.Sexpr]
   [param-count : i64]
-  [out : AstSpmdSpecializationList]) : ResultAstSpmdCallable
+  [out : AstSpmdSpecializationList (:consume)]) : ResultAstSpmdCallable
   (match (reader.sexpr-view items)
     [(reader.SexprView.Nil)
       (if (= (ast-spmd-specialization-list-len (& out)) 0)

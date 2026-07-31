@@ -177,7 +177,7 @@
         (package_lock_entry_vec.set entries index entry)))))
 
 (define (package-lock-entry-list-insert
-  [entries : package_lock_entry_vec.Vec]
+  [entries : package_lock_entry_vec.Vec (:consume)]
   [entry : PackageLockEntry]) : ResultPackageLockEntryList
   (let
     [next : package_lock_entry_vec.Vec entries]

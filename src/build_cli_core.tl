@@ -247,7 +247,7 @@
   17)
 
 (define (build-string-index-map-put
-  [map : build_string_i64_map.Map]
+  [map : build_string_i64_map.Map (:consume)]
   [key : String]
   [value : i64]) : build_string_i64_map.Map
   (let
@@ -255,6 +255,12 @@
     (begin
       (build_string_i64_map.insert-ref! (&mut out) key value)
       out)))
+
+(define (build-string-index-map-put!
+  [map : (&mut map build_string_i64_map.Map)]
+  [key : String]
+  [value : i64]) : unit
+  (build_string_i64_map.insert-ref! map key value))
 
 (define (build-invalid-manifest-message [diag : CompilerDiagnostic]) : String
   (str_cat.str-cat
@@ -385,7 +391,7 @@
   [has-opt-level : bool]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-lines : String]
-  [stdlib-roots : cli_svec.Vec]) : ResultBuildConfig
+  [stdlib-roots : cli_svec.Vec (:consume)]) : ResultBuildConfig
   (match kind
     [(cli_option.CliCommonOptionKind.StdlibRoot)
       (build-parse-options
@@ -809,7 +815,7 @@
   [opt-level : i64]
   [has-opt-level : bool]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]
+  [stdlib-roots : cli_svec.Vec (:consume)]
   [resolved-deps : CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
   (match kind
     [(cli_option.CliCommonOptionKind.StdlibRoot)
@@ -3353,20 +3359,16 @@
           (begin
             (while (< cursor position)
               (begin
-                (set!
-                  dst
-                  (tlci-spmd-specializations-push
-                    dst
-                    (tlci-spmd-specializations-ref items cursor)))
+                (tlci-spmd-specializations-push!
+                  (&mut dst)
+                  (tlci-spmd-specializations-ref items cursor))
                 (set! cursor (+ cursor 1))))
-            (set! dst (tlci-spmd-specializations-push dst item))
+            (tlci-spmd-specializations-push! (&mut dst) item)
             (while (< cursor count)
               (begin
-                (set!
-                  dst
-                  (tlci-spmd-specializations-push
-                    dst
-                    (tlci-spmd-specializations-ref items cursor)))
+                (tlci-spmd-specializations-push!
+                  (&mut dst)
+                  (tlci-spmd-specializations-ref items cursor))
                 (set! cursor (+ cursor 1))))
             dst))))))
 
@@ -3390,20 +3392,16 @@
           (set! scan (+ scan 1))))
       (while (< cursor position)
         (begin
-          (set!
-            dst
-            (tlci-spmd-callables-push
-              dst
-              (tlci-spmd-callables-ref items cursor)))
+          (tlci-spmd-callables-push!
+            (&mut dst)
+            (tlci-spmd-callables-ref items cursor))
           (set! cursor (+ cursor 1))))
-      (set! dst (tlci-spmd-callables-push dst item))
+      (tlci-spmd-callables-push! (&mut dst) item)
       (while (< cursor count)
         (begin
-          (set!
-            dst
-            (tlci-spmd-callables-push
-              dst
-              (tlci-spmd-callables-ref items cursor)))
+          (tlci-spmd-callables-push!
+            (&mut dst)
+            (tlci-spmd-callables-ref items cursor))
           (set! cursor (+ cursor 1))))
       dst)))
 
@@ -5137,7 +5135,7 @@
 
 (define (build-package-schedule-pass
   [nodes : BuildPackageGraphNodeVec]
-  [scheduled : build_string_i64_map.Map]
+  [scheduled : build_string_i64_map.Map (:consume)]
   [built : build_string_i64_map.Map]
   [target : CompilerBackendTarget]
   [opt-level : i64]
@@ -5177,12 +5175,10 @@
                       (set! error-message message))]
                   [(ResultBuildPackageGraphWorker.Ok worker)
                     (begin
-                      (set!
-                        next-scheduled
-                        (build-string-index-map-put
-                          next-scheduled
-                          manifest-path
-                          1))
+                      (build-string-index-map-put!
+                        (&mut next-scheduled)
+                        manifest-path
+                        1)
                       (set!
                         next-workers
                         (build-package-graph-worker-vec-push
@@ -5222,7 +5218,7 @@
 
 (define (build-package-wait-workers-with
   [workers : BuildPackageGraphWorkerVec]
-  [built : build_string_i64_map.Map]
+  [built : build_string_i64_map.Map (:consume)]
   [announce : bool]
   [failed-status : i64]) : ResultBuildPackageWait
   (let
@@ -5282,12 +5278,10 @@
                                 (build-package-failure-status
                                   next-failed-status
                                   1)))
-                            (set!
-                              next-built
-                              (build-string-index-map-put
-                                next-built
-                                manifest-path
-                                1))))))
+                            (build-string-index-map-put!
+                              (&mut next-built)
+                              manifest-path
+                              1)))))
                     (let
                       [status : i64 (process.output-status output)]
                       (begin
@@ -5830,7 +5824,7 @@
   [has-output : bool]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [stdlib-roots : cli_svec.Vec]
+  [stdlib-roots : cli_svec.Vec (:consume)]
   [opt-level : i64]
   [link-inputs : SourceToolLinkInputs]) : ResultBuildCliConfig
   (match kind

@@ -1702,7 +1702,7 @@
     (BackendFloatSeq (array.make-array BackendFloatEntry 0) 0)))
 
 (define (compiler-backend-string-set-add
-  [set : BackendStringSet]
+  [set : BackendStringSet (:consume)]
   [text : String]) : BackendStringSet
   (let
     [seen : backend_string_i64_map.Map (struct-get set seen)]
@@ -1715,7 +1715,7 @@
         (BackendStringSet seen items)))))
 
 (define (compiler-backend-symbol-set-add
-  [set : BackendSymbolSet]
+  [set : BackendSymbolSet (:consume)]
   [symbol : i64]) : BackendSymbolSet
   (let
     [seen : backend_i64_i64_map.Map (struct-get set seen)]
@@ -1729,7 +1729,7 @@
         (BackendSymbolSet seen items)))))
 
 (define (compiler-backend-float-set-add
-  [set : BackendFloatSet]
+  [set : BackendFloatSet (:consume)]
   [ty : AstType]
   [bits : u64]) : BackendFloatSet
   (let
@@ -1757,7 +1757,7 @@
     false))
 
 (define (compiler-backend-program-collections-add-function
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [name : i64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-add (struct-get collections functions) name)
@@ -1781,7 +1781,7 @@
     (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-float
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [ty : AstType]
   [bits : u64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
@@ -1794,7 +1794,7 @@
     (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-bytes
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (struct-get collections functions)
@@ -1888,7 +1888,7 @@
 
 (define (compiler-backend-source-span-index-add
   [entries : CompilerSourceSpansEntryList]
-  [map : backend_i64_i64_map.Map]
+  [map : backend_i64_i64_map.Map (:consume)]
   [values : (Array CompilerMaybeSourceSpan)]) : backend_i64_i64_map.Map
   (compiler-backend-source-span-index-add-array
     (struct-get entries slots)
@@ -1899,7 +1899,7 @@
 (define (compiler-backend-source-span-index-add-array
   [slots : (Array CompilerSourceSpansEntry)]
   [index : i64]
-  [map : backend_i64_i64_map.Map]
+  [map : backend_i64_i64_map.Map (:consume)]
   [values : (Array CompilerMaybeSourceSpan)]) : backend_i64_i64_map.Map
   (if (< index 0)
     map
@@ -16173,7 +16173,7 @@
 
 (define (compiler-backend-global-types-fill
   [globals : CompilerIrGlobalList]
-  [ids : backend_i64_i64_map.Map]
+  [ids : backend_i64_i64_map.Map (:consume)]
   [values : (Array AstType)]
   [index : i64]) : backend_i64_i64_map.Map
   (match globals
@@ -28106,7 +28106,7 @@
     [(CompilerIrExternList.Array seq) (compiler-ir-extern-seq-count seq)]))
 
 (define (compiler-backend-program-index-bind-name
-  [ids : backend_i64_i64_map.Map]
+  [ids : backend_i64_i64_map.Map (:consume)]
   [name : i64]
   [index : i64]) : backend_i64_i64_map.Map
   (let
@@ -28121,7 +28121,7 @@
         ids))))
 
 (define (compiler-backend-program-index-bind-extern-id
-  [ids : backend_i64_i64_map.Map]
+  [ids : backend_i64_i64_map.Map (:consume)]
   [name-id : i64]
   [index : i64]) : backend_i64_i64_map.Map
   (if (< name-id 0)
@@ -28131,7 +28131,7 @@
       ids)))
 
 (define (compiler-backend-program-index-bind-extern-ids
-  [ids : backend_i64_i64_map.Map]
+  [ids : backend_i64_i64_map.Map (:consume)]
   [name-id : i64]
   [source-name-id : i64]
   [index : i64]) : backend_i64_i64_map.Map
@@ -28142,7 +28142,7 @@
 
 (define (compiler-backend-program-index-functions-into
   [functions : CompilerIrFunctionList]
-  [ids : backend_i64_i64_map.Map]
+  [ids : backend_i64_i64_map.Map (:consume)]
   [names : (Array String)]
   [signatures : (Array CompilerBackendMaybeSignature)]
   [index : i64]) : backend_i64_i64_map.Map
@@ -28176,7 +28176,7 @@
 
 (define (compiler-backend-program-index-function-seq-into
   [functions : CompilerIrFunctionSeq]
-  [ids : backend_i64_i64_map.Map]
+  [ids : backend_i64_i64_map.Map (:consume)]
   [names : (Array String)]
   [signatures : (Array CompilerBackendMaybeSignature)]
   [out-index : i64]
@@ -28246,7 +28246,7 @@
 (define (compiler-backend-program-index-extern-signatures-into
   [type-segment-bases : i64]
   [externs : CompilerIrExternList]
-  [signature-ids : backend_i64_i64_map.Map]
+  [signature-ids : backend_i64_i64_map.Map (:consume)]
   [names : (Array String)]
   [signatures : (Array CompilerBackendMaybeSignature)]
   [call-infos : (Array i64)]
@@ -28310,7 +28310,7 @@
 ;; Link symbols have their own intern identity, distinct from source identity.
 (define (compiler-backend-program-index-extern-links-into
   [externs : CompilerIrExternList]
-  [link-references : backend_i64_i64_map.Map]
+  [link-references : backend_i64_i64_map.Map (:consume)]
   [link-symbols : (Array i64)]
   [provideds : (Array bool)]
   [index : i64]) : backend_i64_i64_map.Map
@@ -28343,7 +28343,7 @@
 ;; Logical extern names carry parser/generated identities.
 (define (compiler-backend-program-index-extern-reference-names-into
   [externs : CompilerIrExternList]
-  [reference-ids : backend_i64_i64_map.Map]
+  [reference-ids : backend_i64_i64_map.Map (:consume)]
   [index : i64]) : backend_i64_i64_map.Map
   (match externs
     [(CompilerIrExternList.Nil) reference-ids]
@@ -28382,7 +28382,7 @@
 
 (define (compiler-backend-collect-group-counts-instr
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map]
+  [map : backend_string_i64_map.Map (:consume)]
   [instr : CompilerIrInstr]) : backend_string_i64_map.Map
   (match instr
     [(CompilerIrInstr.Pack _ words ty)
@@ -28455,7 +28455,7 @@
 
 (define (compiler-backend-collect-group-counts-instr-seq
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map]
+  [map : backend_string_i64_map.Map (:consume)]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : backend_string_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -28471,7 +28471,7 @@
 
 (define (compiler-backend-collect-group-class-masks-instr-seq
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map]
+  [map : backend_string_i64_map.Map (:consume)]
   [type-info : CompilerRegVarTypes]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : backend_string_i64_map.Map
@@ -28492,7 +28492,7 @@
 ;; sequence leaf direct, avoiding a callback or tagged dispatch per instruction.
 (define (compiler-backend-collect-block-shared
   [type-segment-bases : i64]
-  [state : CompilerBackendCollectState]
+  [state : CompilerBackendCollectState (:consume)]
   [block : CompilerIrBlock]) : CompilerBackendCollectState
   (match block
     [(CompilerIrBlock.Block _ instrs)
@@ -28519,7 +28519,7 @@
 
 (define (compiler-backend-collect-block-seq-shared
   [type-segment-bases : i64]
-  [state : CompilerBackendCollectState]
+  [state : CompilerBackendCollectState (:consume)]
   [seq : CompilerIrBlockSeq]
   [index : i64]) : CompilerBackendCollectState
   (if (>= index (compiler-ir-block-seq-count seq))
@@ -28535,7 +28535,7 @@
 
 (define (compiler-backend-collect-blocks-shared
   [type-segment-bases : i64]
-  [state : CompilerBackendCollectState]
+  [state : CompilerBackendCollectState (:consume)]
   [blocks : CompilerIrBlockList]) : CompilerBackendCollectState
   (match blocks
     [(CompilerIrBlockList.Nil) state]
@@ -28603,7 +28603,7 @@
         0)]))
 
 (define (compiler-backend-merge-group-class-mask
-  [map : backend_string_i64_map.Map]
+  [map : backend_string_i64_map.Map (:consume)]
   [name : String]
   [mask : i64]) : backend_string_i64_map.Map
   (if (string.eq name "")
@@ -28623,7 +28623,7 @@
 
 (define (compiler-backend-collect-group-class-masks-instr
   [type-segment-bases : i64]
-  [map : backend_string_i64_map.Map]
+  [map : backend_string_i64_map.Map (:consume)]
   [type-info : CompilerRegVarTypes]
   [instr : CompilerIrInstr]) : backend_string_i64_map.Map
   (match instr
@@ -29112,7 +29112,7 @@
 
 (define (compiler-backend-validate-global-symbols-into
   [globals : CompilerIrGlobalList]
-  [seen : backend_string_i64_map.Map]) : ResultCompilerBackendSymbolValidation
+  [seen : backend_string_i64_map.Map (:consume)]) : ResultCompilerBackendSymbolValidation
   (match globals
     [(CompilerIrGlobalList.Nil) (ResultCompilerBackendSymbolValidation.Ok seen)]
     [(CompilerIrGlobalList.Cons global rest)
@@ -29155,7 +29155,7 @@
   [functions : CompilerIrFunctionList]
   [_plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]
-  [seen : backend_string_i64_map.Map]) : ResultCompilerBackendSymbolValidation
+  [seen : backend_string_i64_map.Map (:consume)]) : ResultCompilerBackendSymbolValidation
   (match functions
     [(CompilerIrFunctionList.Nil)
       (ResultCompilerBackendSymbolValidation.Ok seen)]
@@ -29215,7 +29215,7 @@
   [functions : CompilerIrFunctionSeq]
   [_plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]
-  [seen : backend_string_i64_map.Map]
+  [seen : backend_string_i64_map.Map (:consume)]
   [seq-index : i64]) : ResultCompilerBackendSymbolValidation
   (if (>= seq-index (compiler-ir-function-seq-count functions))
     (ResultCompilerBackendSymbolValidation.Ok seen)
@@ -34047,7 +34047,7 @@
       [_ false])))
 
 (define (compiler-backend-phi-target-labels-add
-  [out : BackendSymbolSeq]
+  [out : BackendSymbolSeq (:consume)]
   [label : i64]) : BackendSymbolSeq
   (let
     [acc : BackendSymbolSeq out]
@@ -34060,7 +34060,7 @@
 
 (define (compiler-backend-phi-target-labels
   [blocks : CompilerIrBlockList]
-  [out : BackendSymbolSeq]) : BackendSymbolSeq
+  [out : BackendSymbolSeq (:consume)]) : BackendSymbolSeq
   (match blocks
     [(CompilerIrBlockList.Nil) out]
     [(CompilerIrBlockList.Cons block rest)
@@ -34077,7 +34077,7 @@
 (define (compiler-backend-phi-target-labels-seq
   [blocks : CompilerIrBlockSeq]
   [index : i64]
-  [out : BackendSymbolSeq]) : BackendSymbolSeq
+  [out : BackendSymbolSeq (:consume)]) : BackendSymbolSeq
   (if (>= index (compiler-ir-block-seq-count blocks))
     out
     (match (compiler-ir-block-seq-ref blocks index)
@@ -35473,13 +35473,18 @@
   [value : CompilerIrValue]) : String
   (match value
     [(CompilerIrValue.Var id)
-      (match (compiler-backend-emit-assignment-lookup assignments id)
-        [(CompilerRegMaybeLocation.Some location)
-          (match location
-            [(CompilerRegLocation.Register home)
-              (compiler-abi-register-spelling home)]
-            [_ ""])]
-        [(CompilerRegMaybeLocation.No) ""])]
+      ;; A single-use AddrOf definition is suppressed by forwarding. Its
+      ;; allocator home therefore never receives the address; consumers must
+      ;; materialize the source slot address through the ordinary load path.
+      (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
+        ""
+        (match (compiler-backend-emit-assignment-lookup assignments id)
+          [(CompilerRegMaybeLocation.Some location)
+            (match location
+              [(CompilerRegLocation.Register home)
+                (compiler-abi-register-spelling home)]
+              [_ ""])]
+          [(CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
 
 (define (compiler-backend-emit-mov
@@ -49278,7 +49283,7 @@
 ;; successor, so the resulting count is the number of DISTINCT predecessor
 ;; blocks -- exactly the "is this label a merge?" signal we need.
 (define (compiler-backend-peephole-predcount-bump
-  [counts : backend_label_i64_map.Map]
+  [counts : backend_label_i64_map.Map (:consume)]
   [labels : OptLabelSet]) : backend_label_i64_map.Map
   (match labels
     [(OptLabelSet.Nil) counts]
@@ -49306,7 +49311,7 @@
 ;; this enumeration is complete (those are the only label-bearing terminators).
 (define (compiler-backend-peephole-predcount-build
   [blocks : CompilerIrBlockList]
-  [counts : backend_label_i64_map.Map]) : backend_label_i64_map.Map
+  [counts : backend_label_i64_map.Map (:consume)]) : backend_label_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) counts]
     [(CompilerIrBlockList.Array seq)
@@ -49331,7 +49336,7 @@
 (define (compiler-backend-peephole-predcount-build-seq
   [blocks : CompilerIrBlockSeq]
   [index : i64]
-  [counts : backend_label_i64_map.Map]) : backend_label_i64_map.Map
+  [counts : backend_label_i64_map.Map (:consume)]) : backend_label_i64_map.Map
   (if (>= index (compiler-ir-block-seq-count blocks))
     counts
     (compiler-backend-peephole-predcount-build-seq
@@ -54938,7 +54943,7 @@
   (struct-get collections uses-f64-neg))
 
 (define (compiler-backend-collect-float-both-collections
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [bits : u64]) : CompilerBackendProgramCollections
   (compiler-backend-program-collections-add-float
     (compiler-backend-program-collections-add-float
@@ -54988,7 +54993,7 @@
     [_ collections]))
 
 (define (compiler-backend-collect-maybe-value-collections
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [value : CompilerIrMaybeValue]) : CompilerBackendProgramCollections
   (match value
     [(CompilerIrMaybeValue.No) collections]
@@ -54996,7 +55001,7 @@
       (compiler-backend-collect-value-collections collections inner)]))
 
 (define (compiler-backend-collect-value-list-collections
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [values : CompilerIrValueList]) : CompilerBackendProgramCollections
   (match values
     [(CompilerIrValueList.Nil) collections]
@@ -55010,7 +55015,7 @@
         (box-get rest))]))
 
 (define (compiler-backend-collect-call-args-array-collections
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [values : (Array CompilerIrValue)]
   [index : i64]) : CompilerBackendProgramCollections
   (if (>= index (array-length values))
@@ -55023,7 +55028,7 @@
       (+ index 1))))
 
 (define (compiler-backend-collect-call-args-collections
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [args : CompilerIrCallArgs]) : CompilerBackendProgramCollections
   (match args
     [(CompilerIrCallArgs.Nil) collections]
@@ -55040,7 +55045,7 @@
         0)]))
 
 (define (compiler-backend-collect-spmd-call-args-collections
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [args : CompilerIrSpmdCallArgList]) : CompilerBackendProgramCollections
   (match args
     [(CompilerIrSpmdCallArgList.Nil) collections]
@@ -55068,7 +55073,7 @@
           out))]))
 
 (define (compiler-backend-collect-phi-collections
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [inputs : CompilerIrPhiInputList]) : CompilerBackendProgramCollections
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) collections]
@@ -55351,7 +55356,7 @@
     [_ collections]))
 
 (define (compiler-backend-collect-global-collections
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [globals : CompilerIrGlobalList]) : CompilerBackendProgramCollections
   (match globals
     [(CompilerIrGlobalList.Nil) collections]
@@ -55379,7 +55384,7 @@
         functions)]))
 
 (define (compiler-backend-collect-source-path-strings
-  [collections : CompilerBackendProgramCollections]
+  [collections : CompilerBackendProgramCollections (:consume)]
   [spans : CompilerSourceSpans]) : CompilerBackendProgramCollections
   (match spans
     [(CompilerSourceSpans.Spans _ instr-entries _)
@@ -55935,7 +55940,7 @@
   (backend_i64_i64_map.contains? (& (struct-get index calls)) name-id))
 
 (define (compiler-backend-runtime-index-add-define
-  [index : CompilerBackendRuntimeIndex]
+  [index : CompilerBackendRuntimeIndex (:consume)]
   [name-id : i64]) : CompilerBackendRuntimeIndex
   (let
     [defines : backend_i64_i64_map.Map (struct-get index defines)]
@@ -55949,7 +55954,7 @@
         (struct-get index startup-profile)))))
 
 (define (compiler-backend-runtime-index-add-extern-name
-  [index : CompilerBackendRuntimeIndex]
+  [index : CompilerBackendRuntimeIndex (:consume)]
   [name-id : i64]) : CompilerBackendRuntimeIndex
   (let
     [externs : backend_i64_i64_map.Map (struct-get index externs)]
@@ -55963,7 +55968,7 @@
         (struct-get index startup-profile)))))
 
 (define (compiler-backend-runtime-index-add-call
-  [index : CompilerBackendRuntimeIndex]
+  [index : CompilerBackendRuntimeIndex (:consume)]
   [name-id : i64]) : CompilerBackendRuntimeIndex
   (let
     [calls : backend_i64_i64_map.Map (struct-get index calls)]
@@ -56018,7 +56023,7 @@
     [_ index]))
 
 (define (compiler-backend-runtime-index-instr-seq
-  [index : CompilerBackendRuntimeIndex]
+  [index : CompilerBackendRuntimeIndex (:consume)]
   [instrs : CompilerIrInstrSeq]) : CompilerBackendRuntimeIndex
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -56140,7 +56145,7 @@
         (compiler-ir-extern-seq-to-list seq))]))
 
 (define (compiler-backend-runtime-index-arena-debug-call-links
-  [index : CompilerBackendRuntimeIndex]
+  [index : CompilerBackendRuntimeIndex (:consume)]
   [externs : CompilerIrExternList]) : CompilerBackendRuntimeIndex
   (match externs
     [(CompilerIrExternList.Nil) index]

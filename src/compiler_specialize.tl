@@ -448,7 +448,7 @@
 
 (define (spec-template-index-build
   [templates : SpecTemplateList]
-  [index : spec_id_i64_map.Map]
+  [index : spec_id_i64_map.Map (:consume)]
   [values : (__tl_dyn-array SpecMaybeTemplate)]
   [at : i64]
   [slot : i64]) : spec_id_i64_map.Map
@@ -3075,7 +3075,7 @@
   [template : SpecTemplate]
   [values : SpecValueList]
   [templates : SpecTemplateEnv]
-  [state : SpecState]
+  [state : SpecState (:consume)]
   [_origin : AstExpr]) : ResultSpecEnsure
   (match template
     [(SpecTemplate.Item name-id params ret body)

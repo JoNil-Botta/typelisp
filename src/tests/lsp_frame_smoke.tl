@@ -1093,9 +1093,9 @@
       (let
         [after-two : LspLineCol (lsp-line-col-at-offset source 3)]
         [after-three : LspLineCol
-          (lsp-line-col-cache-at-offset! cache source 6)]
+          (lsp-line-col-cache-at-offset! (&mut cache) source 6)]
         [after-four : LspLineCol
-          (lsp-line-col-cache-at-offset! cache source 10)]
+          (lsp-line-col-cache-at-offset! (&mut cache) source 10)]
         (set!
           utf16-ok
           (and
@@ -1111,9 +1111,9 @@
       (let
         [after-two : LspLineCol (lsp-line-col-at-offset source 3)]
         [after-three : LspLineCol
-          (lsp-line-col-cache-at-offset! cache source 6)]
+          (lsp-line-col-cache-at-offset! (&mut cache) source 6)]
         [after-four : LspLineCol
-          (lsp-line-col-cache-at-offset! cache source 10)]
+          (lsp-line-col-cache-at-offset! (&mut cache) source 10)]
         (set!
           utf8-ok
           (and

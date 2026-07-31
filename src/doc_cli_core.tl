@@ -439,10 +439,10 @@
 (define (doc-test-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : doc_svec.Vec]
+  [input-paths : doc_svec.Vec (:consume)]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : doc_svec.Vec]
+  [stdlib-roots : doc_svec.Vec (:consume)]
   [batch-list : DocMaybeString]) : ResultDocTestCliConfig
   (if (>= idx count)
     (doc-test-config-finish
@@ -643,10 +643,10 @@
 (define (doc-default-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : doc_svec.Vec]
+  [input-paths : doc_svec.Vec (:consume)]
   [output-path : DocMaybeString]
   [manifest-path : String]
-  [stdlib-roots : doc_svec.Vec]) : ResultDocDefaultCliConfig
+  [stdlib-roots : doc_svec.Vec (:consume)]) : ResultDocDefaultCliConfig
   (if (>= idx count)
     (doc-default-config-finish
       input-paths

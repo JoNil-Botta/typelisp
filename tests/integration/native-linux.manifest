@@ -177,6 +177,7 @@ functions|tests/integration/functions.tl|32|-|-|-
 global_initializer|tests/integration/global_initializer.tl|120|-|-|-
 hello|tests/integration/hello.tl|42|-|-|-
 parameter_set_rebind|tests/integration/parameter_set_rebind.tl|42|-|-|-
+by_value_memory_aggregate_explicit_mut|tests/integration/by_value_memory_aggregate_explicit_mut.tl|42|-|-|-
 i16_min_div_neg1_trap|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/linux/i16_min_div_neg1_trap/i16_min_div_neg1_trap.tl:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
 i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/linux/i16_min_rem_neg1_trap/i16_min_rem_neg1_trap.tl:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
 lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|stdlib/string.tl

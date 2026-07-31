@@ -116,7 +116,9 @@
     (array-ref (struct-get names slots) index)
     ""))
 
-(define (source-tool-cfg-names-add [names : SourceToolCfgNames] [name : String]) : SourceToolCfgNames
+(define (source-tool-cfg-names-add
+  [names : SourceToolCfgNames (:consume)]
+  [name : String]) : SourceToolCfgNames
   (let
     [next : SourceToolCfgNames names]
     (begin

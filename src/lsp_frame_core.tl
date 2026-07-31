@@ -299,12 +299,19 @@
         (LspLengthParse.Err "lsp: invalid Content-Length")))
     LspLengthParse.Ignore))
 
-(define (lsp-string-vec-push-copy [items : lsp_svec.Vec] [value : String]) : lsp_svec.Vec
+(define (lsp-string-vec-push-copy
+  [items : lsp_svec.Vec (:consume)]
+  [value : String]) : lsp_svec.Vec
   (let
     [next-items : lsp_svec.Vec items]
     (begin
       (lsp_svec.push (&mut next-items) value)
       next-items)))
+
+(define (lsp-string-vec-push-copy!
+  [items : (&mut items lsp_svec.Vec)]
+  [value : String]) : unit
+  (lsp_svec.push items value))
 
 ;; The LSP is serial, so the narrow frame boundary can select one active
 ;; memory transport without plumbing transport arguments through every request
@@ -1072,7 +1079,7 @@
   0)
 
 (define (lsp-documents-find-index-from
-  [docs : lsp_document_vec.Vec]
+  [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]
   [index : i64]) : i64
   (let
@@ -1080,25 +1087,25 @@
     [found : i64 -1]
     [done : bool false]
     (begin
-      (while (< i (lsp_document_vec.len (& docs)))
+      (while (< i (lsp_document_vec.len docs))
         (if done
-          (set! i (lsp_document_vec.len (& docs)))
+          (set! i (lsp_document_vec.len docs))
           (let
             [doc : LspDocument
-              (lsp_document_vec.get (& docs) i (lsp-document-fallback))]
+              (lsp_document_vec.get docs i (lsp-document-fallback))]
             (if (string.eq (struct-get doc uri) uri)
               (begin
                 (set! found i)
                 (set! done true)
-                (set! i (lsp_document_vec.len (& docs))))
+                (set! i (lsp_document_vec.len docs)))
               (set! i (+ i 1))))))
       found)))
 
 (define (lsp-documents-find-index [docs : lsp_document_vec.Vec] [uri : String]) : i64
-  (lsp-documents-find-index-from docs uri 0))
+  (lsp-documents-find-index-from (& docs) uri 0))
 
 (define (lsp-documents-set-versioned
-  [docs : lsp_document_vec.Vec]
+  [docs : lsp_document_vec.Vec (:consume)]
   [uri : String]
   [path : String]
   [text : String]
@@ -1169,20 +1176,28 @@
   [diagnostic-uris : LspDiagnosticUris]) : lsp_document_vec.Vec
   (lsp-documents-set-versioned docs uri path text -1 diagnostic-uris))
 
-(define (lsp-documents-set-check-cache
-  [docs : lsp_document_vec.Vec]
+(define (lsp-documents-set-check-cache!
+  [docs : (&mut docs lsp_document_vec.Vec)]
   [uri : String]
-  [check-cache : LspCheckCache]) : lsp_document_vec.Vec
+  [check-cache : LspCheckCache]) : unit
   (let
-    [index : i64 (lsp-documents-find-index docs uri)]
-    (if (>= index 0)
-      (let
-        [doc : LspDocument
-          (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-        (begin
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< index (lsp_document_vec.len (& docs))) (< found 0))
+        (let
+          [doc : LspDocument
+            (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
+          (if (string.eq (struct-get doc uri) uri)
+            (set! found index)
+            (set! index (+ index 1)))))
+      (if (>= found 0)
+        (let
+          [doc : LspDocument
+            (lsp_document_vec.get (& docs) found (lsp-document-fallback))]
           (lsp_document_vec.set
             (&mut docs)
-            index
+            found
             (LspDocument
               (struct-get doc uri)
               (struct-get doc path)
@@ -1192,15 +1207,22 @@
               (struct-get doc decls)
               (struct-get doc decls-valid)
               check-cache
-              (struct-get doc semantic)))
-          docs))
-      docs)))
+              (struct-get doc semantic))))
+        unit))))
+
+(define (lsp-documents-set-check-cache
+  [docs : lsp_document_vec.Vec (:consume)]
+  [uri : String]
+  [check-cache : LspCheckCache]) : lsp_document_vec.Vec
+  (begin
+    (lsp-documents-set-check-cache! (&mut docs) uri check-cache)
+    docs))
 
 (define (lsp-documents-set-semantic-index
-  [docs : lsp_document_vec.Vec]
+  [docs : lsp_document_vec.Vec (:consume)]
   [uri : String]
   [version : i64]
-  [semantic-index : CompilerSemanticSourceIndex]) : lsp_document_vec.Vec
+  [semantic-index : CompilerSemanticSourceIndex (:consume)]) : lsp_document_vec.Vec
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
@@ -1236,7 +1258,7 @@
         docs))))
 
 (define (lsp-documents-release-index!
-  [docs : lsp_document_vec.Vec]
+  [docs : (&mut docs lsp_document_vec.Vec)]
   [index : i64]) : unit
   (if (and (>= index 0) (< index (lsp_document_vec.len (& docs))))
     (let
@@ -1247,7 +1269,7 @@
         (lsp_document_vec.set (&mut docs) index doc)))
     unit))
 
-(define (lsp-documents-release-all! [docs : lsp_document_vec.Vec]) : unit
+(define (lsp-documents-release-all! [docs : (&mut docs lsp_document_vec.Vec)]) : unit
   (let
     [index : i64 0]
     (while (< index (lsp_document_vec.len (& docs)))
@@ -1255,7 +1277,9 @@
         (lsp-documents-release-index! docs index)
         (set! index (+ index 1))))))
 
-(define (lsp-documents-shift-left! [docs : lsp_document_vec.Vec] [index : i64]) : unit
+(define (lsp-documents-shift-left!
+  [docs : (&mut docs lsp_document_vec.Vec)]
+  [index : i64]) : unit
   (let
     [i : i64 index]
     [last : i64 (- (lsp_document_vec.len (& docs)) 1)]
@@ -1267,19 +1291,23 @@
           (lsp_document_vec.set (&mut docs) i next)
           (set! i (+ i 1)))))))
 
-(define (lsp-documents-remove-index [docs : lsp_document_vec.Vec] [index : i64]) : lsp_document_vec.Vec
+(define (lsp-documents-remove-index
+  [docs : lsp_document_vec.Vec (:consume)]
+  [index : i64]) : lsp_document_vec.Vec
   (if (if (>= index 0)
     (< index (lsp_document_vec.len (& docs)))
     false)
     (begin
-      (lsp-documents-release-index! docs index)
-      (lsp-documents-shift-left! docs index)
+      (lsp-documents-release-index! (&mut docs) index)
+      (lsp-documents-shift-left! (&mut docs) index)
       (lsp-documents-drop-last! (&mut docs))
       docs)
     docs))
 
 (define (lsp-documents-remove [docs : lsp_document_vec.Vec] [uri : String]) : lsp_document_vec.Vec
-  (lsp-documents-remove-index docs (lsp-documents-find-index docs uri)))
+  (let
+    [index : i64 (lsp-documents-find-index docs uri)]
+    (lsp-documents-remove-index docs index)))
 
 (define (lsp-documents-lookup [docs : lsp_document_vec.Vec] [uri : String]) : LspDocumentLookup
   (let
@@ -1300,6 +1328,7 @@
   (let
     [doc : LspDocument
       (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
+    [slots : (__tl_dyn-array LspDocument) (struct-get docs slots)]
     [path : String (struct-get doc path)]
     ;; Versioned documents are client-owned open buffers. Only unversioned
     ;; entries loaded by tooling may be refreshed from disk.
@@ -1326,7 +1355,7 @@
                 (begin
                   (lsp-semantic-snapshot-release!
                     (&mut (struct-get doc semantic)))
-                  (lsp_document_vec.set (&mut docs) index updated)
+                  (array-set! slots index updated)
                   updated))))]
         [(io.ErrIoBytes _) doc]))))
 
@@ -1393,17 +1422,15 @@
 (define (lsp-documents-check-cache-smoke-ok?) : bool
   (let
     [uri : String "file:///cached.tl"]
-    [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
+    [docs : lsp_document_vec.Vec
+      (lsp-documents-set
+        (lsp_document_vec.new)
+        uri
+        "cached.tl"
+        "same"
+        (lsp-diagnostic-uris-empty))]
     (begin
-      (set!
-        docs
-        (lsp-documents-set
-          docs
-          uri
-          "cached.tl"
-          "same"
-          (lsp-diagnostic-uris-empty)))
-      (set! docs (lsp-documents-set-check-cache docs uri LspCheckCacheOk))
+      (lsp-documents-set-check-cache! (&mut docs) uri LspCheckCacheOk)
       (let
         [preserved-docs : lsp_document_vec.Vec
           (lsp-documents-set
@@ -1417,7 +1444,7 @@
           (let
             [invalidated-docs : lsp_document_vec.Vec
               (lsp-documents-set
-                docs
+                preserved-docs
                 uri
                 "cached.tl"
                 "changed"
@@ -1710,7 +1737,7 @@
                     (lsp-language-cfgs))
                     [(ResultCompilerCheckWithSemanticIndex.Err _)
                       (begin
-                        (lsp-documents-release-all! docs)
+                        (lsp-documents-release-all! (&mut docs))
                         false)]
                     [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
                       (begin
@@ -4120,7 +4147,7 @@
       (LspLineCol line col))))
 
 (define (lsp-line-col-cache-at-offset!
-  [cache : LspLineColCache]
+  [cache : (&mut cache LspLineColCache)]
   [text : String]
   [off : i64]) : LspLineCol
   (if (= off (struct-get cache offset))
@@ -4425,8 +4452,8 @@
 (define (lsp-collect-import-targets
   [text : String]
   [path : String]
-  [stdlib-roots : lsp_svec.Vec]
-  [acc : lsp_svec.Vec]) : lsp_svec.Vec
+  [stdlib-roots : lsp_svec.Vec (:consume)]
+  [acc : lsp_svec.Vec (:consume)]) : lsp_svec.Vec
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -4456,7 +4483,7 @@
                       operand-start)
                       [(LspImportTarget.Found resolved _ end)
                         (begin
-                          (set! out (lsp-string-vec-push-copy out resolved))
+                          (lsp-string-vec-push-copy! (&mut out) resolved)
                           (set! i end))]
                       [(LspImportTarget.Missing) (set! i (+ i 1))]))
                   (set! i (+ i 1))))]
@@ -4546,7 +4573,7 @@
 (define (lsp-resolve-import-alias
   [text : String]
   [path : String]
-  [stdlib-roots : lsp_svec.Vec]
+  [stdlib-roots : lsp_svec.Vec (:consume)]
   [alias : String]) : String
   (let
     [n : i64 (string.string-length text)]
@@ -5028,7 +5055,7 @@
         acc))))
 
 ;; Collect every top-level definition name in `text`, skipping strings/comments.
-(define (lsp-collect-def-names [text : String] [acc : lsp_svec.Vec]) : lsp_svec.Vec
+(define (lsp-collect-def-names [text : String] [acc : lsp_svec.Vec (:consume)]) : lsp_svec.Vec
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -5045,11 +5072,9 @@
                 [name-off : i64 (lsp-def-name-offset-at text i n)]
                 (begin
                   (if (>= name-off 0)
-                    (set!
-                      out
-                      (lsp-string-vec-push-copy
-                        out
-                        (lsp-symbol-at-offset text name-off)))
+                    (lsp-string-vec-push-copy!
+                      (&mut out)
+                      (lsp-symbol-at-offset text name-off))
                     unit)
                   (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
@@ -5058,7 +5083,7 @@
 (define (lsp-collect-def-names-all
   [docs : lsp_document_vec.Vec]
   [idx : i64]
-  [acc : lsp_svec.Vec]) : lsp_svec.Vec
+  [acc : lsp_svec.Vec (:consume)]) : lsp_svec.Vec
   (if (>= idx (lsp_document_vec.len (& docs)))
     acc
     (lsp-collect-def-names-all
@@ -6496,11 +6521,17 @@
                         [symbol-kind : i64 (lsp-decl-symbol-kind-at text i n)]
                         [form-end : i64 (lsp-skip-paren-group text i n)]
                         [form-start-lc : LspLineCol
-                          (lsp-line-col-cache-at-offset! lc-cache text i)]
+                          (lsp-line-col-cache-at-offset! (&mut lc-cache) text i)]
                         [name-lc : LspLineCol
-                          (lsp-line-col-cache-at-offset! lc-cache text name-off)]
+                          (lsp-line-col-cache-at-offset!
+                            (&mut lc-cache)
+                            text
+                            name-off)]
                         [form-end-lc : LspLineCol
-                          (lsp-line-col-cache-at-offset! lc-cache text form-end)]
+                          (lsp-line-col-cache-at-offset!
+                            (&mut lc-cache)
+                            text
+                            form-end)]
                         (lsp_decl_vec.push
                           (&mut result)
                           (LspDeclEntry
@@ -6931,11 +6962,11 @@
       (set! lsp-document-cache-arena head)
       (LspServerState head docs workspace))))
 
-(define (lsp-server-state-destroy! [state : LspServerState]) : unit
+(define (lsp-server-state-destroy! [state : LspServerState (:consume)]) : unit
   (let
     [owner : i64 (struct-get state owner-arena)]
     (begin
-      (lsp-documents-release-all! (struct-get state documents))
+      (lsp-documents-release-all! (&mut (struct-get state documents)))
       (set! lsp-document-cache-arena 0)
       (if (> owner 0)
         (unsafe
@@ -7482,12 +7513,13 @@
     [text : String (struct-get doc text)]
     [uri : String (struct-get doc uri)]
     [scanned : lsp_decl_vec.Vec (lsp-scan-decls text)]
+    [slots : (__tl_dyn-array LspDocument) (struct-get docs slots)]
     [idx : i64 (lsp-documents-find-index docs uri)]
     (begin
       (if (>= idx 0)
         (begin
-          (lsp_document_vec.set
-            (&mut docs)
+          (array-set!
+            slots
             idx
             (LspDocument
               uri
@@ -8339,7 +8371,7 @@
 
 (define (lsp-tl-save-known-and-continue
   [id : json.Json]
-  [docs : lsp_document_vec.Vec]
+  [docs : lsp_document_vec.Vec (:consume)]
   [uri : String]
   [path : String]
   [diagnostic-uris : LspDiagnosticUris]
@@ -9078,7 +9110,7 @@
                       acc
                       (let
                         [lc : LspLineCol
-                          (lsp-line-col-cache-at-offset! lc-cache text i)]
+                          (lsp-line-col-cache-at-offset! (&mut lc-cache) text i)]
                         (lsp-json-list-cons
                           (lsp-document-highlight
                             (struct-get lc line)

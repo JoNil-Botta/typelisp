@@ -148,7 +148,7 @@
   [idx : i64]
   [count : i64]
   [check : bool]
-  [paths : fmt_svec.Vec]
+  [paths : fmt_svec.Vec (:consume)]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
   (if (>= idx count)
@@ -255,7 +255,7 @@
 (define (fmt-split-lines-into
   [source : String]
   [start : i64]
-  [lines : fmt_svec.Vec]) : fmt_svec.Vec
+  [lines : fmt_svec.Vec (:consume)]) : fmt_svec.Vec
   (let
     [len : i64 (string.string-length source)]
     (if (> start len)

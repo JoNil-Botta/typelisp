@@ -1817,7 +1817,9 @@
           (string.append root suffix)
           (string.append root (string.append "/" suffix)))))))
 
-(define (compiler-load-string-vec-push-copy [roots : svec.Vec] [root : String]) : svec.Vec
+(define (compiler-load-string-vec-push-copy
+  [roots : svec.Vec (:consume)]
+  [root : String]) : svec.Vec
   (let
     [next-roots : svec.Vec roots]
     (begin
@@ -2792,6 +2794,7 @@
     [left-len : i64 (ast-decl-list-len (& left))]
     [right-len : i64 (ast-decl-list-len (& right))]
     [right-key : i64 (compiler-parse-decl-list-storage-key (& right))]
+    [right-slots : (__tl_dyn-array AstDecl) (struct-get right slots)]
     [out : AstDeclList
       (if (and
         (<= left-len (struct-get right offset))
@@ -2807,17 +2810,13 @@
           [new-offset : i64 (- (struct-get right offset) left-len)]
           (begin
             (ast-decl-list-copy-to
-              (&mut (struct-get right slots))
+              (&mut right-slots)
               (& (struct-get left slots))
               (struct-get left offset)
               new-offset
               0
               left-len)
-            (AstDeclList
-              (struct-get right slots)
-              new-offset
-              (+ left-len right-len)
-              true)))
+            (AstDeclList right-slots new-offset (+ left-len right-len) true)))
         (let
           [out : AstDeclList
             (ast-decl-list-with-capacity (+ left-len right-len))]
@@ -2855,6 +2854,8 @@
   (let
     [left-len : i64 (ast-decl-path-list-len (& left))]
     [right-len : i64 (ast-decl-path-list-len (& right))]
+    [right-slots : (__tl_dyn-array String) (struct-get right slots)]
+    [right-owner-ids : (__tl_dyn-array i64) (struct-get right owner-ids)]
     (if (and
       (<= left-len (struct-get right offset))
       (struct-get right prependable)
@@ -2869,22 +2870,22 @@
         [new-offset : i64 (- (struct-get right offset) left-len)]
         (begin
           (ast-decl-path-list-copy-to
-            (&mut (struct-get right slots))
+            (&mut right-slots)
             (& (struct-get left slots))
             (struct-get left offset)
             new-offset
             0
             left-len)
           (ast-decl-module-list-copy-to
-            (&mut (struct-get right owner-ids))
+            (&mut right-owner-ids)
             (& (struct-get left owner-ids))
             (struct-get left offset)
             new-offset
             0
             left-len)
           (AstDeclPathList
-            (struct-get right slots)
-            (struct-get right owner-ids)
+            right-slots
+            right-owner-ids
             new-offset
             (+ left-len right-len)
             true)))
@@ -2916,6 +2917,7 @@
   (let
     [left-len : i64 (ast-decl-module-list-len (& left))]
     [right-len : i64 (ast-decl-module-list-len (& right))]
+    [right-slots : (__tl_dyn-array i64) (struct-get right slots)]
     (if (and
       (<= left-len (struct-get right offset))
       (struct-get right prependable)
@@ -2930,17 +2932,13 @@
         [new-offset : i64 (- (struct-get right offset) left-len)]
         (begin
           (ast-decl-module-list-copy-to
-            (&mut (struct-get right slots))
+            (&mut right-slots)
             (& (struct-get left slots))
             (struct-get left offset)
             new-offset
             0
             left-len)
-          (AstDeclModuleList
-            (struct-get right slots)
-            new-offset
-            (+ left-len right-len)
-            true)))
+          (AstDeclModuleList right-slots new-offset (+ left-len right-len) true)))
       (let
         [out : AstDeclModuleList
           (ast-decl-module-list-with-capacity (+ left-len right-len))]
@@ -9674,19 +9672,15 @@
         path
         (compiler-load-owned-path-from-root package-owner package-root path)))))
 
-(defenum CompilerLoadOwnedPathCacheResult
-  (CompilerLoadOwnedPathCacheResult load_i64_i64_map.Map i64))
-
-(define (compiler-load-package-owned-path-cached
-  [cache : load_i64_i64_map.Map]
+(define (compiler-load-package-owned-path-cached!
+  [cache : (&mut cache load_i64_i64_map.Map)]
   [package-owner : String]
   [package-root : String]
   [stdlib-roots : svec.Vec]
   [path : String]
-  [path-id : i64]) : CompilerLoadOwnedPathCacheResult
-  (match (load_i64_i64_map.get (& cache) path-id)
-    [(load_i64_i64_map.LookupFound owned-id)
-      (CompilerLoadOwnedPathCacheResult cache owned-id)]
+  [path-id : i64]) : i64
+  (match (load_i64_i64_map.get cache path-id)
+    [(load_i64_i64_map.LookupFound owned-id) owned-id]
     [(load_i64_i64_map.LookupMissing)
       (let
         [owned : String
@@ -9696,10 +9690,9 @@
             stdlib-roots
             path)]
         [owned-id : i64 (ci.intern-generated-canonical-name owned)]
-        [next-cache : load_i64_i64_map.Map cache]
         (begin
-          (load_i64_i64_map.insert-ref! (&mut next-cache) path-id owned-id)
-          (CompilerLoadOwnedPathCacheResult next-cache owned-id)))]))
+          (load_i64_i64_map.insert-ref! cache path-id owned-id)
+          owned-id))]))
 
 (define (compiler-load-package-decl-logical-name
   [entry-path : String]
@@ -10026,17 +10019,13 @@
                   decl-path
                   decl)
                   cbi.compiler-builtin-id-fix-empty
-                  (match (compiler-load-package-owned-path-cached
-                    owned-cache
+                  (compiler-load-package-owned-path-cached!
+                    (&mut owned-cache)
                     package-owner
                     package-root
                     stdlib-roots
                     decl-path
-                    decl-path-id)
-                    [(CompilerLoadOwnedPathCacheResult next-cache cached-id)
-                      (begin
-                        (set! owned-cache next-cache)
-                        cached-id)]))]
+                    decl-path-id))]
               [owned-path : String (intern-str owned-path-id)]
               (begin
                 (ast-decl-path-list-push-with-owner-id
@@ -14233,7 +14222,7 @@
 (define (compiler-load-manifest-link-values
   [values : reader.Sexpr]
   [fname : String]
-  [acc : fs.FsStringVector]) : ResultPkgStrVec
+  [acc : fs.FsStringVector (:consume)]) : ResultPkgStrVec
   (match (reader.sexpr-view values)
     [(reader.SexprView.Nil)
       (if (= (fs.string-vector-len (& acc)) 0)

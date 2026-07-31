@@ -290,7 +290,7 @@
   [text : String]
   [start : i64]
   [n : i64]
-  [paths : cli_svec.Vec]) : cli_svec.Vec
+  [paths : cli_svec.Vec (:consume)]) : cli_svec.Vec
   (if (>= start n)
     paths
     (let
@@ -419,7 +419,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : cli_svec.Vec]
+  [roots : cli_svec.Vec (:consume)]
   [has-opt-level : bool]
   [opt-level : i64]
   [test-mode : TestMode]
@@ -785,8 +785,8 @@
   [target-path : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [runtime-decls : AstDeclList]
-  [runtime-paths : AstDeclPathList]
+  [runtime-decls : AstDeclList (:consume)]
+  [runtime-paths : AstDeclPathList (:consume)]
   [tests : (__tl_dyn-array InlineTest)]) : InlineCollect
   (let
     [cur-decls : AstDeclList decls]
@@ -1332,7 +1332,7 @@
     (ast-node-push (AstExpr.Begin (tltest-main-exprs tests)))))
 
 (define (tltest-reach-mark-name-id
-  [names : tltest_name_map.Map]
+  [names : tltest_name_map.Map (:consume)]
   [name-id : i64]) : tltest_name_map.Map
   (let
     [result : tltest_name_map.Map names]
@@ -2149,8 +2149,8 @@
   [paths : AstDeclPathList]
   [target-path : String]
   [names : tltest_name_map.Map]
-  [out-decls : AstDeclList]
-  [out-paths : AstDeclPathList]) : InlineRuntimeDecls
+  [out-decls : AstDeclList (:consume)]
+  [out-paths : AstDeclPathList (:consume)]) : InlineRuntimeDecls
   (let
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]

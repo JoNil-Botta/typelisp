@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-native-link-windows.sh - Windows native link
-# smoke for compiler-owned MSVC link.exe discovery and lld-link fallback.
+# verify-native-link-windows.sh - Windows native link and archive smoke for
+# compiler-owned MSVC tool discovery and LLVM fallbacks.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -64,22 +64,36 @@ short_windows_path() {
     to_windows_path "$1"
 }
 
-resolve_windows_archiver() {
-    if [ -n "${TYPELISP_WINDOWS_LIB:-}" ]; then
-        to_unix_path "$TYPELISP_WINDOWS_LIB"
+resolve_llvm_ar() {
+    if command -v llvm-ar >/dev/null 2>&1; then
+        command -v llvm-ar
         return 0
     fi
-    if command -v llvm-lib >/dev/null 2>&1; then
-        command -v llvm-lib
+    if command -v llvm-ar.exe >/dev/null 2>&1; then
+        command -v llvm-ar.exe
         return 0
     fi
-    if command -v llvm-lib.exe >/dev/null 2>&1; then
-        command -v llvm-lib.exe
-        return 0
-    fi
-    if command -v lib.exe >/dev/null 2>&1; then
-        command -v lib.exe
-        return 0
+
+    for candidate_dir in \
+        "/c/Program Files/LLVM/bin" \
+        "/c/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/Llvm/x64/bin" \
+        "/c/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/Llvm/x64/bin" \
+        "/c/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/x64/bin" \
+        "/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/bin"; do
+        if [ -x "$candidate_dir/llvm-ar.exe" ]; then
+            printf '%s\n' "$candidate_dir/llvm-ar.exe"
+            return 0
+        fi
+    done
+
+    if command -v powershell.exe >/dev/null 2>&1; then
+        ps_llvm_ar=$(powershell.exe -NoProfile -Command '$cmd = Get-Command llvm-ar.exe -ErrorAction SilentlyContinue; if ($cmd) { $cmd.Source }' |
+            tr -d '\r' |
+            sed -n '1p')
+        if [ -n "$ps_llvm_ar" ]; then
+            to_unix_path "$ps_llvm_ar"
+            return 0
+        fi
     fi
 
     return 1
@@ -342,9 +356,9 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 
 echo "[windows-native-link] create named link library"
-ARCHIVER_PATH=$(resolve_windows_archiver || true)
-if [ -z "$ARCHIVER_PATH" ]; then
-    fail "missing archiver: llvm-lib (or configured lib.exe/TYPELISP_WINDOWS_LIB)"
+LLVM_AR_PATH=$(resolve_llvm_ar || true)
+if [ -z "$LLVM_AR_PATH" ]; then
+    fail "missing deterministic COFF archiver: llvm-ar"
 fi
 CLANG_RUN_PATH=$(find_clang || true)
 if [ -z "$CLANG_RUN_PATH" ]; then
@@ -352,9 +366,9 @@ if [ -z "$CLANG_RUN_PATH" ]; then
 fi
 "$CLANG_RUN_PATH" --target=x86_64-pc-windows-msvc -c \
     "$LINK_LIB_DIR/ffi_add7.s" -o "$LINK_LIB_DIR/ffi_add7.obj"
-MSYS2_ARG_CONV_EXCL='*' "$ARCHIVER_PATH" /NOLOGO \
-    "/OUT:$(to_windows_path "$LINK_LIB_DIR/ffi_add7.lib")" \
-    "$(to_windows_path "$LINK_LIB_DIR/ffi_add7.obj")" \
+"$LLVM_AR_PATH" --format=coff rcsD \
+    "$LINK_LIB_DIR/ffi_add7.lib" \
+    "$LINK_LIB_DIR/ffi_add7.obj" \
     > "$WORKDIR/link-lib.stdout" 2> "$WORKDIR/link-lib.stderr"
 assert_empty "$WORKDIR/link-lib.stderr"
 
@@ -600,6 +614,139 @@ assert_empty "$WORKDIR/public-run-link-metadata.stderr"
 echo "[windows-native-link:$SMOKE_NAME] smoke passed"
 }
 
+run_windows_archive_smoke() {
+    ARCHIVE_SMOKE_NAME=$1
+    ARCHIVER_OVERRIDE=$2
+    ARCHIVE_WORKDIR="$ROOT/target/native-archive-windows-$ARCHIVE_SMOKE_NAME"
+    ARCHIVE_LIB_PKG="$ARCHIVE_WORKDIR/archive-lib"
+    ARCHIVE_APP_PKG="$ARCHIVE_WORKDIR/archive-app"
+    ARCHIVE_LIB="$ARCHIVE_LIB_PKG/target/release/archive_lib.lib"
+    ARCHIVE_OBJ="$ARCHIVE_LIB_PKG/target/release/archive_lib.obj"
+    ARCHIVE_APP="$ARCHIVE_APP_PKG/target/release/archive_app.exe"
+
+    rm -rf "$ARCHIVE_WORKDIR"
+    mkdir -p "$ARCHIVE_LIB_PKG/src" "$ARCHIVE_APP_PKG/src"
+    cat > "$ARCHIVE_LIB_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "archive_lib")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+    cat > "$ARCHIVE_LIB_PKG/src/lib.tl" <<'EOF'
+(define (archive-answer) : i64 42)
+EOF
+    cat > "$ARCHIVE_APP_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "archive_app")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (archive_lib "../archive-lib")))
+EOF
+    cat > "$ARCHIVE_APP_PKG/src/main.tl" <<'EOF'
+(import "pkg:archive_lib/src/lib.tl")
+(define (main) : i64 (archive-answer))
+EOF
+
+    if [ -n "$ARCHIVER_OVERRIDE" ]; then
+        TYPELISP_WINDOWS_LIB=$ARCHIVER_OVERRIDE
+        export TYPELISP_WINDOWS_LIB
+        echo "[windows-native-archive:$ARCHIVE_SMOKE_NAME] archiver override=$TYPELISP_WINDOWS_LIB"
+    else
+        unset TYPELISP_WINDOWS_LIB
+        echo "[windows-native-archive:$ARCHIVE_SMOKE_NAME] archiver=compiler auto-discovery"
+    fi
+
+    if ! "$COMPILER" build --manifest-path "$ARCHIVE_LIB_PKG/typelisp.pkg" \
+        --target windows-x86_64 --opt-level 0 \
+        > "$ARCHIVE_WORKDIR/build-first.stdout" \
+        2> "$ARCHIVE_WORKDIR/build-first.stderr"; then
+        sed 's/^/  /' "$ARCHIVE_WORKDIR/build-first.stdout" >&2 || true
+        sed 's/^/  /' "$ARCHIVE_WORKDIR/build-first.stderr" >&2 || true
+        fail "first deterministic archive build failed ($ARCHIVE_SMOKE_NAME)"
+    fi
+    assert_empty "$ARCHIVE_WORKDIR/build-first.stderr"
+    [ -s "$ARCHIVE_LIB" ] || fail "archive build did not write $ARCHIVE_LIB"
+    [ -s "$ARCHIVE_OBJ" ] || fail "archive build did not write $ARCHIVE_OBJ"
+    cp "$ARCHIVE_LIB" "$ARCHIVE_WORKDIR/archive-first.lib"
+    cp "$ARCHIVE_OBJ" "$ARCHIVE_WORKDIR/object-first.obj"
+
+    rm -rf "$ARCHIVE_LIB_PKG/target"
+    sleep 2
+    if ! "$COMPILER" build --manifest-path "$ARCHIVE_LIB_PKG/typelisp.pkg" \
+        --target windows-x86_64 --opt-level 0 \
+        > "$ARCHIVE_WORKDIR/build-second.stdout" \
+        2> "$ARCHIVE_WORKDIR/build-second.stderr"; then
+        sed 's/^/  /' "$ARCHIVE_WORKDIR/build-second.stdout" >&2 || true
+        sed 's/^/  /' "$ARCHIVE_WORKDIR/build-second.stderr" >&2 || true
+        fail "second deterministic archive build failed ($ARCHIVE_SMOKE_NAME)"
+    fi
+    assert_empty "$ARCHIVE_WORKDIR/build-second.stderr"
+    if ! cmp -s "$ARCHIVE_WORKDIR/object-first.obj" "$ARCHIVE_OBJ"; then
+        fail "clean package builds produced different COFF object inputs ($ARCHIVE_SMOKE_NAME)"
+    fi
+    if ! cmp -s "$ARCHIVE_WORKDIR/archive-first.lib" "$ARCHIVE_LIB"; then
+        fail "clean package builds produced nondeterministic .lib archives ($ARCHIVE_SMOKE_NAME)"
+    fi
+
+    if ! "$COMPILER" build --manifest-path "$ARCHIVE_APP_PKG/typelisp.pkg" \
+        --target windows-x86_64 --opt-level 0 \
+        > "$ARCHIVE_WORKDIR/build-consumer.stdout" \
+        2> "$ARCHIVE_WORKDIR/build-consumer.stderr"; then
+        sed 's/^/  /' "$ARCHIVE_WORKDIR/build-consumer.stdout" >&2 || true
+        sed 's/^/  /' "$ARCHIVE_WORKDIR/build-consumer.stderr" >&2 || true
+        fail "archive package consumer build failed ($ARCHIVE_SMOKE_NAME)"
+    fi
+    assert_empty "$ARCHIVE_WORKDIR/build-consumer.stderr"
+    [ -x "$ARCHIVE_APP" ] || fail "archive package consumer did not write $ARCHIVE_APP"
+
+    set +e
+    "$ARCHIVE_APP" > "$ARCHIVE_WORKDIR/consumer.stdout" 2> "$ARCHIVE_WORKDIR/consumer.stderr"
+    archive_consumer_status=$?
+    set -e
+    if [ "$archive_consumer_status" -ne 42 ]; then
+        sed 's/^/  /' "$ARCHIVE_WORKDIR/consumer.stdout" >&2 || true
+        sed 's/^/  /' "$ARCHIVE_WORKDIR/consumer.stderr" >&2 || true
+        fail "archive package consumer expected exit 42, got $archive_consumer_status"
+    fi
+    assert_empty "$ARCHIVE_WORKDIR/consumer.stdout"
+    assert_empty "$ARCHIVE_WORKDIR/consumer.stderr"
+    echo "[windows-native-archive:$ARCHIVE_SMOKE_NAME] deterministic archive smoke passed"
+}
+
+run_windows_archive_override_rejection() {
+    REJECT_WORKDIR="$ROOT/target/native-archive-windows-override-rejection"
+    REJECT_PKG="$REJECT_WORKDIR/archive-lib"
+    rm -rf "$REJECT_WORKDIR"
+    mkdir -p "$REJECT_PKG/src"
+    cat > "$REJECT_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "rejected_archive_lib")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+    cat > "$REJECT_PKG/src/lib.tl" <<'EOF'
+(define (archive-answer) : i64 42)
+EOF
+
+    TYPELISP_WINDOWS_LIB=$COMPILER
+    export TYPELISP_WINDOWS_LIB
+    set +e
+    "$COMPILER" build --manifest-path "$REJECT_PKG/typelisp.pkg" \
+        --target windows-x86_64 --opt-level 0 \
+        > "$REJECT_WORKDIR/build.stdout" 2> "$REJECT_WORKDIR/build.stderr"
+    reject_status=$?
+    set -e
+    if [ "$reject_status" -eq 0 ]; then
+        fail "incompatible TYPELISP_WINDOWS_LIB override unexpectedly succeeded"
+    fi
+    assert_empty "$REJECT_WORKDIR/build.stdout"
+    assert_contains "$REJECT_WORKDIR/build.stderr" \
+        "TYPELISP_WINDOWS_LIB must resolve to llvm-ar(.exe) or MSVC lib(.exe)"
+    unset TYPELISP_WINDOWS_LIB
+    echo "[windows-native-archive:override-rejection] incompatible override rejected"
+}
+
 run_windows_link_smoke msvc-auto ""
 
 LLD_LINK_COMMAND=$(resolve_lld_link_command || true)
@@ -607,5 +754,10 @@ if [ -z "$LLD_LINK_COMMAND" ]; then
     fail "missing linker fallback: lld-link"
 fi
 run_windows_link_smoke lld-link "$LLD_LINK_COMMAND"
+
+run_windows_archive_smoke msvc-auto ""
+LLVM_AR_OVERRIDE=$(to_windows_path "$LLVM_AR_PATH")
+run_windows_archive_smoke llvm-ar "$LLVM_AR_OVERRIDE"
+run_windows_archive_override_rejection
 
 echo "windows native link smoke passed"

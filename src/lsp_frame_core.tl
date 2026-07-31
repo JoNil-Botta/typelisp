@@ -16,8 +16,7 @@
 (import compiler_target_cfg_core as target_cfg)
 (import "compiler_check_core.tl")
 (import "compiler_semantic_index.tl")
-(import "compiler_load.tl")
-(import format_rules as fmt_rules)
+(import "format_rules.tl")
 (import "lint_driver_core.tl")
 (import "lsp_vector_families.tl")
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
@@ -4953,23 +4952,23 @@
   [docs : lsp_document_vec.Vec]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found _ text _)
-      (match (fmt_rules.format-rules-render-source-width-result text 80)
-        [(fmt_rules.ResultFormatString.Ok formatted)
+      (match (format-rules-render-source-width-result text 80)
+        [(ResultFormatString.Ok formatted)
           (lsp-write-response
             id
             (lsp-json-array
               (lsp-json-list-cons
                 (lsp-formatting-edit text formatted)
                 (json.list-empty))))]
-        [(fmt_rules.ResultFormatString.Err _)
+        [(ResultFormatString.Err _)
           (lsp-write-response id (lsp-json-array (json.list-empty)))])]
     [(LspDocumentLookup.Missing)
       (lsp-write-response id (lsp-json-array (json.list-empty)))]))
 
 (define (lsp-format-edit-text [text : String]) : String
-  (match (fmt_rules.format-rules-render-source-width-result text 80)
-    [(fmt_rules.ResultFormatString.Ok formatted) formatted]
-    [(fmt_rules.ResultFormatString.Err _) text]))
+  (match (format-rules-render-source-width-result text 80)
+    [(ResultFormatString.Ok formatted) formatted]
+    [(ResultFormatString.Err _) text]))
 
 (define (lsp-handle-formatting
   [id : json.Json]

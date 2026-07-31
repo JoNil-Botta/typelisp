@@ -29,7 +29,7 @@
 ; closure, and read after `make-arr` returns (the key dangling case).
 (define (make-arr) : (-> i64)
   (let
-    [a : (Array i64) (array.make-array i64 3)]
+    [a : (__tl_dyn-array i64) (array.make-array i64 3)]
     (begin
       (array-set! a 0 42)
       (lambda () : i64
@@ -41,7 +41,7 @@
 ; A dynamic array captured and indexed in the same scope.
 (define (case-dynarray-elem) : bool
   (let
-    [a : (Array i64) (array.make-array i64 4)]
+    [a : (__tl_dyn-array i64) (array.make-array i64 4)]
     (begin
       (array-set! a 2 9)
       (=

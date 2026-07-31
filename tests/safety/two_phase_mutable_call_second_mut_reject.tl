@@ -3,11 +3,11 @@
 (import stdlib.array)
 
 (define (take-two
-  [left : (&mut left (Array i64))]
-  [right : (&mut right (Array i64))]) : unit
+  [left : (&mut left (__tl_dyn-array i64))]
+  [right : (&mut right (__tl_dyn-array i64))]) : unit
   unit)
 
 (define (main) : unit
   (let
-    [items : (Array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     (take-two (&mut items) (&mut items))))

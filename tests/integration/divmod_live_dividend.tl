@@ -39,7 +39,7 @@
 ;; The same shape with the remainder feeding a store rather than an add: the
 ;; fused divmod+store bundle picks its SRC through a second selector, so it
 ;; needs its own coverage.
-(define (walk-store [out : (Array i64)] [n : i64] [seed : i64]) : i64
+(define (walk-store [out : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64
   (let
     [state : i64 seed]
     [i : i64 0]
@@ -57,7 +57,7 @@
     ;; both loops out of the constant folder.
     [n : i64 (+ 7 (io.arg-count))]
     [w : i64 (walk n 1)]
-    [out : (Array i64) (make-array i64 8)]
+    [out : (__tl_dyn-array i64) (make-array i64 8)]
     [s : i64 (walk-store out n 1)]
     [t : i64 (+ (array-ref out 0) (+ (array-ref out 4) (array-ref out 7)))]
     ;; One bit per reference value, so a failing exit code names which shape

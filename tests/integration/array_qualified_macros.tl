@@ -9,17 +9,17 @@
     true))
 
 (define (put-mut!
-  [items : (&mut items (Array i64))]
+  [items : (&mut items (__tl_dyn-array i64))]
   [index : i64]
   [value : i64]) : unit
   (array-set! items index value))
 
-(define (push-mut! [items : (&mut items (Array i64))] [value : i64]) : unit
+(define (push-mut! [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
   (array-push! items value))
 
 (define (dynamic-score) : i64
   (let
-    [items : (Array i64) (array.make-array i64 2)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 2)]
     (begin
       (array-set! items 0 10)
       (array-set! items 1 20)

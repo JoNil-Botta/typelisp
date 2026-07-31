@@ -5,7 +5,7 @@
 (define (take [n : (& n i64)]) : i64
   1)
 
-(define (main [n : i64] [out : (Array i64)] [limit : i64]) : unit
+(define (main [n : i64] [out : (__tl_dyn-array i64)] [limit : i64]) : unit
   (foreach
     ([i : i64 0 limit])
     (let

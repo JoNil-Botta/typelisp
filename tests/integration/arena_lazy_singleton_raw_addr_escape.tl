@@ -40,9 +40,9 @@
 ; The whole-run singleton: an "is it open" flag and the RAW ADDRESS of the
 ; storage the open produced. Only the address is kept, exactly as the loader
 ; keeps `host-table-addr`.
-(define session-open-flag : (Array i64)
+(define session-open-flag : (__tl_dyn-array i64)
   (array.make-array i64 1))
-(define session-addr-cell : (Array i64)
+(define session-addr-cell : (__tl_dyn-array i64)
   (array.make-array i64 1))
 
 ; Flip to false to get the defect back: the storage is then owned by whatever
@@ -50,7 +50,7 @@
 (define session-storage-has-owner : bool
   true)
 
-(define (raw-addr-of [items : (Array i64)]) : i64
+(define (raw-addr-of [items : (__tl_dyn-array i64)]) : i64
   (cast
     (unsafe
       (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
@@ -73,7 +73,7 @@
           (unsafe
             (arena.tl_arena_set owner-arena))
           unit)]
-      [storage : (Array i64) (array.make-array i64 8)]
+      [storage : (__tl_dyn-array i64) (array.make-array i64 8)]
       [_fill : unit (array-set! storage 0 session-magic)]
       [addr : i64 (raw-addr-of storage)]
       [_restore : unit

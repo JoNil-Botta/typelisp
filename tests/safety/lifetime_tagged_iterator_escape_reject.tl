@@ -3,11 +3,11 @@
 
 (defstruct Iter
   (:lifetimes source)
-  (slots (& source (Array i64)))
+  (slots (& source (__tl_dyn-array i64)))
   (len i64)
   (index i64))
 
-(define (main [items : (Array i64)]) : (Iter items)
+(define (main [items : (__tl_dyn-array i64)]) : (Iter items)
   (let
-    [local : (Array i64) (array.make-array i64 1)]
+    [local : (__tl_dyn-array i64) (array.make-array i64 1)]
     (Iter (& local) 1 0)))

@@ -14,10 +14,10 @@
   (value Value))
 
 (defstruct FieldList
-  (items (Array Field)))
+  (items (__tl_dyn-array Field)))
 
 (defstruct ValueList
-  (items (Array Value)))
+  (items (__tl_dyn-array Value)))
 
 (defenum Lookup
   (Found Value)
@@ -27,8 +27,8 @@
   (FieldList (array.make-array Field 0)))
 
 (define (field-list-copy-from
-  [source : (Array Field)]
-  [target : (Array Field)]
+  [source : (__tl_dyn-array Field)]
+  [target : (__tl_dyn-array Field)]
   [index : i64]) : unit
   (if (= index (array-length source))
     unit
@@ -38,8 +38,8 @@
 
 (define (field-list-prepend [name : String] [value : Value] [rest : FieldList]) : FieldList
   (let
-    [source : (Array Field) (struct-get rest items)]
-    [target : (Array Field)
+    [source : (__tl_dyn-array Field) (struct-get rest items)]
+    [target : (__tl_dyn-array Field)
       (array.make-array Field (+ (array-length source) 1))]
     (begin
       (array-set! target 0 (Field name value))
@@ -47,7 +47,7 @@
       (FieldList target))))
 
 (define (field-list-get-from
-  [items : (Array Field)]
+  [items : (__tl_dyn-array Field)]
   [name : String]
   [index : i64]) : Lookup
   (if (= index (array-length items))
@@ -73,8 +73,8 @@
   (ValueList (array.make-array Value 0)))
 
 (define (value-list-copy-from
-  [source : (Array Value)]
-  [target : (Array Value)]
+  [source : (__tl_dyn-array Value)]
+  [target : (__tl_dyn-array Value)]
   [index : i64]) : unit
   (if (= index (array-length source))
     unit
@@ -84,8 +84,8 @@
 
 (define (value-list-prepend [value : Value] [rest : ValueList]) : ValueList
   (let
-    [source : (Array Value) (struct-get rest items)]
-    [target : (Array Value)
+    [source : (__tl_dyn-array Value) (struct-get rest items)]
+    [target : (__tl_dyn-array Value)
       (array.make-array Value (+ (array-length source) 1))]
     (begin
       (array-set! target 0 value)

@@ -6,7 +6,7 @@
 (define (dynamic-array-clear-high-bit) : i64
   (let
     ;; lint-allow: single-element-array-cell
-    [items : (Array u64) (array.make-array u64 1)]
+    [items : (__tl_dyn-array u64) (array.make-array u64 1)]
     (begin
       (array-set! items 0 (cast 0x6666666666666667 : u64))
       (if (>= (array-ref items 0) (threshold))
@@ -24,7 +24,7 @@
 (define (dynamic-array-set-high-bit) : i64
   (let
     ;; lint-allow: single-element-array-cell
-    [items : (Array u64) (array.make-array u64 1)]
+    [items : (__tl_dyn-array u64) (array.make-array u64 1)]
     (begin
       (array-set! items 0 (threshold))
       (if (>= (array-ref items 0) (threshold))

@@ -88,7 +88,7 @@
 
 (define (case-array) : bool
   (let
-    [items : (Array PairF64) (array.make-array PairF64 2)]
+    [items : (__tl_dyn-array PairF64) (array.make-array PairF64 2)]
     (begin
       (array-set! items 0 (PairF64 3.0 4.0))
       (array-set! items 1 (PairF64 5.0 6.0))

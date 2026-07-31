@@ -7,7 +7,7 @@
 (define sync-string-integration-count : i64
   48)
 
-(define (sync-string-integration-array-i64-addr [items : (Array i64)]) : i64
+(define (sync-string-integration-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
 
@@ -93,7 +93,7 @@
     [(ThreadJoinErr _) -1]))
 
 (define (sync-string-integration-pack-context!
-  [ctx : (Array i64)]
+  [ctx : (__tl_dyn-array i64)]
   [channel : sync.ChannelString]
   [count : i64]) : unit
   (begin
@@ -103,7 +103,7 @@
 (define (sync-string-integration-run [channel : sync.ChannelString]) : i64
   (let
     [owner : arena.Arena (arena.make-atomic)]
-    [ctx : (Array i64)
+    [ctx : (__tl_dyn-array i64)
       (array.make-array i64 (+ sync.channel-string-raw-field-count 1))]
     [expected : i64
       (sync-string-integration-expected-sum sync-string-integration-count)]

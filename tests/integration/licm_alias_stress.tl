@@ -20,7 +20,7 @@
 ;;    array's length for all iterations and the checksum breaks.
 ;;
 ;; Both bounds/values feed from (io.arg-count) so nothing constant-folds.
-(define (rotate-sum [xs : (Array i64)] [n : i64]) : i64
+(define (rotate-sum [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -34,9 +34,9 @@
       acc)))
 
 (define (nested-flip
-  [xss : (Array (Array i64))]
-  [a : (Array i64)]
-  [b : (Array i64)]
+  [xss : (__tl_dyn-array (__tl_dyn-array i64))]
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
   [n : i64]) : i64
   (let
     [i : i64 0]
@@ -54,10 +54,11 @@
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 5)]
-    [xs : (Array i64) (array.make-array i64 n)]
-    [a : (Array i64) (array.make-array i64 2)]
-    [b : (Array i64) (array.make-array i64 3)]
-    [xss : (Array (Array i64)) (array.make-array (Array i64) 1)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [a : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [b : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [xss : (__tl_dyn-array (__tl_dyn-array i64))
+      (array.make-array (type (__tl_dyn-array i64)) 1)]
     (begin
       (array-set! xss 0 a)
       ;; n = 6 (no args). rotate-sum walk:

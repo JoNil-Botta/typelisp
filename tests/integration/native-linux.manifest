@@ -151,9 +151,9 @@ make_array_negative_trap|tests/integration/make_array_negative_trap.tl|134|-|-|-
 make_array_overflow_trap|tests/integration/make_array_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 bce_paired_underflow_sp0_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_paired_underflow_sp0_trap/bce_paired_underflow_sp0_trap.tl:39:47: array index out of bounds: index=-1 length=4\n
 bce_paired_underflow_sp1_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_paired_underflow_sp1_trap/bce_paired_underflow_sp1_trap.tl:40:46: array index out of bounds: index=-1 length=4\n
-bce_affine_versioning|tests/integration/bce_affine_versioning.tl|42|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl
-bce_affine_overflow_trap|tests/integration/bce_affine_versioning.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_affine_overflow_trap/bce_affine_overflow_trap.tl:17:45: array index out of bounds: index=-9223372036854775807 length=8\n
-bce_affine_underflow_trap|tests/integration/bce_affine_versioning.tl|134|-|2|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_affine_underflow_trap/bce_affine_underflow_trap.tl:28:45: array index out of bounds: index=-2 length=8\n
+bce_affine_versioning|tests/integration/bce_affine_versioning.tl|42|-|0|stdlib/io.tl stdlib/string.tl
+bce_affine_overflow_trap|tests/integration/bce_affine_versioning.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_affine_overflow_trap/bce_affine_overflow_trap.tl:17:45: array index out of bounds: index=-9223372036854775807 length=8\n
+bce_affine_underflow_trap|tests/integration/bce_affine_versioning.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_affine_underflow_trap/bce_affine_underflow_trap.tl:28:45: array index out of bounds: index=-2 length=8\n
 make_array_init|tests/integration/make_array_init.tl|42|-|-|stdlib/string.tl
 make_array_zero|tests/integration/make_array_zero.tl|0|-|-|-
 mutable_reference_array|tests/integration/mutable_reference_array.tl|42|-|-|-

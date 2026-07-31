@@ -887,7 +887,7 @@
 (define intern-map-hash-slots : (__tl_dyn-array i64)
   (make-array i64 (intern-capacity)))
 (define intern-generated-map-capacity : i64
-  32768)
+  131072)
 (define intern-generated-map-id-slots : (__tl_dyn-array InternSlotId)
   (make-array InternSlotId intern-generated-map-capacity))
 (define intern-generated-map-hash-slots : (__tl_dyn-array i64)

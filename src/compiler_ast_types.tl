@@ -2940,7 +2940,6 @@
   (Some i64))
 
 (defenum AstImportKind
-  (Path)
   (Module)
   (Macro i64 AstMaybeModuleName)
   (MacroDecls i64 AstMaybeModuleName))
@@ -7185,7 +7184,6 @@
   [remap : AstProgramCompactionRemap]
   [kind : AstImportKind]) : AstImportKind
   (match kind
-    [(AstImportKind.Path) AstImportKind.Path]
     [(AstImportKind.Module) AstImportKind.Module]
     [(AstImportKind.Macro call module-name)
       (AstImportKind.Macro

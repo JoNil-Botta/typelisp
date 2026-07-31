@@ -1,0 +1,68 @@
+diff --git a/src/compiler_lower.tl b/src/compiler_lower.tl
+index 834a44119..58dd6b1e0 100644
+--- a/src/compiler_lower.tl
++++ b/src/compiler_lower.tl
+@@ -14084,7 +14084,8 @@
+ (define (lower-supported-reference-referent-type?
+   [ctx : TcContext]
+   [ty : AstType]) : bool
+-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
++  (match (tc-type-strip-region
++    (tc-canonicalize-inferred-type ctx (tc-resolve-type ctx ty)))
+     [(AstType.I64) true]
+     [(AstType.U64) true]
+     [(AstType.F64) true]
+@@ -14296,7 +14297,7 @@
+             (match decl
+               [(TcStructDecl _ _ fields)
+                 (lower-supported-reference-field-list-with-stack?
+-                  ctx
++                  (tc-context-with-nominal-owner-module-id ctx name)
+                   subst
+                   fields
+                   (lower-id-set-insert stack name))])])])))
+@@ -14318,7 +14319,7 @@
+           [(ResultAstVariantDefList.Err _) false]
+           [(ResultAstVariantDefList.Ok variants)
+             (lower-supported-reference-variant-list-with-stack?
+-              ctx
++              (tc-context-with-nominal-owner-module-id ctx name)
+               subst
+               variants
+               (lower-id-set-insert stack name))])])))
+@@ -14328,7 +14329,9 @@
+   [ty : AstType]
+   [stack : LowerIdSet]) : bool
+   (let
+-    [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
++    [resolved : AstType
++      (tc-type-strip-region
++        (tc-canonicalize-inferred-type ctx (tc-resolve-type ctx ty)))]
+     (if (not (tc-type-contains-reference? resolved))
+       true
+       (match resolved
+@@ -14365,12 +14368,24 @@
+               ctx
+               (tc-context-type-get ctx ret)
+               stack))]
++        [(AstType.Struct name)
++          (lower-supported-reference-struct-args-with-stack?
++            ctx
++            name
++            (ast-lifetime-list-new)
++            stack)]
+         [(AstType.StructArgs name lifetimes)
+           (lower-supported-reference-struct-args-with-stack?
+             ctx
+             name
+             (box-get lifetimes)
+             stack)]
++        [(AstType.Enum name)
++          (lower-supported-reference-enum-args-with-stack?
++            ctx
++            name
++            (ast-lifetime-list-new)
++            stack)]
+         [(AstType.EnumArgs name lifetimes)
+           (lower-supported-reference-enum-args-with-stack?
+             ctx

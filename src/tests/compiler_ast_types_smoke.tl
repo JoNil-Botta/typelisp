@@ -752,13 +752,13 @@
     [(ast.AstDecl.Import
         _
         (ast.AstImportSpec.Spec
-          (ast.AstImportKind.Path)
+          (ast.AstImportKind.Module)
           path
           module-name
           alias
           _))
       (and
-        (string.eq path "pkg/path")
+        (string.eq path "pkg.module")
         (match module-name
           [(ast.AstMaybeModuleName.Some name)
             (string.eq (ci.intern-str name) "pkg.module")]
@@ -931,8 +931,8 @@
               (ast.AstDecl.Import
                 ast.ast-decl-meta-runtime
                 (ast.AstImportSpec.Spec
-                  (ast.AstImportKind.Path)
-                  "pkg/path"
+                  (ast.AstImportKind.Module)
+                  "pkg.module"
                   (ast.AstMaybeModuleName.Some
                     (ci.intern-generated-name "pkg.module"))
                   (ast.AstMaybeImportAlias.Some

@@ -3,7 +3,7 @@
 (import stdlib.arena)
 (import stdlib.io)
 (import stdlib.string)
-(import "../../src/compiler_ast_types.tl")
+(import compiler_ast_types)
 
 (extern (tl_alloc [size : i64]) : i64)
 
@@ -11,8 +11,8 @@
   (let
     [handle : i64 (arena.tl_arena_make)]
     (begin
-      (compiler-arena-debug-protect-never-reset! handle)
-      (compiler-arena-debug-protect-never-reset! handle)
+      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
+      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
       handle)))
 
 (define (compiler-arena-debug-fixture-allowed) : i64
@@ -53,13 +53,14 @@
 (define (compiler-arena-debug-fixture-overflow-reset) : i64
   (let
     [handle : i64 (arena.tl_arena_make_small)]
-    [_protect : unit (compiler-arena-debug-protect-never-reset! handle)]
+    [_protect : unit
+      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)]
     [_set : unit
       (unsafe
         (arena.tl_arena_set handle))]
     [_overflow : i64 (tl_alloc 16777216)]
     (begin
-      (compiler-arena-debug-protect-never-reset! handle)
+      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
       (unsafe
         (arena.tl_region_reset 0))
       0)))
@@ -72,7 +73,7 @@
     [_allocation : i64 (tl_alloc 8)]
     [handle : i64 (arena.tl_arena_current)]
     (begin
-      (compiler-arena-debug-protect-never-reset! handle)
+      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
       (unsafe
         (arena.tl_region_reset 0))
       0)))
@@ -100,20 +101,23 @@
   (let
     [home : i64 (arena.tl_arena_current)]
     [handle : i64 (compiler-arena-debug-fixture-protected)]
-    [pools : AstNodePoolContext
-      (ast-node-pool-context-new-with-capacities-in-arena 8 8 handle)]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-new-with-capacities-in-arena
+        8
+        8
+        handle)]
     [_restore : unit
       (unsafe
         (arena.tl_arena_set home))]
     (begin
-      (ast-node-pool-context-install! pools)
+      (compiler_ast_types.ast-node-pool-context-install! pools)
       0)))
 
 (define (compiler-arena-debug-fixture-invalid-atomic) : i64
   (let
     [handle : i64 (arena.tl_arena_make_atomic)]
     (begin
-      (compiler-arena-debug-protect-never-reset! handle)
+      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
       0)))
 
 (define (main) : i64
@@ -138,11 +142,11 @@
           (compiler-arena-debug-fixture-pool-install)]
         [(string.eq operation "invalid-null")
           (begin
-            (compiler-arena-debug-protect-never-reset! 0)
+            (compiler_ast_types.compiler-arena-debug-protect-never-reset! 0)
             0)]
         [(string.eq operation "invalid-address")
           (begin
-            (compiler-arena-debug-protect-never-reset! 4096)
+            (compiler_ast_types.compiler-arena-debug-protect-never-reset! 4096)
             0)]
         [(string.eq operation "invalid-atomic")
           (compiler-arena-debug-fixture-invalid-atomic)]

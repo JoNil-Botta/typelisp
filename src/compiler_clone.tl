@@ -12,7 +12,7 @@
 ;; clone-able named type. Function, reference, raw-pointer, str, and
 ;; compile-time-only values are not clone-able. Clone-ability is a
 ;; least-fixed-point over the type graph.
-(import "compiler_ast_types.tl")
+(import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import stdlib.hashmap)
@@ -151,29 +151,29 @@
 (define (clone-name-set-empty) : CloneNameSet
   (CloneNameSet (clone_id_map.with-capacity 8) (clone_id_map.with-capacity 8)))
 
-(define (clone-name-set-for-decls [decls : AstDeclList]) : CloneNameSet
+(define (clone-name-set-for-decls [decls : ast.AstDeclList]) : CloneNameSet
   (let
     [aliases : clone_id_map.Map (clone_id_map.with-capacity 64)]
     [current-module-id : i64 (clone-root-module-id)]
     [index : i64 0]
-    [count : i64 (ast-decl-list-len (& decls))]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
     (begin
       (while (< index count)
         (begin
           ;; Borrowed classification first: only module markers and imports
           ;; carry a payload this alias table reads.
-          (if (ast-decl-list-unwrapped-module-or-import-at? (& decls) index)
-            (match (ast-decl-unwrapped
-              (ast-decl-list-get (& decls) index (ast-decl-fallback)))
-              [(AstDecl.Module next-module)
+          (if (ast.ast-decl-list-unwrapped-module-or-import-at? (& decls) index)
+            (match (ast.ast-decl-unwrapped
+              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback)))
+              [(ast.AstDecl.Module next-module)
                 (set! current-module-id next-module)]
-              [(AstDecl.Import
+              [(ast.AstDecl.Import
                   decl-meta
-                  (AstImportSpec.Spec
+                  (ast.AstImportSpec.Spec
                     _
                     _
-                    (AstMaybeModuleName.Some target)
-                    (AstMaybeImportAlias.Some alias)
+                    (ast.AstMaybeModuleName.Some target)
+                    (ast.AstMaybeImportAlias.Some alias)
                     _))
                 (clone_id_map.insert-ref!
                   (&mut aliases)
@@ -396,112 +396,115 @@
       (= (clone-name-list-unique-key-for-base-id-or ambiguous base-id -1) -1)
       (> (clone-name-set-capacity grown) seed-capacity))))
 
-(define (clone-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
-  (ast-node-pool-context-type-get pools id))
+(define (clone-type-get [pools : ast.AstNodePoolContext] [id : i64]) : ast.AstType
+  (ast.ast-node-pool-context-type-get pools id))
 
 ;; A field type is clone-able given the current clone-able-name set: scalars,
 ;; String, tuples, fixed arrays, and dynamic arrays are clone-able recursively; a
 ;; named type (parsed as AstType.Var, or resolved to AstType.Enum/AstType.Struct) is
 ;; clone-able iff it is in `names`; everything else is not.
 (define (clone-field-type-able-id?
-  [pools : AstNodePoolContext]
-  [ty : AstType]
+  [pools : ast.AstNodePoolContext]
+  [ty : ast.AstType]
   [names : CloneNameSet]
   [module-id : i64]) : bool
   (match ty
-    [(AstType.I64) true]
-    [(AstType.I32) true]
-    [(AstType.I16) true]
-    [(AstType.I8) true]
-    [(AstType.U64) true]
-    [(AstType.U32) true]
-    [(AstType.U16) true]
-    [(AstType.U8) true]
-    [(AstType.F64) true]
-    [(AstType.F32) true]
-    [(AstType.Bool) true]
-    [(AstType.Char) true]
-    [(AstType.Unit) true]
-    [(AstType.Never) true]
-    [(AstType.String) true]
-    [(AstType.Tuple elems)
+    [(ast.AstType.I64) true]
+    [(ast.AstType.I32) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.I8) true]
+    [(ast.AstType.U64) true]
+    [(ast.AstType.U32) true]
+    [(ast.AstType.U16) true]
+    [(ast.AstType.U8) true]
+    [(ast.AstType.F64) true]
+    [(ast.AstType.F32) true]
+    [(ast.AstType.Bool) true]
+    [(ast.AstType.Char) true]
+    [(ast.AstType.Unit) true]
+    [(ast.AstType.Never) true]
+    [(ast.AstType.String) true]
+    [(ast.AstType.Tuple elems)
       (clone-field-type-list-able? pools (box-get elems) names module-id)]
-    [(AstType.Array elem _)
+    [(ast.AstType.Array elem _)
       (clone-field-type-able-id?
         pools
         (clone-type-get pools elem)
         names
         module-id)]
-    [(AstType.DynArray elem)
+    [(ast.AstType.DynArray elem)
       (clone-field-type-able-id?
         pools
         (clone-type-get pools elem)
         names
         module-id)]
-    [(AstType.Box elem)
+    [(ast.AstType.Box elem)
       (clone-field-type-able-id?
         pools
         (clone-type-get pools elem)
         names
         module-id)]
-    [(AstType.Region _ inner)
+    [(ast.AstType.Region _ inner)
       (clone-field-type-able-id?
         pools
         (clone-type-get pools inner)
         names
         module-id)]
-    [(AstType.Var name)
+    [(ast.AstType.Var name)
       (clone-name-set-contains-id?
         names
         (clone-type-name-resolve-id names module-id name))]
-    [(AstType.Enum name)
+    [(ast.AstType.Enum name)
       (clone-name-set-contains-resolved-nominal-id? names module-id name)]
-    [(AstType.Struct name)
+    [(ast.AstType.Struct name)
       (clone-name-set-contains-resolved-nominal-id? names module-id name)]
     [_ false]))
 
 (define (clone-field-type-list-able?
-  [pools : AstNodePoolContext]
-  [types : AstTypeList]
+  [pools : ast.AstNodePoolContext]
+  [types : ast.AstTypeList]
   [names : CloneNameSet]
   [module-id : i64]) : bool
   (clone-field-type-list-able-at pools (& types) names module-id 0))
 
 (define (clone-field-type-list-able-at
-  [pools : AstNodePoolContext]
-  [types : (& types AstTypeList)]
+  [pools : ast.AstNodePoolContext]
+  [types : (& types ast.AstTypeList)]
   [names : CloneNameSet]
   [module-id : i64]
   [index : i64]) : bool
-  (if (>= index (ast-type-list-len types))
+  (if (>= index (ast.ast-type-list-len types))
     true
     (if (clone-field-type-able-id?
       pools
       (clone-type-get
         pools
-        (ast-type-list-get types index (ast-type-id-fallback)))
+        (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
       names
       module-id)
       (clone-field-type-list-able-at pools types names module-id (+ index 1))
       false)))
 
 (define (clone-variant-list-able?
-  [pools : AstNodePoolContext]
-  [variants : AstVariantDefList]
+  [pools : ast.AstNodePoolContext]
+  [variants : ast.AstVariantDefList]
   [names : CloneNameSet]
   [module-id : i64]) : bool
   (clone-variant-list-able-at pools (& variants) names module-id 0))
 
 (define (clone-variant-list-able-at
-  [pools : AstNodePoolContext]
-  [variants : (& variants AstVariantDefList)]
+  [pools : ast.AstNodePoolContext]
+  [variants : (& variants ast.AstVariantDefList)]
   [names : CloneNameSet]
   [module-id : i64]
   [index : i64]) : bool
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (ast.ast-variant-def-list-len variants))
     true
-    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
-      [(AstVariantDef.Def _ field-types _)
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def _ field-types _)
         (if (clone-field-type-list-able? pools field-types names module-id)
           (clone-variant-list-able-at
             pools
@@ -512,22 +515,25 @@
           false)])))
 
 (define (clone-struct-fields-able?
-  [pools : AstNodePoolContext]
-  [fields : AstFieldDefList]
+  [pools : ast.AstNodePoolContext]
+  [fields : ast.AstFieldDefList]
   [names : CloneNameSet]
   [module-id : i64]) : bool
   (clone-struct-fields-able-at pools (& fields) names module-id 0))
 
 (define (clone-struct-fields-able-at
-  [pools : AstNodePoolContext]
-  [fields : (& fields AstFieldDefList)]
+  [pools : ast.AstNodePoolContext]
+  [fields : (& fields ast.AstFieldDefList)]
   [names : CloneNameSet]
   [module-id : i64]
   [index : i64]) : bool
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (ast.ast-field-def-list-len fields))
     true
-    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
-      [(AstFieldDef.Def _ ty _)
+    (match (ast.ast-field-def-list-get
+      fields
+      index
+      (ast.ast-field-def-fallback))
+      [(ast.AstFieldDef.Def _ ty _)
         (if (clone-field-type-able-id? pools ty names module-id)
           (clone-struct-fields-able-at pools fields names module-id (+ index 1))
           false)])))
@@ -536,8 +542,8 @@
 ;; clone-able under the current `names` set. Repeats until the set stops
 ;; shrinking (monotone decreasing, so it terminates).
 (define (clone-fixpoint-step-in-module
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [names : CloneNameSet]
   [acc : CloneNameSet]
   [module-id : i64]) : CloneNameSet
@@ -545,7 +551,7 @@
     [out : CloneNameSet acc]
     [current-module-id : i64 module-id]
     [index : i64 0]
-    [count : i64 (ast-decl-list-len (& decls))]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
@@ -554,14 +560,14 @@
           ;; type-definition kinds have a payload this fixpoint reads, so every
           ;; other declaration is skipped without materialising a 104 B row and
           ;; copying it twice more through `ast-decl-unwrapped`.
-          (if (ast-decl-list-unwrapped-module-or-type-definition-at?
+          (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
             (& decls)
             index)
-            (match (ast-decl-unwrapped
+            (match (ast.ast-decl-unwrapped
               (array-ref (struct-get decls slots) (+ decl-offset index)))
-              [(AstDecl.Module next-module)
+              [(ast.AstDecl.Module next-module)
                 (set! current-module-id next-module)]
-              [(AstDecl.DefEnum decl-meta name _ variants)
+              [(ast.AstDecl.DefEnum decl-meta name _ variants)
                 (if (clone-variant-list-able?
                   pools
                   variants
@@ -573,7 +579,7 @@
                       out
                       (clone-name-key-id-in-module current-module-id name)))
                   unit)]
-              [(AstDecl.DefStruct decl-meta name _ _ fields)
+              [(ast.AstDecl.DefStruct decl-meta name _ _ fields)
                 (if (clone-struct-fields-able?
                   pools
                   fields
@@ -591,41 +597,41 @@
       out)))
 
 (define (clone-fixpoint-step
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [names : CloneNameSet]
   [acc : CloneNameSet]) : CloneNameSet
   (clone-fixpoint-step-in-module pools decls names acc (clone-root-module-id)))
 
 ;; Initial over-approximation: every enum/struct name is assumed clone-able.
 (define (clone-all-type-names-in-module
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [acc : CloneNameSet]
   [module-id : i64]) : CloneNameSet
   (let
     [out : CloneNameSet acc]
     [current-module-id : i64 module-id]
     [index : i64 0]
-    [count : i64 (ast-decl-list-len (& decls))]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
         (begin
           ;; Same borrowed classification as the fixpoint step above.
-          (if (ast-decl-list-unwrapped-module-or-type-definition-at?
+          (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
             (& decls)
             index)
-            (match (ast-decl-unwrapped
+            (match (ast.ast-decl-unwrapped
               (array-ref (struct-get decls slots) (+ decl-offset index)))
-              [(AstDecl.Module next-module)
+              [(ast.AstDecl.Module next-module)
                 (set! current-module-id next-module)]
-              [(AstDecl.DefEnum decl-meta name _ _)
+              [(ast.AstDecl.DefEnum decl-meta name _ _)
                 (set!
                   out
                   (clone-name-set-insert-id
                     out
                     (clone-name-key-id-in-module current-module-id name)))]
-              [(AstDecl.DefStruct decl-meta name _ _ _)
+              [(ast.AstDecl.DefStruct decl-meta name _ _ _)
                 (set!
                   out
                   (clone-name-set-insert-id
@@ -636,12 +642,12 @@
           (set! index (+ index 1))))
       out)))
 
-(define (clone-all-type-names [decls : AstDeclList] [acc : CloneNameSet]) : CloneNameSet
+(define (clone-all-type-names [decls : ast.AstDeclList] [acc : CloneNameSet]) : CloneNameSet
   (clone-all-type-names-in-module decls acc (clone-root-module-id)))
 
 (define (clone-fixpoint
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [names : CloneNameSet]) : CloneNameSet
   (let
     [next : CloneNameSet
@@ -656,34 +662,36 @@
       next
       (clone-fixpoint pools decls next))))
 
-(define (clone-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
+(define (clone-decl-list-append
+  [left : ast.AstDeclList]
+  [right : ast.AstDeclList]) : ast.AstDeclList
   (let
-    [out : AstDeclList
-      (ast-decl-list-with-capacity
-        (+ (ast-decl-list-len (& left)) (ast-decl-list-len (& right))))]
+    [out : ast.AstDeclList
+      (ast.ast-decl-list-with-capacity
+        (+ (ast.ast-decl-list-len (& left)) (ast.ast-decl-list-len (& right))))]
     (begin
-      (ast-decl-list-append-from (&mut out) (& left) 0)
-      (ast-decl-list-append-from (&mut out) (& right) 0)
+      (ast.ast-decl-list-append-from (&mut out) (& left) 0)
+      (ast.ast-decl-list-append-from (&mut out) (& right) 0)
       out)))
 
 (define (clone-root-add-type-list
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
-  [types : AstTypeList]
+  [types : ast.AstTypeList]
   [module-id : i64]) : CloneNameList
   (clone-root-add-type-list-at pools decls able roots (& types) module-id 0))
 
 (define (clone-root-add-type-list-at
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
-  [types : (& types AstTypeList)]
+  [types : (& types ast.AstTypeList)]
   [module-id : i64]
   [index : i64]) : CloneNameList
-  (if (>= index (ast-type-list-len types))
+  (if (>= index (ast.ast-type-list-len types))
     roots
     (clone-root-add-type-list-at
       pools
@@ -696,33 +704,36 @@
         roots
         (clone-type-get
           pools
-          (ast-type-list-get types index (ast-type-id-fallback)))
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
         module-id)
       types
       module-id
       (+ index 1))))
 
 (define (clone-root-add-fields
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
-  [fields : AstFieldDefList]
+  [fields : ast.AstFieldDefList]
   [module-id : i64]) : CloneNameList
   (clone-root-add-fields-at pools decls able roots (& fields) module-id 0))
 
 (define (clone-root-add-fields-at
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
-  [fields : (& fields AstFieldDefList)]
+  [fields : (& fields ast.AstFieldDefList)]
   [module-id : i64]
   [index : i64]) : CloneNameList
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (ast.ast-field-def-list-len fields))
     roots
-    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
-      [(AstFieldDef.Def _ ty _)
+    (match (ast.ast-field-def-list-get
+      fields
+      index
+      (ast.ast-field-def-fallback))
+      [(ast.AstFieldDef.Def _ ty _)
         (clone-root-add-fields-at
           pools
           decls
@@ -733,26 +744,29 @@
           (+ index 1))])))
 
 (define (clone-root-add-variants
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
-  [variants : AstVariantDefList]
+  [variants : ast.AstVariantDefList]
   [module-id : i64]) : CloneNameList
   (clone-root-add-variants-at pools decls able roots (& variants) module-id 0))
 
 (define (clone-root-add-variants-at
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
-  [variants : (& variants AstVariantDefList)]
+  [variants : (& variants ast.AstVariantDefList)]
   [module-id : i64]
   [index : i64]) : CloneNameList
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (ast.ast-variant-def-list-len variants))
     roots
-    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
-      [(AstVariantDef.Def _ fields _)
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def _ fields _)
         (clone-root-add-variants-at
           pools
           decls
@@ -763,9 +777,9 @@
           (+ index 1))])))
 
 (define (clone-root-add-name-deps-in-module
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
-  [cursor : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
+  [cursor : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
   [name-key-id : i64]
@@ -777,7 +791,7 @@
   ;; type-definition kinds carry a payload the search reads; the rest are
   ;; skipped through the borrowed tag test.
   (let
-    [count : i64 (ast-decl-list-len (& cursor))]
+    [count : i64 (ast.ast-decl-list-len (& cursor))]
     [index : i64 0]
     [out : CloneNameList roots]
     [current-module-id : i64 module-id]
@@ -785,14 +799,14 @@
     (begin
       (while (and (not done) (< index count))
         (begin
-          (if (ast-decl-list-unwrapped-module-or-type-definition-at?
+          (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
             (& cursor)
             index)
-            (match (ast-decl-unwrapped
-              (ast-decl-list-get (& cursor) index (ast-decl-fallback)))
-              [(AstDecl.Module next-module)
+            (match (ast.ast-decl-unwrapped
+              (ast.ast-decl-list-get (& cursor) index (ast.ast-decl-fallback)))
+              [(ast.AstDecl.Module next-module)
                 (set! current-module-id next-module)]
-              [(AstDecl.DefEnum decl-meta decl-name _ variants)
+              [(ast.AstDecl.DefEnum decl-meta decl-name _ variants)
                 (if (=
                   (clone-name-key-id-in-module current-module-id decl-name)
                   name-key-id)
@@ -808,7 +822,7 @@
                         current-module-id))
                     (set! done true))
                   unit)]
-              [(AstDecl.DefStruct decl-meta decl-name _ _ fields)
+              [(ast.AstDecl.DefStruct decl-meta decl-name _ _ fields)
                 (if (=
                   (clone-name-key-id-in-module current-module-id decl-name)
                   name-key-id)
@@ -830,9 +844,9 @@
       out)))
 
 (define (clone-root-add-name-deps
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
-  [cursor : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
+  [cursor : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
   [name-key-id : i64]) : CloneNameList
@@ -846,8 +860,8 @@
     (clone-root-module-id)))
 
 (define (clone-root-add-name
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
   [name-key-id : i64]) : CloneNameList
@@ -864,14 +878,14 @@
     roots))
 
 (define (clone-root-add-type
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
-  [ty : AstType]
+  [ty : ast.AstType]
   [module-id : i64]) : CloneNameList
   (match ty
-    [(AstType.Tuple elems)
+    [(ast.AstType.Tuple elems)
       (clone-root-add-type-list
         pools
         decls
@@ -879,7 +893,7 @@
         roots
         (box-get elems)
         module-id)]
-    [(AstType.Array elem _)
+    [(ast.AstType.Array elem _)
       (clone-root-add-type
         pools
         decls
@@ -887,7 +901,7 @@
         roots
         (clone-type-get pools elem)
         module-id)]
-    [(AstType.DynArray elem)
+    [(ast.AstType.DynArray elem)
       (clone-root-add-type
         pools
         decls
@@ -895,7 +909,7 @@
         roots
         (clone-type-get pools elem)
         module-id)]
-    [(AstType.Box elem)
+    [(ast.AstType.Box elem)
       (clone-root-add-type
         pools
         decls
@@ -903,7 +917,7 @@
         roots
         (clone-type-get pools elem)
         module-id)]
-    [(AstType.Region _ inner)
+    [(ast.AstType.Region _ inner)
       (clone-root-add-type
         pools
         decls
@@ -911,21 +925,21 @@
         roots
         (clone-type-get pools inner)
         module-id)]
-    [(AstType.Var name)
+    [(ast.AstType.Var name)
       (clone-root-add-name
         pools
         decls
         able
         roots
         (clone-root-nominal-key-id able module-id name))]
-    [(AstType.Enum name)
+    [(ast.AstType.Enum name)
       (clone-root-add-name
         pools
         decls
         able
         roots
         (clone-root-nominal-key-id able module-id name))]
-    [(AstType.Struct name)
+    [(ast.AstType.Struct name)
       (clone-root-add-name
         pools
         decls
@@ -935,8 +949,8 @@
     [_ roots]))
 
 (define (clone-root-expand
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
   [cursor : CloneNameList]) : CloneNameList
@@ -967,28 +981,28 @@
       out)))
 
 (define (clone-stdlib-handoff-roots
-  [pools : AstNodePoolContext]
-  [decls : AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]) : CloneNameList
   (clone-root-expand pools decls able roots roots))
 
 (define (clone-helper-decl-count-in-module
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [root-key-id : i64]
   [helper-name-id : i64]
   [module-id : i64]) : i64
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) 0]
-    [(AstDeclListStep.Cons decl rest)
-      (match (ast-decl-unwrapped decl)
-        [(AstDecl.Module next-module)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) 0]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (match (ast.ast-decl-unwrapped decl)
+        [(ast.AstDecl.Module next-module)
           (clone-helper-decl-count-in-module
             rest
             root-key-id
             helper-name-id
             next-module)]
-        [(AstDecl.DefFn decl-meta name _ _ _ _)
+        [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
           (+
             (if (and
               (=
@@ -1012,7 +1026,7 @@
             module-id)])]))
 
 (define (clone-helper-decl-count
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [root-key-id : i64]
   [helper-name-id : i64]) : i64
   (clone-helper-decl-count-in-module

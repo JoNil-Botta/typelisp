@@ -210,7 +210,10 @@ fi
 if [ -s "$METADATA_FILES" ]; then
     echo "Checking current-syntax-aware TypeLisp formatting for $metadata_count file(s)."
     select_current_cli_for_format
-    if ! xargs "$CURRENT_CLI_BIN" fmt --check < "$METADATA_FILES"; then
+    # Batch the driver invocations: one process per batch keeps the formatter's
+    # arena bounded, which Windows runners enforce as a system commit limit
+    # (error 1455) when a single invocation spans the whole tree.
+    if ! xargs -n "${TYPELISP_FORMAT_BATCH_SIZE:-32}" "$CURRENT_CLI_BIN" fmt --check < "$METADATA_FILES"; then
         echo "Current-syntax-aware TypeLisp format check failed." >&2
         echo "Run: $CURRENT_CLI_BIN fmt --check \$(cat $METADATA_FILES)" >&2
         exit 1

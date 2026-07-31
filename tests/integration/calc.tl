@@ -39,15 +39,13 @@
 ;; There is no hand-built token stream anywhere in this file: the parser's input
 ;; is exactly the lexer's output.
 ;; The shared token model: the `Token` enum, the `token-tag` / `token-int`
-;; accessors, and the tag constants. Resolved relative to this file, so it finds
-;; the co-located `token.tl`.
-;; Retained for #2454 path-import compatibility: this fixture intentionally uses
-;; the co-located token module as a flat multi-file program slice.
+;; accessors, and the tag constants. The dotted `token` identity resolves to
+;; the co-located module.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
-(import "token.tl")
-(import (vector.vector Token) as tokvec)
+(import token)
+(import (vector.vector token.Token) as tokvec)
 
 ;; ============================ AST model ===================================
 ;; The real recursive AST: an integer literal, or a binary node over two
@@ -102,14 +100,14 @@
 ;; builtin (#45) - exactly as a real lexer reports malformed input; the trailing
 ;; `Token.End` is dead code that only satisfies the `Token` result type, since
 ;; `panic` yields unit and never returns.
-(define (single-token [c : char]) : Token
+(define (single-token [c : char]) : token.Token
   (cond
-    [(= c '+') Token.Plus]
-    [(= c '-') Token.Minus]
-    [(= c '*') Token.Star]
-    [(= c '/') Token.Slash]
-    [(= c '(') Token.LParen]
-    [(= c ')') Token.RParen]
+    [(= c '+') token.Token.Plus]
+    [(= c '-') token.Token.Minus]
+    [(= c '*') token.Token.Star]
+    [(= c '/') token.Token.Slash]
+    [(= c '(') token.Token.LParen]
+    [(= c ')') token.Token.RParen]
     [else (io.panic "lexer: unexpected character")]))
 
 ;; Lex `src`, appending each emitted `Token` value into `toks` and returning the
@@ -140,14 +138,14 @@
                         acc
                         (+ (* acc 10) (digit-value (string.string-ref src i))))
                       (set! i (+ i 1))))
-                  (tokvec.push toks (Token.Int acc))
+                  (tokvec.push toks (token.Token.Int acc))
                   (set! count (+ count 1))))
               (begin
                 (tokvec.push toks (single-token c))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))))))
       ;; A real lexer terminates the stream; record the sentinel too.
-      (tokvec.push toks Token.End)
+      (tokvec.push toks token.Token.End)
       count)))
 
 ;; ============================ Parser ======================================
@@ -171,11 +169,11 @@
 
 ;; Kind tag of the token under the cursor.
 (define (current-tag [toks : (& toks tokvec.Vec)] [cur : (& cur (Array i64 1))]) : i64
-  (token-tag (tokvec.get toks (cur-pos cur) Token.End)))
+  (token.token-tag (tokvec.get toks (cur-pos cur) token.Token.End)))
 
 ;; Integer value of the token under the cursor (meaningful only for `Token.Int`).
 (define (current-val [toks : (& toks tokvec.Vec)] [cur : (& cur (Array i64 1))]) : i64
-  (token-int (tokvec.get toks (cur-pos cur) Token.End)))
+  (token.token-int (tokvec.get toks (cur-pos cur) token.Token.End)))
 
 ;; Consume the current token: advance the cursor by one.
 (define (advance [cur : (&mut cur (Array i64 1))]) : unit
@@ -201,21 +199,21 @@
   [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [t : i64 (current-tag toks cur)]
-    (if (= t (tag-int))
+    (if (= t (token.tag-int))
       ;; A literal: build `(Expr.Num v)` and consume the `Token.Int` token.
       (let
         [v : i64 (current-val toks cur)]
         (begin
           (advance cur)
           (Expr.Num v)))
-      (if (= t (tag-lparen))
+      (if (= t (token.tag-lparen))
         ;; '(' expr ')': consume '(', parse the inner expr, consume ')'.
         (begin
-          (expect toks cur (tag-lparen))
+          (expect toks cur (token.tag-lparen))
           (let
             [inner : Expr (parse-expr toks cur)]
             (begin
-              (expect toks cur (tag-rparen))
+              (expect toks cur (token.tag-rparen))
               inner)))
         (io.panic "parser: expected an integer or '('")))))
 
@@ -229,9 +227,9 @@
     [acc : Expr (parse-factor toks cur)]
     (begin
       (while (or
-        (= (current-tag toks cur) (tag-star))
-        (= (current-tag toks cur) (tag-slash)))
-        (if (= (current-tag toks cur) (tag-star))
+        (= (current-tag toks cur) (token.tag-star))
+        (= (current-tag toks cur) (token.tag-slash)))
+        (if (= (current-tag toks cur) (token.tag-star))
           (begin
             (advance cur)
             (set! acc (Expr.Mul (box acc) (box (parse-factor toks cur)))))
@@ -251,9 +249,9 @@
     [acc : Expr (parse-term toks cur)]
     (begin
       (while (or
-        (= (current-tag toks cur) (tag-plus))
-        (= (current-tag toks cur) (tag-minus)))
-        (if (= (current-tag toks cur) (tag-plus))
+        (= (current-tag toks cur) (token.tag-plus))
+        (= (current-tag toks cur) (token.tag-minus)))
+        (if (= (current-tag toks cur) (token.tag-plus))
           (begin
             (advance cur)
             (set! acc (Expr.Add (box acc) (box (parse-term toks cur)))))

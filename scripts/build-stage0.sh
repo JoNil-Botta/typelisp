@@ -50,6 +50,10 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 mkdir -p "$(dirname -- "$OUT")"
 
+SEED_DOTTED_IMPORT_BRIDGE_ROOT=$(
+    bootstrap_seed_dotted_import_bridge_root \
+        "$ROOT" "$SEED" "$WORKDIR"
+)
 SEED_COMPTIME_VARIANT_BRIDGE_ROOT=$(
     bootstrap_seed_comptime_short_variant_bridge_root \
         "$ROOT" "$SEED" "$WORKDIR"
@@ -99,6 +103,38 @@ stage_seed_bootstrap_cfg_args() {
 STAGES=4
 PREV="$SEED"
 
+if [ -n "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" ]; then
+    echo "[build-stage0] published seed predates the dotted-import cutover; building a one-generation bridge"
+    DOTTED_BRIDGE_DIR="$WORKDIR/dotted-import-seed-bridge/build"
+    DOTTED_BRIDGE_ASM="$DOTTED_BRIDGE_DIR/bridge.s"
+    DOTTED_BRIDGE_OBJ="$DOTTED_BRIDGE_DIR/bridge.$NL_OBJ_EXT"
+    DOTTED_BRIDGE_BIN="$DOTTED_BRIDGE_DIR/bridge$NL_BIN_EXT"
+    mkdir -p "$DOTTED_BRIDGE_DIR"
+    if ! run_with_heartbeat_capture \
+        "compile dotted-import bridge" \
+        "$COMPILE_STDOUT" "$COMPILE_STDERR" \
+        "$SEED" compile \
+        "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/src/main.tl" \
+        -o "$DOTTED_BRIDGE_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --cfg stage0-seed-bootstrap \
+        --stdlib-root "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/stdlib" \
+        --stdlib-root "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/src" \
+        --opt-level 2; then
+        echo "[build-stage0] seed failed while compiling the dotted-import bridge" >&2
+        sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true
+        sed 's/^/  /' "$COMPILE_STDERR" >&2 || true
+        exit 1
+    fi
+    bootstrap_seed_runtime_small_arena_compat "$DOTTED_BRIDGE_ASM"
+    assemble_and_link \
+        "dotted-import bridge" \
+        "$DOTTED_BRIDGE_ASM" "$DOTTED_BRIDGE_OBJ" "$DOTTED_BRIDGE_BIN"
+    PREV=$DOTTED_BRIDGE_BIN
+    echo "[build-stage0] dotted-import bridge ready; building stage1 from current sources"
+fi
+
 if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
     echo "[build-stage0] seed pins prefixed comptime variants; building a short-variant bridge"
     BRIDGE_DIR="$WORKDIR/comptime-short-variant-seed-bridge"
@@ -114,7 +150,7 @@ if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
             run_with_heartbeat_capture \
                 "compile short-variant bridge" \
                 "$COMPILE_STDOUT" "$COMPILE_STDERR" \
-                "$SEED" compile \
+                "$PREV" compile \
                 "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src/main.tl" \
                 -o "$BRIDGE_ASM" \
                 --target "$NL_BOOTSTRAP_TARGET" \
@@ -131,7 +167,7 @@ if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
         if ! run_with_heartbeat_capture \
             "compile short-variant bridge" \
             "$COMPILE_STDOUT" "$COMPILE_STDERR" \
-            "$SEED" compile \
+            "$PREV" compile \
             "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src/main.tl" \
             -o "$BRIDGE_ASM" \
             --target "$NL_BOOTSTRAP_TARGET" \

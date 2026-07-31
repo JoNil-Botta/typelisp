@@ -6,8 +6,13 @@
 (import (vector.vector String) as windows_coff_svec)
 (import compiler_object as cobj)
 (import compiler_profile_state as profile_state)
-(import "compiler_object_coff.tl")
-(import "compiler_driver_core.tl")
+(import compiler_object_coff)
+(import compiler_driver_core)
+(import compiler_ast_types)
+(import compiler_backend)
+(import compiler_ir_types)
+(import compiler_diagnostic)
+(import compiler_optimize)
 (import sym_i64_env)
 (cfg test (import stdlib.test))
 
@@ -18,7 +23,7 @@
 (defenum ResultCompilerWindowsBatchArtifact
   (CoffObject String)
   (Assembly text_buf.TextBuf String)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
 (define (compiler-windows-coff-extern-linkable?
   [name : String]
@@ -77,7 +82,7 @@
 
 (define (compiler-windows-coff-linkability [image : cobj.CompilerObjectImage]) : CompilerWindowsCoffLinkability
   (cond
-    [(not (compiler-object-coff-image-supported? image))
+    [(not (compiler_object_coff.compiler-object-coff-image-supported? image))
       (CompilerWindowsCoffLinkability.Unavailable "unsupported-coff-image")]
     [(not
         (compiler-windows-coff-relocations-linkable?
@@ -93,14 +98,14 @@
           (cobj.CompilerObjectSymbolKind.Function)))
       (CompilerWindowsCoffLinkability.Unavailable "missing-entry-symbol")]
     [(<
-        (compiler-object-coff-section-label-offset
+        (compiler_object_coff.compiler-object-coff-section-label-offset
           image
           (cobj.CompilerObjectSectionKind.Text)
           "tl_setup_argv")
         0)
       (CompilerWindowsCoffLinkability.Unavailable "missing-runtime-entry")]
     [(<=
-        (compiler-object-coff-section-raw-size
+        (compiler_object_coff.compiler-object-coff-section-raw-size
           image
           (cobj.CompilerObjectSectionKind.Text))
         0)
@@ -114,101 +119,108 @@
 
 (define (compiler-windows-batch-diagnostic
   [input-path : String]
-  [message : String]) : (Box CompilerDiagnostic)
-  (box (compiler-diagnostic-at-start input-path message)))
+  [message : String]) : (Box compiler_diagnostic.CompilerDiagnostic)
+  (box (compiler_diagnostic.compiler-diagnostic-at-start input-path message)))
 
 (define (compiler-windows-batch-backend-diagnostic
   [input-path : String]
-  [diag : (Box CompilerDiagnostic)]) : (Box CompilerDiagnostic)
-  (box (compiler-diagnostic-with-path (box-get diag) input-path)))
+  [diag : (Box compiler_diagnostic.CompilerDiagnostic)]) : (Box
+    compiler_diagnostic.CompilerDiagnostic)
+  (box
+    (compiler_diagnostic.compiler-diagnostic-with-path
+      (box-get diag)
+      input-path)))
 
 (define (compiler-windows-batch-emit-assembly
-  [pools : AstNodePoolContext]
+  [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
-  [program : CompilerIrProgram]
-  [spans : CompilerSourceSpans]
-  [mode : CompilerBackendMode]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [mode : compiler_backend.CompilerBackendMode]
   [category : String]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
   (begin
-    (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
-    (match (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
+    (cfg
+      compile-profile
+      (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
+    (match (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
       pools
       program
-      (CompilerBackendTarget.Windows)
+      (compiler_backend.CompilerBackendTarget.Windows)
       mode
       spans
       true
       false
       profile-state)
-      [(ResultCompilerBackendBuffer.Ok asm)
+      [(compiler_backend.ResultCompilerBackendBuffer.Ok asm)
         (begin
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase
+            (compiler_driver_core.compiler-driver-profile-finish-phase
               profile-state
               "backend.assembly"))
-          (compiler-driver-allocation-profile-snapshot! "backend.assembly")
+          (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+            "backend.assembly")
           (ResultCompilerWindowsBatchArtifact.Assembly asm category))]
-      [(ResultCompilerBackendBuffer.Err diag)
+      [(compiler_backend.ResultCompilerBackendBuffer.Err diag)
         (begin
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase
+            (compiler_driver_core.compiler-driver-profile-finish-phase
               profile-state
               "backend.assembly"))
-          (compiler-driver-allocation-profile-snapshot!
+          (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
             "backend.assembly-error")
           (ResultCompilerWindowsBatchArtifact.Err
             (compiler-windows-batch-backend-diagnostic input-path diag)))])))
 
 (define (compiler-windows-coff-object-binop-supported?
-  [op : CompilerIrBinOp]
-  [ty : AstType]) : bool
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [ty : compiler_ast_types.AstType]) : bool
   (and
-    (not (compiler-backend-float-type? ty))
+    (not (compiler_backend.compiler-backend-float-type? ty))
     (match op
-      [(CompilerIrBinOp.Add) true]
-      [(CompilerIrBinOp.Sub) true]
-      [(CompilerIrBinOp.Mul) true]
-      [(CompilerIrBinOp.Eq) true]
-      [(CompilerIrBinOp.Ne) true]
-      [(CompilerIrBinOp.Lt) true]
-      [(CompilerIrBinOp.Le) true]
-      [(CompilerIrBinOp.Gt) true]
-      [(CompilerIrBinOp.Ge) true]
-      [(CompilerIrBinOp.BitTestEq) true]
-      [(CompilerIrBinOp.BitTestNe) true]
-      [(CompilerIrBinOp.And) true]
-      [(CompilerIrBinOp.Or) true]
-      [(CompilerIrBinOp.BitAnd) true]
-      [(CompilerIrBinOp.BitOr) true]
-      [(CompilerIrBinOp.BitXor) true]
+      [(compiler_ir_types.CompilerIrBinOp.Add) true]
+      [(compiler_ir_types.CompilerIrBinOp.Sub) true]
+      [(compiler_ir_types.CompilerIrBinOp.Mul) true]
+      [(compiler_ir_types.CompilerIrBinOp.Eq) true]
+      [(compiler_ir_types.CompilerIrBinOp.Ne) true]
+      [(compiler_ir_types.CompilerIrBinOp.Lt) true]
+      [(compiler_ir_types.CompilerIrBinOp.Le) true]
+      [(compiler_ir_types.CompilerIrBinOp.Gt) true]
+      [(compiler_ir_types.CompilerIrBinOp.Ge) true]
+      [(compiler_ir_types.CompilerIrBinOp.BitTestEq) true]
+      [(compiler_ir_types.CompilerIrBinOp.BitTestNe) true]
+      [(compiler_ir_types.CompilerIrBinOp.And) true]
+      [(compiler_ir_types.CompilerIrBinOp.Or) true]
+      [(compiler_ir_types.CompilerIrBinOp.BitAnd) true]
+      [(compiler_ir_types.CompilerIrBinOp.BitOr) true]
+      [(compiler_ir_types.CompilerIrBinOp.BitXor) true]
       [_ false])))
 
 (define (compiler-windows-coff-object-value-supported?
-  [value : CompilerIrValue]) : bool
+  [value : compiler_ir_types.CompilerIrValue]) : bool
   (match value
     ;; The object emitter currently uses `REX.W C7 /0`, whose imm32 operand is
     ;; sign-extended. Keep wider constants on the assembly path until movabs
     ;; lowering is shared with the object backend.
-    [(CompilerIrValue.I64 value)
+    [(compiler_ir_types.CompilerIrValue.I64 value)
       (and (>= value -2147483648) (<= value 2147483647))]
     ;; This placeholder only records the initializer reference today.
-    [(CompilerIrValue.RuntimeGlobal _) false]
+    [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) false]
     [_ true]))
 
 (define (compiler-windows-coff-object-call-args-supported?
-  [args : CompilerIrCallArgs]) : bool
+  [args : compiler_ir_types.CompilerIrCallArgs]) : bool
   (match args
-    [(CompilerIrCallArgs.Nil) true]
-    [(CompilerIrCallArgs.One value)
+    [(compiler_ir_types.CompilerIrCallArgs.Nil) true]
+    [(compiler_ir_types.CompilerIrCallArgs.One value)
       (compiler-windows-coff-object-value-supported? value)]
-    [(CompilerIrCallArgs.Two lhs rhs)
+    [(compiler_ir_types.CompilerIrCallArgs.Two lhs rhs)
       (and
         (compiler-windows-coff-object-value-supported? lhs)
         (compiler-windows-coff-object-value-supported? rhs))]
-    [(CompilerIrCallArgs.Array values)
+    [(compiler_ir_types.CompilerIrCallArgs.Array values)
       (let
         [index : i64 0]
         [count : i64 (array-length values)]
@@ -225,11 +237,12 @@
 
 (define (compiler-windows-coff-object-call-supported? [name : i64]) : bool
   (let
-    [text : String (compiler-ir-symbol-text name)]
+    [text : String (compiler_ir_types.compiler-ir-symbol-text name)]
     (and
-      (not (compiler-backend-stdlib-runtime-function-name? text))
-      (not (compiler-backend-string-prefix-at? text "tl_" 0))
-      (not (compiler-backend-fixed-fault-symbol-id? name)))))
+      (not
+        (compiler_backend.compiler-backend-stdlib-runtime-function-name? text))
+      (not (compiler_backend.compiler-backend-string-prefix-at? text "tl_" 0))
+      (not (compiler_backend.compiler-backend-fixed-fault-symbol-id? name)))))
 
 ;; Object-image lowering is deliberately incremental. The COFF encoder can
 ;; serialize every byte record produced by the cases below, but several IR
@@ -237,111 +250,114 @@
 ;; emitter. Do not mistake an encodable image for a semantically complete one:
 ;; keep those programs on the assembly path until their object lowering lands.
 (define (compiler-windows-coff-object-instr-supported?
-  [instr : CompilerIrInstr]) : bool
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (match instr
-    [(CompilerIrInstr.Mov _ src _)
+    [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
       (compiler-windows-coff-object-value-supported? src)]
-    [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ op lhs rhs ty)
       (and
         (compiler-windows-coff-object-binop-supported? op ty)
         (compiler-windows-coff-object-value-supported? lhs)
         (compiler-windows-coff-object-value-supported? rhs))]
-    [(CompilerIrInstr.UnOp _ op src _)
+    [(compiler_ir_types.CompilerIrInstr.UnOp _ op src _)
       (and
         (compiler-windows-coff-object-value-supported? src)
         (match op
-          [(CompilerIrUnOp.Sqrt) false]
+          [(compiler_ir_types.CompilerIrUnOp.Sqrt) false]
           [_ true]))]
-    [(CompilerIrInstr.Call _ name args _)
+    [(compiler_ir_types.CompilerIrInstr.Call _ name args _)
       (and
         (compiler-windows-coff-object-call-supported? name)
         (compiler-windows-coff-object-call-args-supported? args))]
-    [(CompilerIrInstr.CallIndirect _ _ _ _) false]
-    [(CompilerIrInstr.CallIndirectC _ callee args _)
+    [(compiler_ir_types.CompilerIrInstr.CallIndirect _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ callee args _)
       (and
         (compiler-windows-coff-object-value-supported? callee)
         (compiler-windows-coff-object-call-args-supported? args))]
-    [(CompilerIrInstr.CallCAbiStoreResult _) false]
-    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) false]
-    [(CompilerIrInstr.TailCall _ _ _) false]
-    [(CompilerIrInstr.Store _ value _)
+    [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult _) false]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult _) false]
+    [(compiler_ir_types.CompilerIrInstr.TailCall _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Store _ value _)
       (compiler-windows-coff-object-value-supported? value)]
-    [(CompilerIrInstr.Jump _) true]
+    [(compiler_ir_types.CompilerIrInstr.Jump _) true]
     ;; The object-only control-flow implementation still has differential
     ;; mismatches for conditions, early returns, and enum matches.
-    [(CompilerIrInstr.Branch _ _ _) false]
-    [(CompilerIrInstr.TotalEnumBranch _ _ _) false]
-    [(CompilerIrInstr.Return maybe)
+    [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Return maybe)
       (match maybe
-        [(CompilerIrMaybeValue.No) true]
-        [(CompilerIrMaybeValue.Some value)
+        [(compiler_ir_types.CompilerIrMaybeValue.No) true]
+        [(compiler_ir_types.CompilerIrMaybeValue.Some value)
           (compiler-windows-coff-object-value-supported? value)])]
-    [(CompilerIrInstr.Phi _ _ _) false]
-    [(CompilerIrInstr.Gep _ base offset _)
+    [(compiler_ir_types.CompilerIrInstr.Phi _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
       (and
         (compiler-windows-coff-object-value-supported? base)
         (compiler-windows-coff-object-value-supported? offset))]
-    [(CompilerIrInstr.Load _ src _)
+    [(compiler_ir_types.CompilerIrInstr.Load _ src _)
       (compiler-windows-coff-object-value-supported? src)]
-    [(CompilerIrInstr.StorePtr _ _ _) false]
-    [(CompilerIrInstr.CopyBytes _ _ _) false]
-    [(CompilerIrInstr.BoundsCheck _ _ _) false]
-    [(CompilerIrInstr.Cast _ _ _ _) false]
-    [(CompilerIrInstr.Bitcast _ _ _ _) false]
-    [(CompilerIrInstr.Splat _ _ _ _) false]
-    [(CompilerIrInstr.VectorBinOp _) false]
-    [(CompilerIrInstr.VectorPrefix _) false]
-    [(CompilerIrInstr.VectorReduce _ _ _ _ _) false]
-    [(CompilerIrInstr.VectorCompare _) false]
-    [(CompilerIrInstr.MaskBinOp _ _ _ _ _) false]
-    [(CompilerIrInstr.MaskNot _ _ _) false]
-    [(CompilerIrInstr.MaskReduce _ _ _ _) false]
-    [(CompilerIrInstr.Select _) false]
-    [(CompilerIrInstr.VectorLoad _ _ _ _ _) false]
-    [(CompilerIrInstr.VectorStore _) false]
-    [(CompilerIrInstr.PredicatedStore _) false]
-    [(CompilerIrInstr.PredicatedLoad _) false]
-    [(CompilerIrInstr.GatherLoad _) false]
-    [(CompilerIrInstr.VectorShuffle _) false]
-    [(CompilerIrInstr.TailMask _ _ _ _) false]
-    [(CompilerIrInstr.CpuId _ _ _ _) false]
-    [(CompilerIrInstr.Xgetbv _ _) false]
-    [(CompilerIrInstr.Syscall _ _) false]
-    [(CompilerIrInstr.SpmdCall _) false]
-    [(CompilerIrInstr.Pack _ _ _) false]
-    [(CompilerIrInstr.Word _ _ _ _) false]
-    [(CompilerIrInstr.TailCallIndirect _ _ _) false]
-    [(CompilerIrInstr.Alloc _ _) false]
-    [(CompilerIrInstr.AddrOf _ _) false]
-    [(CompilerIrInstr.LaneId _ _ _) false]
-    [(CompilerIrInstr.EntryArgc _) false]
-    [(CompilerIrInstr.EntryArgv _) false]
-    [(CompilerIrInstr.EntryEnvp _) false]
-    [(CompilerIrInstr.Switch _ _ _ _) false]
-    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) false]))
+    [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.CopyBytes _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Cast _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Bitcast _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Splat _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorBinOp _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorPrefix _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorCompare _) false]
+    [(compiler_ir_types.CompilerIrInstr.MaskBinOp _ _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.MaskNot _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.MaskReduce _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Select _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorLoad _ _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorStore _) false]
+    [(compiler_ir_types.CompilerIrInstr.PredicatedStore _) false]
+    [(compiler_ir_types.CompilerIrInstr.PredicatedLoad _) false]
+    [(compiler_ir_types.CompilerIrInstr.GatherLoad _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorShuffle _) false]
+    [(compiler_ir_types.CompilerIrInstr.TailMask _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.CpuId _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Xgetbv _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Syscall _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.SpmdCall _) false]
+    [(compiler_ir_types.CompilerIrInstr.Pack _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Word _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Alloc _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.LaneId _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.EntryArgc _) false]
+    [(compiler_ir_types.CompilerIrInstr.EntryArgv _) false]
+    [(compiler_ir_types.CompilerIrInstr.EntryEnvp _) false]
+    [(compiler_ir_types.CompilerIrInstr.Switch _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) false]))
 
 (test
   compiler-windows-coff-total-enum-control-flow-falls-back
   (begin
     (test.assert-false
       (compiler-windows-coff-object-instr-supported?
-        (CompilerIrInstr.TotalEnumBranch (CompilerIrValue.I64 0) 1 2))
+        (compiler_ir_types.CompilerIrInstr.TotalEnumBranch
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          1
+          2))
       "total enum branches stay on the assembly path")
     (test.assert-false
       (compiler-windows-coff-object-instr-supported?
-        (CompilerIrInstr.TotalEnumSwitch
-          (CompilerIrValue.I64 0)
+        (compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
+          (compiler_ir_types.CompilerIrValue.I64 0)
           0
-          CompilerIrSwitchCaseList.Nil
+          compiler_ir_types.CompilerIrSwitchCaseList.Nil
           1
           2))
       "total enum switches stay on the assembly path")))
 
 (define (compiler-windows-coff-object-instrs-supported?
-  [instrs : CompilerIrInstrSeq]) : bool
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
   (let
     [index : i64 0]
-    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
     [supported : bool true]
     (begin
       (while (and supported (< index count))
@@ -349,30 +365,30 @@
           (set!
             supported
             (compiler-windows-coff-object-instr-supported?
-              (compiler-ir-instr-seq-ref instrs index)))
+              (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
           (set! index (+ index 1))))
       supported)))
 
 (define (compiler-windows-coff-object-blocks-supported?
-  [blocks : CompilerIrBlockList]) : bool
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
   (match blocks
-    [(CompilerIrBlockList.Nil) true]
-    [(CompilerIrBlockList.Cons block rest)
+    [(compiler_ir_types.CompilerIrBlockList.Nil) true]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (match block
-        [(CompilerIrBlock.Block _ instrs)
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (and
             (compiler-windows-coff-object-instrs-supported? instrs)
             (compiler-windows-coff-object-blocks-supported? (box-get rest)))])]
-    [(CompilerIrBlockList.Array seq)
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (let
         [index : i64 0]
-        [count : i64 (compiler-ir-block-seq-count seq)]
+        [count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
         [supported : bool true]
         (begin
           (while (and supported (< index count))
             (begin
-              (match (compiler-ir-block-seq-ref seq index)
-                [(CompilerIrBlock.Block _ instrs)
+              (match (compiler_ir_types.compiler-ir-block-seq-ref seq index)
+                [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
                   (set!
                     supported
                     (compiler-windows-coff-object-instrs-supported? instrs))])
@@ -380,49 +396,54 @@
           supported))]))
 
 (define (compiler-windows-coff-object-functions-supported?
-  [functions : CompilerIrFunctionList]) : bool
+  [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
   (match functions
-    [(CompilerIrFunctionList.Nil) true]
-    [(CompilerIrFunctionList.Cons function rest)
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) true]
+    [(compiler_ir_types.CompilerIrFunctionList.Cons function rest)
       (match function
-        [(CompilerIrFunction.Function name _ _ _ blocks)
+        [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
           (and
             (or
-              (compiler-backend-stdlib-runtime-function-name?
-                (compiler-ir-symbol-text name))
+              (compiler_backend.compiler-backend-stdlib-runtime-function-name?
+                (compiler_ir_types.compiler-ir-symbol-text name))
               (compiler-windows-coff-object-blocks-supported? blocks))
             (compiler-windows-coff-object-functions-supported? (box-get rest)))])]
-    [(CompilerIrFunctionList.Array seq)
+    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (let
         [index : i64 0]
-        [count : i64 (compiler-ir-function-seq-count seq)]
+        [count : i64 (compiler_ir_types.compiler-ir-function-seq-count seq)]
         [supported : bool true]
         (begin
           (while (and supported (< index count))
             (begin
-              (match (compiler-ir-function-seq-ref seq index)
-                [(CompilerIrFunction.Function name _ _ _ blocks)
+              (match (compiler_ir_types.compiler-ir-function-seq-ref seq index)
+                [(compiler_ir_types.CompilerIrFunction.Function
+                    name
+                    _
+                    _
+                    _
+                    blocks)
                   (set!
                     supported
                     (or
-                      (compiler-backend-stdlib-runtime-function-name?
-                        (compiler-ir-symbol-text name))
+                      (compiler_backend.compiler-backend-stdlib-runtime-function-name?
+                        (compiler_ir_types.compiler-ir-symbol-text name))
                       (compiler-windows-coff-object-blocks-supported? blocks)))])
               (set! index (+ index 1))))
           supported))]))
 
 (define (compiler-windows-coff-object-program-supported?
-  [program : CompilerIrProgram]) : bool
+  [program : compiler_ir_types.CompilerIrProgram]) : bool
   (match program
-    [(CompilerIrProgram.Program _ functions _)
+    [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
       (compiler-windows-coff-object-functions-supported? functions)]))
 
 (define (compiler-windows-batch-emit-optimized
-  [pools : AstNodePoolContext]
+  [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
-  [program : CompilerIrProgram]
-  [spans : CompilerSourceSpans]
-  [mode : CompilerBackendMode]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [mode : compiler_backend.CompilerBackendMode]
   [force-assembly : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
   (if force-assembly
@@ -446,47 +467,51 @@
       (begin
         (cfg
           compile-profile
-          (compiler-driver-profile-start-phase profile-state))
-        (match (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
+          (compiler_driver_core.compiler-driver-profile-start-phase
+            profile-state))
+        (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
           pools
           program
-          (CompilerBackendTarget.Windows)
+          (compiler_backend.CompilerBackendTarget.Windows)
           mode
           spans
           true
           false
           profile-state)
-          [(ResultCompilerBackendObject.Ok image)
+          [(compiler_backend.ResultCompilerBackendObject.Ok image)
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-finish-phase
+                (compiler_driver_core.compiler-driver-profile-finish-phase
                   profile-state
                   "backend.object-image"))
-              (compiler-driver-allocation-profile-snapshot!
+              (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
                 "backend.object-image")
               (match (compiler-windows-coff-linkability image)
                 [(CompilerWindowsCoffLinkability.Linkable)
                   (begin
                     (cfg
                       compile-profile
-                      (compiler-driver-profile-start-phase profile-state))
-                    (match (compiler-object-coff-render image)
-                      [(ResultCompilerObjectCoff.Ok object)
+                      (compiler_driver_core.compiler-driver-profile-start-phase
+                        profile-state))
+                    (match (compiler_object_coff.compiler-object-coff-render
+                      image)
+                      [(compiler_object_coff.ResultCompilerObjectCoff.Ok object)
                         (begin
                           (cfg
                             compile-profile
-                            (compiler-driver-profile-finish-phase
+                            (compiler_driver_core.compiler-driver-profile-finish-phase
                               profile-state
                               "render.coff-object"))
-                          (compiler-driver-allocation-profile-snapshot!
+                          (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
                             "render.coff-object")
                           (ResultCompilerWindowsBatchArtifact.CoffObject object))]
-                      [(ResultCompilerObjectCoff.Err message)
+                      [(compiler_object_coff.ResultCompilerObjectCoff.Err
+                          message)
                         (begin
                           (cfg
                             compile-profile
-                            (compiler-driver-profile-finish-phase
+                            (compiler_driver_core.compiler-driver-profile-finish-phase
                               profile-state
                               "render.coff-object"))
                           (ResultCompilerWindowsBatchArtifact.Err
@@ -504,53 +529,64 @@
                     mode
                     category
                     profile-state)]))]
-          [(ResultCompilerBackendObject.Err diag)
+          [(compiler_backend.ResultCompilerBackendObject.Err diag)
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-finish-phase
+                (compiler_driver_core.compiler-driver-profile-finish-phase
                   profile-state
                   "backend.object-image"))
-              (compiler-driver-allocation-profile-snapshot!
+              (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
                 "backend.object-image-error")
               (ResultCompilerWindowsBatchArtifact.Err
                 (compiler-windows-batch-backend-diagnostic input-path diag)))])))))
 
 (define (compiler-windows-batch-emit-lowered
-  [pools : AstNodePoolContext]
+  [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
-  [program : CompilerIrProgram]
-  [spans : CompilerSourceSpans]
-  [mode : CompilerBackendMode]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [mode : compiler_backend.CompilerBackendMode]
   [opt-level : i64]
   [force-assembly : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
-  (if (ast-node-pool-context-type-exhausted? pools)
+  (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerWindowsBatchArtifact.Err
-      (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
+      (box
+        (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
+          input-path)))
     (begin
-      (compiler-driver-release-typecheck-caches-after-lower!)
-      (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
-      (match (optimize-program-with-spans-and-pools-and-level-and-profile-state
+      (compiler_driver_core.compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler_driver_core.compiler-driver-retire-frontend-arena!)
+      (cfg
+        compile-profile
+        (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
+      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
         pools
         program
         spans
         opt-level
         profile-state)
-        [(CompilerOptimizedProgram.Program optimized optimized-spans)
+        [(compiler_optimize.CompilerOptimizedProgram.Program
+            optimized
+            optimized-spans)
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase profile-state "optimize"))
-            (compiler-driver-allocation-profile-snapshot! "optimize")
-            (compiler-driver-release-lowered-ir! opt-level)
-            (if (ast-node-pool-context-type-exhausted? pools)
+              (compiler_driver_core.compiler-driver-profile-finish-phase
+                profile-state
+                "optimize"))
+            (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+              "optimize")
+            (compiler_driver_core.compiler-driver-release-lowered-ir! opt-level)
+            (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerWindowsBatchArtifact.Err
                 (box
-                  (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
+                  (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
+                    input-path)))
               (begin
-                (compiler-backend-set-scalar-registers! (>= opt-level 2))
+                (compiler_backend.compiler-backend-set-scalar-registers!
+                  (>= opt-level 2))
                 (compiler-windows-batch-emit-optimized
                   pools
                   input-path
@@ -562,26 +598,32 @@
 
 (define (compiler-windows-batch-emit-lowered-result
   [input-path : String]
-  [lowered : ResultCompilerDriverLowered]
-  [mode : CompilerBackendMode]
+  [lowered : compiler_driver_core.ResultCompilerDriverLowered]
+  [mode : compiler_backend.CompilerBackendMode]
   [opt-level : i64]
   [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
   (match lowered
-    [(ResultCompilerDriverLowered.Ok program spans pools profile-state)
+    [(compiler_driver_core.ResultCompilerDriverLowered.Ok
+        program
+        spans
+        pools
+        profile-state)
       (let
-        [emit-program : CompilerIrProgram
-          (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler-ir-clone-program-shell pools program)
+        [emit-program : compiler_ir_types.CompilerIrProgram
+          (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
+            opt-level)
+            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
             program)]
-        [emit-spans : CompilerSourceSpans
-          (if (compiler-driver-retirement-clone-shells? opt-level)
+        [emit-spans : compiler_ir_types.CompilerSourceSpans
+          (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
+            opt-level)
             (clone spans)
             spans)]
         [out : ResultCompilerWindowsBatchArtifact
           (begin
-            (ast-node-pool-reader-use! pools)
+            (compiler_ast_types.ast-node-pool-reader-use! pools)
             (if (>= opt-level 1)
-              (compiler-driver-retire-lowered-source-arena!)
+              (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
               unit)
             (compiler-windows-batch-emit-lowered
               pools
@@ -594,39 +636,43 @@
               profile-state))]
         (begin
           (if (= opt-level 0)
-            (compiler-driver-retire-lowered-source-arena!)
+            (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
             unit)
-          (ast-node-pool-reader-clear!)
-          (compiler-driver-restore-frontend-return-arena!)
+          (compiler_ast_types.ast-node-pool-reader-clear!)
+          (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag)
+    [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-restore-frontend-return-arena!)
+        (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerWindowsBatchArtifact.Err diag))]))
 
 (define (compiler-windows-batch-state-emit-file
-  [state : CompilerDriverState]
+  [state : compiler_driver_core.CompilerDriverState]
   [input-path : String]
   [stdlib-roots : windows_coff_svec.Vec]
   [opt-level : i64]
-  [mode : CompilerBackendMode]
+  [mode : compiler_backend.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
   (begin
     (cfg
       compile-profile
-      (compiler-driver-profile-start-total
-        (compiler-driver-state-profile state)))
+      (compiler_driver_core.compiler-driver-profile-start-total
+        (compiler_driver_core.compiler-driver-state-profile state)))
     (let
-      [target : CompilerBackendTarget (CompilerBackendTarget.Windows)]
-      [lowered : ResultCompilerDriverLowered
-        (compiler-driver-load-and-lower-escaping-with-state-and-retirement
+      [target : compiler_backend.CompilerBackendTarget
+        (compiler_backend.CompilerBackendTarget.Windows)]
+      [lowered : compiler_driver_core.ResultCompilerDriverLowered
+        (compiler_driver_core.compiler-driver-load-and-lower-escaping-with-state-and-retirement
           state
           input-path
           target
           stdlib-roots
           mode
-          (compiler-driver-state-target-cfgs state target cfgs)
+          (compiler_driver_core.compiler-driver-state-target-cfgs
+            state
+            target
+            cfgs)
           (>= opt-level 1))]
       ;; No builtin reinstall here; this state's parse-derived table is still
       ;; installed and id values are spelling-derived and state-independent.

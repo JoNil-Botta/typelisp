@@ -17,10 +17,13 @@
 (import doc_extract)
 (import (vector.vector doc_render.DocModule core) as doc_module_vec)
 (import doc_html)
-(import "doc_test.tl")
-(import "doc_expand.tl")
-(import "compiler_load.tl")
-(import "package_source_core.tl")
+(import doc_test)
+(import doc_expand)
+(import compiler_load)
+(import compiler_ast_types as ast)
+(import compiler_diagnostic as cdiag)
+(import compiler_typecheck_core as tc)
+(import package_source_core)
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as doc_path_map)
 (import stdlib.string)
@@ -110,14 +113,14 @@
   (doc_path_map.with-capacity 64))
 
 (define (doc-modules-from-paths-into
-  [paths : AstDeclPathList]
+  [paths : ast.AstDeclPathList]
   [seen : (&mut seen doc_path_map.Map)]
   [modules : (&mut modules doc_module_vec.Vec)]) : unit
-  (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Nil) unit]
-    [(AstDeclPathListStep.Cons path rest)
+  (match (ast.ast-decl-path-list-step paths)
+    [(ast.AstDeclPathListStep.Nil) unit]
+    [(ast.AstDeclPathListStep.Cons path rest)
       (let
-        [rest : AstDeclPathList rest]
+        [rest : ast.AstDeclPathList rest]
         (if (doc_path_map.insert-if-absent-ref! seen path 1)
           (begin
             (doc_module_vec.push
@@ -128,7 +131,7 @@
             (doc-modules-from-paths-into rest seen modules))
           (doc-modules-from-paths-into rest seen modules)))]))
 
-(define (doc-modules-from-paths [paths : AstDeclPathList]) : doc_module_vec.Vec
+(define (doc-modules-from-paths [paths : ast.AstDeclPathList]) : doc_module_vec.Vec
   (let
     [modules : doc_module_vec.Vec (doc_module_vec.new)]
     [seen : doc_path_map.Map (doc-path-set-new)]
@@ -137,42 +140,42 @@
       modules)))
 
 (define (doc-generated-modules-from-source-paths-into
-  [paths : AstDeclPathList]
+  [paths : ast.AstDeclPathList]
   [seen : (&mut seen doc_path_map.Map)]
-  [stdlib-roots : doc_svec.Vec]) : ResultDocExpandedModules
-  (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Nil)
-      (ResultDocExpandedModules.Ok (doc_module_vec.new))]
-    [(AstDeclPathListStep.Cons path rest)
+  [stdlib-roots : doc_svec.Vec]) : doc_expand.ResultDocExpandedModules
+  (match (ast.ast-decl-path-list-step paths)
+    [(ast.AstDeclPathListStep.Nil)
+      (doc_expand.ResultDocExpandedModules.Ok (doc_module_vec.new))]
+    [(ast.AstDeclPathListStep.Cons path rest)
       (let
-        [rest : AstDeclPathList rest]
+        [rest : ast.AstDeclPathList rest]
         (if (doc_path_map.insert-if-absent-ref! seen path 1)
           (let
             [docs : doc_extract.DocExtraction
               (doc_extract.doc-extract-file path)]
-            (match (doc-expanded-generated-modules-from-source-docs
+            (match (doc_expand.doc-expanded-generated-modules-from-source-docs
               path
               docs
               stdlib-roots)
-              [(ResultDocExpandedModules.Ok head-modules)
+              [(doc_expand.ResultDocExpandedModules.Ok head-modules)
                 (match (doc-generated-modules-from-source-paths-into
                   rest
                   seen
                   stdlib-roots)
-                  [(ResultDocExpandedModules.Ok tail-modules)
-                    (ResultDocExpandedModules.Ok
+                  [(doc_expand.ResultDocExpandedModules.Ok tail-modules)
+                    (doc_expand.ResultDocExpandedModules.Ok
                       (doc_render.doc-module-list-append
                         head-modules
                         tail-modules))]
-                  [(ResultDocExpandedModules.Err message)
-                    (ResultDocExpandedModules.Err message)])]
-              [(ResultDocExpandedModules.Err message)
-                (ResultDocExpandedModules.Err message)]))
+                  [(doc_expand.ResultDocExpandedModules.Err message)
+                    (doc_expand.ResultDocExpandedModules.Err message)])]
+              [(doc_expand.ResultDocExpandedModules.Err message)
+                (doc_expand.ResultDocExpandedModules.Err message)]))
           (doc-generated-modules-from-source-paths-into rest seen stdlib-roots)))]))
 
 (define (doc-generated-modules-from-source-paths
-  [paths : AstDeclPathList]
-  [stdlib-roots : doc_svec.Vec]) : ResultDocExpandedModules
+  [paths : ast.AstDeclPathList]
+  [stdlib-roots : doc_svec.Vec]) : doc_expand.ResultDocExpandedModules
   (let
     [seen : doc_path_map.Map (doc-path-set-new)]
     (doc-generated-modules-from-source-paths-into
@@ -182,11 +185,11 @@
 
 (define (doc-render-loaded-markdown
   [input-path : String]
-  [paths : AstDeclPathList]
+  [paths : ast.AstDeclPathList]
   [generated-modules : doc_module_vec.Vec]) : String
   (let
     [modules : doc_module_vec.Vec
-      (doc-modules-from-paths (ast-decl-root-path-cons input-path paths))]
+      (doc-modules-from-paths (ast.ast-decl-root-path-cons input-path paths))]
     [all-modules : doc_module_vec.Vec
       (doc_render.doc-module-list-append modules generated-modules)]
     (if (> (doc_render.doc-module-list-count all-modules) 1)
@@ -197,27 +200,28 @@
   [input-path : String]
   [output-path : String]
   [stdlib-roots : doc_svec.Vec]) : i64
-  (match (compiler-load-file-with-paths-and-roots
+  (match (compiler_load.compiler-load-file-with-paths-and-roots
     input-path
     (sym_i64_env.sym-i64-empty)
     stdlib-roots)
-    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (match (doc-generated-modules-from-source-paths
-        (ast-decl-root-path-cons input-path paths)
+        (ast.ast-decl-root-path-cons input-path paths)
         stdlib-roots)
-        [(ResultDocExpandedModules.Ok source-generated-modules)
+        [(doc_expand.ResultDocExpandedModules.Ok source-generated-modules)
           (let
             ;; Expansion from public source docs is authoritative and errors
             ;; above fail the command. Loaded graph expansion is best-effort:
             ;; synthetic graph docs can combine helper declarations from many
             ;; modules in ways normal source builds never do.
             [generated-modules : doc_module_vec.Vec
-              (match (doc-expanded-generated-modules-from-loaded-decls
+              (match (doc_expand.doc-expanded-generated-modules-from-loaded-decls
                 decls
                 paths
                 stdlib-roots)
-                [(ResultDocExpandedModules.Ok modules) modules]
-                [(ResultDocExpandedModules.Err _) (doc_module_vec.new)])]
+                [(doc_expand.ResultDocExpandedModules.Ok modules) modules]
+                [(doc_expand.ResultDocExpandedModules.Err _)
+                  (doc_module_vec.new)])]
             (begin
               (doc-write-text
                 output-path
@@ -229,25 +233,28 @@
                     source-generated-modules)))
               (doc-print-wrote output-path)
               0))]
-        [(ResultDocExpandedModules.Err message)
+        [(doc_expand.ResultDocExpandedModules.Err message)
           (begin
             (io.print-error message)
             1)])]
-    [(ResultCompilerLoadWithPaths.Err diag)
+    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (io.print-error (cdiag.compiler-diagnostic-render (box-get diag)))
         1)]))
 
 (define (doc-generate-package
   [manifest-path : String]
   [has-manifest : bool]
   [output-path : String]) : i64
-  (match (package-source-discover-for "doc" manifest-path has-manifest)
-    [(ResultPackageSourceSet.Err message)
+  (match (package_source_core.package-source-discover-for
+    "doc"
+    manifest-path
+    has-manifest)
+    [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
         (io.print-error (string.append message "\n"))
         1)]
-    [(ResultPackageSourceSet.Ok source-set)
+    [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (begin
         (doc-write-text
           output-path
@@ -267,7 +274,7 @@
 
 (define (doc-generate-html-module-graph [output-path : String]) : i64
   (let
-    [modules : doc_module_vec.Vec (doc-read-modules 2 (- (arg-count) 1))]
+    [modules : doc_module_vec.Vec (doc-read-modules 2 (- (io.arg-count) 1))]
     (begin
       (doc-write-text
         output-path
@@ -277,14 +284,14 @@
 
 (define (doc-test-file [input-path : String] [stdlib-roots : doc_svec.Vec]) : i64
   (let
-    [report : DocTestRunReport
-      (doc-test-run-file-with-roots input-path stdlib-roots)]
+    [report : doc_test.DocTestRunReport
+      (doc_test.doc-test-run-file-with-roots input-path stdlib-roots)]
     (begin
-      (if (doc-test-run-report-ok? report)
+      (if (doc_test.doc-test-run-report-ok? report)
         (io.print-string
-          (string.append (doc-test-run-report-render report) "\n"))
-        (io.print-error (doc-test-run-report-render report)))
-      (doc-test-run-report-status report))))
+          (string.append (doc_test.doc-test-run-report-render report) "\n"))
+        (io.print-error (doc_test.doc-test-run-report-render report)))
+      (doc_test.doc-test-run-report-status report))))
 
 (define (doc-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
@@ -292,7 +299,7 @@
 (define (doc-stdlib-roots [idx : i64]) : doc_svec.Vec
   (let
     [i : i64 idx]
-    [n : i64 (arg-count)]
+    [n : i64 (io.arg-count)]
     [roots : doc_svec.Vec (doc_svec.new)]
     (begin
       (while (< i n)
@@ -610,12 +617,15 @@
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : doc_svec.Vec]) : i64
-  (match (package-source-discover-for "doc" manifest-path has-manifest)
-    [(ResultPackageSourceSet.Err message)
+  (match (package_source_core.package-source-discover-for
+    "doc"
+    manifest-path
+    has-manifest)
+    [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
         (io.print-error (string.append message "\n"))
         1)]
-    [(ResultPackageSourceSet.Ok source-set)
+    [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (doc-test-package-files (struct-get source-set sources) stdlib-roots 0)]))
 
 (define (doc-default-config-finish
@@ -790,9 +800,9 @@
 ;; base=2.
 (define (doc-main-test [base : i64]) : i64
   (begin
-    (compiler-load-session-cache-enable!)
-    (compiler-load-session-program-cache-disable!)
-    (match (doc-test-config-from base (arg-count))
+    (compiler_load.compiler-load-session-cache-enable!)
+    (compiler_load.compiler-load-session-program-cache-disable!)
+    (match (doc-test-config-from base (io.arg-count))
       [(ResultDocTestCliConfig.Ok config)
         (match config
           [(DocTestCliConfig.File input-paths stdlib-roots)
@@ -800,7 +810,7 @@
               [status : i64
                 (begin
                   (if doc-test-prefix-cache-stats
-                    (tc-prefix-snapshot-cache-clear!)
+                    (tc.tc-prefix-snapshot-cache-clear!)
                     unit)
                   (doc-test-files
                     input-paths
@@ -809,7 +819,7 @@
                     0))]
               (begin
                 (if doc-test-prefix-cache-stats
-                  (tc-prefix-snapshot-cache-print-stats "doc-test-batch")
+                  (tc.tc-prefix-snapshot-cache-print-stats "doc-test-batch")
                   unit)
                 status))]
           [(DocTestCliConfig.Package manifest-path has-manifest stdlib-roots)
@@ -820,14 +830,14 @@
           1)])))
 
 (define (doc-main-html [base : i64]) : i64
-  (if (= (arg-count) (+ base 3))
+  (if (= (io.arg-count) (+ base 3))
     (doc-generate-html-file (io.arg (+ base 1)) (io.arg (+ base 2)))
-    (if (> (arg-count) (+ base 3))
-      (doc-generate-html-module-graph (io.arg (- (arg-count) 1)))
+    (if (> (io.arg-count) (+ base 3))
+      (doc-generate-html-module-graph (io.arg (- (io.arg-count) 1)))
       (doc-invalid-html-args))))
 
 (define (doc-main-load [base : i64]) : i64
-  (if (>= (arg-count) (+ base 3))
+  (if (>= (io.arg-count) (+ base 3))
     (doc-generate-loaded-file
       (io.arg (+ base 1))
       (io.arg (+ base 2))
@@ -835,7 +845,7 @@
     (doc-invalid-load-args)))
 
 (define (doc-main-default [base : i64]) : i64
-  (match (doc-default-config-from base (arg-count))
+  (match (doc-default-config-from base (io.arg-count))
     [(ResultDocDefaultCliConfig.Ok config)
       (match config
         [(DocDefaultCliConfig.Explicit input-paths output-path stdlib-roots)

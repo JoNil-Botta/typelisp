@@ -11,8 +11,8 @@
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import format_tokens as tokens)
-(import "format_rules.tl")
-(import "package_source_core.tl")
+(import format_rules)
+(import package_source_core)
 
 (defenum FmtConfig
   (File bool fmt_svec.Vec)
@@ -76,9 +76,12 @@
 
 (test
   fmt-parse-diagnostic-includes-path-line-and-column
-  (match (format-rules-render-source-width-result "(define x\n  ]" 80)
-    [(ResultFormatString.Ok _) (io.panic "fmt parse unexpectedly succeeded")]
-    [(ResultFormatString.Err err)
+  (match (format_rules.format-rules-render-source-width-result
+    "(define x\n  ]"
+    80)
+    [(format_rules.ResultFormatString.Ok _)
+      (io.panic "fmt parse unexpectedly succeeded")]
+    [(format_rules.ResultFormatString.Err err)
       (let
         [message : String (fmt-source-error-message "bad.tl" err)]
         (if (string.eq
@@ -88,9 +91,9 @@
           (io.panic message)))]))
 
 (define (fmt-malformed-int-error? [source : String]) : bool
-  (match (format-rules-render-source-width-result source 80)
-    [(ResultFormatString.Ok _) false]
-    [(ResultFormatString.Err err)
+  (match (format_rules.format-rules-render-source-width-result source 80)
+    [(format_rules.ResultFormatString.Ok _) false]
+    [(format_rules.ResultFormatString.Err err)
       (string.eq
         (tokens.format-source-error-message err)
         "format lexer: malformed integer literal")]))
@@ -390,8 +393,8 @@
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
     [source : String (byte_buf.to-string (io.read-file path))]
-    (match (format-rules-render-source-width-result source 80)
-      [(ResultFormatString.Ok formatted)
+    (match (format_rules.format-rules-render-source-width-result source 80)
+      [(format_rules.ResultFormatString.Ok formatted)
         (if check
           (if (string.eq source formatted)
             0
@@ -406,7 +409,7 @@
           (if (string.eq source formatted)
             0
             (fmt-write-formatted-file path formatted)))]
-      [(ResultFormatString.Err err)
+      [(format_rules.ResultFormatString.Err err)
         (begin
           (io.print-error
             (string.append (fmt-source-error-message path err) "\n"))
@@ -458,12 +461,15 @@
   [check : bool]
   [manifest-path : String]
   [has-manifest : bool]) : i64
-  (match (package-source-discover-for "fmt" manifest-path has-manifest)
-    [(ResultPackageSourceSet.Err message)
+  (match (package_source_core.package-source-discover-for
+    "fmt"
+    manifest-path
+    has-manifest)
+    [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
         (io.print-error (string.append message "\n"))
         1)]
-    [(ResultPackageSourceSet.Ok source-set)
+    [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (fmt-package-files check (struct-get source-set sources) 0)]))
 
 ;; Run the `fmt` command over arguments starting at `start` (the index of the

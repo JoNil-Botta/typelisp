@@ -8,12 +8,15 @@
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
-(import "compiler_check_core.tl")
-(import "compiler_driver_core.tl")
-(import "doc_test.tl")
-(import "compiler_load.tl")
-(import "package_source_core.tl")
-(import "test_cli_core.tl")
+(import compiler_check_core)
+(import compiler_driver_core)
+(import doc_test)
+(import compiler_load)
+(import compiler_ast_types as ast)
+(import compiler_diagnostic as cdiag)
+(import compiler_intern as ci)
+(import package_source_core)
+(import test_cli_core)
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
 (import sym_i64_env)
@@ -196,11 +199,11 @@
     false
     (cli_svec.new)))
 
-(define (selfhost-check-doctest-report [report : DocTestRunReport]) : i64
-  (if (doc-test-run-report-ok? report)
+(define (selfhost-check-doctest-report [report : doc_test.DocTestRunReport]) : i64
+  (if (doc_test.doc-test-run-report-ok? report)
     0
     (begin
-      (io.print-error (doc-test-run-report-render report))
+      (io.print-error (doc_test.doc-test-run-report-render report))
       1)))
 
 (define (selfhost-check-print-passed) : i64
@@ -213,16 +216,19 @@
   [stdlib-roots : cli_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : i64
   (selfhost-check-doctest-report
-    (doc-test-typecheck-file-with-roots-and-cfg input-path stdlib-roots cfgs)))
+    (doc_test.doc-test-typecheck-file-with-roots-and-cfg
+      input-path
+      stdlib-roots
+      cfgs)))
 
 (define (selfhost-check-package-doctests
-  [paths : AstDeclPathList]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : i64
   (selfhost-check-doctest-report
-    (doc-test-typecheck-package-paths-with-roots-and-cfg
+    (doc_test.doc-test-typecheck-package-paths-with-roots-and-cfg
       paths
       stdlib-roots
       manifest-dir
@@ -230,12 +236,13 @@
       cfgs)))
 
 (define (selfhost-check-report-diagnostics
-  [diagnostics : CompilerDiagnosticList]) : unit
+  [diagnostics : cdiag.CompilerDiagnosticList]) : unit
   (match diagnostics
-    [(CompilerDiagnosticList.Nil) unit]
-    [(CompilerDiagnosticList.Cons diag rest)
+    [(cdiag.CompilerDiagnosticList.Nil) unit]
+    [(cdiag.CompilerDiagnosticList.Cons diag rest)
       (begin
-        (io.print-error (compiler-driver-render-source-diagnostic diag))
+        (io.print-error
+          (compiler_driver_core.compiler-driver-render-source-diagnostic diag))
         (selfhost-check-report-diagnostics (box-get rest)))]))
 
 (define (selfhost-check-file
@@ -243,14 +250,14 @@
   [stdlib-roots : cli_svec.Vec]
   [target : target_cfg.CompilerTargetCfg]
   [cfg-names : cli_svec.Vec]) : i64
-  (match (compiler-check-file-with-roots-and-cfg
+  (match (compiler_check_core.compiler-check-file-with-roots-and-cfg
     input-path
     stdlib-roots
     (target_cfg.compiler-target-cfgs-with-names target cfg-names))
-    [(ResultCompilerCheck.Ok _)
+    [(compiler_check_core.ResultCompilerCheck.Ok _)
       (let
         [inline-test-status : i64
-          (tltest-inline-typecheck-file-with-cfg
+          (test_cli_core.tltest-inline-typecheck-file-with-cfg
             input-path
             stdlib-roots
             (target_cfg.compiler-target-cfgs-with-names target cfg-names)
@@ -266,36 +273,39 @@
               (selfhost-check-print-passed)
               doctest-status))
           inline-test-status))]
-    [(ResultCompilerCheck.Err diag)
+    [(compiler_check_core.ResultCompilerCheck.Err diag)
       (begin
         (selfhost-check-report-diagnostics (box-get diag))
         1)]))
 
-(define (selfhost-check-package-kind-entry? [kind : CompilerPkgKind]) : bool
+(define (selfhost-check-package-kind-entry?
+  [kind : compiler_load.CompilerPkgKind]) : bool
   (match kind
     [(CompilerPkgKindBin) true]
     [(CompilerPkgKindLib) false]))
 
 (define (selfhost-check-package-entry-path
   [manifest-dir : String]
-  [manifest : CompilerPkgManifest]) : String
-  (compiler-load-normalize-path
-    (compiler-load-join-root-path manifest-dir (struct-get manifest entry))))
+  [manifest : compiler_load.CompilerPkgManifest]) : String
+  (compiler_load.compiler-load-normalize-path
+    (compiler_load.compiler-load-join-root-path
+      manifest-dir
+      (struct-get manifest entry))))
 
 (define (selfhost-check-package-doctest-paths-snapshot
-  [paths : AstDeclPathList]) : AstDeclPathList
+  [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
-    [count : i64 (ast-decl-path-list-len (& paths))]
-    [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [count : i64 (ast.ast-decl-path-list-len (& paths))]
+    [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (let
-          [path : String (ast-decl-path-list-get (& paths) index "")]
+          [path : String (ast.ast-decl-path-list-get (& paths) index "")]
           [owned-path : String
             (string.substring path 0 (string.string-length path))]
           (begin
-            (ast-decl-path-list-push-with-owner-id
+            (ast.ast-decl-path-list-push-with-owner-id
               (&mut out)
               owned-path
               cbi.compiler-builtin-id-fix-empty)
@@ -308,43 +318,48 @@
   [stdlib-roots : cli_svec.Vec]
   [target : target_cfg.CompilerTargetCfg]
   [cfg-names : cli_svec.Vec]) : i64
-  (match (package-source-discover-for "check" manifest-path has-manifest)
-    [(ResultPackageSourceSet.Err message)
+  (match (package_source_core.package-source-discover-for
+    "check"
+    manifest-path
+    has-manifest)
+    [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
         (io.print-error message)
         1)]
-    [(ResultPackageSourceSet.Ok source-set)
+    [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (let
-        [manifest : CompilerPkgManifest (struct-get source-set manifest)]
+        [manifest : compiler_load.CompilerPkgManifest
+          (struct-get source-set manifest)]
         [manifest-dir : String (struct-get source-set manifest-dir)]
         [name : String (struct-get manifest name)]
         [entry-path : String
           (selfhost-check-package-entry-path manifest-dir manifest)]
         [emit-entry : bool
           (selfhost-check-package-kind-entry? (struct-get manifest kind))]
-        [_reset-file-state : unit (compiler-driver-reset-file-state!)]
-        (match (compiler-check-package-entry-file-with-roots-and-cfg
+        [_reset-file-state : unit
+          (compiler_driver_core.compiler-driver-reset-file-state!)]
+        (match (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
           entry-path
           stdlib-roots
           manifest-dir
           (struct-get manifest deps)
           emit-entry
           (target_cfg.compiler-target-cfgs-with-names target cfg-names))
-          [(ResultCompilerCheckWithPaths.Ok _ paths)
+          [(compiler_check_core.ResultCompilerCheckWithPaths.Ok _ paths)
             (let
               ;; Doctests run after the compiler and intern arenas are reset.
               ;; Filesystem paths are values here, so retain owned copies rather
               ;; than carrying parser identity across that lifetime boundary.
-              [doctest-paths : AstDeclPathList
+              [doctest-paths : ast.AstDeclPathList
                 (selfhost-check-package-doctest-paths-snapshot paths)]
               ;; Match standalone package inline-test runs: entry checking can
               ;; leave enough compiler state live to exhaust long package checks.
               [_reset-after-entry : unit
                 (begin
-                  (compiler-driver-reset-file-state!)
-                  (intern-persistent-arena-reset!))]
+                  (compiler_driver_core.compiler-driver-reset-file-state!)
+                  (ci.intern-persistent-arena-reset!))]
               [inline-test-status : i64
-                (tltest-inline-typecheck-package-sources-with-cfg
+                (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
                   (struct-get source-set sources)
                   stdlib-roots
                   manifest-dir
@@ -367,7 +382,7 @@
                     (selfhost-check-print-passed)
                     doctest-status))
                 inline-test-status))]
-          [(ResultCompilerCheckWithPaths.Err diag)
+          [(compiler_check_core.ResultCompilerCheckWithPaths.Err diag)
             (begin
               (selfhost-check-report-diagnostics (box-get diag))
               1)]))]))

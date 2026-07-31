@@ -1,11 +1,13 @@
 ;; compiler_surface_hydrate.tl - package-agnostic frontend surface lookup and
 ;; hydration from TLCl auxiliary sections.
-(import "compiler_surface_ast.tl")
+(import compiler_surface_ast as surface_ast)
+(import compiler_surface_identity as surface_identity)
 (import compiler_surface_facts as surface_facts)
-(import "tlci_core.tl")
+(import compiler_ast_types as ast)
+(import tlci_core as tlci)
 
 (defstruct CompilerSurfaceHydration
-  (ast SurfaceAstHydration)
+  (ast surface_ast.SurfaceAstHydration)
   (facts surface_facts.SurfaceTypecheckFacts))
 
 (defenum ResultCompilerSurfaceKey
@@ -19,20 +21,21 @@
   (Ok CompilerSurfaceHydration)
   (Err String))
 
-(define (compiler-surface-identity-bytes [rodata : (__tl_dyn-array u8)]) : ResultTlciAuxLookup
-  (tlci-aux-find rodata tlci-aux-kind-package-identity))
+(define (compiler-surface-identity-bytes [rodata : (__tl_dyn-array u8)]) : tlci.ResultTlciAuxLookup
+  (tlci.tlci-aux-find rodata tlci.tlci-aux-kind-package-identity))
 
-(define (compiler-surface-ast-bytes [rodata : (__tl_dyn-array u8)]) : ResultTlciAuxLookup
-  (tlci-aux-find rodata tlci-aux-kind-frontend-ast))
+(define (compiler-surface-ast-bytes [rodata : (__tl_dyn-array u8)]) : tlci.ResultTlciAuxLookup
+  (tlci.tlci-aux-find rodata tlci.tlci-aux-kind-frontend-ast))
 
-(define (compiler-surface-fact-bytes [rodata : (__tl_dyn-array u8)]) : ResultTlciAuxLookup
-  (tlci-aux-find rodata tlci-aux-kind-frontend-facts))
+(define (compiler-surface-fact-bytes [rodata : (__tl_dyn-array u8)]) : tlci.ResultTlciAuxLookup
+  (tlci.tlci-aux-find rodata tlci.tlci-aux-kind-frontend-facts))
 
 (define (compiler-surface-key [rodata : (__tl_dyn-array u8)]) : ResultCompilerSurfaceKey
   (match (compiler-surface-identity-bytes rodata)
-    [(ResultTlciAuxLookup.Missing) ResultCompilerSurfaceKey.Missing]
-    [(ResultTlciAuxLookup.Err message) (ResultCompilerSurfaceKey.Err message)]
-    [(ResultTlciAuxLookup.Ok schema bytes)
+    [(tlci.ResultTlciAuxLookup.Missing) ResultCompilerSurfaceKey.Missing]
+    [(tlci.ResultTlciAuxLookup.Err message)
+      (ResultCompilerSurfaceKey.Err message)]
+    [(tlci.ResultTlciAuxLookup.Ok schema bytes)
       (if (not (= schema surface_identity.surface-identity-schema-version))
         (ResultCompilerSurfaceKey.Err
           "compiler surface: unsupported identity schema")
@@ -47,17 +50,20 @@
   [ast-bytes : (__tl_dyn-array u8)]
   [fact-bytes : (__tl_dyn-array u8)]
   [expected-key : surface_identity.SurfaceIdentityKey]
-  [pools : AstNodePoolContext]) : ResultCompilerSurfaceHydration
+  [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
   (match (surface_identity.surface-identity-hydrate identity-bytes expected-key)
     [(surface_identity.ResultSurfaceIdentityHydration.Err message)
       (ResultCompilerSurfaceHydration.Err message)]
     [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch message)
       (ResultCompilerSurfaceHydration.KeyMismatch message)]
     [(surface_identity.ResultSurfaceIdentityHydration.Ok identity)
-      (match (surface-ast-decode ast-bytes (struct-get identity remap) pools)
-        [(ResultSurfaceAstHydration.Err message)
+      (match (surface_ast.surface-ast-decode
+        ast-bytes
+        (struct-get identity remap)
+        pools)
+        [(surface_ast.ResultSurfaceAstHydration.Err message)
           (ResultCompilerSurfaceHydration.Err message)]
-        [(ResultSurfaceAstHydration.Ok hydration)
+        [(surface_ast.ResultSurfaceAstHydration.Ok hydration)
           (match (surface_facts.surface-typecheck-facts-decode
             fact-bytes
             (struct-get identity remap))
@@ -72,33 +78,34 @@
 (define (compiler-surface-hydrate
   [rodata : (__tl_dyn-array u8)]
   [expected-key : surface_identity.SurfaceIdentityKey]
-  [pools : AstNodePoolContext]) : ResultCompilerSurfaceHydration
+  [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
   (begin
     (surface_facts.surface-typecheck-facts-clear!)
     (match (compiler-surface-identity-bytes rodata)
-      [(ResultTlciAuxLookup.Missing) ResultCompilerSurfaceHydration.Missing]
-      [(ResultTlciAuxLookup.Err message)
+      [(tlci.ResultTlciAuxLookup.Missing)
+        ResultCompilerSurfaceHydration.Missing]
+      [(tlci.ResultTlciAuxLookup.Err message)
         (ResultCompilerSurfaceHydration.Err message)]
-      [(ResultTlciAuxLookup.Ok identity-schema identity-bytes)
+      [(tlci.ResultTlciAuxLookup.Ok identity-schema identity-bytes)
         (if (not
           (= identity-schema surface_identity.surface-identity-schema-version))
           (ResultCompilerSurfaceHydration.Err
             "compiler surface: unsupported identity schema")
           (match (compiler-surface-ast-bytes rodata)
-            [(ResultTlciAuxLookup.Missing)
+            [(tlci.ResultTlciAuxLookup.Missing)
               ResultCompilerSurfaceHydration.Missing]
-            [(ResultTlciAuxLookup.Err message)
+            [(tlci.ResultTlciAuxLookup.Err message)
               (ResultCompilerSurfaceHydration.Err message)]
-            [(ResultTlciAuxLookup.Ok ast-schema ast-bytes)
-              (if (not (= ast-schema surface-ast-schema-version))
+            [(tlci.ResultTlciAuxLookup.Ok ast-schema ast-bytes)
+              (if (not (= ast-schema surface_ast.surface-ast-schema-version))
                 (ResultCompilerSurfaceHydration.Err
                   "compiler surface: unsupported AST schema")
                 (match (compiler-surface-fact-bytes rodata)
-                  [(ResultTlciAuxLookup.Missing)
+                  [(tlci.ResultTlciAuxLookup.Missing)
                     ResultCompilerSurfaceHydration.Missing]
-                  [(ResultTlciAuxLookup.Err message)
+                  [(tlci.ResultTlciAuxLookup.Err message)
                     (ResultCompilerSurfaceHydration.Err message)]
-                  [(ResultTlciAuxLookup.Ok fact-schema fact-bytes)
+                  [(tlci.ResultTlciAuxLookup.Ok fact-schema fact-bytes)
                     (if (not
                       (=
                         fact-schema

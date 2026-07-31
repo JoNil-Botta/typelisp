@@ -3,10 +3,11 @@
 (import stdlib.io)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
-
-;; Retained for #2454 path-import compatibility: compiler_backend.tl is raw
-;; source without a resolvable top-level module name.
-(import "../../src/compiler_backend.tl")
+(import compiler_backend)
+(import compiler_ir_types as ir)
+(import compiler_ast_types as ast)
+(import compiler_regalloc as regalloc)
+(import compiler_liveness as liveness)
 
 (define (win-param-preassign-assert-true [condition : bool] [message : String]) : unit
   (if condition
@@ -22,53 +23,74 @@
   [pa : i64]
   [pb : i64]
   [pc : i64]
-  [pd : i64]) : CompilerIrGlobalList
-  (compiler-ir-global-cons
-    (CompilerIrGlobal.Global pa (AstType.I64) (CompilerIrValue.I64 0))
-    (compiler-ir-global-cons
-      (CompilerIrGlobal.Global pb (AstType.I64) (CompilerIrValue.I64 0))
-      (compiler-ir-global-cons
-        (CompilerIrGlobal.Global pc (AstType.I64) (CompilerIrValue.I64 0))
-        (compiler-ir-global-cons
-          (CompilerIrGlobal.Global pd (AstType.I64) (CompilerIrValue.I64 0))
-          CompilerIrGlobalList.Nil)))))
+  [pd : i64]) : ir.CompilerIrGlobalList
+  (ir.compiler-ir-global-cons
+    (ir.CompilerIrGlobal.Global pa (ast.AstType.I64) (ir.CompilerIrValue.I64 0))
+    (ir.compiler-ir-global-cons
+      (ir.CompilerIrGlobal.Global
+        pb
+        (ast.AstType.I64)
+        (ir.CompilerIrValue.I64 0))
+      (ir.compiler-ir-global-cons
+        (ir.CompilerIrGlobal.Global
+          pc
+          (ast.AstType.I64)
+          (ir.CompilerIrValue.I64 0))
+        (ir.compiler-ir-global-cons
+          (ir.CompilerIrGlobal.Global
+            pd
+            (ast.AstType.I64)
+            (ir.CompilerIrValue.I64 0))
+          ir.CompilerIrGlobalList.Nil)))))
 
 (define (win-param-preassign-function
   [function-name : i64]
   [pa : i64]
   [pb : i64]
   [pc : i64]
-  [pd : i64]) : CompilerIrFunction
-  (CompilerIrFunction.Function
+  [pd : i64]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
     function-name
-    (compiler-ir-param-cons
-      (CompilerIrParam.Param "a" (AstType.I64) 0)
-      (compiler-ir-param-cons
-        (CompilerIrParam.Param "b" (AstType.I64) 1)
-        (compiler-ir-param-cons
-          (CompilerIrParam.Param "c" (AstType.I64) 2)
-          (compiler-ir-param-cons
-            (CompilerIrParam.Param "d" (AstType.I64) 3)
-            CompilerIrParamList.Nil))))
-    (AstType.Unit)
+    (ir.compiler-ir-param-cons
+      (ir.CompilerIrParam.Param "a" (ast.AstType.I64) 0)
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "b" (ast.AstType.I64) 1)
+        (ir.compiler-ir-param-cons
+          (ir.CompilerIrParam.Param "c" (ast.AstType.I64) 2)
+          (ir.compiler-ir-param-cons
+            (ir.CompilerIrParam.Param "d" (ast.AstType.I64) 3)
+            ir.CompilerIrParamList.Nil))))
+    (ast.AstType.Unit)
     4
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        (compiler-ir-label "entry")
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.Store pa (CompilerIrValue.Var 0) (AstType.I64))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Store pb (CompilerIrValue.Var 1) (AstType.I64))
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Store pc (CompilerIrValue.Var 2) (AstType.I64))
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.Store pd (CompilerIrValue.Var 3) (AstType.I64))
-                (compiler-ir-instr-cons
-                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
-                  CompilerIrInstrList.Nil))))))
-      CompilerIrBlockList.Nil)))
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Store
+            pa
+            (ir.CompilerIrValue.Var 0)
+            (ast.AstType.I64))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Store
+              pb
+              (ir.CompilerIrValue.Var 1)
+              (ast.AstType.I64))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Store
+                pc
+                (ir.CompilerIrValue.Var 2)
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Store
+                  pd
+                  (ir.CompilerIrValue.Var 3)
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                  ir.CompilerIrInstrList.Nil))))))
+      ir.CompilerIrBlockList.Nil)))
 
-(define (win-param-preassign-program) : CompilerIrProgram
+(define (win-param-preassign-program) : ir.CompilerIrProgram
   (let
     [function-name : i64
       (win-param-preassign-logical-name "win_param_preassign")]
@@ -76,38 +98,38 @@
     [pb : i64 (win-param-preassign-logical-name "win_pb")]
     [pc : i64 (win-param-preassign-logical-name "win_pc")]
     [pd : i64 (win-param-preassign-logical-name "win_pd")]
-    (CompilerIrProgram.Program
+    (ir.CompilerIrProgram.Program
       (win-param-preassign-globals pa pb pc pd)
-      (compiler-ir-function-cons
+      (ir.compiler-ir-function-cons
         (win-param-preassign-function function-name pa pb pc pd)
-        CompilerIrFunctionList.Nil)
-      CompilerIrExternList.Nil)))
+        ir.CompilerIrFunctionList.Nil)
+      ir.CompilerIrExternList.Nil)))
 
-(define (win-param-preassign-safe-div-function) : CompilerIrFunction
-  (CompilerIrFunction.Function
+(define (win-param-preassign-safe-div-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
     (win-param-preassign-logical-name "win_param_safe_div")
-    (compiler-ir-param-cons
-      (CompilerIrParam.Param "a" (AstType.I64) 0)
-      (compiler-ir-param-cons
-        (CompilerIrParam.Param "b" (AstType.I64) 1)
-        CompilerIrParamList.Nil))
-    (AstType.I64)
+    (ir.compiler-ir-param-cons
+      (ir.CompilerIrParam.Param "a" (ast.AstType.I64) 0)
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "b" (ast.AstType.I64) 1)
+        ir.CompilerIrParamList.Nil))
+    (ast.AstType.I64)
     3
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        (compiler-ir-label "entry")
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.BinOp
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.BinOp
             2
-            CompilerIrBinOp.SafeDiv
-            (CompilerIrValue.I64 8)
-            (CompilerIrValue.I64 2)
-            (AstType.I64))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Return
-              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
-            CompilerIrInstrList.Nil)))
-      CompilerIrBlockList.Nil)))
+            ir.CompilerIrBinOp.SafeDiv
+            (ir.CompilerIrValue.I64 8)
+            (ir.CompilerIrValue.I64 2)
+            (ast.AstType.I64))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Return
+              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
+            ir.CompilerIrInstrList.Nil)))
+      ir.CompilerIrBlockList.Nil)))
 
 (define (win-param-preassign-safe-div-regalloc-ok?) : bool
   ;; The incoming Win64 home of param b (var 1) is %rdx (arg1), which the safe
@@ -117,69 +139,73 @@
   ;; so b is now register-homed in a CALLEE-SAVED register that survives the
   ;; clobber instead of being stack-homed -- the same soundness property (b is
   ;; not left in a div-clobbered register) with a better home.
-  (match (compiler-reg-plan-function-scalar-for-abi
+  (match (regalloc.compiler-reg-plan-function-scalar-for-abi
     CompilerRegTargetAbi.Windows
     (win-param-preassign-safe-div-function))
-    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
+    [(regalloc.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and
-        (not (compiler-live-set-contains? ineligible 1))
-        (match (compiler-reg-assignment-lookup assignments 1)
-          [(CompilerRegMaybeLocation.Some location)
+        (not (liveness.compiler-live-set-contains? ineligible 1))
+        (match (regalloc.compiler-reg-assignment-lookup assignments 1)
+          [(regalloc.CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegLocation.Register r)
-                (compiler-reg-id-list-contains?
-                  (compiler-reg-win64-callee-saved-integer-registers)
+              [(regalloc.CompilerRegLocation.Register r)
+                (regalloc.compiler-reg-id-list-contains?
+                  (regalloc.compiler-reg-win64-callee-saved-integer-registers)
                   r)]
               [_ false])]
-          [(CompilerRegMaybeLocation.No) false]))]))
+          [(regalloc.CompilerRegMaybeLocation.No) false]))]))
 
 (define (win-param-preassign-backend-ok?) : bool
   (begin
-    (compiler-backend-set-scalar-registers! true)
-    (match (compiler-backend-emit-program-target-with-mode
+    (compiler_backend.compiler-backend-set-scalar-registers! true)
+    (match (compiler_backend.compiler-backend-emit-program-target-with-mode
       (win-param-preassign-program)
-      (CompilerBackendTarget.Windows)
-      (CompilerBackendMode.Scalar)
-      (compiler-source-spans-empty)
+      (compiler_backend.CompilerBackendTarget.Windows)
+      (compiler_backend.CompilerBackendMode.Scalar)
+      (ir.compiler-source-spans-empty)
       false)
-      [(ResultCompilerBackend.Ok asm)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
         (let
           [ok : bool
             (and
-              (compiler-backend-string-contains?
+              (compiler_backend.compiler-backend-string-contains?
                 asm
                 "#t _tl_f0 _tl_win_param_preassign\n")
-              (compiler-backend-string-contains? asm "_tl_f0:\n")
+              (compiler_backend.compiler-backend-string-contains?
+                asm
+                "_tl_f0:\n")
               ;; Params a/b/d keep their incoming Win64 arg-register homes
               ;; (%rcx/%rdx/%r9) and are stored to their globals directly --
               ;; no stack spill.
-              (compiler-backend-string-contains?
+              (compiler_backend.compiler-backend-string-contains?
                 asm
                 "    movq %rcx, _tl_win_pa(%rip)\n")
-              (compiler-backend-string-contains?
+              (compiler_backend.compiler-backend-string-contains?
                 asm
                 "    movq %rdx, _tl_win_pb(%rip)\n")
-              (compiler-backend-string-contains?
+              (compiler_backend.compiler-backend-string-contains?
                 asm
                 "    movq %r9, _tl_win_pd(%rip)\n")
               ;; Param c arrives in %r8, which doubles as the backend's fixed
               ;; emit scratch register, so it cannot stay there: it is
               ;; relocated to a callee-saved register (%r12) and stored from
               ;; there -- NOT stacked, and never stored directly out of %r8.
-              (compiler-backend-string-contains? asm "    movq %r8, %r12\n")
-              (compiler-backend-string-contains?
+              (compiler_backend.compiler-backend-string-contains?
+                asm
+                "    movq %r8, %r12\n")
+              (compiler_backend.compiler-backend-string-contains?
                 asm
                 "    movq %r12, _tl_win_pc(%rip)\n")
               (not
-                (compiler-backend-string-contains?
+                (compiler_backend.compiler-backend-string-contains?
                   asm
                   "    movq %r8, _tl_win_pc(%rip)\n")))]
           (begin
-            (compiler-backend-set-scalar-registers! false)
+            (compiler_backend.compiler-backend-set-scalar-registers! false)
             ok))]
-      [(ResultCompilerBackend.Err _)
+      [(compiler_backend.ResultCompilerBackend.Err _)
         (begin
-          (compiler-backend-set-scalar-registers! false)
+          (compiler_backend.compiler-backend-set-scalar-registers! false)
           false)])))
 
 (test

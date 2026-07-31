@@ -1,10 +1,12 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
 (import stdlib.arena)
+(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.io)
-(import "compiler_parse_core.tl")
+(import compiler_parse_core as parser)
+(import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
-(import "compiler_diagnostic.tl")
+(import compiler_diagnostic as cdiag)
 (import lex as lexer)
 (import read as reader)
 (import compiler_intern as ci)
@@ -17,11 +19,11 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_embedded_stdlib as ces)
-(import "compiler_ctfe.tl")
+(import compiler_ctfe as ctfe)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import token)
-(import "tlci_core.tl")
+(import tlci_core as tlci)
 
 ;; Sources, manifests, and include payloads are interpreted as text here.
 ;; Make that conversion explicit at the binary IO boundary.
@@ -63,12 +65,16 @@
   (reader.sexpr-node-pool-base-arena-handle-value))
 
 (defenum ResultCompilerLoad
-  (Ok AstDeclList sym_i64_env.SymI64Env)
-  (Err (Box CompilerDiagnostic)))
+  (Ok ast.AstDeclList sym_i64_env.SymI64Env)
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultCompilerLoadWithPaths
-  (Ok AstDeclList AstDeclPathList AstDeclModuleList sym_i64_env.SymI64Env)
-  (Err (Box CompilerDiagnostic)))
+  (Ok
+    ast.AstDeclList
+    ast.AstDeclPathList
+    ast.AstDeclModuleList
+    sym_i64_env.SymI64Env)
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum CompilerLoadMaybePath
   (CompilerLoadNoPath)
@@ -94,7 +100,7 @@
 
 (defenum CompilerLoadPackageSpmdInterface
   (Unavailable)
-  (Available TlciSpmdCallables))
+  (Available tlci.TlciSpmdCallables))
 
 (defenum ResultCompilerLoadPackageSpmdInterface
   (Ok CompilerLoadPackageSpmdInterface)
@@ -115,15 +121,15 @@
 
 (defenum CompilerLoadMaybeDecl
   (CompilerLoadNoDecl)
-  (CompilerLoadSomeDecl AstDecl))
+  (CompilerLoadSomeDecl ast.AstDecl))
 
 (defenum ResultCompilerLoadInclude
-  (Ok AstDecl)
-  (Err (Box CompilerDiagnostic)))
+  (Ok ast.AstDecl)
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultCompilerLoadModuleId
   (Ok String i64)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (defstruct CompilerLoadParseIdentity
   (source-path-id i64)
@@ -132,14 +138,13 @@
 
 (defenum ResultCompilerLoadAliasCheck
   (Ok)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum CompilerLoadSurfaceMaybeString
   (CompilerLoadSurfaceNoString)
   (CompilerLoadSurfaceSomeString String))
 
 (defenum CompilerLoadSurfaceImportKind
-  (CompilerLoadSurfaceImportPath)
   (CompilerLoadSurfaceImportModule)
   (CompilerLoadSurfaceImportMacro)
   (CompilerLoadSurfaceImportMacroDecls))
@@ -151,7 +156,7 @@
   (module-name CompilerLoadSurfaceMaybeString)
   (alias CompilerLoadSurfaceMaybeString)
   (default-alias CompilerLoadSurfaceMaybeString)
-  (span AstSourceSpan))
+  (span ast.AstSourceSpan))
 
 (defstruct CompilerLoadSurfaceImportList
   ;; Surface builders count first and retain a right-sized array in source
@@ -207,20 +212,23 @@
 
 (defenum CompilerLoadSurfaceSignature
   (CompilerLoadSurfaceNoSignature)
-  (CompilerLoadSurfaceValueSignature AstMaybeType)
-  (CompilerLoadSurfaceFunctionSignature AstParamList AstType)
-  (CompilerLoadSurfaceExternSignature AstExternKind AstExternMetadata AstType)
+  (CompilerLoadSurfaceValueSignature ast.AstMaybeType)
+  (CompilerLoadSurfaceFunctionSignature ast.AstParamList ast.AstType)
+  (CompilerLoadSurfaceExternSignature
+    ast.AstExternKind
+    ast.AstExternMetadata
+    ast.AstType)
   (CompilerLoadSurfaceStructSignature
-    AstLifetimeList
-    AstStructRepr
-    AstStructCleanup
-    AstFieldDefList)
+    ast.AstLifetimeList
+    ast.AstStructRepr
+    ast.AstStructCleanup
+    ast.AstFieldDefList)
   (CompilerLoadSurfaceEnumSignature
-    AstLifetimeList
-    AstEnumCleanup
-    AstVariantDefList)
-  (CompilerLoadSurfaceMacroSignature AstMacroParamList AstType i64)
-  (CompilerLoadSurfaceDispatchSignature AstDispatchVariantList))
+    ast.AstLifetimeList
+    ast.AstEnumCleanup
+    ast.AstVariantDefList)
+  (CompilerLoadSurfaceMacroSignature ast.AstMacroParamList ast.AstType i64)
+  (CompilerLoadSurfaceDispatchSignature ast.AstDispatchVariantList))
 
 (defstruct CompilerLoadSurfaceDecl
   (kind CompilerLoadSurfaceDeclKind)
@@ -232,7 +240,7 @@
   (has-export bool)
   (has-generated-meta bool)
   (was-unsafe bool)
-  (span AstSourceSpan))
+  (span ast.AstSourceSpan))
 
 (defstruct CompilerLoadSurfaceDeclList
   ;; Declarations are stored in source order, including declarations flattened
@@ -255,14 +263,12 @@
   (decls i64))
 
 (defstruct CompilerLoadSurfaceSummary
-  ;; `module-id` is the load/dedup identity. Moduleless legacy path imports can
-  ;; declare into their caller's module, so aliases target the separate
-  ;; `declaration-module-id`.
+  ;; `module-id` is the load/dedup identity; aliases target the separate
+  ;; `declaration-module-id` when a source declares an explicit module.
   (module-id i64)
   (declaration-module-id i64)
   (explicit-module bool)
-  ;; True when this source was established through a module-qualified identity
-  ;; (a dotted import or an explicit-module path import).
+  ;; True when this source was established through a module-qualified identity.
   (qualified-load bool)
   (source-path-id i64)
   (source-path String)
@@ -325,7 +331,7 @@
 
 (defenum ResultCompilerLoadSurfaceSummary
   (Ok CompilerLoadSurfaceSummary)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum CompilerLoadMaybeSurfaceSummary
   (CompilerLoadNoSurfaceSummary)
@@ -334,9 +340,9 @@
 (defenum CompilerLoadPreludeCacheLookup
   (CompilerLoadPreludeCacheMiss)
   (CompilerLoadPreludeCacheHit
-    AstDeclList
-    AstDeclPathList
-    AstDeclModuleList
+    ast.AstDeclList
+    ast.AstDeclPathList
+    ast.AstDeclModuleList
     sym_i64_env.SymI64Env))
 
 (defstruct CompilerLoadInternIdSeq
@@ -351,14 +357,14 @@
   (CompilerLoadPreludeCacheEmpty)
   (CompilerLoadPreludeCacheFull
     CompilerLoadPreludeCacheKey
-    AstDeclList
-    AstDeclPathList
-    AstDeclModuleList
+    ast.AstDeclList
+    ast.AstDeclPathList
+    ast.AstDeclModuleList
     sym_i64_env.SymI64Env))
 
 (defenum CompilerLoadProgramCacheLookup
   (CompilerLoadProgramCacheMiss)
-  (CompilerLoadProgramCacheHit AstProgram))
+  (CompilerLoadProgramCacheHit ast.AstProgram))
 
 (defenum CompilerLoadProgramSourceKind
   (CompilerLoadProgramFile)
@@ -371,7 +377,7 @@
 
 (defenum CompilerLoadProgramCacheSlot
   (CompilerLoadProgramCacheEmpty)
-  (CompilerLoadProgramCacheFull CompilerLoadProgramCacheKey AstProgram))
+  (CompilerLoadProgramCacheFull CompilerLoadProgramCacheKey ast.AstProgram))
 
 (defenum CompilerLoadProgramAdmissionSlot
   (CompilerLoadProgramAdmissionEmpty)
@@ -777,7 +783,7 @@
 (define (compiler-load-session-state-program-cache-store-at
   [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
@@ -808,14 +814,14 @@
 (define (compiler-load-session-state-program-cache-store
   [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
-  [program : AstProgram]) : bool
+  [program : ast.AstProgram]) : bool
   (begin
     (compiler-load-session-state-program-cache-ensure! state)
     (compiler-load-session-state-program-cache-store-at state key program 0)))
 
 (define (compiler-load-program-cache-store
   [key : CompilerLoadProgramCacheKey]
-  [program : AstProgram]) : bool
+  [program : ast.AstProgram]) : bool
   (compiler-load-session-state-program-cache-store
     compiler-load-active-session-state
     key
@@ -942,7 +948,7 @@
       [recorded : bool
         (begin
           (unsafe
-            (arena.tl_arena_set node-pool-base-arena))
+            (arena.tl_arena_set ast.node-pool-base-arena))
           (let
             [persistent-key : CompilerLoadProgramCacheKey
               (compiler-load-program-cache-key-copy key)]
@@ -975,9 +981,9 @@
         (array-ref (struct-get state intern-state) 0)]
       [new-intern-floor : i64
         (if (=
-          (intern-active-table-id)
+          (ci.intern-active-table-id)
           (ci.intern-compat-state-table-id interns))
-          (intern-pool-len)
+          (ci.intern-pool-len)
           (ci.intern-compat-state-pool-len interns))]
       (if (> new-intern-floor old-intern-floor)
         (begin
@@ -985,10 +991,10 @@
           (array-set! (struct-get state intern-floor) 0 new-intern-floor))
         unit))
     (let
-      [new-intern-floor : i64 (intern-pool-len)]
+      [new-intern-floor : i64 (ci.intern-pool-len)]
       (if (> new-intern-floor old-intern-floor)
         (begin
-          (intern-persistent-arena-floor-refresh!)
+          (ci.intern-persistent-arena-floor-refresh!)
           (array-set! (struct-get state intern-floor) 0 new-intern-floor))
         unit))))
 
@@ -996,14 +1002,14 @@
   [state : CompilerLoadSessionState]) : unit
   (begin
     (if (>
-      (ast-node-pool-len)
+      (ast.ast-node-pool-len)
       (compiler-load-session-state-ast-floor-value state))
-      (array-set! (struct-get state ast-floor) 0 (ast-node-pool-len))
+      (array-set! (struct-get state ast-floor) 0 (ast.ast-node-pool-len))
       unit)
     (if (>
-      (ty-node-pool-len)
+      (ast.ty-node-pool-len)
       (compiler-load-session-state-ty-floor-value state))
-      (array-set! (struct-get state ty-floor) 0 (ty-node-pool-len))
+      (array-set! (struct-get state ty-floor) 0 (ast.ty-node-pool-len))
       unit)
     (compiler-load-session-state-intern-floor-refresh!
       state
@@ -1021,23 +1027,23 @@
 
 (define (compiler-load-session-state-note-persistent-with-pools!
   [state : CompilerLoadSessionState]
-  [pools : AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext]) : unit
   (begin
     (if (>
-      (ast-node-pool-context-expr-len pools)
+      (ast.ast-node-pool-context-expr-len pools)
       (compiler-load-session-state-ast-floor-value state))
       (array-set!
         (struct-get state ast-floor)
         0
-        (ast-node-pool-context-expr-len pools))
+        (ast.ast-node-pool-context-expr-len pools))
       unit)
     (if (>
-      (ast-node-pool-context-type-len pools)
+      (ast.ast-node-pool-context-type-len pools)
       (compiler-load-session-state-ty-floor-value state))
       (array-set!
         (struct-get state ty-floor)
         0
-        (ast-node-pool-context-type-len pools))
+        (ast.ast-node-pool-context-type-len pools))
       unit)
     (compiler-load-session-state-intern-floor-refresh!
       state
@@ -1162,7 +1168,7 @@
     (set! compiler-load-active-session-state (compiler-load-session-state-new))
     (compiler-load-session-reset-pools!)
     (compiler-load-session-reset-interns!)
-    (intern-persistent-arena-reset!)
+    (ci.intern-persistent-arena-reset!)
     (compiler-load-session-floors-set! 0 0 0)
     (compiler-load-program-cache-clear!)
     (compiler-load-runtime-prelude-cache-clear!)))
@@ -1199,7 +1205,7 @@
     (if (= compiler-load-provenance-arena-handle 0)
       (begin
         (set! compiler-load-provenance-arena-handle (arena.tl_arena_make_small))
-        (compiler-arena-debug-protect-never-reset!
+        (ast.compiler-arena-debug-protect-never-reset!
           compiler-load-provenance-arena-handle))
       unit)
     ;; Re-enter the root-tracked newest segment after an overflow. Selecting
@@ -1320,11 +1326,11 @@
 
 (define (compiler-load-session-reset-pools!) : unit
   (begin
-    (compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-decl-origin-cache-reset!)
     (reader.sexpr-node-pool-reset!)
     ;; Global resets do not own the previously installed context cells. Detach
     ;; before truncating so stale scratch-owned cells are not updated.
-    (ast-node-pool-active-context-clear!)
+    (ast.ast-node-pool-active-context-clear!)
     (compiler-load-surface-summaries-reset!)
     (compiler-load-lazy-qualified-observer-reset!)
     (array-set!
@@ -1333,29 +1339,29 @@
       0)
     (if (compiler-load-session-cache-enabled?)
       (begin
-        (ast-node-pool-reset-to! (compiler-load-session-ast-floor-value))
-        (ty-node-pool-reset-to! (compiler-load-session-ty-floor-value)))
+        (ast.ast-node-pool-reset-to! (compiler-load-session-ast-floor-value))
+        (ast.ty-node-pool-reset-to! (compiler-load-session-ty-floor-value)))
       (begin
-        (ast-node-pool-reset!)
-        (ty-node-pool-reset!)))))
+        (ast.ast-node-pool-reset!)
+        (ast.ty-node-pool-reset!)))))
 
 (define (compiler-load-session-state-reset-pools-with-pools!
   [state : CompilerLoadSessionState]
-  [pools : AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext]) : unit
   (begin
-    (compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-decl-origin-cache-reset!)
     (reader.sexpr-node-pool-reset!)
     (compiler-load-session-state-surface-summaries-reset! state)
     (compiler-load-session-state-lazy-qualified-observer-reset! state)
     (array-set! (struct-get state surface-summary-load-depth) 0 0)
     (if (compiler-load-session-state-cache-enabled? state)
-      (ast-node-pool-context-reset-to!
+      (ast.ast-node-pool-context-reset-to!
         pools
         (compiler-load-session-state-ast-floor-value state)
         (compiler-load-session-state-ty-floor-value state))
       (begin
         (reader.sp-node-pool-reset!)
-        (ast-node-pool-context-reset-to! pools 0 0)))))
+        (ast.ast-node-pool-context-reset-to! pools 0 0)))))
 
 (define (compiler-load-session-reset-interns!) : unit
   (begin
@@ -1370,9 +1376,9 @@
       0)
     (if (compiler-load-session-cache-enabled?)
       (begin
-        (intern-reset-to! (compiler-load-session-intern-floor-value))
-        (intern-persistent-arena-reset-to-floor!))
-      (intern-reset!))))
+        (ci.intern-reset-to! (compiler-load-session-intern-floor-value))
+        (ci.intern-persistent-arena-reset-to-floor!))
+      (ci.intern-reset!))))
 
 (define (compiler-load-session-state-reset-interns-with-state!
   [load-state : CompilerLoadSessionState]
@@ -1494,9 +1500,9 @@
 (define (compiler-load-session-state-runtime-prelude-cache-store-at
   [state : CompilerLoadSessionState]
   [key : CompilerLoadPreludeCacheKey]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [modules : AstDeclModuleList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [modules : ast.AstDeclModuleList]
   [seen : sym_i64_env.SymI64Env]
   [index : i64]) : unit
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
@@ -1525,9 +1531,9 @@
 (define (compiler-load-session-state-runtime-prelude-cache-store
   [state : CompilerLoadSessionState]
   [key : CompilerLoadPreludeCacheKey]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [modules : AstDeclModuleList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [modules : ast.AstDeclModuleList]
   [seen : sym_i64_env.SymI64Env]) : unit
   (begin
     (compiler-load-session-state-runtime-prelude-cache-ensure! state)
@@ -1544,11 +1550,11 @@
 (define (compiler-load-session-state-runtime-prelude-cache-store-with-pools
   [state : CompilerLoadSessionState]
   [key : CompilerLoadPreludeCacheKey]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [modules : AstDeclModuleList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [modules : ast.AstDeclModuleList]
   [seen : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext]) : unit
   (begin
     (compiler-load-session-state-runtime-prelude-cache-ensure! state)
     (compiler-load-session-state-runtime-prelude-cache-store-at
@@ -2000,7 +2006,7 @@
     (array-set!
       (struct-get state dotted-path-cache-generation)
       0
-      (intern-generation))))
+      (ci.intern-generation))))
 
 (define (compiler-load-dotted-path-cache-reset!) : unit
   (compiler-load-session-state-dotted-path-cache-reset!
@@ -2010,7 +2016,7 @@
   [state : CompilerLoadSessionState]) : unit
   (if (=
     (array-ref (struct-get state dotted-path-cache-generation) 0)
-    (intern-generation))
+    (ci.intern-generation))
     unit
     (compiler-load-session-state-dotted-path-cache-reset! state)))
 
@@ -2075,8 +2081,12 @@
         (let
           [prev-arena : i64 (arena.tl_arena_current)]
           (begin
+            ;; Cache values must never point into an arena a caller can rewind
+            ;; (a top-level `with-arena` can mark/reset the pool base arena, and
+            ;; the next request would read the freed path back on a cache hit),
+            ;; so allocate them in the never-reset provenance arena.
             (unsafe
-              (arena.tl_arena_set node-pool-base-arena))
+              (arena.tl_arena_set (compiler-load-provenance-arena)))
             (let
               [path : String
                 (compiler-load-dotted-module-path-uncached module-name)]
@@ -2102,11 +2112,11 @@
 
 (define (compiler-load-dotted-module-path-from-ast
   [module-name : String]
-  [expected-module : AstMaybeModuleName]) : String
+  [expected-module : ast.AstMaybeModuleName]) : String
   (match expected-module
-    [(AstMaybeModuleName.Some module-id)
+    [(ast.AstMaybeModuleName.Some module-id)
       (compiler-load-dotted-module-path-id module-id module-name)]
-    [(AstMaybeModuleName.No)
+    [(ast.AstMaybeModuleName.No)
       (compiler-load-dotted-module-path-uncached module-name)]))
 
 (define (compiler-load-dotted-module-first-len [module-name : String]) : i64
@@ -2142,21 +2152,21 @@
   [stdlib-roots : svec.Vec]) : String
   (let
     [suffix : String (compiler-load-stdlib-suffix module-path)]
-    (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
-      [(CompilerLoadSomePath root-path)
-        (begin
-          (compiler-load-note-embedded-equivalent-if-matching! suffix root-path)
-          root-path)]
-      [(CompilerLoadNoPath)
-        (if (io.file-exists? module-path)
+    (if (io.file-exists? module-path)
+      (begin
+        (compiler-load-note-embedded-equivalent-if-matching! suffix module-path)
+        module-path)
+      (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
+        [(CompilerLoadSomePath root-path)
           (begin
             (compiler-load-note-embedded-equivalent-if-matching!
               suffix
-              module-path)
-            module-path)
+              root-path)
+            root-path)]
+        [(CompilerLoadNoPath)
           (match (compiler-load-embedded-stdlib-path suffix)
             [(CompilerLoadSomePath embedded-path) embedded-path]
-            [(CompilerLoadNoPath) module-path]))])))
+            [(CompilerLoadNoPath) module-path])]))))
 
 (define (compiler-load-resolve-root-module-path
   [module-path : String]
@@ -2214,35 +2224,100 @@
     (compiler-load-dotted-module-path-uncached module-name)
     stdlib-roots))
 
-(define (compiler-load-resolve-import-spec-with-roots
+(define (compiler-load-resolve-dotted-import-spec-with-roots
   [importer-path : String]
   [import-root : String]
-  [kind : AstImportKind]
   [import-path : String]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [stdlib-roots : svec.Vec]) : ResultPkgResolve
-  (match kind
-    [(AstImportKind.Path)
-      (compiler-load-resolve-import-result-with-roots
-        importer-path
-        import-path
-        stdlib-roots)]
-    [(AstImportKind.Module)
+  (let
+    [module-path : String
+      (compiler-load-dotted-module-path-from-ast import-path expected-module)]
+    [first-len : i64 (compiler-load-dotted-module-first-len import-path)]
+    [first : String (string.substring import-path 0 first-len)]
+    [rest : String (compiler-load-dotted-module-rest import-path first-len)]
+    (if (or
+      (compiler-load-stdlib-import? module-path)
+      (= (string.string-length rest) 0))
+      ;; stdlib or a bare single-segment (local) import: local/roots resolution.
       (compiler-load-resolve-module-path-with-roots
         importer-path
         import-root
-        (compiler-load-dotted-module-path-from-ast import-path expected-module)
+        module-path
+        stdlib-roots)
+      ;; A nested dotted import whose first segment may be a package alias:
+      ;; consult the nearest manifest's deps before local/roots resolution so
+      ;; dependency sources can import their own dependencies (#2453).
+      (match (compiler-load-discover-manifest importer-path)
+        [(CompilerLoadNoPath)
+          (compiler-load-resolve-module-path-with-roots
+            importer-path
+            import-root
+            module-path
+            stdlib-roots)]
+        [(CompilerLoadSomePath manifest-path)
+          (match (compiler-load-parse-manifest-diagnostic
+            manifest-path
+            (compiler-load-read-file-text manifest-path))
+            [(ResultCompilerPkgManifestDiagnostic.Err _)
+              (compiler-load-resolve-module-path-with-roots
+                importer-path
+                import-root
+                module-path
+                stdlib-roots)]
+            [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
+              (match (compiler-load-pkg-dep-lookup
+                (struct-get manifest deps)
+                first)
+                [(CompilerLoadNoPath)
+                  (compiler-load-resolve-module-path-with-roots
+                    importer-path
+                    import-root
+                    module-path
+                    stdlib-roots)]
+                [(CompilerLoadSomePath dep-path)
+                  (if (compiler-load-github-dependency-path? dep-path)
+                    (ResultPkgResolve.Err
+                      (string.append
+                        "compiler-load: GitHub dependency '"
+                        (string.append
+                          first
+                          (string.append
+                            "' requires fetch support: "
+                            import-path))))
+                    (ResultPkgResolve.Ok
+                      (compiler-load-normalize-path
+                        (compiler-load-join-root-path
+                          (compiler-load-join-root-path
+                            (compiler-load-dirname manifest-path)
+                            dep-path)
+                          (compiler-load-dotted-module-path-uncached rest)))))])])]))))
+
+(define (compiler-load-resolve-import-spec-with-roots
+  [importer-path : String]
+  [import-root : String]
+  [kind : ast.AstImportKind]
+  [import-path : String]
+  [expected-module : ast.AstMaybeModuleName]
+  [stdlib-roots : svec.Vec]) : ResultPkgResolve
+  (match kind
+    [(ast.AstImportKind.Module)
+      (compiler-load-resolve-dotted-import-spec-with-roots
+        importer-path
+        import-root
+        import-path
+        expected-module
         stdlib-roots)]
-    [(AstImportKind.Macro _ _)
+    [(ast.AstImportKind.Macro _ _)
       (ResultPkgResolve.Err
         "compiler-load: module macro imports must be expanded before import resolution")]
-    [(AstImportKind.MacroDecls _ _)
+    [(ast.AstImportKind.MacroDecls _ _)
       (ResultPkgResolve.Err
         "compiler-load: module macro imports must be expanded before import resolution")]))
 
 (define (compiler-load-resolve-package-module-import
   [module-name : String]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [importer-path : String]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
@@ -2255,30 +2330,50 @@
     (if (compiler-load-stdlib-import? module-path)
       (ResultPkgResolve.Ok
         (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
-      (match (compiler-load-pkg-dep-lookup deps first)
-        [(CompilerLoadNoPath)
-          (let
-            [importer-dir : String (compiler-load-dirname importer-path)]
-            [primary : String
-              (compiler-load-normalize-path
-                (compiler-load-join-root-path importer-dir module-path))]
-            [fallback : String
-              (compiler-load-normalize-path
-                (compiler-load-join-root-path manifest-dir module-path))]
-            (if (and
-              (compiler-load-nested-import-root? importer-dir)
-              (io.file-exists? primary))
-              (ResultPkgResolve.Ok primary)
-              (ResultPkgResolve.Ok fallback)))]
-        [(CompilerLoadSomePath dep-path)
-          (let
-            [rest : String
-              (compiler-load-dotted-module-rest module-name first-len)]
-            (if (= (string.string-length rest) 0)
+      (let
+        [rest : String (compiler-load-dotted-module-rest module-name first-len)]
+        [importer-dir : String (compiler-load-dirname importer-path)]
+        [primary : String
+          (compiler-load-normalize-path
+            (compiler-load-join-root-path importer-dir module-path))]
+        [fallback : String
+          (compiler-load-normalize-path
+            (compiler-load-join-root-path manifest-dir module-path))]
+        (if (= (string.string-length rest) 0)
+          ;; A bare single-segment import names a local module first; the
+          ;; package alias only disambiguates nested paths.
+          (if (and
+            (compiler-load-nested-import-root? importer-dir)
+            (io.file-exists? primary))
+            (ResultPkgResolve.Ok primary)
+            (if (io.file-exists? fallback)
+              (ResultPkgResolve.Ok fallback)
               (ResultPkgResolve.Err
                 (string.append
                   "compiler-load: dotted import missing module segment after package alias: "
-                  module-name))
+                  module-name))))
+          (match (compiler-load-pkg-dep-lookup deps first)
+            [(CompilerLoadNoPath)
+              (if (and
+                (compiler-load-nested-import-root? importer-dir)
+                (io.file-exists? primary))
+                (ResultPkgResolve.Ok primary)
+                (if (io.file-exists? fallback)
+                  (ResultPkgResolve.Ok fallback)
+                  (if (=
+                    (compiler-pkg-dep-list-count (compiler-pkg-deps-list deps))
+                    0)
+                    ;; A dotted alias with no declared dependencies and no
+                    ;; local module is an unknown package alias; with a deps
+                    ;; graph the name may be a vendored local source module.
+                    (ResultPkgResolve.Err
+                      (string.append
+                        "compiler-load: unknown package alias '"
+                        (string.append
+                          first
+                          (string.append "': pkg:" module-path))))
+                    (ResultPkgResolve.Ok fallback))))]
+            [(CompilerLoadSomePath dep-path)
               (if (compiler-load-github-dependency-path? dep-path)
                 (ResultPkgResolve.Err
                   (string.append
@@ -2290,25 +2385,18 @@
                   (compiler-load-normalize-path
                     (compiler-load-join-root-path
                       (compiler-load-join-root-path manifest-dir dep-path)
-                      (compiler-load-dotted-module-path-uncached rest)))))))]))))
+                      (compiler-load-dotted-module-path-uncached rest)))))]))))))
 
 (define (compiler-load-resolve-package-import-spec
   [importer-path : String]
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
   [import-path : String]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultPkgResolve
   (match kind
-    [(AstImportKind.Path)
-      (if (compiler-load-pkg-import? import-path)
-        (compiler-load-resolve-pkg-import import-path manifest-dir deps)
-        (compiler-load-resolve-import-result-with-roots
-          importer-path
-          import-path
-          stdlib-roots))]
-    [(AstImportKind.Module)
+    [(ast.AstImportKind.Module)
       (compiler-load-resolve-package-module-import
         import-path
         expected-module
@@ -2316,137 +2404,148 @@
         manifest-dir
         deps
         stdlib-roots)]
-    [(AstImportKind.Macro _ _)
+    [(ast.AstImportKind.Macro _ _)
       (ResultPkgResolve.Err
         "compiler-load: module macro imports must be expanded before import resolution")]
-    [(AstImportKind.MacroDecls _ _)
+    [(ast.AstImportKind.MacroDecls _ _)
       (ResultPkgResolve.Err
         "compiler-load: module macro imports must be expanded before import resolution")]))
 
 (define (compiler-load-package-import-externs?
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
   [import-path : String]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [deps : CompilerPkgDeps]) : bool
   (match kind
-    [(AstImportKind.Path) (compiler-load-pkg-import? import-path)]
-    [(AstImportKind.Module)
+    [(ast.AstImportKind.Module)
       (let
         [module-path : String
           (compiler-load-dotted-module-path-from-ast
             import-path
             expected-module)]
         [first : String (compiler-load-dotted-module-first import-path)]
-        (if (compiler-load-stdlib-import? module-path)
+        [rest : String
+          (compiler-load-dotted-module-rest
+            import-path
+            (compiler-load-dotted-module-first-len import-path))]
+        ;; A bare single-segment import names a local module first; only a
+        ;; nested path under a dependency alias is package-extern.
+        (if (or
+          (compiler-load-stdlib-import? module-path)
+          (= (string.string-length rest) 0))
           false
           (match (compiler-load-pkg-dep-lookup deps first)
             [(CompilerLoadSomePath _) true]
             [(CompilerLoadNoPath) false])))]
-    [(AstImportKind.Macro _ _) false]
-    [(AstImportKind.MacroDecls _ _) false]))
+    [(ast.AstImportKind.Macro _ _) false]
+    [(ast.AstImportKind.MacroDecls _ _) false]))
 
 (define (compiler-load-package-source-expected-module
-  [kind : AstImportKind]
-  [expected-module : AstMaybeModuleName]
-  [package-externs : bool]) : AstMaybeModuleName
+  [kind : ast.AstImportKind]
+  [expected-module : ast.AstMaybeModuleName]
+  [package-externs : bool]) : ast.AstMaybeModuleName
   (if package-externs
     (match kind
       ;; A dependency alias selects a package root and source path; it is not
       ;; the dependency source's public module identity. Let an explicit module
       ;; declaration win, while a moduleless source keeps the dotted fallback.
-      [(AstImportKind.Module) AstMaybeModuleName.No]
-      ;; A legacy path import's `module ...` tail is an explicit assertion and
-      ;; must continue to reject a mismatched provider.
+      [(ast.AstImportKind.Module) ast.AstMaybeModuleName.No]
       [_ expected-module])
     expected-module))
 
-(define (compiler-load-macro-import-kind? [kind : AstImportKind]) : bool
+(define (compiler-load-macro-import-kind? [kind : ast.AstImportKind]) : bool
   (match kind
-    [(AstImportKind.Macro _ _) true]
-    [(AstImportKind.MacroDecls _ _) true]
+    [(ast.AstImportKind.Macro _ _) true]
+    [(ast.AstImportKind.MacroDecls _ _) true]
     [_ false]))
 
-(define (compiler-load-include-str-def [name : i64] [contents : String]) : AstDecl
+(define (compiler-load-include-str-def [name : i64] [contents : String]) : ast.AstDecl
   (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [decl : AstDecl
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [decl : ast.AstDecl
       (compiler-load-include-str-def-with-pools pools name contents)]
     (begin
-      (ast-node-pool-context-install! pools)
+      (ast.ast-node-pool-context-install! pools)
       decl)))
 
 (define (compiler-load-include-str-def-with-pools
-  [pools : AstNodePoolContext]
+  [pools : ast.AstNodePoolContext]
   [name : i64]
-  [contents : String]) : AstDecl
-  (ast-decl-def-id
+  [contents : String]) : ast.AstDecl
+  (ast.ast-decl-def-id
     name
-    (AstMaybeType.Some (AstType.String))
-    (ast-node-pool-context-expr-push
+    (ast.AstMaybeType.Some (ast.AstType.String))
+    (ast.ast-node-pool-context-expr-push
       pools
-      (AstExpr.Literal (ast-lit-generated-string contents)))))
+      (ast.AstExpr.Literal (ast.ast-lit-generated-string contents)))))
 
 ;; A comptime include becomes a zero-argument macro whose expansion is a string
 ;; literal. The file bytes therefore exist only while the transformer runs;
 ;; unlike `include-str`, no runtime definition or static string is emitted.
 (define (compiler-load-include-str-comptime-def-with-pools
-  [pools : AstNodePoolContext]
+  [pools : ast.AstNodePoolContext]
   [name : i64]
-  [contents : String]) : AstDecl
+  [contents : String]) : ast.AstDecl
   (let
-    [args : AstExprList (ast-expr-list-with-capacity 1)]
+    [args : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
     [literal : i64
-      (ast-node-pool-context-expr-push
+      (ast.ast-node-pool-context-expr-push
         pools
-        (AstExpr.Literal (ast-lit-generated-string contents)))]
+        (ast.AstExpr.Literal (ast.ast-lit-generated-string contents)))]
     (begin
-      (ast-expr-list-push (&mut args) literal)
-      (ast-decl-def-macro-id
+      (ast.ast-expr-list-push (&mut args) literal)
+      (ast.ast-decl-def-macro-id
         name
-        (ast-macro-param-list-new)
-        (AstType.String)
-        (ast-node-pool-context-expr-push
+        (ast.ast-macro-param-list-new)
+        (ast.AstType.String)
+        (ast.ast-node-pool-context-expr-push
           pools
-          (AstExpr.Call
-            (ast-node-pool-context-expr-push
+          (ast.AstExpr.Call
+            (ast.ast-node-pool-context-expr-push
               pools
-              (AstExpr.Var (cbi.compiler-builtin-ctfe-ref 29)))
+              (ast.AstExpr.Var (cbi.compiler-builtin-ctfe-ref 29)))
             args))))))
 
 (define (compiler-load-include-str-lzss-def-with-pools
-  [pools : AstNodePoolContext]
+  [pools : ast.AstNodePoolContext]
   [name : i64]
-  [contents : String]) : AstDecl
+  [contents : String]) : ast.AstDecl
   (let
-    [compressed : String (ctfe-embedded-stdlib-binary-data-bytes contents)]
-    (ast-decl-def-id
+    [compressed : String (ctfe.ctfe-embedded-stdlib-binary-data-bytes contents)]
+    (ast.ast-decl-def-id
       name
-      (AstMaybeType.Some (ast-ty-dyn-array-with-pools pools (AstType.U8)))
-      (ast-node-pool-context-expr-push pools (AstExpr.BinaryData compressed)))))
+      (ast.AstMaybeType.Some
+        (ast.ast-ty-dyn-array-with-pools pools (ast.AstType.U8)))
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.BinaryData compressed)))))
 
-(define (compiler-load-include-bin-def [name : i64] [contents : String]) : AstDecl
+(define (compiler-load-include-bin-def [name : i64] [contents : String]) : ast.AstDecl
   (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [decl : AstDecl
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [decl : ast.AstDecl
       (compiler-load-include-bin-def-with-pools pools name contents)]
     (begin
-      (ast-node-pool-context-install! pools)
+      (ast.ast-node-pool-context-install! pools)
       decl)))
 
 (define (compiler-load-include-bin-def-with-pools
-  [pools : AstNodePoolContext]
+  [pools : ast.AstNodePoolContext]
   [name : i64]
-  [contents : String]) : AstDecl
-  (ast-decl-def-id
+  [contents : String]) : ast.AstDecl
+  (ast.ast-decl-def-id
     name
-    (AstMaybeType.Some (ast-ty-dyn-array-with-pools pools (AstType.U8)))
-    (ast-node-pool-context-expr-push pools (AstExpr.BinaryData contents))))
+    (ast.AstMaybeType.Some
+      (ast.ast-ty-dyn-array-with-pools pools (ast.AstType.U8)))
+    (ast.ast-node-pool-context-expr-push
+      pools
+      (ast.AstExpr.BinaryData contents))))
 
 (define (compiler-load-include-str-read-error
   [importer-path : String]
   [include-path : String]
-  [resolved : String]) : CompilerDiagnostic
-  (compiler-diagnostic-at-start
+  [resolved : String]) : cdiag.CompilerDiagnostic
+  (cdiag.compiler-diagnostic-at-start
     importer-path
     (string.append
       "compiler-load: cannot read include-str "
@@ -2486,7 +2585,7 @@
   [include-path : String]
   [resolved : String]
   [name : i64]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
     (ResultCompilerLoadInclude.Ok
       (compiler-load-include-str-def-with-pools
@@ -2511,7 +2610,7 @@
   [include-path : String]
   [resolved : String]
   [name : i64]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
     (ResultCompilerLoadInclude.Ok
       (compiler-load-include-str-comptime-def-with-pools
@@ -2536,7 +2635,7 @@
   [include-path : String]
   [resolved : String]
   [name : i64]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
     (ResultCompilerLoadInclude.Ok
       (compiler-load-include-str-lzss-def-with-pools
@@ -2562,7 +2661,7 @@
   [resolved : String]
   [name : i64]) : ResultCompilerLoadInclude
   (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadInclude
       (compiler-load-include-str-lzss-from-resolved-with-pools
         importer-path
@@ -2571,14 +2670,14 @@
         name
         pools)]
     (begin
-      (ast-node-pool-context-install! pools)
+      (ast.ast-node-pool-context-install! pools)
       result)))
 
 (define (compiler-load-include-bin-read-error
   [importer-path : String]
   [include-path : String]
-  [resolved : String]) : CompilerDiagnostic
-  (compiler-diagnostic-at-start
+  [resolved : String]) : cdiag.CompilerDiagnostic
+  (cdiag.compiler-diagnostic-at-start
     importer-path
     (str_cat.str-cat
       "compiler-load: cannot read include-bin "
@@ -2617,7 +2716,7 @@
   [include-path : String]
   [resolved : String]
   [name : i64]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
     (ResultCompilerLoadInclude.Ok
       (compiler-load-include-bin-def-with-pools
@@ -2642,7 +2741,7 @@
   [include-path : String]
   [name : i64]
   [stdlib-roots : svec.Vec]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (match (compiler-load-resolve-import-result-with-roots
     importer-path
     include-path
@@ -2656,14 +2755,14 @@
         pools)]
     [(ResultPkgResolve.Err message)
       (ResultCompilerLoadInclude.Err
-        (box (compiler-diagnostic-at-start importer-path message)))]))
+        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-expand-include-str-comptime-with-pools
   [importer-path : String]
   [include-path : String]
   [name : i64]
   [stdlib-roots : svec.Vec]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (match (compiler-load-resolve-import-result-with-roots
     importer-path
     include-path
@@ -2677,14 +2776,14 @@
         pools)]
     [(ResultPkgResolve.Err message)
       (ResultCompilerLoadInclude.Err
-        (box (compiler-diagnostic-at-start importer-path message)))]))
+        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-expand-include-str-lzss-with-pools
   [importer-path : String]
   [include-path : String]
   [name : i64]
   [stdlib-roots : svec.Vec]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (match (compiler-load-resolve-import-result-with-roots
     importer-path
     include-path
@@ -2698,14 +2797,14 @@
         pools)]
     [(ResultPkgResolve.Err message)
       (ResultCompilerLoadInclude.Err
-        (box (compiler-diagnostic-at-start importer-path message)))]))
+        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-expand-include-bin-with-pools
   [importer-path : String]
   [include-path : String]
   [name : i64]
   [stdlib-roots : svec.Vec]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (match (compiler-load-resolve-import-result-with-roots
     importer-path
     include-path
@@ -2719,83 +2818,91 @@
         pools)]
     [(ResultPkgResolve.Err message)
       (ResultCompilerLoadInclude.Err
-        (box (compiler-diagnostic-at-start importer-path message)))]))
+        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-decl-list-prepend-with-origin
-  [head : AstDecl]
-  [origin : CompilerParseMaybeDeclSpan]
-  [rest : AstDeclList]) : AstDeclList
+  [head : ast.AstDecl]
+  [origin : parser.CompilerParseMaybeDeclSpan]
+  [rest : ast.AstDeclList]) : ast.AstDeclList
   (let
-    [rest-key : i64 (compiler-parse-decl-list-storage-key (& rest))]
-    [out : AstDeclList (ast-decl-list-prepend-builder head rest)]
+    [rest-key : i64 (parser.compiler-parse-decl-list-storage-key (& rest))]
+    [out : ast.AstDeclList (ast.ast-decl-list-prepend-builder head rest)]
     [same-storage : bool
-      (= rest-key (compiler-parse-decl-list-storage-key (& out)))]
+      (= rest-key (parser.compiler-parse-decl-list-storage-key (& out)))]
     (if same-storage
       (begin
-        (compiler-parse-decl-origin-register-maybe! (& out) 0 origin)
+        (parser.compiler-parse-decl-origin-register-maybe! (& out) 0 origin)
         out)
       (begin
-        (compiler-parse-decl-origin-register-maybe! (& out) 0 origin)
-        (compiler-parse-decl-origin-register-list-aliases! (& out) 1 rest)
+        (parser.compiler-parse-decl-origin-register-maybe! (& out) 0 origin)
+        (parser.compiler-parse-decl-origin-register-list-aliases!
+          (& out)
+          1
+          rest)
         out))))
 
 (define (compiler-load-decl-list-prepend-from-source
-  [head : AstDecl]
-  [source : AstDeclList]
-  [rest : AstDeclList]) : AstDeclList
+  [head : ast.AstDecl]
+  [source : ast.AstDeclList]
+  [rest : ast.AstDeclList]) : ast.AstDeclList
   (let
-    [rest-key : i64 (compiler-parse-decl-list-storage-key (& rest))]
-    [out : AstDeclList (ast-decl-list-prepend-builder head rest)]
+    [rest-key : i64 (parser.compiler-parse-decl-list-storage-key (& rest))]
+    [out : ast.AstDeclList (ast.ast-decl-list-prepend-builder head rest)]
     [same-storage : bool
-      (= rest-key (compiler-parse-decl-list-storage-key (& out)))]
+      (= rest-key (parser.compiler-parse-decl-list-storage-key (& out)))]
     (begin
-      (if (compiler-parse-decl-origin-needs-record?
-        (ast-decl-list-get (& source) 0 (ast-decl-fallback)))
-        (compiler-parse-decl-origin-register-alias-record!
+      (if (parser.compiler-parse-decl-origin-needs-record?
+        (ast.ast-decl-list-get (& source) 0 (ast.ast-decl-fallback)))
+        (parser.compiler-parse-decl-origin-register-alias-record!
           (& out)
           0
           1
-          (compiler-parse-decl-list-storage-key (& source))
+          (parser.compiler-parse-decl-list-storage-key (& source))
           (struct-get source offset)
           false)
         unit)
       (if same-storage
         unit
-        (compiler-parse-decl-origin-register-list-aliases! (& out) 1 rest))
+        (parser.compiler-parse-decl-origin-register-list-aliases!
+          (& out)
+          1
+          rest))
       out)))
 
-(define (compiler-load-decl-list-prepend [head : AstDecl] [rest : AstDeclList]) : AstDeclList
+(define (compiler-load-decl-list-prepend
+  [head : ast.AstDecl]
+  [rest : ast.AstDeclList]) : ast.AstDeclList
   (compiler-load-decl-list-prepend-with-origin
     head
-    (CompilerParseMaybeDeclSpan.None)
+    (parser.CompilerParseMaybeDeclSpan.None)
     rest))
 
 (define (compiler-load-decl-list-append
-  [left : AstDeclList]
-  [right : AstDeclList]) : AstDeclList
+  [left : ast.AstDeclList]
+  [right : ast.AstDeclList]) : ast.AstDeclList
   (let
-    [out : AstDeclList
-      (ast-decl-list-with-capacity
-        (+ (ast-decl-list-len (& left)) (ast-decl-list-len (& right))))]
+    [out : ast.AstDeclList
+      (ast.ast-decl-list-with-capacity
+        (+ (ast.ast-decl-list-len (& left)) (ast.ast-decl-list-len (& right))))]
     (begin
-      (ast-decl-list-append-from (&mut out) (& left) 0)
-      (ast-decl-list-append-from (&mut out) (& right) 0)
-      (compiler-parse-decl-origin-register-list-aliases! (& out) 0 left)
-      (compiler-parse-decl-origin-register-list-aliases!
+      (ast.ast-decl-list-append-from (&mut out) (& left) 0)
+      (ast.ast-decl-list-append-from (&mut out) (& right) 0)
+      (parser.compiler-parse-decl-origin-register-list-aliases! (& out) 0 left)
+      (parser.compiler-parse-decl-origin-register-list-aliases!
         (& out)
-        (ast-decl-list-len (& left))
+        (ast.ast-decl-list-len (& left))
         right)
       out)))
 
 (define (compiler-load-decl-list-append-onto
-  [left : AstDeclList]
-  [right : AstDeclList]) : AstDeclList
+  [left : ast.AstDeclList]
+  [right : ast.AstDeclList]) : ast.AstDeclList
   (let
-    [left-len : i64 (ast-decl-list-len (& left))]
-    [right-len : i64 (ast-decl-list-len (& right))]
-    [right-key : i64 (compiler-parse-decl-list-storage-key (& right))]
-    [right-slots : (__tl_dyn-array AstDecl) (struct-get right slots)]
-    [out : AstDeclList
+    [left-len : i64 (ast.ast-decl-list-len (& left))]
+    [right-len : i64 (ast.ast-decl-list-len (& right))]
+    [right-key : i64 (parser.compiler-parse-decl-list-storage-key (& right))]
+    [right-slots : (__tl_dyn-array ast.AstDecl) (struct-get right slots)]
+    [out : ast.AstDeclList
       (if (and
         (<= left-len (struct-get right offset))
         (struct-get right prependable)
@@ -2809,51 +2916,53 @@
         (let
           [new-offset : i64 (- (struct-get right offset) left-len)]
           (begin
-            (ast-decl-list-copy-to
+            (ast.ast-decl-list-copy-to
               (&mut right-slots)
               (& (struct-get left slots))
               (struct-get left offset)
               new-offset
               0
               left-len)
-            (AstDeclList right-slots new-offset (+ left-len right-len) true)))
+            (ast.AstDeclList right-slots new-offset (+ left-len right-len) true)))
         (let
-          [out : AstDeclList
-            (ast-decl-list-with-capacity (+ left-len right-len))]
+          [out : ast.AstDeclList
+            (ast.ast-decl-list-with-capacity (+ left-len right-len))]
           (begin
-            (ast-decl-list-append-from (&mut out) (& left) 0)
-            (ast-decl-list-append-from (&mut out) (& right) 0)
+            (ast.ast-decl-list-append-from (&mut out) (& left) 0)
+            (ast.ast-decl-list-append-from (&mut out) (& right) 0)
             out)))]
     [same-storage : bool
-      (= right-key (compiler-parse-decl-list-storage-key (& out)))]
+      (= right-key (parser.compiler-parse-decl-list-storage-key (& out)))]
     (begin
-      (compiler-parse-decl-origin-register-list-aliases! (& out) 0 left)
+      (parser.compiler-parse-decl-origin-register-list-aliases! (& out) 0 left)
       (if same-storage
         unit
-        (compiler-parse-decl-origin-register-list-aliases!
+        (parser.compiler-parse-decl-origin-register-list-aliases!
           (& out)
           left-len
           right))
       out)))
 
 (define (compiler-load-decl-path-list-append
-  [left : AstDeclPathList]
-  [right : AstDeclPathList]) : AstDeclPathList
+  [left : ast.AstDeclPathList]
+  [right : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
-    [out : AstDeclPathList
-      (ast-decl-path-list-with-capacity
-        (+ (ast-decl-path-list-len (& left)) (ast-decl-path-list-len (& right))))]
+    [out : ast.AstDeclPathList
+      (ast.ast-decl-path-list-with-capacity
+        (+
+          (ast.ast-decl-path-list-len (& left))
+          (ast.ast-decl-path-list-len (& right))))]
     (begin
-      (ast-decl-path-list-append-from (&mut out) (& left) 0)
-      (ast-decl-path-list-append-from (&mut out) (& right) 0)
+      (ast.ast-decl-path-list-append-from (&mut out) (& left) 0)
+      (ast.ast-decl-path-list-append-from (&mut out) (& right) 0)
       out)))
 
 (define (compiler-load-decl-path-list-append-onto
-  [left : AstDeclPathList]
-  [right : AstDeclPathList]) : AstDeclPathList
+  [left : ast.AstDeclPathList]
+  [right : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
-    [left-len : i64 (ast-decl-path-list-len (& left))]
-    [right-len : i64 (ast-decl-path-list-len (& right))]
+    [left-len : i64 (ast.ast-decl-path-list-len (& left))]
+    [right-len : i64 (ast.ast-decl-path-list-len (& right))]
     [right-slots : (__tl_dyn-array String) (struct-get right slots)]
     [right-owner-ids : (__tl_dyn-array i64) (struct-get right owner-ids)]
     (if (and
@@ -2869,54 +2978,54 @@
       (let
         [new-offset : i64 (- (struct-get right offset) left-len)]
         (begin
-          (ast-decl-path-list-copy-to
+          (ast.ast-decl-path-list-copy-to
             (&mut right-slots)
             (& (struct-get left slots))
             (struct-get left offset)
             new-offset
             0
             left-len)
-          (ast-decl-module-list-copy-to
+          (ast.ast-decl-module-list-copy-to
             (&mut right-owner-ids)
             (& (struct-get left owner-ids))
             (struct-get left offset)
             new-offset
             0
             left-len)
-          (AstDeclPathList
+          (ast.AstDeclPathList
             right-slots
             right-owner-ids
             new-offset
             (+ left-len right-len)
             true)))
       (let
-        [out : AstDeclPathList
-          (ast-decl-path-list-with-capacity (+ left-len right-len))]
+        [out : ast.AstDeclPathList
+          (ast.ast-decl-path-list-with-capacity (+ left-len right-len))]
         (begin
-          (ast-decl-path-list-append-from (&mut out) (& left) 0)
-          (ast-decl-path-list-append-from (&mut out) (& right) 0)
+          (ast.ast-decl-path-list-append-from (&mut out) (& left) 0)
+          (ast.ast-decl-path-list-append-from (&mut out) (& right) 0)
           out)))))
 
 (define (compiler-load-decl-module-list-append
-  [left : AstDeclModuleList]
-  [right : AstDeclModuleList]) : AstDeclModuleList
+  [left : ast.AstDeclModuleList]
+  [right : ast.AstDeclModuleList]) : ast.AstDeclModuleList
   (let
-    [out : AstDeclModuleList
-      (ast-decl-module-list-with-capacity
+    [out : ast.AstDeclModuleList
+      (ast.ast-decl-module-list-with-capacity
         (+
-          (ast-decl-module-list-len (& left))
-          (ast-decl-module-list-len (& right))))]
+          (ast.ast-decl-module-list-len (& left))
+          (ast.ast-decl-module-list-len (& right))))]
     (begin
-      (ast-decl-module-list-append-from (&mut out) (& left) 0)
-      (ast-decl-module-list-append-from (&mut out) (& right) 0)
+      (ast.ast-decl-module-list-append-from (&mut out) (& left) 0)
+      (ast.ast-decl-module-list-append-from (&mut out) (& right) 0)
       out)))
 
 (define (compiler-load-decl-module-list-append-onto
-  [left : AstDeclModuleList]
-  [right : AstDeclModuleList]) : AstDeclModuleList
+  [left : ast.AstDeclModuleList]
+  [right : ast.AstDeclModuleList]) : ast.AstDeclModuleList
   (let
-    [left-len : i64 (ast-decl-module-list-len (& left))]
-    [right-len : i64 (ast-decl-module-list-len (& right))]
+    [left-len : i64 (ast.ast-decl-module-list-len (& left))]
+    [right-len : i64 (ast.ast-decl-module-list-len (& right))]
     [right-slots : (__tl_dyn-array i64) (struct-get right slots)]
     (if (and
       (<= left-len (struct-get right offset))
@@ -2931,20 +3040,24 @@
       (let
         [new-offset : i64 (- (struct-get right offset) left-len)]
         (begin
-          (ast-decl-module-list-copy-to
+          (ast.ast-decl-module-list-copy-to
             (&mut right-slots)
             (& (struct-get left slots))
             (struct-get left offset)
             new-offset
             0
             left-len)
-          (AstDeclModuleList right-slots new-offset (+ left-len right-len) true)))
+          (ast.AstDeclModuleList
+            right-slots
+            new-offset
+            (+ left-len right-len)
+            true)))
       (let
-        [out : AstDeclModuleList
-          (ast-decl-module-list-with-capacity (+ left-len right-len))]
+        [out : ast.AstDeclModuleList
+          (ast.ast-decl-module-list-with-capacity (+ left-len right-len))]
         (begin
-          (ast-decl-module-list-append-from (&mut out) (& left) 0)
-          (ast-decl-module-list-append-from (&mut out) (& right) 0)
+          (ast.ast-decl-module-list-append-from (&mut out) (& left) 0)
+          (ast.ast-decl-module-list-append-from (&mut out) (& right) 0)
           out)))))
 
 (define compiler-load-core-macro-prelude-path : String
@@ -2966,7 +3079,7 @@
     source
     seen
     stdlib-roots
-    AstMaybeModuleName.No
+    ast.AstMaybeModuleName.No
     cfgs))
 
 (define (compiler-load-stdlib-prelude-file-with-roots-cfg
@@ -3015,14 +3128,14 @@
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
     load-state
     path
     source
     seen
     stdlib-roots
-    AstMaybeModuleName.No
+    ast.AstMaybeModuleName.No
     cfgs
     pools))
 
@@ -3032,7 +3145,7 @@
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (let
     [suffix : String (compiler-load-stdlib-suffix path)]
     (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
@@ -3084,23 +3197,23 @@
       (ResultCompilerLoadWithPaths.Ok
         (compiler-load-decl-list-append
           decls
-          (ast-decl-cons
-            (ast-decl-module-id cbi.compiler-builtin-id-fix-empty)
-            (ast-decl-list-new)))
+          (ast.ast-decl-cons
+            (ast.ast-decl-module-id cbi.compiler-builtin-id-fix-empty)
+            (ast.ast-decl-list-new)))
         (compiler-load-decl-path-list-append
           paths
-          (ast-decl-path-list-prepend-builder-with-owner-id
+          (ast.ast-decl-path-list-prepend-builder-with-owner-id
             compiler-load-core-macro-prelude-path
-            (ast-decl-path-list-owner-id
+            (ast.ast-decl-path-list-owner-id
               (& paths)
               0
               cbi.compiler-builtin-id-fix-empty)
-            (ast-decl-path-list-new)))
+            (ast.ast-decl-path-list-new)))
         (compiler-load-decl-module-list-append
           modules
-          (ast-decl-module-cons-id
+          (ast.ast-decl-module-cons-id
             cbi.compiler-builtin-id-fix-empty
-            (ast-decl-module-list-new)))
+            (ast.ast-decl-module-list-new)))
         seen)]
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultCompilerLoadWithPaths.Err diag)]))
@@ -3121,7 +3234,7 @@
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
     (compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
       load-state
@@ -3138,10 +3251,10 @@
     [(ResultCompilerLoadWithPaths.Err diag) (ResultCompilerLoad.Err diag)]))
 
 (define (compiler-load-parse-context-name-id [name : String]) : i64
-  (intern-source-slice name 0 (intern-private-string-length name)))
+  (ci.intern-source-slice name 0 (ci.intern-private-string-length name)))
 
 (define (compiler-load-source-path-id [path : String]) : i64
-  (intern-source-slice path 0 (intern-private-string-length path)))
+  (ci.intern-source-slice path 0 (ci.intern-private-string-length path)))
 
 (define (compiler-load-seen-module-contains?
   [seen : sym_i64_env.SymI64Env]
@@ -3157,22 +3270,22 @@
 
 (define (compiler-load-decls-module-id-loop
   [path : String]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [fallback : String]
   [fallback-id : i64]
   [found : CompilerLoadMaybeModuleId]) : ResultCompilerLoadModuleId
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil)
       (match found
         [(CompilerLoadNoModuleId)
           (ResultCompilerLoadModuleId.Ok fallback fallback-id)]
         [(CompilerLoadSomeModuleId name name-id)
           (ResultCompilerLoadModuleId.Ok name name-id)])]
-    [(AstDeclListStep.Cons decl rest)
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (match decl
-          [(AstDecl.Module name)
+          [(ast.AstDecl.Module name)
             (match found
               [(CompilerLoadNoModuleId)
                 (compiler-load-decls-module-id-loop
@@ -3180,11 +3293,11 @@
                   rest
                   fallback
                   fallback-id
-                  (CompilerLoadSomeModuleId (intern-str name) name))]
+                  (CompilerLoadSomeModuleId (ci.intern-str name) name))]
               [(CompilerLoadSomeModuleId _ _)
                 (ResultCompilerLoadModuleId.Err
                   (box
-                    (compiler-diagnostic-at-start
+                    (cdiag.compiler-diagnostic-at-start
                       path
                       "compiler-load: duplicate module declaration")))])]
           [_
@@ -3197,7 +3310,7 @@
 
 (define (compiler-load-decls-module-id
   [path : String]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [fallback-id : i64]) : ResultCompilerLoadModuleId
   (let
     [fallback : String (compiler-load-canonical-module-id-from-path path)]
@@ -3210,7 +3323,7 @@
 
 (define (compiler-load-decls-module-id-with-fallback
   [path : String]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [fallback : String]
   [fallback-id : i64]) : ResultCompilerLoadModuleId
   (compiler-load-decls-module-id-loop
@@ -3222,45 +3335,46 @@
 
 (define (compiler-load-check-expected-module
   [path : String]
-  [expected : AstMaybeModuleName]
+  [expected : ast.AstMaybeModuleName]
   [actual : String]
   [actual-id : i64]) : ResultCompilerLoadModuleId
   (match expected
-    [(AstMaybeModuleName.No) (ResultCompilerLoadModuleId.Ok actual actual-id)]
-    [(AstMaybeModuleName.Some want)
+    [(ast.AstMaybeModuleName.No)
+      (ResultCompilerLoadModuleId.Ok actual actual-id)]
+    [(ast.AstMaybeModuleName.Some want)
       (if (if (>= actual-id 0)
         (= want actual-id)
-        (string.eq (intern-str want) actual))
+        (string.eq (ci.intern-str want) actual))
         (ResultCompilerLoadModuleId.Ok actual actual-id)
         (ResultCompilerLoadModuleId.Err
           (box
-            (compiler-diagnostic-at-start
+            (cdiag.compiler-diagnostic-at-start
               path
               (string.append
                 "compiler-load: import expected module "
                 (string.append
-                  (intern-str want)
+                  (ci.intern-str want)
                   (string.append " but loaded " actual)))))))]))
 
-(define (compiler-load-no-expected-module? [expected : AstMaybeModuleName]) : bool
+(define (compiler-load-no-expected-module? [expected : ast.AstMaybeModuleName]) : bool
   (match expected
-    [(AstMaybeModuleName.No) true]
-    [(AstMaybeModuleName.Some _) false]))
+    [(ast.AstMaybeModuleName.No) true]
+    [(ast.AstMaybeModuleName.Some _) false]))
 
 (define (compiler-load-module-fallback-id-for-parse
   [fallback : String]
-  [expected : AstMaybeModuleName]) : i64
+  [expected : ast.AstMaybeModuleName]) : i64
   (match expected
-    [(AstMaybeModuleName.Some module-id)
-      (if (string.eq (intern-str module-id) fallback)
+    [(ast.AstMaybeModuleName.Some module-id)
+      (if (string.eq (ci.intern-str module-id) fallback)
         module-id
         (compiler-load-parse-context-name-id fallback))]
-    [(AstMaybeModuleName.No) (compiler-load-parse-context-name-id fallback)]))
+    [(ast.AstMaybeModuleName.No) (compiler-load-parse-context-name-id fallback)]))
 
 (define (compiler-load-parse-identity
   [path : String]
   [module-fallback : String]
-  [expected : AstMaybeModuleName]) : CompilerLoadParseIdentity
+  [expected : ast.AstMaybeModuleName]) : CompilerLoadParseIdentity
   (CompilerLoadParseIdentity
     (compiler-load-source-path-id path)
     (compiler-load-module-fallback-id-for-parse module-fallback expected)
@@ -3269,7 +3383,7 @@
 (define (compiler-load-seen-path-key-id
   [source-path-id : i64]
   [context-module-id : i64]) : i64
-  (intern-composite-pair-id source-path-id context-module-id))
+  (ci.intern-composite-pair-id source-path-id context-module-id))
 
 (define (compiler-load-strip-tl-extension [path : String]) : String
   (let
@@ -3301,13 +3415,6 @@
 (define (compiler-load-canonical-module-id-from-path [path : String]) : String
   (compiler-load-module-id-from-path-text path))
 
-(define (compiler-load-canonical-module-id-from-pkg-import
-  [import-path : String]) : String
-  (if (compiler-load-pkg-import? import-path)
-    (compiler-load-module-id-from-path-text
-      (string.substring import-path 4 (- (string.string-length import-path) 4)))
-    (compiler-load-module-id-from-path-text import-path)))
-
 (define (compiler-load-root-relative-path [root : String] [path : String]) : String
   (let
     [normalized-path : String (compiler-load-normalize-path path)]
@@ -3320,44 +3427,19 @@
       (string.substring normalized-path prefix-len (- path-len prefix-len))
       normalized-path)))
 
-;; Path-import identity must not depend on which spelling of the resolved
-;; path a graph produced: package loading resolves the same file both
-;; package-owned (typelisp/src/x.tl) and entry-relative (src/x.tl), and an
-;; absolute canonical would load it twice -- every nominal in the chain then
-;; collides. Canonicalize relative to the importing root. Dotted and path
-;; spellings stay distinct on purpose: a moduleless path import is absorbed
-;; into the importer's namespace while a dotted import names a module, so
-;; merging them hands one importer the other's load shape.
+;; Dotted imports carry their canonical module identity directly. Macro imports
+;; are expanded before resolution and retain the resolved-path fallback here.
 (define (compiler-load-canonical-module-id-from-import-rooted
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
   [import-path : String]
   [resolved-path : String]
-  [import-root : String]) : String
+  [_ : String]) : String
   (match kind
-    [(AstImportKind.Module) import-path]
-    [(AstImportKind.Path)
-      (let
-        [normalized-import : String (compiler-load-normalize-path import-path)]
-        (cond
-          [(compiler-load-pkg-import? import-path)
-            (compiler-load-canonical-module-id-from-pkg-import import-path)]
-          [(compiler-load-stdlib-import? normalized-import)
-            (compiler-load-canonical-module-id-from-path normalized-import)]
-          [else
-            ;; The identity is the root-relative path with the extension
-            ;; stripped: stable across owned and entry-relative resolutions
-            ;; of the same file, slash-separated so it can never equal a
-            ;; dotted module id (the import kinds cannot merge), and
-            ;; dot-free so name resolution in moduleless files never takes
-            ;; the qualified-name path per lookup.
-            (string.append
-              "/"
-              (compiler-load-strip-tl-extension
-                (compiler-load-root-relative-path import-root resolved-path)))]))]
+    [(ast.AstImportKind.Module) import-path]
     [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
 
 (define (compiler-load-canonical-module-id-from-import
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
   [import-path : String]
   [resolved-path : String]) : String
   (compiler-load-canonical-module-id-from-import-rooted
@@ -3366,9 +3448,8 @@
     resolved-path
     ""))
 
-;; Linkage ownership for a moduleless import follows its path relative to the
-;; entry root. Keep this distinct from the absolute module fallback used for
-;; load deduplication and expected-module checks.
+;; Linkage ownership for a moduleless entry follows its path relative to the
+;; entry root.
 (define (compiler-load-decl-owner-id-from-root [root : String] [path : String]) : i64
   (let
     [normalized-path : String (compiler-load-normalize-path path)]
@@ -3385,97 +3466,82 @@
       (compiler-load-module-id-from-path-text relative))))
 
 (define (compiler-load-canonical-source-module-from-import
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
   [import-path : String]
   [resolved-path : String]
-  [expected-module : AstMaybeModuleName]
-  [context-module : String]) : String
+  [_ : ast.AstMaybeModuleName]
+  [_ : String]) : String
   (let
     [fallback : String
       (compiler-load-canonical-module-id-from-import
         kind
         import-path
         resolved-path)]
-    (match kind
-      [(AstImportKind.Path)
-        (let
-          [normalized-import : String
-            (compiler-load-normalize-path import-path)]
-          [normalized-resolved : String
-            (compiler-load-normalize-path resolved-path)]
-          (if (or
-            (compiler-load-pkg-import? import-path)
-            (compiler-load-stdlib-source-module-import? normalized-import)
-            (compiler-load-stdlib-source-module-import? normalized-resolved))
-            fallback
-            (if (compiler-load-no-expected-module? expected-module)
-              context-module
-              fallback)))]
-      [_ fallback])))
+    fallback))
 
-(define (compiler-load-decls-source-module [decls : AstDeclList]) : String
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) ""]
-    [(AstDeclListStep.Cons decl rest)
+(define (compiler-load-decls-source-module [decls : ast.AstDeclList]) : String
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) ""]
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (match decl
-          [(AstDecl.Module name) (intern-str name)]
+          [(ast.AstDecl.Module name) (ci.intern-str name)]
           [_ (compiler-load-decls-source-module rest)]))]))
 
-(define (compiler-load-decls-source-module-id [decls : AstDeclList]) : i64
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) cbi.compiler-builtin-id-fix-empty]
-    [(AstDeclListStep.Cons decl rest)
+(define (compiler-load-decls-source-module-id [decls : ast.AstDeclList]) : i64
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) cbi.compiler-builtin-id-fix-empty]
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (match decl
-          [(AstDecl.Module name) name]
+          [(ast.AstDecl.Module name) name]
           [_ (compiler-load-decls-source-module-id rest)]))]))
 
 (define (compiler-load-decls-source-module-or
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [fallback : String]) : String
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) fallback]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) fallback]
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (match decl
-          [(AstDecl.Module name) (intern-str name)]
+          [(ast.AstDecl.Module name) (ci.intern-str name)]
           [_ (compiler-load-decls-source-module-or rest fallback)]))]))
 
 ;; Tag-only predicate: an index cursor reads the tag word through a borrow
 ;; instead of copying a 104 B row and a 144 B step result per declaration.
-(define (compiler-load-decl-list-has-module? [decls : AstDeclList]) : bool
+(define (compiler-load-decl-list-has-module? [decls : ast.AstDeclList]) : bool
   (let
-    [count : i64 (ast-decl-list-len (& decls))]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
         (begin
-          (match (ast-decl-list-ref-borrowed (& decls) index)
-            [(AstDecl.Module _) (set! found true)]
+          (match (ast.ast-decl-list-ref-borrowed (& decls) index)
+            [(ast.AstDecl.Module _) (set! found true)]
             [_ unit])
           (set! index (+ index 1))))
       found)))
 
 (define (compiler-load-decl-list-has-module-name?
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [want : String]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (match decl
-          [(AstDecl.Module name)
-            (if (string.eq (intern-str name) want)
+          [(ast.AstDecl.Module name)
+            (if (string.eq (ci.intern-str name) want)
               true
               (compiler-load-decl-list-has-module-name? rest want))]
-          [(AstDecl.ModuleBody name body-box)
-            (if (string.eq (intern-str name) want)
+          [(ast.AstDecl.ModuleBody name body-box)
+            (if (string.eq (ci.intern-str name) want)
               true
               (or
                 (compiler-load-decl-list-has-module-name?
@@ -3485,28 +3551,30 @@
           [_ (compiler-load-decl-list-has-module-name? rest want)]))]))
 
 (define (compiler-load-decl-list-has-extern-symbol?
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [want : String]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (match decl
-          [(AstDecl.Extern decl-meta _ _ metadata _)
-            (if (string.eq (ast-extern-metadata-symbol (box-get metadata)) want)
+          [(ast.AstDecl.Extern decl-meta _ _ metadata _)
+            (if (string.eq
+              (ast.ast-extern-metadata-symbol (box-get metadata))
+              want)
               true
               (compiler-load-decl-list-has-extern-symbol? rest want))]
           [_ (compiler-load-decl-list-has-extern-symbol? rest want)]))]))
 
 (define (compiler-load-contextual-moduleless-decls
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [source-module : String]
-  [source-module-id : i64]) : AstDeclList
+  [source-module-id : i64]) : ast.AstDeclList
   (if (and
     (> (string.string-length source-module) 0)
     (not (compiler-load-decl-list-has-module? decls)))
-    (ast-decl-cons (ast-decl-module-id source-module-id) decls)
+    (ast.ast-decl-cons (ast.ast-decl-module-id source-module-id) decls)
     decls))
 
 (define (compiler-load-seen-module-with-paths
@@ -3514,148 +3582,102 @@
   [path-id : i64]
   [_ : String]
   [module-name-id : i64]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-decl-list-has-module? decls)
     (ResultCompilerLoadWithPaths.Ok
-      (ast-decl-cons (ast-decl-module-id module-name-id) (ast-decl-list-new))
-      (ast-decl-path-list-prepend-builder-with-owner-id
+      (ast.ast-decl-cons
+        (ast.ast-decl-module-id module-name-id)
+        (ast.ast-decl-list-new))
+      (ast.ast-decl-path-list-prepend-builder-with-owner-id
         path
         path-id
-        (ast-decl-path-list-new))
-      (ast-decl-module-cons-id module-name-id (ast-decl-module-list-new))
+        (ast.ast-decl-path-list-new))
+      (ast.ast-decl-module-cons-id
+        module-name-id
+        (ast.ast-decl-module-list-new))
       seen)
     (ResultCompilerLoadWithPaths.Ok
-      (ast-decl-list-new)
-      (ast-decl-path-list-new)
-      (ast-decl-module-list-new)
+      (ast.ast-decl-list-new)
+      (ast.ast-decl-path-list-new)
+      (ast.ast-decl-module-list-new)
       seen)))
-
-(define (compiler-load-legacy-path-flat-module-import?
-  [kind : AstImportKind]
-  [expected : AstMaybeModuleName]
-  [alias : AstMaybeImportAlias]
-  [imported-decls : AstDeclList]) : bool
-  (match kind
-    [(AstImportKind.Path)
-      (match expected
-        [(AstMaybeModuleName.No)
-          (match alias
-            [(AstMaybeImportAlias.No)
-              (compiler-load-decl-list-has-module? imported-decls)]
-            [(AstMaybeImportAlias.Some _) false])]
-        [(AstMaybeModuleName.Some _) false])]
-    [_ false]))
 
 (define (compiler-load-after-import-expected-module
   [state : CompilerLoadSessionState]
   [source-path-id : i64]
-  [kind : AstImportKind]
-  [expected : AstMaybeModuleName]
-  [alias : AstMaybeImportAlias]
-  [imported-decls : AstDeclList]) : AstMaybeModuleName
+  [kind : ast.AstImportKind]
+  [expected : ast.AstMaybeModuleName]
+  [_ : ast.AstMaybeImportAlias]
+  [imported-decls : ast.AstDeclList]) : ast.AstMaybeModuleName
   (match kind
-    [(AstImportKind.Module)
+    [(ast.AstImportKind.Module)
       (match (compiler-load-session-state-surface-summary-find-source
         state
         source-path-id)
         [(CompilerLoadSomeSurfaceSummary summary)
-          (AstMaybeModuleName.Some (struct-get summary declaration-module-id))]
+          (ast.AstMaybeModuleName.Some
+            (struct-get summary declaration-module-id))]
         [(CompilerLoadNoSurfaceSummary)
           (if (compiler-load-decl-list-has-module? imported-decls)
-            (AstMaybeModuleName.Some
+            (ast.AstMaybeModuleName.Some
               (compiler-load-decls-source-module-id imported-decls))
             expected)])]
-    [_
-      (if (compiler-load-legacy-path-flat-module-import?
-        kind
-        expected
-        alias
-        imported-decls)
-        (AstMaybeModuleName.Some
-          (compiler-load-decls-source-module-id imported-decls))
-        (match expected
-          [(AstMaybeModuleName.Some _) expected]
-          [(AstMaybeModuleName.No)
-            (match alias
-              [(AstMaybeImportAlias.Some _) expected]
-              [(AstMaybeImportAlias.No)
-                (match (compiler-load-session-state-surface-summary-find-source
-                  state
-                  source-path-id)
-                  [(CompilerLoadSomeSurfaceSummary summary)
-                    (if (struct-get summary qualified-load)
-                      (AstMaybeModuleName.Some
-                        (struct-get summary declaration-module-id))
-                      expected)]
-                  [(CompilerLoadNoSurfaceSummary) expected])])]))]))
+    [_ expected]))
 
 (define (compiler-load-after-import-alias
-  [state : CompilerLoadSessionState]
-  [source-path-id : i64]
-  [kind : AstImportKind]
-  [expected : AstMaybeModuleName]
-  [alias : AstMaybeImportAlias]
-  [imported-decls : AstDeclList]) : AstMaybeImportAlias
-  (if (compiler-load-legacy-path-flat-module-import?
-    kind
-    expected
-    alias
-    imported-decls)
-    (AstMaybeImportAlias.Some cbi.compiler-builtin-id-fix-empty)
-    (match kind
-      [(AstImportKind.Path)
-        (match expected
-          [(AstMaybeModuleName.Some _) alias]
-          [(AstMaybeModuleName.No)
-            (match alias
-              [(AstMaybeImportAlias.Some _) alias]
-              [(AstMaybeImportAlias.No)
-                (match (compiler-load-session-state-surface-summary-find-source
-                  state
-                  source-path-id)
-                  [(CompilerLoadSomeSurfaceSummary summary)
-                    (if (struct-get summary qualified-load)
-                      (AstMaybeImportAlias.Some
-                        cbi.compiler-builtin-id-fix-empty)
-                      alias)]
-                  [(CompilerLoadNoSurfaceSummary) alias])])])]
-      [_ alias])))
+  [_ : CompilerLoadSessionState]
+  [_ : i64]
+  [_ : ast.AstImportKind]
+  [_ : ast.AstMaybeModuleName]
+  [alias : ast.AstMaybeImportAlias]
+  [_ : ast.AstDeclList]) : ast.AstMaybeImportAlias
+  alias)
 
 (define (compiler-load-dotted-import-alias-key
   [module-id : i64]
   [alias-id : i64]) : i64
-  (intern-composite-pair-id module-id alias-id))
+  (ci.intern-composite-pair-id module-id alias-id))
 
 (define (compiler-load-duplicate-dotted-import-alias-loop
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [current-module : i64]
   [seen : sym_i64_env.SymI64Env]) : CompilerLoadMaybeString
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (CompilerLoadNoString)]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) (CompilerLoadNoString)]
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (match decl
-          [(AstDecl.Module name)
+          [(ast.AstDecl.Module name)
             (compiler-load-duplicate-dotted-import-alias-loop rest name seen)]
-          [(AstDecl.Import
+          [(ast.AstDecl.Import
               decl-meta
-              (AstImportSpec.Spec
-                (AstImportKind.Module)
+              (ast.AstImportSpec.Spec
+                (ast.AstImportKind.Module)
+                import-name
                 _
-                _
-                (AstMaybeImportAlias.Some alias)
+                (ast.AstMaybeImportAlias.Some alias)
                 _))
             (let
               [key : i64
                 (compiler-load-dotted-import-alias-key current-module alias)]
+              ;; Re-importing the same module under the same alias is
+              ;; idempotent; only a different module under a repeated alias is
+              ;; ambiguous.
               (if (sym_i64_env.sym-i64-contains-id seen key)
-                (CompilerLoadSomeString (intern-str alias))
+                (if (=
+                  (sym_i64_env.sym-i64-lookup-id-or seen key -1)
+                  (ci.intern import-name))
+                  (compiler-load-duplicate-dotted-import-alias-loop
+                    rest
+                    current-module
+                    seen)
+                  (CompilerLoadSomeString (ci.intern-str alias)))
                 (compiler-load-duplicate-dotted-import-alias-loop
                   rest
                   current-module
-                  (sym_i64_env.sym-i64-bind-id seen key 1))))]
+                  (sym_i64_env.sym-i64-bind-id seen key (ci.intern import-name)))))]
           [_
             (compiler-load-duplicate-dotted-import-alias-loop
               rest
@@ -3664,7 +3686,7 @@
 
 (define (compiler-load-check-dotted-import-aliases
   [path : String]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [_source-module : String]) : ResultCompilerLoadAliasCheck
   (match (compiler-load-duplicate-dotted-import-alias-loop
     decls
@@ -3674,7 +3696,7 @@
     [(CompilerLoadSomeString alias)
       (ResultCompilerLoadAliasCheck.Err
         (box
-          (compiler-diagnostic-at-start
+          (cdiag.compiler-diagnostic-at-start
             path
             (string.append
               "compiler-load: duplicate module import alias "
@@ -3860,7 +3882,7 @@
 (define (compiler-load-session-state-surface-summary-seen-expected-module?
   [state : CompilerLoadSessionState]
   [source-path-id : i64]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [seen : sym_i64_env.SymI64Env]) : bool
   (match (compiler-load-session-state-surface-summary-find-source
     state
@@ -3869,15 +3891,13 @@
     [(CompilerLoadSomeSurfaceSummary summary)
       (and
         (match expected-module
-          [(AstMaybeModuleName.Some _)
-            ;; A moduleless path import at the root has no target namespace for
-            ;; a later qualified alias. Preserve its legacy reload behavior;
-            ;; nested/module-owned flat imports have a canonical alias target.
+          [(ast.AstMaybeModuleName.Some _)
+            ;; A qualified alias requires a concrete declaration module.
             (not
               (=
                 (struct-get summary declaration-module-id)
                 cbi.compiler-builtin-id-fix-empty))]
-          [(AstMaybeModuleName.No) (struct-get summary qualified-load)])
+          [(ast.AstMaybeModuleName.No) (struct-get summary qualified-load)])
         (compiler-load-seen-module-contains?
           seen
           ""
@@ -3885,7 +3905,7 @@
 
 (define (compiler-load-surface-summary-seen-expected-module?
   [source-path-id : i64]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [seen : sym_i64_env.SymI64Env]) : bool
   (compiler-load-session-state-surface-summary-seen-expected-module?
     compiler-load-active-session-state
@@ -3897,22 +3917,22 @@
   [state : CompilerLoadSessionState]
   [path : String]
   [source-path-id : i64]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-session-state-surface-summary-find-source
     state
     source-path-id)
     [(CompilerLoadNoSurfaceSummary)
       (ResultCompilerLoadWithPaths.Ok
-        (ast-decl-list-new)
-        (ast-decl-path-list-new)
-        (ast-decl-module-list-new)
+        (ast.ast-decl-list-new)
+        (ast.ast-decl-path-list-new)
+        (ast.ast-decl-module-list-new)
         seen)]
     [(CompilerLoadSomeSurfaceSummary summary)
       (let
         [module-id : i64 (struct-get summary module-id)]
         (match expected-module
-          [(AstMaybeModuleName.Some expected-id)
+          [(ast.AstMaybeModuleName.Some expected-id)
             (when
               (and
                 (struct-get summary explicit-module)
@@ -3920,38 +3940,44 @@
               (return
                 (ResultCompilerLoadWithPaths.Err
                   (box
-                    (compiler-diagnostic-at-start
+                    (cdiag.compiler-diagnostic-at-start
                       path
                       (string.append
                         "compiler-load: import expected module "
                         (string.append
-                          (intern-str expected-id)
-                          (string.append " but loaded " (intern-str module-id)))))))))]
-          [(AstMaybeModuleName.No) unit])
+                          (ci.intern-str expected-id)
+                          (string.append
+                            " but loaded "
+                            (ci.intern-str module-id)))))))))]
+          [(ast.AstMaybeModuleName.No) unit])
         (if (match expected-module
-          [(AstMaybeModuleName.Some expected-id) (= module-id expected-id)]
-          [(AstMaybeModuleName.No) false])
+          [(ast.AstMaybeModuleName.Some expected-id) (= module-id expected-id)]
+          [(ast.AstMaybeModuleName.No) false])
           (ResultCompilerLoadWithPaths.Ok
-            (ast-decl-cons (ast-decl-module-id module-id) (ast-decl-list-new))
-            (ast-decl-path-list-prepend-builder-with-owner-id
+            (ast.ast-decl-cons
+              (ast.ast-decl-module-id module-id)
+              (ast.ast-decl-list-new))
+            (ast.ast-decl-path-list-prepend-builder-with-owner-id
               path
               source-path-id
-              (ast-decl-path-list-new))
-            (ast-decl-module-cons-id module-id (ast-decl-module-list-new))
+              (ast.ast-decl-path-list-new))
+            (ast.ast-decl-module-cons-id
+              module-id
+              (ast.ast-decl-module-list-new))
             seen)
           (ResultCompilerLoadWithPaths.Ok
-            (ast-decl-list-new)
-            (ast-decl-path-list-new)
-            (ast-decl-module-list-new)
+            (ast.ast-decl-list-new)
+            (ast.ast-decl-path-list-new)
+            (ast.ast-decl-module-list-new)
             seen)))]))
 
 (define (compiler-load-resolved-path-id-for-generated-import-with-state
   [state : CompilerLoadSessionState]
   [resolved : String]
-  [expected-module : AstMaybeModuleName]) : i64
+  [expected-module : ast.AstMaybeModuleName]) : i64
   (match expected-module
-    [(AstMaybeModuleName.No) (ci.intern-generated-canonical-name resolved)]
-    [(AstMaybeModuleName.Some module-id)
+    [(ast.AstMaybeModuleName.No) (ci.intern-generated-canonical-name resolved)]
+    [(ast.AstMaybeModuleName.Some module-id)
       (match (compiler-load-session-state-surface-summary-find-module
         state
         module-id)
@@ -4026,10 +4052,10 @@
   [path : String]
   [parse-identity : CompilerLoadParseIdentity]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext]) : unit
   (let
     [parse-cfgs : sym_i64_env.SymI64Env cfgs]
     [source-path-id : i64 (struct-get parse-identity source-path-id)]
@@ -4053,11 +4079,12 @@
             parse-cfgs
             pools)]
         [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-          (compiler-load-parse-file-diagnostic-escaping-with-pools
-            path
-            parse-cfgs
-            pools)]))
-      [(ResultAstProgramDiagnostic.Ok program)
+          (parser.ResultAstProgramDiagnostic.Err
+            (box
+              (cdiag.compiler-diagnostic-at-start
+                path
+                (string.append "compiler-load: cannot read import " path))))]))
+      [(parser.ResultAstProgramDiagnostic.Ok program)
         (match (compiler-load-surface-summary-build
           path
           source-path-id
@@ -4070,17 +4097,17 @@
               load-state
               summary)]
           [(ResultCompilerLoadSurfaceSummary.Err _) unit])]
-      [(ResultAstProgramDiagnostic.Err _) unit])))
+      [(parser.ResultAstProgramDiagnostic.Err _) unit])))
 
 (define (compiler-load-surface-summary-ensure-with-pools
   [load-state : CompilerLoadSessionState]
   [path : String]
   [source-path-id : i64]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext]) : unit
   (let
     [fallback : String (compiler-load-canonical-module-id-from-path path)]
     [parse-identity : CompilerLoadParseIdentity
@@ -4108,10 +4135,10 @@
   [path : String]
   [source-path-id : i64]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext]) : unit
   (let
     [fallback : String (compiler-load-canonical-module-id-from-path path)]
     [parse-identity : CompilerLoadParseIdentity
@@ -4137,10 +4164,10 @@
   [path : String]
   [source-path-id : i64]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext]) : unit
   ;; Typecheck/package compatibility path; driver-owned loading calls the
   ;; state-taking traversal functions above.
   (compiler-load-surface-summary-refresh-with-state-and-pools
@@ -4242,25 +4269,27 @@
 (define (compiler-load-lazy-dotted-tail-after-prefix-id
   [name : i64]
   [prefix : i64]) : i64
-  (if (intern-dotted? prefix)
+  (if (ci.intern-dotted? prefix)
     (if (and
-      (intern-dotted? name)
-      (= (intern-leading-dot-id name) (intern-leading-dot-id prefix)))
+      (ci.intern-dotted? name)
+      (= (ci.intern-leading-dot-id name) (ci.intern-leading-dot-id prefix)))
       (compiler-load-lazy-dotted-tail-after-prefix-id
-        (intern-dotted-tail-id name)
-        (intern-dotted-tail-id prefix))
+        (ci.intern-dotted-tail-id name)
+        (ci.intern-dotted-tail-id prefix))
       -1)
-    (if (and (intern-dotted? name) (= (intern-leading-dot-id name) prefix))
-      (intern-dotted-tail-id name)
+    (if (and
+      (ci.intern-dotted? name)
+      (= (ci.intern-leading-dot-id name) prefix))
+      (ci.intern-dotted-tail-id name)
       -1)))
 
 (define (compiler-load-lazy-tail-after-prefix-id [name : i64] [alias : i64]) : i64
   (unless
-    (and (intern-renderable-id? name) (intern-renderable-id? alias))
+    (and (ci.intern-renderable-id? name) (ci.intern-renderable-id? alias))
     (return -1))
-  (if (intern-qualified? name)
-    (if (= (intern-qualified-module-id name) alias)
-      (intern-qualified-base-id name)
+  (if (ci.intern-qualified? name)
+    (if (= (ci.intern-qualified-module-id name) alias)
+      (ci.intern-qualified-base-id name)
       -1)
     (compiler-load-lazy-dotted-tail-after-prefix-id name alias)))
 
@@ -4543,23 +4572,26 @@
 (define (compiler-load-lazy-qualified-member-id [name : i64] [alias : i64]) : i64
   (let
     [base : i64 (compiler-load-lazy-tail-after-prefix-id name alias)]
-    (if (intern-dotted? base)
-      (intern-leading-dot-id base)
+    (if (ci.intern-dotted? base)
+      (ci.intern-leading-dot-id base)
       base)))
 
 (define (compiler-load-lazy-surface-variant-direct-name?
-  [variants : AstVariantDefList]
+  [variants : ast.AstVariantDefList]
   [name : i64]) : bool
   (compiler-load-lazy-surface-variant-direct-name-at? (& variants) name 0))
 
 (define (compiler-load-lazy-surface-variant-direct-name-at?
-  [variants : (& variants AstVariantDefList)]
+  [variants : (& variants ast.AstVariantDefList)]
   [name : i64]
   [index : i64]) : bool
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (ast.ast-variant-def-list-len variants))
     false
-    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
-      [(AstVariantDef.Def variant-name _ _)
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def variant-name _ _)
         (or
           (= variant-name name)
           (compiler-load-lazy-surface-variant-direct-name-at?
@@ -4693,24 +4725,24 @@
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-session-state-lazy-type-demand
     state
-    (ty-node-get type-id)
+    (ast.ty-node-get type-id)
     alias
     summary
     locals))
 
 (define (compiler-load-session-state-lazy-type-list-demand-at?
   [state : CompilerLoadSessionState]
-  [types : (& types AstTypeList)]
+  [types : (& types ast.AstTypeList)]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast-type-list-len types))
+  (if (>= index (ast.ast-type-list-len types))
     (compiler-load-lazy-alias-demand-none)
     (compiler-load-lazy-alias-demand-merge
       (compiler-load-session-state-lazy-type-id-demand
         state
-        (ast-type-list-get types index (ast-type-id-fallback))
+        (ast.ast-type-list-get types index (ast.ast-type-id-fallback))
         alias
         summary
         locals)
@@ -4724,7 +4756,7 @@
 
 (define (compiler-load-session-state-lazy-type-list-demand
   [state : CompilerLoadSessionState]
-  [types : AstTypeList]
+  [types : ast.AstTypeList]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
@@ -4738,12 +4770,12 @@
 
 (define (compiler-load-session-state-lazy-type-demand
   [state : CompilerLoadSessionState]
-  [ty : AstType]
+  [ty : ast.AstType]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match ty
-    [(AstType.Func args ret)
+    [(ast.AstType.Func args ret)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-type-list-demand
           state
@@ -4757,105 +4789,105 @@
           alias
           summary
           locals))]
-    [(AstType.Tuple items)
+    [(ast.AstType.Tuple items)
       (compiler-load-session-state-lazy-type-list-demand
         state
         (box-get items)
         alias
         summary
         locals)]
-    [(AstType.Array elem _)
+    [(ast.AstType.Array elem _)
       (compiler-load-session-state-lazy-type-id-demand
         state
         elem
         alias
         summary
         locals)]
-    [(AstType.DynArray elem)
+    [(ast.AstType.DynArray elem)
       (compiler-load-session-state-lazy-type-id-demand
         state
         elem
         alias
         summary
         locals)]
-    [(AstType.Box elem)
+    [(ast.AstType.Box elem)
       (compiler-load-session-state-lazy-type-id-demand
         state
         elem
         alias
         summary
         locals)]
-    [(AstType.Region _ inner)
+    [(ast.AstType.Region _ inner)
       (compiler-load-session-state-lazy-type-id-demand
         state
         inner
         alias
         summary
         locals)]
-    [(AstType.Ref _ inner)
+    [(ast.AstType.Ref _ inner)
       (compiler-load-session-state-lazy-type-id-demand
         state
         inner
         alias
         summary
         locals)]
-    [(AstType.MutRef _ inner)
+    [(ast.AstType.MutRef _ inner)
       (compiler-load-session-state-lazy-type-id-demand
         state
         inner
         alias
         summary
         locals)]
-    [(AstType.Enum name)
+    [(ast.AstType.Enum name)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(AstType.EnumArgs name _)
+    [(ast.AstType.EnumArgs name _)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(AstType.Struct name)
+    [(ast.AstType.Struct name)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(AstType.StructArgs name _)
+    [(ast.AstType.StructArgs name _)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(AstType.Var name)
+    [(ast.AstType.Var name)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(AstType.VarArgs name _)
+    [(ast.AstType.VarArgs name _)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(AstType.Ptr inner)
+    [(ast.AstType.Ptr inner)
       (compiler-load-session-state-lazy-type-id-demand
         state
         inner
         alias
         summary
         locals)]
-    [(AstType.MutPtr inner)
+    [(ast.AstType.MutPtr inner)
       (compiler-load-session-state-lazy-type-id-demand
         state
         inner
@@ -4866,13 +4898,13 @@
 
 (define (compiler-load-session-state-lazy-maybe-type-demand
   [state : CompilerLoadSessionState]
-  [maybe-ty : AstMaybeType]
+  [maybe-ty : ast.AstMaybeType]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match maybe-ty
-    [(AstMaybeType.No) (compiler-load-lazy-alias-demand-none)]
-    [(AstMaybeType.Some ty)
+    [(ast.AstMaybeType.No) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstMaybeType.Some ty)
       (compiler-load-session-state-lazy-type-demand
         state
         ty
@@ -4882,15 +4914,15 @@
 
 (define (compiler-load-session-state-lazy-param-list-demand-at?
   [state : CompilerLoadSessionState]
-  [params : (& params AstParamList)]
+  [params : (& params ast.AstParamList)]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast-param-list-len params))
+  (if (>= index (ast.ast-param-list-len params))
     (compiler-load-lazy-alias-demand-none)
-    (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _ _)
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param _ ty _ _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-type-demand
             state
@@ -4908,7 +4940,7 @@
 
 (define (compiler-load-session-state-lazy-param-list-demand
   [state : CompilerLoadSessionState]
-  [params : AstParamList]
+  [params : ast.AstParamList]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
@@ -4922,13 +4954,13 @@
 
 (define (compiler-load-session-state-lazy-param-list-locals-at
   [state : CompilerLoadSessionState]
-  [params : (& params AstParamList)]
+  [params : (& params ast.AstParamList)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : sym_i64_env.SymI64Env
-  (if (>= index (ast-param-list-len params))
+  (if (>= index (ast.ast-param-list-len params))
     locals
-    (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name _ _ _)
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param name _ _ _)
         (compiler-load-session-state-lazy-param-list-locals-at
           state
           params
@@ -4943,7 +4975,7 @@
 
 (define (compiler-load-session-state-lazy-param-list-locals
   [state : CompilerLoadSessionState]
-  [params : AstParamList]
+  [params : ast.AstParamList]
   [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-load-session-state-lazy-param-list-locals-at
     state
@@ -4957,15 +4989,18 @@
 ;; artificial `unknown` demand for every alias.
 (define (compiler-load-session-state-lazy-macro-param-list-demand-at?
   [state : CompilerLoadSessionState]
-  [params : (& params AstMacroParamList)]
+  [params : (& params ast.AstMacroParamList)]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast-macro-param-list-len params))
+  (if (>= index (ast.ast-macro-param-list-len params))
     (compiler-load-lazy-alias-demand-none)
-    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty _ _)
+    (match (ast.ast-macro-param-list-get
+      params
+      index
+      (ast.ast-macro-param-fallback))
+      [(ast.AstMacroParam.Param _ ty _ _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-type-demand
             state
@@ -4983,7 +5018,7 @@
 
 (define (compiler-load-session-state-lazy-macro-param-list-demand
   [state : CompilerLoadSessionState]
-  [params : AstMacroParamList]
+  [params : ast.AstMacroParamList]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
@@ -4997,13 +5032,16 @@
 
 (define (compiler-load-session-state-lazy-macro-param-list-locals-at
   [state : CompilerLoadSessionState]
-  [params : (& params AstMacroParamList)]
+  [params : (& params ast.AstMacroParamList)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : sym_i64_env.SymI64Env
-  (if (>= index (ast-macro-param-list-len params))
+  (if (>= index (ast.ast-macro-param-list-len params))
     locals
-    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param name _ _ _)
+    (match (ast.ast-macro-param-list-get
+      params
+      index
+      (ast.ast-macro-param-fallback))
+      [(ast.AstMacroParam.Param name _ _ _)
         (compiler-load-session-state-lazy-macro-param-list-locals-at
           state
           params
@@ -5018,7 +5056,7 @@
 
 (define (compiler-load-session-state-lazy-macro-param-list-locals
   [state : CompilerLoadSessionState]
-  [params : AstMacroParamList]
+  [params : ast.AstMacroParamList]
   [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-load-session-state-lazy-macro-param-list-locals-at
     state
@@ -5028,15 +5066,18 @@
 
 (define (compiler-load-session-state-lazy-field-list-demand-at?
   [state : CompilerLoadSessionState]
-  [fields : (& fields AstFieldDefList)]
+  [fields : (& fields ast.AstFieldDefList)]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (ast.ast-field-def-list-len fields))
     (compiler-load-lazy-alias-demand-none)
-    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
-      [(AstFieldDef.Def _ ty _)
+    (match (ast.ast-field-def-list-get
+      fields
+      index
+      (ast.ast-field-def-fallback))
+      [(ast.AstFieldDef.Def _ ty _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-type-demand
             state
@@ -5054,7 +5095,7 @@
 
 (define (compiler-load-session-state-lazy-field-list-demand
   [state : CompilerLoadSessionState]
-  [fields : AstFieldDefList]
+  [fields : ast.AstFieldDefList]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
@@ -5068,15 +5109,18 @@
 
 (define (compiler-load-session-state-lazy-variant-list-demand-at?
   [state : CompilerLoadSessionState]
-  [variants : (& variants AstVariantDefList)]
+  [variants : (& variants ast.AstVariantDefList)]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (ast.ast-variant-def-list-len variants))
     (compiler-load-lazy-alias-demand-none)
-    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
-      [(AstVariantDef.Def _ types _)
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def _ types _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-type-list-demand
             state
@@ -5094,7 +5138,7 @@
 
 (define (compiler-load-session-state-lazy-variant-list-demand
   [state : CompilerLoadSessionState]
-  [variants : AstVariantDefList]
+  [variants : ast.AstVariantDefList]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
@@ -5108,26 +5152,26 @@
 
 (define (compiler-load-session-state-lazy-pattern-demand
   [state : CompilerLoadSessionState]
-  [pattern : AstPattern]
+  [pattern : ast.AstPattern]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match pattern
-    [(AstPattern.Var _ maybe-ty)
+    [(ast.AstPattern.Var _ maybe-ty)
       (compiler-load-session-state-lazy-maybe-type-demand
         state
         maybe-ty
         alias
         summary
         locals)]
-    [(AstPattern.Tuple patterns)
+    [(ast.AstPattern.Tuple patterns)
       (compiler-load-session-state-lazy-pattern-list-demand
         state
         (box-get patterns)
         alias
         summary
         locals)]
-    [(AstPattern.Variant name patterns)
+    [(ast.AstPattern.Variant name patterns)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-name-demand
           state
@@ -5145,7 +5189,7 @@
 
 (define (compiler-load-session-state-lazy-pattern-list-demand-at?
   [state : CompilerLoadSessionState]
-  [patterns : (& patterns AstPatternList)]
+  [patterns : (& patterns ast.AstPatternList)]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
@@ -5155,7 +5199,7 @@
     (compiler-load-lazy-alias-demand-merge
       (compiler-load-session-state-lazy-pattern-demand
         state
-        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
         alias
         summary
         locals)
@@ -5169,7 +5213,7 @@
 
 (define (compiler-load-session-state-lazy-pattern-list-demand
   [state : CompilerLoadSessionState]
-  [patterns : AstPatternList]
+  [patterns : ast.AstPatternList]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
@@ -5183,10 +5227,10 @@
 
 (define (compiler-load-session-state-lazy-pattern-locals
   [state : CompilerLoadSessionState]
-  [pattern : AstPattern]
+  [pattern : ast.AstPattern]
   [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match pattern
-    [(AstPattern.Var name _)
+    [(ast.AstPattern.Var name _)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-demand-bind-local-exhaustive
@@ -5194,7 +5238,7 @@
           locals
           name)
         (sym_i64_env.sym-i64-bind-id locals name 1))]
-    [(AstPattern.Binding name)
+    [(ast.AstPattern.Binding name)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-demand-bind-local-exhaustive
@@ -5202,12 +5246,12 @@
           locals
           name)
         (sym_i64_env.sym-i64-bind-id locals name 1))]
-    [(AstPattern.Tuple patterns)
+    [(ast.AstPattern.Tuple patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (box-get patterns)
         locals)]
-    [(AstPattern.Variant _ patterns)
+    [(ast.AstPattern.Variant _ patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (box-get patterns)
@@ -5216,7 +5260,7 @@
 
 (define (compiler-load-session-state-lazy-pattern-list-locals-at
   [state : CompilerLoadSessionState]
-  [patterns : (& patterns AstPatternList)]
+  [patterns : (& patterns ast.AstPatternList)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : sym_i64_env.SymI64Env
   (if (>= index (struct-get patterns len))
@@ -5226,13 +5270,13 @@
       patterns
       (compiler-load-session-state-lazy-pattern-locals
         state
-        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
         locals)
       (+ index 1))))
 
 (define (compiler-load-session-state-lazy-pattern-list-locals
   [state : CompilerLoadSessionState]
-  [patterns : AstPatternList]
+  [patterns : ast.AstPatternList]
   [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-load-session-state-lazy-pattern-list-locals-at
     state
@@ -5242,17 +5286,17 @@
 
 (define (compiler-load-session-state-lazy-expr-list-demand-at?
   [state : CompilerLoadSessionState]
-  [exprs : (& exprs AstExprList)]
+  [exprs : (& exprs ast.AstExprList)]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (ast.ast-expr-list-len exprs))
     (compiler-load-lazy-alias-demand-none)
     (compiler-load-lazy-alias-demand-merge
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get (ast-expr-list-get exprs index 0))
+        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))
         alias
         summary
         locals)
@@ -5266,7 +5310,7 @@
 
 (define (compiler-load-session-state-lazy-expr-list-demand
   [state : CompilerLoadSessionState]
-  [exprs : AstExprList]
+  [exprs : ast.AstExprList]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
@@ -5280,15 +5324,18 @@
 
 (define (compiler-load-session-state-lazy-let-bindings-demand-at?
   [state : CompilerLoadSessionState]
-  [bindings : (& bindings AstLetBindingList)]
+  [bindings : (& bindings ast.AstLetBindingList)]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast-let-binding-list-len bindings))
+  (if (>= index (ast.ast-let-binding-list-len bindings))
     (compiler-load-lazy-alias-demand-none)
-    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
-      [(AstLetBinding.Binding name maybe-ty init)
+    (match (ast.ast-let-binding-list-get
+      bindings
+      index
+      (ast.ast-let-binding-fallback))
+      [(ast.AstLetBinding.Binding name maybe-ty init)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-maybe-type-demand
             state
@@ -5299,7 +5346,7 @@
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-expr-demand
               state
-              (ast-node-get init)
+              (ast.ast-node-get init)
               alias
               summary
               locals)
@@ -5319,13 +5366,16 @@
 
 (define (compiler-load-session-state-lazy-let-bindings-locals-at
   [state : CompilerLoadSessionState]
-  [bindings : (& bindings AstLetBindingList)]
+  [bindings : (& bindings ast.AstLetBindingList)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : sym_i64_env.SymI64Env
-  (if (>= index (ast-let-binding-list-len bindings))
+  (if (>= index (ast.ast-let-binding-list-len bindings))
     locals
-    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
-      [(AstLetBinding.Binding name _ _)
+    (match (ast.ast-let-binding-list-get
+      bindings
+      index
+      (ast.ast-let-binding-fallback))
+      [(ast.AstLetBinding.Binding name _ _)
         (compiler-load-session-state-lazy-let-bindings-locals-at
           state
           bindings
@@ -5340,15 +5390,15 @@
 
 (define (compiler-load-session-state-lazy-match-arms-demand-at?
   [state : CompilerLoadSessionState]
-  [arms : (& arms AstMatchArmList)]
+  [arms : (& arms ast.AstMatchArmList)]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (ast-match-arm-list-len arms))
+  (if (>= index (ast.ast-match-arm-list-len arms))
     (compiler-load-lazy-alias-demand-none)
-    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
-      [(AstMatchArm.Arm pattern body)
+    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
+      [(ast.AstMatchArm.Arm pattern body)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-pattern-demand
             state
@@ -5359,7 +5409,7 @@
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-expr-demand
               state
-              (ast-node-get body)
+              (ast.ast-node-get body)
               alias
               summary
               (compiler-load-session-state-lazy-pattern-locals
@@ -5376,7 +5426,7 @@
 
 (define (compiler-load-session-state-lazy-match-arms-demand
   [state : CompilerLoadSessionState]
-  [arms : AstMatchArmList]
+  [arms : ast.AstMatchArmList]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
@@ -5390,52 +5440,52 @@
 
 (define (compiler-load-session-state-lazy-expr-demand
   [state : CompilerLoadSessionState]
-  [expr : AstExpr]
+  [expr : ast.AstExpr]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match expr
-    [(AstExpr.Spanned inner _)
+    [(ast.AstExpr.Spanned inner _)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get inner)
+        (ast.ast-node-get inner)
         alias
         summary
         locals)]
-    [(AstExpr.Literal _) (compiler-load-lazy-alias-demand-none)]
-    [(AstExpr.Var name)
+    [(ast.AstExpr.Literal _) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstExpr.Var name)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(AstExpr.Binary _ left right)
+    [(ast.AstExpr.Binary _ left right)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get left)
+          (ast.ast-node-get left)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get right)
+          (ast.ast-node-get right)
           alias
           summary
           locals))]
-    [(AstExpr.Unary _ inner)
+    [(ast.AstExpr.Unary _ inner)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get inner)
+        (ast.ast-node-get inner)
         alias
         summary
         locals)]
-    [(AstExpr.Call func args)
+    [(ast.AstExpr.Call func args)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get func)
+          (ast.ast-node-get func)
           alias
           summary
           locals)
@@ -5445,30 +5495,30 @@
           alias
           summary
           locals))]
-    [(AstExpr.If condition then-branch else-branch)
+    [(ast.AstExpr.If condition then-branch else-branch)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get condition)
+          (ast.ast-node-get condition)
           alias
           summary
           locals)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-expr-demand
             state
-            (ast-node-get then-branch)
+            (ast.ast-node-get then-branch)
             alias
             summary
             locals)
           (compiler-load-session-state-lazy-expr-demand
             state
-            (ast-node-get else-branch)
+            (ast.ast-node-get else-branch)
             alias
             summary
             locals)))]
-    [(AstExpr.Let let-box)
+    [(ast.AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet.Let bindings body)
+        [(ast.AstLet.Let bindings body)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-let-bindings-demand-at?
               state
@@ -5479,7 +5529,7 @@
               0)
             (compiler-load-session-state-lazy-expr-demand
               state
-              (ast-node-get body)
+              (ast.ast-node-get body)
               alias
               summary
               (compiler-load-session-state-lazy-let-bindings-locals-at
@@ -5487,9 +5537,9 @@
                 (& bindings)
                 locals
                 0)))])]
-    [(AstExpr.Lambda lambda-box)
+    [(ast.AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda.Lambda params ret body)
+        [(ast.AstLambda.Lambda params ret body)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-param-list-demand
               state
@@ -5506,147 +5556,147 @@
                 locals)
               (compiler-load-session-state-lazy-expr-demand
                 state
-                (ast-node-get body)
+                (ast.ast-node-get body)
                 alias
                 summary
                 (compiler-load-session-state-lazy-param-list-locals
                   state
                   params
                   locals))))])]
-    [(AstExpr.Tuple exprs)
+    [(ast.AstExpr.Tuple exprs)
       (compiler-load-session-state-lazy-expr-list-demand
         state
         exprs
         alias
         summary
         locals)]
-    [(AstExpr.TupleRef tuple _)
+    [(ast.AstExpr.TupleRef tuple _)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get tuple)
+        (ast.ast-node-get tuple)
         alias
         summary
         locals)]
-    [(AstExpr.Array exprs)
+    [(ast.AstExpr.Array exprs)
       (compiler-load-session-state-lazy-expr-list-demand
         state
         exprs
         alias
         summary
         locals)]
-    [(AstExpr.DynArray exprs)
+    [(ast.AstExpr.DynArray exprs)
       (compiler-load-session-state-lazy-expr-list-demand
         state
         exprs
         alias
         summary
         locals)]
-    [(AstExpr.MakeArray elem-id length)
+    [(ast.AstExpr.MakeArray elem-id length)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-type-demand
           state
-          (ty-node-get elem-id)
+          (ast.ty-node-get elem-id)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get length)
+          (ast.ast-node-get length)
           alias
           summary
           locals))]
-    [(AstExpr.ArrayRef items index)
+    [(ast.AstExpr.ArrayRef items index)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get items)
+          (ast.ast-node-get items)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get index)
+          (ast.ast-node-get index)
           alias
           summary
           locals))]
-    [(AstExpr.ArraySet items index value)
+    [(ast.AstExpr.ArraySet items index value)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get items)
+          (ast.ast-node-get items)
           alias
           summary
           locals)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-expr-demand
             state
-            (ast-node-get index)
+            (ast.ast-node-get index)
             alias
             summary
             locals)
           (compiler-load-session-state-lazy-expr-demand
             state
-            (ast-node-get value)
+            (ast.ast-node-get value)
             alias
             summary
             locals)))]
-    [(AstExpr.ArrayPush items value)
+    [(ast.AstExpr.ArrayPush items value)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get items)
+          (ast.ast-node-get items)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get value)
+          (ast.ast-node-get value)
           alias
           summary
           locals))]
-    [(AstExpr.StringRef text index)
+    [(ast.AstExpr.StringRef text index)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get text)
+          (ast.ast-node-get text)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get index)
+          (ast.ast-node-get index)
           alias
           summary
           locals))]
-    [(AstExpr.While condition body)
+    [(ast.AstExpr.While condition body)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get condition)
+          (ast.ast-node-get condition)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get body)
+          (ast.ast-node-get body)
           alias
           summary
           locals))]
-    [(AstExpr.Begin exprs)
+    [(ast.AstExpr.Begin exprs)
       (compiler-load-session-state-lazy-expr-list-demand
         state
         exprs
         alias
         summary
         locals)]
-    [(AstExpr.Unsafe exprs)
+    [(ast.AstExpr.Unsafe exprs)
       (compiler-load-session-state-lazy-expr-list-demand
         state
         exprs
         alias
         summary
         locals)]
-    [(AstExpr.Set target value)
+    [(ast.AstExpr.Set target value)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-name-demand
           state
@@ -5656,52 +5706,52 @@
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get value)
+          (ast.ast-node-get value)
           alias
           summary
           locals))]
-    [(AstExpr.Ann inner ty-id)
+    [(ast.AstExpr.Ann inner ty-id)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get inner)
+          (ast.ast-node-get inner)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-type-demand
           state
-          (ty-node-get ty-id)
+          (ast.ty-node-get ty-id)
           alias
           summary
           locals))]
-    [(AstExpr.Cast inner ty-id)
+    [(ast.AstExpr.Cast inner ty-id)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get inner)
+          (ast.ast-node-get inner)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-type-demand
           state
-          (ty-node-get ty-id)
+          (ast.ty-node-get ty-id)
           alias
           summary
           locals))]
-    [(AstExpr.Borrow _ _ place)
+    [(ast.AstExpr.Borrow _ _ place)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get place)
+        (ast.ast-node-get place)
         alias
         summary
         locals)]
-    [(AstExpr.Match match-box)
+    [(ast.AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch.Match scrutinee arms)
+        [(ast.AstMatch.Match scrutinee arms)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-expr-demand
               state
-              (ast-node-get scrutinee)
+              (ast.ast-node-get scrutinee)
               alias
               summary
               locals)
@@ -5711,9 +5761,9 @@
               alias
               summary
               locals))])]
-    [(AstExpr.Foreach foreach-box)
+    [(ast.AstExpr.Foreach foreach-box)
       (match (box-get foreach-box)
-        [(AstForeach.Foreach index ty start end body)
+        [(ast.AstForeach.Foreach index ty start end body)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-type-demand
               state
@@ -5724,20 +5774,20 @@
             (compiler-load-lazy-alias-demand-merge
               (compiler-load-session-state-lazy-expr-demand
                 state
-                (ast-node-get start)
+                (ast.ast-node-get start)
                 alias
                 summary
                 locals)
               (compiler-load-lazy-alias-demand-merge
                 (compiler-load-session-state-lazy-expr-demand
                   state
-                  (ast-node-get end)
+                  (ast.ast-node-get end)
                   alias
                   summary
                   locals)
                 (compiler-load-session-state-lazy-expr-demand
                   state
-                  (ast-node-get body)
+                  (ast.ast-node-get body)
                   alias
                   summary
                   (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
@@ -5747,9 +5797,9 @@
                       locals
                       index)
                     (sym_i64_env.sym-i64-bind-id locals index 1))))))])]
-    [(AstExpr.SpmdReduce reduce-box)
+    [(ast.AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
-        [(AstSpmdReduce.Reduce _ index ty start end init value)
+        [(ast.AstSpmdReduce.Reduce _ index ty start end init value)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-type-demand
               state
@@ -5760,27 +5810,27 @@
             (compiler-load-lazy-alias-demand-merge
               (compiler-load-session-state-lazy-expr-demand
                 state
-                (ast-node-get start)
+                (ast.ast-node-get start)
                 alias
                 summary
                 locals)
               (compiler-load-lazy-alias-demand-merge
                 (compiler-load-session-state-lazy-expr-demand
                   state
-                  (ast-node-get end)
+                  (ast.ast-node-get end)
                   alias
                   summary
                   locals)
                 (compiler-load-lazy-alias-demand-merge
                   (compiler-load-session-state-lazy-expr-demand
                     state
-                    (ast-node-get init)
+                    (ast.ast-node-get init)
                     alias
                     summary
                     locals)
                   (compiler-load-session-state-lazy-expr-demand
                     state
-                    (ast-node-get value)
+                    (ast.ast-node-get value)
                     alias
                     summary
                     (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
@@ -5790,9 +5840,9 @@
                         locals
                         index)
                       (sym_i64_env.sym-i64-bind-id locals index 1)))))))])]
-    [(AstExpr.SpmdScan scan-box)
+    [(ast.AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
-        [(AstSpmdScan.Scan _ index ty start end prefix _ init value body)
+        [(ast.AstSpmdScan.Scan _ index ty start end prefix _ init value body)
           (let
             [value-locals : sym_i64_env.SymI64Env
               (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
@@ -5820,91 +5870,91 @@
               (compiler-load-lazy-alias-demand-merge
                 (compiler-load-session-state-lazy-expr-demand
                   state
-                  (ast-node-get start)
+                  (ast.ast-node-get start)
                   alias
                   summary
                   locals)
                 (compiler-load-lazy-alias-demand-merge
                   (compiler-load-session-state-lazy-expr-demand
                     state
-                    (ast-node-get end)
+                    (ast.ast-node-get end)
                     alias
                     summary
                     locals)
                   (compiler-load-lazy-alias-demand-merge
                     (compiler-load-session-state-lazy-expr-demand
                       state
-                      (ast-node-get init)
+                      (ast.ast-node-get init)
                       alias
                       summary
                       locals)
                     (compiler-load-lazy-alias-demand-merge
                       (compiler-load-session-state-lazy-expr-demand
                         state
-                        (ast-node-get value)
+                        (ast.ast-node-get value)
                         alias
                         summary
                         value-locals)
                       (compiler-load-session-state-lazy-expr-demand
                         state
-                        (ast-node-get body)
+                        (ast.ast-node-get body)
                         alias
                         summary
                         body-locals)))))))])]
-    [(AstExpr.SpmdBroadcast value lane)
+    [(ast.AstExpr.SpmdBroadcast value lane)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get value)
+          (ast.ast-node-get value)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get lane)
+          (ast.ast-node-get lane)
           alias
           summary
           locals))]
-    [(AstExpr.SpmdShuffle value lane)
+    [(ast.AstExpr.SpmdShuffle value lane)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get value)
+          (ast.ast-node-get value)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get lane)
+          (ast.ast-node-get lane)
           alias
           summary
           locals))]
-    [(AstExpr.StructGet receiver _)
+    [(ast.AstExpr.StructGet receiver _)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get receiver)
+        (ast.ast-node-get receiver)
         alias
         summary
         locals)]
-    [(AstExpr.StructSet receiver _ value)
+    [(ast.AstExpr.StructSet receiver _ value)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get receiver)
+          (ast.ast-node-get receiver)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get value)
+          (ast.ast-node-get value)
           alias
           summary
           locals))]
-    [(AstExpr.WithEscape scratch body)
+    [(ast.AstExpr.WithEscape scratch body)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get scratch)
+          (ast.ast-node-get scratch)
           alias
           summary
           locals)
@@ -5914,18 +5964,18 @@
           alias
           summary
           locals))]
-    [(AstExpr.WithScratch body)
+    [(ast.AstExpr.WithScratch body)
       (compiler-load-session-state-lazy-expr-list-demand
         state
         body
         alias
         summary
         locals)]
-    [(AstExpr.InArena arena body)
+    [(ast.AstExpr.InArena arena body)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get arena)
+          (ast.ast-node-get arena)
           alias
           summary
           locals)
@@ -5935,147 +5985,147 @@
           alias
           summary
           locals))]
-    [(AstExpr.Box inner)
+    [(ast.AstExpr.Box inner)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get inner)
+        (ast.ast-node-get inner)
         alias
         summary
         locals)]
-    [(AstExpr.BoxGet inner)
+    [(ast.AstExpr.BoxGet inner)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get inner)
+        (ast.ast-node-get inner)
         alias
         summary
         locals)]
-    [(AstExpr.BoxTake inner)
+    [(ast.AstExpr.BoxTake inner)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get inner)
+        (ast.ast-node-get inner)
         alias
         summary
         locals)]
-    [(AstExpr.BoxSet inner value)
+    [(ast.AstExpr.BoxSet inner value)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get inner)
+          (ast.ast-node-get inner)
           alias
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get value)
+          (ast.ast-node-get value)
           alias
           summary
           locals))]
-    [(AstExpr.TypeLiteral ty-id)
+    [(ast.AstExpr.TypeLiteral ty-id)
       (compiler-load-session-state-lazy-type-demand
         state
-        (ty-node-get ty-id)
+        (ast.ty-node-get ty-id)
         alias
         summary
         locals)]
-    [(AstExpr.Init maybe-ty-id)
+    [(ast.AstExpr.Init maybe-ty-id)
       (compiler-load-session-state-lazy-maybe-type-demand
         state
-        (ast-maybe-type-from-id maybe-ty-id)
+        (ast.ast-maybe-type-from-id maybe-ty-id)
         alias
         summary
         locals)]
-    [(AstExpr.Comptime inner)
+    [(ast.AstExpr.Comptime inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get inner)
+          (ast.ast-node-get inner)
           alias
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstExpr.Quote inner)
+    [(ast.AstExpr.Quote inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get inner)
+          (ast.ast-node-get inner)
           alias
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstExpr.Quasiquote inner)
+    [(ast.AstExpr.Quasiquote inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get inner)
+          (ast.ast-node-get inner)
           alias
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstExpr.Unquote inner)
+    [(ast.AstExpr.Unquote inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get inner)
+          (ast.ast-node-get inner)
           alias
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstExpr.UnquoteSplicing inner)
+    [(ast.AstExpr.UnquoteSplicing inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get inner)
+          (ast.ast-node-get inner)
           alias
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstExpr.Try inner)
+    [(ast.AstExpr.Try inner)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get inner)
+        (ast.ast-node-get inner)
         alias
         summary
         locals)]
-    [(AstExpr.Return inner)
+    [(ast.AstExpr.Return inner)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get inner)
+        (ast.ast-node-get inner)
         alias
         summary
         locals)]
-    [(AstExpr.Break) (compiler-load-lazy-alias-demand-none)]
-    [(AstExpr.Continue) (compiler-load-lazy-alias-demand-none)]
-    [(AstExpr.PtrNull ty-id)
+    [(ast.AstExpr.Break) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstExpr.Continue) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstExpr.PtrNull ty-id)
       (compiler-load-session-state-lazy-type-demand
         state
-        (ty-node-get ty-id)
+        (ast.ty-node-get ty-id)
         alias
         summary
         locals)]
-    [(AstExpr.PtrNullCheck inner)
+    [(ast.AstExpr.PtrNullCheck inner)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get inner)
+        (ast.ast-node-get inner)
         alias
         summary
         locals)]
-    [(AstExpr.BinaryData _) (compiler-load-lazy-alias-demand-none)]
-    [(AstExpr.SpmdProgramIndex) (compiler-load-lazy-alias-demand-none)]
-    [(AstExpr.SpmdProgramCount) (compiler-load-lazy-alias-demand-none)]
-    [(AstExpr.ProgramArgc) (compiler-load-lazy-alias-demand-none)]
-    [(AstExpr.ProgramArgv) (compiler-load-lazy-alias-demand-none)]
-    [(AstExpr.ProgramEnvp) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstExpr.BinaryData _) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstExpr.SpmdProgramIndex) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstExpr.SpmdProgramCount) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstExpr.ProgramArgc) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstExpr.ProgramArgv) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstExpr.ProgramEnvp) (compiler-load-lazy-alias-demand-none)]
     ;; Macro-generated and uncommon AST shapes are an explicit eager fence.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
 
 (define (compiler-load-session-state-lazy-module-macro-demand
   [state : CompilerLoadSessionState]
-  [call-expr : AstExpr]
+  [call-expr : ast.AstExpr]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
@@ -6085,19 +6135,19 @@
   ;; instead of assuming a later typechecker fast path can materialize it.
   ;; This keeps arbitrary generated-module macros correct.
   (match call-expr
-    [(AstExpr.Spanned inner _)
+    [(ast.AstExpr.Spanned inner _)
       (compiler-load-session-state-lazy-module-macro-demand
         state
-        (ast-node-get inner)
+        (ast.ast-node-get inner)
         alias
         summary
         locals)]
-    [(AstExpr.Call func args)
+    [(ast.AstExpr.Call func args)
       (let
         [function-demand : CompilerLoadLazyAliasDemand
           (compiler-load-session-state-lazy-module-macro-demand
             state
-            (ast-node-get func)
+            (ast.ast-node-get func)
             alias
             summary
             locals)]
@@ -6113,7 +6163,7 @@
             alias
             summary
             locals)))]
-    [(AstExpr.Var name)
+    [(ast.AstExpr.Var name)
       (let
         [name-demand : CompilerLoadLazyAliasDemand
           (compiler-load-session-state-lazy-name-demand
@@ -6132,63 +6182,63 @@
     [_ (compiler-load-lazy-alias-demand-unknown)]))
 
 (define (compiler-load-lazy-module-macro-qualified-by?
-  [call-expr : AstExpr]
+  [call-expr : ast.AstExpr]
   [module-id : i64]) : bool
   ;; A moduleless source file has a path-derived summary ID, but a caller can
   ;; still invoke its macro through the canonical dotted import ID. Keep that
   ;; import loaded when the macro target uses that spelling.
   (match call-expr
-    [(AstExpr.Spanned inner _)
+    [(ast.AstExpr.Spanned inner _)
       (compiler-load-lazy-module-macro-qualified-by?
-        (ast-node-get inner)
+        (ast.ast-node-get inner)
         module-id)]
-    [(AstExpr.Call func _)
+    [(ast.AstExpr.Call func _)
       (compiler-load-lazy-module-macro-qualified-by?
-        (ast-node-get func)
+        (ast.ast-node-get func)
         module-id)]
-    [(AstExpr.Var name)
+    [(ast.AstExpr.Var name)
       (compiler-load-lazy-name-qualified-by-id? name module-id)]
     [_ false]))
 
 (define (compiler-load-lazy-decl-module-macro-qualified-by?
-  [decl : AstDecl]
+  [decl : ast.AstDecl]
   [module-id : i64]) : bool
   (match decl
-    [(AstDecl.ModuleBody _ body)
+    [(ast.AstDecl.ModuleBody _ body)
       (compiler-load-lazy-decl-list-module-macro-qualified-by?
         (box-get body)
         module-id)]
-    [(AstDecl.Import
+    [(ast.AstDecl.Import
         decl-meta
-        (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
+        (ast.AstImportSpec.Spec (ast.AstImportKind.Macro call-expr _) _ _ _ _))
       (compiler-load-lazy-module-macro-qualified-by?
-        (ast-node-get call-expr)
+        (ast.ast-node-get call-expr)
         module-id)]
-    [(AstDecl.Unsafe inner)
+    [(ast.AstDecl.Unsafe inner)
       (compiler-load-lazy-decl-module-macro-qualified-by?
         (box-get inner)
         module-id)]
     [_ false]))
 
 (define (compiler-load-lazy-decl-list-module-macro-qualified-by?
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [module-id : i64]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
       (or
         (compiler-load-lazy-decl-module-macro-qualified-by? decl module-id)
         (compiler-load-lazy-decl-list-module-macro-qualified-by? rest module-id))]))
 
 (define (compiler-load-session-state-lazy-generated-meta-demand
   [state : CompilerLoadSessionState]
-  [meta : AstGeneratedDeclMeta]
+  [meta : ast.AstGeneratedDeclMeta]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match meta
-    [(AstGeneratedDeclMeta.No) (compiler-load-lazy-alias-demand-none)]
-    [(AstGeneratedDeclMeta.Some _ _ args _)
+    [(ast.AstGeneratedDeclMeta.No) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstGeneratedDeclMeta.Some _ _ args _)
       (compiler-load-session-state-lazy-expr-list-demand
         state
         args
@@ -6198,20 +6248,20 @@
 
 (define (compiler-load-session-state-lazy-decl-demand-inner
   [state : CompilerLoadSessionState]
-  [decl : AstDecl]
+  [decl : ast.AstDecl]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match decl
-    [(AstDecl.Module _) (compiler-load-lazy-alias-demand-none)]
-    [(AstDecl.ModuleBody _ body)
+    [(ast.AstDecl.Module _) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstDecl.ModuleBody _ body)
       (compiler-load-session-state-lazy-decl-list-demand
         state
         (box-get body)
         alias
         summary
         locals)]
-    [(AstDecl.Def decl-meta _ maybe-ty body)
+    [(ast.AstDecl.Def decl-meta _ maybe-ty body)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-maybe-type-demand
           state
@@ -6221,11 +6271,11 @@
           locals)
         (compiler-load-session-state-lazy-expr-demand
           state
-          (ast-node-get body)
+          (ast.ast-node-get body)
           alias
           summary
           locals))]
-    [(AstDecl.DefFn decl-meta _ params ret body _)
+    [(ast.AstDecl.DefFn decl-meta _ params ret body _)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-param-list-demand
           state
@@ -6242,14 +6292,14 @@
             locals)
           (compiler-load-session-state-lazy-expr-demand
             state
-            (ast-node-get body)
+            (ast.ast-node-get body)
             alias
             summary
             (compiler-load-session-state-lazy-param-list-locals
               state
               params
               locals))))]
-    [(AstDecl.DefMacro decl-meta _ params ret body)
+    [(ast.AstDecl.DefMacro decl-meta _ params ret body)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-lazy-alias-demand-merge
@@ -6268,7 +6318,7 @@
               locals)
             (compiler-load-session-state-lazy-expr-demand
               state
-              (ast-node-get body)
+              (ast.ast-node-get body)
               alias
               summary
               (compiler-load-session-state-lazy-macro-param-list-locals
@@ -6276,7 +6326,7 @@
                 params
                 locals))))
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.Extern decl-meta _ _ _ ty)
+    [(ast.AstDecl.Extern decl-meta _ _ _ ty)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-type-demand
@@ -6286,7 +6336,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.DefEnum decl-meta _ _ variants)
+    [(ast.AstDecl.DefEnum decl-meta _ _ variants)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-variant-list-demand
@@ -6296,7 +6346,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
+    [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-variant-list-demand
@@ -6306,7 +6356,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.DefStruct decl-meta _ _ _ fields)
+    [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-field-list-demand
@@ -6316,7 +6366,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
+    [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-field-list-demand
@@ -6326,28 +6376,28 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.Import
+    [(ast.AstDecl.Import
         decl-meta
-        (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
+        (ast.AstImportSpec.Spec (ast.AstImportKind.Macro call-expr _) _ _ _ _))
       (compiler-load-session-state-lazy-module-macro-demand
         state
-        (ast-node-get call-expr)
+        (ast.ast-node-get call-expr)
         alias
         summary
         locals)]
-    [(AstDecl.Import
+    [(ast.AstDecl.Import
         decl-meta
-        (AstImportSpec.Spec (AstImportKind.MacroDecls _ _) _ _ _ _))
+        (ast.AstImportSpec.Spec (ast.AstImportKind.MacroDecls _ _) _ _ _ _))
       (compiler-load-lazy-alias-demand-unknown)]
-    [(AstDecl.Import decl-meta _) (compiler-load-lazy-alias-demand-none)]
-    [(AstDecl.Test _ body _)
+    [(ast.AstDecl.Import decl-meta _) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstDecl.Test _ body _)
       (compiler-load-session-state-lazy-expr-demand
         state
-        (ast-node-get body)
+        (ast.ast-node-get body)
         alias
         summary
         locals)]
-    [(AstDecl.Unsafe inner)
+    [(ast.AstDecl.Unsafe inner)
       ;; ast-decl-comptime-only? and ast-decl-generated-meta recurse through
       ;; Unsafe, so the outer dispatcher has already accounted for metadata.
       (compiler-load-session-state-lazy-decl-demand-inner
@@ -6356,26 +6406,28 @@
         alias
         summary
         locals)]
-    [(AstDecl.DefDispatch decl-meta _ _) (compiler-load-lazy-alias-demand-none)]
-    [(AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
-    [(AstDecl.IncludeStrComptime _ _) (compiler-load-lazy-alias-demand-none)]
-    [(AstDecl.IncludeStrLzss _ _) (compiler-load-lazy-alias-demand-none)]
-    [(AstDecl.IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstDecl.DefDispatch decl-meta _ _)
+      (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstDecl.IncludeStrComptime _ _)
+      (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstDecl.IncludeStrLzss _ _) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstDecl.IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
     ;; A future declaration shape might hide references. Keep it conservative.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
 
 (define (compiler-load-session-state-lazy-decl-demand
   [state : CompilerLoadSessionState]
-  [decl : AstDecl]
+  [decl : ast.AstDecl]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (if (ast-decl-comptime-only? decl)
+  (if (ast.ast-decl-comptime-only? decl)
     (if (compiler-load-session-state-lazy-qualified-observer-exhaustive? state)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-generated-meta-demand
           state
-          (ast-decl-generated-meta decl)
+          (ast.ast-decl-generated-meta decl)
           alias
           summary
           locals)
@@ -6395,13 +6447,13 @@
 
 (define (compiler-load-session-state-lazy-decl-list-demand
   [state : CompilerLoadSessionState]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (compiler-load-lazy-alias-demand-none)]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
         [head : CompilerLoadLazyAliasDemand
           (compiler-load-session-state-lazy-decl-demand
@@ -6451,11 +6503,11 @@
 
 (define (compiler-load-session-state-structural-member-demand-with-pools
   [state : CompilerLoadSessionState]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [alias : i64]
-  [pools : AstNodePoolContext]) : CompilerLoadStructuralMemberDemand
+  [pools : ast.AstNodePoolContext]) : CompilerLoadStructuralMemberDemand
   (let
-    [_install-pools : unit (ast-node-pool-context-install! pools)]
+    [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
     (compiler-load-structural-member-demand-from-lazy
       (compiler-load-session-state-lazy-decl-list-demand
         state
@@ -6467,9 +6519,9 @@
 ;; Serial/test compatibility adapter. Production load jobs pass their owned
 ;; session state to the stateful entry point above.
 (define (compiler-load-structural-member-demand-with-pools
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [alias : i64]
-  [pools : AstNodePoolContext]) : CompilerLoadStructuralMemberDemand
+  [pools : ast.AstNodePoolContext]) : CompilerLoadStructuralMemberDemand
   (compiler-load-session-state-structural-member-demand-with-pools
     compiler-load-active-session-state
     decls
@@ -6477,12 +6529,12 @@
     pools))
 
 (define (compiler-load-structural-member-demand
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [alias : i64]) : CompilerLoadStructuralMemberDemand
   (compiler-load-structural-member-demand-with-pools
     decls
     alias
-    (ast-node-pool-context-capture-active)))
+    (ast.ast-node-pool-context-capture-active)))
 
 (define (compiler-load-structural-member-demand-contains?
   [demand : CompilerLoadStructuralMemberDemand]
@@ -6509,35 +6561,35 @@
 (define (compiler-load-session-state-lazy-import-preload-demand
   [state : CompilerLoadSessionState]
   [candidate : bool]
-  [alias : AstMaybeImportAlias]
-  [rest : AstDeclList]
-  [pools : AstNodePoolContext]) : CompilerLoadLazyAliasDemand
+  [alias : ast.AstMaybeImportAlias]
+  [rest : ast.AstDeclList]
+  [pools : ast.AstNodePoolContext]) : CompilerLoadLazyAliasDemand
   ;; Most real module imports are immediately used through `alias.member`.
   ;; Such use (and any unresolved generated use) must load anyway, so avoid a
   ;; speculative second parse that only creates a summary we cannot use.
   ;; Direct names remain summary-driven because their ownership and policy are
   ;; part of the imported module surface.
   (let
-    [_install-pools : unit (ast-node-pool-context-install! pools)]
+    [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
     (if candidate
       (match alias
-        [(AstMaybeImportAlias.Some alias-name)
+        [(ast.AstMaybeImportAlias.Some alias-name)
           (compiler-load-session-state-lazy-decl-list-demand
             state
             rest
             alias-name
             (compiler-load-lazy-empty-surface-summary)
             (sym_i64_env.sym-i64-empty))]
-        [(AstMaybeImportAlias.No) (compiler-load-lazy-alias-demand-none)])
+        [(ast.AstMaybeImportAlias.No) (compiler-load-lazy-alias-demand-none)])
       (compiler-load-lazy-alias-demand-none))))
 
 ;; Serial/test compatibility adapter. Stateful loader traversal must use
 ;; compiler-load-session-state-lazy-import-preload-demand directly.
 (define (compiler-load-lazy-import-preload-demand
   [candidate : bool]
-  [alias : AstMaybeImportAlias]
-  [rest : AstDeclList]
-  [pools : AstNodePoolContext]) : CompilerLoadLazyAliasDemand
+  [alias : ast.AstMaybeImportAlias]
+  [rest : ast.AstDeclList]
+  [pools : ast.AstNodePoolContext]) : CompilerLoadLazyAliasDemand
   (compiler-load-session-state-lazy-import-preload-demand
     compiler-load-active-session-state
     candidate
@@ -6547,27 +6599,27 @@
 
 (define (compiler-load-lazy-import-preload-candidate?
   [importer-path : String]
-  [kind : AstImportKind]
-  [alias : AstMaybeImportAlias]) : bool
+  [kind : ast.AstImportKind]
+  [alias : ast.AstMaybeImportAlias]) : bool
   (and
     (compiler-load-lazy-imports-enabled?)
     (not (compiler-load-prelude-importer? importer-path))
     (match kind
-      [(AstImportKind.Module) true]
+      [(ast.AstImportKind.Module) true]
       [_ false])
     (match alias
-      [(AstMaybeImportAlias.Some _) true]
-      [(AstMaybeImportAlias.No) false])))
+      [(ast.AstMaybeImportAlias.Some _) true]
+      [(ast.AstMaybeImportAlias.No) false])))
 
 (define (compiler-load-lazy-import-preload-summary-with-state-and-pools
   [load-state : CompilerLoadSessionState]
   [resolved : String]
   [resolved-id : i64]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext]) : unit
   (compiler-load-surface-summary-ensure-with-pools
     load-state
     resolved
@@ -6582,10 +6634,10 @@
   [resolved : String]
   [resolved-id : i64]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext]) : unit
   (compiler-load-lazy-import-preload-summary-with-state-and-pools
     compiler-load-active-session-state
     resolved
@@ -6596,18 +6648,40 @@
     cfgs
     pools))
 
+;; A moduleless import target reachable only next to its importer (neither
+;; stdlib-prefixed nor under a configured root) is the dotted successor of a
+;; legacy string-path import: its declarations belong to the importing
+;; compilation and must be typechecked even while nothing references them.
+;; Module-declared, stdlib, or root-resident targets are library units that
+;; lazy loading may skip while they stay unused.
+(define (compiler-load-lazy-import-include-semantics?
+  [summary : CompilerLoadSurfaceSummary]
+  [resolved : String]
+  [stdlib-roots : svec.Vec]) : bool
+  (and
+    (not (struct-get summary explicit-module))
+    (not (compiler-load-stdlib-import? (struct-get summary source-path)))
+    (not
+      (compiler-load-path-under-roots-from?
+        (compiler-load-normalize-path resolved)
+        stdlib-roots
+        0
+        (svec.len (& stdlib-roots))))))
+
 (define (compiler-load-lazy-import-skip-with-state?
   [load-state : CompilerLoadSessionState]
   [importer-path : String]
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
+  [resolved : String]
   [resolved-id : i64]
-  [expected-module : AstMaybeModuleName]
-  [alias : AstMaybeImportAlias]
-  [rest : AstDeclList]
-  [pools : AstNodePoolContext]
-  [preload-demand : CompilerLoadLazyAliasDemand]) : bool
+  [expected-module : ast.AstMaybeModuleName]
+  [alias : ast.AstMaybeImportAlias]
+  [rest : ast.AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [preload-demand : CompilerLoadLazyAliasDemand]
+  [stdlib-roots : svec.Vec]) : bool
   (let
-    [_install-pools : unit (ast-node-pool-context-install! pools)]
+    [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
     (if (or
       (not (compiler-load-lazy-imports-enabled?))
       (compiler-load-prelude-importer? importer-path))
@@ -6617,34 +6691,28 @@
         resolved-id)
         [(CompilerLoadNoSurfaceSummary) false]
         [(CompilerLoadSomeSurfaceSummary summary)
-          (let
-            [policy : CompilerLoadLazyImportPolicy
-              (struct-get summary lazy-policy)]
-            (match kind
-              [(AstImportKind.Module)
-                (if (compiler-load-lazy-decl-list-module-macro-qualified-by?
-                  rest
-                  (match expected-module
-                    [(AstMaybeModuleName.Some module-id) module-id]
-                    [(AstMaybeModuleName.No) (struct-get summary module-id)]))
-                  false
-                  (match alias
-                    [(AstMaybeImportAlias.Some alias-name)
-                      (match policy
-                        [(CompilerLoadLazyImportEager) false]
-                        [(CompilerLoadLazyImportQualified)
-                          (not
-                            (compiler-load-lazy-alias-demand-requires-load?
-                              policy
-                              (compiler-load-session-state-lazy-decl-list-demand
-                                load-state
-                                rest
-                                alias-name
-                                summary
-                                (sym_i64_env.sym-i64-empty))))]
-                        [(CompilerLoadLazyImportDirect)
-                          (if (struct-get preload-demand direct)
-                            false
+          (if (compiler-load-lazy-import-include-semantics?
+            summary
+            resolved
+            stdlib-roots)
+            false
+            (let
+              [policy : CompilerLoadLazyImportPolicy
+                (struct-get summary lazy-policy)]
+              (match kind
+                [(ast.AstImportKind.Module)
+                  (if (compiler-load-lazy-decl-list-module-macro-qualified-by?
+                    rest
+                    (match expected-module
+                      [(ast.AstMaybeModuleName.Some module-id) module-id]
+                      [(ast.AstMaybeModuleName.No)
+                        (struct-get summary module-id)]))
+                    false
+                    (match alias
+                      [(ast.AstMaybeImportAlias.Some alias-name)
+                        (match policy
+                          [(CompilerLoadLazyImportEager) false]
+                          [(CompilerLoadLazyImportQualified)
                             (not
                               (compiler-load-lazy-alias-demand-requires-load?
                                 policy
@@ -6653,70 +6721,86 @@
                                   rest
                                   alias-name
                                   summary
-                                  (sym_i64_env.sym-i64-empty)))))])]
-                    [(AstMaybeImportAlias.No) false]))]
-              [_ false]))]))))
+                                  (sym_i64_env.sym-i64-empty))))]
+                          [(CompilerLoadLazyImportDirect)
+                            (if (struct-get preload-demand direct)
+                              false
+                              (not
+                                (compiler-load-lazy-alias-demand-requires-load?
+                                  policy
+                                  (compiler-load-session-state-lazy-decl-list-demand
+                                    load-state
+                                    rest
+                                    alias-name
+                                    summary
+                                    (sym_i64_env.sym-i64-empty)))))])]
+                      [(ast.AstMaybeImportAlias.No) false]))]
+                [_ false])))]))))
 
 (define (compiler-load-lazy-import-skip?
   [importer-path : String]
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
+  [resolved : String]
   [resolved-id : i64]
-  [expected-module : AstMaybeModuleName]
-  [alias : AstMaybeImportAlias]
-  [rest : AstDeclList]
-  [pools : AstNodePoolContext]
-  [preload-demand : CompilerLoadLazyAliasDemand]) : bool
+  [expected-module : ast.AstMaybeModuleName]
+  [alias : ast.AstMaybeImportAlias]
+  [rest : ast.AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [preload-demand : CompilerLoadLazyAliasDemand]
+  [stdlib-roots : svec.Vec]) : bool
   (compiler-load-lazy-import-skip-with-state?
     compiler-load-active-session-state
     importer-path
     kind
+    resolved
     resolved-id
     expected-module
     alias
     rest
     pools
-    preload-demand))
+    preload-demand
+    stdlib-roots))
 
-(define (compiler-load-surface-zero-span) : AstSourceSpan
-  (ast-source-span 0 0 0 0))
+(define (compiler-load-surface-zero-span) : ast.AstSourceSpan
+  (ast.ast-source-span 0 0 0 0))
 
-(define (compiler-load-surface-module-maybe [module-name : AstMaybeModuleName]) : CompilerLoadSurfaceMaybeString
+(define (compiler-load-surface-module-maybe
+  [module-name : ast.AstMaybeModuleName]) : CompilerLoadSurfaceMaybeString
   (match module-name
-    [(AstMaybeModuleName.No) (CompilerLoadSurfaceNoString)]
-    [(AstMaybeModuleName.Some name)
-      (CompilerLoadSurfaceSomeString (intern-str name))]))
+    [(ast.AstMaybeModuleName.No) (CompilerLoadSurfaceNoString)]
+    [(ast.AstMaybeModuleName.Some name)
+      (CompilerLoadSurfaceSomeString (ci.intern-str name))]))
 
-(define (compiler-load-surface-alias-maybe [alias : AstMaybeImportAlias]) : CompilerLoadSurfaceMaybeString
+(define (compiler-load-surface-alias-maybe [alias : ast.AstMaybeImportAlias]) : CompilerLoadSurfaceMaybeString
   (match alias
-    [(AstMaybeImportAlias.No) (CompilerLoadSurfaceNoString)]
-    [(AstMaybeImportAlias.Some name)
-      (CompilerLoadSurfaceSomeString (intern-str name))]))
+    [(ast.AstMaybeImportAlias.No) (CompilerLoadSurfaceNoString)]
+    [(ast.AstMaybeImportAlias.Some name)
+      (CompilerLoadSurfaceSomeString (ci.intern-str name))]))
 
-(define (compiler-load-surface-import-kind [kind : AstImportKind]) : CompilerLoadSurfaceImportKind
+(define (compiler-load-surface-import-kind [kind : ast.AstImportKind]) : CompilerLoadSurfaceImportKind
   (match kind
-    [(AstImportKind.Path) (CompilerLoadSurfaceImportPath)]
-    [(AstImportKind.Module) (CompilerLoadSurfaceImportModule)]
-    [(AstImportKind.Macro _ _) (CompilerLoadSurfaceImportMacro)]
-    [(AstImportKind.MacroDecls _ _) (CompilerLoadSurfaceImportMacroDecls)]))
+    [(ast.AstImportKind.Module) (CompilerLoadSurfaceImportModule)]
+    [(ast.AstImportKind.Macro _ _) (CompilerLoadSurfaceImportMacro)]
+    [(ast.AstImportKind.MacroDecls _ _) (CompilerLoadSurfaceImportMacroDecls)]))
 
-(define (compiler-load-surface-import-decl-emitting? [kind : AstImportKind]) : bool
+(define (compiler-load-surface-import-decl-emitting? [kind : ast.AstImportKind]) : bool
   (match kind
-    [(AstImportKind.MacroDecls _ _) true]
+    [(ast.AstImportKind.MacroDecls _ _) true]
     [_ false]))
 
 (define (compiler-load-surface-import-default-alias
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
   [import-path : String]) : CompilerLoadSurfaceMaybeString
   (match kind
-    [(AstImportKind.Module)
+    [(ast.AstImportKind.Module)
       (CompilerLoadSurfaceSomeString
-        (parse-ast-dotted-import-default-alias import-path))]
+        (parser.parse-ast-dotted-import-default-alias import-path))]
     [_ (CompilerLoadSurfaceNoString)]))
 
-(define (compiler-load-surface-macro-result-kind [ret : AstType]) : CompilerLoadSurfaceMacroResultKind
+(define (compiler-load-surface-macro-result-kind [ret : ast.AstType]) : CompilerLoadSurfaceMacroResultKind
   (match ret
-    [(AstType.Expr) (CompilerLoadSurfaceMacroExpr)]
-    [(AstType.Var name)
+    [(ast.AstType.Expr) (CompilerLoadSurfaceMacroExpr)]
+    [(ast.AstType.Var name)
       (cond
         [(or
             (= name cbi.compiler-builtin-id-fix-Expr)
@@ -6733,64 +6817,72 @@
         [else (CompilerLoadSurfaceMacroOther)])]
     [_ (CompilerLoadSurfaceMacroOther)]))
 
-(define (compiler-load-surface-macro-result-decl-emitting? [ret : AstType]) : bool
+(define (compiler-load-surface-macro-result-decl-emitting? [ret : ast.AstType]) : bool
   (match (compiler-load-surface-macro-result-kind ret)
     [(CompilerLoadSurfaceMacroModule) true]
     [(CompilerLoadSurfaceMacroDecls) true]
     [_ false]))
 
-(define (compiler-load-surface-fn-export? [export : AstFnExport]) : bool
+(define (compiler-load-surface-fn-export? [export : ast.AstFnExport]) : bool
   (match export
-    [(AstFnExport.No) false]
-    [(AstFnExport.Export _) true]))
+    [(ast.AstFnExport.No) false]
+    [(ast.AstFnExport.Export _) true]))
 
-(define (compiler-load-surface-generated-meta? [meta : AstGeneratedDeclMeta]) : bool
+(define (compiler-load-surface-generated-meta?
+  [meta : ast.AstGeneratedDeclMeta]) : bool
   (match meta
-    [(AstGeneratedDeclMeta.No) false]
-    [(AstGeneratedDeclMeta.Some _ _ _ _) true]))
+    [(ast.AstGeneratedDeclMeta.No) false]
+    [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true]))
 
-(define (compiler-load-surface-field-list-cleanup? [fields : AstFieldDefList]) : bool
+(define (compiler-load-surface-field-list-cleanup?
+  [fields : ast.AstFieldDefList]) : bool
   (compiler-load-surface-field-list-cleanup-at? (& fields) 0))
 
 (define (compiler-load-surface-field-list-cleanup-at?
-  [fields : (& fields AstFieldDefList)]
+  [fields : (& fields ast.AstFieldDefList)]
   [index : i64]) : bool
-  (if (>= index (ast-field-def-list-len fields))
+  (if (>= index (ast.ast-field-def-list-len fields))
     false
-    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
-      [(AstFieldDef.Def _ _ cleanup)
+    (match (ast.ast-field-def-list-get
+      fields
+      index
+      (ast.ast-field-def-fallback))
+      [(ast.AstFieldDef.Def _ _ cleanup)
         (or
-          (ast-field-cleanup? cleanup)
+          (ast.ast-field-cleanup? cleanup)
           (compiler-load-surface-field-list-cleanup-at? fields (+ index 1)))])))
 
 (define (compiler-load-surface-variant-payload-cleanup?
-  [cleanups : AstVariantPayloadCleanupList]) : bool
+  [cleanups : ast.AstVariantPayloadCleanupList]) : bool
   (compiler-load-surface-variant-payload-cleanup-at? (& cleanups) 0))
 
 (define (compiler-load-surface-variant-payload-cleanup-at?
-  [cleanups : (& cleanups AstVariantPayloadCleanupList)]
+  [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]
   [index : i64]) : bool
-  (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
+  (if (>= index (ast.ast-variant-payload-cleanup-list-len cleanups))
     false
     (or
-      (ast-variant-payload-cleanup?
-        (ast-variant-payload-cleanup-list-get
+      (ast.ast-variant-payload-cleanup?
+        (ast.ast-variant-payload-cleanup-list-get
           cleanups
           index
-          (ast-variant-payload-cleanup-fallback)))
+          (ast.ast-variant-payload-cleanup-fallback)))
       (compiler-load-surface-variant-payload-cleanup-at? cleanups (+ index 1)))))
 
 (define (compiler-load-surface-variant-list-cleanup?
-  [variants : AstVariantDefList]) : bool
+  [variants : ast.AstVariantDefList]) : bool
   (compiler-load-surface-variant-list-cleanup-at? (& variants) 0))
 
 (define (compiler-load-surface-variant-list-cleanup-at?
-  [variants : (& variants AstVariantDefList)]
+  [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : bool
-  (if (>= index (ast-variant-def-list-len variants))
+  (if (>= index (ast.ast-variant-def-list-len variants))
     false
-    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
-      [(AstVariantDef.Def _ _ cleanups)
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def _ _ cleanups)
         (or
           (compiler-load-surface-variant-payload-cleanup? cleanups)
           (compiler-load-surface-variant-list-cleanup-at? variants (+ index 1)))])))
@@ -6802,20 +6894,20 @@
     (+ (struct-get left imports) (struct-get right imports))
     (+ (struct-get left decls) (struct-get right decls))))
 
-(define (compiler-load-surface-count-decl [decl : AstDecl]) : CompilerLoadSurfaceCounts
+(define (compiler-load-surface-count-decl [decl : ast.AstDecl]) : CompilerLoadSurfaceCounts
   (match decl
-    [(AstDecl.Import _ _) (CompilerLoadSurfaceCounts 1 0)]
-    [(AstDecl.Unsafe inner-box)
+    [(ast.AstDecl.Import _ _) (CompilerLoadSurfaceCounts 1 0)]
+    [(ast.AstDecl.Unsafe inner-box)
       (compiler-load-surface-count-decl (box-get inner-box))]
-    [(AstDecl.ModuleBody _ body-box)
+    [(ast.AstDecl.ModuleBody _ body-box)
       (compiler-load-surface-count-decls (box-get body-box))]
-    [(AstDecl.Module _) (CompilerLoadSurfaceCounts 0 0)]
+    [(ast.AstDecl.Module _) (CompilerLoadSurfaceCounts 0 0)]
     [_ (CompilerLoadSurfaceCounts 0 1)]))
 
-(define (compiler-load-surface-count-decls [decls : AstDeclList]) : CompilerLoadSurfaceCounts
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (CompilerLoadSurfaceCounts 0 0)]
-    [(AstDeclListStep.Cons decl rest)
+(define (compiler-load-surface-count-decls [decls : ast.AstDeclList]) : CompilerLoadSurfaceCounts
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) (CompilerLoadSurfaceCounts 0 0)]
+    [(ast.AstDeclListStep.Cons decl rest)
       (compiler-load-surface-counts-add
         (compiler-load-surface-count-decl decl)
         (compiler-load-surface-count-decls rest))]))
@@ -6873,14 +6965,14 @@
 (define (compiler-load-surface-build-decl-inner
   [source-path : String]
   [module-id : i64]
-  [decl : AstDecl]
+  [decl : ast.AstDecl]
   [generated : bool]
   [was-unsafe : bool]
   [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
   (match decl
-    [(AstDecl.Import
+    [(ast.AstDecl.Import
         decl-meta
-        (AstImportSpec.Spec kind import-path module-name alias span))
+        (ast.AstImportSpec.Spec kind import-path module-name alias span))
       (compiler-load-surface-build-add-import
         build
         (CompilerLoadSurfaceImport
@@ -6892,7 +6984,7 @@
           (compiler-load-surface-import-default-alias kind import-path)
           (box-get span))
         (compiler-load-surface-import-decl-emitting? kind))]
-    [(AstDecl.Def decl-meta name maybe-ty _)
+    [(ast.AstDecl.Def decl-meta name maybe-ty _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -6910,10 +7002,11 @@
         false
         generated
         false)]
-    [(AstDecl.DefFn decl-meta name params ret _ metadata)
+    [(ast.AstDecl.DefFn decl-meta name params ret _ metadata)
       (let
         [has-export : bool
-          (compiler-load-surface-fn-export? (ast-fn-metadata-export metadata))]
+          (compiler-load-surface-fn-export?
+            (ast.ast-fn-metadata-export metadata))]
         (compiler-load-surface-build-add-decl
           build
           (CompilerLoadSurfaceDecl
@@ -6931,7 +7024,7 @@
           has-export
           generated
           false))]
-    [(AstDecl.Extern decl-meta name kind meta ty)
+    [(ast.AstDecl.Extern decl-meta name kind meta ty)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -6949,11 +7042,11 @@
         false
         generated
         false)]
-    [(AstDecl.DefStruct decl-meta name repr cleanup fields)
+    [(ast.AstDecl.DefStruct decl-meta name repr cleanup fields)
       (let
         [has-cleanup : bool
           (or
-            (ast-struct-cleanup? cleanup)
+            (ast.ast-struct-cleanup? cleanup)
             (compiler-load-surface-field-list-cleanup? fields))]
         (compiler-load-surface-build-add-decl
           build
@@ -6962,7 +7055,7 @@
             name
             module-id
             (CompilerLoadSurfaceStructSignature
-              (ast-lifetime-list-new)
+              (ast.ast-lifetime-list-new)
               repr
               cleanup
               fields)
@@ -6976,11 +7069,17 @@
           false
           generated
           false))]
-    [(AstDecl.DefStructLifetimes decl-meta name lifetimes repr cleanup fields)
+    [(ast.AstDecl.DefStructLifetimes
+        decl-meta
+        name
+        lifetimes
+        repr
+        cleanup
+        fields)
       (let
         [has-cleanup : bool
           (or
-            (ast-struct-cleanup? cleanup)
+            (ast.ast-struct-cleanup? cleanup)
             (compiler-load-surface-field-list-cleanup? fields))]
         (compiler-load-surface-build-add-decl
           build
@@ -6999,11 +7098,11 @@
           false
           generated
           false))]
-    [(AstDecl.DefEnum decl-meta name cleanup variants)
+    [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
       (let
         [has-cleanup : bool
           (or
-            (ast-enum-cleanup? cleanup)
+            (ast.ast-enum-cleanup? cleanup)
             (compiler-load-surface-variant-list-cleanup? variants))]
         (compiler-load-surface-build-add-decl
           build
@@ -7012,7 +7111,7 @@
             name
             module-id
             (CompilerLoadSurfaceEnumSignature
-              (ast-lifetime-list-new)
+              (ast.ast-lifetime-list-new)
               cleanup
               variants)
             (CompilerLoadSurfaceMacroOther)
@@ -7025,11 +7124,11 @@
           false
           generated
           false))]
-    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
+    [(ast.AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (let
         [has-cleanup : bool
           (or
-            (ast-enum-cleanup? cleanup)
+            (ast.ast-enum-cleanup? cleanup)
             (compiler-load-surface-variant-list-cleanup? variants))]
         (compiler-load-surface-build-add-decl
           build
@@ -7048,7 +7147,7 @@
           false
           generated
           false))]
-    [(AstDecl.DefMacro decl-meta name params ret body-box)
+    [(ast.AstDecl.DefMacro decl-meta name params ret body-box)
       (let
         [result-kind : CompilerLoadSurfaceMacroResultKind
           (compiler-load-surface-macro-result-kind ret)]
@@ -7071,7 +7170,7 @@
           false
           generated
           decl-emitting))]
-    [(AstDecl.DefDispatch decl-meta name variants)
+    [(ast.AstDecl.DefDispatch decl-meta name variants)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -7089,7 +7188,7 @@
         false
         generated
         false)]
-    [(AstDecl.Test name _ span)
+    [(ast.AstDecl.Test name _ span)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -7107,7 +7206,7 @@
         false
         generated
         false)]
-    [(AstDecl.IncludeStr name _)
+    [(ast.AstDecl.IncludeStr name _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -7125,7 +7224,7 @@
         false
         generated
         false)]
-    [(AstDecl.IncludeStrComptime name _)
+    [(ast.AstDecl.IncludeStrComptime name _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -7143,7 +7242,7 @@
         false
         generated
         false)]
-    [(AstDecl.IncludeStrLzss name _)
+    [(ast.AstDecl.IncludeStrLzss name _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -7161,7 +7260,7 @@
         false
         generated
         false)]
-    [(AstDecl.IncludeBin name _)
+    [(ast.AstDecl.IncludeBin name _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -7179,7 +7278,7 @@
         false
         generated
         false)]
-    [(AstDecl.Unsafe inner-box)
+    [(ast.AstDecl.Unsafe inner-box)
       (compiler-load-surface-build-decl
         source-path
         module-id
@@ -7187,18 +7286,19 @@
         generated
         true
         build)]
-    [(AstDecl.ModuleBody nested-module body-box)
+    [(ast.AstDecl.ModuleBody nested-module body-box)
       (compiler-load-surface-build-decls-into
         source-path
         nested-module
         (box-get body-box)
         build)]
-    [(AstDecl.Module _) build]))
+    [(ast.AstDecl.Module _) build]
+    [_ build]))
 
 (define (compiler-load-surface-build-decl
   [source-path : String]
   [module-id : i64]
-  [decl : AstDecl]
+  [decl : ast.AstDecl]
   [generated : bool]
   [was-unsafe : bool]
   [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
@@ -7208,28 +7308,28 @@
     decl
     (or
       generated
-      (compiler-load-surface-generated-meta? (ast-decl-generated-meta decl)))
+      (compiler-load-surface-generated-meta? (ast.ast-decl-generated-meta decl)))
     was-unsafe
     build))
 
 (define (compiler-load-surface-build-decls-into
   [source-path : String]
   [module-id : i64]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) build]
-    [(AstDeclListStep.Cons decl rest-box)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) build]
+    [(ast.AstDeclListStep.Cons decl rest-box)
       (let
-        [rest : AstDeclList rest-box]
+        [rest : ast.AstDeclList rest-box]
         (match decl
-          [(AstDecl.Module next-module)
+          [(ast.AstDecl.Module next-module)
             (compiler-load-surface-build-decls-into
               source-path
               next-module
               rest
               build)]
-          [(AstDecl.ModuleBody nested-module body-box)
+          [(ast.AstDecl.ModuleBody nested-module body-box)
             (compiler-load-surface-build-decls-into
               source-path
               module-id
@@ -7255,7 +7355,7 @@
 (define (compiler-load-surface-build-decls
   [source-path : String]
   [module-id : i64]
-  [decls : AstDeclList]) : CompilerLoadSurfaceBuild
+  [decls : ast.AstDeclList]) : CompilerLoadSurfaceBuild
   (compiler-load-surface-build-decls-into
     source-path
     module-id
@@ -7271,7 +7371,7 @@
   [declaration-module-id : i64]
   [explicit-module : bool]
   [qualified-load : bool]
-  [decls : AstDeclList]) : CompilerLoadSurfaceSummary
+  [decls : ast.AstDeclList]) : CompilerLoadSurfaceSummary
   (let
     [source-path : String (compiler-load-normalize-path path)]
     [build : CompilerLoadSurfaceBuild
@@ -7307,13 +7407,13 @@
   [path : String]
   [source-path-id : i64]
   [root-id : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [fallback-id : i64]
   [qualified-load : bool]) : ResultCompilerLoadSurfaceSummary
   (match program
-    [(AstProgram.Program decls-box)
+    [(ast.AstProgram.Program decls-box)
       (let
-        [decls : AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (box-get decls-box)]
         [source-module : String (compiler-load-decls-source-module decls)]
         (match (compiler-load-decls-module-id path decls fallback-id)
           [(ResultCompilerLoadModuleId.Ok _ module-id)
@@ -7338,60 +7438,60 @@
             (ResultCompilerLoadSurfaceSummary.Err diag)]))]))
 
 (define (compiler-load-alias-decl-list
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
   [import-path : String]
-  [expected-module : AstMaybeModuleName]
-  [alias : AstMaybeImportAlias]
-  [rest : AstDeclList]) : AstDeclList
+  [expected-module : ast.AstMaybeModuleName]
+  [alias : ast.AstMaybeImportAlias]
+  [rest : ast.AstDeclList]) : ast.AstDeclList
   (match alias
-    [(AstMaybeImportAlias.Some _)
+    [(ast.AstMaybeImportAlias.Some _)
       (compiler-load-decl-list-prepend
-        (AstDecl.Import
-          ast-decl-meta-runtime
-          (AstImportSpec.Spec
+        (ast.AstDecl.Import
+          ast.ast-decl-meta-runtime
+          (ast.AstImportSpec.Spec
             kind
             import-path
             expected-module
             alias
-            (box (ast-source-span 0 0 0 0))))
+            (box (ast.ast-source-span 0 0 0 0))))
         rest)]
-    [(AstMaybeImportAlias.No) rest]))
+    [(ast.AstMaybeImportAlias.No) rest]))
 
 (define (compiler-load-alias-path-list
   [importer-path : String]
   [importer-decl-owner-id : i64]
-  [alias : AstMaybeImportAlias]
-  [rest : AstDeclPathList]) : AstDeclPathList
+  [alias : ast.AstMaybeImportAlias]
+  [rest : ast.AstDeclPathList]) : ast.AstDeclPathList
   (match alias
-    [(AstMaybeImportAlias.Some _)
-      (ast-decl-path-list-prepend-builder-with-owner-id
+    [(ast.AstMaybeImportAlias.Some _)
+      (ast.ast-decl-path-list-prepend-builder-with-owner-id
         importer-path
         importer-decl-owner-id
         rest)]
-    [(AstMaybeImportAlias.No) rest]))
+    [(ast.AstMaybeImportAlias.No) rest]))
 
 (define (compiler-load-alias-module-list
   [importer-module-id : i64]
-  [alias : AstMaybeImportAlias]
-  [rest : AstDeclModuleList]) : AstDeclModuleList
+  [alias : ast.AstMaybeImportAlias]
+  [rest : ast.AstDeclModuleList]) : ast.AstDeclModuleList
   (match alias
-    [(AstMaybeImportAlias.Some _)
-      (ast-decl-module-list-prepend-builder-id importer-module-id rest)]
-    [(AstMaybeImportAlias.No) rest]))
+    [(ast.AstMaybeImportAlias.Some _)
+      (ast.ast-decl-module-list-prepend-builder-id importer-module-id rest)]
+    [(ast.AstMaybeImportAlias.No) rest]))
 
 ;; Imported module declarations switch the flattened declaration context; restore
 ;; the importer's source module before the alias marker and remaining decls.
 (define (compiler-load-decls-after-import
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
   [import-path : String]
-  [expected-module : AstMaybeModuleName]
-  [alias : AstMaybeImportAlias]
+  [expected-module : ast.AstMaybeModuleName]
+  [alias : ast.AstMaybeImportAlias]
   [_importer-source-module : String]
   [importer-source-module-id : i64]
-  [imported-decls : AstDeclList]
-  [rest : AstDeclList]) : AstDeclList
+  [imported-decls : ast.AstDeclList]
+  [rest : ast.AstDeclList]) : ast.AstDeclList
   (let
-    [after-alias : AstDeclList
+    [after-alias : ast.AstDeclList
       (compiler-load-alias-decl-list
         kind
         import-path
@@ -7400,25 +7500,25 @@
         rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
       (compiler-load-decl-list-prepend
-        (ast-decl-module-id importer-source-module-id)
+        (ast.ast-decl-module-id importer-source-module-id)
         after-alias)
       after-alias)))
 
 (define (compiler-load-paths-after-import
   [importer-path : String]
   [importer-decl-owner-id : i64]
-  [alias : AstMaybeImportAlias]
-  [imported-decls : AstDeclList]
-  [rest : AstDeclPathList]) : AstDeclPathList
+  [alias : ast.AstMaybeImportAlias]
+  [imported-decls : ast.AstDeclList]
+  [rest : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
-    [after-alias : AstDeclPathList
+    [after-alias : ast.AstDeclPathList
       (compiler-load-alias-path-list
         importer-path
         importer-decl-owner-id
         alias
         rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
-      (ast-decl-path-list-prepend-builder-with-owner-id
+      (ast.ast-decl-path-list-prepend-builder-with-owner-id
         importer-path
         importer-decl-owner-id
         after-alias)
@@ -7426,19 +7526,21 @@
 
 (define (compiler-load-modules-after-import
   [importer-module-id : i64]
-  [alias : AstMaybeImportAlias]
-  [imported-decls : AstDeclList]
-  [rest : AstDeclModuleList]) : AstDeclModuleList
+  [alias : ast.AstMaybeImportAlias]
+  [imported-decls : ast.AstDeclList]
+  [rest : ast.AstDeclModuleList]) : ast.AstDeclModuleList
   (let
-    [after-alias : AstDeclModuleList
+    [after-alias : ast.AstDeclModuleList
       (compiler-load-alias-module-list importer-module-id alias rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
-      (ast-decl-module-list-prepend-builder-id importer-module-id after-alias)
+      (ast.ast-decl-module-list-prepend-builder-id
+        importer-module-id
+        after-alias)
       after-alias)))
 
 (define (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
   [traversal : CompilerLoadTraversalContext]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [importer-path : String]
   [importer-module : String]
   [importer-module-id : i64]
@@ -7448,28 +7550,28 @@
   [stdlib-roots : svec.Vec]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil)
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
-        (ast-decl-list-new)
-        (ast-decl-path-list-new)
-        (ast-decl-module-list-new)
+        (ast.ast-decl-list-new)
+        (ast.ast-decl-path-list-new)
+        (ast.ast-decl-module-list-new)
         seen)]
-    [(AstDeclListStep.Cons decl rest)
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (match decl
-          [(AstDecl.ModuleBody target-module-id body-box)
+          [(ast.AstDecl.ModuleBody target-module-id body-box)
             (let
-              [target-module : String (intern-str target-module-id)]
-              [body : AstDeclList (box-get body-box)]
+              [target-module : String (ci.intern-str target-module-id)]
+              [body : ast.AstDeclList (box-get body-box)]
               (if (or
                 (compiler-load-decl-list-has-module-name? body target-module)
                 (compiler-load-decl-list-has-module-name? rest target-module))
                 (ResultCompilerLoadWithPaths.Err
                   (box
-                    (compiler-diagnostic-at-start
+                    (cdiag.compiler-diagnostic-at-start
                       importer-path
                       "compiler-load: duplicate module declaration")))
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
@@ -7513,26 +7615,27 @@
                           rest-seen)
                         (ResultCompilerLoadWithPaths.Ok
                           (compiler-load-decl-list-prepend
-                            (ast-decl-module-id target-module-id)
+                            (ast.ast-decl-module-id target-module-id)
                             (compiler-load-decl-list-append-onto
                               body-decls
                               (compiler-load-decl-list-prepend
-                                (ast-decl-module-id importer-source-module-id)
+                                (ast.ast-decl-module-id
+                                  importer-source-module-id)
                                 rest-decls)))
-                          (ast-decl-path-list-prepend-builder-with-owner-id
+                          (ast.ast-decl-path-list-prepend-builder-with-owner-id
                             importer-path
                             target-module-id
                             (compiler-load-decl-path-list-append-onto
                               body-paths
-                              (ast-decl-path-list-prepend-builder-with-owner-id
+                              (ast.ast-decl-path-list-prepend-builder-with-owner-id
                                 importer-path
                                 (struct-get traversal importer-decl-owner-id)
                                 rest-paths)))
-                          (ast-decl-module-list-prepend-builder-id
+                          (ast.ast-decl-module-list-prepend-builder-id
                             target-module-id
                             (compiler-load-decl-module-list-append-onto
                               body-modules
-                              (ast-decl-module-list-prepend-builder-id
+                              (ast.ast-decl-module-list-prepend-builder-id
                                 importer-source-module-id
                                 rest-modules)))
                           rest-seen)]
@@ -7540,9 +7643,14 @@
                         (ResultCompilerLoadWithPaths.Err diag)])]
                   [(ResultCompilerLoadWithPaths.Err diag)
                     (ResultCompilerLoadWithPaths.Err diag)])))]
-          [(AstDecl.Import
+          [(ast.AstDecl.Import
               decl-meta
-              (AstImportSpec.Spec kind import-path expected-module alias span))
+              (ast.AstImportSpec.Spec
+                kind
+                import-path
+                expected-module
+                alias
+                span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                 traversal
@@ -7567,11 +7675,11 @@
                       decl
                       decls
                       rest-decls)
-                    (ast-decl-path-list-prepend-builder-with-owner-id
+                    (ast.ast-decl-path-list-prepend-builder-with-owner-id
                       importer-path
                       (struct-get traversal importer-decl-owner-id)
                       rest-paths)
-                    (ast-decl-module-list-prepend-builder-id
+                    (ast.ast-decl-module-list-prepend-builder-id
                       importer-source-module-id
                       rest-modules)
                     rest-seen)]
@@ -7624,18 +7732,20 @@
                           (struct-get traversal load-state)
                           importer-path
                           kind
+                          resolved
                           resolved-id
                           expected-module
                           alias
                           rest
                           pools
-                          preload-demand)
+                          preload-demand
+                          stdlib-roots)
                         false)]
                     (match (if preload-skip
                       (ResultCompilerLoadWithPaths.Ok
-                        (ast-decl-list-new)
-                        (ast-decl-path-list-new)
-                        (ast-decl-module-list-new)
+                        (ast.ast-decl-list-new)
+                        (ast.ast-decl-path-list-new)
+                        (ast.ast-decl-module-list-new)
                         seen)
                       (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
                         (struct-get traversal load-state)
@@ -7681,7 +7791,7 @@
                                 rest-modules
                                 rest-seen)
                               (let
-                                [after-import-expected : AstMaybeModuleName
+                                [after-import-expected : ast.AstMaybeModuleName
                                   (compiler-load-after-import-expected-module
                                     (struct-get traversal load-state)
                                     resolved-id
@@ -7689,7 +7799,7 @@
                                     expected-module
                                     alias
                                     imported-decls)]
-                                [after-import-alias : AstMaybeImportAlias
+                                [after-import-alias : ast.AstMaybeImportAlias
                                   (compiler-load-after-import-alias
                                     (struct-get traversal load-state)
                                     resolved-id
@@ -7709,7 +7819,7 @@
                                         after-import-alias
                                         importer-source-module
                                         importer-source-module-id
-                                        (ast-decl-list-new)
+                                        (ast.ast-decl-list-new)
                                         rest-decls)
                                       (compiler-load-paths-after-import
                                         importer-path
@@ -7717,12 +7827,12 @@
                                           traversal
                                           importer-decl-owner-id)
                                         after-import-alias
-                                        (ast-decl-list-new)
+                                        (ast.ast-decl-list-new)
                                         rest-paths)
                                       (compiler-load-modules-after-import
                                         importer-source-module-id
                                         after-import-alias
-                                        (ast-decl-list-new)
+                                        (ast.ast-decl-list-new)
                                         rest-modules)
                                       rest-seen))
                                   (ResultCompilerLoadWithPaths.Ok
@@ -7761,8 +7871,9 @@
                         (ResultCompilerLoadWithPaths.Err diag)]))]
                 [(ResultPkgResolve.Err message)
                   (ResultCompilerLoadWithPaths.Err
-                    (box (compiler-diagnostic-at-start importer-path message)))]))]
-          [(AstDecl.IncludeStr name include-path)
+                    (box
+                      (cdiag.compiler-diagnostic-at-start importer-path message)))]))]
+          [(ast.AstDecl.IncludeStr name include-path)
             (match (compiler-load-expand-include-str-with-pools
               importer-path
               include-path
@@ -7793,11 +7904,11 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         (struct-get traversal importer-decl-owner-id)
                         rest-paths)
-                      (ast-decl-module-list-prepend-builder-id
+                      (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
                         rest-modules)
                       rest-seen)]
@@ -7805,7 +7916,7 @@
                     (ResultCompilerLoadWithPaths.Err diag)])]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
-          [(AstDecl.IncludeStrComptime name include-path)
+          [(ast.AstDecl.IncludeStrComptime name include-path)
             (match (compiler-load-expand-include-str-comptime-with-pools
               importer-path
               include-path
@@ -7836,11 +7947,11 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         (struct-get traversal importer-decl-owner-id)
                         rest-paths)
-                      (ast-decl-module-list-prepend-builder-id
+                      (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
                         rest-modules)
                       rest-seen)]
@@ -7848,7 +7959,7 @@
                     (ResultCompilerLoadWithPaths.Err diag)])]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
-          [(AstDecl.IncludeStrLzss name include-path)
+          [(ast.AstDecl.IncludeStrLzss name include-path)
             (match (compiler-load-expand-include-str-lzss-with-pools
               importer-path
               include-path
@@ -7875,12 +7986,12 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-list-prepend-builder expanded rest-decls)
-                      (ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         (struct-get traversal importer-decl-owner-id)
                         rest-paths)
-                      (ast-decl-module-list-prepend-builder-id
+                      (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
                         rest-modules)
                       rest-seen)]
@@ -7888,7 +7999,7 @@
                     (ResultCompilerLoadWithPaths.Err diag)])]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
-          [(AstDecl.IncludeBin name include-path)
+          [(ast.AstDecl.IncludeBin name include-path)
             (match (compiler-load-expand-include-bin-with-pools
               importer-path
               include-path
@@ -7919,11 +8030,11 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         (struct-get traversal importer-decl-owner-id)
                         rest-paths)
-                      (ast-decl-module-list-prepend-builder-id
+                      (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
                         rest-modules)
                       rest-seen)]
@@ -7955,11 +8066,11 @@
                     decl
                     decls
                     rest-decls)
-                  (ast-decl-path-list-prepend-builder-with-owner-id
+                  (ast.ast-decl-path-list-prepend-builder-with-owner-id
                     importer-path
                     (struct-get traversal importer-decl-owner-id)
                     rest-paths)
-                  (ast-decl-module-list-prepend-builder-id
+                  (ast.ast-decl-module-list-prepend-builder-id
                     importer-source-module-id
                     rest-modules)
                   rest-seen)]
@@ -7967,7 +8078,7 @@
                 (ResultCompilerLoadWithPaths.Err diag)])]))]))
 
 (define (compiler-load-decls-with-module-and-roots-cfg-root
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [importer-path : String]
   [importer-path-id : i64]
   [importer-decl-owner-id : i64]
@@ -7980,7 +8091,7 @@
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
       (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
         (CompilerLoadTraversalContext
@@ -7999,15 +8110,15 @@
         cfgs
         pools)]
     (begin
-      (ast-node-pool-context-install! pools)
+      (ast.ast-node-pool-context-install! pools)
       result)))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg
   [path : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [parse-identity : CompilerLoadParseIdentity]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg-root
@@ -8023,12 +8134,12 @@
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
   [load-state : CompilerLoadSessionState]
   [path : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
+  [pools : ast.AstNodePoolContext]
   [parse-identity : CompilerLoadParseIdentity]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
     load-state
@@ -8045,13 +8156,13 @@
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
   [load-state : CompilerLoadSessionState]
   [path : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
+  [pools : ast.AstNodePoolContext]
   [parse-identity : CompilerLoadParseIdentity]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
     load-state
@@ -8071,13 +8182,13 @@
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
   [load-state : CompilerLoadSessionState]
   [path : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
+  [pools : ast.AstNodePoolContext]
   [module-id-fallback : String]
   [parse-identity : CompilerLoadParseIdentity]
   [source-module-fallback : String]
@@ -8087,12 +8198,12 @@
       (compiler-load-session-state-surface-summary-load-enter! load-state)]
     [source-path-id : i64 (struct-get parse-identity source-path-id)]
     [module-id-fallback-id : i64 (struct-get parse-identity module-fallback-id)]
-    [source-path : String (intern-str source-path-id)]
+    [source-path : String (ci.intern-str source-path-id)]
     [loaded : ResultCompilerLoadWithPaths
       (match program
-        [(AstProgram.Program decls-box)
+        [(ast.AstProgram.Program decls-box)
           (let
-            [decls : AstDeclList (box-get decls-box)]
+            [decls : ast.AstDeclList (box-get decls-box)]
             [effective-source-module-fallback : String
               (if (> (string.string-length source-module-fallback) 0)
                 source-module-fallback
@@ -8114,7 +8225,7 @@
                     source-module-fallback-id
                     module-id-fallback-id)
                   cbi.compiler-builtin-id-fix-empty))]
-            [load-decls : AstDeclList
+            [load-decls : ast.AstDeclList
               (compiler-load-contextual-moduleless-decls
                 decls
                 source-module
@@ -8197,15 +8308,15 @@
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root
   [path : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [parse-identity : CompilerLoadParseIdentity]) : ResultCompilerLoadWithPaths
   (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
       (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
         compiler-load-active-session-state
@@ -8219,7 +8330,7 @@
         pools
         parse-identity)]
     (begin
-      (ast-node-pool-context-install! pools)
+      (ast.ast-node-pool-context-install! pools)
       result)))
 
 (define (compiler-load-source-with-paths
@@ -8238,7 +8349,7 @@
     source
     seen
     stdlib-roots
-    AstMaybeModuleName.No))
+    ast.AstMaybeModuleName.No))
 
 (define (compiler-load-source-with-paths-and-roots-cfg
   [path : String]
@@ -8251,7 +8362,7 @@
     source
     seen
     stdlib-roots
-    AstMaybeModuleName.No
+    ast.AstMaybeModuleName.No
     cfgs))
 
 (define (compiler-load-source-with-paths-and-roots-expect
@@ -8259,14 +8370,14 @@
   [source : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
+  [expected-module : ast.AstMaybeModuleName]) : ResultCompilerLoadWithPaths
   (compiler-load-source-with-paths-and-roots-expect-cfg
     path
     source
     seen
     stdlib-roots
     expected-module
-    (compiler-cfg-empty)))
+    (parser.compiler-cfg-empty)))
 
 ;; Parse a module source directly in the active (program-lifetime) arena.
 ;;
@@ -8282,19 +8393,19 @@
 (define (compiler-load-parse-source-diagnostic-escaping
   [path : String]
   [source : String]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
-  (parse-ast-source-diagnostic-with-cfg path source cfgs))
+  [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
+  (parser.parse-ast-source-diagnostic-with-cfg path source cfgs))
 
 (define (compiler-load-parse-source-diagnostic-escaping-with-pools
   [path : String]
   [source : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
-  (parse-ast-source-diagnostic-with-cfg-and-pools path source cfgs pools))
+  [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
+  (parser.parse-ast-source-diagnostic-with-cfg-and-pools path source cfgs pools))
 
 (define (compiler-load-parse-file-diagnostic-escaping
   [path : String]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (let
     [source : String (compiler-load-read-file-text path)]
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
@@ -8302,7 +8413,7 @@
 (define (compiler-load-parse-file-diagnostic-escaping-with-pools
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (let
     [source : String (compiler-load-read-file-text path)]
     (compiler-load-parse-source-diagnostic-escaping-with-pools
@@ -8316,12 +8427,12 @@
 ;; source text, parser scratch, and superseded temporary pool arrays are all
 ;; released before import traversal continues to the next file.
 (define (compiler-load-propagate-compacted-decl-origins!
-  [source : AstDeclList]
-  [dest : AstDeclList]
+  [source : ast.AstDeclList]
+  [dest : ast.AstDeclList]
   [records-start : i64]
   [records-end : i64]) : unit
   (begin
-    (compiler-parse-decl-origin-copy-direct-records!
+    (parser.compiler-parse-decl-origin-copy-direct-records!
       source
       (& dest)
       0
@@ -8334,23 +8445,23 @@
     ;; walk still stops at the shorter of the two lists, which is what running
     ;; either cursor to `Nil` did.
     (let
-      [source-count : i64 (ast-decl-list-len (& source))]
-      [dest-count : i64 (ast-decl-list-len (& dest))]
+      [source-count : i64 (ast.ast-decl-list-len (& source))]
+      [dest-count : i64 (ast.ast-decl-list-len (& dest))]
       [count : i64
         (if (< source-count dest-count)
           source-count
           dest-count)]
-      [source-slots : (__tl_dyn-array AstDecl) (struct-get source slots)]
+      [source-slots : (__tl_dyn-array ast.AstDecl) (struct-get source slots)]
       [source-offset : i64 (struct-get source offset)]
-      [dest-slots : (__tl_dyn-array AstDecl) (struct-get dest slots)]
+      [dest-slots : (__tl_dyn-array ast.AstDecl) (struct-get dest slots)]
       [dest-offset : i64 (struct-get dest offset)]
       [index : i64 0]
       (while (< index count)
         (begin
           (match (array-ref source-slots (+ source-offset index))
-            [(AstDecl.ModuleBody _ source-body-box)
+            [(ast.AstDecl.ModuleBody _ source-body-box)
               (match (array-ref dest-slots (+ dest-offset index))
-                [(AstDecl.ModuleBody _ dest-body-box)
+                [(ast.AstDecl.ModuleBody _ dest-body-box)
                   (compiler-load-propagate-compacted-decl-origins!
                     (box-get source-body-box)
                     (box-get dest-body-box)
@@ -8361,14 +8472,14 @@
           (set! index (+ index 1)))))))
 
 (define (compiler-load-propagate-compacted-program-origins!
-  [source : AstProgram]
-  [dest : AstProgram]
+  [source : ast.AstProgram]
+  [dest : ast.AstProgram]
   [records-start : i64]
   [records-end : i64]) : unit
   (match source
-    [(AstProgram.Program source-decls-box)
+    [(ast.AstProgram.Program source-decls-box)
       (match dest
-        [(AstProgram.Program dest-decls-box)
+        [(ast.AstProgram.Program dest-decls-box)
           (compiler-load-propagate-compacted-decl-origins!
             (box-get source-decls-box)
             (box-get dest-decls-box)
@@ -8378,7 +8489,7 @@
 (define (compiler-load-parse-file-diagnostic-detached-with-pools
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (let
     [caller-arena : i64 (arena.tl_arena_current)]
     [scratch-root : i64 (arena.tl_arena_make)]
@@ -8403,22 +8514,25 @@
           256
           estimate))]
     [scratch-base : i64 (arena.tl_arena_current)]
-    [scratch-pools : AstNodePoolContext
-      (ast-node-pool-context-new-with-capacities-in-arena
+    [scratch-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
         expr-capacity
         type-capacity
         scratch-base)]
     [records-start : i64 (reader.sp-node-pool-len)]
-    [parsed : ResultAstProgramDiagnostic
+    [parsed : parser.ResultAstProgramDiagnostic
       (compiler-load-parse-source-diagnostic-escaping-with-pools
         path
         source
         cfgs
         scratch-pools)]
     (match parsed
-      [(ResultAstProgramDiagnostic.Ok program)
-        (match (ast-program-copy-append-with-pools scratch-pools pools program)
-          [(AstProgramCompaction out-program _)
+      [(parser.ResultAstProgramDiagnostic.Ok program)
+        (match (ast.ast-program-copy-append-with-pools
+          scratch-pools
+          pools
+          program)
+          [(ast.AstProgramCompaction out-program _)
             (let
               [records-end : i64 (reader.sp-node-pool-len)]
               [_origins : unit
@@ -8428,57 +8542,57 @@
                   records-start
                   records-end)]
               [_compact-origin-records : unit
-                (compiler-parse-member-records-compact!
+                (parser.compiler-parse-member-records-compact!
                   records-start
                   records-end)]
               [scratch-head : i64 (arena.tl_arena_current)]
               [_restore-caller : unit
                 (unsafe
                   (arena.tl_arena_set caller-arena))]
-              [out : ResultAstProgramDiagnostic
-                (ResultAstProgramDiagnostic.Ok out-program)]
+              [out : parser.ResultAstProgramDiagnostic
+                (parser.ResultAstProgramDiagnostic.Ok out-program)]
               (begin
-                (ast-node-pool-context-destroy-storage! scratch-pools)
+                (ast.ast-node-pool-context-destroy-storage! scratch-pools)
                 (unsafe
                   (arena.tl_arena_destroy scratch-head))
                 out))])]
-      [(ResultAstProgramDiagnostic.Err diag)
+      [(parser.ResultAstProgramDiagnostic.Err diag)
         (let
           [scratch-head : i64 (arena.tl_arena_current)]
           [_restore-caller : unit
             (unsafe
               (arena.tl_arena_set caller-arena))]
-          [stable-diag : (Box CompilerDiagnostic)
-            (box (compiler-diagnostic-copy (box-get diag)))]
-          [out : ResultAstProgramDiagnostic
-            (ResultAstProgramDiagnostic.Err stable-diag)]
+          [stable-diag : (Box cdiag.CompilerDiagnostic)
+            (box (cdiag.compiler-diagnostic-copy (box-get diag)))]
+          [out : parser.ResultAstProgramDiagnostic
+            (parser.ResultAstProgramDiagnostic.Err stable-diag)]
           (begin
             (reader.sp-node-pool-truncate! records-start)
-            (ast-node-pool-context-destroy-storage! scratch-pools)
+            (ast.ast-node-pool-context-destroy-storage! scratch-pools)
             (unsafe
               (arena.tl_arena_destroy scratch-head))
             out))])))
 
 (define (compiler-load-cache-program-result
   [key : CompilerLoadProgramCacheKey]
-  [result : ResultAstProgramDiagnostic]) : ResultAstProgramDiagnostic
+  [result : parser.ResultAstProgramDiagnostic]) : parser.ResultAstProgramDiagnostic
   (match result
-    [(ResultAstProgramDiagnostic.Ok program)
+    [(parser.ResultAstProgramDiagnostic.Ok program)
       (begin
         (if (compiler-load-program-cache-store key program)
           (compiler-load-session-note-persistent!)
           unit)
-        (ResultAstProgramDiagnostic.Ok program))]
-    [(ResultAstProgramDiagnostic.Err diag)
-      (ResultAstProgramDiagnostic.Err diag)]))
+        (parser.ResultAstProgramDiagnostic.Ok program))]
+    [(parser.ResultAstProgramDiagnostic.Err diag)
+      (parser.ResultAstProgramDiagnostic.Err diag)]))
 
 (define (compiler-load-cache-program-result-with-pools
   [load-state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
-  [result : ResultAstProgramDiagnostic]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  [result : parser.ResultAstProgramDiagnostic]
+  [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (match result
-    [(ResultAstProgramDiagnostic.Ok program)
+    [(parser.ResultAstProgramDiagnostic.Ok program)
       (begin
         (if (compiler-load-session-state-program-cache-store
           load-state
@@ -8488,25 +8602,25 @@
             load-state
             pools)
           unit)
-        (ResultAstProgramDiagnostic.Ok program))]
-    [(ResultAstProgramDiagnostic.Err diag)
-      (ResultAstProgramDiagnostic.Err diag)]))
+        (parser.ResultAstProgramDiagnostic.Ok program))]
+    [(parser.ResultAstProgramDiagnostic.Err diag)
+      (parser.ResultAstProgramDiagnostic.Err diag)]))
 
 (define (compiler-load-parse-file-diagnostic-cache-miss
   [key : CompilerLoadProgramCacheKey]
   [path : String]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
       [prev-arena : i64 (arena.tl_arena_current)]
-      [loaded : ResultAstProgramDiagnostic
+      [loaded : parser.ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (arena.tl_arena_set node-pool-base-arena))
+            (arena.tl_arena_set ast.node-pool-base-arena))
           (let
             [persistent-key : CompilerLoadProgramCacheKey
               (compiler-load-program-cache-key-copy key)]
-            [parsed : ResultAstProgramDiagnostic
+            [parsed : parser.ResultAstProgramDiagnostic
               (compiler-load-parse-file-diagnostic-escaping path cfgs)]
             (begin
               (unsafe
@@ -8520,18 +8634,18 @@
   [key : CompilerLoadProgramCacheKey]
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (if (compiler-load-session-state-program-cache-can-store load-state key)
     (let
       [prev-arena : i64 (arena.tl_arena_current)]
-      [loaded : ResultAstProgramDiagnostic
+      [loaded : parser.ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))
+            (arena.tl_arena_set (ast.ast-node-pool-context-base-arena pools)))
           (let
             [persistent-key : CompilerLoadProgramCacheKey
               (compiler-load-program-cache-key-copy key)]
-            [parsed : ResultAstProgramDiagnostic
+            [parsed : parser.ResultAstProgramDiagnostic
               (compiler-load-parse-file-diagnostic-escaping-with-pools
                 path
                 cfgs
@@ -8548,21 +8662,21 @@
     (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)))
 
 (define (compiler-load-ast-program-result-ok?
-  [result : ResultAstProgramDiagnostic]) : bool
+  [result : parser.ResultAstProgramDiagnostic]) : bool
   (match result
-    [(ResultAstProgramDiagnostic.Ok _) true]
-    [(ResultAstProgramDiagnostic.Err _) false]))
+    [(parser.ResultAstProgramDiagnostic.Ok _) true]
+    [(parser.ResultAstProgramDiagnostic.Err _) false]))
 
 (define (compiler-load-parse-file-diagnostic-cache-miss-local
   [key : CompilerLoadProgramCacheKey]
   [path : String]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [start-nodes : i64 (ast-node-pool-len)]
-      [cold : ResultAstProgramDiagnostic
+      [start-nodes : i64 (ast.ast-node-pool-len)]
+      [cold : parser.ResultAstProgramDiagnostic
         (compiler-load-parse-file-diagnostic-escaping path cfgs)]
-      [node-delta : i64 (- (ast-node-pool-len) start-nodes)]
+      [node-delta : i64 (- (ast.ast-node-pool-len) start-nodes)]
       (if (and
         (compiler-load-ast-program-result-ok? cold)
         (<= node-delta compiler-load-local-program-cache-node-limit))
@@ -8575,16 +8689,17 @@
   [key : CompilerLoadProgramCacheKey]
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (if (compiler-load-session-state-program-cache-can-store load-state key)
     (let
-      [start-nodes : i64 (ast-node-pool-context-expr-len pools)]
-      [cold : ResultAstProgramDiagnostic
+      [start-nodes : i64 (ast.ast-node-pool-context-expr-len pools)]
+      [cold : parser.ResultAstProgramDiagnostic
         (compiler-load-parse-file-diagnostic-escaping-with-pools
           path
           cfgs
           pools)]
-      [node-delta : i64 (- (ast-node-pool-context-expr-len pools) start-nodes)]
+      [node-delta : i64
+        (- (ast.ast-node-pool-context-expr-len pools) start-nodes)]
       (if (and
         (compiler-load-ast-program-result-ok? cold)
         (<= node-delta compiler-load-local-program-cache-node-limit))
@@ -8600,17 +8715,17 @@
 (define (compiler-load-parse-file-diagnostic-admit-only
   [key : CompilerLoadProgramCacheKey]
   [path : String]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (let
-    [parsed : ResultAstProgramDiagnostic
+    [parsed : parser.ResultAstProgramDiagnostic
       (compiler-load-parse-file-diagnostic-escaping path cfgs)]
     (begin
       (match parsed
-        [(ResultAstProgramDiagnostic.Ok _)
+        [(parser.ResultAstProgramDiagnostic.Ok _)
           (if (compiler-load-program-admission-record-persistent key)
             unit
             unit)]
-        [(ResultAstProgramDiagnostic.Err _) unit])
+        [(parser.ResultAstProgramDiagnostic.Err _) unit])
       parsed)))
 
 (define (compiler-load-parse-file-diagnostic-admit-only-with-pools
@@ -8618,26 +8733,26 @@
   [key : CompilerLoadProgramCacheKey]
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (let
-    [parsed : ResultAstProgramDiagnostic
+    [parsed : parser.ResultAstProgramDiagnostic
       (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)]
     (begin
       (match parsed
-        [(ResultAstProgramDiagnostic.Ok _)
+        [(parser.ResultAstProgramDiagnostic.Ok _)
           (if (compiler-load-session-state-program-admission-record-persistent
             load-state
             key)
             unit
             unit)]
-        [(ResultAstProgramDiagnostic.Err _) unit])
+        [(parser.ResultAstProgramDiagnostic.Err _) unit])
       parsed)))
 
 (define (compiler-load-parse-file-diagnostic-session-id
   [path : String]
   [source-path-id : i64]
   [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (if (and
     (compiler-load-session-cache-enabled?)
     (compiler-load-session-program-cache-enabled?)
@@ -8652,7 +8767,7 @@
         [(CompilerLoadProgramCacheHit program)
           (begin
             (compiler-load-program-cache-note-hit!)
-            (ResultAstProgramDiagnostic.Ok program))]
+            (parser.ResultAstProgramDiagnostic.Ok program))]
         [(CompilerLoadProgramCacheMiss)
           (begin
             (compiler-load-program-cache-note-miss!)
@@ -8676,7 +8791,7 @@
   [source-path-id : i64]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (if (and
     (compiler-load-session-state-cache-enabled? load-state)
     (compiler-load-session-state-program-cache-enabled? load-state)
@@ -8692,7 +8807,7 @@
         [(CompilerLoadProgramCacheHit program)
           (begin
             (compiler-load-session-state-program-cache-note-hit! load-state)
-            (ResultAstProgramDiagnostic.Ok program))]
+            (parser.ResultAstProgramDiagnostic.Ok program))]
         [(CompilerLoadProgramCacheMiss)
           (begin
             (compiler-load-session-state-program-cache-note-miss! load-state)
@@ -8728,18 +8843,18 @@
   [key : CompilerLoadProgramCacheKey]
   [path : String]
   [source : String]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
       [prev-arena : i64 (arena.tl_arena_current)]
-      [loaded : ResultAstProgramDiagnostic
+      [loaded : parser.ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (arena.tl_arena_set node-pool-base-arena))
+            (arena.tl_arena_set ast.node-pool-base-arena))
           (let
             [persistent-key : CompilerLoadProgramCacheKey
               (compiler-load-program-cache-key-copy key)]
-            [parsed : ResultAstProgramDiagnostic
+            [parsed : parser.ResultAstProgramDiagnostic
               (compiler-load-parse-source-diagnostic-escaping path source cfgs)]
             (begin
               (unsafe
@@ -8754,18 +8869,18 @@
   [path : String]
   [source : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (if (compiler-load-session-state-program-cache-can-store load-state key)
     (let
       [prev-arena : i64 (arena.tl_arena_current)]
-      [loaded : ResultAstProgramDiagnostic
+      [loaded : parser.ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))
+            (arena.tl_arena_set (ast.ast-node-pool-context-base-arena pools)))
           (let
             [persistent-key : CompilerLoadProgramCacheKey
               (compiler-load-program-cache-key-copy key)]
-            [parsed : ResultAstProgramDiagnostic
+            [parsed : parser.ResultAstProgramDiagnostic
               (compiler-load-parse-source-diagnostic-escaping-with-pools
                 path
                 source
@@ -8790,7 +8905,7 @@
   [path : String]
   [source-path-id : i64]
   [source : String]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (begin
     (compiler-load-session-note-embedded-stdlib-source!)
     (if (and
@@ -8806,7 +8921,7 @@
           [(CompilerLoadProgramCacheHit program)
             (begin
               (compiler-load-program-cache-note-hit!)
-              (ResultAstProgramDiagnostic.Ok program))]
+              (parser.ResultAstProgramDiagnostic.Ok program))]
           [(CompilerLoadProgramCacheMiss)
             (begin
               (compiler-load-program-cache-note-miss!)
@@ -8823,7 +8938,7 @@
   [source-path-id : i64]
   [source : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (begin
     (compiler-load-session-state-note-embedded-stdlib-source! load-state)
     (if (and
@@ -8840,7 +8955,7 @@
           [(CompilerLoadProgramCacheHit program)
             (begin
               (compiler-load-session-state-program-cache-note-hit! load-state)
-              (ResultAstProgramDiagnostic.Ok program))]
+              (parser.ResultAstProgramDiagnostic.Ok program))]
           [(CompilerLoadProgramCacheMiss)
             (begin
               (compiler-load-session-state-program-cache-note-miss! load-state)
@@ -8862,14 +8977,14 @@
   [source : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (let
     [fallback : String (compiler-load-canonical-module-id-from-path path)]
     [parse-identity : CompilerLoadParseIdentity
       (compiler-load-parse-identity path fallback expected-module)]
     (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
-      [(ResultAstProgramDiagnostic.Ok program)
+      [(parser.ResultAstProgramDiagnostic.Ok program)
         (compiler-load-program-with-paths-and-roots-expect-cfg
           path
           program
@@ -8878,7 +8993,7 @@
           expected-module
           cfgs
           parse-identity)]
-      [(ResultAstProgramDiagnostic.Err diag)
+      [(parser.ResultAstProgramDiagnostic.Err diag)
         (ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
@@ -8887,9 +9002,9 @@
   [source : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (let
     [fallback : String (compiler-load-canonical-module-id-from-path path)]
     [parse-identity : CompilerLoadParseIdentity
@@ -8899,7 +9014,7 @@
       source
       cfgs
       pools)
-      [(ResultAstProgramDiagnostic.Ok program)
+      [(parser.ResultAstProgramDiagnostic.Ok program)
         (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
           load-state
           path
@@ -8910,7 +9025,7 @@
           cfgs
           pools
           parse-identity)]
-      [(ResultAstProgramDiagnostic.Err diag)
+      [(parser.ResultAstProgramDiagnostic.Err diag)
         (ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (compiler-load-source
@@ -8932,7 +9047,7 @@
     path
     seen
     stdlib-roots
-    AstMaybeModuleName.No))
+    ast.AstMaybeModuleName.No))
 
 (define (compiler-load-file-with-paths-and-roots-cfg
   [path : String]
@@ -8943,7 +9058,7 @@
     path
     seen
     stdlib-roots
-    AstMaybeModuleName.No
+    ast.AstMaybeModuleName.No
     cfgs))
 
 (define (compiler-load-file-with-paths-and-roots-cfg-with-pools
@@ -8952,13 +9067,13 @@
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
     load-state
     path
     seen
     stdlib-roots
-    AstMaybeModuleName.No
+    ast.AstMaybeModuleName.No
     cfgs
     pools))
 
@@ -8966,13 +9081,13 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
+  [expected-module : ast.AstMaybeModuleName]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg
     path
     seen
     stdlib-roots
     expected-module
-    (compiler-cfg-empty)))
+    (parser.compiler-cfg-empty)))
 
 (define (compiler-load-bind-path-dedup
   [loaded : ResultCompilerLoadWithPaths]
@@ -8994,7 +9109,7 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root
     path
@@ -9009,9 +9124,9 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
     load-state
     path
@@ -9026,7 +9141,7 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
@@ -9043,10 +9158,10 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
     load-state
     path
@@ -9064,12 +9179,12 @@
   [source-path-id : i64]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
   [import-path : String]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
+  [pools : ast.AstNodePoolContext]
   [context-module : String]
   [context-module-id : i64]) : ResultCompilerLoadWithPaths
   (let
@@ -9109,7 +9224,7 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-current : bool]) : ResultCompilerLoadWithPaths
@@ -9132,9 +9247,9 @@
         seen)
       (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
         (ResultCompilerLoadWithPaths.Ok
-          (ast-decl-list-new)
-          (ast-decl-path-list-new)
-          (ast-decl-module-list-new)
+          (ast.ast-decl-list-new)
+          (ast.ast-decl-path-list-new)
+          (ast.ast-decl-module-list-new)
           seen)
         (let
           [fallback : String (compiler-load-canonical-module-id-from-path path)]
@@ -9154,7 +9269,7 @@
                 stdlib-roots
                 parse-cfgs)
               (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
-              [(ResultAstProgramDiagnostic.Ok program)
+              [(parser.ResultAstProgramDiagnostic.Ok program)
                 (compiler-load-bind-path-dedup
                   (compiler-load-program-with-paths-and-roots-expect-cfg-root
                     path
@@ -9167,7 +9282,7 @@
                     parse-identity)
                   path-dedup
                   path-key-id)]
-              [(ResultAstProgramDiagnostic.Err diag)
+              [(parser.ResultAstProgramDiagnostic.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])
             (match (compiler-load-embedded-stdlib-source-for-path path)
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
@@ -9184,7 +9299,7 @@
                       path
                       source
                       parse-cfgs)))
-                  [(ResultAstProgramDiagnostic.Ok program)
+                  [(parser.ResultAstProgramDiagnostic.Ok program)
                     (compiler-load-bind-path-dedup
                       (compiler-load-program-with-paths-and-roots-expect-cfg-root
                         path
@@ -9197,12 +9312,12 @@
                         parse-identity)
                       path-dedup
                       path-key-id)]
-                  [(ResultAstProgramDiagnostic.Err diag)
+                  [(parser.ResultAstProgramDiagnostic.Err diag)
                     (ResultCompilerLoadWithPaths.Err diag)])]
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
                 (ResultCompilerLoadWithPaths.Err
                   (box
-                    (compiler-diagnostic-at-start
+                    (cdiag.compiler-diagnostic-at-start
                       path
                       (string.append "compiler-load: cannot read import " path))))])))))))
 
@@ -9211,11 +9326,11 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-current : bool]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (let
     [fallback : String (compiler-load-canonical-module-id-from-path path)]
     (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
@@ -9241,11 +9356,11 @@
   [source-path-id : i64]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-current : bool]
-  [pools : AstNodePoolContext]
+  [pools : ast.AstNodePoolContext]
   [context-module-id : i64]
   [module-id-fallback : String]
   [source-module-fallback : String]
@@ -9268,9 +9383,9 @@
         seen)
       (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
         (ResultCompilerLoadWithPaths.Ok
-          (ast-decl-list-new)
-          (ast-decl-path-list-new)
-          (ast-decl-module-list-new)
+          (ast.ast-decl-list-new)
+          (ast.ast-decl-path-list-new)
+          (ast.ast-decl-module-list-new)
           seen)
         (let
           [parse-identity : CompilerLoadParseIdentity
@@ -9306,7 +9421,7 @@
                 path
                 parse-cfgs
                 pools))
-              [(ResultAstProgramDiagnostic.Ok program)
+              [(parser.ResultAstProgramDiagnostic.Ok program)
                 (compiler-load-bind-path-dedup
                   (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
                     load-state
@@ -9324,7 +9439,7 @@
                     source-module-fallback-id)
                   path-dedup
                   path-key-id)]
-              [(ResultAstProgramDiagnostic.Err diag)
+              [(parser.ResultAstProgramDiagnostic.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])
             (match (compiler-load-embedded-stdlib-source-for-path path)
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
@@ -9344,7 +9459,7 @@
                       source
                       parse-cfgs
                       pools)))
-                  [(ResultAstProgramDiagnostic.Ok program)
+                  [(parser.ResultAstProgramDiagnostic.Ok program)
                     (compiler-load-bind-path-dedup
                       (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
                         load-state
@@ -9362,12 +9477,12 @@
                         source-module-fallback-id)
                       path-dedup
                       path-key-id)]
-                  [(ResultAstProgramDiagnostic.Err diag)
+                  [(parser.ResultAstProgramDiagnostic.Err diag)
                     (ResultCompilerLoadWithPaths.Err diag)])]
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
                 (ResultCompilerLoadWithPaths.Err
                   (box
-                    (compiler-diagnostic-at-start
+                    (cdiag.compiler-diagnostic-at-start
                       path
                       (string.append "compiler-load: cannot read import " path))))])))))))
 
@@ -9375,12 +9490,12 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [module-id-fallback : String]
   [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
       (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
         compiler-load-active-session-state
@@ -9401,7 +9516,7 @@
           -1)
         cbi.compiler-builtin-id-fix-empty)]
     (begin
-      (ast-node-pool-context-install! pools)
+      (ast.ast-node-pool-context-install! pools)
       result)))
 
 (define (compiler-load-entry-file-with-paths-and-roots-cfg
@@ -9413,7 +9528,7 @@
     path
     seen
     stdlib-roots
-    AstMaybeModuleName.No
+    ast.AstMaybeModuleName.No
     (compiler-load-dirname path)
     cfgs
     false))
@@ -9424,13 +9539,13 @@
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
     load-state
     path
     seen
     stdlib-roots
-    AstMaybeModuleName.No
+    ast.AstMaybeModuleName.No
     (compiler-load-dirname path)
     cfgs
     false
@@ -9715,24 +9830,24 @@
         decl-path
         (compiler-load-package-module-key module source-name)))))
 
-(define (compiler-load-param-type-list [params : AstParamList]) : AstTypeList
+(define (compiler-load-param-type-list [params : ast.AstParamList]) : ast.AstTypeList
   (let
-    [out : AstTypeList
-      (ast-type-list-with-capacity (ast-param-list-len (& params)))]
+    [out : ast.AstTypeList
+      (ast.ast-type-list-with-capacity (ast.ast-param-list-len (& params)))]
     (begin
       (compiler-load-param-type-list-into (& params) 0 (&mut out))
       out)))
 
 (define (compiler-load-param-type-list-into
-  [params : (& params AstParamList)]
+  [params : (& params ast.AstParamList)]
   [index : i64]
-  [out : (&mut out AstTypeList)]) : unit
-  (if (>= index (ast-param-list-len params))
+  [out : (&mut out ast.AstTypeList)]) : unit
+  (if (>= index (ast.ast-param-list-len params))
     unit
     (begin
-      (match (ast-param-list-get params index (ast-param-fallback))
-        [(AstParam.Param _ ty _ _)
-          (ast-type-list-push out (ast-node-pool-reader-type-push ty))])
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(ast.AstParam.Param _ ty _ _)
+          (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push ty))])
       (compiler-load-param-type-list-into params (+ index 1) out))))
 
 (define (compiler-load-package-tlci-path
@@ -9762,17 +9877,17 @@
               "': "
               (io.error-message error)))]
         [(io.OkIoString contents)
-          (match (tlci-parse-image (tlci-string->bytes contents))
-            [(ResultTlciImage.Err message)
+          (match (tlci.tlci-parse-image (tlci.tlci-string->bytes contents))
+            [(tlci.ResultTlciImage.Err message)
               (ResultCompilerLoadPackageSpmdInterface.Err
                 (str_cat.str-cat
                   "compiler-load: invalid dependency tlci '"
                   path
                   "': "
                   message))]
-            [(ResultTlciImage.Ok image)
+            [(tlci.ResultTlciImage.Ok image)
               (let
-                [metadata : TlciMetadata (struct-get image metadata)]
+                [metadata : tlci.TlciMetadata (struct-get image metadata)]
                 (if (or
                   (not
                     (string.eq (struct-get metadata package-name) package-name))
@@ -9797,21 +9912,21 @@
                       (struct-get metadata spmd-callables)))))])]))))
 
 (define (compiler-load-imported-spmd-specializations
-  [items : TlciSpmdSpecializations]) : AstImportedSpmdSpecializationList
+  [items : tlci.TlciSpmdSpecializations]) : ast.AstImportedSpmdSpecializationList
   (let
-    [out : AstImportedSpmdSpecializationList
-      (ast-imported-spmd-specialization-list-new)]
-    [count : i64 (tlci-spmd-specializations-len items)]
+    [out : ast.AstImportedSpmdSpecializationList
+      (ast.ast-imported-spmd-specialization-list-new)]
+    [count : i64 (tlci.tlci-spmd-specializations-len items)]
     [index : i64 0]
     (begin
       (while (< index count)
         (let
-          [item : TlciSpmdSpecialization
-            (tlci-spmd-specializations-ref items index)]
+          [item : tlci.TlciSpmdSpecialization
+            (tlci.tlci-spmd-specializations-ref items index)]
           (begin
-            (ast-imported-spmd-specialization-list-push
+            (ast.ast-imported-spmd-specialization-list-push
               (&mut out)
-              (AstImportedSpmdSpecialization
+              (ast.AstImportedSpmdSpecialization
                 (ci.intern-generated-canonical-name (struct-get item abi))
                 (ci.intern-generated-canonical-name (struct-get item backend))
                 (struct-get item lanes)
@@ -9824,20 +9939,22 @@
 
 (define (compiler-load-imported-spmd-callables-for
   [canonical-name : String]
-  [items : TlciSpmdCallables]) : AstImportedSpmdCallableList
+  [items : tlci.TlciSpmdCallables]) : ast.AstImportedSpmdCallableList
   (let
-    [out : AstImportedSpmdCallableList (ast-imported-spmd-callable-list-new)]
-    [count : i64 (tlci-spmd-callables-len items)]
+    [out : ast.AstImportedSpmdCallableList
+      (ast.ast-imported-spmd-callable-list-new)]
+    [count : i64 (tlci.tlci-spmd-callables-len items)]
     [index : i64 0]
     (begin
       (while (< index count)
         (let
-          [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
+          [item : tlci.TlciSpmdCallable
+            (tlci.tlci-spmd-callables-ref items index)]
           (begin
             (if (string.eq (struct-get item name) canonical-name)
-              (ast-imported-spmd-callable-list-push
+              (ast.ast-imported-spmd-callable-list-push
                 (&mut out)
-                (AstImportedSpmdCallable
+                (ast.AstImportedSpmdCallable
                   (ci.intern-generated-canonical-name
                     (struct-get item signature))
                   (compiler-load-imported-spmd-specializations
@@ -9850,21 +9967,21 @@
   [package-owner : String]
   [module : String]
   [name : i64]
-  [interface : CompilerLoadPackageSpmdInterface]) : AstImportedSpmdMetadata
+  [interface : CompilerLoadPackageSpmdInterface]) : ast.AstImportedSpmdMetadata
   (let
     [canonical-name : String
       (compiler-load-package-module-key
         (if (= (string.string-length module) 0)
           package-owner
           module)
-        (intern-str name))]
-    [callables : AstImportedSpmdCallableList
+        (ci.intern-str name))]
+    [callables : ast.AstImportedSpmdCallableList
       (match interface
         [(CompilerLoadPackageSpmdInterface.Unavailable)
-          (ast-imported-spmd-callable-list-new)]
+          (ast.ast-imported-spmd-callable-list-new)]
         [(CompilerLoadPackageSpmdInterface.Available items)
           (compiler-load-imported-spmd-callables-for canonical-name items)])]
-    (AstImportedSpmdMetadata.Package
+    (ast.AstImportedSpmdMetadata.Package
       (ci.intern-generated-canonical-name canonical-name)
       (box callables))))
 
@@ -9875,11 +9992,11 @@
   [decl-path : String]
   [module : String]
   [name : i64]
-  [params : AstParamList]
-  [ret : AstType]
-  [spmd-interface : CompilerLoadPackageSpmdInterface]) : AstDecl
+  [params : ast.AstParamList]
+  [ret : ast.AstType]
+  [spmd-interface : CompilerLoadPackageSpmdInterface]) : ast.AstDecl
   (let
-    [name-str : String (intern-str name)]
+    [name-str : String (ci.intern-str name)]
     [logical-path : String
       (compiler-load-package-owned-path
         package-owner
@@ -9889,22 +10006,22 @@
     [logical : String
       (compiler-load-package-decl-logical-name "" logical-path module name-str)]
     [link-name : String (compiler-load-package-user-symbol logical)]
-    (AstDecl.Extern
-      ast-decl-meta-runtime
+    (ast.AstDecl.Extern
+      ast.ast-decl-meta-runtime
       name
-      (AstExternKind.Function)
+      (ast.AstExternKind.Function)
       (box
-        (AstExternMetadata.Metadata
-          (AstExternAbi.C)
+        (ast.AstExternMetadata.Metadata
+          (ast.AstExternAbi.C)
           (ci.intern-generated-canonical-name link-name)
-          (ast-extern-link-input-list-new)
-          (ast-extern-metadata-flags false (string.eq link-name logical))
+          (ast.ast-extern-link-input-list-new)
+          (ast.ast-extern-metadata-flags false (string.eq link-name logical))
           (compiler-load-imported-spmd-metadata
             package-owner
             module
             name
             spmd-interface)))
-      (ast-ty-func (compiler-load-param-type-list params) ret))))
+      (ast.ast-ty-func (compiler-load-param-type-list params) ret))))
 
 (define (compiler-load-package-transform-decl
   [package-owner : String]
@@ -9913,11 +10030,11 @@
   [decl-path : String]
   [module : String]
   [spmd-interface : CompilerLoadPackageSpmdInterface]
-  [decl : AstDecl]) : CompilerLoadMaybeDecl
+  [decl : ast.AstDecl]) : CompilerLoadMaybeDecl
   (match decl
-    [(AstDecl.DefFn decl-meta name params ret _ _)
+    [(ast.AstDecl.DefFn decl-meta name params ret _ _)
       (CompilerLoadSomeDecl
-        (ast-decl-with-meta
+        (ast.ast-decl-with-meta
           decl-meta
           (compiler-load-package-def-fn-extern
             package-owner
@@ -9929,11 +10046,11 @@
             params
             ret
             spmd-interface)))]
-    [(AstDecl.DefStruct decl-meta _ _ _ _) (CompilerLoadSomeDecl decl)]
-    [(AstDecl.Module _) (CompilerLoadSomeDecl decl)]
-    [(AstDecl.Unsafe inner-box)
+    [(ast.AstDecl.DefStruct decl-meta _ _ _ _) (CompilerLoadSomeDecl decl)]
+    [(ast.AstDecl.Module _) (CompilerLoadSomeDecl decl)]
+    [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (box-get inner-box)]
         (match (compiler-load-package-transform-decl
           package-owner
           package-root
@@ -9943,38 +10060,38 @@
           spmd-interface
           inner)
           [(CompilerLoadSomeDecl transformed)
-            (CompilerLoadSomeDecl (ast-decl-unsafe transformed))]
+            (CompilerLoadSomeDecl (ast.ast-decl-unsafe transformed))]
           [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
     [_ (CompilerLoadNoDecl)]))
 
 (define (compiler-load-path-list-head-or
-  [paths : AstDeclPathList]
+  [paths : ast.AstDeclPathList]
   [fallback : String]) : String
-  (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Cons path _) path]
-    [(AstDeclPathListStep.Nil) fallback]))
+  (match (ast.ast-decl-path-list-step paths)
+    [(ast.AstDeclPathListStep.Cons path _) path]
+    [(ast.AstDeclPathListStep.Nil) fallback]))
 
-(define (compiler-load-path-list-tail [paths : AstDeclPathList]) : AstDeclPathList
-  (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Cons _ rest)
+(define (compiler-load-path-list-tail [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
+  (match (ast.ast-decl-path-list-step paths)
+    [(ast.AstDeclPathListStep.Cons _ rest)
       (let
-        [rest : AstDeclPathList rest]
+        [rest : ast.AstDeclPathList rest]
         rest)]
-    [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]))
+    [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)]))
 
 (define (compiler-load-package-owned-decl-entry-main?
   [entry-path : String]
   [module : String]
   [decl-path : String]
-  [decl : AstDecl]) : bool
+  [decl : ast.AstDecl]) : bool
   (match decl
-    [(AstDecl.DefFn decl-meta name _ _ _ _)
+    [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
       (compiler-load-package-entry-main?
         entry-path
         decl-path
         module
-        (intern-str name))]
-    [(AstDecl.Unsafe inner-box)
+        (ci.intern-str name))]
+    [(ast.AstDecl.Unsafe inner-box)
       (compiler-load-package-owned-decl-entry-main?
         entry-path
         module
@@ -9987,28 +10104,28 @@
   [package-root : String]
   [stdlib-roots : svec.Vec]
   [entry-path : String]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [module : String]) : AstDeclPathList
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [module : String]) : ast.AstDeclPathList
   (let
-    [count : i64 (ast-decl-list-len (& decls))]
-    [decl-cursor : AstDeclList decls]
-    [path-cursor : AstDeclPathList paths]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [decl-cursor : ast.AstDeclList decls]
+    [path-cursor : ast.AstDeclPathList paths]
     [current-module : String module]
-    [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
     [owned-cache : load_i64_i64_map.Map
       (load_i64_i64_map.with-capacity (+ (* count 2) 16))]
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast-decl-list-step decl-cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest)
+        (match (ast.ast-decl-list-step decl-cursor)
+          [(ast.AstDeclListStep.Nil) (set! done true)]
+          [(ast.AstDeclListStep.Cons decl rest)
             (let
               [decl-path : String
                 (compiler-load-path-list-head-or path-cursor entry-path)]
               [decl-path-id : i64
-                (ast-decl-path-list-owner-id
+                (ast.ast-decl-path-list-owner-id
                   (& path-cursor)
                   0
                   cbi.compiler-builtin-id-fix-empty)]
@@ -10026,15 +10143,15 @@
                     stdlib-roots
                     decl-path
                     decl-path-id))]
-              [owned-path : String (intern-str owned-path-id)]
+              [owned-path : String (ci.intern-str owned-path-id)]
               (begin
-                (ast-decl-path-list-push-with-owner-id
+                (ast.ast-decl-path-list-push-with-owner-id
                   (&mut out)
                   owned-path
                   owned-path-id)
                 (match decl
-                  [(AstDecl.Module name)
-                    (set! current-module (intern-str name))]
+                  [(ast.AstDecl.Module name)
+                    (set! current-module (ci.intern-str name))]
                   [_ unit])
                 (set! decl-cursor rest)
                 (set! path-cursor (compiler-load-path-list-tail path-cursor))))]))
@@ -10045,8 +10162,8 @@
   [package-root : String]
   [stdlib-roots : svec.Vec]
   [entry-path : String]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]) : AstDeclPathList
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
   (compiler-load-package-owned-paths-for-decls-in-module
     package-owner
     package-root
@@ -10060,26 +10177,26 @@
   [package-owner : String]
   [package-root : String]
   [stdlib-roots : svec.Vec]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
   [seen : sym_i64_env.SymI64Env]
   [module : String]
   [module-id : i64]
   [spmd-interface : CompilerLoadPackageSpmdInterface]) : ResultCompilerLoadWithPaths
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
-        (ast-decl-list-new)
-        (ast-decl-path-list-new)
-        (ast-decl-module-list-new)
+        (ast.ast-decl-list-new)
+        (ast.ast-decl-path-list-new)
+        (ast.ast-decl-module-list-new)
         seen)]
-    [(AstDeclListStep.Cons decl rest)
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         [decl-path : String
           (compiler-load-path-list-head-or paths package-root)]
         [decl-path-id : i64
-          (ast-decl-path-list-owner-id
+          (ast.ast-decl-path-list-owner-id
             (& paths)
             0
             cbi.compiler-builtin-id-fix-empty)]
@@ -10089,14 +10206,14 @@
             package-root
             stdlib-roots
             decl-path)]
-        [rest-paths : AstDeclPathList (compiler-load-path-list-tail paths)]
+        [rest-paths : ast.AstDeclPathList (compiler-load-path-list-tail paths)]
         [next-module : String
           (match decl
-            [(AstDecl.Module name) (intern-str name)]
+            [(ast.AstDecl.Module name) (ci.intern-str name)]
             [_ module])]
         [next-module-id : i64
           (match decl
-            [(AstDecl.Module name) name]
+            [(ast.AstDecl.Module name) name]
             [_ module-id])]
         (match (compiler-load-package-extern-decls
           package-owner
@@ -10127,11 +10244,11 @@
                     transformed
                     decls
                     rest-decls)
-                  (ast-decl-path-list-prepend-builder-with-owner-id
+                  (ast.ast-decl-path-list-prepend-builder-with-owner-id
                     owned-decl-path
                     decl-path-id
                     rest-decl-paths)
-                  (ast-decl-module-list-prepend-builder-id
+                  (ast.ast-decl-module-list-prepend-builder-id
                     module-id
                     rest-modules)
                   rest-seen)]
@@ -10163,7 +10280,7 @@
                 manifest-path
                 (string.append
                   "': "
-                  (compiler-diagnostic-message (box-get diag))))))]
+                  (cdiag.compiler-diagnostic-message (box-get diag))))))]
         [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
           (let
             [manifest-dir : String (compiler-load-dirname manifest-path)]
@@ -10181,14 +10298,14 @@
   [resolved : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [module-id-fallback : String]
   [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (match (compiler-load-package-entry-for-source resolved)
     [(ResultCompilerLoadPackageEntry.Err message)
       (ResultCompilerLoadWithPaths.Err
-        (box (compiler-diagnostic-at-start resolved message)))]
+        (box (cdiag.compiler-diagnostic-at-start resolved message)))]
     [(ResultCompilerLoadPackageEntry.Ok entry)
       (match (compiler-load-package-spmd-interface
         (struct-get entry manifest-dir)
@@ -10196,7 +10313,7 @@
         (struct-get entry version))
         [(ResultCompilerLoadPackageSpmdInterface.Err message)
           (ResultCompilerLoadWithPaths.Err
-            (box (compiler-diagnostic-at-start resolved message)))]
+            (box (cdiag.compiler-diagnostic-at-start resolved message)))]
         [(ResultCompilerLoadPackageSpmdInterface.Ok spmd-interface)
           (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
             resolved
@@ -10245,7 +10362,7 @@
         name)]
     [(ResultPkgResolve.Err message)
       (ResultCompilerLoadInclude.Err
-        (box (compiler-diagnostic-at-start importer-path message)))]))
+        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-package-expand-include-str-comptime
   [importer-path : String]
@@ -10266,10 +10383,10 @@
         include-path
         resolved
         name
-        (ast-node-pool-context-capture-active))]
+        (ast.ast-node-pool-context-capture-active))]
     [(ResultPkgResolve.Err message)
       (ResultCompilerLoadInclude.Err
-        (box (compiler-diagnostic-at-start importer-path message)))]))
+        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-package-expand-include-str-lzss
   [importer-path : String]
@@ -10292,7 +10409,7 @@
         name)]
     [(ResultPkgResolve.Err message)
       (ResultCompilerLoadInclude.Err
-        (box (compiler-diagnostic-at-start importer-path message)))]))
+        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-package-expand-include-bin
   [importer-path : String]
@@ -10315,10 +10432,10 @@
         name)]
     [(ResultPkgResolve.Err message)
       (ResultCompilerLoadInclude.Err
-        (box (compiler-diagnostic-at-start importer-path message)))]))
+        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-package-decls-with-module-and-roots
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [importer-path : String]
   [importer-path-id : i64]
   [importer-module : String]
@@ -10330,20 +10447,25 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
-        (ast-decl-list-new)
-        (ast-decl-path-list-new)
-        (ast-decl-module-list-new)
+        (ast.ast-decl-list-new)
+        (ast.ast-decl-path-list-new)
+        (ast.ast-decl-module-list-new)
         seen)]
-    [(AstDeclListStep.Cons decl rest)
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (match decl
-          [(AstDecl.Import
+          [(ast.AstDecl.Import
               decl-meta
-              (AstImportSpec.Spec kind import-path expected-module alias span))
+              (ast.AstImportSpec.Spec
+                kind
+                import-path
+                expected-module
+                alias
+                span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-package-decls-with-module-and-roots
                 rest
@@ -10368,11 +10490,11 @@
                       decl
                       decls
                       rest-decls)
-                    (ast-decl-path-list-prepend-builder-with-owner-id
+                    (ast.ast-decl-path-list-prepend-builder-with-owner-id
                       importer-path
                       importer-path-id
                       rest-paths)
-                    (ast-decl-module-list-prepend-builder-id
+                    (ast.ast-decl-module-list-prepend-builder-id
                       importer-module-id
                       rest-modules)
                     rest-seen)]
@@ -10395,7 +10517,7 @@
                         import-path
                         expected-module
                         deps)]
-                    [source-expected-module : AstMaybeModuleName
+                    [source-expected-module : ast.AstMaybeModuleName
                       (compiler-load-package-source-expected-module
                         kind
                         expected-module
@@ -10419,8 +10541,8 @@
                           importer-path
                           kind
                           alias))]
-                    [preload-pools : AstNodePoolContext
-                      (ast-node-pool-context-capture-active)]
+                    [preload-pools : ast.AstNodePoolContext
+                      (ast.ast-node-pool-context-capture-active)]
                     [preload-demand : CompilerLoadLazyAliasDemand
                       (compiler-load-lazy-import-preload-demand
                         preload-candidate
@@ -10450,18 +10572,20 @@
                         (compiler-load-lazy-import-skip?
                           importer-path
                           kind
+                          resolved
                           resolved-id
                           expected-module
                           alias
                           rest
                           preload-pools
-                          preload-demand)
+                          preload-demand
+                          stdlib-roots)
                         false)]
                     (match (if preload-skip
                       (ResultCompilerLoadWithPaths.Ok
-                        (ast-decl-list-new)
-                        (ast-decl-path-list-new)
-                        (ast-decl-module-list-new)
+                        (ast.ast-decl-list-new)
+                        (ast.ast-decl-path-list-new)
+                        (ast.ast-decl-module-list-new)
                         seen)
                       (if package-externs
                         (compiler-load-package-externs-from-import
@@ -10517,7 +10641,7 @@
                                 rest-modules
                                 rest-seen)
                               (let
-                                [after-import-expected : AstMaybeModuleName
+                                [after-import-expected : ast.AstMaybeModuleName
                                   (compiler-load-after-import-expected-module
                                     compiler-load-active-session-state
                                     resolved-id
@@ -10525,7 +10649,7 @@
                                     expected-module
                                     alias
                                     imported-decls)]
-                                [after-import-alias : AstMaybeImportAlias
+                                [after-import-alias : ast.AstMaybeImportAlias
                                   (compiler-load-after-import-alias
                                     compiler-load-active-session-state
                                     resolved-id
@@ -10544,18 +10668,18 @@
                                         after-import-alias
                                         importer-source-module
                                         importer-source-module-id
-                                        (ast-decl-list-new)
+                                        (ast.ast-decl-list-new)
                                         rest-decls)
                                       (compiler-load-paths-after-import
                                         importer-path
                                         importer-path-id
                                         after-import-alias
-                                        (ast-decl-list-new)
+                                        (ast.ast-decl-list-new)
                                         rest-paths)
                                       (compiler-load-modules-after-import
                                         importer-module-id
                                         after-import-alias
-                                        (ast-decl-list-new)
+                                        (ast.ast-decl-list-new)
                                         rest-modules)
                                       rest-seen))
                                   (ResultCompilerLoadWithPaths.Ok
@@ -10592,8 +10716,9 @@
                         (ResultCompilerLoadWithPaths.Err diag)]))]
                 [(ResultPkgResolve.Err message)
                   (ResultCompilerLoadWithPaths.Err
-                    (box (compiler-diagnostic-at-start importer-path message)))]))]
-          [(AstDecl.IncludeStr name include-path)
+                    (box
+                      (cdiag.compiler-diagnostic-at-start importer-path message)))]))]
+          [(ast.AstDecl.IncludeStr name include-path)
             (match (compiler-load-package-expand-include-str
               importer-path
               include-path
@@ -10625,11 +10750,11 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         importer-path-id
                         rest-paths)
-                      (ast-decl-module-list-prepend-builder-id
+                      (ast.ast-decl-module-list-prepend-builder-id
                         importer-module-id
                         rest-modules)
                       rest-seen)]
@@ -10637,7 +10762,7 @@
                     (ResultCompilerLoadWithPaths.Err diag)])]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
-          [(AstDecl.IncludeStrComptime name include-path)
+          [(ast.AstDecl.IncludeStrComptime name include-path)
             (match (compiler-load-package-expand-include-str-comptime
               importer-path
               include-path
@@ -10669,11 +10794,11 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         importer-path-id
                         rest-paths)
-                      (ast-decl-module-list-prepend-builder-id
+                      (ast.ast-decl-module-list-prepend-builder-id
                         importer-module-id
                         rest-modules)
                       rest-seen)]
@@ -10681,7 +10806,7 @@
                     (ResultCompilerLoadWithPaths.Err diag)])]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
-          [(AstDecl.IncludeStrLzss name include-path)
+          [(ast.AstDecl.IncludeStrLzss name include-path)
             (match (compiler-load-package-expand-include-str-lzss
               importer-path
               include-path
@@ -10709,12 +10834,12 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-list-prepend-builder expanded rest-decls)
-                      (ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         importer-path-id
                         rest-paths)
-                      (ast-decl-module-list-prepend-builder-id
+                      (ast.ast-decl-module-list-prepend-builder-id
                         importer-module-id
                         rest-modules)
                       rest-seen)]
@@ -10722,7 +10847,7 @@
                     (ResultCompilerLoadWithPaths.Err diag)])]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
-          [(AstDecl.IncludeBin name include-path)
+          [(ast.AstDecl.IncludeBin name include-path)
             (match (compiler-load-package-expand-include-bin
               importer-path
               include-path
@@ -10754,11 +10879,11 @@
                         expanded
                         decls
                         rest-decls)
-                      (ast-decl-path-list-prepend-builder-with-owner-id
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         importer-path-id
                         rest-paths)
-                      (ast-decl-module-list-prepend-builder-id
+                      (ast.ast-decl-module-list-prepend-builder-id
                         importer-module-id
                         rest-modules)
                       rest-seen)]
@@ -10790,11 +10915,11 @@
                     decl
                     decls
                     rest-decls)
-                  (ast-decl-path-list-prepend-builder-with-owner-id
+                  (ast.ast-decl-path-list-prepend-builder-with-owner-id
                     importer-path
                     importer-path-id
                     rest-paths)
-                  (ast-decl-module-list-prepend-builder-id
+                  (ast.ast-decl-module-list-prepend-builder-id
                     importer-module-id
                     rest-modules)
                   rest-seen)]
@@ -10803,10 +10928,10 @@
 
 (define (compiler-load-package-program-with-paths-and-roots-expect-fallback
   [path : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
@@ -10818,12 +10943,12 @@
     [_ : unit (compiler-load-surface-summary-load-enter!)]
     [source-path-id : i64 (struct-get parse-identity source-path-id)]
     [module-id-fallback-id : i64 (struct-get parse-identity module-fallback-id)]
-    [source-path : String (intern-str source-path-id)]
+    [source-path : String (ci.intern-str source-path-id)]
     [loaded : ResultCompilerLoadWithPaths
       (match program
-        [(AstProgram.Program decls-box)
+        [(ast.AstProgram.Program decls-box)
           (let
-            [decls : AstDeclList (box-get decls-box)]
+            [decls : ast.AstDeclList (box-get decls-box)]
             [effective-source-module-fallback : String
               (if (> (string.string-length source-module-fallback) 0)
                 source-module-fallback
@@ -10845,7 +10970,7 @@
                     source-module-fallback-id
                     module-id-fallback-id)
                   cbi.compiler-builtin-id-fix-empty))]
-            [load-decls : AstDeclList
+            [load-decls : ast.AstDeclList
               (compiler-load-contextual-moduleless-decls
                 decls
                 source-module
@@ -10923,10 +11048,10 @@
 
 (define (compiler-load-package-program-with-paths-and-roots-expect
   [path : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
@@ -10950,7 +11075,7 @@
   [source-path-id : i64]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
@@ -10984,7 +11109,7 @@
           stdlib-roots
           parse-cfgs)
         (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
-        [(ResultAstProgramDiagnostic.Ok program)
+        [(parser.ResultAstProgramDiagnostic.Ok program)
           (compiler-load-package-program-with-paths-and-roots-expect-fallback
             path
             program
@@ -10998,7 +11123,7 @@
             parse-identity
             source-module-fallback
             source-module-fallback-id)]
-        [(ResultAstProgramDiagnostic.Err diag)
+        [(parser.ResultAstProgramDiagnostic.Err diag)
           (ResultCompilerLoadWithPaths.Err diag)])
       (match (compiler-load-embedded-stdlib-source-for-path path)
         [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
@@ -11013,7 +11138,7 @@
               path
               source
               parse-cfgs))
-            [(ResultAstProgramDiagnostic.Ok program)
+            [(parser.ResultAstProgramDiagnostic.Ok program)
               (compiler-load-package-program-with-paths-and-roots-expect-fallback
                 path
                 program
@@ -11027,12 +11152,12 @@
                 parse-identity
                 source-module-fallback
                 source-module-fallback-id)]
-            [(ResultAstProgramDiagnostic.Err diag)
+            [(parser.ResultAstProgramDiagnostic.Err diag)
               (ResultCompilerLoadWithPaths.Err diag)])]
         [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
           (ResultCompilerLoadWithPaths.Err
             (box
-              (compiler-diagnostic-at-start
+              (cdiag.compiler-diagnostic-at-start
                 path
                 (string.append "compiler-load: cannot read import " path))))]))))
 
@@ -11040,7 +11165,7 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
@@ -11063,7 +11188,7 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
+  [expected-module : ast.AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
@@ -11087,10 +11212,10 @@
     path
     seen
     stdlib-roots
-    AstMaybeModuleName.No
+    ast.AstMaybeModuleName.No
     manifest-dir
     deps
-    (compiler-cfg-empty)))
+    (parser.compiler-cfg-empty)))
 
 (define (compiler-load-package-file-with-paths-and-roots-cfg
   [path : String]
@@ -11103,7 +11228,7 @@
     path
     seen
     stdlib-roots
-    AstMaybeModuleName.No
+    ast.AstMaybeModuleName.No
     manifest-dir
     deps
     cfgs))
@@ -11119,7 +11244,7 @@
     path
     seen
     stdlib-roots
-    AstMaybeModuleName.No
+    ast.AstMaybeModuleName.No
     manifest-dir
     deps
     cfgs
@@ -11139,23 +11264,23 @@
       (compiler-load-parse-identity
         path
         (compiler-load-canonical-module-id-from-path path)
-        AstMaybeModuleName.No)]
+        ast.AstMaybeModuleName.No)]
     (match (compiler-load-parse-source-diagnostic-escaping
       path
       source
       parse-cfgs)
-      [(ResultAstProgramDiagnostic.Ok program)
+      [(parser.ResultAstProgramDiagnostic.Ok program)
         (compiler-load-package-program-with-paths-and-roots-expect
           path
           program
           seen
           stdlib-roots
-          AstMaybeModuleName.No
+          ast.AstMaybeModuleName.No
           manifest-dir
           deps
           parse-cfgs
           parse-identity)]
-      [(ResultAstProgramDiagnostic.Err diag)
+      [(parser.ResultAstProgramDiagnostic.Err diag)
         (ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (compiler-load-package-stdlib-prelude-file-with-roots-cfg
@@ -11319,103 +11444,103 @@
       [(ResultCompilerLoadWithPaths.Err diag)
         (ResultCompilerLoadWithPaths.Err diag)])))
 
-(define (compiler-load-decl-list-count [decls : AstDeclList]) : i64
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) 0]
-    [(AstDeclListStep.Cons _ rest)
+(define (compiler-load-decl-list-count [decls : ast.AstDeclList]) : i64
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) 0]
+    [(ast.AstDeclListStep.Cons _ rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (+ 1 (compiler-load-decl-list-count rest)))]))
 
 (define (compiler-load-decl-list-value-name-count
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [want : String]) : i64
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) 0]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) 0]
+    [(ast.AstDeclListStep.Cons decl rest)
       (+
         (match decl
-          [(AstDecl.Def _ name _ _)
-            (if (string.eq (intern-str name) want)
+          [(ast.AstDecl.Def _ name _ _)
+            (if (string.eq (ci.intern-str name) want)
               1
               0)]
           [_ 0])
         (compiler-load-decl-list-value-name-count rest want))]))
 
 (define (compiler-load-first-string-def?
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [name : String]
   [want : String]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Cons
-        (AstDecl.Def
-          ast-decl-meta-runtime
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Cons
+        (ast.AstDecl.Def
+          ast.ast-decl-meta-runtime
           got
-          (AstMaybeType.Some (AstType.String))
+          (ast.AstMaybeType.Some (ast.AstType.String))
           value-box)
         _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : ast.AstExpr (ast.ast-node-get value-box)]
         (match value
-          [(AstExpr.Literal (AstLiteral.String string-id))
+          [(ast.AstExpr.Literal (ast.AstLiteral.String string-id))
             (and
-              (string.eq (intern-str got) name)
-              (string.eq (intern-str string-id) want))]
+              (string.eq (ci.intern-str got) name)
+              (string.eq (ci.intern-str string-id) want))]
           [_ false]))]
     [_ false]))
 
 (define (compiler-load-first-string-macro?
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [name : String]
   [want : String]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Cons
-        (AstDecl.DefMacro
-          ast-decl-meta-runtime
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Cons
+        (ast.AstDecl.DefMacro
+          ast.ast-decl-meta-runtime
           got
           params
-          (AstType.String)
+          (ast.AstType.String)
           body-box)
         _)
-      (match (ast-node-get body-box)
-        [(AstExpr.Call callee-box args)
+      (match (ast.ast-node-get body-box)
+        [(ast.AstExpr.Call callee-box args)
           (and
-            (string.eq (intern-str got) name)
-            (= (ast-macro-param-list-len (& params)) 0)
-            (match (ast-node-get callee-box)
-              [(AstExpr.Var callee)
-                (string.eq (intern-str callee) "expr-string")]
+            (string.eq (ci.intern-str got) name)
+            (= (ast.ast-macro-param-list-len (& params)) 0)
+            (match (ast.ast-node-get callee-box)
+              [(ast.AstExpr.Var callee)
+                (string.eq (ci.intern-str callee) "expr-string")]
               [_ false])
-            (= (ast-expr-list-len (& args)) 1)
-            (match (ast-node-get (ast-expr-list-get (& args) 0 0))
-              [(AstExpr.Literal (AstLiteral.String text))
-                (string.eq (intern-str text) want)]
+            (= (ast.ast-expr-list-len (& args)) 1)
+            (match (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))
+              [(ast.AstExpr.Literal (ast.AstLiteral.String text))
+                (string.eq (ci.intern-str text) want)]
               [_ false]))]
         [_ false])]
     [_ false]))
 
 (define (compiler-load-first-lzss-def?
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [name : String]
   [want-source : String]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Cons
-        (AstDecl.Def
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Cons
+        (ast.AstDecl.Def
           _
           got
-          (AstMaybeType.Some (AstType.DynArray elem-id))
+          (ast.AstMaybeType.Some (ast.AstType.DynArray elem-id))
           value-box)
         _)
-      (match (ast-node-get value-box)
-        [(AstExpr.BinaryData bytes)
+      (match (ast.ast-node-get value-box)
+        [(ast.AstExpr.BinaryData bytes)
           (and
-            (string.eq (intern-str got) name)
-            (match (ty-node-get elem-id)
-              [(AstType.U8) true]
+            (string.eq (ci.intern-str got) name)
+            (match (ast.ty-node-get elem-id)
+              [(ast.AstType.U8) true]
               [_ false])
             (string.eq
               bytes
-              (ctfe-embedded-stdlib-binary-data-bytes want-source)))]
+              (ctfe.ctfe-embedded-stdlib-binary-data-bytes want-source)))]
         [_ false])]
     [_ false]))
 
@@ -11429,24 +11554,24 @@
     (= (compiler-load-char-code-at text 4) 255)
     (= (compiler-load-char-code-at text 5) 10)))
 
-(define (compiler-load-first-bin-def? [decls : AstDeclList] [name : String]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Cons
-        (AstDecl.Def
+(define (compiler-load-first-bin-def? [decls : ast.AstDeclList] [name : String]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Cons
+        (ast.AstDecl.Def
           _
           got
-          (AstMaybeType.Some (AstType.DynArray elem-id))
+          (ast.AstMaybeType.Some (ast.AstType.DynArray elem-id))
           value-box)
         _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [elem : AstType (ty-node-get elem-id)]
+        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [elem : ast.AstType (ast.ty-node-get elem-id)]
         (match value
-          [(AstExpr.BinaryData text)
+          [(ast.AstExpr.BinaryData text)
             (and
-              (string.eq (intern-str got) name)
+              (string.eq (ci.intern-str got) name)
               (match elem
-                [(AstType.U8) true]
+                [(ast.AstType.U8) true]
                 [_ false])
               (compiler-load-binary-payload-ok? text))]
           [_ false]))]
@@ -11466,26 +11591,26 @@
         (string-from-bytes (ptr-cast (array-data bytes) : (Ptr u8)) 6)))))
 
 (define (compiler-load-decl-list-has-import-alias?
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [target-module : String]
   [target-alias : String]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
       (let
-        [rest : AstDeclList rest]
+        [rest : ast.AstDeclList rest]
         (match decl
-          [(AstDecl.Import
+          [(ast.AstDecl.Import
               decl-meta
-              (AstImportSpec.Spec
+              (ast.AstImportSpec.Spec
                 _
                 _
-                (AstMaybeModuleName.Some module-name)
-                (AstMaybeImportAlias.Some alias)
+                (ast.AstMaybeModuleName.Some module-name)
+                (ast.AstMaybeImportAlias.Some alias)
                 _))
             (if (and
-              (string.eq (intern-str module-name) target-module)
-              (string.eq (intern-str alias) target-alias))
+              (string.eq (ci.intern-str module-name) target-module)
+              (string.eq (ci.intern-str alias) target-alias))
               true
               (compiler-load-decl-list-has-import-alias?
                 rest
@@ -11497,38 +11622,41 @@
               target-module
               target-alias)]))]))
 
-(define (compiler-load-unmoduled-import-restored-decls? [decls : AstDeclList]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Cons (AstDecl.Module imported-module) rest1)
+(define (compiler-load-unmoduled-import-restored-decls?
+  [decls : ast.AstDeclList]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Cons (ast.AstDecl.Module imported-module) rest1)
       (let
-        [rest1 : AstDeclList rest1]
-        (match (ast-decl-list-step rest1)
-          [(AstDeclListStep.Cons
-              (AstDecl.Def decl-meta imported-name _ _)
+        [rest1 : ast.AstDeclList rest1]
+        (match (ast.ast-decl-list-step rest1)
+          [(ast.AstDeclListStep.Cons
+              (ast.AstDecl.Def decl-meta imported-name _ _)
               rest2)
             (let
-              [rest2 : AstDeclList rest2]
-              (match (ast-decl-list-step rest2)
-                [(AstDeclListStep.Cons (AstDecl.Module restored-module) rest3)
+              [rest2 : ast.AstDeclList rest2]
+              (match (ast.ast-decl-list-step rest2)
+                [(ast.AstDeclListStep.Cons
+                    (ast.AstDecl.Module restored-module)
+                    rest3)
                   (let
-                    [rest3 : AstDeclList rest3]
-                    (match (ast-decl-list-step rest3)
-                      [(AstDeclListStep.Cons
-                          (AstDecl.Import
-                            ast-decl-meta-runtime
-                            (AstImportSpec.Spec
+                    [rest3 : ast.AstDeclList rest3]
+                    (match (ast.ast-decl-list-step rest3)
+                      [(ast.AstDeclListStep.Cons
+                          (ast.AstDecl.Import
+                            ast.ast-decl-meta-runtime
+                            (ast.AstImportSpec.Spec
                               _
                               _
-                              (AstMaybeModuleName.Some alias-module)
-                              (AstMaybeImportAlias.Some alias-name)
+                              (ast.AstMaybeModuleName.Some alias-module)
+                              (ast.AstMaybeImportAlias.Some alias-name)
                               _))
                           rest4)
                         (let
-                          [rest4 : AstDeclList rest4]
-                          (match (ast-decl-list-step rest4)
-                            [(AstDeclListStep.Cons
-                                (AstDecl.DefFn
-                                  ast-decl-meta-runtime
+                          [rest4 : ast.AstDeclList rest4]
+                          (match (ast.ast-decl-list-step rest4)
+                            [(ast.AstDeclListStep.Cons
+                                (ast.AstDecl.DefFn
+                                  ast.ast-decl-meta-runtime
                                   main-name
                                   _
                                   _
@@ -11536,21 +11664,21 @@
                                   _)
                                 done-box)
                               (let
-                                [done : AstDeclList done-box]
+                                [done : ast.AstDeclList done-box]
                                 (and
-                                  (ast-decl-list-empty? (& done))
+                                  (ast.ast-decl-list-empty? (& done))
                                   (string.eq
-                                    (intern-str imported-module)
-                                    "restore.dep")
+                                    (ci.intern-str imported-module)
+                                    "cl_restore_dep")
                                   (string.eq
-                                    (intern-str imported-name)
+                                    (ci.intern-str imported-name)
                                     "dep-value")
-                                  (string.eq (intern-str restored-module) "")
+                                  (string.eq (ci.intern-str restored-module) "")
                                   (string.eq
-                                    (intern-str alias-module)
-                                    "restore.dep")
-                                  (string.eq (intern-str alias-name) "dep")
-                                  (string.eq (intern-str main-name) "main")))]
+                                    (ci.intern-str alias-module)
+                                    "cl_restore_dep")
+                                  (string.eq (ci.intern-str alias-name) "dep")
+                                  (string.eq (ci.intern-str main-name) "main")))]
                             [_ false]))]
                       [_ false]))]
                 [_ false]))]
@@ -11558,27 +11686,29 @@
     [_ false]))
 
 (define (compiler-load-two-modules?
-  [modules : AstDeclModuleList]
+  [modules : ast.AstDeclModuleList]
   [want : String]) : bool
   (and
-    (= (ast-decl-module-list-len (& modules)) 2)
-    (string.eq (ast-decl-module-list-get (& modules) 0 "") want)
-    (string.eq (ast-decl-module-list-get (& modules) 1 "") want)))
+    (= (ast.ast-decl-module-list-len (& modules)) 2)
+    (string.eq (ast.ast-decl-module-list-get (& modules) 0 "") want)
+    (string.eq (ast.ast-decl-module-list-get (& modules) 1 "") want)))
 
 (define (compiler-load-entry-cycle-module-name? [name : String]) : bool
-  (or (string.eq name "smoke.entry") (string.eq name "smoke.dep")))
+  (or
+    (string.eq name "compiler_load_entry")
+    (string.eq name "compiler_load_dep")))
 
 (define (compiler-load-entry-cycle-modules-loop
-  [modules : AstDeclModuleList]
+  [modules : ast.AstDeclModuleList]
   [count : i64]) : bool
-  (if (>= count (ast-decl-module-list-len (& modules)))
-    (= count 11)
+  (if (>= count (ast.ast-decl-module-list-len (& modules)))
+    (= count 10)
     (and
       (compiler-load-entry-cycle-module-name?
-        (ast-decl-module-list-get (& modules) count ""))
+        (ast.ast-decl-module-list-get (& modules) count ""))
       (compiler-load-entry-cycle-modules-loop modules (+ count 1)))))
 
-(define (compiler-load-entry-cycle-modules? [modules : AstDeclModuleList]) : bool
+(define (compiler-load-entry-cycle-modules? [modules : ast.AstDeclModuleList]) : bool
   (compiler-load-entry-cycle-modules-loop modules 0))
 
 (define (compiler-load-surface-maybe-string-eq?
@@ -11591,10 +11721,9 @@
 (define (compiler-load-surface-import-kind-code
   [kind : CompilerLoadSurfaceImportKind]) : i64
   (match kind
-    [(CompilerLoadSurfaceImportPath) 1]
-    [(CompilerLoadSurfaceImportModule) 2]
-    [(CompilerLoadSurfaceImportMacro) 3]
-    [(CompilerLoadSurfaceImportMacroDecls) 4]))
+    [(CompilerLoadSurfaceImportModule) 1]
+    [(CompilerLoadSurfaceImportMacro) 2]
+    [(CompilerLoadSurfaceImportMacroDecls) 3]))
 
 (define (compiler-load-surface-decl-kind-code
   [kind : CompilerLoadSurfaceDeclKind]) : i64
@@ -11701,7 +11830,7 @@
             (=
               (compiler-load-surface-decl-kind-code (struct-get decl kind))
               kind-code)
-            (string.eq (intern-str (struct-get decl name)) name))
+            (string.eq (ci.intern-str (struct-get decl name)) name))
             (return true)
             (set! index (+ index 1)))))
       false)))
@@ -11718,8 +11847,8 @@
           [decl : CompilerLoadSurfaceDecl
             (compiler-load-surface-decl-list-at decls index)]
           (if (and
-            (string.eq (intern-str (struct-get decl name)) name)
-            (string.eq (intern-str (struct-get decl module)) module))
+            (string.eq (ci.intern-str (struct-get decl name)) name)
+            (string.eq (ci.intern-str (struct-get decl module)) module))
             (return true)
             (set! index (+ index 1)))))
       false)))
@@ -11735,7 +11864,7 @@
           [decl : CompilerLoadSurfaceDecl
             (compiler-load-surface-decl-list-at decls index)]
           (if (and
-            (string.eq (intern-str (struct-get decl name)) name)
+            (string.eq (ci.intern-str (struct-get decl name)) name)
             (struct-get decl has-generated-meta))
             (return true)
             (set! index (+ index 1)))))
@@ -11752,7 +11881,7 @@
           [decl : CompilerLoadSurfaceDecl
             (compiler-load-surface-decl-list-at decls index)]
           (if (and
-            (string.eq (intern-str (struct-get decl name)) name)
+            (string.eq (ci.intern-str (struct-get decl name)) name)
             (struct-get decl was-unsafe))
             (return true)
             (set! index (+ index 1)))))
@@ -11769,7 +11898,7 @@
           [decl : CompilerLoadSurfaceDecl
             (compiler-load-surface-decl-list-at decls index)]
           (if (and
-            (string.eq (intern-str (struct-get decl name)) name)
+            (string.eq (ci.intern-str (struct-get decl name)) name)
             (struct-get decl has-cleanup))
             (return true)
             (set! index (+ index 1)))))
@@ -11803,10 +11932,10 @@
 (define (compiler-load-surface-summary-smoke-source) : String
   (str_cat.str-cat
     "(module summary.mod)
-(import \"dep.tl\" module dep.mod as dep)
+(import dep.mod as dep)
 (import stdlib.vector as vec)
 (import (vec.vector i64) as vi64)
-(cfg feature (import \"feature.tl\" module feature.mod as feat))
+(cfg feature (import feature.mod as feat))
 (emit-generated VecI64)
 (define value : i64 1)
 (define (pub [x : i64]) (:export-symbol \"pub\") : i64 x)
@@ -11831,7 +11960,7 @@
     [imports : CompilerLoadSurfaceImportList (struct-get summary imports)]
     [decls : CompilerLoadSurfaceDeclList (struct-get summary decls)]
     (and
-      (string.eq (intern-str (struct-get summary module-id)) "summary.mod")
+      (string.eq (ci.intern-str (struct-get summary module-id)) "summary.mod")
       (string.eq (struct-get summary source-path) "src/summary.tl")
       (string.eq (struct-get summary root-id) "src")
       (= (compiler-load-surface-import-list-count imports) 5)
@@ -11842,33 +11971,32 @@
         (struct-get
           (compiler-load-surface-import-list-at imports 0)
           import-path)
-        "dep.tl")
+        "dep.mod")
       (string.eq
         (struct-get
           (compiler-load-surface-import-list-at imports 1)
           import-path)
         "stdlib.vector")
-      (= (compiler-load-surface-import-kind-count imports 1) 2)
+      (= (compiler-load-surface-import-kind-count imports 1) 3)
       (= (compiler-load-surface-import-kind-count imports 2) 1)
       (= (compiler-load-surface-import-kind-count imports 3) 1)
-      (= (compiler-load-surface-import-kind-count imports 4) 1)
       (compiler-load-surface-import-has?
         imports
-        2
+        1
         "stdlib.vector"
         "vec"
         "vector")
-      (compiler-load-surface-import-has? imports 1 "feature.tl" "feat" "")
+      (compiler-load-surface-import-has? imports 1 "feature.mod" "feat" "mod")
       (= (compiler-load-surface-decl-list-count decls) 14)
       (=
         (array-length (struct-get decls slots))
         (compiler-load-surface-decl-list-count decls))
       (string.eq
-        (intern-str
+        (ci.intern-str
           (struct-get (compiler-load-surface-decl-list-at decls 0) name))
         "value")
       (string.eq
-        (intern-str
+        (ci.intern-str
           (struct-get
             (compiler-load-surface-decl-list-at
               decls
@@ -11896,33 +12024,34 @@
       (struct-get summary has-decl-emitting-macro)
       (compiler-load-surface-summary-requires-eager? summary))))
 
-(define (compiler-load-surface-mark-generated-value! [program : AstProgram]) : bool
+(define (compiler-load-surface-mark-generated-value! [program : ast.AstProgram]) : bool
   (match program
-    [(AstProgram.Program decls-box)
+    [(ast.AstProgram.Program decls-box)
       (let
-        [decls : AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (box-get decls-box)]
         [index : i64 0]
         [found : bool false]
         (begin
-          (while (and (< index (ast-decl-list-len (& decls))) (not found))
+          (while (and (< index (ast.ast-decl-list-len (& decls))) (not found))
             (let
-              [decl : AstDecl
-                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              [decl : ast.AstDecl
+                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
               (match decl
-                [(AstDecl.Def _ name _ _)
-                  (if (string.eq (intern-str name) "generated-value")
+                [(ast.AstDecl.Def _ name _ _)
+                  (if (string.eq (ci.intern-str name) "generated-value")
                     (let
-                      [args : AstExprList (ast-expr-list-new)]
+                      [args : ast.AstExprList (ast.ast-expr-list-new)]
                       (begin
-                        (ast-expr-list-push
+                        (ast.ast-expr-list-push
                           (&mut args)
-                          (ast-node-push
-                            (AstExpr.Literal (ast-lit-generated-string "i64"))))
+                          (ast.ast-node-push
+                            (ast.AstExpr.Literal
+                              (ast.ast-lit-generated-string "i64"))))
                         (array-set!
                           (struct-get decls slots)
                           (+ (struct-get decls offset) index)
-                          (ast-decl-comptime-decl-with-meta
-                            (AstGeneratedDeclMeta.Some
+                          (ast.ast-decl-comptime-decl-with-meta
+                            (ast.AstGeneratedDeclMeta.Some
                               "gen-family"
                               "generated-value"
                               args
@@ -11937,17 +12066,20 @@
 (define (compiler-load-surface-summary-smoke-ok?) : bool
   (let
     [cfgs : sym_i64_env.SymI64Env
-      (compiler-cfg-enable (compiler-cfg-empty) "feature")]
+      (parser.compiler-cfg-enable (parser.compiler-cfg-empty) "feature")]
     [path : String "src\\summary.tl"]
     [parse-identity : CompilerLoadParseIdentity
-      (compiler-load-parse-identity path "src.summary" AstMaybeModuleName.No)]
+      (compiler-load-parse-identity
+        path
+        "src.summary"
+        ast.AstMaybeModuleName.No)]
     [source-path-id : i64 (struct-get parse-identity source-path-id)]
     [fallback-id : i64 (struct-get parse-identity module-fallback-id)]
     (match (compiler-load-parse-source-diagnostic-escaping
       path
       (compiler-load-surface-summary-smoke-source)
       cfgs)
-      [(ResultAstProgramDiagnostic.Ok program)
+      [(parser.ResultAstProgramDiagnostic.Ok program)
         (if (not (compiler-load-surface-mark-generated-value! program))
           false
           (match (compiler-load-surface-summary-build
@@ -11960,7 +12092,7 @@
             [(ResultCompilerLoadSurfaceSummary.Ok summary)
               (compiler-load-surface-summary-shape-ok? summary)]
             [(ResultCompilerLoadSurfaceSummary.Err _) false]))]
-      [(ResultAstProgramDiagnostic.Err _) false])))
+      [(parser.ResultAstProgramDiagnostic.Err _) false])))
 
 (define (compiler-load-normalize-ok?) : bool
   (and
@@ -11980,11 +12112,8 @@
       (compiler-load-canonical-module-id-from-path "src\\compiler_intern.tl")
       "src.compiler_intern")
     (string.eq
-      (compiler-load-canonical-module-id-from-pkg-import "pkg:math/src/add.tl")
-      "math.src.add")
-    (string.eq
       (compiler-load-canonical-module-id-from-import
-        (AstImportKind.Module)
+        (ast.AstImportKind.Module)
         "stdlib.some_name"
         "target/ignored/some_name.tl")
       "stdlib.some_name")))
@@ -12041,10 +12170,10 @@
 (define value : i64 1)"
     (sym_i64_env.sym-i64-empty)
     (svec.new)
-    (AstMaybeModuleName.Some (intern-generated-name "lib.want")))
+    (ast.AstMaybeModuleName.Some (ci.intern-generated-name "lib.want")))
     [(ResultCompilerLoadWithPaths.Err diag)
       (string.eq
-        (compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (box-get diag))
         "compiler-load: import expected module lib.want but loaded lib.actual")]
     [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))
 
@@ -12057,7 +12186,7 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (box-get diag))
         "compiler-load: duplicate module declaration")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
@@ -12068,36 +12197,42 @@
 (define root-value : i64 2)"
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Ok decls _)
-      (match (ast-decl-list-step decls)
-        [(AstDeclListStep.Cons (AstDecl.Module nested-module) rest1)
+      (match (ast.ast-decl-list-step decls)
+        [(ast.AstDeclListStep.Cons (ast.AstDecl.Module nested-module) rest1)
           (let
-            [rest1 : AstDeclList rest1]
-            (match (ast-decl-list-step rest1)
-              [(AstDeclListStep.Cons
-                  (AstDecl.Def decl-meta value-name _ _)
+            [rest1 : ast.AstDeclList rest1]
+            (match (ast.ast-decl-list-step rest1)
+              [(ast.AstDeclListStep.Cons
+                  (ast.AstDecl.Def decl-meta value-name _ _)
                   rest2)
                 (let
-                  [rest2 : AstDeclList rest2]
-                  (match (ast-decl-list-step rest2)
-                    [(AstDeclListStep.Cons
-                        (AstDecl.Module restored-module)
+                  [rest2 : ast.AstDeclList rest2]
+                  (match (ast.ast-decl-list-step rest2)
+                    [(ast.AstDeclListStep.Cons
+                        (ast.AstDecl.Module restored-module)
                         rest3)
                       (let
-                        [rest3 : AstDeclList rest3]
-                        (match (ast-decl-list-step rest3)
-                          [(AstDeclListStep.Cons
-                              (AstDecl.Def ast-decl-meta-runtime root-name _ _)
+                        [rest3 : ast.AstDeclList rest3]
+                        (match (ast.ast-decl-list-step rest3)
+                          [(ast.AstDeclListStep.Cons
+                              (ast.AstDecl.Def
+                                ast.ast-decl-meta-runtime
+                                root-name
+                                _
+                                _)
                               done-box)
                             (let
-                              [done : AstDeclList done-box]
+                              [done : ast.AstDeclList done-box]
                               (and
-                                (ast-decl-list-empty? (& done))
+                                (ast.ast-decl-list-empty? (& done))
                                 (string.eq
-                                  (intern-str nested-module)
+                                  (ci.intern-str nested-module)
                                   "local.helper")
-                                (string.eq (intern-str value-name) "value")
-                                (string.eq (intern-str restored-module) "")
-                                (string.eq (intern-str root-name) "root-value")))]
+                                (string.eq (ci.intern-str value-name) "value")
+                                (string.eq (ci.intern-str restored-module) "")
+                                (string.eq
+                                  (ci.intern-str root-name)
+                                  "root-value")))]
                           [_ false]))]
                     [_ false]))]
               [_ false]))]
@@ -12112,7 +12247,7 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (box-get diag))
         "compiler-load: duplicate module declaration")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
@@ -12133,21 +12268,21 @@
   (let
     [source : String
       "(module cfg.entry)
-(cfg missing (import \"definitely_missing.tl\"))
+(cfg missing (import definitely_missing))
 (define value : i64 1)"]
     [enabled-source : String
       "(module cfg.entry.active)
-(cfg feature (import \"definitely_missing.tl\"))
+(cfg feature (import definitely_missing))
 (define value : i64 1)"]
     [feature-cfg : sym_i64_env.SymI64Env
-      (compiler-cfg-enable (compiler-cfg-empty) "feature")]
+      (parser.compiler-cfg-enable (parser.compiler-cfg-empty) "feature")]
     (and
       (match (compiler-load-source-with-paths-and-roots-cfg
         "src/main.tl"
         source
         (sym_i64_env.sym-i64-empty)
         (svec.new)
-        (compiler-cfg-empty))
+        (parser.compiler-cfg-empty))
         [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (= (compiler-load-decl-list-count decls) 2)]
         [(ResultCompilerLoadWithPaths.Err _) false])
@@ -12164,36 +12299,36 @@
   (begin
     (compiler-load-write-file-text
       "target/compiler_load_dep.tl"
-      "(module smoke.dep)
-(import \"compiler_load_entry.tl\" module smoke.entry as entry)
+      "(module compiler_load_dep)
+(import compiler_load_entry as entry)
 (define dep : i64 1)")
     (compiler-load-write-file-text
       "target/compiler_load_entry.tl"
-      "(module smoke.entry)
-(import \"compiler_load_dep.tl\" module smoke.dep as dep)
-(import \"./compiler_load_dep.tl\" module smoke.dep)
-(define (main) : i64 dep)")
+      "(module compiler_load_entry)
+(import compiler_load_dep as dep)
+(import compiler_load_dep)
+(define (main) : i64 (+ dep.dep compiler_load_dep.dep))")
     (match (compiler-load-file-with-paths
       "target/compiler_load_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
         (and
-          (= (compiler-load-decl-list-count decls) 11)
+          (= (compiler-load-decl-list-count decls) 10)
           (compiler-load-entry-cycle-modules? modules)
-          (compiler-load-test-seen-contains? seen "smoke.entry")
-          (compiler-load-test-seen-contains? seen "smoke.dep"))]
+          (compiler-load-test-seen-contains? seen "compiler_load_entry")
+          (compiler-load-test-seen-contains? seen "compiler_load_dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-import-module-restore-ok?) : bool
   (begin
     (compiler-load-write-file-text
       "target/cl_restore_dep.tl"
-      "(module restore.dep)
+      "(module cl_restore_dep)
 (define dep-value : i64 1)")
     (compiler-load-write-file-text
       "target/cl_restore_entry.tl"
-      "(import \"cl_restore_dep.tl\" module restore.dep as dep)
-(define (main) : i64 42)")
+      "(import cl_restore_dep as dep)
+(define (main) : i64 dep.dep-value)")
     (match (compiler-load-file-with-paths
       "target/cl_restore_entry.tl"
       (sym_i64_env.sym-i64-empty))
@@ -12201,136 +12336,22 @@
         (compiler-load-unmoduled-import-restored-decls? decls)]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
-(define (compiler-load-file-fallback-path-dedup-ok?) : bool
-  (begin
-    (compiler-load-write-file-text
-      "target/compiler_load_legacy_dep.tl"
-      "(define legacy-dep : i64 1)")
-    (compiler-load-write-file-text
-      "target/compiler_load_legacy_entry.tl"
-      "(import \"compiler_load_legacy_dep.tl\")
-(import \"./compiler_load_legacy_dep.tl\")
-(define (main) : i64 legacy-dep)")
-    (match (compiler-load-file-with-paths
-      "target/compiler_load_legacy_entry.tl"
-      (sym_i64_env.sym-i64-empty))
-      [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
-        ;; Path-import identity is the resolved path relative to the import
-        ;; root (the entry's directory here), so both spellings deduplicate
-        ;; under the root-relative path key and the legacy dotted form of
-        ;; the absolute path is no longer an identity.
-        (and
-          (= (compiler-load-decl-list-count decls) 2)
-          (compiler-load-test-seen-contains? seen "/compiler_load_legacy_dep")
-          (not
-            (compiler-load-test-seen-contains?
-              seen
-              "target.compiler_load_legacy_dep")))]
-      [(ResultCompilerLoadWithPaths.Err _) false])))
-
 (define (compiler-load-import-alias-preserved-ok?) : bool
   (begin
     (compiler-load-write-file-text
       "target/cl_alias_dep.tl"
-      "(module alias.dep)
+      "(module cl_alias_dep)
 (define (get) : i64 7)")
     (compiler-load-write-file-text
       "target/cl_alias_entry.tl"
-      "(import \"cl_alias_dep.tl\" module alias.dep :as dep)
+      "(import cl_alias_dep as dep)
 (module alias.entry)
 (define (main) : i64 (dep.get))")
     (match (compiler-load-file-with-paths
       "target/cl_alias_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
-        (compiler-load-decl-list-has-import-alias? decls "alias.dep" "dep")]
-      [(ResultCompilerLoadWithPaths.Err _) false])))
-
-(define (compiler-load-legacy-path-module-flat-alias-ok?) : bool
-  (begin
-    (compiler-load-write-file-text
-      "target/cl_legacy_module_dep.tl"
-      "(module legacy.dep)
-(define (get) : i64 7)")
-    (compiler-load-write-file-text
-      "target/cl_legacy_module_entry.tl"
-      "(import \"cl_legacy_module_dep.tl\")
-(define (main) : i64 (get))")
-    (match (compiler-load-file-with-paths
-      "target/cl_legacy_module_entry.tl"
-      (sym_i64_env.sym-i64-empty))
-      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
-        (compiler-load-decl-list-has-import-alias? decls "legacy.dep" "")]
-      [(ResultCompilerLoadWithPaths.Err _) false])))
-
-(define (compiler-load-seen-legacy-path-module-flat-alias-ok?) : bool
-  (begin
-    (compiler-load-write-file-text
-      "target/cl_seen_legacy_module_dep.tl"
-      "(module seen.legacy.dep)
-(define (get) : i64 7)")
-    (compiler-load-write-file-text
-      "target/cl_seen_legacy_module_pre.tl"
-      "(import \"cl_seen_legacy_module_dep.tl\" module seen.legacy.dep :as dep)
-(define (pre) : i64 (dep.get))")
-    (compiler-load-write-file-text
-      "target/cl_seen_legacy_module_entry.tl"
-      "(import \"cl_seen_legacy_module_pre.tl\")
-(import \"cl_seen_legacy_module_dep.tl\")
-(define (main) : i64 (get))")
-    (match (compiler-load-file-with-paths
-      "target/cl_seen_legacy_module_entry.tl"
-      (sym_i64_env.sym-i64-empty))
-      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
-        (compiler-load-decl-list-has-import-alias? decls "seen.legacy.dep" "")]
-      [(ResultCompilerLoadWithPaths.Err _) false])))
-
-(define (compiler-load-package-legacy-path-module-flat-alias-ok?) : bool
-  (begin
-    (compiler-load-write-file-text
-      "target/cl_pkg_legacy_module_dep.tl"
-      "(module legacy.pkg.dep)
-(define (get) : i64 7)")
-    (compiler-load-write-file-text
-      "target/cl_pkg_legacy_module_entry.tl"
-      "(import \"cl_pkg_legacy_module_dep.tl\")
-(define (main) : i64 (get))")
-    (match (compiler-load-package-file-with-paths-and-roots
-      "target/cl_pkg_legacy_module_entry.tl"
-      (sym_i64_env.sym-i64-empty)
-      (svec.new)
-      "target"
-      (compiler-pkg-deps-empty))
-      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
-        (compiler-load-decl-list-has-import-alias? decls "legacy.pkg.dep" "")]
-      [(ResultCompilerLoadWithPaths.Err _) false])))
-
-(define (compiler-load-package-seen-legacy-path-module-flat-alias-ok?) : bool
-  (begin
-    (compiler-load-write-file-text
-      "target/cl_pkg_seen_legacy_module_dep.tl"
-      "(module seen.legacy.pkg.dep)
-(define (get) : i64 7)")
-    (compiler-load-write-file-text
-      "target/cl_pkg_seen_legacy_module_pre.tl"
-      "(import \"cl_pkg_seen_legacy_module_dep.tl\" module seen.legacy.pkg.dep :as dep)
-(define (pre) : i64 (dep.get))")
-    (compiler-load-write-file-text
-      "target/cl_pkg_seen_legacy_module_entry.tl"
-      "(import \"cl_pkg_seen_legacy_module_pre.tl\")
-(import \"cl_pkg_seen_legacy_module_dep.tl\")
-(define (main) : i64 (get))")
-    (match (compiler-load-package-file-with-paths-and-roots
-      "target/cl_pkg_seen_legacy_module_entry.tl"
-      (sym_i64_env.sym-i64-empty)
-      (svec.new)
-      "target"
-      (compiler-pkg-deps-empty))
-      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
-        (compiler-load-decl-list-has-import-alias?
-          decls
-          "seen.legacy.pkg.dep"
-          "")]
+        (compiler-load-decl-list-has-import-alias? decls "cl_alias_dep" "dep")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-dotted-import-duplicate-alias-ok?) : bool
@@ -12343,9 +12364,30 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (box-get diag))
         "compiler-load: duplicate module import alias one")]
     [(ResultCompilerLoad.Ok _ _) false]))
+
+;; Re-importing the same module under the same alias is idempotent, not a
+;; duplicate: only a different module under a repeated alias is ambiguous.
+(define (compiler-load-dotted-import-same-alias-same-module-ok?) : bool
+  (begin
+    (compiler-load-write-file-text
+      "target/cl_same_alias_dep.tl"
+      "(module cl_same_alias_dep)
+(define (get) : i64 7)")
+    (compiler-load-write-file-text
+      "target/cl_same_alias_entry.tl"
+      "(import cl_same_alias_dep)
+(import cl_same_alias_dep)
+(import cl_same_alias_dep as dep)
+(import cl_same_alias_dep as dep)
+(define (main) : i64 (+ cl_same_alias_dep.get dep.get))")
+    (match (compiler-load-file-with-paths
+      "target/cl_same_alias_entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Err _) false]
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true])))
 
 (define (compiler-load-dotted-import-resolution-ok?) : bool
   (and
@@ -12389,17 +12431,17 @@
       (compiler-load-test-mkdir root)
       (compiler-load-write-file-text
         dep-file
-        "(module cache.dep)
+        "(module stdlib.cache_dep)
 (define dep-value : i64 1)")
       (compiler-load-write-file-text
         "target/cl_cache_entry_a.tl"
         "(module cache.entry.a)
-(import \"stdlib/cache_dep.tl\" module cache.dep as dep)
+(import stdlib.cache_dep as dep)
 (define entry-a : i64 1)")
       (compiler-load-write-file-text
         "target/cl_cache_entry_b.tl"
         "(module cache.entry.b)
-(import \"stdlib/cache_dep.tl\" module cache.dep as dep)
+(import stdlib.cache_dep as dep)
 (define entry-b : i64 2)")
       (compiler-load-session-cache-enable!)
       (compiler-load-program-cache-clear!)
@@ -12444,21 +12486,21 @@
       (compiler-load-test-mkdir root-b)
       (compiler-load-write-file-text
         root-a-file
-        "(module cache.root.a)
+        "(module stdlib.cache_root_dep)
 (define root-value : i64 1)")
       (compiler-load-write-file-text
         root-b-file
-        "(module cache.root.b)
+        "(module stdlib.cache_root_dep)
 (define root-value : i64 2)")
       (compiler-load-write-file-text
         "target/cl_cache_root_entry_a.tl"
         "(module cache.root.entry.a)
-(import \"stdlib/cache_root_dep.tl\" module cache.root.a as dep)
+(import stdlib.cache_root_dep as dep)
 (define entry-a : i64 1)")
       (compiler-load-write-file-text
         "target/cl_cache_root_entry_b.tl"
         "(module cache.root.entry.b)
-(import \"stdlib/cache_root_dep.tl\" module cache.root.b as dep)
+(import stdlib.cache_root_dep as dep)
 (define entry-b : i64 2)")
       (compiler-load-session-cache-enable!)
       (compiler-load-program-cache-clear!)
@@ -12499,7 +12541,7 @@
           "target/cl_cache_cold_entry.tl"
           (sym_i64_env.sym-i64-empty)
           (svec.new)
-          (compiler-cfg-empty))
+          (parser.compiler-cfg-empty))
           [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
           [(ResultCompilerLoadWithPaths.Err _) false])
           (begin
@@ -12509,7 +12551,7 @@
               "target/cl_cache_cold_entry.tl"
               (sym_i64_env.sym-i64-empty)
               (svec.new)
-              (compiler-cfg-empty))
+              (parser.compiler-cfg-empty))
               [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                 (set!
                   ok
@@ -12530,14 +12572,14 @@
         (with-scratch
           (let
             [name : String (string.append "cache.floor." "transient")]
-            [interned : i64 (intern name)]
+            [interned : i64 (ci.intern name)]
             (begin
               (compiler-load-session-note-persistent!)
               interned)))]
       (begin
         (compiler-load-session-reset-interns!)
         (let
-          [again : i64 (intern "cache.floor.transient")]
+          [again : i64 (ci.intern "cache.floor.transient")]
           [ok : bool (= id again)]
           (begin
             (compiler-load-session-cache-disable-for-test!)
@@ -12554,22 +12596,22 @@
       (compiler-load-test-mkdir dir)
       (compiler-load-write-file-text
         dep
-        "(module cache.local.dep)
+        "(module dep)
 (define dep-value : i64 1)")
       (compiler-load-write-file-text
         entry-a
         "(module cache.local.entry.a)
-(import \"dep.tl\" module cache.local.dep as dep)
+(import dep)
 (define entry-a : i64 1)")
       (compiler-load-write-file-text
         entry-b
         "(module cache.local.entry.b)
-(import \"dep.tl\" module cache.local.dep as dep)
+(import dep)
 (define entry-b : i64 2)")
       (compiler-load-write-file-text
         entry-c
         "(module cache.local.entry.c)
-(import \"dep.tl\" module cache.local.dep as dep)
+(import dep)
 (define entry-c : i64 3)")
       (compiler-load-session-cache-enable!)
       (compiler-load-program-cache-clear!)
@@ -12580,7 +12622,7 @@
             entry-a
             (sym_i64_env.sym-i64-empty)
             (svec.new)
-            (compiler-cfg-empty))
+            (parser.compiler-cfg-empty))
             [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
             [(ResultCompilerLoadWithPaths.Err _) false])
             (begin
@@ -12590,7 +12632,7 @@
                 entry-b
                 (sym_i64_env.sym-i64-empty)
                 (svec.new)
-                (compiler-cfg-empty))
+                (parser.compiler-cfg-empty))
                 [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                   (begin
                     (compiler-load-session-reset-pools!)
@@ -12599,7 +12641,7 @@
                       entry-c
                       (sym_i64_env.sym-i64-empty)
                       (svec.new)
-                      (compiler-cfg-empty))
+                      (parser.compiler-cfg-empty))
                       [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                         (set!
                           ok
@@ -12628,22 +12670,22 @@
       (compiler-load-test-mkdir src)
       (compiler-load-write-file-text
         dep
-        "(module cache.pkg.common)
+        "(module common)
 (define common-value : i64 1)")
       (compiler-load-write-file-text
         entry-a
         "(module cache.pkg.entry.a)
-(import \"common.tl\" module cache.pkg.common as common)
+(import common)
 (define entry-a : i64 1)")
       (compiler-load-write-file-text
         entry-b
         "(module cache.pkg.entry.b)
-(import \"common.tl\" module cache.pkg.common as common)
+(import common)
 (define entry-b : i64 2)")
       (compiler-load-write-file-text
         entry-c
         "(module cache.pkg.entry.c)
-(import \"common.tl\" module cache.pkg.common as common)
+(import common)
 (define entry-c : i64 3)")
       (compiler-load-session-cache-enable!)
       (compiler-load-program-cache-clear!)
@@ -12656,7 +12698,7 @@
             (svec.new)
             root
             deps
-            (compiler-cfg-empty))
+            (parser.compiler-cfg-empty))
             [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
             [(ResultCompilerLoadWithPaths.Err _) false])
             (begin
@@ -12668,7 +12710,7 @@
                 (svec.new)
                 root
                 deps
-                (compiler-cfg-empty))
+                (parser.compiler-cfg-empty))
                 [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                   (begin
                     (compiler-load-session-reset-pools!)
@@ -12679,7 +12721,7 @@
                       (svec.new)
                       root
                       deps
-                      (compiler-cfg-empty))
+                      (parser.compiler-cfg-empty))
                       [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                         (set!
                           ok
@@ -12784,8 +12826,8 @@
       (compiler-load-write-file-text
         entry
         "(module fallback.entry)
-(import \"../mid.tl\")
-(define (main) : i64 mid-val)")
+(import mid)
+(define (main) : i64 mid.mid-val)")
       (match (compiler-load-file-with-paths-and-roots
         entry
         (sym_i64_env.sym-i64-empty)
@@ -12797,17 +12839,15 @@
             (compiler-load-test-seen-contains? seen "leaf"))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
-(define (compiler-load-dotted-after-path-import-ok?) : bool
+(define (compiler-load-dotted-transitive-import-ok?) : bool
   (let
     [root : String "target/cl_dotted_after_path/src"]
-    [tests : String (compiler-load-join-root-path root "tests")]
     [helper : String (compiler-load-join-root-path root "helper.tl")]
     [provider : String (compiler-load-join-root-path root "provider.tl")]
-    [entry : String (compiler-load-join-root-path tests "entry.tl")]
+    [entry : String (compiler-load-join-root-path root "entry.tl")]
     (begin
       (compiler-load-test-mkdir "target/cl_dotted_after_path")
       (compiler-load-test-mkdir root)
-      (compiler-load-test-mkdir tests)
       (compiler-load-write-file-text
         helper
         "(module helper)
@@ -12819,62 +12859,13 @@
 (define value : i64 helper.answer)")
       (compiler-load-write-file-text
         entry
-        "(import \"../provider.tl\")
-(define (main) : i64 value)")
+        "(import provider)
+(define (main) : i64 provider.value)")
       (match (compiler-load-file-with-paths entry (sym_i64_env.sym-i64-empty))
         [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
             (compiler-load-test-seen-contains? seen "provider")
             (compiler-load-test-seen-contains? seen "helper"))]
-        [(ResultCompilerLoadWithPaths.Err _) false]))))
-
-(define (compiler-load-canonical-source-import-order-ok? [path-first : bool]) : bool
-  (let
-    [shared : String "target/cl_canonical_source_shared.tl"]
-    [entry : String
-      (if path-first
-        "target/cl_canonical_source_path_first.tl"
-        "target/cl_canonical_source_dotted_first.tl")]
-    [path-import : String "(import \"cl_canonical_source_shared.tl\")"]
-    [dotted-import : String "(import cl_canonical_source_shared as shared)"]
-    [expected-module : String
-      (if path-first
-        "canonical.import.path_first"
-        "cl_canonical_source_shared")]
-    (begin
-      (compiler-load-write-file-text
-        shared
-        "(defstruct SharedValue (value i64))
-(defenum SharedChoice (Chosen SharedValue) (Missing))
-(define canonical-source-marker : i64 42)
-(define (make-shared) : SharedChoice
-  (SharedChoice.Chosen (SharedValue canonical-source-marker)))")
-      (compiler-load-write-file-text
-        entry
-        (str_cat.str-cat
-          (if path-first
-            "(module canonical.import.path_first)\n"
-            "")
-          (if path-first
-            path-import
-            dotted-import)
-          "\n"
-          (if path-first
-            dotted-import
-            path-import)
-          "\n(define (main) : i64 canonical-source-marker)"))
-      (match (compiler-load-file-with-paths entry (sym_i64_env.sym-i64-empty))
-        [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
-          (and
-            (=
-              (compiler-load-decl-list-value-name-count
-                decls
-                "canonical-source-marker")
-              1)
-            (compiler-load-decl-list-has-import-alias?
-              decls
-              expected-module
-              "shared"))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-load-canonical-source-explicit-mismatch-ok?) : bool
@@ -12885,15 +12876,14 @@
 (define value : i64 42)")
     (compiler-load-write-file-text
       "target/cl_canonical_source_explicit_entry.tl"
-      "(import \"cl_canonical_source_explicit.tl\" module canonical.actual as actual)
-(import cl_canonical_source_explicit as wrong)
-(define (main) : i64 (+ actual.value wrong.value))")
+      "(import cl_canonical_source_explicit as wrong)
+(define (main) : i64 wrong.value)")
     (match (compiler-load-file-with-paths
       "target/cl_canonical_source_explicit_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Err diag)
         (string.eq
-          (compiler-diagnostic-message (box-get diag))
+          (cdiag.compiler-diagnostic-message (box-get diag))
           "compiler-load: import expected module cl_canonical_source_explicit but loaded canonical.actual")]
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
@@ -12903,9 +12893,9 @@
     (and
       (match (compiler-load-resolve-package-import-spec
         "proj/src/main.tl"
-        (AstImportKind.Module)
+        (ast.AstImportKind.Module)
         "app.lib"
-        AstMaybeModuleName.No
+        ast.AstMaybeModuleName.No
         (svec.new)
         "proj"
         deps)
@@ -12913,24 +12903,24 @@
         [(ResultPkgResolve.Err _) false])
       (match (compiler-load-resolve-package-import-spec
         "proj/src/main.tl"
-        (AstImportKind.Module)
+        (ast.AstImportKind.Module)
         "math.src.add"
-        AstMaybeModuleName.No
+        ast.AstMaybeModuleName.No
         (svec.new)
         "proj"
         deps)
         [(ResultPkgResolve.Ok path) (string.eq path "math/src/add.tl")]
         [(ResultPkgResolve.Err _) false])
       (compiler-load-package-import-externs?
-        (AstImportKind.Module)
+        (ast.AstImportKind.Module)
         "math.src.add"
-        AstMaybeModuleName.No
+        ast.AstMaybeModuleName.No
         deps)
       (not
         (compiler-load-package-import-externs?
-          (AstImportKind.Module)
+          (ast.AstImportKind.Module)
           "stdlib.core_macros"
-          AstMaybeModuleName.No
+          ast.AstMaybeModuleName.No
           deps)))))
 
 (define (compiler-load-package-dotted-sibling-source-ok?) : bool
@@ -12949,9 +12939,9 @@
 (define dep-val : i64 1)")
       (match (compiler-load-resolve-package-import-spec
         entry
-        (AstImportKind.Module)
+        (ast.AstImportKind.Module)
         "dep"
-        AstMaybeModuleName.No
+        ast.AstMaybeModuleName.No
         (svec.new)
         root
         deps)
@@ -12985,7 +12975,7 @@
       (compiler-load-write-file-text
         entry
         "(module pkg.moduleless.entry)
-(import \"pkg:math/src/add.tl\")
+(import math.src.add)
 (define (main) : i64 0)")
       (match (compiler-load-package-file-with-paths-and-roots
         entry
@@ -13048,15 +13038,19 @@
 
 (define (compiler-load-generated-meta-preserved-ok?) : bool
   (let
-    [meta : AstGeneratedDeclMeta
-      (AstGeneratedDeclMeta.Some "gen" "generated-fn" (ast-expr-list-new) "")]
-    [inner : AstDecl
-      (ast-decl-def-fn-id
+    [meta : ast.AstGeneratedDeclMeta
+      (ast.AstGeneratedDeclMeta.Some
+        "gen"
+        "generated-fn"
+        (ast.ast-expr-list-new)
+        "")]
+    [inner : ast.AstDecl
+      (ast.ast-decl-def-fn-id
         (compiler-load-parse-context-name-id "generated-fn")
-        (ast-param-list-new)
-        (AstType.I64)
-        (ast-node-push (AstExpr.Literal (ast-lit-int 1))))]
-    [decl : AstDecl (ast-decl-comptime-decl-with-meta meta inner)]
+        (ast.ast-param-list-new)
+        (ast.AstType.I64)
+        (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1))))]
+    [decl : ast.AstDecl (ast.ast-decl-comptime-decl-with-meta meta inner)]
     (match (compiler-load-package-transform-decl
       "demo"
       ""
@@ -13067,16 +13061,16 @@
       decl)
       [(CompilerLoadSomeDecl transformed)
         (and
-          (match (ast-decl-generated-meta transformed)
-            [(AstGeneratedDeclMeta.Some generator item arg-keys _)
+          (match (ast.ast-decl-generated-meta transformed)
+            [(ast.AstGeneratedDeclMeta.Some generator item arg-keys _)
               (and
                 (string.eq generator "gen")
                 (string.eq item "generated-fn")
-                (= (ast-expr-list-len (& arg-keys)) 0))]
+                (= (ast.ast-expr-list-len (& arg-keys)) 0))]
             [_ false])
           (match transformed
-            [(AstDecl.Extern decl-meta name _ _ _)
-              (string.eq (intern-str name) "generated-fn")]
+            [(ast.AstDecl.Extern decl-meta name _ _ _)
+              (string.eq (ci.intern-str name) "generated-fn")]
             [_ false]))]
       [(CompilerLoadNoDecl) false])))
 
@@ -13087,34 +13081,34 @@
   (begin
     (compiler-load-write-file-text
       "target/cl_diamond_c.tl"
-      "(module diamond.c)
+      "(module cl_diamond_c)
 (define c-val : i64 1)")
     (compiler-load-write-file-text
       "target/cl_diamond_a.tl"
-      "(module diamond.a)
-(import \"cl_diamond_c.tl\" module diamond.c as c)
-(define a-val : i64 1)")
+      "(module cl_diamond_a)
+(import cl_diamond_c as c)
+(define a-val : i64 c.c-val)")
     (compiler-load-write-file-text
       "target/cl_diamond_b.tl"
-      "(module diamond.b)
-(import \"cl_diamond_c.tl\" module diamond.c as c)
-(define b-val : i64 1)")
+      "(module cl_diamond_b)
+(import cl_diamond_c as c)
+(define b-val : i64 c.c-val)")
     (compiler-load-write-file-text
       "target/cl_diamond_entry.tl"
-      "(module diamond.entry)
-(import \"cl_diamond_a.tl\" module diamond.a as a)
-(import \"cl_diamond_b.tl\" module diamond.b as b)
-(define (main) : i64 0)")
+      "(module cl_diamond_entry)
+(import cl_diamond_a as a)
+(import cl_diamond_b as b)
+(define (main) : i64 (+ a.a-val b.b-val))")
     (match (compiler-load-file-with-paths
       "target/cl_diamond_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler-load-decl-list-count decls) 17)
-          (compiler-load-test-seen-contains? seen "diamond.c")
-          (compiler-load-test-seen-contains? seen "diamond.a")
-          (compiler-load-test-seen-contains? seen "diamond.b")
-          (compiler-load-test-seen-contains? seen "diamond.entry"))]
+          (compiler-load-test-seen-contains? seen "cl_diamond_c")
+          (compiler-load-test-seen-contains? seen "cl_diamond_a")
+          (compiler-load-test-seen-contains? seen "cl_diamond_b")
+          (compiler-load-test-seen-contains? seen "cl_diamond_entry"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; Transitive import dedup: entry imports A, A imports B, B
@@ -13124,46 +13118,46 @@
   (begin
     (compiler-load-write-file-text
       "target/cl_tr_c.tl"
-      "(module tr.c)
+      "(module cl_tr_c)
 (define c-val : i64 1)")
     (compiler-load-write-file-text
       "target/cl_tr_b.tl"
-      "(module tr.b)
-(import \"cl_tr_c.tl\" module tr.c as c)
-(define b-val : i64 1)")
+      "(module cl_tr_b)
+(import cl_tr_c as c)
+(define b-val : i64 c.c-val)")
     (compiler-load-write-file-text
       "target/cl_tr_a.tl"
-      "(module tr.a)
-(import \"cl_tr_b.tl\" module tr.b as b)
-(define a-val : i64 1)")
+      "(module cl_tr_a)
+(import cl_tr_b as b)
+(define a-val : i64 b.b-val)")
     (compiler-load-write-file-text
       "target/cl_tr_entry.tl"
-      "(module tr.entry)
-(import \"cl_tr_a.tl\" module tr.a as a)
-(define (main) : i64 0)")
+      "(module cl_tr_entry)
+(import cl_tr_a as a)
+(define (main) : i64 a.a-val)")
     (match (compiler-load-file-with-paths
       "target/cl_tr_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler-load-decl-list-count decls) 14)
-          (compiler-load-test-seen-contains? seen "tr.c")
-          (compiler-load-test-seen-contains? seen "tr.b")
-          (compiler-load-test-seen-contains? seen "tr.a")
-          (compiler-load-test-seen-contains? seen "tr.entry"))]
+          (compiler-load-test-seen-contains? seen "cl_tr_c")
+          (compiler-load-test-seen-contains? seen "cl_tr_b")
+          (compiler-load-test-seen-contains? seen "cl_tr_a")
+          (compiler-load-test-seen-contains? seen "cl_tr_entry"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
-;; An `(import ...)` of a path that does not resolve to a readable file reports
-;; a `cannot read import <path>` diagnostic (the imported-file diagnostic).
+;; An import whose module does not resolve to a readable file reports a
+;; `cannot read import <path>` diagnostic.
 (define (compiler-load-missing-import-ok?) : bool
   (match (compiler-load-source
     "src/app.tl"
-    "(import \"no_such_module_xyz.tl\")
+    "(import no_such_module_xyz)
 (define value : i64 1)"
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (box-get diag))
         "compiler-load: cannot read import src/no_such_module_xyz.tl")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
@@ -13246,14 +13240,13 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (box-get diag))
         "compiler-load: cannot read include-str no_such_resource_xyz.txt from src/app.tl (resolved src/no_such_resource_xyz.txt)")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
 (define (compiler-load-include-str-raw-text-ok?) : bool
   (let
-    [payload : String
-      "(import \"definitely_missing.tl\")
+    [payload : String "(import definitely_missing)
 (define injected : i64 7)"]
     (begin
       (compiler-load-write-file-text
@@ -13298,7 +13291,7 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (box-get diag))
         "compiler-load: cannot read include-bin no_such_resource_xyz.bin from src/app.tl (resolved src/no_such_resource_xyz.bin)")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
@@ -13333,12 +13326,12 @@
   (begin
     (compiler-load-write-file-text
       "target/cl_ipe_dep.tl"
-      "(module ipe.dep)
+      "(module cl_ipe_dep)
 (define broken : i64 )")
     (compiler-load-write-file-text
       "target/cl_ipe_entry.tl"
-      "(module ipe.entry)
-(import \"cl_ipe_dep.tl\" module ipe.dep as dep)
+      "(module cl_ipe_entry)
+(import cl_ipe_dep as dep)
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths
       "target/cl_ipe_entry.tl"
@@ -13346,10 +13339,10 @@
       [(ResultCompilerLoadWithPaths.Err diag)
         (and
           (string.eq
-            (compiler-diagnostic-path (box-get diag))
+            (cdiag.compiler-diagnostic-path (box-get diag))
             "target/cl_ipe_dep.tl")
           (string.eq
-            (compiler-diagnostic-message (box-get diag))
+            (cdiag.compiler-diagnostic-message (box-get diag))
             "parse: malformed value definition"))]
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
@@ -13365,7 +13358,7 @@
     (compiler-load-write-file-text
       "target/cl_idm_entry.tl"
       "(module idm.entry)
-(import \"cl_idm_dep.tl\" module idm.depa as dep)
+(import cl_idm_dep as dep)
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths
       "target/cl_idm_entry.tl"
@@ -13373,10 +13366,10 @@
       [(ResultCompilerLoadWithPaths.Err diag)
         (and
           (string.eq
-            (compiler-diagnostic-path (box-get diag))
+            (cdiag.compiler-diagnostic-path (box-get diag))
             "target/cl_idm_dep.tl")
           (string.eq
-            (compiler-diagnostic-message (box-get diag))
+            (cdiag.compiler-diagnostic-message (box-get diag))
             "compiler-load: duplicate module declaration"))]
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
@@ -13386,19 +13379,19 @@
   (begin
     (compiler-load-write-file-text
       "target/cl_srf_mod.tl"
-      "(module srf.mod)
+      "(module stdlib.cl_srf_mod)
 (define v : i64 1)")
     (compiler-load-write-file-text
       "target/cl_srf_entry.tl"
       "(module srf.entry)
-(import \"stdlib/cl_srf_mod.tl\" module srf.mod as m)
-(define (main) : i64 0)")
+(import stdlib.cl_srf_mod as m)
+(define (main) : i64 m.v)")
     (match (compiler-load-file-with-paths-and-roots
       "target/cl_srf_entry.tl"
       (sym_i64_env.sym-i64-empty)
       (compiler-load-string-vec-one "target"))
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
-        (compiler-load-test-seen-contains? seen "srf.mod")]
+        (compiler-load-test-seen-contains? seen "stdlib.cl_srf_mod")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; A physically rooted prelude keeps its canonical logical path/module while
@@ -13422,7 +13415,7 @@
           compiler-load-runtime-prelude-path
           (sym_i64_env.sym-i64-empty)
           roots
-          (compiler-cfg-empty))
+          (parser.compiler-cfg-empty))
           [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
             (and
               (=
@@ -13434,13 +13427,13 @@
                 (compiler-load-test-path-at paths 0)
                 compiler-load-runtime-prelude-path)
               (string.eq
-                (ast-decl-module-list-get (& modules) 0 "")
+                (ast.ast-decl-module-list-get (& modules) 0 "")
                 "stdlib.runtime"))]
           [(ResultCompilerLoadWithPaths.Err _) false])
         (match (compiler-load-core-macro-prelude-with-roots-cfg
           (sym_i64_env.sym-i64-empty)
           roots
-          (compiler-cfg-empty))
+          (parser.compiler-cfg-empty))
           [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
             (and
               (=
@@ -13452,12 +13445,12 @@
                 (compiler-load-test-path-at paths 0)
                 compiler-load-core-macro-prelude-path)
               (string.eq
-                (ast-decl-module-list-get (& modules) 0 "")
+                (ast.ast-decl-module-list-get (& modules) 0 "")
                 "stdlib.core_macros")
               (string.eq
-                (ast-decl-module-list-get
+                (ast.ast-decl-module-list-get
                   (& modules)
-                  (- (ast-decl-module-list-len (& modules)) 1)
+                  (- (ast.ast-decl-module-list-len (& modules)) 1)
                   "missing")
                 ""))]
           [(ResultCompilerLoadWithPaths.Err _) false])
@@ -13467,7 +13460,7 @@
           roots
           ""
           (compiler-pkg-deps-empty)
-          (compiler-cfg-empty))
+          (parser.compiler-cfg-empty))
           [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
             (and
               (=
@@ -13479,7 +13472,7 @@
                 (compiler-load-test-path-at paths 0)
                 compiler-load-runtime-prelude-path)
               (string.eq
-                (ast-decl-module-list-get (& modules) 0 "")
+                (ast.ast-decl-module-list-get (& modules) 0 "")
                 "stdlib.runtime"))]
           [(ResultCompilerLoadWithPaths.Err _) false])))))
 
@@ -13489,19 +13482,19 @@
   (begin
     (compiler-load-write-file-text
       "target/cl_ssr_mod.tl"
-      "(module ssr.mod)
+      "(module stdlib.cl_ssr_mod)
 (define v : i64 1)")
     (compiler-load-write-file-text
       "target/cl_ssr_entry.tl"
       "(module ssr.entry)
-(import \"stdlib/cl_ssr_mod.tl\" module ssr.mod as m)
-(define (main) : i64 0)")
+(import stdlib.cl_ssr_mod as m)
+(define (main) : i64 m.v)")
     (match (compiler-load-file-with-paths-and-roots
       "target/cl_ssr_entry.tl"
       (sym_i64_env.sym-i64-empty)
       (compiler-load-string-vec-two "target/cl_ssr_absent_root" "target"))
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
-        (compiler-load-test-seen-contains? seen "ssr.mod")]
+        (compiler-load-test-seen-contains? seen "stdlib.cl_ssr_mod")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; A `stdlib/<x>` import found in no configured root reports a cannot-read
@@ -13511,7 +13504,7 @@
     (compiler-load-write-file-text
       "target/cl_sur_entry.tl"
       "(module sur.entry)
-(import \"stdlib/cl_sur_missing.tl\" module sur.mod as m)
+(import stdlib.cl_sur_missing as m)
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths-and-roots
       "target/cl_sur_entry.tl"
@@ -13519,34 +13512,9 @@
       (compiler-load-string-vec-one "target"))
       [(ResultCompilerLoadWithPaths.Err diag)
         (string.eq
-          (compiler-diagnostic-message (box-get diag))
-          "compiler-load: cannot read import target/stdlib/cl_sur_missing.tl")]
+          (cdiag.compiler-diagnostic-message (box-get diag))
+          "compiler-load: cannot read import stdlib/cl_sur_missing.tl")]
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
-
-;; A configured stdlib root must not serve a suffix that lexically escapes the
-;; root with `..`.
-(define (compiler-load-stdlib-root-escape-rejected-ok?) : bool
-  (let
-    [root-dir : String "target/cl_sre_root"]
-    [entry-dir : String "target/cl_sre_entry_dir"]
-    (begin
-      (fs.mkdir-status-owned root-dir)
-      (fs.mkdir-status-owned entry-dir)
-      (compiler-load-write-file-text
-        "target/cl_sre_out.tl"
-        "(module sre.out)
-(define v : i64 1)")
-      (compiler-load-write-file-text
-        "target/cl_sre_entry_dir/entry.tl"
-        "(module sre.entry)
-(import \"stdlib/../cl_sre_out.tl\" module sre.out as out)
-(define (main) : i64 0)")
-      (match (compiler-load-file-with-paths-and-roots
-        "target/cl_sre_entry_dir/entry.tl"
-        (sym_i64_env.sym-i64-empty)
-        (compiler-load-string-vec-one "target/cl_sre_root"))
-        [(ResultCompilerLoadWithPaths.Err _) true]
-        [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))))
 
 ;: --- typelisp.pkg manifest parser --------------------------------------------
 ;: Parse a `typelisp.pkg` manifest, an S-expression of the form
@@ -13615,7 +13583,7 @@
 ;: Source-facing parse result: the manifest or a path/span-bearing diagnostic.
 (defenum ResultCompilerPkgManifestDiagnostic
   (Ok CompilerPkgManifest)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 ;: Internal: a single extracted string field value, or a diagnostic.
 (defenum ResultPkgString
@@ -13832,7 +13800,7 @@
 ;; values in the caller's arena without creating another intern entry.
 (define (compiler-load-manifest-owned-intern-text [text-id : i64]) : String
   (let
-    [text : String (intern-str text-id)]
+    [text : String (ci.intern-str text-id)]
     (string.copy (& text))))
 
 ;: Extract a single `"value"` from a field tail `("value")`.
@@ -13880,7 +13848,7 @@
                     (match (reader.sexpr-view pin-value-node)
                       [(reader.SexprView.Str pin-value-id)
                         (let
-                          [pin-value : String (intern-str pin-value-id)]
+                          [pin-value : String (ci.intern-str pin-value-id)]
                           (if (string.eq pin-value "")
                             (ResultPkgString.Err
                               (string.append
@@ -13941,7 +13909,7 @@
       (match (reader.sexpr-view address-node)
         [(reader.SexprView.Str address-id)
           (let
-            [address : String (intern-str address-id)]
+            [address : String (ci.intern-str address-id)]
             (match (reader.sexpr-view after-address)
               [(reader.SexprView.Cons pin-form end)
                 (match (reader.sexpr-view end)
@@ -14042,7 +14010,7 @@
         [(reader.SexprView.Nil)
           (match (reader.sexpr-view vhead)
             [(reader.SexprView.Str val-id)
-              (compiler-load-manifest-kind-token (intern-str val-id))]
+              (compiler-load-manifest-kind-token (ci.intern-str val-id))]
             [(reader.SexprView.Sym val)
               (compiler-load-manifest-kind-token
                 (compiler-load-symbol-text val))]
@@ -14235,7 +14203,7 @@
       (match (reader.sexpr-view vhead)
         [(reader.SexprView.Str val-id)
           (let
-            [val : String (intern-str val-id)]
+            [val : String (ci.intern-str val-id)]
             (if (string.eq val "")
               (ResultPkgStrVec.Err
                 (string.append
@@ -14637,8 +14605,8 @@
 ;: reader span to the source-facing diagnostic result.
 (define (compiler-load-manifest-source-error-diagnostic
   [path : String]
-  [err : token.SourceError]) : CompilerDiagnostic
-  (compiler-diagnostic-from-span
+  [err : token.SourceError]) : cdiag.CompilerDiagnostic
+  (cdiag.compiler-diagnostic-from-span
     path
     (token.source-error-span err)
     (string.append "manifest: " (token.source-error-message err))))
@@ -14646,8 +14614,11 @@
 (define (compiler-load-manifest-validation-diagnostic
   [path : String]
   [form : reader.SpannedSexpr]
-  [message : String]) : CompilerDiagnostic
-  (compiler-diagnostic-from-span path (reader.spanned-sexpr-span form) message))
+  [message : String]) : cdiag.CompilerDiagnostic
+  (cdiag.compiler-diagnostic-from-span
+    path
+    (reader.spanned-sexpr-span form)
+    message))
 
 (define (compiler-load-manifest-apply-kind-inference
   [path : String]
@@ -14744,7 +14715,7 @@
       (ResultCompilerPkgManifest.Ok manifest)]
     [(ResultCompilerPkgManifestDiagnostic.Err diag)
       (ResultCompilerPkgManifest.Err
-        (compiler-diagnostic-message (box-get diag)))]))
+        (cdiag.compiler-diagnostic-message (box-get diag)))]))
 
 ;: Self-test: a full manifest parses with the expected fields + dependency
 ;: count.
@@ -14848,12 +14819,18 @@
     [(ResultCompilerPkgManifest.Ok _) false]))
 
 (define (compiler-load-manifest-diagnostic-span-forward?
-  [diag : CompilerDiagnostic]) : bool
+  [diag : cdiag.CompilerDiagnostic]) : bool
   (or
-    (> (compiler-diagnostic-end-line diag) (compiler-diagnostic-line diag))
+    (>
+      (cdiag.compiler-diagnostic-end-line diag)
+      (cdiag.compiler-diagnostic-line diag))
     (and
-      (= (compiler-diagnostic-end-line diag) (compiler-diagnostic-line diag))
-      (>= (compiler-diagnostic-end-col diag) (compiler-diagnostic-col diag)))))
+      (=
+        (cdiag.compiler-diagnostic-end-line diag)
+        (cdiag.compiler-diagnostic-line diag))
+      (>=
+        (cdiag.compiler-diagnostic-end-col diag)
+        (cdiag.compiler-diagnostic-col diag)))))
 
 (define (compiler-load-manifest-diagnostic-rejects?
   [path : String]
@@ -14864,11 +14841,11 @@
   (match (compiler-load-parse-manifest-diagnostic path source)
     [(ResultCompilerPkgManifestDiagnostic.Err diag)
       (and
-        (string.eq (compiler-diagnostic-path (box-get diag)) path)
-        (= (compiler-diagnostic-line (box-get diag)) line)
-        (= (compiler-diagnostic-col (box-get diag)) col)
+        (string.eq (cdiag.compiler-diagnostic-path (box-get diag)) path)
+        (= (cdiag.compiler-diagnostic-line (box-get diag)) line)
+        (= (cdiag.compiler-diagnostic-col (box-get diag)) col)
         (compiler-load-manifest-diagnostic-span-forward? (box-get diag))
-        (string.eq (compiler-diagnostic-message (box-get diag)) expected))]
+        (string.eq (cdiag.compiler-diagnostic-message (box-get diag)) expected))]
     [(ResultCompilerPkgManifestDiagnostic.Ok _) false]))
 
 (define (compiler-load-pkg-manifest-diagnostic-ok?) : bool
@@ -14961,7 +14938,7 @@
     path
     (compiler-load-read-file-text path))
     [(ResultCompilerPkgManifestDiagnostic.Err diag)
-      (string.eq (compiler-diagnostic-message (box-get diag)) expected)]
+      (string.eq (cdiag.compiler-diagnostic-message (box-get diag)) expected)]
     [(ResultCompilerPkgManifestDiagnostic.Ok _) false]))
 
 (define (compiler-load-manifest-infer-bin-only-ok?) : bool
@@ -15543,8 +15520,8 @@
     (let
       [stdlib-name : String "stdlib.core_macros"]
       [pkg-name : String "pkg.local.mod"]
-      [stdlib-id : i64 (intern stdlib-name)]
-      [pkg-id : i64 (intern pkg-name)]
+      [stdlib-id : i64 (ci.intern stdlib-name)]
+      [pkg-id : i64 (ci.intern pkg-name)]
       [first : String
         (compiler-load-dotted-module-path-id stdlib-id "stdlib.core_macros")]
       [second : String
@@ -15564,14 +15541,14 @@
             (string.eq cached "pkg/local/mod.tl")]
           [(CompilerLoadNoString) false])))))
 
-(define (compiler-load-test-path-at [paths : AstDeclPathList] [index : i64]) : String
-  (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Nil) ""]
-    [(AstDeclPathListStep.Cons path rest)
+(define (compiler-load-test-path-at [paths : ast.AstDeclPathList] [index : i64]) : String
+  (match (ast.ast-decl-path-list-step paths)
+    [(ast.AstDeclPathListStep.Nil) ""]
+    [(ast.AstDeclPathListStep.Cons path rest)
       (if (= index 0)
         path
         (let
-          [rest : AstDeclPathList rest]
+          [rest : ast.AstDeclPathList rest]
           (compiler-load-test-path-at rest (- index 1))))]))
 
 (define (compiler-load-package-owner-paths-ok?) : bool
@@ -15579,45 +15556,45 @@
     [roots : svec.Vec (compiler-load-string-vec-one "C:/repo/stdlib")]
     [mixed-roots : svec.Vec
       (compiler-load-string-vec-two "C:/repo/stdlib" "C:/repo/selfhost")]
-    [runtime-decl : AstDecl
-      (ast-decl-def-fn-id
+    [runtime-decl : ast.AstDecl
+      (ast.ast-decl-def-fn-id
         (compiler-load-parse-context-name-id "runtime-helper")
-        (ast-param-list-new)
-        (AstType.I64)
-        (ast-node-push (AstExpr.Literal (ast-lit-int 1))))]
-    [helper-decl : AstDecl
-      (ast-decl-def-fn-id
+        (ast.ast-param-list-new)
+        (ast.AstType.I64)
+        (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1))))]
+    [helper-decl : ast.AstDecl
+      (ast.ast-decl-def-fn-id
         (compiler-load-parse-context-name-id "helper")
-        (ast-param-list-new)
-        (AstType.I64)
-        (ast-node-push (AstExpr.Literal (ast-lit-int 2))))]
-    [main-decl : AstDecl
-      (ast-decl-def-fn-id
+        (ast.ast-param-list-new)
+        (ast.AstType.I64)
+        (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 2))))]
+    [main-decl : ast.AstDecl
+      (ast.ast-decl-def-fn-id
         (compiler-load-parse-context-name-id "main")
-        (ast-param-list-new)
-        (AstType.I64)
-        (ast-node-push (AstExpr.Literal (ast-lit-int 0))))]
-    [decls : AstDeclList
-      (ast-decl-cons
+        (ast.ast-param-list-new)
+        (ast.AstType.I64)
+        (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0))))]
+    [decls : ast.AstDeclList
+      (ast.ast-decl-cons
         runtime-decl
-        (ast-decl-cons
+        (ast.ast-decl-cons
           helper-decl
-          (ast-decl-cons main-decl (ast-decl-list-new))))]
+          (ast.ast-decl-cons main-decl (ast.ast-decl-list-new))))]
     [runtime-path-id : i64
       (compiler-load-source-path-id "C:/repo/stdlib/runtime.tl")]
     [main-path-id : i64 (compiler-load-source-path-id "C:/pkg/src/main.tl")]
-    [paths : AstDeclPathList
-      (ast-decl-path-cons-with-owner-id
+    [paths : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id
         "C:/repo/stdlib/runtime.tl"
         runtime-path-id
-        (ast-decl-path-cons-with-owner-id
+        (ast.ast-decl-path-cons-with-owner-id
           "C:/pkg/src/main.tl"
           main-path-id
-          (ast-decl-path-cons-with-owner-id
+          (ast.ast-decl-path-cons-with-owner-id
             "C:/pkg/src/main.tl"
             main-path-id
-            (ast-decl-path-list-new))))]
-    [owned : AstDeclPathList
+            (ast.ast-decl-path-list-new))))]
+    [owned : ast.AstDeclPathList
       (compiler-load-package-owned-paths-for-decls
         "app"
         "C:/pkg/"
@@ -15660,28 +15637,28 @@
 
 (define (compiler-load-package-owner-extern-symbol-ok?) : bool
   (let
-    [decl : AstDecl
+    [decl : ast.AstDecl
       (compiler-load-package-def-fn-extern
         "dep"
         "C:/dep/"
         (svec.new)
         "C:/dep/src/lib.tl"
         ""
-        (intern "helper")
-        (ast-param-list-new)
-        (AstType.I64)
+        (ci.intern "helper")
+        (ast.ast-param-list-new)
+        (ast.AstType.I64)
         CompilerLoadPackageSpmdInterface.Unavailable)]
     (match decl
-      [(AstDecl.Extern decl-meta _ _ metadata _)
+      [(ast.AstDecl.Extern decl-meta _ _ metadata _)
         (string.eq
-          (ast-extern-metadata-symbol (box-get metadata))
+          (ast.ast-extern-metadata-symbol (box-get metadata))
           "_tl_dep_src_lib_helper")]
       [_ false])))
 
 (define (compiler-load-package-imported-spmd-metadata-ok?) : bool
   (let
-    [specialization : TlciSpmdSpecialization
-      (tlci-make-spmd-specialization
+    [specialization : tlci.TlciSpmdSpecialization
+      (tlci.tlci-make-spmd-specialization
         "spmd-call-v1"
         "avx512"
         8
@@ -15689,51 +15666,55 @@
         "v"
         0
         "_tl___tl_spmd_fixture_helper")]
-    [callable : TlciSpmdCallable
-      (tlci-make-spmd-callable
+    [callable : tlci.TlciSpmdCallable
+      (tlci.tlci-make-spmd-callable
         "spmd_fixture/helper"
         "(-> i64 i64 i64)"
-        (tlci-spmd-specializations-push
-          (tlci-spmd-specializations-empty)
+        (tlci.tlci-spmd-specializations-push
+          (tlci.tlci-spmd-specializations-empty)
           specialization))]
-    [metadata : AstImportedSpmdMetadata
+    [metadata : ast.AstImportedSpmdMetadata
       (compiler-load-imported-spmd-metadata
         "spmd_fixture"
         "spmd_fixture"
-        (intern "helper")
+        (ci.intern "helper")
         (CompilerLoadPackageSpmdInterface.Available
-          (tlci-spmd-callables-push (tlci-spmd-callables-empty) callable)))]
+          (tlci.tlci-spmd-callables-push
+            (tlci.tlci-spmd-callables-empty)
+            callable)))]
     (match metadata
-      [(AstImportedSpmdMetadata.No) false]
-      [(AstImportedSpmdMetadata.Package canonical-name callables-box)
+      [(ast.AstImportedSpmdMetadata.No) false]
+      [(ast.AstImportedSpmdMetadata.Package canonical-name callables-box)
         (let
-          [callables : AstImportedSpmdCallableList (box-get callables-box)]
-          [copied-callable : AstImportedSpmdCallable
-            (ast-imported-spmd-callable-list-get
+          [callables : ast.AstImportedSpmdCallableList (box-get callables-box)]
+          [copied-callable : ast.AstImportedSpmdCallable
+            (ast.ast-imported-spmd-callable-list-get
               (& callables)
               0
-              (ast-imported-spmd-callable-fallback))]
-          [specializations : AstImportedSpmdSpecializationList
+              (ast.ast-imported-spmd-callable-fallback))]
+          [specializations : ast.AstImportedSpmdSpecializationList
             (struct-get copied-callable specializations)]
-          [copied-specialization : AstImportedSpmdSpecialization
-            (ast-imported-spmd-specialization-list-get
+          [copied-specialization : ast.AstImportedSpmdSpecialization
+            (ast.ast-imported-spmd-specialization-list-get
               (& specializations)
               0
-              (ast-imported-spmd-specialization-fallback))]
+              (ast.ast-imported-spmd-specialization-fallback))]
           (and
-            (string.eq (intern-str canonical-name) "spmd_fixture/helper")
-            (= (ast-imported-spmd-callable-list-len (& callables)) 1)
+            (string.eq (ci.intern-str canonical-name) "spmd_fixture/helper")
+            (= (ast.ast-imported-spmd-callable-list-len (& callables)) 1)
             (string.eq
-              (intern-str (struct-get copied-callable signature))
+              (ci.intern-str (struct-get copied-callable signature))
               "(-> i64 i64 i64)")
             (=
-              (ast-imported-spmd-specialization-list-len (& specializations))
+              (ast.ast-imported-spmd-specialization-list-len
+                (& specializations))
               1)
             (string.eq
-              (intern-str (struct-get copied-specialization symbol))
+              (ci.intern-str (struct-get copied-specialization symbol))
               "_tl___tl_spmd_fixture_helper")))])))
 
-(define (compiler-load-module-list-slots-address [items : AstDeclModuleList]) : i64
+(define (compiler-load-module-list-slots-address
+  [items : ast.AstDeclModuleList]) : i64
   (unsafe
     (cast
       (ptr->int (ptr-cast (array-data (struct-get items slots)) : (Ptr u8)))
@@ -15749,18 +15730,18 @@
     [alias-b-id : i64 (ci.intern-generated-name "alias-b")]
     [tail-a-id : i64 (ci.intern-generated-name "tail-a")]
     [tail-b-id : i64 (ci.intern-generated-name "tail-b")]
-    [left : AstDeclModuleList (ast-decl-module-list-with-capacity 2)]
+    [left : ast.AstDeclModuleList (ast.ast-decl-module-list-with-capacity 2)]
     [_left : unit
       (begin
-        (ast-decl-module-list-push-id (&mut left) left-a-id)
-        (ast-decl-module-list-push-id (&mut left) left-b-id))]
-    [right-base : AstDeclModuleList (ast-decl-module-list-new)]
-    [right-tail : AstDeclModuleList
-      (ast-decl-module-list-prepend-builder-id right-b-id right-base)]
-    [right : AstDeclModuleList
-      (ast-decl-module-list-prepend-builder-id right-a-id right-tail)]
+        (ast.ast-decl-module-list-push-id (&mut left) left-a-id)
+        (ast.ast-decl-module-list-push-id (&mut left) left-b-id))]
+    [right-base : ast.AstDeclModuleList (ast.ast-decl-module-list-new)]
+    [right-tail : ast.AstDeclModuleList
+      (ast.ast-decl-module-list-prepend-builder-id right-b-id right-base)]
+    [right : ast.AstDeclModuleList
+      (ast.ast-decl-module-list-prepend-builder-id right-a-id right-tail)]
     [right-address : i64 (compiler-load-module-list-slots-address right)]
-    [reused : AstDeclModuleList
+    [reused : ast.AstDeclModuleList
       (compiler-load-decl-module-list-append-onto left right)]
     [shared : (__tl_dyn-array i64) (array.make-array i64 8)]
     [_shared : unit
@@ -15769,24 +15750,25 @@
         (array-set! shared 2 alias-b-id)
         (array-set! shared 4 tail-a-id)
         (array-set! shared 5 tail-b-id))]
-    [alias-left : AstDeclModuleList (AstDeclModuleList shared 1 2 true)]
-    [alias-right : AstDeclModuleList (AstDeclModuleList shared 4 2 true)]
+    [alias-left : ast.AstDeclModuleList (ast.AstDeclModuleList shared 1 2 true)]
+    [alias-right : ast.AstDeclModuleList
+      (ast.AstDeclModuleList shared 4 2 true)]
     [alias-address : i64 (compiler-load-module-list-slots-address alias-right)]
-    [copied : AstDeclModuleList
+    [copied : ast.AstDeclModuleList
       (compiler-load-decl-module-list-append-onto alias-left alias-right)]
     (and
       (= (compiler-load-module-list-slots-address reused) right-address)
-      (= (ast-decl-module-list-len (& reused)) 4)
-      (= (ast-decl-module-list-get-id (& reused) 0 -1) left-a-id)
-      (= (ast-decl-module-list-get-id (& reused) 1 -1) left-b-id)
-      (= (ast-decl-module-list-get-id (& reused) 2 -1) right-a-id)
-      (= (ast-decl-module-list-get-id (& reused) 3 -1) right-b-id)
+      (= (ast.ast-decl-module-list-len (& reused)) 4)
+      (= (ast.ast-decl-module-list-get-id (& reused) 0 -1) left-a-id)
+      (= (ast.ast-decl-module-list-get-id (& reused) 1 -1) left-b-id)
+      (= (ast.ast-decl-module-list-get-id (& reused) 2 -1) right-a-id)
+      (= (ast.ast-decl-module-list-get-id (& reused) 3 -1) right-b-id)
       (not (= (compiler-load-module-list-slots-address copied) alias-address))
-      (= (ast-decl-module-list-len (& copied)) 4)
-      (= (ast-decl-module-list-get-id (& copied) 0 -1) alias-a-id)
-      (= (ast-decl-module-list-get-id (& copied) 1 -1) alias-b-id)
-      (= (ast-decl-module-list-get-id (& copied) 2 -1) tail-a-id)
-      (= (ast-decl-module-list-get-id (& copied) 3 -1) tail-b-id)
+      (= (ast.ast-decl-module-list-len (& copied)) 4)
+      (= (ast.ast-decl-module-list-get-id (& copied) 0 -1) alias-a-id)
+      (= (ast.ast-decl-module-list-get-id (& copied) 1 -1) alias-b-id)
+      (= (ast.ast-decl-module-list-get-id (& copied) 2 -1) tail-a-id)
+      (= (ast.ast-decl-module-list-get-id (& copied) 3 -1) tail-b-id)
       (= (array-ref shared 1) alias-a-id)
       (= (array-ref shared 2) alias-b-id)
       (= (array-ref shared 4) tail-a-id)
@@ -15802,7 +15784,7 @@
     [cfgs : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [program-key : CompilerLoadProgramCacheKey
       (CompilerLoadProgramCacheKey CompilerLoadProgramEmbedded 701 cfgs)]
-    [program : AstProgram (ast-program (ast-decl-list-new))]
+    [program : ast.AstProgram (ast.ast-program (ast.ast-decl-list-new))]
     [_store-program : bool
       (compiler-load-session-state-program-cache-store
         state-a
@@ -15820,9 +15802,9 @@
       (compiler-load-session-state-runtime-prelude-cache-store
         state-a
         prelude-key
-        (ast-decl-list-new)
-        (ast-decl-path-list-new)
-        (ast-decl-module-list-new)
+        (ast.ast-decl-list-new)
+        (ast.ast-decl-path-list-new)
+        (ast.ast-decl-module-list-new)
         (sym_i64_env.sym-i64-empty))]
     [dotted : String
       (compiler-load-session-state-dotted-module-path-id
@@ -15877,11 +15859,11 @@
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
     [_enable-a : unit (compiler-load-session-state-cache-enable! state-a)]
     [_select-b : unit (compiler-load-session-state-use! state-b)]
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [cfgs : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [ok-path : String "explicit-state-a.tl"]
     [ok-id : i64 (compiler-load-source-path-id ok-path)]
-    [first : ResultAstProgramDiagnostic
+    [first : parser.ResultAstProgramDiagnostic
       (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
         state-a
         ok-path
@@ -15889,7 +15871,7 @@
         "(define value : i64 42)"
         cfgs
         pools)]
-    [second : ResultAstProgramDiagnostic
+    [second : parser.ResultAstProgramDiagnostic
       (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
         state-a
         ok-path
@@ -15898,7 +15880,7 @@
         cfgs
         pools)]
     [bad-path : String "explicit-state-a-bad.tl"]
-    [bad : ResultAstProgramDiagnostic
+    [bad : parser.ResultAstProgramDiagnostic
       (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
         state-a
         bad-path
@@ -15911,12 +15893,14 @@
         (compiler-load-ast-program-result-ok? first)
         (compiler-load-ast-program-result-ok? second)
         (match bad
-          [(ResultAstProgramDiagnostic.Err diag)
+          [(parser.ResultAstProgramDiagnostic.Err diag)
             (and
-              (string.eq (compiler-diagnostic-path (box-get diag)) bad-path)
+              (string.eq
+                (cdiag.compiler-diagnostic-path (box-get diag))
+                bad-path)
               (>
                 (string.string-length
-                  (compiler-diagnostic-message (box-get diag)))
+                  (cdiag.compiler-diagnostic-message (box-get diag)))
                 0))]
           [_ false])
         (=
@@ -15948,11 +15932,11 @@
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
     [alias-a-member-id : i64 cbi.compiler-builtin-id-fix-arena_dot_Arena]
-    [alias-a-id : i64 (intern-leading-dot-id alias-a-member-id)]
+    [alias-a-id : i64 (ci.intern-leading-dot-id alias-a-member-id)]
     [member-a-id : i64
       (compiler-load-lazy-qualified-member-id alias-a-member-id alias-a-id)]
     [alias-b-member-id : i64 cbi.compiler-builtin-id-fix-stdlib_dot_string]
-    [alias-b-id : i64 (intern-leading-dot-id alias-b-member-id)]
+    [alias-b-id : i64 (ci.intern-leading-dot-id alias-b-member-id)]
     [member-b-id : i64
       (compiler-load-lazy-qualified-member-id alias-b-member-id alias-b-id)]
     [secondary-root-id : i64 cbi.compiler-builtin-id-fix-empty]
@@ -16450,12 +16434,12 @@
   (let
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
-    [module-a : i64 (intern "surface-dense.module-a")]
-    [module-b : i64 (intern "surface-dense.module-b")]
-    [module-peer : i64 (intern "surface-dense.module-peer")]
-    [source-a : i64 (intern "target/surface-dense-a.tl")]
-    [source-b : i64 (intern "target/surface-dense-b.tl")]
-    [source-peer : i64 (intern "target/surface-dense-peer.tl")]
+    [module-a : i64 (ci.intern "surface-dense.module-a")]
+    [module-b : i64 (ci.intern "surface-dense.module-b")]
+    [module-peer : i64 (ci.intern "surface-dense.module-peer")]
+    [source-a : i64 (ci.intern "target/surface-dense-a.tl")]
+    [source-b : i64 (ci.intern "target/surface-dense-b.tl")]
+    [source-peer : i64 (ci.intern "target/surface-dense-peer.tl")]
     [summary-a : CompilerLoadSurfaceSummary
       (compiler-load-surface-summary-list-test-summary
         module-a
@@ -16684,9 +16668,6 @@
       (compiler-load-file-import-dedup-cycle-ok?)
       (return (io.panic "compiler-load: import dedup/cycle smoke mismatch")))
     (unless
-      (compiler-load-file-fallback-path-dedup-ok?)
-      (return (io.panic "compiler-load: fallback path dedup smoke mismatch")))
-    (unless
       (compiler-load-import-module-restore-ok?)
       (return (io.panic "compiler-load: import module restore smoke mismatch")))
     (unless
@@ -16694,28 +16675,14 @@
       (return
         (io.panic "compiler-load: import alias preservation smoke mismatch")))
     (unless
-      (compiler-load-legacy-path-module-flat-alias-ok?)
-      (return
-        (io.panic "compiler-load: legacy path module flat alias smoke mismatch")))
-    (unless
-      (compiler-load-seen-legacy-path-module-flat-alias-ok?)
-      (return
-        (io.panic
-          "compiler-load: seen legacy path module flat alias smoke mismatch")))
-    (unless
-      (compiler-load-package-legacy-path-module-flat-alias-ok?)
-      (return
-        (io.panic
-          "compiler-load: package legacy path module flat alias smoke mismatch")))
-    (unless
-      (compiler-load-package-seen-legacy-path-module-flat-alias-ok?)
-      (return
-        (io.panic
-          "compiler-load: package seen legacy path module flat alias smoke mismatch")))
-    (unless
       (compiler-load-dotted-import-duplicate-alias-ok?)
       (return
         (io.panic "compiler-load: dotted import duplicate alias smoke mismatch")))
+    (unless
+      (compiler-load-dotted-import-same-alias-same-module-ok?)
+      (return
+        (io.panic
+          "compiler-load: dotted import same-module alias smoke mismatch")))
     (unless
       (compiler-load-dotted-import-resolution-ok?)
       (return
@@ -16736,19 +16703,9 @@
       (return
         (io.panic "compiler-load: dotted source root fallback smoke mismatch")))
     (unless
-      (compiler-load-dotted-after-path-import-ok?)
+      (compiler-load-dotted-transitive-import-ok?)
       (return
-        (io.panic "compiler-load: dotted after path import smoke mismatch")))
-    (unless
-      (compiler-load-canonical-source-import-order-ok? true)
-      (return
-        (io.panic
-          "compiler-load: canonical source path-first import smoke mismatch")))
-    (unless
-      (compiler-load-canonical-source-import-order-ok? false)
-      (return
-        (io.panic
-          "compiler-load: canonical source dotted-first import smoke mismatch")))
+        (io.panic "compiler-load: dotted transitive import smoke mismatch")))
     (unless
       (compiler-load-canonical-source-explicit-mismatch-ok?)
       (return
@@ -16844,9 +16801,6 @@
     (unless
       (compiler-load-stdlib-unresolved-ok?)
       (return (io.panic "compiler-load: stdlib unresolved smoke mismatch")))
-    (unless
-      (compiler-load-stdlib-root-escape-rejected-ok?)
-      (return (io.panic "compiler-load: stdlib root escape smoke mismatch")))
     (unless
       (compiler-load-pkg-manifest-ok?)
       (return (io.panic "compiler-load: pkg manifest smoke mismatch")))

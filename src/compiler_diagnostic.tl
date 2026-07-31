@@ -1,7 +1,7 @@
 ;; compiler_diagnostic.tl - Shared selfhost compiler diagnostic payloads.
 (import stdlib.str_cat_runtime as str_cat)
 (import token)
-(import "compiler_ast_types.tl")
+(import compiler_ast_types as ast)
 (import stdlib.string)
 
 (defenum CompilerDiagnosticLevel
@@ -620,7 +620,7 @@
 
 (define (compiler-diagnostic-from-ast-span
   [path : String]
-  [span : AstSourceSpan]
+  [span : ast.AstSourceSpan]
   [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-new
     message
@@ -629,10 +629,10 @@
     CompilerDiagnosticNoString
     (CompilerDiagnosticSpan
       path
-      (ast-source-span-start-line span)
-      (ast-source-span-start-col span)
-      (ast-source-span-end-line span)
-      (ast-source-span-end-col span))
+      (ast.ast-source-span-start-line span)
+      (ast.ast-source-span-start-col span)
+      (ast.ast-source-span-end-line span)
+      (ast.ast-source-span-end-col span))
     CompilerDiagnosticNoString
     CompilerDiagnosticLabelNil
     CompilerDiagnosticNoteNil))

@@ -1,12 +1,23 @@
 ;; compiler_semantic_index.tl - Owned semantic source index for compiler tooling.
 (import stdlib.byte_buf)
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.string)
 (import stdlib.vector)
+(import stdlib.option)
+(import sym_i64_env)
 (import (vector.vector String) as svec)
 (import (option.option i64) as option_i64)
-(import "compiler_check_core.tl")
+(import compiler_check_core as check_core)
+(import compiler_builtin_ids as cbi)
+(import compiler_load as cload)
+(import compiler_typecheck_api as tc_api)
+(import compiler_parse_core as parse_core)
+(import compiler_diagnostic as cdiag)
+(import compiler_typecheck_core as tc)
+(import compiler_ast_types as ast)
+(import compiler_symbols as csym)
 
 ;; Tool-facing semantic data is copied into an explicitly owned arena. None of
 ;; these records retain TcContext, TcTypeEnv, parser sidecars, or intern-pool
@@ -44,7 +55,7 @@
   (path String)
   (start-byte i64)
   (end-byte i64)
-  (source AstSourceSpan))
+  (source ast.AstSourceSpan))
 
 (defstruct CompilerSemanticRecord
   (symbol CompilerSemanticSymbolId)
@@ -75,15 +86,15 @@
   (complete bool))
 
 (defenum ResultCompilerCheckWithSemanticIndex
-  (Ok CompilerTypecheckSummary CompilerSemanticSourceIndex)
-  (Err (Box CompilerDiagnosticList)))
+  (Ok tc.CompilerTypecheckSummary CompilerSemanticSourceIndex)
+  (Err (Box cdiag.CompilerDiagnosticList)))
 
 (defenum CompilerSemanticMaybeDecl
   (Some i64 CompilerSemanticSymbolKind)
   (None))
 
 (defenum CompilerSemanticMaybeSpan
-  (Some AstSourceSpan)
+  (Some ast.AstSourceSpan)
   (None))
 
 (defenum CompilerSemanticMaybeHandle
@@ -115,12 +126,12 @@
 
 (defstruct CompilerSemanticBindResult
   (scope CompilerSemanticBindingSnapshot)
-  (env TcTypeEnv)
+  (env tc.TcTypeEnv)
   (next-search i64))
 
 (defstruct CompilerSemanticWalkState
-  (ctx TcContext)
-  (top-env TcTypeEnv)
+  (ctx tc.TcContext)
+  (top-env tc.TcTypeEnv)
   (path String)
   (source String)
   (form-start i64)
@@ -142,7 +153,7 @@
     ""
     ""
     0
-    (CompilerSemanticSpan "" -1 -1 (ast-source-span 1 1 1 1))
+    (CompilerSemanticSpan "" -1 -1 (ast.ast-source-span 1 1 1 1))
     false
     CompilerSemanticProvenance.EditableSource))
 
@@ -312,31 +323,32 @@
           (arena.tl_arena_destroy owner)))
       unit)))
 
-(define (compiler-semantic-decl-symbol [decl : AstDecl]) : CompilerSemanticMaybeDecl
+(define (compiler-semantic-decl-symbol [decl : ast.AstDecl]) : CompilerSemanticMaybeDecl
   (match decl
-    [(AstDecl.Def _ name _ _)
+    [(ast.AstDecl.Def _ name _ _)
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Value)]
-    [(AstDecl.DefFn _ name _ _ _ _)
+    [(ast.AstDecl.DefFn _ name _ _ _ _)
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Function)]
-    [(AstDecl.DefMacro _ name _ _ _)
+    [(ast.AstDecl.DefMacro _ name _ _ _)
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Macro)]
-    [(AstDecl.Extern _ name kind _ _)
+    [(ast.AstDecl.Extern _ name kind _ _)
       (CompilerSemanticMaybeDecl.Some
         name
         (match kind
-          [(AstExternKind.Value) CompilerSemanticSymbolKind.ExternValue]
-          [(AstExternKind.Function) CompilerSemanticSymbolKind.ExternFunction]))]
-    [(AstDecl.DefEnum _ name _ _)
+          [(ast.AstExternKind.Value) CompilerSemanticSymbolKind.ExternValue]
+          [(ast.AstExternKind.Function)
+            CompilerSemanticSymbolKind.ExternFunction]))]
+    [(ast.AstDecl.DefEnum _ name _ _)
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Enum)]
-    [(AstDecl.DefEnumLifetimes _ name _ _ _)
+    [(ast.AstDecl.DefEnumLifetimes _ name _ _ _)
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Enum)]
-    [(AstDecl.DefStruct _ name _ _ _)
+    [(ast.AstDecl.DefStruct _ name _ _ _)
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Struct)]
-    [(AstDecl.DefStructLifetimes _ name _ _ _ _)
+    [(ast.AstDecl.DefStructLifetimes _ name _ _ _ _)
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Struct)]
-    [(AstDecl.DefDispatch _ name _)
+    [(ast.AstDecl.DefDispatch _ name _)
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Function)]
-    [(AstDecl.Unsafe inner) (compiler-semantic-decl-symbol (box-get inner))]
+    [(ast.AstDecl.Unsafe inner) (compiler-semantic-decl-symbol (box-get inner))]
     [_ CompilerSemanticMaybeDecl.None]))
 
 (define (compiler-semantic-source-offset
@@ -361,7 +373,7 @@
           (set! index (+ index 1))))
       index)))
 
-(define (compiler-semantic-source-position [source : String] [target : i64]) : AstSourceSpan
+(define (compiler-semantic-source-position [source : String] [target : i64]) : ast.AstSourceSpan
   (let
     [index : i64 0]
     [line : i64 1]
@@ -379,7 +391,7 @@
               (set! col 1))
             (set! col (+ col 1)))
           (set! index (+ index 1))))
-      (ast-source-span line col line col))))
+      (ast.ast-source-span line col line col))))
 
 (define (compiler-semantic-delimiter? [c : char]) : bool
   (or
@@ -574,7 +586,7 @@
   [path : String]
   [source : String]
   [name : String]
-  [origin : AstSourceSpan]
+  [origin : ast.AstSourceSpan]
   [form-start : i64]) : CompilerSemanticSpan
   (let
     [start : i64
@@ -584,52 +596,55 @@
     [end : i64
       (compiler-semantic-source-offset
         source
-        (ast-source-span-end-line origin)
-        (ast-source-span-end-col origin))]
+        (ast.ast-source-span-end-line origin)
+        (ast.ast-source-span-end-col origin))]
     [found : i64 (compiler-semantic-name-offset-in-range source name start end)]
     (if (< found 0)
       (CompilerSemanticSpan (string.copy (& path)) start end origin)
       (let
         [name-len : i64 (string.string-length name)]
-        [position : AstSourceSpan
+        [position : ast.AstSourceSpan
           (compiler-semantic-source-position source found)]
-        [line : i64 (ast-source-span-start-line position)]
-        [col : i64 (ast-source-span-start-col position)]
+        [line : i64 (ast.ast-source-span-start-line position)]
+        [col : i64 (ast.ast-source-span-start-col position)]
         (CompilerSemanticSpan
           (string.copy (& path))
           found
           (+ found name-len)
-          (ast-source-span line col line (+ col name-len)))))))
+          (ast.ast-source-span line col line (+ col name-len)))))))
 
 (define (compiler-semantic-decl-origin
-  [decls : (& decls AstDeclList)]
+  [decls : (& decls ast.AstDeclList)]
   [index : i64]
-  [decl : AstDecl]) : CompilerParseMaybeDeclSpan
-  (match (compiler-parse-decl-origin-span decls index)
-    [(CompilerParseMaybeDeclSpan.Some span)
-      (CompilerParseMaybeDeclSpan.Some span)]
-    [(CompilerParseMaybeDeclSpan.None)
+  [decl : ast.AstDecl]) : parse_core.CompilerParseMaybeDeclSpan
+  (match (parse_core.compiler-parse-decl-origin-span decls index)
+    [(parse_core.CompilerParseMaybeDeclSpan.Some span)
+      (parse_core.CompilerParseMaybeDeclSpan.Some span)]
+    [(parse_core.CompilerParseMaybeDeclSpan.None)
       (let
-        [maybe-span : TcMaybeAstSourceSpan
+        [maybe-span : tc.TcMaybeAstSourceSpan
           (match decl
-            [(AstDecl.Def _ _ _ expr) (tc-expr-id-maybe-span expr)]
-            [(AstDecl.DefFn _ _ _ _ body _) (tc-expr-id-maybe-span body)]
-            [(AstDecl.DefMacro _ _ _ _ body) (tc-expr-id-maybe-span body)]
-            [(AstDecl.Unsafe inner)
+            [(ast.AstDecl.Def _ _ _ expr) (tc.tc-expr-id-maybe-span expr)]
+            [(ast.AstDecl.DefFn _ _ _ _ body _) (tc.tc-expr-id-maybe-span body)]
+            [(ast.AstDecl.DefMacro _ _ _ _ body)
+              (tc.tc-expr-id-maybe-span body)]
+            [(ast.AstDecl.Unsafe inner)
               (match (compiler-semantic-decl-origin decls index (box-get inner))
-                [(CompilerParseMaybeDeclSpan.Some span)
-                  (TcMaybeAstSourceSpan.Some span)]
-                [(CompilerParseMaybeDeclSpan.None) TcMaybeAstSourceSpan.No])]
-            [_ TcMaybeAstSourceSpan.No])]
+                [(parse_core.CompilerParseMaybeDeclSpan.Some span)
+                  (tc.TcMaybeAstSourceSpan.Some span)]
+                [(parse_core.CompilerParseMaybeDeclSpan.None)
+                  tc.TcMaybeAstSourceSpan.No])]
+            [_ tc.TcMaybeAstSourceSpan.No])]
         (match maybe-span
-          [(TcMaybeAstSourceSpan.Some span)
-            (CompilerParseMaybeDeclSpan.Some span)]
-          [(TcMaybeAstSourceSpan.No) CompilerParseMaybeDeclSpan.None]))]))
+          [(tc.TcMaybeAstSourceSpan.Some span)
+            (parse_core.CompilerParseMaybeDeclSpan.Some span)]
+          [(tc.TcMaybeAstSourceSpan.No)
+            parse_core.CompilerParseMaybeDeclSpan.None]))]))
 
 (define (compiler-semantic-decl-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decl : AstDecl]
+  [ctx : tc.TcContext]
+  [env : tc.TcTypeEnv]
+  [decl : ast.AstDecl]
   [kind : CompilerSemanticSymbolKind]
   [name-id : i64]
   [name : String]) : String
@@ -638,12 +653,12 @@
     [(CompilerSemanticSymbolKind.Enum) (string.append "enum " name)]
     [(CompilerSemanticSymbolKind.Macro)
       (match decl
-        [(AstDecl.DefMacro _ _ params ret _)
-          (tc-type-render
-            (ast-ty-func
-              (tc-macro-param-type-list ctx params)
-              (tc-resolve-type ctx ret)))]
-        [(AstDecl.Unsafe inner)
+        [(ast.AstDecl.DefMacro _ _ params ret _)
+          (tc.tc-type-render
+            (ast.ast-ty-func
+              (tc.tc-macro-param-type-list ctx params)
+              (tc.tc-resolve-type ctx ret)))]
+        [(ast.AstDecl.Unsafe inner)
           (compiler-semantic-decl-type
             ctx
             env
@@ -653,17 +668,17 @@
             name)]
         [_ "macro"])]
     [_
-      (match (tc-lookup-visible-id ctx env name-id)
-        [(ResultTcType.Ok ty) (tc-type-render ty)]
-        [(ResultTcType.Err _)
-          (match (tc-top-decl-type ctx decl)
-            [(ResultTcType.Ok ty) (tc-type-render ty)]
-            [(ResultTcType.Err _) ""])])]))
+      (match (tc.tc-lookup-visible-id ctx env name-id)
+        [(tc.ResultTcType.Ok ty) (tc.tc-type-render ty)]
+        [(tc.ResultTcType.Err _)
+          (match (tc.tc-top-decl-type ctx decl)
+            [(tc.ResultTcType.Ok ty) (tc.tc-type-render ty)]
+            [(tc.ResultTcType.Err _) ""])])]))
 
-(define (compiler-semantic-decl-provenance [decl : AstDecl]) : CompilerSemanticProvenance
-  (match (ast-decl-generated-meta decl)
-    [(AstGeneratedDeclMeta.No) CompilerSemanticProvenance.EditableSource]
-    [(AstGeneratedDeclMeta.Some generator item _ key)
+(define (compiler-semantic-decl-provenance [decl : ast.AstDecl]) : CompilerSemanticProvenance
+  (match (ast.ast-decl-generated-meta decl)
+    [(ast.AstGeneratedDeclMeta.No) CompilerSemanticProvenance.EditableSource]
+    [(ast.AstGeneratedDeclMeta.Some generator item _ key)
       (CompilerSemanticProvenance.Generated
         (string.copy (& generator))
         (string.copy (& item))
@@ -672,13 +687,13 @@
 (define (compiler-semantic-use-span-from-origin
   [path : String]
   [source : String]
-  [origin : AstSourceSpan]) : CompilerSemanticSpan
+  [origin : ast.AstSourceSpan]) : CompilerSemanticSpan
   (let
     [start : i64
       (compiler-semantic-source-offset
         source
-        (ast-source-span-start-line origin)
-        (ast-source-span-start-col origin))]
+        (ast.ast-source-span-start-line origin)
+        (ast.ast-source-span-start-col origin))]
     [end : i64 start]
     [source-len : i64 (string.string-length source)]
     (begin
@@ -687,19 +702,19 @@
         (not (compiler-semantic-delimiter? (string.string-ref source end))))
         (set! end (+ end 1)))
       (let
-        [start-position : AstSourceSpan
+        [start-position : ast.AstSourceSpan
           (compiler-semantic-source-position source start)]
-        [end-position : AstSourceSpan
+        [end-position : ast.AstSourceSpan
           (compiler-semantic-source-position source end)]
         (CompilerSemanticSpan
           (string.copy (& path))
           start
           end
-          (ast-source-span
-            (ast-source-span-start-line start-position)
-            (ast-source-span-start-col start-position)
-            (ast-source-span-start-line end-position)
-            (ast-source-span-start-col end-position)))))))
+          (ast.ast-source-span
+            (ast.ast-source-span-start-line start-position)
+            (ast.ast-source-span-start-col start-position)
+            (ast.ast-source-span-start-line end-position)
+            (ast.ast-source-span-start-col end-position)))))))
 
 (define (compiler-semantic-name-span-in-range
   [path : String]
@@ -719,18 +734,18 @@
         (string.copy (& path))
         -1
         -1
-        (ast-source-span 1 1 1 1))
+        (ast.ast-source-span 1 1 1 1))
       (let
         [name-len : i64 (string.string-length name)]
-        [position : AstSourceSpan
+        [position : ast.AstSourceSpan
           (compiler-semantic-source-position source found)]
-        [line : i64 (ast-source-span-start-line position)]
-        [col : i64 (ast-source-span-start-col position)]
+        [line : i64 (ast.ast-source-span-start-line position)]
+        [col : i64 (ast.ast-source-span-start-col position)]
         (CompilerSemanticSpan
           (string.copy (& path))
           found
           (+ found name-len)
-          (ast-source-span line col line (+ col name-len)))))))
+          (ast.ast-source-span line col line (+ col name-len)))))))
 
 (define (compiler-semantic-form-head-end [source : String] [start : i64]) : i64
   (let
@@ -857,76 +872,76 @@
       documentation)))
 
 (define (compiler-semantic-decl-handle
-  [ctx : TcContext]
+  [ctx : tc.TcContext]
   [module-id : i64]
   [name-id : i64]
   [kind : CompilerSemanticSymbolKind]) : CompilerSemanticMaybeHandle
   (let
-    [symbols : CompilerSymbols (tc-context-symbols ctx)]
+    [symbols : csym.CompilerSymbols (tc.tc-context-symbols ctx)]
     (match kind
       [(CompilerSemanticSymbolKind.Struct)
-        (match (compiler-symbols-lookup-type-in-module-id
+        (match (csym.compiler-symbols-lookup-type-in-module-id
           symbols
           module-id
           name-id)
           [(option_i64.Some handle) (CompilerSemanticMaybeHandle.Some handle)]
           [(option_i64.None) CompilerSemanticMaybeHandle.None])]
       [(CompilerSemanticSymbolKind.Enum)
-        (match (compiler-symbols-lookup-type-in-module-id
+        (match (csym.compiler-symbols-lookup-type-in-module-id
           symbols
           module-id
           name-id)
           [(option_i64.Some handle) (CompilerSemanticMaybeHandle.Some handle)]
           [(option_i64.None) CompilerSemanticMaybeHandle.None])]
       [(CompilerSemanticSymbolKind.Macro)
-        (match (compiler-symbols-lookup-macro-in-module-id
+        (match (csym.compiler-symbols-lookup-macro-in-module-id
           symbols
           module-id
           name-id)
           [(option_i64.Some handle) (CompilerSemanticMaybeHandle.Some handle)]
           [(option_i64.None) CompilerSemanticMaybeHandle.None])]
       [_
-        (match (compiler-symbols-lookup-value-in-module-id
+        (match (csym.compiler-symbols-lookup-value-in-module-id
           symbols
           module-id
           name-id)
           [(option_i64.Some handle) (CompilerSemanticMaybeHandle.Some handle)]
           [(option_i64.None) CompilerSemanticMaybeHandle.None])])))
 
-(define (compiler-semantic-use-handle [ctx : TcContext] [lookup-id : i64]) : CompilerSemanticMaybeHandle
+(define (compiler-semantic-use-handle [ctx : tc.TcContext] [lookup-id : i64]) : CompilerSemanticMaybeHandle
   (let
-    [symbols : CompilerSymbols (tc-context-symbols ctx)]
-    (match (compiler-symbols-lookup-value-id symbols lookup-id)
+    [symbols : csym.CompilerSymbols (tc.tc-context-symbols ctx)]
+    (match (csym.compiler-symbols-lookup-value-id symbols lookup-id)
       [(option_i64.Some handle) (CompilerSemanticMaybeHandle.Some handle)]
       [(option_i64.None)
-        (match (compiler-symbols-lookup-macro-id symbols lookup-id)
+        (match (csym.compiler-symbols-lookup-macro-id symbols lookup-id)
           [(option_i64.Some handle) (CompilerSemanticMaybeHandle.Some handle)]
           [(option_i64.None)
-            (match (compiler-symbols-lookup-type-id symbols lookup-id)
+            (match (csym.compiler-symbols-lookup-type-id symbols lookup-id)
               [(option_i64.Some handle)
                 (CompilerSemanticMaybeHandle.Some handle)]
               [(option_i64.None) CompilerSemanticMaybeHandle.None])])])))
 
-(define (compiler-semantic-handle-module-id [ctx : TcContext] [handle : i64]) : i64
+(define (compiler-semantic-handle-module-id [ctx : tc.TcContext] [handle : i64]) : i64
   (let
-    [index : i64 (compiler-symbol-handle-index handle)]
+    [index : i64 (csym.compiler-symbol-handle-index handle)]
     [owners : (__tl_dyn-array i64)
-      (compiler-symbols-owner-module-ids (tc-context-symbols ctx))]
+      (csym.compiler-symbols-owner-module-ids (tc.tc-context-symbols ctx))]
     (if (and (>= index 0) (< index (array-length owners)))
       (array-ref owners index)
       cbi.compiler-builtin-id-fix-empty)))
 
-(define (compiler-semantic-handle-decl [ctx : TcContext] [handle : i64]) : AstDecl
+(define (compiler-semantic-handle-decl [ctx : tc.TcContext] [handle : i64]) : ast.AstDecl
   (let
-    [index : i64 (compiler-symbol-handle-index handle)]
-    [decls : (__tl_dyn-array AstDecl)
-      (compiler-symbols-decls (tc-context-symbols ctx))]
+    [index : i64 (csym.compiler-symbol-handle-index handle)]
+    [decls : (__tl_dyn-array ast.AstDecl)
+      (csym.compiler-symbols-decls (tc.tc-context-symbols ctx))]
     (if (and (>= index 0) (< index (array-length decls)))
       (array-ref decls index)
-      (ast-decl-fallback))))
+      (ast.ast-decl-fallback))))
 
 (define (compiler-semantic-symbol-for-decl
-  [ctx : TcContext]
+  [ctx : tc.TcContext]
   [module-id : i64]
   [fallback-ordinal : i64]
   [name-id : i64]
@@ -935,7 +950,7 @@
     [(CompilerSemanticMaybeHandle.Some handle)
       (CompilerSemanticSymbolId
         (compiler-semantic-handle-module-id ctx handle)
-        (compiler-symbol-handle-index handle)
+        (csym.compiler-symbol-handle-index handle)
         -1)]
     [(CompilerSemanticMaybeHandle.None)
       (CompilerSemanticSymbolId module-id fallback-ordinal -1)]))
@@ -982,40 +997,41 @@
   [name-id : i64]
   [span : CompilerSemanticSpan]) : unit
   (let
-    [ctx : TcContext (struct-get state ctx)]
-    [env : TcTypeEnv (struct-get state top-env)]
-    [name : String (tc-hygiene-name-text-id name-id)]
-    (match (tc-source-name-lookup-key-with-field-check-lookup
+    [ctx : tc.TcContext (struct-get state ctx)]
+    [env : tc.TcTypeEnv (struct-get state top-env)]
+    [name : String (tc.tc-hygiene-name-text-id name-id)]
+    (match (tc.tc-source-name-lookup-key-with-field-check-lookup
       ctx
       env
       name
       name-id
       true)
-      [(TcNameLookup.Ok _ lookup-id)
+      [(tc.TcNameLookup.Ok _ lookup-id)
         (match (compiler-semantic-use-handle ctx lookup-id)
           [(CompilerSemanticMaybeHandle.Some handle)
             (let
-              [decl : AstDecl (compiler-semantic-handle-decl ctx handle)]
+              [decl : ast.AstDecl (compiler-semantic-handle-decl ctx handle)]
               (match (compiler-semantic-decl-symbol decl)
                 [(CompilerSemanticMaybeDecl.Some decl-name-id kind)
                   (let
                     [module-id : i64
                       (compiler-semantic-handle-module-id ctx handle)]
-                    [decl-ctx : TcContext
+                    [decl-ctx : tc.TcContext
                       (if (= module-id cbi.compiler-builtin-id-fix-empty)
-                        (tc-context-with-module-id
+                        (tc.tc-context-with-module-id
                           ctx
                           ""
                           cbi.compiler-builtin-id-fix-empty)
-                        (tc-context-with-module-id
+                        (tc.tc-context-with-module-id
                           ctx
-                          (macro-decl-module-display module-id)
+                          (tc.macro-decl-module-display module-id)
                           module-id))]
-                    [display-name : String (tc-env-key-name-text decl-name-id)]
+                    [display-name : String
+                      (tc.tc-env-key-name-text decl-name-id)]
                     [type-text : String
-                      (match (tc-lookup-visible-id ctx env lookup-id)
-                        [(ResultTcType.Ok ty) (tc-type-render ty)]
-                        [(ResultTcType.Err _)
+                      (match (tc.tc-lookup-visible-id ctx env lookup-id)
+                        [(tc.ResultTcType.Ok ty) (tc.tc-type-render ty)]
+                        [(tc.ResultTcType.Err _)
                           (compiler-semantic-decl-type
                             decl-ctx
                             env
@@ -1028,7 +1044,7 @@
                       (CompilerSemanticRecord
                         (CompilerSemanticSymbolId
                           module-id
-                          (compiler-symbol-handle-index handle)
+                          (csym.compiler-symbol-handle-index handle)
                           -1)
                         CompilerSemanticRecordRole.Use
                         kind
@@ -1043,7 +1059,7 @@
                         (struct-get state provenance))))]
                 [(CompilerSemanticMaybeDecl.None) unit]))]
           [(CompilerSemanticMaybeHandle.None) unit])]
-      [(TcNameLookup.Err _) unit])))
+      [(tc.TcNameLookup.Err _) unit])))
 
 (define (compiler-semantic-record-name-use!
   [state : CompilerSemanticWalkState]
@@ -1069,7 +1085,7 @@
             (string.copy (& (struct-get state path)))
             -1
             -1
-            (ast-source-span 1 1 1 1))])]
+            (ast.ast-source-span 1 1 1 1))])]
     (match (compiler-semantic-binding-lookup state scope name-id)
       [(CompilerSemanticMaybeBinding.Some binding)
         (compiler-semantic-record-use-with-binding! state binding span)]
@@ -1090,22 +1106,22 @@
 (define (compiler-semantic-bind-local!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
+  [env : tc.TcTypeEnv]
   [name-id : i64]
   [kind : CompilerSemanticSymbolKind]
-  [maybe-ty : AstMaybeType]
+  [maybe-ty : ast.AstMaybeType]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
-    [name : String (tc-env-key-name-text name-id)]
-    [binding-ty : AstType
+    [name : String (tc.tc-env-key-name-text name-id)]
+    [binding-ty : ast.AstType
       (match maybe-ty
-        [(AstMaybeType.Some ty) ty]
-        [(AstMaybeType.No) (AstType.Unit)])]
+        [(ast.AstMaybeType.Some ty) ty]
+        [(ast.AstMaybeType.No) (ast.AstType.Unit)])]
     [type-text : String
       (match maybe-ty
-        [(AstMaybeType.Some ty) (tc-type-render ty)]
-        [(AstMaybeType.No) ""])]
+        [(ast.AstMaybeType.Some ty) (tc.tc-type-render ty)]
+        [(ast.AstMaybeType.No) ""])]
     [local-ordinal : i64 (box-get (struct-get state next-local-ordinal))]
     [symbol : CompilerSemanticSymbolId
       (CompilerSemanticSymbolId
@@ -1120,7 +1136,7 @@
           (string.copy (& (struct-get state path)))
           -1
           -1
-          (ast-source-span 1 1 1 1))
+          (ast.ast-source-span 1 1 1 1))
         (compiler-semantic-name-span-in-range
           (struct-get state path)
           (struct-get state source)
@@ -1159,7 +1175,7 @@
             binding)]
         (CompilerSemanticBindResult
           (CompilerSemanticBindingSnapshot head)
-          (tc-bind-id env name-id binding-ty)
+          (tc.tc-bind-id env name-id binding-ty)
           (if (>= (struct-get span end-byte) 0)
             (struct-get span end-byte)
             search-start))))))
@@ -1167,40 +1183,40 @@
 (define (compiler-semantic-bind-checked-let!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [bindings : (& bindings AstLetBindingList)]
+  [env : tc.TcTypeEnv]
+  [bindings : (& bindings ast.AstLetBindingList)]
   [binding-index : i64]
   [body-id : i64]
   [name-id : i64]
-  [maybe-ty : AstMaybeType]
+  [maybe-ty : ast.AstMaybeType]
   [init-id : i64]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
-    [ctx : TcContext (struct-get state ctx)]
-    [expr-bases : i64 (tc-context-expr-bases ctx)]
-    [init : AstExpr (ast-expr-segment-bases-get expr-bases init-id)]
-    [body : AstExpr (ast-expr-segment-bases-get expr-bases body-id)]
-    (match (tc-let-binding-init-type-at
+    [ctx : tc.TcContext (struct-get state ctx)]
+    [expr-bases : i64 (tc.tc-context-expr-bases ctx)]
+    [init : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases init-id)]
+    [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
+    (match (tc.tc-let-binding-init-type-at
       ctx
       env
-      (tc-env-key-name-text name-id)
+      (tc.tc-env-key-name-text name-id)
       maybe-ty
       init-id
       bindings
       (+ binding-index 1)
       body)
-      [(ResultTcType.Ok init-ty)
+      [(tc.ResultTcType.Ok init-ty)
         (let
-          [resolved-maybe-ty : AstMaybeType
-            (tc-let-binding-resolve-maybe-type ctx maybe-ty)]
-          [binding-ty : AstType
-            (tc-let-binding-plain-bind-type ctx resolved-maybe-ty init-ty)]
-          [recorded-maybe-ty : AstMaybeType
+          [resolved-maybe-ty : ast.AstMaybeType
+            (tc.tc-let-binding-resolve-maybe-type ctx maybe-ty)]
+          [binding-ty : ast.AstType
+            (tc.tc-let-binding-plain-bind-type ctx resolved-maybe-ty init-ty)]
+          [recorded-maybe-ty : ast.AstMaybeType
             (match resolved-maybe-ty
-              [(AstMaybeType.Some ty) (AstMaybeType.Some ty)]
-              [(AstMaybeType.No)
-                (AstMaybeType.Some (tc-resolve-type ctx binding-ty))])]
+              [(ast.AstMaybeType.Some ty) (ast.AstMaybeType.Some ty)]
+              [(ast.AstMaybeType.No)
+                (ast.AstMaybeType.Some (tc.tc-resolve-type ctx binding-ty))])]
           [bound : CompilerSemanticBindResult
             (compiler-semantic-bind-local!
               state
@@ -1216,9 +1232,14 @@
             ;; Reproduce the successful checker's special arena-owner,
             ;; arena-phase, and raw C function-pointer binding transition so a
             ;; later inferred binding sees the same exact lexical environment.
-            (tc-bind-c-abi-fnptr-if-needed-id ctx env name-id binding-ty init)
+            (tc.tc-bind-c-abi-fnptr-if-needed-id
+              ctx
+              env
+              name-id
+              binding-ty
+              init)
             (struct-get bound next-search)))]
-      [(ResultTcType.Err _)
+      [(tc.ResultTcType.Err _)
         ;; A complete check reached this walk successfully, so this is only a
         ;; fail-closed fallback for facts the replay cannot reproduce.
         (compiler-semantic-bind-local!
@@ -1227,7 +1248,7 @@
           env
           name-id
           CompilerSemanticSymbolKind.Local
-          (tc-let-binding-resolve-maybe-type ctx maybe-ty)
+          (tc.tc-let-binding-resolve-maybe-type ctx maybe-ty)
           search-start
           search-limit)])))
 
@@ -1235,25 +1256,25 @@
   [state : CompilerSemanticWalkState]
   [expr-id : i64]
   [fallback : i64]) : i64
-  (match (tc-expr-id-maybe-span expr-id)
-    [(TcMaybeAstSourceSpan.Some span)
+  (match (tc.tc-expr-id-maybe-span expr-id)
+    [(tc.TcMaybeAstSourceSpan.Some span)
       (compiler-semantic-source-offset
         (struct-get state source)
-        (ast-source-span-start-line span)
-        (ast-source-span-start-col span))]
-    [(TcMaybeAstSourceSpan.No) fallback]))
+        (ast.ast-source-span-start-line span)
+        (ast.ast-source-span-start-col span))]
+    [(tc.TcMaybeAstSourceSpan.No) fallback]))
 
 (define (compiler-semantic-expr-end-offset
   [state : CompilerSemanticWalkState]
   [expr-id : i64]
   [fallback : i64]) : i64
-  (match (tc-expr-id-maybe-span expr-id)
-    [(TcMaybeAstSourceSpan.Some span)
+  (match (tc.tc-expr-id-maybe-span expr-id)
+    [(tc.TcMaybeAstSourceSpan.Some span)
       (compiler-semantic-source-offset
         (struct-get state source)
-        (ast-source-span-end-line span)
-        (ast-source-span-end-col span))]
-    [(TcMaybeAstSourceSpan.No) fallback]))
+        (ast.ast-source-span-end-line span)
+        (ast.ast-source-span-end-col span))]
+    [(tc.TcMaybeAstSourceSpan.No) fallback]))
 
 (define (compiler-semantic-maybe-span-start
   [state : CompilerSemanticWalkState]
@@ -1263,27 +1284,30 @@
     [(CompilerSemanticMaybeSpan.Some span)
       (compiler-semantic-source-offset
         (struct-get state source)
-        (ast-source-span-start-line span)
-        (ast-source-span-start-col span))]
+        (ast.ast-source-span-start-line span)
+        (ast.ast-source-span-start-col span))]
     [(CompilerSemanticMaybeSpan.None) fallback]))
 
 (define (compiler-semantic-bind-params!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [params : AstParamList]
+  [env : tc.TcTypeEnv]
+  [params : ast.AstParamList]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
-    [next-env : TcTypeEnv env]
+    [next-env : tc.TcTypeEnv env]
     [cursor : i64 search-start]
     [index : i64 0]
     (begin
-      (while (< index (ast-param-list-len (& params)))
+      (while (< index (ast.ast-param-list-len (& params)))
         (begin
-          (match (ast-param-list-get (& params) index (ast-param-fallback))
-            [(AstParam.Param name ty _ _)
+          (match (ast.ast-param-list-get
+            (& params)
+            index
+            (ast.ast-param-fallback))
+            [(ast.AstParam.Param name ty _ _)
               (let
                 [bound : CompilerSemanticBindResult
                   (compiler-semantic-bind-local!
@@ -1292,8 +1316,8 @@
                     next-env
                     name
                     CompilerSemanticSymbolKind.Parameter
-                    (AstMaybeType.Some
-                      (tc-resolve-type (struct-get state ctx) ty))
+                    (ast.AstMaybeType.Some
+                      (tc.tc-resolve-type (struct-get state ctx) ty))
                     cursor
                     search-limit)]
                 (begin
@@ -1311,23 +1335,23 @@
 (define (compiler-semantic-bind-macro-params!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [params : AstMacroParamList]
+  [env : tc.TcTypeEnv]
+  [params : ast.AstMacroParamList]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
-    [next-env : TcTypeEnv env]
+    [next-env : tc.TcTypeEnv env]
     [cursor : i64 search-start]
     [index : i64 0]
     (begin
-      (while (< index (ast-macro-param-list-len (& params)))
+      (while (< index (ast.ast-macro-param-list-len (& params)))
         (begin
-          (match (ast-macro-param-list-get
+          (match (ast.ast-macro-param-list-get
             (& params)
             index
-            (ast-macro-param-fallback))
-            [(AstMacroParam.Param name ty _ _)
+            (ast.ast-macro-param-fallback))
+            [(ast.AstMacroParam.Param name ty _ _)
               (let
                 [bound : CompilerSemanticBindResult
                   (compiler-semantic-bind-local!
@@ -1336,8 +1360,8 @@
                     next-env
                     name
                     CompilerSemanticSymbolKind.Parameter
-                    (AstMaybeType.Some
-                      (tc-resolve-type (struct-get state ctx) ty))
+                    (ast.AstMaybeType.Some
+                      (tc.tc-resolve-type (struct-get state ctx) ty))
                     cursor
                     search-limit)]
                 (begin
@@ -1355,80 +1379,83 @@
 (define (compiler-semantic-walk-expr-list!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [items : AstExprList]) : unit
+  [env : tc.TcTypeEnv]
+  [items : ast.AstExprList]) : unit
   (let
     [index : i64 0]
-    (while (< index (ast-expr-list-len (& items)))
+    (while (< index (ast.ast-expr-list-len (& items)))
       (begin
         (compiler-semantic-walk-node!
           state
           scope
           env
-          (ast-expr-list-get (& items) index 0))
+          (ast.ast-expr-list-get (& items) index 0))
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-walk-quasiquote-list!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [items : AstExprList]) : unit
+  [env : tc.TcTypeEnv]
+  [items : ast.AstExprList]) : unit
   (let
     [index : i64 0]
-    (while (< index (ast-expr-list-len (& items)))
+    (while (< index (ast.ast-expr-list-len (& items)))
       (begin
         (compiler-semantic-walk-quasiquote-node!
           state
           scope
           env
-          (ast-expr-list-get (& items) index 0))
+          (ast.ast-expr-list-get (& items) index 0))
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-walk-quasiquote-let-bindings!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [bindings : AstLetBindingList]) : unit
+  [env : tc.TcTypeEnv]
+  [bindings : ast.AstLetBindingList]) : unit
   (let
     [index : i64 0]
-    (while (< index (ast-let-binding-list-len (& bindings)))
+    (while (< index (ast.ast-let-binding-list-len (& bindings)))
       (begin
-        (match (ast-let-binding-list-get
+        (match (ast.ast-let-binding-list-get
           (& bindings)
           index
-          (ast-let-binding-fallback))
-          [(AstLetBinding.Binding _ _ init)
+          (ast.ast-let-binding-fallback))
+          [(ast.AstLetBinding.Binding _ _ init)
             (compiler-semantic-walk-quasiquote-node! state scope env init)])
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-walk-quasiquote-match-arms!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [arms : AstMatchArmList]) : unit
+  [env : tc.TcTypeEnv]
+  [arms : ast.AstMatchArmList]) : unit
   (let
     [index : i64 0]
-    (while (< index (ast-match-arm-list-len (& arms)))
+    (while (< index (ast.ast-match-arm-list-len (& arms)))
       (begin
-        (match (ast-match-arm-list-get (& arms) index (ast-match-arm-fallback))
-          [(AstMatchArm.Arm _ body)
+        (match (ast.ast-match-arm-list-get
+          (& arms)
+          index
+          (ast.ast-match-arm-fallback))
+          [(ast.AstMatchArm.Arm _ body)
             (compiler-semantic-walk-quasiquote-node! state scope env body)])
         (set! index (+ index 1))))))
 
 (define (compiler-semantic-walk-quasiquote-resource-bindings!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [bindings : AstResourceBindingList]) : unit
+  [env : tc.TcTypeEnv]
+  [bindings : ast.AstResourceBindingList]) : unit
   (let
     [index : i64 0]
-    (while (< index (ast-resource-binding-list-len (& bindings)))
+    (while (< index (ast.ast-resource-binding-list-len (& bindings)))
       (begin
-        (match (ast-resource-binding-list-get
+        (match (ast.ast-resource-binding-list-get
           (& bindings)
           index
-          (ast-resource-binding-fallback))
-          [(AstResourceBinding.Binding _ init cleanup _)
+          (ast.ast-resource-binding-fallback))
+          [(ast.AstResourceBinding.Binding _ init cleanup _)
             (begin
               (compiler-semantic-walk-quasiquote-node! state scope env init)
               (compiler-semantic-walk-quasiquote-node! state scope env cleanup))])
@@ -1437,35 +1464,35 @@
 (define (compiler-semantic-walk-quasiquote-node!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
+  [env : tc.TcTypeEnv]
   [node-id : i64]) : unit
-  (match (ast-node-get node-id)
-    [(AstExpr.Spanned inner _)
+  (match (ast.ast-node-get node-id)
+    [(ast.AstExpr.Spanned inner _)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.Unquote inner)
+    [(ast.AstExpr.Unquote inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.UnquoteSplicing inner)
+    [(ast.AstExpr.UnquoteSplicing inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.Binary _ left right)
+    [(ast.AstExpr.Binary _ left right)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env left)
         (compiler-semantic-walk-quasiquote-node! state scope env right))]
-    [(AstExpr.Unary _ inner)
+    [(ast.AstExpr.Unary _ inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.Call callee args)
+    [(ast.AstExpr.Call callee args)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env callee)
         (compiler-semantic-walk-quasiquote-list! state scope env args))]
-    [(AstExpr.BracketClause items)
+    [(ast.AstExpr.BracketClause items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(AstExpr.If condition then-expr else-expr)
+    [(ast.AstExpr.If condition then-expr else-expr)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env condition)
         (compiler-semantic-walk-quasiquote-node! state scope env then-expr)
         (compiler-semantic-walk-quasiquote-node! state scope env else-expr))]
-    [(AstExpr.Let payload)
+    [(ast.AstExpr.Let payload)
       (match (box-get payload)
-        [(AstLet.Let bindings body)
+        [(ast.AstLet.Let bindings body)
           (begin
             (compiler-semantic-walk-quasiquote-let-bindings!
               state
@@ -1473,117 +1500,117 @@
               env
               bindings)
             (compiler-semantic-walk-quasiquote-node! state scope env body))])]
-    [(AstExpr.Lambda payload)
+    [(ast.AstExpr.Lambda payload)
       (match (box-get payload)
-        [(AstLambda.Lambda _ _ body)
+        [(ast.AstLambda.Lambda _ _ body)
           (compiler-semantic-walk-quasiquote-node! state scope env body)])]
-    [(AstExpr.Tuple items)
+    [(ast.AstExpr.Tuple items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(AstExpr.TupleRef target _)
+    [(ast.AstExpr.TupleRef target _)
       (compiler-semantic-walk-quasiquote-node! state scope env target)]
-    [(AstExpr.Array items)
+    [(ast.AstExpr.Array items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(AstExpr.DynArray items)
+    [(ast.AstExpr.DynArray items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(AstExpr.MakeArray _ size)
+    [(ast.AstExpr.MakeArray _ size)
       (compiler-semantic-walk-quasiquote-node! state scope env size)]
-    [(AstExpr.ArrayRef target index)
+    [(ast.AstExpr.ArrayRef target index)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env target)
         (compiler-semantic-walk-quasiquote-node! state scope env index))]
-    [(AstExpr.ArraySet target index value)
+    [(ast.AstExpr.ArraySet target index value)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env target)
         (compiler-semantic-walk-quasiquote-node! state scope env index)
         (compiler-semantic-walk-quasiquote-node! state scope env value))]
-    [(AstExpr.ArrayTake target live index)
+    [(ast.AstExpr.ArrayTake target live index)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env target)
         (compiler-semantic-walk-quasiquote-node! state scope env live)
         (compiler-semantic-walk-quasiquote-node! state scope env index))]
-    [(AstExpr.ArrayPush target value)
+    [(ast.AstExpr.ArrayPush target value)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env target)
         (compiler-semantic-walk-quasiquote-node! state scope env value))]
-    [(AstExpr.StringRef target index)
+    [(ast.AstExpr.StringRef target index)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env target)
         (compiler-semantic-walk-quasiquote-node! state scope env index))]
-    [(AstExpr.While condition body)
+    [(ast.AstExpr.While condition body)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env condition)
         (compiler-semantic-walk-quasiquote-node! state scope env body))]
-    [(AstExpr.Begin items)
+    [(ast.AstExpr.Begin items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(AstExpr.Unsafe items)
+    [(ast.AstExpr.Unsafe items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
-    [(AstExpr.Set _ value)
+    [(ast.AstExpr.Set _ value)
       (compiler-semantic-walk-quasiquote-node! state scope env value)]
-    [(AstExpr.Ann inner _)
+    [(ast.AstExpr.Ann inner _)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.Cast inner _)
+    [(ast.AstExpr.Cast inner _)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.Borrow _ _ inner)
+    [(ast.AstExpr.Borrow _ _ inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.Match payload)
+    [(ast.AstExpr.Match payload)
       (match (box-get payload)
-        [(AstMatch.Match scrutinee arms)
+        [(ast.AstMatch.Match scrutinee arms)
           (begin
             (compiler-semantic-walk-quasiquote-node! state scope env scrutinee)
             (compiler-semantic-walk-quasiquote-match-arms! state scope env arms))])]
-    [(AstExpr.Foreach payload)
+    [(ast.AstExpr.Foreach payload)
       (match (box-get payload)
-        [(AstForeach.Foreach _ _ start end body)
+        [(ast.AstForeach.Foreach _ _ start end body)
           (begin
             (compiler-semantic-walk-quasiquote-node! state scope env start)
             (compiler-semantic-walk-quasiquote-node! state scope env end)
             (compiler-semantic-walk-quasiquote-node! state scope env body))])]
-    [(AstExpr.SpmdReduce payload)
+    [(ast.AstExpr.SpmdReduce payload)
       (match (box-get payload)
-        [(AstSpmdReduce.Reduce _ _ _ start end init value)
+        [(ast.AstSpmdReduce.Reduce _ _ _ start end init value)
           (begin
             (compiler-semantic-walk-quasiquote-node! state scope env start)
             (compiler-semantic-walk-quasiquote-node! state scope env end)
             (compiler-semantic-walk-quasiquote-node! state scope env init)
             (compiler-semantic-walk-quasiquote-node! state scope env value))])]
-    [(AstExpr.SpmdScan payload)
+    [(ast.AstExpr.SpmdScan payload)
       (match (box-get payload)
-        [(AstSpmdScan.Scan _ _ _ start end _ _ init value body)
+        [(ast.AstSpmdScan.Scan _ _ _ start end _ _ init value body)
           (begin
             (compiler-semantic-walk-quasiquote-node! state scope env start)
             (compiler-semantic-walk-quasiquote-node! state scope env end)
             (compiler-semantic-walk-quasiquote-node! state scope env init)
             (compiler-semantic-walk-quasiquote-node! state scope env value)
             (compiler-semantic-walk-quasiquote-node! state scope env body))])]
-    [(AstExpr.SpmdBroadcast value lane)
+    [(ast.AstExpr.SpmdBroadcast value lane)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env value)
         (compiler-semantic-walk-quasiquote-node! state scope env lane))]
-    [(AstExpr.SpmdShuffle value lane)
+    [(ast.AstExpr.SpmdShuffle value lane)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env value)
         (compiler-semantic-walk-quasiquote-node! state scope env lane))]
-    [(AstExpr.StructGet target _)
+    [(ast.AstExpr.StructGet target _)
       (compiler-semantic-walk-quasiquote-node! state scope env target)]
-    [(AstExpr.StructSet target _ value)
+    [(ast.AstExpr.StructSet target _ value)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env target)
         (compiler-semantic-walk-quasiquote-node! state scope env value))]
-    [(AstExpr.WithRegion _ body)
+    [(ast.AstExpr.WithRegion _ body)
       (compiler-semantic-walk-quasiquote-list! state scope env body)]
-    [(AstExpr.WithEscape scratch body)
+    [(ast.AstExpr.WithEscape scratch body)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env scratch)
         (compiler-semantic-walk-quasiquote-list! state scope env body))]
-    [(AstExpr.WithScratch body)
+    [(ast.AstExpr.WithScratch body)
       (compiler-semantic-walk-quasiquote-list! state scope env body)]
-    [(AstExpr.InArena arena body)
+    [(ast.AstExpr.InArena arena body)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env arena)
         (compiler-semantic-walk-quasiquote-list! state scope env body))]
-    [(AstExpr.WithResource payload)
+    [(ast.AstExpr.WithResource payload)
       (match (box-get payload)
-        [(AstWithResource.WithResource bindings body)
+        [(ast.AstWithResource.WithResource bindings body)
           (begin
             (compiler-semantic-walk-quasiquote-resource-bindings!
               state
@@ -1591,86 +1618,86 @@
               env
               bindings)
             (compiler-semantic-walk-quasiquote-list! state scope env body))])]
-    [(AstExpr.Box inner)
+    [(ast.AstExpr.Box inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.BoxGet inner)
+    [(ast.AstExpr.BoxGet inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.BoxTake inner)
+    [(ast.AstExpr.BoxTake inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.BoxSet target value)
+    [(ast.AstExpr.BoxSet target value)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env target)
         (compiler-semantic-walk-quasiquote-node! state scope env value))]
-    [(AstExpr.Comptime inner)
+    [(ast.AstExpr.Comptime inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.Try inner)
+    [(ast.AstExpr.Try inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.Return inner)
+    [(ast.AstExpr.Return inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.PtrNullCheck inner)
+    [(ast.AstExpr.PtrNullCheck inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.PtrAddrOf inner)
+    [(ast.AstExpr.PtrAddrOf inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.PtrRead inner)
+    [(ast.AstExpr.PtrRead inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.PtrWrite ptr value)
+    [(ast.AstExpr.PtrWrite ptr value)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env ptr)
         (compiler-semantic-walk-quasiquote-node! state scope env value))]
-    [(AstExpr.PtrOffset ptr offset)
+    [(ast.AstExpr.PtrOffset ptr offset)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env ptr)
         (compiler-semantic-walk-quasiquote-node! state scope env offset))]
-    [(AstExpr.PtrCast ptr _)
+    [(ast.AstExpr.PtrCast ptr _)
       (compiler-semantic-walk-quasiquote-node! state scope env ptr)]
-    [(AstExpr.PtrToInt ptr)
+    [(ast.AstExpr.PtrToInt ptr)
       (compiler-semantic-walk-quasiquote-node! state scope env ptr)]
-    [(AstExpr.IntToPtr value _)
+    [(ast.AstExpr.IntToPtr value _)
       (compiler-semantic-walk-quasiquote-node! state scope env value)]
-    [(AstExpr.StringData value)
+    [(ast.AstExpr.StringData value)
       (compiler-semantic-walk-quasiquote-node! state scope env value)]
-    [(AstExpr.StringFromBytes data len)
+    [(ast.AstExpr.StringFromBytes data len)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env data)
         (compiler-semantic-walk-quasiquote-node! state scope env len))]
-    [(AstExpr.ArrayData value)
+    [(ast.AstExpr.ArrayData value)
       (compiler-semantic-walk-quasiquote-node! state scope env value)]
-    [(AstExpr.CpuIdEax leaf subleaf)
+    [(ast.AstExpr.CpuIdEax leaf subleaf)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env leaf)
         (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
-    [(AstExpr.CpuIdEbx leaf subleaf)
+    [(ast.AstExpr.CpuIdEbx leaf subleaf)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env leaf)
         (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
-    [(AstExpr.CpuIdEcx leaf subleaf)
+    [(ast.AstExpr.CpuIdEcx leaf subleaf)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env leaf)
         (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
-    [(AstExpr.CpuIdEdx leaf subleaf)
+    [(ast.AstExpr.CpuIdEdx leaf subleaf)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env leaf)
         (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
-    [(AstExpr.Xgetbv index)
+    [(ast.AstExpr.Xgetbv index)
       (compiler-semantic-walk-quasiquote-node! state scope env index)]
-    [(AstExpr.Syscall args)
+    [(ast.AstExpr.Syscall args)
       (compiler-semantic-walk-quasiquote-list! state scope env args)]
-    [(AstExpr.Quote _) unit]
+    [(ast.AstExpr.Quote _) unit]
     ;; CTFE preserves a nested quasiquote wholesale. Its unquotes belong to
     ;; the future quasiquote evaluation rather than the surrounding macro.
-    [(AstExpr.Quasiquote _) unit]
+    [(ast.AstExpr.Quasiquote _) unit]
     [_ unit]))
 
 (define (compiler-semantic-walk-let!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [bindings : AstLetBindingList]
+  [env : tc.TcTypeEnv]
+  [bindings : ast.AstLetBindingList]
   [body-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
-    [next-env : TcTypeEnv env]
+    [next-env : tc.TcTypeEnv env]
     [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
     [cursor : i64
       (compiler-semantic-form-head-end (struct-get state source) form-start)]
@@ -1681,13 +1708,13 @@
         (string.string-length (struct-get state source)))]
     [index : i64 0]
     (begin
-      (while (< index (ast-let-binding-list-len (& bindings)))
+      (while (< index (ast.ast-let-binding-list-len (& bindings)))
         (begin
-          (match (ast-let-binding-list-get
+          (match (ast.ast-let-binding-list-get
             (& bindings)
             index
-            (ast-let-binding-fallback))
-            [(AstLetBinding.Binding name maybe-ty init-id)
+            (ast.ast-let-binding-fallback))
+            [(ast.AstLetBinding.Binding name maybe-ty init-id)
               (let
                 [init-start : i64
                   (compiler-semantic-expr-start-offset state init-id body-start)]
@@ -1726,8 +1753,8 @@
 (define (compiler-semantic-walk-lambda!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [params : AstParamList]
+  [env : tc.TcTypeEnv]
+  [params : ast.AstParamList]
   [body-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
@@ -1754,9 +1781,9 @@
 (define (compiler-semantic-walk-foreach!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
+  [env : tc.TcTypeEnv]
   [name : i64]
-  [index-ty : AstType]
+  [index-ty : ast.AstType]
   [start-id : i64]
   [end-id : i64]
   [body-id : i64]
@@ -1781,7 +1808,8 @@
           env
           name
           CompilerSemanticSymbolKind.Local
-          (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) index-ty))
+          (ast.AstMaybeType.Some
+            (tc.tc-resolve-type (struct-get state ctx) index-ty))
           (compiler-semantic-form-head-end (struct-get state source) form-start)
           first-expr-start)]
       (compiler-semantic-walk-node!
@@ -1793,9 +1821,9 @@
 (define (compiler-semantic-walk-spmd-reduce!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
+  [env : tc.TcTypeEnv]
   [index-name : i64]
-  [index-ty : AstType]
+  [index-ty : ast.AstType]
   [start-id : i64]
   [end-id : i64]
   [init-id : i64]
@@ -1815,7 +1843,8 @@
         env
         index-name
         CompilerSemanticSymbolKind.Local
-        (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) index-ty))
+        (ast.AstMaybeType.Some
+          (tc.tc-resolve-type (struct-get state ctx) index-ty))
         (compiler-semantic-form-head-end (struct-get state source) form-start)
         first-expr-start)]
     (begin
@@ -1831,13 +1860,13 @@
 (define (compiler-semantic-walk-spmd-scan!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
+  [env : tc.TcTypeEnv]
   [index-name : i64]
-  [index-ty : AstType]
+  [index-ty : ast.AstType]
   [start-id : i64]
   [end-id : i64]
   [prefix-name : i64]
-  [prefix-ty : AstType]
+  [prefix-ty : ast.AstType]
   [init-id : i64]
   [value-id : i64]
   [body-id : i64]
@@ -1856,7 +1885,8 @@
         env
         index-name
         CompilerSemanticSymbolKind.Local
-        (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) index-ty))
+        (ast.AstMaybeType.Some
+          (tc.tc-resolve-type (struct-get state ctx) index-ty))
         (compiler-semantic-form-head-end (struct-get state source) form-start)
         start-offset)]
     [init-offset : i64
@@ -1871,7 +1901,8 @@
         (struct-get index-bound env)
         prefix-name
         CompilerSemanticSymbolKind.Local
-        (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) prefix-ty))
+        (ast.AstMaybeType.Some
+          (tc.tc-resolve-type (struct-get state ctx) prefix-ty))
         (compiler-semantic-expr-end-offset
           state
           end-id
@@ -1895,7 +1926,7 @@
 (define (compiler-semantic-walk-set!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
+  [env : tc.TcTypeEnv]
   [name-id : i64]
   [value-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
@@ -1906,7 +1937,7 @@
         state
         value-id
         (string.string-length (struct-get state source)))]
-    [name : String (tc-env-key-name-text name-id)]
+    [name : String (tc.tc-env-key-name-text name-id)]
     [span : CompilerSemanticSpan
       (compiler-semantic-name-span-in-range
         (struct-get state path)
@@ -1921,16 +1952,16 @@
 (define (compiler-semantic-bind-pattern!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [fact-env : TcTypeEnv]
+  [env : tc.TcTypeEnv]
+  [fact-env : tc.TcTypeEnv]
   [facts-available : bool]
-  [bound-names : TcNameIdList]
-  [pattern : AstPattern]
+  [bound-names : tc.TcNameIdList]
+  [pattern : ast.AstPattern]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (match pattern
-    [(AstPattern.Var name maybe-ty)
-      (if (tc-name-id-list-contains bound-names name)
+    [(ast.AstPattern.Var name maybe-ty)
+      (if (tc.tc-name-id-list-contains bound-names name)
         (compiler-semantic-bind-local!
           state
           scope
@@ -1938,26 +1969,27 @@
           name
           CompilerSemanticSymbolKind.Local
           (match maybe-ty
-            [(AstMaybeType.Some ty)
+            [(ast.AstMaybeType.Some ty)
               ;; Preserve the existing public annotation text while the arm
               ;; body uses the checker's exact fact environment.
-              (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) ty))]
-            [(AstMaybeType.No)
+              (ast.AstMaybeType.Some
+                (tc.tc-resolve-type (struct-get state ctx) ty))]
+            [(ast.AstMaybeType.No)
               (if facts-available
-                (match (tc-lookup-visible-id
+                (match (tc.tc-lookup-visible-id
                   (struct-get state ctx)
                   fact-env
                   name)
-                  [(ResultTcType.Ok ty)
-                    (AstMaybeType.Some
-                      (tc-resolve-type (struct-get state ctx) ty))]
-                  [(ResultTcType.Err _) AstMaybeType.No])
-                AstMaybeType.No)])
+                  [(tc.ResultTcType.Ok ty)
+                    (ast.AstMaybeType.Some
+                      (tc.tc-resolve-type (struct-get state ctx) ty))]
+                  [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
+                ast.AstMaybeType.No)])
           search-start
           search-limit)
         (CompilerSemanticBindResult scope env search-start))]
-    [(AstPattern.Binding name)
-      (if (tc-name-id-list-contains bound-names name)
+    [(ast.AstPattern.Binding name)
+      (if (tc.tc-name-id-list-contains bound-names name)
         (compiler-semantic-bind-local!
           state
           scope
@@ -1965,15 +1997,19 @@
           name
           CompilerSemanticSymbolKind.Local
           (if facts-available
-            (match (tc-lookup-visible-id (struct-get state ctx) fact-env name)
-              [(ResultTcType.Ok ty)
-                (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) ty))]
-              [(ResultTcType.Err _) AstMaybeType.No])
-            AstMaybeType.No)
+            (match (tc.tc-lookup-visible-id
+              (struct-get state ctx)
+              fact-env
+              name)
+              [(tc.ResultTcType.Ok ty)
+                (ast.AstMaybeType.Some
+                  (tc.tc-resolve-type (struct-get state ctx) ty))]
+              [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
+            ast.AstMaybeType.No)
           search-start
           search-limit)
         (CompilerSemanticBindResult scope env search-start))]
-    [(AstPattern.Tuple items)
+    [(ast.AstPattern.Tuple items)
       (compiler-semantic-bind-pattern-list!
         state
         scope
@@ -1984,7 +2020,7 @@
         (box-get items)
         search-start
         search-limit)]
-    [(AstPattern.Variant _ items)
+    [(ast.AstPattern.Variant _ items)
       (compiler-semantic-bind-pattern-list!
         state
         scope
@@ -2000,20 +2036,20 @@
 (define (compiler-semantic-bind-pattern-list!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [fact-env : TcTypeEnv]
+  [env : tc.TcTypeEnv]
+  [fact-env : tc.TcTypeEnv]
   [facts-available : bool]
-  [bound-names : TcNameIdList]
-  [patterns : AstPatternList]
+  [bound-names : tc.TcNameIdList]
+  [patterns : ast.AstPatternList]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
-    [next-env : TcTypeEnv env]
+    [next-env : tc.TcTypeEnv env]
     [cursor : i64 search-start]
     [index : i64 0]
     (begin
-      (while (< index (ast-pattern-list-len (& patterns)))
+      (while (< index (ast.ast-pattern-list-len (& patterns)))
         (let
           [bound : CompilerSemanticBindResult
             (compiler-semantic-bind-pattern!
@@ -2023,7 +2059,10 @@
               fact-env
               facts-available
               bound-names
-              (ast-pattern-list-get (& patterns) index (ast-pattern-fallback))
+              (ast.ast-pattern-list-get
+                (& patterns)
+                index
+                (ast.ast-pattern-fallback))
               cursor
               search-limit)]
           (begin
@@ -2034,54 +2073,58 @@
       (CompilerSemanticBindResult next-scope next-env cursor))))
 
 (define (compiler-semantic-pattern-bound-names
-  [ctx : TcContext]
-  [scrutinee-ty : AstType]
-  [pattern : AstPattern]) : TcNameIdList
+  [ctx : tc.TcContext]
+  [scrutinee-ty : ast.AstType]
+  [pattern : ast.AstPattern]) : tc.TcNameIdList
   ;; An explicitly typed pattern variable is always a binder, including when
   ;; the scrutinee is an enum. Bare enum variant names, by contrast, are not.
   (match pattern
-    [(AstPattern.Var name _) (tc-name-id-list-add TcNameIdList.Nil name)]
-    [_ (tc-borrow-check-pattern-bound-names ctx scrutinee-ty pattern)]))
+    [(ast.AstPattern.Var name _)
+      (tc.tc-name-id-list-add tc.TcNameIdList.Nil name)]
+    [_ (tc.tc-borrow-check-pattern-bound-names ctx scrutinee-ty pattern)]))
 
 (define (compiler-semantic-match-body-source-expr-id [body : i64]) : i64
-  (match (ast-node-get body)
-    [(AstExpr.Spanned inner _)
-      (match (ast-node-get inner)
-        [(AstExpr.Spanned _ _) inner]
+  (match (ast.ast-node-get body)
+    [(ast.AstExpr.Spanned inner _)
+      (match (ast.ast-node-get inner)
+        [(ast.AstExpr.Spanned _ _) inner]
         [_ body])]
     [_ body]))
 
 (define (compiler-semantic-walk-match-arms!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [scrutinee-ty : AstMaybeType]
-  [arms : AstMatchArmList]
+  [env : tc.TcTypeEnv]
+  [scrutinee-ty : ast.AstMaybeType]
+  [arms : ast.AstMatchArmList]
   [search-start : i64]) : unit
   (let
     [index : i64 0]
     [cursor : i64 search-start]
-    (while (< index (ast-match-arm-list-len (& arms)))
+    (while (< index (ast.ast-match-arm-list-len (& arms)))
       (begin
-        (match (ast-match-arm-list-get (& arms) index (ast-match-arm-fallback))
-          [(AstMatchArm.Arm pattern body)
+        (match (ast.ast-match-arm-list-get
+          (& arms)
+          index
+          (ast.ast-match-arm-fallback))
+          [(ast.AstMatchArm.Arm pattern body)
             (let
               [body-start : i64
                 (compiler-semantic-expr-start-offset
                   state
                   (compiler-semantic-match-body-source-expr-id body)
                   (string.string-length (struct-get state source)))]
-              [saved : TcTypeEnvScopedRuntimeSave
-                (tc-type-env-scoped-runtime-save)]
+              [saved : tc.TcTypeEnvScopedRuntimeSave
+                (tc.tc-type-env-scoped-runtime-save)]
               (begin
                 (match scrutinee-ty
-                  [(AstMaybeType.Some ty)
-                    (match (tc-bind-match-pattern
+                  [(ast.AstMaybeType.Some ty)
+                    (match (tc.tc-bind-match-pattern
                       (struct-get state ctx)
                       env
                       ty
                       pattern)
-                      [(ResultTcEnv.Ok fact-env)
+                      [(tc.ResultTcEnv.Ok fact-env)
                         (let
                           [bound : CompilerSemanticBindResult
                             (compiler-semantic-bind-pattern!
@@ -2102,7 +2145,7 @@
                             (struct-get bound scope)
                             fact-env
                             body))]
-                      [(ResultTcEnv.Err _)
+                      [(tc.ResultTcEnv.Err _)
                         (let
                           [bound : CompilerSemanticBindResult
                             (compiler-semantic-bind-pattern!
@@ -2111,9 +2154,9 @@
                               env
                               env
                               false
-                              (tc-pattern-add-bound-name-ids
+                              (tc.tc-pattern-add-bound-name-ids
                                 pattern
-                                TcNameIdList.Nil)
+                                tc.TcNameIdList.Nil)
                               pattern
                               cursor
                               body-start)]
@@ -2122,7 +2165,7 @@
                             (struct-get bound scope)
                             (struct-get bound env)
                             body))])]
-                  [(AstMaybeType.No)
+                  [(ast.AstMaybeType.No)
                     (let
                       [bound : CompilerSemanticBindResult
                         (compiler-semantic-bind-pattern!
@@ -2131,9 +2174,9 @@
                           env
                           env
                           false
-                          (tc-pattern-add-bound-name-ids
+                          (tc.tc-pattern-add-bound-name-ids
                             pattern
-                            TcNameIdList.Nil)
+                            tc.TcNameIdList.Nil)
                           pattern
                           cursor
                           body-start)]
@@ -2142,7 +2185,7 @@
                         (struct-get bound scope)
                         (struct-get bound env)
                         body))])
-                (tc-type-env-scoped-runtime-restore! saved)
+                (tc.tc-type-env-scoped-runtime-restore! saved)
                 (set!
                   cursor
                   (compiler-semantic-expr-end-offset
@@ -2154,25 +2197,25 @@
 (define (compiler-semantic-walk-with-resources!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [bindings : AstResourceBindingList]
-  [body : AstExprList]
+  [env : tc.TcTypeEnv]
+  [bindings : ast.AstResourceBindingList]
+  [body : ast.AstExprList]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
     [next-scope : CompilerSemanticBindingSnapshot scope]
-    [next-env : TcTypeEnv env]
+    [next-env : tc.TcTypeEnv env]
     [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
     [cursor : i64
       (compiler-semantic-form-head-end (struct-get state source) form-start)]
     [index : i64 0]
     (begin
-      (while (< index (ast-resource-binding-list-len (& bindings)))
+      (while (< index (ast.ast-resource-binding-list-len (& bindings)))
         (begin
-          (match (ast-resource-binding-list-get
+          (match (ast.ast-resource-binding-list-get
             (& bindings)
             index
-            (ast-resource-binding-fallback))
-            [(AstResourceBinding.Binding name init cleanup _)
+            (ast.ast-resource-binding-fallback))
+            [(ast.AstResourceBinding.Binding name init cleanup _)
               (let
                 [init-start : i64
                   (compiler-semantic-expr-start-offset
@@ -2189,24 +2232,24 @@
                   (let
                     [bound : CompilerSemanticBindResult
                       (let
-                        [ctx : TcContext (struct-get state ctx)]
-                        [expr-bases : i64 (tc-context-expr-bases ctx)]
-                        [cleanup-expr : AstExpr
-                          (ast-expr-segment-bases-get expr-bases cleanup)]
-                        (match (tc-resource-cleanup-resource-type
+                        [ctx : tc.TcContext (struct-get state ctx)]
+                        [expr-bases : i64 (tc.tc-context-expr-bases ctx)]
+                        [cleanup-expr : ast.AstExpr
+                          (ast.ast-expr-segment-bases-get expr-bases cleanup)]
+                        (match (tc.tc-resource-cleanup-resource-type
                           ctx
                           next-env
                           cleanup-expr)
-                          [(ResultTcType.Ok expected-init-ty)
-                            (match (tc-expr-with-expected-or-actual-id
+                          [(tc.ResultTcType.Ok expected-init-ty)
+                            (match (tc.tc-expr-with-expected-or-actual-id
                               ctx
                               next-env
                               init
                               expected-init-ty)
-                              [(ResultTcType.Ok init-ty)
+                              [(tc.ResultTcType.Ok init-ty)
                                 (let
-                                  [binding-ty : AstType
-                                    (tc-type-without-regions init-ty)]
+                                  [binding-ty : ast.AstType
+                                    (tc.tc-type-without-regions init-ty)]
                                   [recorded : CompilerSemanticBindResult
                                     (compiler-semantic-bind-local!
                                       state
@@ -2214,38 +2257,38 @@
                                       next-env
                                       name
                                       CompilerSemanticSymbolKind.Local
-                                      (AstMaybeType.Some
-                                        (tc-resolve-type ctx binding-ty))
+                                      (ast.AstMaybeType.Some
+                                        (tc.tc-resolve-type ctx binding-ty))
                                       cursor
                                       init-start)]
                                   (CompilerSemanticBindResult
                                     (struct-get recorded scope)
-                                    (tc-bind-id
-                                      (tc-bind-id
+                                    (tc.tc-bind-id
+                                      (tc.tc-bind-id
                                         next-env
-                                        (tc-cleanup-owner-marker-id)
-                                        (AstType.Var name))
+                                        (tc.tc-cleanup-owner-marker-id)
+                                        (ast.AstType.Var name))
                                       name
                                       binding-ty)
                                     (struct-get recorded next-search)))]
-                              [(ResultTcType.Err _)
+                              [(tc.ResultTcType.Err _)
                                 (compiler-semantic-bind-local!
                                   state
                                   next-scope
                                   next-env
                                   name
                                   CompilerSemanticSymbolKind.Local
-                                  AstMaybeType.No
+                                  ast.AstMaybeType.No
                                   cursor
                                   init-start)])]
-                          [(ResultTcType.Err _)
+                          [(tc.ResultTcType.Err _)
                             (compiler-semantic-bind-local!
                               state
                               next-scope
                               next-env
                               name
                               CompilerSemanticSymbolKind.Local
-                              AstMaybeType.No
+                              ast.AstMaybeType.No
                               cursor
                               init-start)]))]
                     (begin
@@ -2266,7 +2309,7 @@
 (define (compiler-semantic-walk-node-with-span!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
+  [env : tc.TcTypeEnv]
   [node-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
@@ -2279,9 +2322,9 @@
       (begin
         (array-set! visited node-id 1)
         (let
-          [expr : AstExpr (ast-node-get node-id)]
+          [expr : ast.AstExpr (ast.ast-node-get node-id)]
           (match expr
-            [(AstExpr.Spanned inner-id span)
+            [(ast.AstExpr.Spanned inner-id span)
               (compiler-semantic-walk-node-with-span!
                 state
                 scope
@@ -2293,7 +2336,7 @@
 (define (compiler-semantic-walk-node!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
+  [env : tc.TcTypeEnv]
   [node-id : i64]) : unit
   (compiler-semantic-walk-node-with-span!
     state
@@ -2305,41 +2348,41 @@
 (define (compiler-semantic-walk-expr!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
-  [env : TcTypeEnv]
-  [expr : AstExpr]
+  [env : tc.TcTypeEnv]
+  [expr : ast.AstExpr]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (match expr
-    [(AstExpr.Spanned inner-id span)
+    [(ast.AstExpr.Spanned inner-id span)
       (compiler-semantic-walk-node-with-span!
         state
         scope
         env
         inner-id
         (CompilerSemanticMaybeSpan.Some span))]
-    [(AstExpr.Var name)
+    [(ast.AstExpr.Var name)
       (compiler-semantic-record-name-use! state scope name maybe-span)]
-    [(AstExpr.Binary _ left right)
+    [(ast.AstExpr.Binary _ left right)
       (begin
         (compiler-semantic-walk-node! state scope env left)
         (compiler-semantic-walk-node! state scope env right))]
-    [(AstExpr.Unary _ inner)
+    [(ast.AstExpr.Unary _ inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.Call callee args)
+    [(ast.AstExpr.Call callee args)
       (begin
         (compiler-semantic-walk-node! state scope env callee)
         (compiler-semantic-walk-expr-list! state scope env args))]
-    [(AstExpr.If condition then-expr else-expr)
+    [(ast.AstExpr.If condition then-expr else-expr)
       (begin
         (compiler-semantic-walk-node! state scope env condition)
         (compiler-semantic-walk-node! state scope env then-expr)
         (compiler-semantic-walk-node! state scope env else-expr))]
-    [(AstExpr.Let payload)
+    [(ast.AstExpr.Let payload)
       (match (box-get payload)
-        [(AstLet.Let bindings body)
+        [(ast.AstLet.Let bindings body)
           (compiler-semantic-walk-let! state scope env bindings body maybe-span)])]
-    [(AstExpr.Lambda payload)
+    [(ast.AstExpr.Lambda payload)
       (match (box-get payload)
-        [(AstLambda.Lambda params _ body)
+        [(ast.AstLambda.Lambda params _ body)
           (compiler-semantic-walk-lambda!
             state
             scope
@@ -2347,73 +2390,74 @@
             params
             body
             maybe-span)])]
-    [(AstExpr.Tuple items)
+    [(ast.AstExpr.Tuple items)
       (compiler-semantic-walk-expr-list! state scope env items)]
-    [(AstExpr.TupleRef target _)
+    [(ast.AstExpr.TupleRef target _)
       (compiler-semantic-walk-node! state scope env target)]
-    [(AstExpr.Array items)
+    [(ast.AstExpr.Array items)
       (compiler-semantic-walk-expr-list! state scope env items)]
-    [(AstExpr.DynArray items)
+    [(ast.AstExpr.DynArray items)
       (compiler-semantic-walk-expr-list! state scope env items)]
-    [(AstExpr.MakeArray _ size)
+    [(ast.AstExpr.MakeArray _ size)
       (compiler-semantic-walk-node! state scope env size)]
-    [(AstExpr.ArrayRef target index)
+    [(ast.AstExpr.ArrayRef target index)
       (begin
         (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-walk-node! state scope env index))]
-    [(AstExpr.ArraySet target index value)
+    [(ast.AstExpr.ArraySet target index value)
       (begin
         (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-walk-node! state scope env index)
         (compiler-semantic-walk-node! state scope env value))]
-    [(AstExpr.ArrayTake target live index)
+    [(ast.AstExpr.ArrayTake target live index)
       (begin
         (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-walk-node! state scope env live)
         (compiler-semantic-walk-node! state scope env index))]
-    [(AstExpr.ArrayPush target value)
+    [(ast.AstExpr.ArrayPush target value)
       (begin
         (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-walk-node! state scope env value))]
-    [(AstExpr.StringRef target index)
+    [(ast.AstExpr.StringRef target index)
       (begin
         (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-walk-node! state scope env index))]
-    [(AstExpr.While condition body)
+    [(ast.AstExpr.While condition body)
       (begin
         (compiler-semantic-walk-node! state scope env condition)
         (compiler-semantic-walk-node! state scope env body))]
-    [(AstExpr.Begin items)
+    [(ast.AstExpr.Begin items)
       (compiler-semantic-walk-expr-list! state scope env items)]
-    [(AstExpr.Unsafe items)
+    [(ast.AstExpr.Unsafe items)
       (compiler-semantic-walk-expr-list! state scope env items)]
-    [(AstExpr.Set name value)
+    [(ast.AstExpr.Set name value)
       (compiler-semantic-walk-set! state scope env name value maybe-span)]
-    [(AstExpr.Ann inner _) (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.Cast inner _)
+    [(ast.AstExpr.Ann inner _)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.Borrow _ _ inner)
+    [(ast.AstExpr.Cast inner _)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.Match payload)
+    [(ast.AstExpr.Borrow _ _ inner)
+      (compiler-semantic-walk-node! state scope env inner)]
+    [(ast.AstExpr.Match payload)
       (match (box-get payload)
-        [(AstMatch.Match scrutinee arms)
+        [(ast.AstMatch.Match scrutinee arms)
           (begin
             (compiler-semantic-walk-node! state scope env scrutinee)
             (compiler-semantic-walk-match-arms!
               state
               scope
               env
-              (match (tc-expr-id (struct-get state ctx) env scrutinee)
-                [(ResultTcType.Ok ty) (AstMaybeType.Some ty)]
-                [(ResultTcType.Err _) AstMaybeType.No])
+              (match (tc.tc-expr-id (struct-get state ctx) env scrutinee)
+                [(tc.ResultTcType.Ok ty) (ast.AstMaybeType.Some ty)]
+                [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
               arms
               (compiler-semantic-expr-end-offset
                 state
                 scrutinee
                 (compiler-semantic-maybe-span-start state maybe-span 0))))])]
-    [(AstExpr.Foreach payload)
+    [(ast.AstExpr.Foreach payload)
       (match (box-get payload)
-        [(AstForeach.Foreach name index-ty start end body)
+        [(ast.AstForeach.Foreach name index-ty start end body)
           (compiler-semantic-walk-foreach!
             state
             scope
@@ -2424,9 +2468,9 @@
             end
             body
             maybe-span)])]
-    [(AstExpr.SpmdReduce payload)
+    [(ast.AstExpr.SpmdReduce payload)
       (match (box-get payload)
-        [(AstSpmdReduce.Reduce _ index index-ty start end init value)
+        [(ast.AstSpmdReduce.Reduce _ index index-ty start end init value)
           (compiler-semantic-walk-spmd-reduce!
             state
             scope
@@ -2438,9 +2482,9 @@
             init
             value
             maybe-span)])]
-    [(AstExpr.SpmdScan payload)
+    [(ast.AstExpr.SpmdScan payload)
       (match (box-get payload)
-        [(AstSpmdScan.Scan
+        [(ast.AstSpmdScan.Scan
             _
             index
             index-ty
@@ -2465,35 +2509,35 @@
             value
             body
             maybe-span)])]
-    [(AstExpr.SpmdBroadcast value lane)
+    [(ast.AstExpr.SpmdBroadcast value lane)
       (begin
         (compiler-semantic-walk-node! state scope env value)
         (compiler-semantic-walk-node! state scope env lane))]
-    [(AstExpr.SpmdShuffle value lane)
+    [(ast.AstExpr.SpmdShuffle value lane)
       (begin
         (compiler-semantic-walk-node! state scope env value)
         (compiler-semantic-walk-node! state scope env lane))]
-    [(AstExpr.StructGet target _)
+    [(ast.AstExpr.StructGet target _)
       (compiler-semantic-walk-node! state scope env target)]
-    [(AstExpr.StructSet target _ value)
+    [(ast.AstExpr.StructSet target _ value)
       (begin
         (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-walk-node! state scope env value))]
-    [(AstExpr.WithRegion _ body)
+    [(ast.AstExpr.WithRegion _ body)
       (compiler-semantic-walk-expr-list! state scope env body)]
-    [(AstExpr.WithEscape scratch body)
+    [(ast.AstExpr.WithEscape scratch body)
       (begin
         (compiler-semantic-walk-node! state scope env scratch)
         (compiler-semantic-walk-expr-list! state scope env body))]
-    [(AstExpr.WithScratch body)
+    [(ast.AstExpr.WithScratch body)
       (compiler-semantic-walk-expr-list! state scope env body)]
-    [(AstExpr.InArena arena body)
+    [(ast.AstExpr.InArena arena body)
       (begin
         (compiler-semantic-walk-node! state scope env arena)
         (compiler-semantic-walk-expr-list! state scope env body))]
-    [(AstExpr.WithResource payload)
+    [(ast.AstExpr.WithResource payload)
       (match (box-get payload)
-        [(AstWithResource.WithResource bindings body)
+        [(ast.AstWithResource.WithResource bindings body)
           (compiler-semantic-walk-with-resources!
             state
             scope
@@ -2501,74 +2545,78 @@
             bindings
             body
             maybe-span)])]
-    [(AstExpr.Box value) (compiler-semantic-walk-node! state scope env value)]
-    [(AstExpr.BoxGet value)
+    [(ast.AstExpr.Box value)
       (compiler-semantic-walk-node! state scope env value)]
-    [(AstExpr.BoxTake value)
+    [(ast.AstExpr.BoxGet value)
       (compiler-semantic-walk-node! state scope env value)]
-    [(AstExpr.BoxSet target value)
+    [(ast.AstExpr.BoxTake value)
+      (compiler-semantic-walk-node! state scope env value)]
+    [(ast.AstExpr.BoxSet target value)
       (begin
         (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-walk-node! state scope env value))]
-    [(AstExpr.Comptime inner)
+    [(ast.AstExpr.Comptime inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.Quote _) unit]
-    [(AstExpr.Quasiquote inner)
+    [(ast.AstExpr.Quote _) unit]
+    [(ast.AstExpr.Quasiquote inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.Unquote inner)
+    [(ast.AstExpr.Unquote inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.UnquoteSplicing inner)
+    [(ast.AstExpr.UnquoteSplicing inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.BracketClause items)
+    [(ast.AstExpr.BracketClause items)
       (compiler-semantic-walk-expr-list! state scope env items)]
-    [(AstExpr.Try inner) (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.Return inner)
+    [(ast.AstExpr.Try inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.PtrNullCheck inner)
+    [(ast.AstExpr.Return inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.PtrAddrOf inner)
+    [(ast.AstExpr.PtrNullCheck inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.PtrRead inner)
+    [(ast.AstExpr.PtrAddrOf inner)
       (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.PtrWrite ptr value)
+    [(ast.AstExpr.PtrRead inner)
+      (compiler-semantic-walk-node! state scope env inner)]
+    [(ast.AstExpr.PtrWrite ptr value)
       (begin
         (compiler-semantic-walk-node! state scope env ptr)
         (compiler-semantic-walk-node! state scope env value))]
-    [(AstExpr.PtrOffset ptr offset)
+    [(ast.AstExpr.PtrOffset ptr offset)
       (begin
         (compiler-semantic-walk-node! state scope env ptr)
         (compiler-semantic-walk-node! state scope env offset))]
-    [(AstExpr.PtrCast ptr _) (compiler-semantic-walk-node! state scope env ptr)]
-    [(AstExpr.PtrToInt ptr) (compiler-semantic-walk-node! state scope env ptr)]
-    [(AstExpr.IntToPtr value _)
+    [(ast.AstExpr.PtrCast ptr _)
+      (compiler-semantic-walk-node! state scope env ptr)]
+    [(ast.AstExpr.PtrToInt ptr)
+      (compiler-semantic-walk-node! state scope env ptr)]
+    [(ast.AstExpr.IntToPtr value _)
       (compiler-semantic-walk-node! state scope env value)]
-    [(AstExpr.StringData value)
+    [(ast.AstExpr.StringData value)
       (compiler-semantic-walk-node! state scope env value)]
-    [(AstExpr.StringFromBytes data len)
+    [(ast.AstExpr.StringFromBytes data len)
       (begin
         (compiler-semantic-walk-node! state scope env data)
         (compiler-semantic-walk-node! state scope env len))]
-    [(AstExpr.ArrayData value)
+    [(ast.AstExpr.ArrayData value)
       (compiler-semantic-walk-node! state scope env value)]
-    [(AstExpr.CpuIdEax leaf subleaf)
+    [(ast.AstExpr.CpuIdEax leaf subleaf)
       (begin
         (compiler-semantic-walk-node! state scope env leaf)
         (compiler-semantic-walk-node! state scope env subleaf))]
-    [(AstExpr.CpuIdEbx leaf subleaf)
+    [(ast.AstExpr.CpuIdEbx leaf subleaf)
       (begin
         (compiler-semantic-walk-node! state scope env leaf)
         (compiler-semantic-walk-node! state scope env subleaf))]
-    [(AstExpr.CpuIdEcx leaf subleaf)
+    [(ast.AstExpr.CpuIdEcx leaf subleaf)
       (begin
         (compiler-semantic-walk-node! state scope env leaf)
         (compiler-semantic-walk-node! state scope env subleaf))]
-    [(AstExpr.CpuIdEdx leaf subleaf)
+    [(ast.AstExpr.CpuIdEdx leaf subleaf)
       (begin
         (compiler-semantic-walk-node! state scope env leaf)
         (compiler-semantic-walk-node! state scope env subleaf))]
-    [(AstExpr.Xgetbv index)
+    [(ast.AstExpr.Xgetbv index)
       (compiler-semantic-walk-node! state scope env index)]
-    [(AstExpr.Syscall args)
+    [(ast.AstExpr.Syscall args)
       (compiler-semantic-walk-expr-list! state scope env args)]
     [_ unit]))
 
@@ -2590,7 +2638,7 @@
       (compiler-semantic-name-span-in-range
         (struct-get state path)
         (struct-get state source)
-        (tc-env-key-name-text name-id)
+        (tc.tc-env-key-name-text name-id)
         (compiler-semantic-form-head-end (struct-get state source) form-start)
         body-start)]
     (if (>= (struct-get name-span end-byte) 0)
@@ -2599,15 +2647,15 @@
 
 (define (compiler-semantic-walk-decl!
   [state : CompilerSemanticWalkState]
-  [decl : AstDecl]) : unit
+  [decl : ast.AstDecl]) : unit
   (match decl
-    [(AstDecl.Def _ _ _ value)
+    [(ast.AstDecl.Def _ _ _ value)
       (compiler-semantic-walk-node!
         state
         (compiler-semantic-binding-snapshot-empty)
         (struct-get state top-env)
         value)]
-    [(AstDecl.DefFn _ name params _ body _)
+    [(ast.AstDecl.DefFn _ name params _ body _)
       (let
         [body-start : i64
           (compiler-semantic-expr-start-offset
@@ -2627,7 +2675,7 @@
           (struct-get bound scope)
           (struct-get bound env)
           body))]
-    [(AstDecl.DefMacro _ name params _ body)
+    [(ast.AstDecl.DefMacro _ name params _ body)
       (let
         [body-start : i64
           (compiler-semantic-expr-start-offset
@@ -2647,20 +2695,20 @@
           (struct-get bound scope)
           (struct-get bound env)
           body))]
-    [(AstDecl.Test _ body _)
+    [(ast.AstDecl.Test _ body _)
       (compiler-semantic-walk-node!
         state
         (compiler-semantic-binding-snapshot-empty)
         (struct-get state top-env)
         body)]
-    [(AstDecl.Unsafe inner)
+    [(ast.AstDecl.Unsafe inner)
       (compiler-semantic-walk-decl! state (box-get inner))]
     [_ unit]))
 
 (define (compiler-semantic-index-build-owned
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [paths : AstDeclPathList]
+  [ctx : tc.TcContext]
+  [env : tc.TcTypeEnv]
+  [paths : ast.AstDeclPathList]
   [entry-path : String]
   [entry-source : String]) : CompilerSemanticSourceIndex
   (let
@@ -2673,9 +2721,9 @@
       (unsafe
         (arena.tl_arena_set owner))
       (let
-        [decls : AstDeclList
-          (match (tc-context-program ctx)
-            [(AstProgram.Program decls-box) (box-get decls-box)])]
+        [decls : ast.AstDeclList
+          (match (tc.tc-context-program ctx)
+            [(ast.AstProgram.Program decls-box) (box-get decls-box)])]
         [walk-state : CompilerSemanticWalkState
           (CompilerSemanticWalkState
             ctx
@@ -2689,44 +2737,44 @@
             CompilerSemanticProvenance.EditableSource
             (box
               (compiler-semantic-record-vec-new
-                (* (ast-decl-list-len (& decls)) 2)))
+                (* (ast.ast-decl-list-len (& decls)) 2)))
             (box
               (compiler-semantic-binding-vec-new
-                (* (ast-decl-list-len (& decls)) 2)))
+                (* (ast.ast-decl-list-len (& decls)) 2)))
             (array.make-array
               i64
-              (ast-node-pool-context-expr-len (tc-context-pools ctx)))
+              (ast.ast-node-pool-context-expr-len (tc.tc-context-pools ctx)))
             (box 0))]
         [index : i64 0]
         [cached-path : String ""]
         [cached-source : String ""]
         [form-search-start : i64 0]
         (begin
-          (while (< index (ast-decl-list-len (& decls)))
+          (while (< index (ast.ast-decl-list-len (& decls)))
             (let
-              [decl : AstDecl
-                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              [decl : ast.AstDecl
+                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
               [path : String
-                (ast-decl-path-list-get (& paths) index entry-path)]
+                (ast.ast-decl-path-list-get (& paths) index entry-path)]
               [module-id : i64
-                (ast-decl-path-list-owner-id
+                (ast.ast-decl-path-list-owner-id
                   (& paths)
                   index
                   cbi.compiler-builtin-id-fix-empty)]
-              [decl-ctx : TcContext
+              [decl-ctx : tc.TcContext
                 (if (= module-id cbi.compiler-builtin-id-fix-empty)
-                  (tc-context-with-module-id
+                  (tc.tc-context-with-module-id
                     ctx
                     ""
                     cbi.compiler-builtin-id-fix-empty)
-                  (tc-context-with-module-id
+                  (tc.tc-context-with-module-id
                     ctx
-                    (macro-decl-module-display module-id)
+                    (tc.macro-decl-module-display module-id)
                     module-id))]
               [generated : bool
-                (match (ast-decl-generated-meta decl)
-                  [(AstGeneratedDeclMeta.No) false]
-                  [(AstGeneratedDeclMeta.Some _ _ _ _) true])]
+                (match (ast.ast-decl-generated-meta decl)
+                  [(ast.AstGeneratedDeclMeta.No) false]
+                  [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true])]
               [provenance : CompilerSemanticProvenance
                 (compiler-semantic-decl-provenance decl)]
               [path-changed : bool (not (string.eq path cached-path))]
@@ -2759,22 +2807,22 @@
                 (match (compiler-semantic-decl-symbol decl)
                   [(CompilerSemanticMaybeDecl.Some name-id kind)
                     (let
-                      [name : String (tc-env-key-name-text name-id)]
-                      [maybe-origin : CompilerParseMaybeDeclSpan
+                      [name : String (tc.tc-env-key-name-text name-id)]
+                      [maybe-origin : parse_core.CompilerParseMaybeDeclSpan
                         (compiler-semantic-decl-origin (& decls) index decl)]
                       [form-start : i64
                         (match maybe-origin
-                          [(CompilerParseMaybeDeclSpan.Some origin)
+                          [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
                             (if (or generated (string.eq cached-source ""))
                               -1
                               (compiler-semantic-top-level-form-start
                                 cached-source
                                 (compiler-semantic-source-offset
                                   cached-source
-                                  (ast-source-span-start-line origin)
-                                  (ast-source-span-start-col origin))
+                                  (ast.ast-source-span-start-line origin)
+                                  (ast.ast-source-span-start-col origin))
                                 form-search-start))]
-                          [(CompilerParseMaybeDeclSpan.None)
+                          [(parse_core.CompilerParseMaybeDeclSpan.None)
                             (if (and
                               (not generated)
                               (not (string.eq cached-source "")))
@@ -2782,14 +2830,14 @@
                               -1)])]
                       [has-origin : bool
                         (match maybe-origin
-                          [(CompilerParseMaybeDeclSpan.Some _) true]
-                          [(CompilerParseMaybeDeclSpan.None)
+                          [(parse_core.CompilerParseMaybeDeclSpan.Some _) true]
+                          [(parse_core.CompilerParseMaybeDeclSpan.None)
                             (and
                               (not generated)
                               (not (string.eq cached-source "")))])]
                       [span : CompilerSemanticSpan
                         (match maybe-origin
-                          [(CompilerParseMaybeDeclSpan.Some origin)
+                          [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
                             (if (string.eq cached-source "")
                               (CompilerSemanticSpan
                                 (string.copy (& path))
@@ -2802,12 +2850,12 @@
                                 name
                                 origin
                                 form-start))]
-                          [(CompilerParseMaybeDeclSpan.None)
+                          [(parse_core.CompilerParseMaybeDeclSpan.None)
                             (if (and
                               (not generated)
                               (not (string.eq cached-source "")))
                               (let
-                                [end-position : AstSourceSpan
+                                [end-position : ast.AstSourceSpan
                                   (compiler-semantic-source-position
                                     cached-source
                                     (string.string-length cached-source))]
@@ -2815,17 +2863,18 @@
                                   path
                                   cached-source
                                   name
-                                  (ast-source-span
+                                  (ast.ast-source-span
                                     1
                                     1
-                                    (ast-source-span-start-line end-position)
-                                    (ast-source-span-start-col end-position))
+                                    (ast.ast-source-span-start-line
+                                      end-position)
+                                    (ast.ast-source-span-start-col end-position))
                                   form-start))
                               (CompilerSemanticSpan
                                 (string.copy (& path))
                                 -1
                                 -1
-                                (ast-source-span 1 1 1 1)))])]
+                                (ast.ast-source-span 1 1 1 1)))])]
                       [symbol : CompilerSemanticSymbolId
                         (compiler-semantic-symbol-for-decl
                           decl-ctx
@@ -2897,20 +2946,22 @@
 (define (compiler-check-program-with-paths-index-cache
   [path : String]
   [source : String]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
   (begin
-    (cfg compile-profile (compiler-check-profile-start))
-    (match (typecheck-compiler-program-with-paths-checked-cache
-      (ast-program decls)
+    (cfg compile-profile (check_core.compiler-check-profile-start))
+    (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
+      (ast.ast-program decls)
       paths
       stdlib-roots
       cache-scope)
-      [(ResultCompilerTypecheckChecked.Ok summary ctx env checked-paths)
+      [(tc.ResultCompilerTypecheckChecked.Ok summary ctx env checked-paths)
         (begin
-          (cfg compile-profile (compiler-check-profile-finish "typecheck"))
+          (cfg
+            compile-profile
+            (check_core.compiler-check-profile-finish "typecheck"))
           (ResultCompilerCheckWithSemanticIndex.Ok
             summary
             (compiler-semantic-index-build-owned
@@ -2919,41 +2970,47 @@
               checked-paths
               path
               source)))]
-      [(ResultCompilerTypecheckChecked.Err diag)
+      [(tc.ResultCompilerTypecheckChecked.Err diag)
         (begin
-          (cfg compile-profile (compiler-check-profile-finish "typecheck"))
+          (cfg
+            compile-profile
+            (check_core.compiler-check-profile-finish "typecheck"))
           (ResultCompilerCheckWithSemanticIndex.Err
             (box
-              (compiler-check-diagnostics-with-fallback-path
+              (check_core.compiler-check-diagnostics-with-fallback-path
                 (box-get diag)
                 path))))])))
 
 (define (compiler-check-loaded-with-prelude-index-cache
   [path : String]
   [source : String]
-  [prelude-decls : AstDeclList]
-  [prelude-paths : AstDeclPathList]
-  [loaded : ResultCompilerLoadWithPaths]
+  [prelude-decls : ast.AstDeclList]
+  [prelude-paths : ast.AstDeclPathList]
+  [loaded : cload.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
   (match loaded
-    [(ResultCompilerLoadWithPaths.Ok entry-decls entry-paths entry-modules _)
+    [(cload.ResultCompilerLoadWithPaths.Ok
+        entry-decls
+        entry-paths
+        entry-modules
+        _)
       (begin
-        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (cfg compile-profile (check_core.compiler-check-profile-finish "load"))
         (compiler-check-program-with-paths-index-cache
           path
           source
-          (compiler-load-decl-list-append prelude-decls entry-decls)
-          (compiler-load-decl-path-list-append
+          (cload.compiler-load-decl-list-append prelude-decls entry-decls)
+          (cload.compiler-load-decl-path-list-append
             prelude-paths
-            (ast-decl-path-list-with-modules entry-paths entry-modules))
+            (ast.ast-decl-path-list-with-modules entry-paths entry-modules))
           stdlib-roots
           cache-scope))]
-    [(ResultCompilerLoadWithPaths.Err diag)
+    [(cload.ResultCompilerLoadWithPaths.Err diag)
       (begin
-        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (cfg compile-profile (check_core.compiler-check-profile-finish "load"))
         (ResultCompilerCheckWithSemanticIndex.Err
-          (compiler-diagnostic-list-box-single diag)))]))
+          (cdiag.compiler-diagnostic-list-box-single diag)))]))
 
 ;; Build a replacement index only after a complete semantic check. On error no
 ;; index is returned, which makes the last-good contract explicit: IDE clients
@@ -2966,7 +3023,7 @@
     path
     source
     stdlib-roots
-    (compiler-check-language-cfgs)))
+    (check_core.compiler-check-language-cfgs)))
 
 (define (compiler-check-source-index-with-roots-and-cfg
   [path : String]
@@ -2974,13 +3031,13 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheckWithSemanticIndex
   (begin
-    (compiler-check-reset-pools!)
-    (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-core-macro-prelude-with-roots-cfg
+    (check_core.compiler-check-reset-pools!)
+    (cfg compile-profile (check_core.compiler-check-profile-start))
+    (match (cload.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       cfgs)
-      [(ResultCompilerLoadWithPaths.Ok
+      [(cload.ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
           prelude-modules
@@ -2989,23 +3046,25 @@
           path
           source
           prelude-decls
-          (ast-decl-path-list-with-modules prelude-paths prelude-modules)
-          (compiler-load-source-with-paths-and-roots-cfg
+          (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
+          (cload.compiler-load-source-with-paths-and-roots-cfg
             path
             source
             prelude-seen
             stdlib-roots
             cfgs)
           stdlib-roots
-          (compiler-typecheck-prefix-cache-scope
+          (tc_api.compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-semantic-index"
             stdlib-roots
             cfgs))]
-      [(ResultCompilerLoadWithPaths.Err diag)
+      [(cload.ResultCompilerLoadWithPaths.Err diag)
         (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (cfg
+            compile-profile
+            (check_core.compiler-check-profile-finish "load"))
           (ResultCompilerCheckWithSemanticIndex.Err
-            (compiler-diagnostic-list-box-single diag)))])))
+            (cdiag.compiler-diagnostic-list-box-single diag)))])))
 
 (define (compiler-semantic-source-index-find-definition
   [index : (& index CompilerSemanticSourceIndex)]
@@ -3288,7 +3347,7 @@
     [path : String "src/tests/semantic_index_entry.tl"]
     [source : String
       "(module semantic.demo)
-(import \"semantic_index_import_dep.tl\" module semantic.index.import_dep as dep)
+(import semantic.index.import_dep as dep)
 (defstruct Pair (left i64))
 (defmacro (emit-generated) : Decls
   `(define generated-value : i64 7))
@@ -3561,11 +3620,11 @@
                           "answer"
                           CompilerSemanticSymbolKind.Value)
                         (=
-                          (ast-source-span-start-line
+                          (ast.ast-source-span-start-line
                             (struct-get (struct-get answer span) source))
                           12)
                         (=
-                          (ast-source-span-start-col
+                          (ast.ast-source-span-start-col
                             (struct-get (struct-get answer span) source))
                           11)
                         (compiler-check-semantic-index-record-ok?
@@ -3615,13 +3674,13 @@
                           param-definition
                           "answer")
                         (=
-                          (ast-source-span-start-line
+                          (ast.ast-source-span-start-line
                             (struct-get
                               (struct-get param-definition span)
                               source))
                           18)
                         (=
-                          (ast-source-span-start-col
+                          (ast.ast-source-span-start-col
                             (struct-get
                               (struct-get param-definition span)
                               source))
@@ -3635,13 +3694,13 @@
                           local-definition
                           "answer")
                         (=
-                          (ast-source-span-start-line
+                          (ast.ast-source-span-start-line
                             (struct-get
                               (struct-get local-definition span)
                               source))
                           21)
                         (=
-                          (ast-source-span-start-col
+                          (ast.ast-source-span-start-col
                             (struct-get
                               (struct-get local-definition span)
                               source))

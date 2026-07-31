@@ -288,10 +288,10 @@ assert_contains "$WORKDIR/compile-synthesized-entry.stdout" "Wrote $SYNTH_ASM"
 CFG_SRC="$WORKDIR/cfg-feature.tl"
 CFG_ASM="$WORKDIR/cfg-feature.s"
 cat > "$CFG_SRC" <<'EOF'
-(import "stdlib/string.tl")
+(import stdlib.string)
 (cfg feature (define marker : String "enabled-cfg-feature"))
 (cfg (not feature) (define marker : String "disabled-cfg-feature"))
-(define (main) : i64 (string-length marker))
+(define (main) : i64 (string.string-length marker))
 EOF
 # cli-gate-case stage1-wrapper-compile-cfg wrapper run_capture
 run_capture compile-cfg "$COMPILER" compile "$CFG_SRC" -o "$CFG_ASM" --cfg feature
@@ -304,16 +304,16 @@ CFG_BATCH_ONE_ASM="$WORKDIR/cfg-batch-one.s"
 CFG_BATCH_TWO_ASM="$WORKDIR/cfg-batch-two.s"
 CFG_BATCH_LIST="$WORKDIR/cfg-batch.txt"
 cat > "$CFG_BATCH_ONE" <<'EOF'
-(import "stdlib/string.tl")
+(import stdlib.string)
 (cfg feature (define marker : String "enabled-cfg-batch-one"))
 (cfg (not feature) (define marker : String "disabled-cfg-batch-one"))
-(define (main) : i64 (string-length marker))
+(define (main) : i64 (string.string-length marker))
 EOF
 cat > "$CFG_BATCH_TWO" <<'EOF'
-(import "stdlib/string.tl")
+(import stdlib.string)
 (cfg feature (define marker : String "enabled-cfg-batch-two"))
 (cfg (not feature) (define marker : String "disabled-cfg-batch-two"))
-(define (main) : i64 (string-length marker))
+(define (main) : i64 (string.string-length marker))
 EOF
 printf '%s|%s\n%s|%s\n' \
     "$CFG_BATCH_ONE" "$CFG_BATCH_ONE_ASM" \
@@ -356,8 +356,8 @@ cat > "$CHECK_ROOT/repo-stdlib/helper.tl" <<'EOF'
 (define (helper) : i64 42)
 EOF
 cat > "$CHECK_ROOT/app/main.tl" <<'EOF'
-(import "stdlib/helper.tl")
-(define (main) : i64 (helper))
+(import stdlib.helper)
+(define (main) : i64 (helper.helper))
 EOF
 # cli-gate-case stage1-wrapper-check-stdlib-root wrapper run_capture
 run_capture check-stdlib-root "$COMPILER" check "$CHECK_ROOT/app/main.tl" --stdlib-root "$CHECK_ROOT/repo-stdlib"
@@ -387,12 +387,11 @@ echo "[host-action-cli] package build"
     (math "vendor/math")))
 EOF
     cat > "$PKG/src/main.tl" <<'EOF'
-(import "macros.tl" module stage1.macros as macros)
+(import macros)
 (define (main) : i64 (macros.add-one-macro 41))
 EOF
     cat > "$PKG/src/macros.tl" <<'EOF'
-(module stage1.macros)
-(import "pkg:math/src/lib.tl")
+(import math.src.lib as math)
 (import stdlib.comptime)
 (define stage1-exported-value : i64 7)
 (defstruct Stage1Point
@@ -402,7 +401,7 @@ EOF
   (Stage1A)
   (Stage1B i64))
 (defmacro (add-one-macro [value : i64]) : i64
-  `(add-one ,value))
+  `(math.add-one ,value))
 (defmacro (all-macro [items : Expr ...]) : bool
   (comptime.expr-list-fold-if
     items
@@ -763,15 +762,15 @@ EOF
     cat > "$DOC_ENTRY" <<'EOF'
 ;# Entry module docs.
 ;# ```typelisp
-;# (import "stdlib/docfixture.tl")
-;# (define (main) : i64 stdlib-answer)
+;# (import stdlib.docfixture)
+;# (define (main) : i64 docfixture.stdlib-answer)
 ;# ```
 
-(import "local.tl")
-(import "stdlib/docfixture.tl")
+(import local)
+(import stdlib.docfixture)
 
 ;: Entry docs.
-(define (main) : i64 (+ local-answer stdlib-answer))
+(define (main) : i64 (+ local.local-answer docfixture.stdlib-answer))
 EOF
     # cli-gate-case stage1-wrapper-doc wrapper run_capture
     run_capture doc "$COMPILER" doc "$DOC_ENTRY" -o "$DOC_MD" --stdlib-root "$DOC_STDLIB"
@@ -790,12 +789,12 @@ assert_contains "$WORKDIR/doc-test.stdout" "Doc tests passed: 1 example(s)"
 echo "[host-action-cli] test --check"
     TEST_SRC="$WORKDIR/inline-test.tl"
     cat > "$TEST_SRC" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (inc [x : i64]) : i64 (+ x 1))
 
 (test inc-basic
-  (assert-i64-eq (inc 41) 42 "inc result"))
+  (test.assert-i64-eq (inc 41) 42 "inc result"))
 EOF
     # cli-gate-case stage1-wrapper-test-check wrapper run_capture
     run_capture test-check "$COMPILER" test --check "$TEST_SRC" --target linux-x86_64 --opt-level 2 --stdlib-root "$ROOT/stdlib"
@@ -804,13 +803,13 @@ EOF
 
     TEST_BATCH_SRC="$WORKDIR/inline-test-batch.tl"
     cat > "$TEST_BATCH_SRC" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (test batch-one
-  (assert-i64-eq (+ 20 22) 42 "batch one"))
+  (test.assert-i64-eq (+ 20 22) 42 "batch one"))
 
 (test batch-two
-  (assert-i64-eq (* 6 7) 42 "batch two"))
+  (test.assert-i64-eq (* 6 7) 42 "batch two"))
 EOF
     TEST_BATCH_LIST="$WORKDIR/inline-test-batch.txt"
     printf '%s\n' "$TEST_SRC" "$TEST_BATCH_SRC" > "$TEST_BATCH_LIST"
@@ -842,17 +841,17 @@ EOF
 
     TEST_BATCH_FAIL_SRC="$WORKDIR/inline-test-batch-fail.tl"
     cat > "$TEST_BATCH_FAIL_SRC" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (test intentional-batch-failure
-  (assert-i64-eq 1 2 "intentional batch failure"))
+  (test.assert-i64-eq 1 2 "intentional batch failure"))
 EOF
     TEST_BATCH_SENTINEL_SRC="$WORKDIR/inline-test-batch-sentinel.tl"
     cat > "$TEST_BATCH_SENTINEL_SRC" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (test runs-after-failed-file
-  (assert-i64-eq 42 42 "isolation sentinel"))
+  (test.assert-i64-eq 42 42 "isolation sentinel"))
 EOF
     TEST_BATCH_FAIL_LIST="$WORKDIR/inline-test-batch-fail.txt"
     printf '%s\n' "$TEST_SRC" "$TEST_BATCH_FAIL_SRC" "$TEST_BATCH_SENTINEL_SRC" > "$TEST_BATCH_FAIL_LIST"
@@ -946,7 +945,7 @@ EOF
   (entry "src/lib.tl"))
 EOF
     cat > "$TEST_PKG/src/lib.tl" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (inc [x : i64]) : i64 (+ x 1))
 
@@ -981,19 +980,19 @@ EOF
   (panic "nested package inline test should be ignored"))
 EOF
     cat > "$TEST_PKG/tests/basic.tl" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (main) : i64
   (begin
-    (assert-i64-eq (+ 21 21) 42 "package tests dir basic")
+    (test.assert-i64-eq (+ 21 21) 42 "package tests dir basic")
     0))
 EOF
     cat > "$TEST_PKG/tests/nested/more.tl" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (main) : i64
   (begin
-    (assert-i64-eq (* 6 7) 42 "package nested tests dir")
+    (test.assert-i64-eq (* 6 7) 42 "package nested tests dir")
     0))
 EOF
     cat > "$TEST_PKG/tests/format_golden/fixture.tl" <<'EOF'
@@ -1050,10 +1049,10 @@ EOF
     echo "[host-action-cli] test failures"
     FAIL_SRC="$WORKDIR/inline-test-fail.tl"
     cat > "$FAIL_SRC" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (test failing-case
-  (assert-i64-eq 1 2 "inline failure message"))
+  (test.assert-i64-eq 1 2 "inline failure message"))
 EOF
     set +e
     # cli-gate-case stage1-wrapper-test-fail direct TYPELISP_STAGE1_HEARTBEAT_FD=3
@@ -1306,7 +1305,7 @@ echo "[host-action-cli] lint"
 run_capture lint-help "$COMPILER" lint --help
 assert_empty "$WORKDIR/lint-help.stdout"
 assert_contains "$WORKDIR/lint-help.stderr" "Usage:"
-assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--legacy-path-import] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]"
+assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]"
 assert_contains "$WORKDIR/lint-help.stderr" "Summary:"
 
 LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lint-nopkg.XXXXXX")

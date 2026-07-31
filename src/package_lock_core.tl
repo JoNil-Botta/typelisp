@@ -8,12 +8,12 @@
 (import stdlib.vector)
 (import lex as lexer)
 (import read as reader)
-(import "package_cache_core.tl")
+(import package_cache_core)
 
 (defstruct PackageLockEntry
   (alias String)
   (url String)
-  (pin-kind PackageCachePinKind)
+  (pin-kind package_cache_core.PackageCachePinKind)
   (pin-value String)
   (commit String))
 
@@ -24,7 +24,7 @@
   (entries package_lock_entry_vec.Vec))
 
 (defstruct PackageLockPin
-  (kind PackageCachePinKind)
+  (kind package_cache_core.PackageCachePinKind)
   (value String))
 
 (define (package-lock-symbol-text [name-id : i64]) : String
@@ -39,7 +39,7 @@
   (Err String))
 
 (defenum ResultPackageLockPinKind
-  (Ok PackageCachePinKind)
+  (Ok package_cache_core.PackageCachePinKind)
   (Err String))
 
 (defenum ResultPackageLockPin
@@ -114,7 +114,7 @@
       (= i n))))
 
 (define (package-lock-entry-list-fallback) : PackageLockEntry
-  (PackageLockEntry "" "" (PackageCachePinKind.Rev) "" ""))
+  (PackageLockEntry "" "" (package_cache_core.PackageCachePinKind.Rev) "" ""))
 
 (define (package-lock-entry-list-lookup-from
   [entries : (& entries package_lock_entry_vec.Vec)]
@@ -228,11 +228,12 @@
 (define (package-lock-parse-pin-kind [value : String]) : ResultPackageLockPinKind
   (cond
     [(string.eq value "rev")
-      (ResultPackageLockPinKind.Ok (PackageCachePinKind.Rev))]
+      (ResultPackageLockPinKind.Ok (package_cache_core.PackageCachePinKind.Rev))]
     [(string.eq value "tag")
-      (ResultPackageLockPinKind.Ok (PackageCachePinKind.Tag))]
+      (ResultPackageLockPinKind.Ok (package_cache_core.PackageCachePinKind.Tag))]
     [(string.eq value "branch")
-      (ResultPackageLockPinKind.Ok (PackageCachePinKind.Branch))]
+      (ResultPackageLockPinKind.Ok
+        (package_cache_core.PackageCachePinKind.Branch))]
     [else
       (ResultPackageLockPinKind.Err
         "package-lock: pin kind must be `rev`, `tag`, or `branch`")]))
@@ -286,7 +287,7 @@
   [has-alias : bool]
   [url : String]
   [has-url : bool]
-  [pin-kind : PackageCachePinKind]
+  [pin-kind : package_cache_core.PackageCachePinKind]
   [pin-value : String]
   [has-pin : bool]
   [commit : String]
@@ -437,7 +438,7 @@
               false
               ""
               false
-              (PackageCachePinKind.Rev)
+              (package_cache_core.PackageCachePinKind.Rev)
               ""
               false
               ""
@@ -631,7 +632,8 @@
 (define (package-lock-emit-entry [entry : PackageLockEntry]) : String
   (let
     [kind-name : String
-      (package-cache-pin-kind-name (struct-get entry pin-kind))]
+      (package_cache_core.package-cache-pin-kind-name
+        (struct-get entry pin-kind))]
     (string.append
       "    (dependency\n"
       (string.append
@@ -696,13 +698,15 @@
   [entry : PackageLockEntry]
   [alias : String]
   [url : String]
-  [kind : PackageCachePinKind]
+  [kind : package_cache_core.PackageCachePinKind]
   [pin-value : String]
   [commit : String]) : bool
   (and
     (string.eq (struct-get entry alias) alias)
     (string.eq (struct-get entry url) url)
-    (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
+    (package_cache_core.package-cache-pin-kind-eq?
+      (struct-get entry pin-kind)
+      kind)
     (string.eq (struct-get entry pin-value) pin-value)
     (string.eq (struct-get entry commit) commit)))
 
@@ -710,7 +714,7 @@
   [entries : package_lock_entry_vec.Vec]
   [alias : String]
   [url : String]
-  [kind : PackageCachePinKind]
+  [kind : package_cache_core.PackageCachePinKind]
   [pin-value : String]
   [commit : String]) : bool
   (match (package-lock-entry-list-lookup entries alias)
@@ -731,14 +735,14 @@
             entries
             "alpha"
             "https://github.com/owner/alpha.git"
-            (PackageCachePinKind.Branch)
+            (package_cache_core.PackageCachePinKind.Branch)
             "main"
             "1111111111111111111111111111111111111111")
           (package-lock-list-has-entry?
             entries
             "zeta"
             "https://github.com/owner/zeta.git"
-            (PackageCachePinKind.Rev)
+            (package_cache_core.PackageCachePinKind.Rev)
             "abcdef0123456789abcdef0123456789abcdef01"
             "abcdef0123456789abcdef0123456789abcdef01")))]))
 
@@ -763,14 +767,14 @@
                 entries
                 "alpha"
                 "https://github.com/owner/alpha.git"
-                (PackageCachePinKind.Branch)
+                (package_cache_core.PackageCachePinKind.Branch)
                 "main"
                 "1111111111111111111111111111111111111111")
               (package-lock-list-has-entry?
                 entries
                 "zeta"
                 "https://github.com/owner/zeta.git"
-                (PackageCachePinKind.Rev)
+                (package_cache_core.PackageCachePinKind.Rev)
                 "abcdef0123456789abcdef0123456789abcdef01"
                 "abcdef0123456789abcdef0123456789abcdef01")))])]))
 

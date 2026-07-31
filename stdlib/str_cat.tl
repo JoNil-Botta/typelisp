@@ -6,7 +6,7 @@
 ;# files that use them.
 ;#
 ;# Dotted usage: import this module as `stdlib.str_cat`, then call
-;# `(str_cat.str-cat a b c)`. Legacy path imports can call `(str-cat a b c)`.
+;# `(str_cat.str-cat a b c)`.
 ;# Expansions delegate to the bootstrap-safe implementation module, whose
 ;# fully-qualified helpers require no imports at the call site.
 ;#

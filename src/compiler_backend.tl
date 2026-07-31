@@ -30501,6 +30501,46 @@
     false
     program-index))
 
+;; Private scalar SPMD calls carry the active mask before the source helper
+;; parameters, and their hidden callee signature already records that complete
+;; internal ABI. Size its stack-passed tail from the signature so the ordinary
+;; per-function outgoing area covers these calls too. SIMD private calls make
+;; their own aligned per-call adjustment for uniform stack args and private
+;; vector/mask storage.
+(define (compiler-backend-spmd-scalar-stack-arg-space
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [callee : i64]
+  [program-index : CompilerBackendProgramIndex]) : i64
+  (let
+    [stack-count : i64
+      (compiler-backend-type-list-stack-arg-count
+        type-segment-bases
+        target
+        (compiler-backend-call-param-types-index callee program-index)
+        0
+        0
+        0
+        0
+        program-index)]
+    (if (= stack-count 0)
+      0
+      (compiler-backend-round-up-16 (* stack-count 8)))))
+
+(define (compiler-backend-spmd-outgoing-stack-space
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [payload : CompilerIrInstrSpmdCallPayload]
+  [program-index : CompilerBackendProgramIndex]) : i64
+  (match (struct-get payload backend)
+    [(CompilerIrSpmdBackend.Scalar)
+      (compiler-backend-spmd-scalar-stack-arg-space
+        type-segment-bases
+        target
+        (struct-get payload callee)
+        program-index)]
+    [_ 0]))
+
 ;; Indirect (closure) calls carry no callee signature here, so size conservatively:
 ;; the leading environment pointer plus two stack words per argument is always an
 ;; upper bound on the real footprint.
@@ -30563,6 +30603,12 @@
             (+ (compiler-backend-windows-closure-stack-arg-space args) 16))]
         [(CompilerIrInstr.TailCallIndirect _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
+        [(CompilerIrInstr.SpmdCall payload-box)
+          (compiler-backend-spmd-outgoing-stack-space
+            type-segment-bases
+            target
+            (box-get payload-box)
+            program-index)]
         [_ 0])]
     [(CompilerBackendTarget.Linux)
       ;; Reserve outgoing stack-arg space in the prologue frame so these calls
@@ -30613,6 +30659,12 @@
               16))]
         [(CompilerIrInstr.TailCallIndirect _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
+        [(CompilerIrInstr.SpmdCall payload-box)
+          (compiler-backend-spmd-outgoing-stack-space
+            type-segment-bases
+            target
+            (box-get payload-box)
+            program-index)]
         [_ 0])]))
 
 (defstruct CompilerBackendOutgoingFrameScan

@@ -69,6 +69,13 @@ On Windows, `verify-integration.sh` sends independent manifest links through
 `lld-link` children; set `TYPELISP_WINDOWS_LINK_JOBS=1` for serial debugging or
 to another value from 1 through 64 for a host-specific measurement.
 
+For process-level safe-thread stress, `measure-thread-integration-stress.sh`
+builds the seven `thread_safe_*` manifest fixtures once and repeatedly runs the
+native executables on Linux or Windows. It retains every exit code and stream;
+use `TYPELISP_THREAD_STRESS_ITERATIONS=1000`,
+`TYPELISP_THREAD_STRESS_JOBS=8`, and, on Linux,
+`TYPELISP_THREAD_STRESS_CPU=0` to increase scheduling pressure.
+
 Some gate-owned helpers deliberately retain measurement-oriented names:
 
 | Helper | Owning gate |

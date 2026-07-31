@@ -738,6 +738,8 @@ decision|src/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); impor
 
 decision|src/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by src/main.tl and src/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_main cases; has no main to compile directly
 
+decision|src/legacy_path_import_audit.tl|standalone reader-form audit for the legacy path-import ratchet (#6052): compiled and run by scripts/check-tl-lint.sh on every platform, with focused inline tests discovered by typelisp test; intentionally outside the compiler import graph
+
 # Optimization-benchmark codegen smoke. Each flattened opt_* TypeLisp source
 # must compile to assembly that defines main: with no backend "# TODO" (the
 # runner auto-rejects "# TODO"). Sources live outside src/ so they are not

@@ -1415,30 +1415,102 @@
         archive-path
         (process.args-cons obj-path (process.args-empty))))))
 
-(define (source-tool-windows-archiver-args
+(define (source-tool-windows-msvc-archiver-args
   [obj-path : String]
   [archive-path : String]) : process.ProcessStringList
   (process.args-cons
     "/NOLOGO"
     (process.args-cons
-      (string.append "/OUT:" archive-path)
-      (process.args-cons obj-path (process.args-empty)))))
+      "/Brepro"
+      (process.args-cons
+        (string.append "/OUT:" archive-path)
+        (process.args-cons obj-path (process.args-empty))))))
 
-(define (source-tool-windows-archiver-fallback-command
+(define (source-tool-windows-llvm-archiver-args
+  [obj-path : String]
+  [archive-path : String]) : process.ProcessStringList
+  (process.args-cons
+    "--format=coff"
+    (process.args-cons
+      "rcsD"
+      (process.args-cons
+        archive-path
+        (process.args-cons obj-path (process.args-empty))))))
+
+(define (source-tool-ascii-fold-char [c : char]) : char
+  (if (and (>= c 'A') (<= c 'Z'))
+    (cast (+ (cast c : i64) 32) : char)
+    c))
+
+(define (source-tool-ascii-case-eq [left : String] [right : String]) : bool
+  (let
+    [left-n : i64 (string.string-length left)]
+    [right-n : i64 (string.string-length right)]
+    [i : i64 0]
+    [same : bool (= left-n right-n)]
+    (begin
+      (while (and same (< i left-n))
+        (begin
+          (if (=
+            (source-tool-ascii-fold-char (string.string-ref left i))
+            (source-tool-ascii-fold-char (string.string-ref right i)))
+            unit
+            (set! same false))
+          (set! i (+ i 1))))
+      same)))
+
+(define (source-tool-windows-llvm-archiver-name? [command : String]) : bool
+  (let
+    [basename : String (source-tool-fs-basename command)]
+    (or
+      (source-tool-ascii-case-eq basename "llvm-ar")
+      (source-tool-ascii-case-eq basename "llvm-ar.exe"))))
+
+(define (source-tool-windows-msvc-archiver-name? [command : String]) : bool
+  (let
+    [basename : String (source-tool-fs-basename command)]
+    (or
+      (source-tool-ascii-case-eq basename "lib")
+      (source-tool-ascii-case-eq basename "lib.exe"))))
+
+(define (source-tool-windows-llvm-archiver-command
+  [command : String]
   [obj-path : String]
   [archive-path : String]) : process.ProcessCommand
   (process.command
-    (source-tool-resolved-env-command-or-default
-      "TYPELISP_WINDOWS_LIB"
-      (source-tool-resolve-command "llvm-lib"))
-    (source-tool-windows-archiver-args obj-path archive-path)))
+    command
+    (source-tool-windows-llvm-archiver-args obj-path archive-path)))
+
+(define (source-tool-windows-override-archiver-command
+  [obj-path : String]
+  [archive-path : String]) : ResultSourceToolCommand
+  (let
+    [name : String "TYPELISP_WINDOWS_LIB"]
+    [command : String
+      (source-tool-resolved-env-command-or-default
+        name
+        (source-tool-resolve-command "llvm-ar"))]
+    (cond
+      [(source-tool-windows-llvm-archiver-name? command)
+        (ResultSourceToolCommand.Ok
+          (source-tool-windows-llvm-archiver-command
+            command
+            obj-path
+            archive-path))]
+      [(source-tool-windows-msvc-archiver-name? command)
+        (ResultSourceToolCommand.Ok
+          (process.command
+            command
+            (source-tool-windows-msvc-archiver-args obj-path archive-path)))]
+      [else
+        (ResultSourceToolCommand.Err
+          "TYPELISP_WINDOWS_LIB must resolve to llvm-ar(.exe) or MSVC lib(.exe); deterministic Windows archives require llvm-ar --format=coff rcsD or lib.exe /Brepro")])))
 
 (define (source-tool-windows-archiver-command
   [obj-path : String]
   [archive-path : String]) : ResultSourceToolCommand
   (if (source-tool-env-command-set? "TYPELISP_WINDOWS_LIB")
-    (ResultSourceToolCommand.Ok
-      (source-tool-windows-archiver-fallback-command obj-path archive-path))
+    (source-tool-windows-override-archiver-command obj-path archive-path)
     (let
       [target : String "x86_64-pc-windows-msvc"]
       [tool : String "lib.exe"]
@@ -1448,11 +1520,12 @@
             (process.command-with-env-list
               (process.command
                 (msvc.tool-executable resolved-tool)
-                (source-tool-windows-archiver-args obj-path archive-path))
+                (source-tool-windows-msvc-archiver-args obj-path archive-path))
               (msvc.tool-process-env resolved-tool)))]
         [(msvc.ErrMsvcTool _)
           (ResultSourceToolCommand.Ok
-            (source-tool-windows-archiver-fallback-command
+            (source-tool-windows-llvm-archiver-command
+              (source-tool-resolve-command "llvm-ar")
               obj-path
               archive-path))]))))
 

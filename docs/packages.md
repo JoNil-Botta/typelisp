@@ -74,6 +74,14 @@ the same corpus through both routes and requires byte-identical assembly.
 resolution and build profile rules, then executes `bin` package artifacts;
 runtime arguments are passed after `--`.
 
+Windows `staticlib` archives are byte-reproducible when their COFF object input
+is unchanged. TypeLisp invokes discovered MSVC `lib.exe` with `/Brepro`, or
+falls back to `llvm-ar --format=coff rcsD`. `TYPELISP_WINDOWS_LIB` may override
+the executable with a path or PATH-resolved name whose basename is
+`lib[.exe]` or `llvm-ar[.exe]`; TypeLisp selects the corresponding deterministic
+argument contract. Other basenames, including `llvm-lib`, are rejected rather
+than silently producing a timestamp-bearing archive.
+
 Dependencies may be local paths or git/GitHub pins (`rev`, `tag`, or
 `branch`). Remote pins resolve through `typelisp.lock` — a deterministic
 S-expression lockfile recording alias, normalized URL, pin, and exact

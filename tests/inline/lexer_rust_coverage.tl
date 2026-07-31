@@ -176,7 +176,7 @@
 (test
   lexer-single-char-literal-a
   (let
-    [toks : (Array token.Token) (lex.lex "'a'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'a'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       'a'
@@ -185,7 +185,7 @@
 (test
   lexer-single-char-literal-Z
   (let
-    [toks : (Array token.Token) (lex.lex "'Z'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'Z'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       'Z'
@@ -194,7 +194,7 @@
 (test
   lexer-single-char-literal-zero
   (let
-    [toks : (Array token.Token) (lex.lex "'0'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'0'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '0'
@@ -203,7 +203,7 @@
 (test
   lexer-single-char-literal-lparen
   (let
-    [toks : (Array token.Token) (lex.lex "'('")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'('")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '('
@@ -212,7 +212,7 @@
 (test
   lexer-single-char-literal-plus
   (let
-    [toks : (Array token.Token) (lex.lex "'+'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'+'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '+'
@@ -221,7 +221,7 @@
 (test
   lexer-single-char-literal-space
   (let
-    [toks : (Array token.Token) (lex.lex "' '")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "' '")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       ' '
@@ -247,7 +247,7 @@
 (test
   lexer-apostrophe-char-literal-a
   (let
-    [toks : (Array token.Token) (lex.lex "'a'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'a'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       'a'
@@ -256,7 +256,7 @@
 (test
   lexer-apostrophe-char-literal-space
   (let
-    [toks : (Array token.Token) (lex.lex "' '")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "' '")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       ' '
@@ -265,7 +265,7 @@
 (test
   lexer-apostrophe-char-literal-double-quote
   (let
-    [toks : (Array token.Token) (lex.lex "'\"'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'\"'")]
     (lexer-assert-bool-eq
       (= (cast (token.char (array-ref toks 0)) : i64) 34)
       true
@@ -274,7 +274,7 @@
 (test
   lexer-apostrophe-escaped-char-literal-newline
   (let
-    [toks : (Array token.Token) (lex.lex "'\\n'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'\\n'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '\n'
@@ -439,7 +439,7 @@
 (test
   lexer-eof-singleton
   (let
-    [toks : (Array token.Token) (lex.lex "")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "")]
     (lexer-assert-bool-eq
       (= (token.tag (array-ref toks 0)) (token.tag-end))
       true
@@ -464,31 +464,31 @@
 (test
   lexer-control-char-literals
   (let
-    [toks : (Array token.Token) (lex.lex "' '")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "' '")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       ' '
       "space char literal"))
   (let
-    [toks : (Array token.Token) (lex.lex "'\\n'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'\\n'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '\n'
       "newline char literal"))
   (let
-    [toks : (Array token.Token) (lex.lex "'\\t'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'\\t'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '\t'
       "tab char literal"))
   (let
-    [toks : (Array token.Token) (lex.lex "'\\r'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'\\r'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '\r'
       "return char literal"))
   (let
-    [toks : (Array token.Token) (lex.lex "'\\0'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'\\0'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '\0'
@@ -497,16 +497,16 @@
 (test
   lexer-apostrophe-escaped-char-literals
   (let
-    [toks : (Array token.Token) (lex.lex "'\\n'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'\\n'")]
     (lexer-assert-char-eq (token.char (array-ref toks 0)) '\n' "escape n"))
   (let
-    [toks : (Array token.Token) (lex.lex "'\\t'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'\\t'")]
     (lexer-assert-char-eq (token.char (array-ref toks 0)) '\t' "escape t"))
   (let
-    [toks : (Array token.Token) (lex.lex "'\\r'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'\\r'")]
     (lexer-assert-char-eq (token.char (array-ref toks 0)) '\r' "escape r"))
   (let
-    [toks : (Array token.Token) (lex.lex "'\\0'")]
+    [toks : (__tl_dyn-array token.Token) (lex.lex "'\\0'")]
     (lexer-assert-char-eq (token.char (array-ref toks 0)) '\0' "escape 0"))
   ;; ordinary letters are direct character payloads in the apostrophe syntax
   )

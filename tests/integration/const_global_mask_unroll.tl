@@ -26,7 +26,10 @@
   255)
 
 ;; Masked index from a global mask: the shape that regressed.
-(define (mask-sum [table : (Array i64)] [buf : (Array u8)] [len : i64]) : i64
+(define (mask-sum
+  [table : (__tl_dyn-array i64)]
+  [buf : (__tl_dyn-array u8)]
+  [len : i64]) : i64
   (let
     [acc : i64 0]
     [i : i64 0]
@@ -41,7 +44,10 @@
       acc)))
 
 ;; Literal-mask control: identical but for the mask spelling.
-(define (mask-sum-literal [table : (Array i64)] [buf : (Array u8)] [len : i64]) : i64
+(define (mask-sum-literal
+  [table : (__tl_dyn-array i64)]
+  [buf : (__tl_dyn-array u8)]
+  [len : i64]) : i64
   (let
     [acc : i64 0]
     [i : i64 0]
@@ -57,8 +63,8 @@
 
 (define (main) : i64
   (let
-    [table : (Array i64) (array.make-array i64 256)]
-    [buf : (Array u8) (array.make-array u8 64)]
+    [table : (__tl_dyn-array i64) (array.make-array i64 256)]
+    [buf : (__tl_dyn-array u8) (array.make-array u8 64)]
     [n : i64 0]
     (begin
       (while (< n 256)

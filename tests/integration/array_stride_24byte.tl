@@ -12,7 +12,7 @@
 
 (define (main) : i64
   (let
-    [items : (Array Triple) (array.make-array Triple 1)]
+    [items : (__tl_dyn-array Triple) (array.make-array Triple 1)]
     (begin
       (array-set! items 0 (Triple 1 2 3))
       (array-push! items (Triple 5 7 11))

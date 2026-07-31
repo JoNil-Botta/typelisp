@@ -792,80 +792,8 @@
 ;; transformer programs define one entry function per catalog identity and
 ;; nothing else, so export order is the identity order; compact function
 ;; naming makes label names unstable, so offsets are the contract.
-(define (compiler-tlci-native-function-export-count
-  [image : cobj.CompilerObjectImage]) : i64
-  (let
-    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
-    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
-    [index : i64 0]
-    [total : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (match (cobj.compiler-object-symbol-list-ref symbols index)
-            [(cobj.CompilerObjectSymbol.Symbol _ binding kind _)
-              (if (and
-                (match binding
-                  [(cobj.CompilerObjectSymbolBinding.Export) true]
-                  [_ false])
-                (match kind
-                  [(cobj.CompilerObjectSymbolKind.Function) true]
-                  [_ false]))
-                (set! total (+ total 1))
-                unit)])
-          (set! index (+ index 1))))
-      total)))
-
-(define (compiler-tlci-native-function-export-offsets
-  [image : cobj.CompilerObjectImage]) : (__tl_dyn-array i64)
-  (let
-    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
-    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
-    [total : i64 (compiler-tlci-native-function-export-count image)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 total)]
-    [index : i64 0]
-    [slot : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (match (cobj.compiler-object-symbol-list-ref symbols index)
-            [(cobj.CompilerObjectSymbol.Symbol name binding kind _)
-              (if (and
-                (match binding
-                  [(cobj.CompilerObjectSymbolBinding.Export) true]
-                  [_ false])
-                (match kind
-                  [(cobj.CompilerObjectSymbolKind.Function) true]
-                  [_ false]))
-                (begin
-                  (array-set!
-                    out
-                    slot
-                    (compiler-tlci-native-entry-offset image name))
-                  (set! slot (+ slot 1)))
-                unit)])
-          (set! index (+ index 1))))
-      (compiler-tlci-native-sort-offsets! out)
-      out)))
-
 ;; Function bodies are emitted in definition order, so ascending text offsets
 ;; are definition order regardless of symbol-table ordering.
-(define (compiler-tlci-native-sort-offsets! [out : (__tl_dyn-array i64)]) : unit
-  (let
-    [count : i64 (array-length out)]
-    [index : i64 1]
-    (while (< index count)
-      (let
-        [value : i64 (array-ref out index)]
-        [scan : i64 index]
-        (begin
-          (while (and (> scan 0) (> (array-ref out (- scan 1)) value))
-            (begin
-              (array-set! out scan (array-ref out (- scan 1)))
-              (set! scan (- scan 1))))
-          (array-set! out scan value)
-          (set! index (+ index 1)))))))
-
 ;; Primitives-only packaging boundary: callers (the producer, tools) pass
 ;; metadata as canonical text and plain arrays, and every tlci_core nominal
 ;; stays inside this module's single import instance.

@@ -3,6 +3,6 @@
 
 (define (main) : i64
   (let
-    [items : (Array MixedGlobalAnnotationItem)
+    [items : (__tl_dyn-array MixedGlobalAnnotationItem)
       (mixed-global-annotation-bridge-items)]
     (+ (array-length items) (mixed-global-annotation-bridge))))

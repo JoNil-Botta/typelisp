@@ -201,7 +201,7 @@
 
 (define (doc-site-language-guides) : doc_site_guides.Vec
   (let
-    [guides : doc_site_guides.Vec (doc_site_guides.with-capacity 2)]
+    [guides : doc_site_guides.Vec (doc_site_guides.with-capacity 8)]
     (begin
       (doc_site_guides.push
         (&mut guides)
@@ -217,6 +217,48 @@
           "SPEC.md"
           "spec.html"
           "Specification"))
+      (doc_site_guides.push
+        (&mut guides)
+        (DocSiteGuidePage.GuidePage
+          "Language Guide"
+          "docs/language-guide.md"
+          "language-guide.html"
+          "Language guide"))
+      (doc_site_guides.push
+        (&mut guides)
+        (DocSiteGuidePage.GuidePage
+          "Memory and Ownership"
+          "docs/memory-model.md"
+          "memory-model.html"
+          "Memory and ownership"))
+      (doc_site_guides.push
+        (&mut guides)
+        (DocSiteGuidePage.GuidePage
+          "Concurrency and SIMD"
+          "docs/concurrency-and-simd.md"
+          "concurrency-and-simd.html"
+          "Concurrency and SIMD"))
+      (doc_site_guides.push
+        (&mut guides)
+        (DocSiteGuidePage.GuidePage
+          "Packages"
+          "docs/packages.md"
+          "packages.html"
+          "Packages"))
+      (doc_site_guides.push
+        (&mut guides)
+        (DocSiteGuidePage.GuidePage
+          "Testing, Documentation, and Bootstrap"
+          "docs/testing-and-bootstrap.md"
+          "testing-and-bootstrap.html"
+          "Testing, documentation, and bootstrap"))
+      (doc_site_guides.push
+        (&mut guides)
+        (DocSiteGuidePage.GuidePage
+          "Compiler Architecture and CLI"
+          "docs/compiler-architecture.md"
+          "compiler-architecture.html"
+          "Compiler architecture and CLI"))
       guides)))
 
 (define (doc-site-stdlib-api-tree) : DocSiteApiTree
@@ -427,11 +469,15 @@
     (if (doc-site-href-external? target)
       target
       (let
+        [normalized-target : String
+          (if (doc-site-string-prefix? target "../")
+            (string.substring target 3 (- (string.string-length target) 3))
+            target)]
         [site-target : String
-          (doc-site-sections-output-for-source target sections)]
+          (doc-site-sections-output-for-source normalized-target sections)]
         (if (> (string.string-length site-target) 0)
           site-target
-          (doc-site-repo-source-url target))))))
+          (doc-site-repo-source-url normalized-target))))))
 
 (define (doc-site-rewrite-language-links
   [sections : doc_site_sections.Vec]
@@ -1282,6 +1328,21 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
       (doc-site-require
         (doc-site-vector-core-growth-order?)
         "doc-site: canonical vector core growth/order mismatch")
+      (doc-site-require
+        (= (doc-site-guide-page-list-count (doc-site-language-guides)) 8)
+        "doc-site: language guide inventory mismatch")
+      (doc-site-require
+        (string.eq
+          (doc-site-rewrite-language-link-target sections "../SPEC.md")
+          "spec.html")
+        "doc-site: parent guide link rewrite missing")
+      (doc-site-require
+        (string.eq
+          (doc-site-rewrite-language-link-target
+            sections
+            "../tools/doc-site/doc_site.tl")
+          "https://github.com/JoNil-Botta/typelisp/blob/main/tools/doc-site/doc_site.tl")
+        "doc-site: parent repository link rewrite missing")
       (doc_bridge.bridge-doc-html-require-contains
         index
         "<nav class=\"tl-doc-site-nav\" aria-label=\"stdlib API\">"

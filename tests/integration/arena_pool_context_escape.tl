@@ -28,7 +28,7 @@
 
 ; The "pool state" a global points at: a one-element cell holding a payload.
 (defstruct CellHolder
-  (cells (Array i64)))
+  (cells (__tl_dyn-array i64)))
 
 ; The process-global. `install!` re-points it at the caller's cells, so whatever
 ; arena those cells live in becomes this global's lifetime.
@@ -43,7 +43,7 @@
   (if (not pin-cells-to-long-lived)
     ; UNGUARDED: cells come from whatever arena is current.
     (let
-      [cells : (Array i64) (array.make-array i64 1)]
+      [cells : (__tl_dyn-array i64) (array.make-array i64 1)]
       (begin
         (array-set! cells 0 value)
         (CellHolder cells)))
@@ -53,7 +53,7 @@
       [_enter : unit
         (unsafe
           (arena.tl_arena_set long-lived-arena))]
-      [cells : (Array i64) (array.make-array i64 1)]
+      [cells : (__tl_dyn-array i64) (array.make-array i64 1)]
       [head : i64 (arena.tl_arena_current)]
       [_leave : unit
         (begin

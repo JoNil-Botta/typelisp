@@ -3,7 +3,7 @@
 
 (defstruct Iter
   (:lifetimes source)
-  (slots (&mut source (Array i64)))
+  (slots (&mut source (__tl_dyn-array i64)))
   (index i64))
 
 (defenum Next
@@ -27,7 +27,7 @@
 
 (define (main) : unit
   (let
-    [items : (Array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     [iter : (Iter items) (Iter (&mut items) 0)]
     [first (next (&mut iter))]
     (begin

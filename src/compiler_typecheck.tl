@@ -349,7 +349,7 @@
       "typecheck: call `id` argument 1 (parameter `x`) type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       "(define (main) : i64 (let [x : i64 \"hello\"] x))"
-      "typecheck: let binding type mismatch: expected i64, found String")
+      "typecheck: let binding `x` type mismatch: expected i64, found String")
     (compiler-typecheck-error-ok?
       "(define (main) : i64
   (let [x : i64 0] (begin (set! x true) x)))"
@@ -2420,7 +2420,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-unknown-field-source)
-        "typecheck: unknown struct field Point.z")
+        "typecheck: unknown struct field Point.z; available fields: x, y")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-aggregate-global-source))
@@ -2532,7 +2532,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-import-alias-missing-member-source)
-        "typecheck: unbound name d/missing")
+        "typecheck: unbound name d.missing")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -4984,7 +4984,7 @@
       "typecheck: assignment type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-let-mismatch-source)
-      "typecheck: let binding type mismatch: expected i64, found bool")
+      "typecheck: let binding `x` type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-ann-mismatch-source)
       "typecheck: annotation type mismatch: expected i64, found bool")
@@ -5056,7 +5056,7 @@
       "typecheck: equality operands must match")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-int-mismatch-source)
-      "typecheck: integer operator expects matching integer operands")
+      "typecheck: integer operator expects matching integer operands: expected i32, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-cmp-mismatch-source)
       "typecheck: comparison expects matching ordered scalar operands")
@@ -5077,11 +5077,11 @@
       "typecheck: shift left operand must be integer")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-bitwise-mismatch-source)
-      "typecheck: integer operator expects matching integer operands")
+      "typecheck: integer operator expects matching integer operands: expected u64, found i64")
     (compiler-typecheck-ok? (compiler-typecheck-op-ok-nary-bitwise-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-nary-bitwise-mismatch-source)
-      "typecheck: integer operator expects matching integer operands")
+      "typecheck: integer operator expects matching integer operands: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-nary-bitwise-too-few-source)
       "parse: malformed binary expression")
@@ -5863,7 +5863,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-binding-arity-source)
-            "typecheck: pattern arity mismatch")))
+            "typecheck: pattern arity mismatch: expected 1, found 2")))
       (set!
         ok
         (and
@@ -9617,6 +9617,38 @@
     (take-handle (struct-get (struct-get p inner) handle))
     (take-handle (struct-get (struct-get p inner) backup))))")
 
+(define (compiler-typecheck-move-owner-projection-deep-mixed-repeat-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Leaf
+  (:cleanup cleanup-leaf)
+  (handle FileHandle (:owned))
+  (tag i64))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (mixed (Tuple (Array (Tuple Leaf i64) 2) i64)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-projection-deep-mixed-repeat [p : Holder]) : unit
+  (begin
+    (take-handle
+      (struct-get
+        (tuple-ref
+          (array-ref
+            (tuple-ref (struct-get p mixed) 0)
+            1)
+          0)
+        handle))
+    (take-handle
+      (struct-get
+        (tuple-ref
+          (array-ref
+            (tuple-ref (struct-get p mixed) 0)
+            1)
+          0)
+        handle))))")
+
 (define (compiler-typecheck-move-owner-projection-nested-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -10451,13 +10483,15 @@
     [items0 : TcMovePath
       (TcMovePath
         items-id
-        (TcMovePathSegments.ArrayIndex 0 (box TcMovePathSegments.Nil)))]
+        (tc-move-path-segments-append-array (tc-move-path-segments-empty) 0))]
     [items1 : TcMovePath
       (TcMovePath
         items-id
-        (TcMovePathSegments.ArrayIndex 1 (box TcMovePathSegments.Nil)))]
-    [items-root : TcMovePath (TcMovePath items-id TcMovePathSegments.Nil)]
-    [shadowed-root : TcMovePath (TcMovePath shadowed-id TcMovePathSegments.Nil)]
+        (tc-move-path-segments-append-array (tc-move-path-segments-empty) 1))]
+    [items-root : TcMovePath
+      (TcMovePath items-id (tc-move-path-segments-empty))]
+    [shadowed-root : TcMovePath
+      (TcMovePath shadowed-id (tc-move-path-segments-empty))]
     [origin-a : AstExpr (AstExpr.Var (intern "origin-a"))]
     [origin-b : AstExpr (AstExpr.Var (intern "origin-b"))]
     [empty : TcMovedSet (tc-moved-empty)]
@@ -10670,6 +10704,11 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-projection-nested-repeat-source)
         "typecheck: use of moved value `p.inner.handle`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-projection-deep-mixed-repeat-source)
+        "typecheck: use of moved value `p.mixed.0[1].0.handle`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -11179,14 +11218,14 @@
       1)
     (compiler-typecheck-error-location-ok?
       (compiler-typecheck-unknown-field-source)
-      "typecheck: unknown struct field Point.z"
+      "typecheck: unknown struct field Point.z; available fields: x, y"
       3
       3)
     (compiler-typecheck-error-location-ok?
       (compiler-typecheck-unknown-variant-source)
       "typecheck: unknown variant Other"
       3
-      3)
+      13)
     (compiler-typecheck-error-location-ok?
       (compiler-typecheck-unsafe-decl-origin-source)
       "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)"

@@ -11,7 +11,7 @@
 (import (serialize.serialize json Address) as address_json)
 (import (serialize.serialize json i64) as i64_json)
 (import (serialize.serialize json (Array i64 3)) as fixed_i64_json)
-(import (serialize.serialize json (Array i64)) as dyn_i64_json)
+(import (serialize.serialize json (type (__tl_dyn-array i64))) as dyn_i64_json)
 (import (serialize.serialize json (Array Address 2)) as address_array_json)
 (import (serialize.serialize json enum_fixture.Status) as status_json)
 
@@ -24,8 +24,9 @@
   (home Address)
   (scores (Array i64 3))
   (previous (Array Address 2))
-  (samples (Array i64))
-  (combo (Tuple i64 Address (Array i64 2) (Array i64) (Tuple String bool))))
+  (samples (__tl_dyn-array i64))
+  (combo
+    (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))))
 
 (import (serialize.serialize json Person) as person_json)
 (import (serialize.serialize json Person) as person_json_again)
@@ -209,7 +210,7 @@
     (= (array-ref scores 1) 5)
     (= (array-ref scores 2) 6)))
 
-(define (serialize-json-samples-ok? [samples : (Array i64)]) : bool
+(define (serialize-json-samples-ok? [samples : (__tl_dyn-array i64)]) : bool
   (and
     (= (array-length samples) 2)
     (= (array-ref samples 0) 7)
@@ -221,7 +222,8 @@
     (serialize-json-address-eq? (array-ref previous 1) 222 "Paris")))
 
 (define (serialize-json-combo-ok?
-  [combo : (Tuple i64 Address (Array i64 2) (Array i64) (Tuple String bool))]) : bool
+  [combo
+    : (Tuple i64 Address (Array i64 2) (__tl_dyn-array i64) (Tuple String bool))]) : bool
   (and
     (= (tuple-ref combo 0) 99)
     (serialize-json-address-eq? (tuple-ref combo 1) 333 "Rome")
@@ -244,7 +246,7 @@
     (serialize-json-samples-ok? (struct-get person samples))
     (serialize-json-combo-ok? (struct-get person combo))))
 
-(define (serialize-json-make-samples) : (Array i64)
+(define (serialize-json-make-samples) : (__tl_dyn-array i64)
   (make-array 7 8))
 
 (define (serialize-json-previous-addresses) : (Array Address 2)
@@ -254,7 +256,7 @@
     i64
     Address
     (Array i64 2)
-    (Array i64)
+    (__tl_dyn-array i64)
     (Tuple String bool))
   (tuple
     99
@@ -318,7 +320,7 @@
 
 (define (serialize-json-dyn-array-root-roundtrip-ok?) : bool
   (let
-    [samples : (Array i64) (serialize-json-make-samples)]
+    [samples : (__tl_dyn-array i64) (serialize-json-make-samples)]
     [json : json.Json (dyn_i64_json.to-json samples)]
     [encoded : String (stdlib.json.stringify json)]
     (and

@@ -2,8 +2,8 @@
 ;: does not protect a disjoint sibling merely because both share an owner
 ;: lifetime.
 (defstruct ReborrowDeadSiblingArrays
-  (left (Array i64))
-  (right (Array i64)))
+  (left (__tl_dyn-array i64))
+  (right (__tl_dyn-array i64)))
 
 (define (consume [value : (& owner i64)]) : unit
   unit)

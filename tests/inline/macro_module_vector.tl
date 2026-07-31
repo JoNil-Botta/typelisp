@@ -7,13 +7,15 @@
 ;; calls the `grow` helper. Lowering must therefore keep and resolve generated
 ;; module bodies, including unqualified helper calls inside the generated
 ;; module, rather than pruning those bodies after typecheck succeeds.
+;; The hand-emitted vector deliberately uses private dynamic-array backing so
+;; the macro serializer continues to cover generated growable storage.
 (import stdlib.test)
 
 (defmacro (int-vector-module) : Module
   `(begin
     (module generated.intvec)
     (defstruct IntVec
-      (slots (Array i64))
+      (slots (__tl_dyn-array i64))
       (len i64)
       (cap i64))
     (define (int-vec-with-capacity [cap : i64]) : IntVec
@@ -39,7 +41,7 @@
       (let
         [old-cap : i64 (struct-get v cap)]
         [new-cap : i64 (* old-cap 2)]
-        [bigger : (Array i64) (make-array i64 new-cap)]
+        [bigger : (__tl_dyn-array i64) (make-array i64 new-cap)]
         [n : i64 (struct-get v len)]
         [i : i64 0]
         (begin
@@ -51,7 +53,7 @@
     (define (int-vec-push [v : IntVec] [value : i64]) : IntVec
       (if (< (struct-get v len) (struct-get v cap))
         (let
-          [slots : (Array i64) (struct-get v slots)]
+          [slots : (__tl_dyn-array i64) (struct-get v slots)]
           (begin
             (array-set! slots (struct-get v len) value)
             (IntVec slots (+ (struct-get v len) 1) (struct-get v cap))))

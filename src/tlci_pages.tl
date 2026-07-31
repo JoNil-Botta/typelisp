@@ -33,16 +33,26 @@
   2)
 (define tlci-pages-linux-map-anonymous : i64
   32)
-(define tlci-pages-windows-mem-commit-reserve : i32
-  (cast 12288 : i32))
-(define tlci-pages-windows-mem-release : i32
-  (cast 32768 : i32))
-(define tlci-pages-windows-page-readwrite : i32
-  (cast 4 : i32))
-(define tlci-pages-windows-page-readonly : i32
-  (cast 2 : i32))
-(define tlci-pages-windows-page-execute-read : i32
-  (cast 32 : i32))
+(cfg
+  windows
+  (define tlci-pages-windows-mem-commit-reserve : i32
+    (cast 12288 : i32)))
+(cfg
+  windows
+  (define tlci-pages-windows-mem-release : i32
+    (cast 32768 : i32)))
+(cfg
+  windows
+  (define tlci-pages-windows-page-readwrite : i32
+    (cast 4 : i32)))
+(cfg
+  windows
+  (define tlci-pages-windows-page-readonly : i32
+    (cast 2 : i32)))
+(cfg
+  windows
+  (define tlci-pages-windows-page-execute-read : i32
+    (cast 32 : i32)))
 
 (cfg
   windows

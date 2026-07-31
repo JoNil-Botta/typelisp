@@ -4,7 +4,7 @@
 
 (define (transient-allocation) : i64
   (let
-    [items : (Array i64) (array.make-array i64 4096)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 4096)]
     (begin
       (array-set! items 0 37)
       (array-ref items 0))))

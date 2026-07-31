@@ -36,7 +36,7 @@
 ;; memory-LICM (the descriptor loads stay in the loop) and forcing the
 ;; call-spanning values -- including the array handle v -- into callee-saved
 ;; homes. Five hot i64 values (a,b,c,acc,i) fill r12..rbx; v is the 6th = %rbp.
-(define (churn6 [v : (Array i64)] [rounds : i64]) : i64
+(define (churn6 [v : (__tl_dyn-array i64)] [rounds : i64]) : i64
   (let
     [a : i64 1]
     [b : i64 2]
@@ -72,7 +72,7 @@
   (let
     [n : i64 (+ (io.arg-count) 7)]
     ; n = 8 (no args)
-    [v : (Array i64) (array.make-array i64 n)]
+    [v : (__tl_dyn-array i64) (array.make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

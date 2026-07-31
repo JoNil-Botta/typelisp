@@ -2,7 +2,7 @@
 ;: after the state leaves scope.
 (defstruct MutReborrowIter
   (:lifetimes source)
-  (slots (&mut source (Array i64)))
+  (slots (&mut source (__tl_dyn-array i64)))
   (index i64))
 
 (defenum MutReborrowNext
@@ -27,7 +27,7 @@
 
 (define (main) : unit
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (let
       [first : (MutReborrowNext items)
         (let

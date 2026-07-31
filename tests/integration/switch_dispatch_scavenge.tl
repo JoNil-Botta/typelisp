@@ -26,7 +26,11 @@
   (Op4)
   (Op5))
 
-(define (run-switch [program : (Array Op)] [plen : i64] [n : i64] [seed : i64]) : i64
+(define (run-switch
+  [program : (__tl_dyn-array Op)]
+  [plen : i64]
+  [n : i64]
+  [seed : i64]) : i64
   (let
     [i : i64 0]
     [a0 : i64 (+ seed 111)]
@@ -197,7 +201,7 @@
 
 (define (main) : i64
   (let
-    [p : (Array Op) (array.make-array Op 6)]
+    [p : (__tl_dyn-array Op) (array.make-array Op 6)]
     (begin
       (array-set! p 0 (Op0))
       (array-set! p 1 (Op1))

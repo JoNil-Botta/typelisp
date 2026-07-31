@@ -31,7 +31,7 @@
     (+ 1 (clobber (- x 1)))))
 
 (define (run
-  [p : (Array i64)]
+  [p : (__tl_dyn-array i64)]
   [b : i64]
   [c : i64]
   [d : i64]
@@ -60,7 +60,7 @@
 (define (main) : i64
   (let
     [ac : i64 (io.arg-count)]
-    [p : (Array i64) (make-array i64 3)]
+    [p : (__tl_dyn-array i64) (make-array i64 3)]
     (begin
       (array-set! p 0 (+ ac 10))
       (array-set! p 1 (+ ac 12))

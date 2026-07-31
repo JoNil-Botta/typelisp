@@ -4131,9 +4131,11 @@ SPMD helper calls:
   varying arguments, and mask arguments as full 256-bit values in caller-owned
   32-byte stack-block slots. The caller passes the block address in `%r10`;
   varying and mask results use `%ymm0`. Uniform arguments and results retain
-  the platform scalar ABI. The block is private to one call and remains valid
-  until that call returns. Imported package helpers remain limited to the
-  scalar and AVX-512 private ABIs.
+  the platform scalar ABI. The caller places the block after the platform's
+  outgoing shadow and stack-argument layout, so ordinary uniform arguments and
+  callee-owned call storage do not overlap it. The block is private to one call
+  and remains valid until that call returns. Imported package helpers remain
+  limited to the scalar and AVX-512 private ABIs.
 - Function values and indirect calls, ordinary extern calls, `defdispatch`
   logical calls, and recursion through SPMD helpers are deferred by design;
   they are rejected with diagnostics naming the specific boundary rather than

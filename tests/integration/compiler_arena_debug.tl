@@ -21,7 +21,7 @@
     [_set : unit
       (unsafe
         (arena.tl_arena_set handle))]
-    [values : (Array i64) (array.make-array i64 1024)]
+    [values : (__tl_dyn-array i64) (array.make-array i64 1024)]
     (begin
       (array-set! values 1023 42)
       (array-ref values 1023))))
@@ -33,7 +33,7 @@
       (unsafe
         (arena.tl_arena_set handle))]
     [mark : i64 (arena.tl_region_mark)]
-    [_values : (Array i64) (array.make-array i64 16)]
+    [_values : (__tl_dyn-array i64) (array.make-array i64 16)]
     (begin
       (unsafe
         (arena.tl_region_reset mark))

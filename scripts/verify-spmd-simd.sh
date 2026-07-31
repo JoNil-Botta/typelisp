@@ -149,6 +149,7 @@ tests/spmd/inline_helper_f64.tl
 tests/spmd/private_helper_i64.tl
 tests/spmd/private_helper_f64.tl
 tests/spmd/private_helper_bool.tl
+tests/spmd/private_helper_uniform_stack.tl
 tests/spmd/private_helper_masked_load.tl
 tests/spmd/private_helper_store.tl
 tests/spmd/private_helper_effects.tl
@@ -366,6 +367,7 @@ verify_avx2_private_helper_call_shape() {
         tests/spmd/private_helper_i64.tl \
         tests/spmd/private_helper_f64.tl \
         tests/spmd/private_helper_bool.tl \
+        tests/spmd/private_helper_uniform_stack.tl \
         tests/spmd/private_helper_masked_load.tl \
         tests/spmd/private_helper_store.tl \
         tests/spmd/private_helper_effects.tl

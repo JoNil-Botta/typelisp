@@ -19,7 +19,7 @@
 ;; The runtime check guards value correctness: a stale forwarded value or a
 ;; wrongly kept entry produces a wrong sum -> not 42. Self-recursive (never
 ;; taken) so the opt2 inliner cannot inline it into main.
-(define (poke-sum [xs : (Array i64)] [n : i64]) : i64
+(define (poke-sum [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (if (< n 0)
     (poke-sum xs (+ n 1))
     (begin
@@ -31,7 +31,7 @@
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 1)]
-    [xs : (Array i64) (array.make-array i64 3)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 3)]
     [r : i64 (poke-sum xs n)]
     ;; n = 2 (io.arg-count is 1 with no args): xs[0]=42, xs[1]=6,
     ;; xs[2]=42-6=36; r = 36+6 = 42.

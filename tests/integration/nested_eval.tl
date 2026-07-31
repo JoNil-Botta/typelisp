@@ -1,13 +1,14 @@
 ;; nested_eval.tl - end-to-end proof of NESTED PATTERN MATCHING (#41).
 ;;
-;; A tiny tree-walking evaluator over a recursive `Sexpr` tree with dense call
-;; arguments. The `Call` arm destructures TWO enum layers at once with a single
+;; A tiny tree-walking evaluator over a recursive `Sexpr` tree whose calls have
+;; exactly two arguments in a fixed array. The `Call` arm destructures TWO enum
+;; layers at once with a single
 ;; nested pattern
 ;;
 ;;     [(Sexpr.Call (SexprAtom.Sym name) args) ...]
 ;;
 ;; binding `name : String` (the operator symbol, projected out of the nested
-;; `SexprAtom.Sym`) and `args : (Array SexprAtom)` in one `match`. Before
+;; `SexprAtom.Sym`) and `args : (Array SexprAtom 2)` in one `match`. Before
 ;; nested patterns this required a separate single-level projection helper
 ;; (`sexpr-sym`, a `match` that pulled the symbol text out of the head and
 ;; panicked on the wrong shape); the nested pattern folds that projection into
@@ -28,7 +29,7 @@
   (List (Box Sexpr)))
 
 (defenum Sexpr
-  (Call SexprAtom (Array SexprAtom)))
+  (Call SexprAtom (Array SexprAtom 2)))
 
 (define (eval-atom [a : SexprAtom]) : i64
   (match a
@@ -64,9 +65,9 @@
     [inner : Sexpr
       (Sexpr.Call
         (SexprAtom.Sym "*")
-        (make-array (SexprAtom.Int 2) (SexprAtom.Int 3)))]
+        (array (SexprAtom.Int 2) (SexprAtom.Int 3)))]
     [prog : Sexpr
       (Sexpr.Call
         (SexprAtom.Sym "+")
-        (make-array (SexprAtom.Int 1) (SexprAtom.List (box inner))))]
+        (array (SexprAtom.Int 1) (SexprAtom.List (box inner))))]
     (eval-sexpr prog)))

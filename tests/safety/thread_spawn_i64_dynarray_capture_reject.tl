@@ -4,7 +4,7 @@
 
 (define (main) : i64
   (let
-    [items : (Array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     (match (thread_i64.spawn
       (lambda () : i64
         (array-ref items 0)))

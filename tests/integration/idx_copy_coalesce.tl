@@ -13,7 +13,7 @@
 ;; increment clobber the checked index, or the checked index clobber the
 ;; carried value, produces a wrong sum or an OOB abort -> not 42);
 ;; target/idx-copy-gate.sh additionally asserts the asm shape.
-(define (sum-loop [xs : (Array i64)] [n : i64]) : i64
+(define (sum-loop [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -27,7 +27,7 @@
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 5)]
-    [xs : (Array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

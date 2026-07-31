@@ -221,7 +221,7 @@ cat > "$NAME_CASE_PROBE" <<'EOF'
 (define name-case-probe : i64 0)
 EOF
 
-if ! "$COMPILER" lint --name-case "$NAME_CASE_PROBE" \
+if ! "$COMPILER" lint --format flat --name-case "$NAME_CASE_PROBE" \
     > "$NAME_CASE_PROBE_STDOUT" 2> "$NAME_CASE_PROBE_STDERR"; then
     echo "TypeLisp name-case capability probe failed:" >&2
     cat "$NAME_CASE_PROBE_STDERR" >&2
@@ -277,7 +277,7 @@ for lint_chunk in "$LINT_CHUNK_DIR"/lint.*.txt; do
         set -- --name-case "$@"
     fi
     if ci_timing_run "chunk-$lint_chunk_index" lint \
-        "$COMPILER" lint --check --redundant-function-name "$@" \
+        "$COMPILER" lint --format flat --check --redundant-function-name "$@" \
             >> "$STDOUT" 2>> "$STDERR"; then
         :
     else

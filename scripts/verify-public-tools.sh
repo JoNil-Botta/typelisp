@@ -2158,10 +2158,23 @@ EOF
     run_cmd lint-nested-let "$COMPILER" lint "$WORKDIR/lint_bad.tl"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "lint_bad.tl:"
+    assert_contains "$out" "warning[nested-let]:"
+    assert_contains "$out" "--> "
+    assert_contains "$out" "lint_bad.tl:2:3"
+    assert_contains "$out" "2 |   (let"
+    assert_contains "$out" "|   ^"
     assert_contains "$out" "nested let"
-    assert_contains "$out" "merge bindings"
+    assert_contains "$out" "= help: merge the nested let bindings into one sequential let"
     assert_contains "$out" "lint: 1 finding(s)"
+
+    # cli-gate-case lint-nested-let-flat wrapper run_cmd
+    run_cmd lint-nested-let-flat "$COMPILER" lint "$WORKDIR/lint_bad.tl" --format flat
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "lint_bad.tl:2:3: nested let"
+    assert_contains "$out" "lint: 1 finding(s)"
+    assert_not_contains "$out" "warning[nested-let]:"
+    assert_not_contains "$out" "= help:"
 
     # cli-gate-case lint-nested-let-check wrapper run_cmd
     run_cmd lint-nested-let-check "$COMPILER" lint "$WORKDIR/lint_bad.tl" --check
@@ -2170,6 +2183,34 @@ EOF
     assert_contains "$out" "lint_bad.tl:"
     assert_contains "$out" "nested let"
     assert_contains "$out" "lint: 1 finding(s)"
+
+    cat > "$WORKDIR/lint_bad_suppressed.tl" <<'EOF'
+(define (main) : i64
+  ;; lint-allow: nested-let
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))
+EOF
+    # cli-gate-case lint-displayed-rule-id-suppresses wrapper run_cmd
+    run_cmd lint-displayed-rule-id-suppresses "$COMPILER" lint "$WORKDIR/lint_bad_suppressed.tl" --check
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "lint: 0 finding(s)"
+    assert_not_contains "$out" "nested-let"
+
+    # cli-gate-case lint-format-invalid wrapper run_cmd
+    run_cmd lint-format-invalid "$COMPILER" lint "$WORKDIR/lint_bad.tl" --format json
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "unsupported --format json (expected rich or flat)"
+
+    # cli-gate-case lint-format-missing wrapper run_cmd
+    run_cmd lint-format-missing "$COMPILER" lint "$WORKDIR/lint_bad.tl" --format
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "--format requires a value"
 
     cat > "$WORKDIR/lint_clean.tl" <<'EOF'
 (define (classify [x : i64]) : i64

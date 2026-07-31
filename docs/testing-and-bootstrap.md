@@ -63,7 +63,10 @@ rules.
 `--deprecated-string-concat`, `--redundant-function-name`, and
 `--prefer-dotted-field`. `--legacy-path-import` reports compatibility-only
 string-path imports with their dotted replacements, and `--name-case` enforces
-those naming conventions.
+those naming conventions. Findings use rich source diagnostics by default,
+including the rule ID accepted by `;; lint-allow: <rule-id>` and a suggested
+remedy. Scripts that parse lint output can select the stable
+`path:line:column: message` form with `--format flat`.
 Dead-code lint treats library packages as external API roots and reports
 unreachable declarations in `bin` packages.
 

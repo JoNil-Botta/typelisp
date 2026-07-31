@@ -208,13 +208,14 @@ Options:
 
 (define (cli-lint-help-text) : String
   "Usage:
-    typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--legacy-path-import] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
+    typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--legacy-path-import] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
     Lint source files or every source in a package.
 
 Options:
     --check                        Exit non-zero when lint findings are present
+    --format <rich|flat>           Rich source diagnostics (default) or stable line output
     --deprecated-string-concat     Enable staged string concat deprecation lint
     --redundant-function-name      Enable staged redundant module-prefix lint
     --prefer-dotted-field          Enable staged simple struct-get dotted field lint

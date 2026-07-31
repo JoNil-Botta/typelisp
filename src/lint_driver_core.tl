@@ -1,10 +1,11 @@
 ;; lint_driver_core.tl - Driver logic for the selfhost `typelisp lint` tool:
 ;; load a TypeLisp source, run the lint_core rules over its program, and
-;; render each finding as `path:line:col: message`. Kept main-less so both the
-;; CLI driver (`lint.tl`) and the runnable smoke (`lint_driver_smoke.tl`) can
-;; import it. Warn-only by default; callers can pass `--check` after the input
-;; path to exit non-zero when findings remain. The deprecated string.concat rule
-;; and staged migration rules are opt-in.
+;; render each finding through the shared source diagnostic renderer. Kept
+;; main-less so both the CLI driver (`lint.tl`) and the runnable smoke
+;; (`lint_driver_smoke.tl`) can import it. Warn-only by default; callers can pass
+;; `--check` after the input path to exit non-zero when findings remain, or
+;; `--format flat` for the stable `path:line:col: message` machine format. The
+;; deprecated string.concat rule and staged migration rules are opt-in.
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.arena)
@@ -41,6 +42,8 @@
   false)
 (define selfhost-lint-legacy-path-import : bool
   false)
+(define selfhost-lint-flat-output : bool
+  false)
 
 (define (selfhost-lint-language-config-reset!) : unit
   (begin
@@ -49,7 +52,8 @@
       (target_cfg.compiler-target-cfg-default))
     (set! selfhost-lint-language-cfg-names (lint_svec.new))
     (set! selfhost-lint-cli-has-target false)
-    (set! selfhost-lint-legacy-path-import false)))
+    (set! selfhost-lint-legacy-path-import false)
+    (set! selfhost-lint-flat-output false)))
 
 (define (selfhost-lint-language-cfgs) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs-with-names
@@ -199,6 +203,48 @@
               redundant-function-name
               prefer-dotted-field
               name-case))]
+        [(string.eq current "--format")
+          (if (>= (+ idx 1) count)
+            (ResultSelfhostLintConfig.Err
+              "selfhost-lint: --format requires a value")
+            (let
+              [format : String (io.arg (+ idx 1))]
+              (cond
+                [(string.eq format "flat")
+                  (begin
+                    (set! selfhost-lint-flat-output true)
+                    (selfhost-lint-parse-options
+                      (+ idx 2)
+                      count
+                      input-paths
+                      manifest-path
+                      has-manifest
+                      stdlib-roots
+                      enforcing
+                      deprecated-string-concat
+                      redundant-function-name
+                      prefer-dotted-field
+                      name-case))]
+                [(string.eq format "rich")
+                  (begin
+                    (set! selfhost-lint-flat-output false)
+                    (selfhost-lint-parse-options
+                      (+ idx 2)
+                      count
+                      input-paths
+                      manifest-path
+                      has-manifest
+                      stdlib-roots
+                      enforcing
+                      deprecated-string-concat
+                      redundant-function-name
+                      prefer-dotted-field
+                      name-case))]
+                [else
+                  (ResultSelfhostLintConfig.Err
+                    (string.append
+                      "selfhost-lint: unsupported --format "
+                      (string.append format " (expected rich or flat)")))])))]
         [(string.eq current "--cfg")
           (if (>= (+ idx 1) count)
             (ResultSelfhostLintConfig.Err
@@ -323,28 +369,54 @@
       false
       false)))
 
-;; Render one finding as `path:line:col: message` (line/col from the flagged
-;; node's source span; 0:0 only for synthesized nodes that carry no location).
-(define (selfhost-lint-render-finding [path : String] [finding : LintFinding]) : String
+;; Convert a finding to the common diagnostic model. The diagnostic code is
+;; deliberately the lint suppression key printed by `lint-allow`.
+(define (selfhost-lint-finding-diagnostic
+  [path : String]
+  [finding : LintFinding]) : CompilerDiagnostic
   (let
     [fspan : AstSourceSpan (struct-get finding span)]
-    (string.append
-      path
-      (string.append
-        ":"
-        (string.append
-          (string.int->string (ast-source-span-start-line fspan))
-          (string.append
-            ":"
-            (string.append
-              (string.int->string (ast-source-span-start-col fspan))
-              (string.append ": " (struct-get finding message)))))))))
+    [rule-id : String (struct-get finding rule-id)]
+    [suggestion : String (lint-rule-suggestion (string.copy (& rule-id)))]
+    (compiler-diagnostic-with-help
+      (compiler-diagnostic-with-code
+        (compiler-diagnostic-with-level
+          (compiler-diagnostic-from-ast-span
+            path
+            fspan
+            (struct-get finding message))
+          CompilerDiagnosticWarning)
+        rule-id)
+      suggestion)))
 
-;; Print every finding (one per line) to stdout; returns the number printed.
+;; Rich diagnostics are the human-facing default. `--format flat` preserves the
+;; historical line-oriented form for scripts and editors that parse it.
+(define (selfhost-lint-render-finding
+  [path : String]
+  [source : String]
+  [finding : LintFinding]) : String
+  (let
+    [diag : CompilerDiagnostic (selfhost-lint-finding-diagnostic path finding)]
+    (if selfhost-lint-flat-output
+      (compiler-diagnostic-render diag)
+      (compiler-diagnostic-render-source diag source))))
+
+(define (selfhost-lint-render-finding-line
+  [path : String]
+  [source : String]
+  [finding : LintFinding]) : String
+  (let
+    [rendered : String (selfhost-lint-render-finding path source finding)]
+    (if selfhost-lint-flat-output
+      (string.append rendered "\n")
+      rendered)))
+
+;; Print every finding to stdout; returns the number printed.
 ;; Findings are stored in discovery order, so render backward to preserve the
 ;; historical list-accumulator output order.
 (define (selfhost-lint-print-findings-from
   [path : String]
+  [source : String]
   [items : LintFindings]
   [index : i64]
   [printed : i64]) : i64
@@ -352,14 +424,24 @@
     printed
     (begin
       (io.print-string
-        (string.append
-          (selfhost-lint-render-finding path (lint-findings-ref items index))
-          "\n"))
-      (selfhost-lint-print-findings-from path items (- index 1) (+ printed 1)))))
+        (selfhost-lint-render-finding-line
+          path
+          source
+          (lint-findings-ref items index)))
+      (selfhost-lint-print-findings-from
+        path
+        source
+        items
+        (- index 1)
+        (+ printed 1)))))
 
-(define (selfhost-lint-print-findings [path : String] [items : LintFindings]) : i64
+(define (selfhost-lint-print-findings
+  [path : String]
+  [source : String]
+  [items : LintFindings]) : i64
   (selfhost-lint-print-findings-from
     path
+    source
     items
     (- (lint-findings-count items) 1)
     0))
@@ -3954,13 +4036,12 @@
           (selfhost-lint-package-dead-finding-active? source decl))
           (begin
             (io.print-string
-              (string.append
-                (selfhost-lint-render-finding
-                  path
-                  (lint-dead-code-finding
-                    (struct-get decl name)
-                    (struct-get decl span)))
-                "\n"))
+              (selfhost-lint-render-finding-line
+                path
+                source
+                (lint-dead-code-finding
+                  (struct-get decl name)
+                  (struct-get decl span))))
             (+ printed 1))
           printed)]
       (selfhost-lint-package-dead-print-for-source-from
@@ -4133,7 +4214,7 @@
               name-case)]
           (if (string.eq selfhost-lint-typed-unused-unsafe-error "")
             (begin
-              (selfhost-lint-print-findings input-path findings)
+              (selfhost-lint-print-findings input-path source findings)
               (io.print-string
                 (string.append
                   "lint: "
@@ -4192,7 +4273,7 @@
           (if (string.eq selfhost-lint-typed-unused-unsafe-error "")
             (let
               [ordinary-count : i64
-                (selfhost-lint-print-findings input-path findings)]
+                (selfhost-lint-print-findings input-path source findings)]
               [dead-count : i64
                 (selfhost-lint-package-dead-print-for-source
                   input-path

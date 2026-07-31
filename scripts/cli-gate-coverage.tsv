@@ -1,12 +1,12 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	487
-# count	total	all	annotations	487
+# count	total	all	rows	491
+# count	total	all	annotations	491
 # count	total	all	sources	3
-# count	total	all	source-sites	361
+# count	total	all	source-sites	365
 # count	total	all	expanded-cases	159
-# count	gate	public-tools	rows	306
-# count	gate	public-tools	source-sites	197
+# count	gate	public-tools	rows	310
+# count	gate	public-tools	source-sites	201
 # count	gate	public-tools	expanded-cases	125
 # count	gate	selfhost-cli	rows	79
 # count	gate	selfhost-cli	source-sites	78
@@ -14,15 +14,15 @@
 # count	gate	stage1-wrapper	rows	102
 # count	gate	stage1-wrapper	source-sites	86
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	364
+# count	host	all	rows	368
 # count	host	linux	rows	120
 # count	host	windows	rows	3
-# count	platform	linux	rows	484
-# count	platform	windows	rows	367
+# count	platform	linux	rows	488
+# count	platform	windows	rows	371
 # count	kind	delegated	rows	8
 # count	kind	direct	rows	53
-# count	kind	wrapper	rows	426
-# count	process	compiler	rows	315
+# count	kind	wrapper	rows	430
+# count	process	compiler	rows	319
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -328,8 +328,12 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	selfhost-build-package-mode-staged	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp build --direct --manifest-path <selfhost-pkg>/typelisp.pkg --backend-mode avx2	<selfhost-pkg>/typelisp.pkg	inherited	repository	compiler+native-tools	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Built $(native_arg_path <selfhost-pkg-bin>)	empty	[ -f <selfhost-pkg-asm> ] || fail selfhost package --backend-mode avx2 did not keep assembly;assert_contains <selfhost-pkg-asm> vzeroupper	selfhost-build-package-mode-staged	-
 1	selfhost-run-tool-missing-target	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp run --direct <planner-source> --target	prepared-by-gate	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr run: --target requires a value	[ -f <source> ] || fail backend diagnostic source missing: <source>;[ -f <contains> ] || fail backend diagnostic expectations missing: <contains>	selfhost-run-tool-missing-target	-
 1	backend-quote-runtime-value	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp compile <work-source>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr <expected>;selfhost: assert_contains stderr <expected-rich>	none	backend-quote-runtime-value	-
-1	lint-nested-let	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl	<workdir>/lint_bad.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint_bad.tl:;assert_contains stdout nested let;assert_contains stdout merge bindings;assert_contains stdout lint: 1 finding(s)	empty	none	lint-nested-let	-
+1	lint-nested-let	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl	<workdir>/lint_bad.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout warning[nested-let],location-at-2:3,source-snippet,caret,nested-let-message,merge-bindings-help,lint-1-finding	empty	none	lint-nested-let	-
+1	lint-nested-let-flat	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl --format flat	<workdir>/lint_bad.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint_bad.tl:2:3:nested-let;assert_contains stdout lint: 1 finding(s);assert_not_contains stdout warning-code,help	empty	none	lint-nested-let-flat	-
 1	lint-nested-let-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl --check	<workdir>/lint_bad.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	assert_contains stdout lint_bad.tl:;assert_contains stdout nested let;assert_contains stdout lint: 1 finding(s)	empty	none	lint-nested-let-check	-
+1	lint-displayed-rule-id-suppresses	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad_suppressed.tl --check	<workdir>/lint_bad_suppressed.tl-with-lint-allow:nested-let	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s);assert_not_contains stdout nested-let	empty	none	lint-displayed-rule-id-suppresses	-
+1	lint-format-invalid	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl --format json	<workdir>/lint_bad.tl	inherited	repository	compiler	none	nonzero	empty	assert_contains stderr unsupported-format-json-expected-rich-or-flat	none	lint-format-invalid	-
+1	lint-format-missing	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl --format	<workdir>/lint_bad.tl	inherited	repository	compiler	none	nonzero	empty	assert_contains stderr format-requires-value	none	lint-format-missing	-
 1	lint-clean	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_clean.tl	<workdir>/lint_clean.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-clean	-
 1	lint-clean-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_clean.tl --check	<workdir>/lint_clean.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-clean-check	-
 1	lint-cfg-windows-target	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <check-cfg-src> --target windows-x86_64 --cfg tooling-feature --check	<check-cfg-src>	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-cfg-windows-target	-

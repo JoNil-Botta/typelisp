@@ -6979,13 +6979,14 @@
     (begin
       (while (< index (array.length (struct-get map slots)))
         (begin
-          (array-set!
-            (struct-get map slots)
-            index
-            (tc_i64_i64_map.GeneratedHashmapSlot.Empty))
+          (set!
+            (struct-get (array-ref (struct-get map slots) index) state)
+            (tc_i64_i64_map.GeneratedHashmapSlotState.Empty))
           (set! index (+ index 1))))
       (set! (struct-get map len) 0)
-      (set! (struct-get map deleted) 0))))
+      (set!
+        (struct-get map growth-limit)
+        (tc_i64_i64_map.growth-limit-for (tc_i64_i64_map.capacity (& map)))))))
 
 (define (tc-cache-map-grow-in-owner!
   [map : (&mut map tc_i64_i64_map.Map)]

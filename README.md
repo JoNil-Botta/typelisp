@@ -122,7 +122,8 @@ The following parts are implemented and actively tested:
   through `(Box T)`, and safe task threading.
 - Comptime macros with type reflection, package manifests and lockfiles,
   inline tests, doctests, formatting, linting, documentation generation, and a
-  stdio language server.
+  stdio language server with a deterministic multi-root workspace index and
+  open-document overlays.
 - SPMD `foreach`, `spmd-reduce`, and `spmd-scan` with scalar lowering and
   restricted AVX2/AVX-512 lowering.
 
@@ -170,7 +171,8 @@ remain in migration fixtures, but new code should not imitate them. The
 The [`tools/vs-code-extension`](tools/vs-code-extension) directory contains a
 VS Code extension with syntax highlighting and a stdio language server. It
 provides diagnostics, compiler and lint quick fixes, definition lookup, hover,
-completion, inlay hints, and formatting. See its
+completion, inlay hints, and formatting. The server indexes workspace sources,
+with unsaved open documents overriding disk snapshots. See the extension
 [README](tools/vs-code-extension/README.md) for installation.
 
 ## Contributing

@@ -288,12 +288,8 @@
 (define (package-source-tl-file? [path : String]) : bool
   (string.eq (fs.extension (& path)) "tl"))
 
-(define (package-source-include-file?
-  [path : String]
-  [metadata : fs.FsMetadata]) : bool
-  (and
-    (fs.file-kind-regular? (fs.metadata-kind metadata))
-    (package-source-tl-file? path)))
+(define (package-source-include-kind? [path : String] [kind : fs.FsFileKind]) : bool
+  (and (fs.file-kind-regular? kind) (package-source-tl-file? path)))
 
 (define (package-source-entry-error
   [command : String]
@@ -395,22 +391,23 @@
     (let
       [child-relative : String (package-source-relative-join relative name)]
       [child-path : String (package-source-root-join root child-relative)]
-      (match (fs.try-file-metadata (& child-path))
-        [(fs.ErrFsMetadata error)
+      ;; Do not follow symbolic links or Windows reparse points. Package and
+      ;; workspace discovery must stay inside the lexical root and a directory
+      ;; link back to an ancestor must not turn traversal into a cycle.
+      (match (fs.try-file-kind-no-follow (& child-path))
+        [(fs.ErrFsFileKind error)
           (package-source-entry-error command child-path error)]
-        [(fs.OkFsMetadata metadata)
-          (let
-            [kind : fs.FsFileKind (fs.metadata-kind metadata)]
-            (if (fs.file-kind-directory? kind)
-              (if (package-source-dir-has-manifest? child-path)
-                (ResultPackageSourceList.Ok acc)
-                (package-source-scan-dir command root child-relative acc))
-              (if (package-source-include-file? child-path metadata)
-                (ResultPackageSourceList.Ok
-                  (package-source-vec-insert
-                    acc
-                    (compiler-load-normalize-path child-path)))
-                (ResultPackageSourceList.Ok acc))))]))))
+        [(fs.OkFsFileKind kind)
+          (if (fs.file-kind-directory? kind)
+            (if (package-source-dir-has-manifest? child-path)
+              (ResultPackageSourceList.Ok acc)
+              (package-source-scan-dir command root child-relative acc))
+            (if (package-source-include-kind? child-path kind)
+              (ResultPackageSourceList.Ok
+                (package-source-vec-insert
+                  acc
+                  (compiler-load-normalize-path child-path)))
+              (ResultPackageSourceList.Ok acc)))]))))
 
 (define (package-source-scan-entries-from
   [command : String]
@@ -445,6 +442,109 @@
   [entries : svec.Vec]
   [acc : svec.Vec]) : ResultPackageSourceList
   (package-source-scan-entries-from command root relative entries 0 acc))
+
+;; Discover ordinary package-style TypeLisp sources below an explicit root.
+;; Unlike `package-source-discover-for`, this does not require or parse a
+;; manifest at the root. It exists for tooling such as the LSP workspace index
+;; that receives roots from its protocol while still needing exactly the same
+;; deterministic traversal, exclusion, regular-file, and nested-package rules.
+(define (package-source-discover-root-for [command : String] [root : String]) : ResultPackageSourceList
+  (let
+    [normalized-root : String (compiler-load-normalize-path root)]
+    (match (fs.try-read-dir (& normalized-root))
+      [(fs.ErrIoStringVector error)
+        (package-source-read-dir-error command normalized-root error)]
+      [(fs.OkIoStringVector entries)
+        (package-source-scan-entries
+          command
+          normalized-root
+          ""
+          (package-source-sort-entries entries)
+          (svec.new))])))
+
+;; Return the next normalized path-separator position, or `end`.
+(define (package-source-relative-separator
+  [relative : String]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [index : i64 start]
+    (begin
+      (while (and
+        (< index end)
+        (not (fs.path-separator? (string.string-ref relative index))))
+        (set! index (+ index 1)))
+      index)))
+
+;; Check the directory segments that lead to one source. The root's own
+;; manifest is allowed; a manifest below it is a nested-package boundary.
+(define (package-source-relative-parent-eligible?
+  [root : String]
+  [relative : String]) : bool
+  (let
+    [end : i64 (fs.last-separator-index (& relative))]
+    [cursor : i64 0]
+    [prefix : String ""]
+    [eligible : bool true]
+    (begin
+      (while (and eligible (>= end 0) (< cursor end))
+        (let
+          [separator : i64
+            (package-source-relative-separator relative cursor end)]
+          [name : String
+            (string.substring relative cursor (- separator cursor))]
+          (begin
+            (if (or
+              (= (string.string-length name) 0)
+              (package-source-skip-dir? name))
+              (set! eligible false)
+              (let
+                [next-prefix : String
+                  (package-source-relative-join prefix name)]
+                [parent : String (package-source-root-join root next-prefix)]
+                (begin
+                  (set! prefix next-prefix)
+                  ;; Match recursive discovery: every parent must be a real
+                  ;; directory, never a symlink or Windows reparse point.
+                  (match (fs.try-file-kind-no-follow (& parent))
+                    [(fs.ErrFsFileKind _) (set! eligible false)]
+                    [(fs.OkFsFileKind kind)
+                      (if (and
+                        (fs.file-kind-directory? kind)
+                        (not (package-source-dir-has-manifest? parent)))
+                        unit
+                        (set! eligible false))]))))
+            (set! cursor (+ separator 1)))))
+      eligible)))
+
+;; Parent-policy half of the single-path check. This intentionally does not
+;; require the file itself to exist so an unsaved open document can still be
+;; associated with its workspace root.
+(define (package-source-path-location-eligible-for-root?
+  [root : String]
+  [path : String]) : bool
+  (let
+    [normalized-root : String (compiler-load-normalize-path root)]
+    [normalized-path : String (compiler-load-normalize-path path)]
+    [relative : String
+      (compiler-load-root-relative-path normalized-root normalized-path)]
+    (and
+      (not (string.eq relative normalized-path))
+      (fs.path-safe-relative? (& relative))
+      (package-source-tl-file? normalized-path)
+      (package-source-relative-parent-eligible? normalized-root relative))))
+
+;; Fast single-path counterpart to root discovery for file-watcher events.
+;; The path must additionally be a current regular file.
+(define (package-source-path-eligible-for-root? [root : String] [path : String]) : bool
+  (let
+    [normalized-path : String (compiler-load-normalize-path path)]
+    (and
+      (package-source-path-location-eligible-for-root? root normalized-path)
+      (match (fs.try-file-kind-no-follow (& normalized-path))
+        [(fs.OkFsFileKind kind)
+          (package-source-include-kind? normalized-path kind)]
+        [(fs.ErrFsFileKind _) false]))))
 
 (define (package-source-discover-for
   [command : String]

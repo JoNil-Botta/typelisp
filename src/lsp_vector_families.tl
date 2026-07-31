@@ -51,6 +51,68 @@
 
 (import (vector.vector LspDocument core) as lsp_document_vec)
 
+;; Normalized client workspace identity. `uri` is the canonical file URI
+;; derived from the normalized absolute `path`; client order is preserved.
+(defstruct LspWorkspaceRoot
+  (uri String)
+  (path String))
+
+;; One current source snapshot. Disk text is intentionally not retained:
+;; providers query immutable declaration summaries, while open buffers keep
+;; their authoritative text in `LspDocument`.
+(defstruct LspWorkspaceSource
+  (root-uri String)
+  (root-path String)
+  (uri String)
+  (path String)
+  (module String)
+  (explicit-module bool)
+  (overlay bool)
+  (decls lsp_decl_vec.Vec))
+
+;; Hand-grown dense collections avoid two generated vector-family
+;; instantiations in the self-host compiler. The state snapshot owns their
+;; backing arrays and replaces the whole arena on mutations.
+(defstruct LspWorkspaceRoots
+  (slots (__tl_dyn-array LspWorkspaceRoot))
+  (len i64))
+
+(defstruct LspWorkspaceSources
+  (slots (__tl_dyn-array LspWorkspaceSource))
+  (len i64))
+
+(defstruct LspWorkspaceIndex
+  (roots LspWorkspaceRoots)
+  (sources LspWorkspaceSources))
+
+;; Immutable flattened declaration returned by the workspace query boundary.
+;; Callers receive a value row, never either mutable index collection.
+(defstruct LspWorkspaceDeclRow
+  (root-uri String)
+  (root-path String)
+  (uri String)
+  (path String)
+  (module String)
+  (explicit-module bool)
+  (overlay bool)
+  (decl LspDeclEntry))
+
+(defenum LspWorkspaceDeclLookup
+  (Found LspWorkspaceDeclRow)
+  (Missing))
+
+(defenum LspWorkspaceRootLookup
+  (Found LspWorkspaceRoot)
+  (Missing))
+
+;; Every long-lived LSP collection is owned by `owner-arena`. Mutating
+;; protocol events create a fresh snapshot, swap this aggregate, and destroy
+;; the previous arena so retained memory depends on live state, not history.
+(defstruct LspServerState
+  (owner-arena i64)
+  (documents lsp_document_vec.Vec)
+  (workspace LspWorkspaceIndex))
+
 ;; One candidate `textDocument/foldingRange` result. Positions stay 1-based
 ;; internally like every other LSP scanner here; `kind` is 0 for an unlabelled
 ;; region and 1 for a comment block. `parent` links an open form to the form

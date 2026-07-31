@@ -23,6 +23,7 @@ byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|1
 # Defined safe-code areas that should remain accepted.
 bounds_spmd_comptime_defined|run-exit|tests/safety/bounds_spmd_comptime_defined.tl|42|-
 reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
+signature_lifetime_alias_reborrow_ok|run-exit|tests/safety/signature_lifetime_alias_reborrow_ok.tl|42|-
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 unsafe_syscall_defined|check-ok|tests/safety/unsafe_syscall_defined.tl|-|-
 mutable_reference_reborrow_subscope_ok|check-ok|tests/safety/mutable_reference_reborrow_subscope_ok.tl|-|-
@@ -103,6 +104,8 @@ two_phase_mutable_call_escape_reject|check-fail|tests/safety/two_phase_mutable_c
 two_phase_mutable_call_mutate_reject|check-fail|tests/safety/two_phase_mutable_call_mutate_reject.tl|-|cannot assign to borrowed place `items`
 lifetime_tagged_iterator_escape_reject|check-fail|tests/safety/lifetime_tagged_iterator_escape_reject.tl|-|reference value would escape lexical scope
 lifetime_tagged_iterator_live_mut_reject|check-fail|tests/safety/lifetime_tagged_iterator_live_mut_reject.tl|-|cannot assign to borrowed place `iter.index`
+signature_lifetime_alias_unknown_reject|check-fail|tests/safety/signature_lifetime_alias_unknown_reject.tl|-|typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64)
+signature_lifetime_alias_local_return_reject|check-fail|tests/safety/signature_lifetime_alias_local_return_reject.tl|-|typecheck: borrow lifetime mismatch
 lending_iterator_second_next_live_reject|check-fail|tests/safety/lending_iterator_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
 vector_iter_mut_second_next_live_reject|check-fail|tests/safety/vector_iter_mut_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
 vector_iter_mut_push_live_reject|check-fail|tests/safety/vector_iter_mut_push_live_reject.tl|-|cannot read mutably borrowed place `values`

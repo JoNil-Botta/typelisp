@@ -8100,6 +8100,19 @@
     lifetime-id
     (- (tc-type-env-scoped-stack-len stack) 1)))
 
+(define (tc-type-env-scoped-stack-signature-lifetime-index?
+  [stack : TcTypeEnvScopedStack]
+  [index : i64]
+  [lifetime-id : i64]) : bool
+  (if (< index 0)
+    false
+    (let
+      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      (tc-signature-lifetime-marker-entry?
+        (struct-get slot name-id)
+        (struct-get slot ty)
+        lifetime-id))))
+
 (define (tc-type-env-scoped-visible-marker-kind [name-id : i64] [ty : AstType]) : TcTypeEnvScopedMarkerKind
   (cond
     [(= name-id (tc-unsafe-marker-id)) TcTypeEnvScopedMarkerKind.UnsafeContext]
@@ -8108,6 +8121,8 @@
     [(= name-id (tc-default-boundary-id))
       TcTypeEnvScopedMarkerKind.DefaultBoundary]
     [(= name-id (tc-region-marker-id)) TcTypeEnvScopedMarkerKind.Region]
+    [(= name-id (tc-signature-lifetime-marker-id))
+      TcTypeEnvScopedMarkerKind.Other]
     [(tc-cleanup-owner-marker-entry? name-id ty)
       TcTypeEnvScopedMarkerKind.CleanupOwner]
     [(tc-ordinary-arena-owner-marker-entry? name-id ty)
@@ -8849,8 +8864,19 @@
             (tc-type-env-scoped-stack-find-lifetime-index
               stack
               target-lifetime-id)]
+          [value-signature : bool
+            (tc-type-env-scoped-stack-signature-lifetime-index?
+              stack
+              value-index
+              value-lifetime-id)]
+          [target-signature : bool
+            (tc-type-env-scoped-stack-signature-lifetime-index?
+              stack
+              target-index
+              target-lifetime-id)]
           [result : bool
             (cond
+              [(and value-signature target-signature) false]
               [(>= value-index 0)
                 (and (>= target-index 0) (< value-index target-index))]
               [(>= target-index 0)
@@ -10010,6 +10036,9 @@
 
 (define (tc-region-marker-id) : i64
   cbi.compiler-builtin-id-tc-active-region)
+
+(define (tc-signature-lifetime-marker-id) : i64
+  (intern "\n__typelisp_signature_lifetime_marker"))
 
 (define (tc-cleanup-owner-marker-id) : i64
   cbi.compiler-builtin-id-tc-cleanup-owner)
@@ -14040,12 +14069,23 @@
 ;; list and outlive nested stack bindings or scoped arenas. The default program
 ;; arena is inferred for untagged aggregate handles, so it has no lexical
 ;; binder in this environment walk.
+(define (tc-signature-lifetime-marker-entry?
+  [key : i64]
+  [ty : AstType]
+  [lifetime-id : i64]) : bool
+  (if (= key (tc-signature-lifetime-marker-id))
+    (match ty
+      [(AstType.Var lifetime) (and (>= lifetime-id 0) (= lifetime lifetime-id))]
+      [_ false])
+    false))
+
 (define (tc-env-binding-matches-lifetime-id?
   [key : i64]
   [ty : AstType]
   [lifetime-id : i64]) : bool
   (cond
     [(= key lifetime-id) true]
+    [(tc-signature-lifetime-marker-entry? key ty lifetime-id) true]
     [(= key (tc-region-marker-id))
       (match ty
         [(AstType.Var region) (and (>= lifetime-id 0) (= region lifetime-id))]
@@ -14106,6 +14146,20 @@
         true
         (tc-lifetime-visible-scan-id? rest lifetime-id))]))
 
+(define (tc-lifetime-nearest-binding-signature-scan-id?
+  [env : TcTypeEnv]
+  [lifetime-id : i64]) : bool
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) false]
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+      (if scan-through
+        (tc-lifetime-nearest-binding-signature-scan-id? rest lifetime-id)
+        false)]
+    [(TcTypeEnvView.Bind key ty rest)
+      (if (tc-env-binding-matches-lifetime-id? key ty lifetime-id)
+        (tc-signature-lifetime-marker-entry? key ty lifetime-id)
+        (tc-lifetime-nearest-binding-signature-scan-id? rest lifetime-id))]))
+
 (define (tc-lifetime-visible-persistent-id?
   [env : TcTypeEnv]
   [lifetime-id : i64]) : bool
@@ -14141,7 +14195,8 @@
   [env : TcTypeEnv]
   [lifetime-id : i64]
   [target-id : i64]
-  [seen-target : bool]) : bool
+  [seen-target : bool]
+  [signature-only : bool]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
     [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
@@ -14150,35 +14205,42 @@
           rest
           lifetime-id
           target-id
-          seen-target)
+          seen-target
+          signature-only)
         false)]
     [(TcTypeEnvView.Bind key ty rest)
-      (if (tc-env-binding-matches-lifetime-id? key ty lifetime-id)
+      (if (if signature-only
+        (tc-signature-lifetime-marker-entry? key ty lifetime-id)
+        (tc-env-binding-matches-lifetime-id? key ty lifetime-id))
         seen-target
         (tc-lifetime-outlives-binding-scan-inner-id
           rest
           lifetime-id
           target-id
-          (or seen-target (= key target-id))))]))
+          (or seen-target (= key target-id))
+          signature-only))]))
 
 (define (tc-lifetime-outlives-binding-scan-id
   [env : TcTypeEnv]
   [lifetime-id : i64]
   [target-id : i64]
-  [seen-target : bool]) : bool
+  [seen-target : bool]
+  [signature-only : bool]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
       (tc-lifetime-outlives-binding-scan-inner-id
         rest
         lifetime-id
         target-id
-        seen-target)]
+        seen-target
+        signature-only)]
     [_
       (tc-lifetime-outlives-binding-scan-inner-id
         env
         lifetime-id
         target-id
-        seen-target)]))
+        seen-target
+        signature-only)]))
 
 (define (tc-lifetime-outlives-binding-persistent-id?
   [env : TcTypeEnv]
@@ -14187,11 +14249,25 @@
   (if (or (< lifetime-id 0) (< target-id 0))
     false
     (let
+      [signature-lifetime : bool
+        (tc-lifetime-nearest-binding-signature-scan-id? env lifetime-id)]
       [lifetime-rank : i64 (tc-ordinary-binding-rank-id-from env lifetime-id 0)]
       [target-rank : i64 (tc-ordinary-binding-rank-id-from env target-id 0)]
-      (if (and (>= lifetime-rank 0) (>= target-rank 0))
-        (> lifetime-rank target-rank)
-        (tc-lifetime-outlives-binding-scan-id env lifetime-id target-id false)))))
+      (if signature-lifetime
+        (tc-lifetime-outlives-binding-scan-id
+          env
+          lifetime-id
+          target-id
+          false
+          true)
+        (if (and (>= lifetime-rank 0) (>= target-rank 0))
+          (> lifetime-rank target-rank)
+          (tc-lifetime-outlives-binding-scan-id
+            env
+            lifetime-id
+            target-id
+            false
+            false))))))
 
 (define (tc-lifetime-outlives-binding-id?
   [env : TcTypeEnv]
@@ -14224,7 +14300,9 @@
   [env : TcTypeEnv]
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]
-  [seen-target : bool]) : bool
+  [seen-target : bool]
+  [value-signature : bool]
+  [target-signature : bool]) : bool
   (if (and (>= value-lifetime-id 0) (= value-lifetime-id target-lifetime-id))
     true
     (match (tc-type-env-view env)
@@ -14235,10 +14313,14 @@
             rest
             value-lifetime-id
             target-lifetime-id
-            seen-target)
+            seen-target
+            value-signature
+            target-signature)
           false)]
       [(TcTypeEnvView.Bind key ty rest)
-        (if (tc-env-binding-matches-lifetime-id? key ty value-lifetime-id)
+        (if (if value-signature
+          (tc-signature-lifetime-marker-entry? key ty value-lifetime-id)
+          (tc-env-binding-matches-lifetime-id? key ty value-lifetime-id))
           seen-target
           (tc-lifetime-outlives-lifetime-scan-inner-id
             rest
@@ -14246,26 +14328,36 @@
             target-lifetime-id
             (or
               seen-target
-              (tc-env-binding-matches-lifetime-id? key ty target-lifetime-id))))])))
+              (if target-signature
+                (tc-signature-lifetime-marker-entry? key ty target-lifetime-id)
+                (tc-env-binding-matches-lifetime-id? key ty target-lifetime-id)))
+            value-signature
+            target-signature))])))
 
 (define (tc-lifetime-outlives-lifetime-scan-id
   [env : TcTypeEnv]
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]
-  [seen-target : bool]) : bool
+  [seen-target : bool]
+  [value-signature : bool]
+  [target-signature : bool]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
       (tc-lifetime-outlives-lifetime-scan-inner-id
         rest
         value-lifetime-id
         target-lifetime-id
-        seen-target)]
+        seen-target
+        value-signature
+        target-signature)]
     [_
       (tc-lifetime-outlives-lifetime-scan-inner-id
         env
         value-lifetime-id
         target-lifetime-id
-        seen-target)]))
+        seen-target
+        value-signature
+        target-signature)]))
 
 (define (tc-lifetime-outlives-lifetime-persistent-id?
   [env : TcTypeEnv]
@@ -14276,17 +14368,36 @@
     (if (= value-lifetime-id target-lifetime-id)
       true
       (let
+        [value-signature : bool
+          (tc-lifetime-nearest-binding-signature-scan-id? env value-lifetime-id)]
+        [target-signature : bool
+          (tc-lifetime-nearest-binding-signature-scan-id?
+            env
+            target-lifetime-id)]
         [value-rank : i64
           (tc-ordinary-binding-rank-id-from env value-lifetime-id 0)]
         [target-rank : i64
           (tc-ordinary-binding-rank-id-from env target-lifetime-id 0)]
-        (if (and (>= value-rank 0) (>= target-rank 0))
-          (> value-rank target-rank)
-          (tc-lifetime-outlives-lifetime-scan-id
-            env
-            value-lifetime-id
-            target-lifetime-id
-            false))))))
+        (cond
+          [(and value-signature target-signature) false]
+          [(or value-signature target-signature)
+            (tc-lifetime-outlives-lifetime-scan-id
+              env
+              value-lifetime-id
+              target-lifetime-id
+              false
+              value-signature
+              target-signature)]
+          [(and (>= value-rank 0) (>= target-rank 0))
+            (> value-rank target-rank)]
+          [else
+            (tc-lifetime-outlives-lifetime-scan-id
+              env
+              value-lifetime-id
+              target-lifetime-id
+              false
+              false
+              false)])))))
 
 (define (tc-lifetime-outlives-lifetime-id?
   [env : TcTypeEnv]
@@ -24481,40 +24592,180 @@
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
       [(ResultTcType.Err message) (ResultTcUnit.Err message)])))
 
+(define (tc-signature-lifetime-type-list-collect-into
+  [types : AstTypeList]
+  [skip-id : i64]
+  [out : TcNameIdList]) : TcNameIdList
+  (tc-signature-lifetime-type-list-collect-at (& types) skip-id 0 out))
+
+(define (tc-signature-lifetime-type-list-collect-at
+  [types : (& types AstTypeList)]
+  [skip-id : i64]
+  [index : i64]
+  [out : TcNameIdList]) : TcNameIdList
+  (if (>= index (ast-type-list-len types))
+    out
+    (tc-signature-lifetime-type-list-collect-at
+      types
+      skip-id
+      (+ index 1)
+      (tc-signature-lifetime-type-collect-into
+        (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))
+        skip-id
+        out))))
+
+(define (tc-signature-lifetime-type-collect-into
+  [ty : AstType]
+  [skip-id : i64]
+  [out : TcNameIdList]) : TcNameIdList
+  ;; Nested function types introduce their own signature lifetime scope.
+  (match ty
+    [(AstType.Func _ _) out]
+    [(AstType.Tuple elems)
+      (tc-signature-lifetime-type-list-collect-into (box-get elems) skip-id out)]
+    [(AstType.Array elem _)
+      (tc-signature-lifetime-type-collect-into (ty-node-get elem) skip-id out)]
+    [(AstType.DynArray elem)
+      (tc-signature-lifetime-type-collect-into (ty-node-get elem) skip-id out)]
+    [(AstType.Box elem)
+      (tc-signature-lifetime-type-collect-into (ty-node-get elem) skip-id out)]
+    [(AstType.Ptr elem)
+      (tc-signature-lifetime-type-collect-into (ty-node-get elem) skip-id out)]
+    [(AstType.MutPtr elem)
+      (tc-signature-lifetime-type-collect-into (ty-node-get elem) skip-id out)]
+    [(AstType.Ref lifetime inner)
+      (tc-signature-lifetime-type-collect-into
+        (ty-node-get inner)
+        skip-id
+        (if (= lifetime skip-id)
+          out
+          (tc-name-id-list-add out lifetime)))]
+    [(AstType.MutRef lifetime inner)
+      (tc-signature-lifetime-type-collect-into
+        (ty-node-get inner)
+        skip-id
+        (if (= lifetime skip-id)
+          out
+          (tc-name-id-list-add out lifetime)))]
+    [(AstType.Region _ inner)
+      (tc-signature-lifetime-type-collect-into (ty-node-get inner) skip-id out)]
+    [(AstType.EnumArgs _ lifetimes)
+      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+    [(AstType.StructArgs _ lifetimes)
+      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+    [(AstType.VarArgs _ lifetimes)
+      (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
+    [(AstType.Consume inner)
+      (tc-signature-lifetime-type-collect-into (ty-node-get inner) skip-id out)]
+    [_ out]))
+
+(define (tc-param-list-has-name-id-at?
+  [params : (& params AstParamList)]
+  [name-id : i64]
+  [index : i64]) : bool
+  (if (>= index (ast-param-list-len params))
+    false
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name _ _ _)
+        (or
+          (= name name-id)
+          (tc-param-list-has-name-id-at? params name-id (+ index 1)))])))
+
+(define (tc-signature-lifetime-needs-marker?
+  [params : (& params AstParamList)]
+  [lifetime-id : i64]) : bool
+  (and
+    (>= lifetime-id 0)
+    (not (tc-elaborated-lifetime-hidden? lifetime-id))
+    (not (string.eq (intern-str lifetime-id) "program"))
+    (not (tc-param-list-has-name-id-at? params lifetime-id 0))))
+
+(define (tc-bind-signature-lifetime-markers
+  [env : TcTypeEnv]
+  [params : (& params AstParamList)]
+  [lifetimes : TcNameIdList]) : TcTypeEnv
+  (match lifetimes
+    [(TcNameIdList.Nil) env]
+    [(TcNameIdList.Cons lifetime rest)
+      (let
+        [next-env : TcTypeEnv
+          (if (tc-signature-lifetime-needs-marker? params lifetime)
+            (tc-bind-runtime-marker-id
+              env
+              (tc-signature-lifetime-marker-id)
+              (AstType.Var lifetime)
+              TcTypeEnvScopedMarkerKind.Other)
+            env)]
+        (tc-bind-signature-lifetime-markers next-env params (box-get rest)))]))
+
+(define (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
+  [carrier : TcTypeEnvScopedCarrier (:consume)]
+  [params : (& params AstParamList)]
+  [lifetimes : TcNameIdList]) : TcTypeEnvScopedCarrier
+  (match lifetimes
+    [(TcNameIdList.Nil) carrier]
+    [(TcNameIdList.Cons lifetime rest)
+      (let
+        [next-carrier : TcTypeEnvScopedCarrier
+          (if (tc-signature-lifetime-needs-marker? params lifetime)
+            (tc-type-env-scoped-carrier-with-sidecar
+              carrier
+              (tc-type-env-scoped-sidecar-bind-marker-id
+                (struct-get carrier sidecar)
+                (tc-signature-lifetime-marker-id)
+                (AstType.Var lifetime)
+                TcTypeEnvScopedMarkerKind.Other))
+            carrier)]
+        (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
+          next-carrier
+          params
+          (box-get rest)))]))
+
 (define (tc-bind-params
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : AstParamList]) : TcTypeEnv
-  (tc-bind-params-at ctx env (& params) 0))
+  (tc-bind-params-at ctx env (& params) 0 TcNameIdList.Nil))
 
 (define (tc-bind-params-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : (& params AstParamList)]
-  [index : i64]) : TcTypeEnv
+  [index : i64]
+  [lifetimes : TcNameIdList]) : TcTypeEnv
   (if (>= index (ast-param-list-len params))
-    env
+    (tc-bind-signature-lifetime-markers env params lifetimes)
     (match (ast-param-list-get params index (ast-param-fallback))
       [(AstParam.Param name ty _ _)
         (tc-bind-params-at
           ctx
           (tc-bind-id env name (tc-resolve-type ctx ty))
           params
-          (+ index 1))])))
+          (+ index 1)
+          (tc-signature-lifetime-type-collect-into ty name lifetimes))])))
 
 (define (tc-type-env-scoped-carrier-bind-params
   [ctx : TcContext]
   [carrier : TcTypeEnvScopedCarrier (:consume)]
   [params : AstParamList]) : TcTypeEnvScopedCarrier
-  (tc-type-env-scoped-carrier-bind-params-at ctx carrier (& params) 0))
+  (tc-type-env-scoped-carrier-bind-params-at
+    ctx
+    carrier
+    (& params)
+    0
+    TcNameIdList.Nil))
 
 (define (tc-type-env-scoped-carrier-bind-params-at
   [ctx : TcContext]
   [carrier : TcTypeEnvScopedCarrier (:consume)]
   [params : (& params AstParamList)]
-  [index : i64]) : TcTypeEnvScopedCarrier
+  [index : i64]
+  [lifetimes : TcNameIdList]) : TcTypeEnvScopedCarrier
   (if (>= index (ast-param-list-len params))
-    carrier
+    (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
+      carrier
+      params
+      lifetimes)
     (match (ast-param-list-get params index (ast-param-fallback))
       [(AstParam.Param name ty _ _)
         (tc-type-env-scoped-carrier-bind-params-at
@@ -24524,7 +24775,8 @@
             name
             (tc-resolve-type ctx ty))
           params
-          (+ index 1))])))
+          (+ index 1)
+          (tc-signature-lifetime-type-collect-into ty name lifetimes))])))
 
 (cfg
   tc-env-scoped-dual-verify

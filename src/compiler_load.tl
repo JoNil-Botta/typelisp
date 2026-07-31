@@ -2343,6 +2343,21 @@
     [(AstImportKind.Macro _ _) false]
     [(AstImportKind.MacroDecls _ _) false]))
 
+(define (compiler-load-package-source-expected-module
+  [kind : AstImportKind]
+  [expected-module : AstMaybeModuleName]
+  [package-externs : bool]) : AstMaybeModuleName
+  (if package-externs
+    (match kind
+      ;; A dependency alias selects a package root and source path; it is not
+      ;; the dependency source's public module identity. Let an explicit module
+      ;; declaration win, while a moduleless source keeps the dotted fallback.
+      [(AstImportKind.Module) AstMaybeModuleName.No]
+      ;; A legacy path import's `module ...` tail is an explicit assertion and
+      ;; must continue to reject a mismatched provider.
+      [_ expected-module])
+    expected-module))
+
 (define (compiler-load-macro-import-kind? [kind : AstImportKind]) : bool
   (match kind
     [(AstImportKind.Macro _ _) true]
@@ -10391,6 +10406,11 @@
                         import-path
                         expected-module
                         deps)]
+                    [source-expected-module : AstMaybeModuleName
+                      (compiler-load-package-source-expected-module
+                        kind
+                        expected-module
+                        package-externs)]
                     [fallback : String
                       (compiler-load-canonical-module-id-from-import
                         kind
@@ -10459,7 +10479,7 @@
                           resolved
                           seen
                           stdlib-roots
-                          expected-module
+                          source-expected-module
                           cfgs
                           fallback
                           "")
@@ -12991,6 +13011,50 @@
               "_tl_math_src_add_add")
             (compiler-load-test-seen-contains? seen "math.src.add")
             (not (compiler-load-test-seen-contains? seen dep)))]
+        [(ResultCompilerLoadWithPaths.Err _) false]))))
+
+(define (compiler-load-package-dotted-explicit-module-id-ok?) : bool
+  (let
+    [base : String "target/cl_pkg_dotted_explicit_id"]
+    [app-root : String (compiler-load-join-root-path base "app")]
+    [app-src : String (compiler-load-join-root-path app-root "src")]
+    [math-root : String (compiler-load-join-root-path base "math")]
+    [math-src : String (compiler-load-join-root-path math-root "src")]
+    [entry : String (compiler-load-join-root-path app-src "main.tl")]
+    [dep : String (compiler-load-join-root-path math-src "add.tl")]
+    [deps : CompilerPkgDeps
+      (compiler-pkg-deps-cons "math" "../math" (compiler-pkg-deps-empty))]
+    (begin
+      (compiler-load-test-mkdir base)
+      (compiler-load-test-mkdir app-root)
+      (compiler-load-test-mkdir app-src)
+      (compiler-load-test-mkdir math-root)
+      (compiler-load-test-mkdir math-src)
+      (compiler-load-write-file-text
+        (compiler-load-join-root-path math-root "typelisp.pkg")
+        "(package (name \"math\") (version \"1\") (kind staticlib) (entry \"src/add.tl\"))")
+      (compiler-load-write-file-text
+        dep
+        "(module arithmetic.public)
+(define (add [x : i64]) : i64 (+ x 1))")
+      (compiler-load-write-file-text
+        entry
+        "(module pkg.dotted.explicit.entry)
+(import math.src.add as math_add)
+(define (main) : i64 (math_add.add 1))")
+      (match (compiler-load-package-file-with-paths-and-roots
+        entry
+        (sym_i64_env.sym-i64-empty)
+        (svec.new)
+        app-root
+        deps)
+        [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
+          (and
+            (compiler-load-decl-list-has-import-alias?
+              decls
+              "arithmetic.public"
+              "math_add")
+            (compiler-load-test-seen-contains? seen "arithmetic.public"))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-load-generated-meta-preserved-ok?) : bool
@@ -16713,6 +16777,11 @@
       (compiler-load-package-moduleless-pkg-import-id-ok?)
       (return
         (io.panic "compiler-load: package moduleless pkg import smoke mismatch")))
+    (unless
+      (compiler-load-package-dotted-explicit-module-id-ok?)
+      (return
+        (io.panic
+          "compiler-load: package dotted explicit module smoke mismatch")))
     (unless
       (compiler-load-generated-meta-preserved-ok?)
       (return

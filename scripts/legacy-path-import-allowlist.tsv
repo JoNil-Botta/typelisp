@@ -105,15 +105,7 @@ src/tests/test_cli_spawn_error_smoke.tl	1
 src/tests/test_cli_stdlib_env_smoke.tl	1
 src/tests/tlci_loader_smoke.tl	1
 src/tlci_loader.tl	1
-tests/inline/hashmap_macro_aggregate_modules.tl	2
-tests/integration/compile_profile_cross_file_single_compilation.tl	3
-tests/integration/compile_profile_macro_detach_unchanged.tl	1
 tests/integration/compiler_arena_debug.tl	1
-tests/integration/comptime_module_value_reflection.tl	1
-tests/integration/consume_parameters.tl	1
-tests/integration/include_str_comptime.tl	1
-tests/safety/consume_parameter_qualified_struct_reject.tl	1
-tests/spmd/package_consumer/src/main.tl	1
 tests/tlci/corpus_emit.tl	1
 tools/compiler-surface-ast-smoke.tl	1
 tools/embedded-stdlib-tlci/build-surface.tl	1

@@ -1,0 +1,13 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/snapshot.tl","languageId":"typelisp","version":1,"text":"(define answer : i64 1)\n(define (use) : i64 answer)"}}},
+  {"jsonrpc":"2.0","id":2,"method":"tl/check","params":{"textDocument":{"uri":"${{TMP_URI}}/snapshot.tl"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/snapshot.tl","version":2},"contentChanges":[{"text":"(define answer : i64 true)\n(define (use) : i64 answer)"}]}},
+  {"jsonrpc":"2.0","id":3,"method":"tl/check","params":{"textDocument":{"uri":"${{TMP_URI}}/snapshot.tl"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/snapshot.tl","version":3},"contentChanges":[{"text":"(define answer : i64 2)\n(define (use) : i64 answer)"}]}},
+  {"jsonrpc":"2.0","id":4,"method":"tl/check","params":{"textDocument":{"uri":"${{TMP_URI}}/snapshot.tl"}}},
+  {"jsonrpc":"2.0","id":5,"method":"textDocument/definition","params":{"textDocument":{"uri":"${{TMP_URI}}/snapshot.tl"},"position":{"line":1,"character":22}}},
+  {"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"${{TMP_URI}}/snapshot.tl"}}},
+  {"jsonrpc":"2.0","id":6,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

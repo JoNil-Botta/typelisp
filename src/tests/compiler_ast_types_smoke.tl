@@ -5,6 +5,33 @@
 (import stdlib.arena)
 (import stdlib.string)
 
+(define (compiler-ast-lazy-dedup-storage-smoke?) : bool
+  (let
+    [caller : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
+    [initially-lazy? : bool
+      (and
+        (= ast.ty-node-dedup-storage-arena 0)
+        (= (array-length ast.ty-node-dedup-slots) 0))]
+    [_set-scratch : unit
+      (unsafe
+        (arena.set! scratch))]
+    [_storage : unit (ast.ty-node-dedup-storage-ensure!)]
+    [restored-caller? : bool (arena.eq? (arena.current) scratch)]
+    [exact-capacity? : bool
+      (= (array-length ast.ty-node-dedup-slots) ast.ty-node-dedup-capacity)]
+    (begin
+      (unsafe
+        (arena.set! caller))
+      (unsafe
+        (arena.destroy scratch))
+      (array-set! ast.ty-node-dedup-slots 0 61)
+      (let
+        [survived? : bool (= (array-ref ast.ty-node-dedup-slots 0) 61)]
+        (begin
+          (array-set! ast.ty-node-dedup-slots 0 0)
+          (and initially-lazy? restored-caller? exact-capacity? survived?))))))
+
 (define (compiler-ast-state-expr-int-lit?
   [pool : ast.AstExprNodePoolState]
   [id : i64]
@@ -1320,6 +1347,7 @@
 
 (define (main) : i64
   (begin
+    (unless (compiler-ast-lazy-dedup-storage-smoke?) (return 18))
     (unless (= (ast.compiler-ast-smoke) 23) (return 2))
     (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))
     (unless (compiler-ast-active-context-sync-smoke?) (return 4))

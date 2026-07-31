@@ -1452,22 +1452,74 @@
 ;; hashes, no table) and membership is confirmed by an EXACT byte compare against
 ;; the arena, so a hash collision can never cause a wrong carry (it just probes
 ;; on) -- soundness does not rely on hash uniqueness. offset -1 = empty slot.
+(define compiler-backend-lazy-table-arena : i64
+  0)
+
+;; Large backend tables are not needed until final emission. Give their
+;; first-use allocations a dedicated persistent arena so a caller's transient
+;; compile arena cannot reclaim global backing storage.
+(define (compiler-backend-lazy-table-arena-ensure!) : i64
+  (if (= compiler-backend-lazy-table-arena 0)
+    (begin
+      (set! compiler-backend-lazy-table-arena (arena.tl_arena_make_small))
+      compiler-backend-lazy-table-arena)
+    compiler-backend-lazy-table-arena))
+
+(define (compiler-backend-lazy-table-arena-finish!
+  [previous : i64]
+  [owner : i64]) : unit
+  (let
+    [head : i64 (arena.tl_arena_current)]
+    (begin
+      (set! compiler-backend-lazy-table-arena head)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous owner)
+            head
+            previous))))))
+
 (define compiler-backend-peephole-carry-safe-capacity : i64
   262144)
 (define compiler-backend-peephole-carry-safe-bytes-capacity : i64
   16777216)
 (define compiler-backend-peephole-carry-safe-offsets : (Array i64)
-  (array.make-array i64 262144))
+  (array.make-array i64 0))
 (define compiler-backend-peephole-carry-safe-lengths : (Array i64)
-  (array.make-array i64 262144))
+  (array.make-array i64 0))
 (define compiler-backend-peephole-carry-safe-bytes : (Array u8)
-  (array.make-array u8 16777216))
+  (array.make-array u8 0))
 (define compiler-backend-peephole-carry-safe-bytes-count : i64
   0)
+
+(define (compiler-backend-peephole-carry-safe-storage-ensure!) : unit
+  (if (=
+    (array-length compiler-backend-peephole-carry-safe-offsets)
+    compiler-backend-peephole-carry-safe-capacity)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (compiler-backend-lazy-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set!
+          compiler-backend-peephole-carry-safe-offsets
+          (array.make-array i64 compiler-backend-peephole-carry-safe-capacity))
+        (set!
+          compiler-backend-peephole-carry-safe-lengths
+          (array.make-array i64 compiler-backend-peephole-carry-safe-capacity))
+        (set!
+          compiler-backend-peephole-carry-safe-bytes
+          (array.make-array
+            u8
+            compiler-backend-peephole-carry-safe-bytes-capacity))
+        (compiler-backend-lazy-table-arena-finish! previous owner)))))
 
 ;; Clear the table: mark every slot empty (offset -1) and rewind the arena.
 (define (compiler-backend-peephole-carry-safe-reset!) : unit
   (let
+    [_storage : unit (compiler-backend-peephole-carry-safe-storage-ensure!)]
     [cap : i64 compiler-backend-peephole-carry-safe-capacity]
     [i : i64 0]
     (begin
@@ -10099,15 +10151,51 @@
 (define compiler-backend-slot-cache-capacity : i64
   16384)
 (define compiler-backend-slot-cache-values : (Array String)
-  (array.make-array String 16384))
+  (array.make-array String 0))
 (define compiler-backend-slot-cache-epochs : (Array i64)
-  (array.make-array i64 16384))
+  (array.make-array i64 0))
 
 ;; Shared by the frame-offset cache below: one bump retires both caches.
 (define compiler-backend-slot-cache-epoch : i64
   1)
+(define compiler-backend-frame-offset-cache-values : (Array String)
+  (array.make-array String 0))
+(define compiler-backend-frame-offset-cache-epochs : (Array i64)
+  (array.make-array i64 0))
+
+(define (compiler-backend-slot-cache-storage-ensure!) : unit
+  (if (=
+    (array-length compiler-backend-slot-cache-values)
+    compiler-backend-slot-cache-capacity)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (compiler-backend-lazy-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set!
+          compiler-backend-slot-cache-values
+          (array.make-array String compiler-backend-slot-cache-capacity))
+        (set!
+          compiler-backend-slot-cache-epochs
+          (array.make-array i64 compiler-backend-slot-cache-capacity))
+        (set!
+          compiler-backend-frame-offset-cache-values
+          (array.make-array String compiler-backend-slot-cache-capacity))
+        (set!
+          compiler-backend-frame-offset-cache-epochs
+          (array.make-array i64 compiler-backend-slot-cache-capacity))
+        (compiler-backend-lazy-table-arena-finish! previous owner)))))
 
 (define (compiler-backend-slot-cache-reset!) : unit
+  (begin
+    (compiler-backend-slot-cache-storage-ensure!)
+    (compiler-backend-immediate-cache-storage-ensure!)
+    (compiler-backend-slot-cache-epoch-bump!)))
+
+(define (compiler-backend-slot-cache-epoch-bump!) : unit
   (set!
     compiler-backend-slot-cache-epoch
     (+ compiler-backend-slot-cache-epoch 1)))
@@ -10139,11 +10227,6 @@
 ;; multiple of 8 down to -131072 shares one rendered instance per offset;
 ;; anything else (non-negative or not slot-aligned) falls back to rendering
 ;; fresh.
-(define compiler-backend-frame-offset-cache-values : (Array String)
-  (array.make-array String 16384))
-(define compiler-backend-frame-offset-cache-epochs : (Array i64)
-  (array.make-array i64 16384))
-
 (define (compiler-backend-frame-offset [offset : i64]) : String
   (begin
     (set! compiler-backend-frame-slot-referenced true)
@@ -12041,9 +12124,27 @@
 ;; guarded by the same compiler-backend-slot-cache-epoch and retired by the
 ;; same reset boundaries. Out-of-window values render fresh.
 (define compiler-backend-immediate-cache-values : (Array String)
-  (array.make-array String 8192))
+  (array.make-array String 0))
 (define compiler-backend-immediate-cache-epochs : (Array i64)
-  (array.make-array i64 8192))
+  (array.make-array i64 0))
+
+(define (compiler-backend-immediate-cache-storage-ensure!) : unit
+  (if (= (array-length compiler-backend-immediate-cache-values) 8192)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (compiler-backend-lazy-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set!
+          compiler-backend-immediate-cache-values
+          (array.make-array String 8192))
+        (set!
+          compiler-backend-immediate-cache-epochs
+          (array.make-array i64 8192))
+        (compiler-backend-lazy-table-arena-finish! previous owner)))))
 
 (define (compiler-backend-immediate-render [n : i64]) : String
   (if (and (>= n -4096) (< n 4096))
@@ -53919,7 +54020,7 @@
 
 (define (compiler-backend-clear-function-emit-state!) : unit
   (begin
-    (compiler-backend-slot-cache-reset!)
+    (compiler-backend-slot-cache-epoch-bump!)
     (set! compiler-backend-emit-assignment-index-active false)
     (set! compiler-backend-rax-override-var -1)
     (set! compiler-backend-rax-forward-pending-var -1)
@@ -53986,7 +54087,7 @@
     ;; emission runs in a scratch arena, so cached values must not survive
     ;; across functions.
     [_cache-before : unit (compiler-backend-user-symbol-cache-reset!)]
-    [_slot-cache-before : unit (compiler-backend-slot-cache-reset!)]
+    [_slot-cache-before : unit (compiler-backend-slot-cache-epoch-bump!)]
     [result : ResultCompilerBackend
       (with-escape
         (arena.Arena scratch)
@@ -54009,7 +54110,7 @@
           true))]
     (begin
       (compiler-backend-user-symbol-cache-reset!)
-      (compiler-backend-slot-cache-reset!)
+      (compiler-backend-slot-cache-epoch-bump!)
       result)))
 
 ;; Keep the direct path available for A/B experiments by raising
@@ -60808,16 +60909,42 @@
 (define compiler-backend-peephole-owner-global-bytes-capacity : i64
   1048576)
 (define compiler-backend-peephole-owner-global-offsets : (Array i64)
-  (array.make-array i64 16384))
+  (array.make-array i64 0))
 (define compiler-backend-peephole-owner-global-lengths : (Array i64)
-  (array.make-array i64 16384))
+  (array.make-array i64 0))
 (define compiler-backend-peephole-owner-global-bytes : (Array u8)
-  (array.make-array u8 1048576))
+  (array.make-array u8 0))
 (define compiler-backend-peephole-owner-global-bytes-count : i64
   0)
 
+(define (compiler-backend-peephole-owner-global-storage-ensure!) : unit
+  (if (=
+    (array-length compiler-backend-peephole-owner-global-offsets)
+    compiler-backend-peephole-owner-global-capacity)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (compiler-backend-lazy-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set!
+          compiler-backend-peephole-owner-global-offsets
+          (array.make-array i64 compiler-backend-peephole-owner-global-capacity))
+        (set!
+          compiler-backend-peephole-owner-global-lengths
+          (array.make-array i64 compiler-backend-peephole-owner-global-capacity))
+        (set!
+          compiler-backend-peephole-owner-global-bytes
+          (array.make-array
+            u8
+            compiler-backend-peephole-owner-global-bytes-capacity))
+        (compiler-backend-lazy-table-arena-finish! previous owner)))))
+
 (define (compiler-backend-peephole-owner-global-reset!) : unit
   (let
+    [_storage : unit (compiler-backend-peephole-owner-global-storage-ensure!)]
     [cap : i64 compiler-backend-peephole-owner-global-capacity]
     [i : i64 0]
     (begin

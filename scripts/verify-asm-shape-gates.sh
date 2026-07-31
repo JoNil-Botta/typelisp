@@ -522,6 +522,42 @@ check_hashmap_get_leaf_caller_saved() {
     assert_not_matches "$_body" '\(%rsp\)|\(%rbp\)' hashmap-get-leaf-caller-saved
 }
 
+check_hashmap_slot_value_update() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "hashmap_slot_update_$_suffix" \
+            tests/integration/hashmap_slot_update_shape.tl "$_target")
+        _scalar=$(function_body "$_asm" \
+            _tl_hashmap_slot_update_shape_stdlib_hashmap_generated_i64_i64_set_occupied_value_bang)
+        _general=$(function_body "$_asm" \
+            _tl_hashmap_slot_update_shape_stdlib_hashmap_generated_String_i64_set_occupied_value_bang)
+
+        # The scalar and general slots retain their 24- and 32-byte layouts.
+        assert_contains "$_scalar" 'imulq $24' "hashmap-scalar-slot-stride-$_target"
+        assert_contains "$_general" 'shlq $5' "hashmap-general-slot-stride-$_target"
+
+        # Both paths guard on Occupied at state offset 0 and perform exactly one
+        # payload write, to value offset 16. In particular, neither rewrites the
+        # key at offset 8, the state, nor the general-family hash at offset 24.
+        assert_contains "$_scalar" 'cmpq $2, (%rax)' "hashmap-scalar-update-state-$_target"
+        assert_contains "$_general" 'cmpq $2, (%rax)' "hashmap-general-update-state-$_target"
+        assert_regex_count_eq "$_scalar" \
+            '^[[:space:]]+movq %r[a-z0-9]+, 16\(%rax\)$' 1 \
+            "hashmap-scalar-update-value-$_target"
+        assert_regex_count_eq "$_general" \
+            '^[[:space:]]+movq %r[a-z0-9]+, 16\(%rax\)$' 1 \
+            "hashmap-general-update-value-$_target"
+        assert_not_matches "$_scalar" \
+            '^[[:space:]]+movq %r[a-z0-9]+, (8|24)?\(%rax\)$' \
+            "hashmap-scalar-update-sibling-$_target"
+        assert_not_matches "$_general" \
+            '^[[:space:]]+movq %r[a-z0-9]+, (8|24)?\(%rax\)$' \
+            "hashmap-general-update-sibling-$_target"
+        assert_not_contains "$_general" 'string_copy' \
+            "hashmap-general-update-key-clone-$_target"
+    done
+}
+
 check_param_pin_interval() {
     _asm=$(compile_gate param_pin_interval tests/integration/param_pin_interval.tl)
     _dead=$(function_body "$_asm" _tl_param_pin_interval_dead_early)
@@ -634,6 +670,7 @@ check_param_csr_home
 check_handle_arg_csr
 check_shift_pin
 check_hashmap_get_leaf_caller_saved
+check_hashmap_slot_value_update
 check_param_pin_interval
 check_frame_slot_repacking
 check_gep_value_direct

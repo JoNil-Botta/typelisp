@@ -10,6 +10,13 @@
       (array.make-array map.GeneratedHashmapSlot 1)]
     [key : String "missing"]
     (begin
-      (array-set! slots 0 (map.GeneratedHashmapSlot.Tombstone))
+      (array-set!
+        slots
+        0
+        (map.GeneratedHashmapSlot
+          (map.GeneratedHashmapSlotState.Tombstone)
+          ""
+          0
+          0))
       (map.probe (& slots) 2 (& key) (map.hash-key (& key)))
       42)))

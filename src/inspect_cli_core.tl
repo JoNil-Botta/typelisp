@@ -126,7 +126,8 @@ Summary:
     (str_cat.str-cat
       "tlci image\n"
       "format-version: "
-      (string.int->string (tlci-read-u64 bytes 8))
+      (string.int->string
+        (tlci-read-u64 bytes tlci-format-version-field-offset))
       "\n"
       "host-arch: "
       (tlci-inspect-host-arch-name host-arch)
@@ -140,10 +141,10 @@ Summary:
       (struct-get image compiler-build-hash)
       "\n"
       "content-hash: "
-      (string.int->string (tlci-read-u64 bytes 48))
+      (string.int->string (tlci-read-u64 bytes tlci-hash-field-offset))
       "\n"
       "file-size: "
-      (string.int->string (tlci-read-u64 bytes 168))
+      (string.int->string (tlci-read-u64 bytes tlci-file-size-field-offset))
       "\n"
       "metadata-version: "
       (struct-get metadata version)
@@ -188,8 +189,8 @@ Summary:
         (tlci-read-u64 bytes 144)
         tlci-section-symbol-record-size)
       (tlci-inspect-import-line
-        (tlci-read-u64 bytes 152)
-        (tlci-read-u64 bytes 160)
+        (tlci-read-u64 bytes tlci-import-section-field-offset)
+        (tlci-read-u64 bytes tlci-import-count-field-offset)
         (array-length (struct-get image imports))))))
 
 (define (tlci-inspect-error [path : String] [message : String]) : String
@@ -246,6 +247,28 @@ Summary:
         (tlci-inspect-error "pkg/dep.tlci" "tlci: content hash mismatch")
         "inspect: pkg/dep.tlci: tlci: content hash mismatch\n")
       (io.panic "inspect error formatting failed"))))
+
+(cfg
+  test
+  (test
+    tlci-inspect-imports-and-file-size
+    (let
+      [ok : bool
+        (match (tlci-emit-image (tlci-test-imports-image))
+          [(ResultTlciBytes.Err _) false]
+          [(ResultTlciBytes.Ok bytes)
+            (match (tlci-parse-image bytes)
+              [(ResultTlciImage.Err _) false]
+              [(ResultTlciImage.Ok parsed)
+                (let
+                  [rendered : String (tlci-inspect-render bytes parsed)]
+                  [expected-file-size : String "file-size: 314\n"]
+                  [expected-imports : String
+                    "  imports: offset=272 records=1 bytes=42\n"]
+                  (and
+                    (string.contains (& rendered) (& expected-file-size))
+                    (string.contains (& rendered) (& expected-imports))))])])]
+      (unless ok (io.panic "inspect import section rendering failed")))))
 
 (cfg
   test

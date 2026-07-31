@@ -55,6 +55,19 @@
         symbols
         (tlci-empty-bytes)))))
 
+(define (tlci-v2-corpus-imports-image) : TlciImage
+  (tlci-make-image
+    tlci-host-arch-x86-64
+    tlci-callback-abi-version
+    "tlci-v2-corpus"
+    (tlci-make-metadata "v1" "corpus.imports" "1.0.0")
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-test-imports-bytes)))
+
 (define (tlci-v2-corpus-write [path : String] [result : ResultTlciBytes]) : i64
   (match result
     [(ResultTlciBytes.Err message)
@@ -71,10 +84,10 @@
 (define (main) : i64
   (if (= (io.arg-count) 1)
     0
-    (if (not (= (io.arg-count) 3))
+    (if (not (= (io.arg-count) 4))
       (begin
         (io.print-error
-          "tlci v2 corpus emitter: expected metadata and sections output paths\n")
+          "tlci v2 corpus emitter: expected metadata, sections, and imports output paths\n")
         2)
       (let
         [empty-status : i64
@@ -83,6 +96,13 @@
             (tlci-emit-image (tlci-v2-corpus-empty-image)))]
         (if (not (= empty-status 0))
           empty-status
-          (tlci-v2-corpus-write
-            (io.arg 2)
-            (tlci-emit-image (tlci-v2-corpus-sections-image))))))))
+          (let
+            [sections-status : i64
+              (tlci-v2-corpus-write
+                (io.arg 2)
+                (tlci-emit-image (tlci-v2-corpus-sections-image)))]
+            (if (not (= sections-status 0))
+              sections-status
+              (tlci-v2-corpus-write
+                (io.arg 3)
+                (tlci-emit-image (tlci-v2-corpus-imports-image))))))))))

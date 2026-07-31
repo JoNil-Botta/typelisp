@@ -83,6 +83,7 @@ inspect_invalid() {
 
 inspect_valid valid-metadata-only
 inspect_valid valid-sections
+inspect_valid valid-imports
 
 for name in \
     malformed-bad-magic \
@@ -99,10 +100,11 @@ done
 
 EMITTED_EMPTY="$WORKDIR/emitted-metadata-only.tlci"
 EMITTED_SECTIONS="$WORKDIR/emitted-sections.tlci"
+EMITTED_IMPORTS="$WORKDIR/emitted-imports.tlci"
 if ! "$COMPILER" run tests/tlci/corpus_emit.tl \
     --stdlib-root stdlib \
     --stdlib-root src \
-    -- "$EMITTED_EMPTY" "$EMITTED_SECTIONS" \
+    -- "$EMITTED_EMPTY" "$EMITTED_SECTIONS" "$EMITTED_IMPORTS" \
     >"$WORKDIR/emitter.stdout" 2>"$WORKDIR/emitter.stderr"; then
     sed 's/^/  /' "$WORKDIR/emitter.stderr" >&2 || true
     fail "emitter witness failed"
@@ -113,5 +115,7 @@ compare_file "$CORPUS/valid-metadata-only.tlci" "$EMITTED_EMPTY" \
     "metadata-only emitter bytes"
 compare_file "$CORPUS/valid-sections.tlci" "$EMITTED_SECTIONS" \
     "section-bearing emitter bytes"
+compare_file "$CORPUS/valid-imports.tlci" "$EMITTED_IMPORTS" \
+    "import-bearing emitter bytes"
 
-echo "TLCI format corpus passed (2 valid, 8 malformed)."
+echo "TLCI format corpus passed (3 valid, 8 malformed)."

@@ -114,7 +114,7 @@ vector_iter_shared_set_live_reject|check-fail|tests/safety/vector_iter_shared_se
 vector_iter_shared_item_source_live_reject|check-fail|tests/safety/vector_iter_shared_item_source_live_reject.tl|-|cannot mutably borrow borrowed place `values`
 vector_iter_shared_move_live_reject|check-fail|tests/safety/vector_iter_shared_move_live_reject.tl|-|cannot move borrowed place `values`
 vector_iter_shared_escape_reject|check-fail|tests/safety/vector_iter_shared_escape_reject.tl|-|reference value would escape lexical scope
-vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact/pop
+vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact.pop
 vector_full_unsupported_equality_nested_reject|check-fail|tests/safety/vector_full_unsupported_equality_nested_reject.tl|-|eq: unsupported type mutptr_i64
 clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper
 reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
@@ -315,7 +315,7 @@ vector_aggregate_ref_rvalue_call_reject|check-fail|tests/safety/vector_aggregate
 vector_aggregate_ref_rvalue_workarounds_ok|check-ok|tests/safety/vector_aggregate_ref_rvalue_workarounds_ok.tl|-|-
 consume_parameter_use_after_move_reject|check-fail|tests/safety/consume_parameter_use_after_move_reject.tl|-|use of moved value `text`
 consume_parameter_borrow_live_reject|check-fail|tests/safety/consume_parameter_borrow_live_reject.tl|-|cannot move borrowed place `text`
-consume_parameter_function_type_mismatch_reject|check-fail|tests/safety/consume_parameter_function_type_mismatch_reject.tl|-|typecheck: let binding type mismatch
+consume_parameter_function_type_mismatch_reject|check-fail|tests/safety/consume_parameter_function_type_mismatch_reject.tl|-|typecheck: let binding `_consumer` type mismatch
 consume_parameter_reference_reject|check-fail|tests/safety/consume_parameter_reference_reject.tl|-|parse: :consume requires a non-reference parameter type
 consume_parameter_extern_reject|check-fail|tests/safety/consume_parameter_extern_reject.tl|-|parse: extern parameters cannot be consuming
 consume_parameter_comptime_reject|check-fail|tests/safety/consume_parameter_comptime_reject.tl|-|parse: comptime parameters cannot be consuming
@@ -338,7 +338,7 @@ vector_into_iterator_mutate_after_reject|check-fail|tests/safety/vector_into_ite
 vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_iterator_second_consume_reject.tl|-|use of moved value `values`
 vector_cleanup_owner_let_reject|check-fail|tests/safety/vector_cleanup_owner_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
 vector_cleanup_into_next_let_reject|check-fail|tests/safety/vector_cleanup_into_next_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
-vector_cleanup_slots_mut_reject|check-fail|tests/safety/vector_cleanup_slots_mut_reject.tl|-|typecheck: unbound name tokens/slots-mut
+vector_cleanup_slots_mut_reject|check-fail|tests/safety/vector_cleanup_slots_mut_reject.tl|-|typecheck: unbound name tokens.slots-mut
 vector_cleanup_move_before_exit_reject|check-fail|tests/safety/vector_cleanup_move_before_exit_reject.tl|-|cleanup owner `items` moved before with scope exit
 vector_cleanup_borrow_live_reject|check-fail|tests/safety/vector_cleanup_borrow_live_reject.tl|-|cannot mutably borrow borrowed place `items`
 vector_cleanup_escape_reject|check-fail|tests/safety/vector_cleanup_escape_reject.tl|-|cleanup-required resource would escape with scope

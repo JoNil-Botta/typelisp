@@ -28180,7 +28180,8 @@
               env
               name-id)
             (let
-              [name : String (tc-hygiene-name-text-id name-id)]
+              [name : String
+                (tc-name-slashes-to-dots (tc-hygiene-name-text-id name-id))]
               [clean-name : String
                 (string.substring
                   clean-message
@@ -28229,11 +28230,46 @@
                         display-message
                         help
                         replacement)]
-                    [(TcUnboundSuggestion.No) message]))
+                    [(TcUnboundSuggestion.No)
+                      (tc-located-error span display-message)]))
                 message))]
           [(TcUnboundSuggestionSnapshot.No) message])
         message))
     message))
+
+(define (tc-locate-integer-binop-error
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [left-id : i64]
+  [right-id : i64]
+  [fallback : AstSourceSpan]
+  [message : String]) : ResultTcType
+  (let
+    [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save)]
+    [left : AstExpr (tc-context-expr-get ctx left-id)]
+    [right : AstExpr (tc-context-expr-get ctx right-id)]
+    [result : ResultTcType
+      (match (tc-expr ctx env left)
+        [(ResultTcType.Ok left-ty)
+          (match (tc-expr ctx env right)
+            [(ResultTcType.Ok right-ty)
+              (if (and
+                (or (tc-integer-type? left-ty) (tc-float-type? left-ty))
+                (not (tc-type-eq left-ty right-ty)))
+                (ResultTcType.Err
+                  (tc-located-error
+                    (match right
+                      [(AstExpr.Spanned _ right-span) right-span]
+                      [_ fallback])
+                    (tc-type-mismatch-message right-ty left-ty message)))
+                (ResultTcType.Err (tc-located-error fallback message)))]
+            [(ResultTcType.Err _)
+              (ResultTcType.Err (tc-located-error fallback message))])]
+        [(ResultTcType.Err _)
+          (ResultTcType.Err (tc-located-error fallback message))])]
+    (begin
+      (tc-type-env-scoped-runtime-restore! saved)
+      result)))
 
 (define (tc-locate-spanned-error-with-context
   [ctx : TcContext]
@@ -28241,17 +28277,47 @@
   [inner : AstExpr]
   [span : AstSourceSpan]
   [message : String]) : ResultTcType
-  (if (and
-    (tc-unbound-name-message? message)
-    (not (tc-rich-error? message))
-    (not (tc-located-error? message)))
-    (match inner
-      [(AstExpr.Var name-id)
-        (begin
-          (tc-unbound-suggestion-snapshot-record! ctx env name-id)
-          (ResultTcType.Err (tc-located-error span message)))]
-      [_ (tc-locate-spanned-error inner span message)])
-    (tc-locate-spanned-error inner span message)))
+  (cond
+    [(and
+        (tc-unbound-name-message? message)
+        (not (tc-rich-error? message))
+        (not (tc-located-error? message)))
+      (match inner
+        [(AstExpr.Var name-id)
+          (begin
+            (tc-unbound-suggestion-snapshot-record! ctx env name-id)
+            (ResultTcType.Err (tc-located-error span message)))]
+        [_ (tc-locate-spanned-error inner span message)])]
+    [(and
+        (string.eq
+          message
+          "typecheck: integer operator expects matching integer operands")
+        (not (tc-rich-error? message))
+        (not (tc-located-error? message)))
+      (match inner
+        [(AstExpr.Binary _ left-id right-id)
+          (tc-locate-integer-binop-error ctx env left-id right-id span message)]
+        [_ (tc-locate-spanned-error inner span message)])]
+    [(and
+        (tc-diag-string-prefix? message "typecheck: unknown struct field ")
+        (not (tc-rich-error? message))
+        (not (tc-located-error? message)))
+      (match inner
+        [(AstExpr.Set _ _) (ResultTcType.Err (tc-located-error span message))]
+        [(AstExpr.StructSet _ _ _)
+          (ResultTcType.Err (tc-located-error span message))]
+        [(AstExpr.StructGet _ _)
+          (ResultTcType.Err (tc-located-error span message))]
+        [_ (tc-locate-spanned-error inner span message)])]
+    [else
+      (match inner
+        [(AstExpr.Set _ _) (ResultTcType.Err message)]
+        [(AstExpr.Spanned nested-box _)
+          (tc-locate-spanned-error
+            (tc-context-expr-get ctx nested-box)
+            span
+            message)]
+        [_ (tc-locate-spanned-error inner span message)])]))
 
 (define (tc-call-arity-callee-name [func : AstExpr]) : String
   (let
@@ -32808,15 +32874,20 @@
 
 (define (tc-let-binding-plain-expected-ok
   [ctx : TcContext]
+  [name : String]
   [maybe-ty : AstMaybeType]
+  [init : AstExpr]
   [init-ty : AstType]) : ResultTcUnit
   (match maybe-ty
     [(AstMaybeType.Some want)
-      (tc-expect-in-context
+      (match (tc-expect-in-context
         ctx
         init-ty
         want
-        "typecheck: let binding type mismatch")]
+        (str_cat.str-cat "typecheck: let binding `" name "` type mismatch"))
+        [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+        [(ResultTcUnit.Err message)
+          (ResultTcUnit.Err (tc-locate-error-at-expr init message))])]
     [(AstMaybeType.No) ResultTcUnit.Ok]))
 
 (define (tc-let-binding-plain-bind-type
@@ -32847,7 +32918,9 @@
             [(ResultTcType.Ok init-ty)
               (match (tc-let-binding-plain-expected-ok
                 ctx
+                (tc-env-key-name-text name)
                 resolved-maybe-ty
+                init
                 init-ty)
                 [(ResultTcUnit.Ok)
                   (match (tc-ensure-cleanup-resource-not-let-bound
@@ -33749,7 +33822,9 @@
                       [resolved-want : AstType (tc-resolve-type ctx want)]
                       (match (tc-let-binding-plain-expected-ok
                         ctx
+                        (tc-env-key-name-text name)
                         (AstMaybeType.Some resolved-want)
+                        init
                         init-ty)
                         [(ResultTcUnit.Ok)
                           (match (tc-ensure-cleanup-resource-not-let-bound
@@ -42860,6 +42935,52 @@
             (tc-variant-constructor-type-for-handle ctx handle)]
           [(option_i64.None) (ResultTcType.Err not-found-message)])])))
 
+(define (tc-struct-decl-field-name-list-render [decl : TcStructDecl]) : String
+  (match decl
+    [(TcStructDecl _ _ fields)
+      (if (= (ast-field-def-list-len (& fields)) 0)
+        "<none>"
+        (tc-struct-field-name-list-render-at (& fields) 0))]))
+
+(define (tc-struct-field-name-list-render-at
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : String
+  (if (>= index (ast-field-def-list-len fields))
+    ""
+    (let
+      [maybe-name : TcMaybeNameId (tc-call-field-list-name-at fields index)]
+      (match maybe-name
+        [(TcMaybeNameId.Some name)
+          (str_cat.str-cat
+            (intern-str name)
+            (if (>= (+ index 1) (ast-field-def-list-len fields))
+              ""
+              (str_cat.str-cat
+                ", "
+                (tc-struct-field-name-list-render-at fields (+ index 1)))))]
+        [(TcMaybeNameId.No) ""]))))
+
+(define (tc-unknown-struct-field-message
+  [ctx : TcContext]
+  [struct-name-id : i64]
+  [field-id : i64]) : String
+  (let
+    [base : String
+      (string.append
+        "typecheck: unknown struct field "
+        (compiler-struct-field-key
+          (tc-nominal-name-id-display struct-name-id)
+          (intern-str field-id)))]
+    [decl-result : ResultTcStructDecl (tc-struct-decl-id ctx struct-name-id)]
+    (match decl-result
+      [(ResultTcStructDecl.Ok decl)
+        (string.append
+          base
+          (string.append
+            "; available fields: "
+            (tc-struct-decl-field-name-list-render decl)))]
+      [(ResultTcStructDecl.Err _) base])))
+
 (define (tc-struct-field-type-id
   [ctx : TcContext]
   [struct-name-id : i64]
@@ -42884,11 +43005,7 @@
             (ResultTcType.Ok (tc-resolve-type field-ctx ty))]
           [(ResultAstType.Err message) (ResultTcType.Err message)]))
       (ResultTcType.Err
-        (string.append
-          "typecheck: unknown struct field "
-          (compiler-struct-field-key
-            (tc-nominal-name-id-display struct-name-id)
-            (intern-str field-id)))))))
+        (tc-unknown-struct-field-message ctx struct-name-id field-id)))))
 
 (define (tc-lifetime-subst-from-nominal-args-id
   [ctx : TcContext]
@@ -42931,11 +43048,7 @@
               [(ResultTcLifetimeSubst.Err message) (ResultTcType.Err message)])]
           [(ResultAstType.Err message) (ResultTcType.Err message)]))
       (ResultTcType.Err
-        (string.append
-          "typecheck: unknown struct field "
-          (compiler-struct-field-key
-            (tc-nominal-name-id-display struct-name-id)
-            (intern-str field-id)))))))
+        (tc-unknown-struct-field-message ctx struct-name-id field-id)))))
 
 (define (tc-comptime-unknown-field-id [owner : String] [field-id : i64]) : ResultTcType
   (ResultTcType.Err
@@ -43568,6 +43681,13 @@
   [types : AstTypeList]) : ResultTcEnv
   (tc-bind-sub-pattern-list-at ctx env (& patterns) (& types) 0))
 
+(define (tc-pattern-arity-message [expected : i64] [found : i64]) : String
+  (str_cat.str-cat
+    "typecheck: pattern arity mismatch: expected "
+    (string.int->string expected)
+    ", found "
+    (string.int->string found)))
+
 (define (tc-bind-sub-pattern-list-at
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -43577,9 +43697,15 @@
   (if (>= index (ast-pattern-list-len patterns))
     (if (>= index (ast-type-list-len types))
       (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err "typecheck: pattern arity mismatch"))
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message
+          (ast-type-list-len types)
+          (ast-pattern-list-len patterns))))
     (if (>= index (ast-type-list-len types))
-      (ResultTcEnv.Err "typecheck: pattern arity mismatch")
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message
+          (ast-type-list-len types)
+          (ast-pattern-list-len patterns)))
       (let
         [pattern : AstPattern
           (ast-pattern-list-get patterns index (ast-pattern-fallback))]
@@ -43843,9 +43969,15 @@
   (if (>= index (ast-pattern-list-len patterns))
     (if (>= index (ast-type-list-len types))
       (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err "typecheck: pattern arity mismatch"))
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message
+          (ast-type-list-len types)
+          (ast-pattern-list-len patterns))))
     (if (>= index (ast-type-list-len types))
-      (ResultTcEnv.Err "typecheck: pattern arity mismatch")
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message
+          (ast-type-list-len types)
+          (ast-pattern-list-len patterns)))
       (let
         [pattern : AstPattern
           (ast-pattern-list-get patterns index (ast-pattern-fallback))]
@@ -44046,9 +44178,15 @@
   (if (>= index (ast-pattern-list-len patterns))
     (if (>= index (ast-type-list-len types))
       (ResultTcEnv.Ok env)
-      (ResultTcEnv.Err "typecheck: pattern arity mismatch"))
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message
+          (ast-type-list-len types)
+          (ast-pattern-list-len patterns))))
     (if (>= index (ast-type-list-len types))
-      (ResultTcEnv.Err "typecheck: pattern arity mismatch")
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message
+          (ast-type-list-len types)
+          (ast-pattern-list-len patterns)))
       (let
         [pattern : AstPattern
           (ast-pattern-list-get patterns index (ast-pattern-fallback))]
@@ -44382,6 +44520,13 @@
         [_ (ResultTcEnv.Err "typecheck: unsupported Box match pattern")])]
     [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))
 
+(define (tc-locate-match-pattern-error [body : AstExpr] [message : String]) : String
+  (if (or (tc-rich-error? message) (tc-located-error? message))
+    message
+    (match (tc-expr-maybe-span body)
+      [(TcMaybeAstSourceSpan.Some span) (tc-located-error span message)]
+      [(TcMaybeAstSourceSpan.No) message])))
+
 (define (tc-match-arm-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -44396,7 +44541,8 @@
             [body : AstExpr (ast-node-get body-box)]
             (match (tc-bind-match-pattern ctx env scrut-ty pattern)
               [(ResultTcEnv.Ok arm-env) (tc-expr ctx arm-env body)]
-              [(ResultTcEnv.Err message) (ResultTcType.Err message)]))])]
+              [(ResultTcEnv.Err message)
+                (ResultTcType.Err (tc-locate-match-pattern-error body message))]))])]
     (begin
       (tc-type-env-scoped-runtime-restore! saved)
       result)))
@@ -44435,7 +44581,8 @@
                             expected
                             "typecheck: match arm result type mismatch"))])]
                   [(ResultTcType.Err message) (ResultTcType.Err message)])]
-              [(ResultTcEnv.Err message) (ResultTcType.Err message)]))])]
+              [(ResultTcEnv.Err message)
+                (ResultTcType.Err (tc-locate-match-pattern-error body message))]))])]
     (begin
       (tc-type-env-scoped-runtime-restore! saved)
       result)))

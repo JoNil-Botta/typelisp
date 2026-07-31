@@ -4897,7 +4897,11 @@
                   (match (reader.spanned-sexpr-view target-node)
                     [(reader.SpannedSexprView.Sym name _)
                       (ResultAstExpr.Ok
-                        (ast-expr-set-id-with-pools pools name parsed-value))]
+                        (ast-expr-spanned-with-pools
+                          pools
+                          (ast-expr-set-id-with-pools pools name parsed-value)
+                          (ast-source-span-from-source-span
+                            (reader.spanned-sexpr-span target-node))))]
                     [_
                       (match (parse-ast-expr-with-pools
                         dispatch
@@ -6608,7 +6612,13 @@
                   (match (parse-ast-expr-with-pools dispatch pools body)
                     [(ResultAstExpr.Ok parsed-body)
                       (ResultAstMatchArm.Ok
-                        (ast-match-arm parsed-pattern parsed-body))]
+                        (ast-match-arm
+                          parsed-pattern
+                          (ast-expr-spanned-with-pools
+                            pools
+                            parsed-body
+                            (ast-source-span-from-source-span
+                              (reader.spanned-sexpr-span pattern)))))]
                     [(ResultAstExpr.Err message)
                       (ResultAstMatchArm.Err message)])]
                 [(ResultAstPattern.Err message) (ResultAstMatchArm.Err message)])]

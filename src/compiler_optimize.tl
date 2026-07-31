@@ -9608,36 +9608,9 @@
 (defenum OptVarDef
   (Def i64 i64 i64))
 
-(import (vector.vector OptVarDef core) as opt_var_def_vec)
-
-(defstruct OptVarDefList
-  (items opt_var_def_vec.Vec))
-
 (defenum OptMaybeVarDef
   (No)
   (Some OptVarDef))
-
-(define (opt-var-defs-new) : OptVarDefList
-  (OptVarDefList (opt_var_def_vec.with-capacity 8)))
-
-(define (opt-var-defs-count [defs : OptVarDefList]) : i64
-  (opt_var_def_vec.len (& (struct-get defs items))))
-
-(define (opt-var-defs-prepend
-  [defs : OptVarDefList (:consume)]
-  [def : OptVarDef]) : OptVarDefList
-  (let
-    [items : opt_var_def_vec.Vec (struct-get defs items)]
-    (begin
-      (opt_var_def_vec.push (&mut items) def)
-      (OptVarDefList items))))
-
-(define (opt-var-defs-ref [defs : OptVarDefList] [index : i64]) : OptVarDef
-  (let
-    [items : opt_var_def_vec.Vec (struct-get defs items)]
-    (array-ref
-      (opt_var_def_vec.slots (& items))
-      (- (- (opt_var_def_vec.len (& items)) index) 1))))
 
 ;; Function virtual-register ids are dense in [0, vars). Verification only
 ;; needs duplicate membership, so a bitmap avoids hashing every definition and
@@ -9777,130 +9750,90 @@
         (opt-verify-param-def-set params set)
         (opt-verify-block-def-set blocks set)))))
 
-(define (opt-var-defs-from-params
+(define (opt-var-defs-index-add!
+  [items : (__tl_dyn-array OptMaybeVarDef)]
+  [var : i64]
+  [block-id : i64]
+  [pos : i64]) : unit
+  (if (and (>= var 0) (< var (array-length items)))
+    (array-set!
+      items
+      var
+      (OptMaybeVarDef.Some (OptVarDef.Def var block-id pos)))
+    unit))
+
+(define (opt-var-defs-index-params!
   [params : CompilerIrParamList]
-  [defs : OptVarDefList (:consume)]) : OptVarDefList
+  [items : (__tl_dyn-array OptMaybeVarDef)]) : unit
   (match (compiler-ir-param-list-force-cons params)
-    [(CompilerIrParamList.Nil) defs]
+    [(CompilerIrParamList.Nil) unit]
     [(CompilerIrParamList.Array seq)
-      (opt-var-defs-from-params (compiler-ir-param-seq-to-list seq) defs)]
+      (opt-var-defs-index-params! (compiler-ir-param-seq-to-list seq) items)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
-          (opt-var-defs-from-params
-            (box-get rest)
-            (opt-var-defs-prepend defs (OptVarDef.Def var 0 0)))])]))
+          (begin
+            (opt-var-defs-index-add! items var 0 0)
+            (opt-var-defs-index-params! (box-get rest) items))])]))
 
-(define (opt-var-defs-from-instr-seq-from
+(define (opt-var-defs-index-instr-seq-from!
   [instrs : CompilerIrInstrSeq]
   [block-id : i64]
   [index : i64]
   [pos : i64]
-  [defs : OptVarDefList (:consume)]) : OptVarDefList
+  [items : (__tl_dyn-array OptMaybeVarDef)]) : unit
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    defs
+    unit
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var instr)
-        [(option_i64.Some var)
-          (opt-var-defs-from-instr-seq-from
-            instrs
-            block-id
-            (+ index 1)
-            (+ pos 1)
-            (opt-var-defs-prepend
-              defs
-              (OptVarDef.Def var block-id (opt-instr-def-position instr pos))))]
-        [(option_i64.None)
-          (opt-var-defs-from-instr-seq-from
-            instrs
-            block-id
-            (+ index 1)
-            (+ pos 1)
-            defs)]))))
+      (begin
+        (match (opt-instr-def-var instr)
+          [(option_i64.Some var)
+            (opt-var-defs-index-add!
+              items
+              var
+              block-id
+              (opt-instr-def-position instr pos))]
+          [(option_i64.None) unit])
+        (opt-var-defs-index-instr-seq-from!
+          instrs
+          block-id
+          (+ index 1)
+          (+ pos 1)
+          items)))))
 
-(define (opt-var-defs-from-blocks
+(define (opt-var-defs-index-blocks!
   [blocks : CompilerIrBlockList]
   [block-id : i64]
-  [defs : OptVarDefList (:consume)]) : OptVarDefList
+  [items : (__tl_dyn-array OptMaybeVarDef)]) : unit
   (match blocks
-    [(CompilerIrBlockList.Nil) defs]
+    [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
-          (opt-var-defs-from-blocks
-            (box-get rest)
-            (+ block-id 1)
-            (opt-var-defs-from-instr-seq-from instrs block-id 0 1 defs))])]
+          (begin
+            (opt-var-defs-index-instr-seq-from! instrs block-id 0 1 items)
+            (opt-var-defs-index-blocks! (box-get rest) (+ block-id 1) items))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-var-defs-from-blocks
+      (opt-var-defs-index-blocks!
         (compiler-ir-block-seq-to-list seq)
         block-id
-        defs)]))
+        items)]))
 
-;; Parameter definitions belong to the entry block, which `opt-cfg-index-build`
-;; always numbers 0. An empty block list has no ids at all, and every id-keyed
-;; dominance query range-checks against the block count, so the placeholder 0
-;; answers exactly like the old missing-label lookup did.
-(define (opt-var-defs-from-function
+;; The preceding single-definition check proves every destination is in
+;; `[0, vars)`. Fill the exact-size lookup directly instead of building and
+;; rescanning an intermediate definition sequence. Parameters belong to dense
+;; block id 0, matching `opt-cfg-index-build`.
+(define (opt-var-defs-index
   [params : CompilerIrParamList]
-  [blocks : CompilerIrBlockList]) : OptVarDefList
-  (opt-var-defs-from-blocks
-    blocks
-    0
-    (opt-var-defs-from-params params (opt-var-defs-new))))
-
-;; The use verifier resolves every operand's defining block, so the
-;; def list is indexed into a var-id-keyed array once per verification
-;; (the list scan per use made the verifier quadratic on large functions).
-(define (opt-var-defs-max-id [defs : OptVarDefList] [highest : i64]) : i64
+  [vars : i64]
+  [blocks : CompilerIrBlockList]) : (__tl_dyn-array OptMaybeVarDef)
   (let
-    [count : i64 (opt-var-defs-count defs)]
-    [index : i64 0]
-    [max-id : i64 highest]
-    (begin
-      (while (< index count)
-        (match (opt-var-defs-ref defs index)
-          [(OptVarDef.Def var _ _)
-            (begin
-              (if (> var max-id)
-                (set! max-id var)
-                unit)
-              (set! index (+ index 1)))]))
-      max-id)))
-
-(define (opt-var-defs-index-fill!
-  [items : (__tl_dyn-array OptMaybeVarDef)]
-  [defs : OptVarDefList]) : unit
-  (let
-    [count : i64 (opt-var-defs-count defs)]
-    [index : i64 0]
-    (while (< index count)
-      (let
-        [def : OptVarDef (opt-var-defs-ref defs index)]
-        (begin
-          (match def
-            [(OptVarDef.Def var block-id pos)
-              (if (and (>= var 0) (< var (array-length items)))
-                (array-set!
-                  items
-                  var
-                  (OptMaybeVarDef.Some (OptVarDef.Def var block-id pos)))
-                unit)])
-          (set! index (+ index 1)))))))
-
-;; `OptMaybeVarDef.No` is the fieldless tag-0 variant, so its representation is
-;; all-zero bytes and `make-array` already produces it for every slot -- see
-;; `lower-make-array-zero-fill-enum-supported?`. Re-writing `.No` over the whole
-;; array with a scalar loop only repeats what the allocation just did.
-(define (opt-var-defs-index [defs : OptVarDefList]) : (__tl_dyn-array
-    OptMaybeVarDef)
-  (let
-    [count : i64 (+ (opt-var-defs-max-id defs (- 0 1)) 1)]
     [items : (__tl_dyn-array OptMaybeVarDef)
-      (array.make-array OptMaybeVarDef count)]
+      (array.make-array OptMaybeVarDef vars)]
     (begin
-      (opt-var-defs-index-fill! items defs)
+      (opt-var-defs-index-params! params items)
+      (opt-var-defs-index-blocks! blocks 0 items)
       items)))
 
 (define (opt-var-def-lookup
@@ -10551,7 +10484,7 @@
             [doms : OptDomInfo (struct-get context doms)]
             [pred-map : OptPredMap (struct-get context pred-map)]
             [defs : (__tl_dyn-array OptMaybeVarDef)
-              (opt-var-defs-index (opt-var-defs-from-function params blocks))]
+              (opt-var-defs-index params vars blocks)]
             (match (opt-verify-phi-predecessors-blocks pred-map blocks)
               [(ResultCompilerOptimizeVerify.Ok)
                 (opt-verify-block-uses defs doms blocks 0)]
@@ -10572,7 +10505,7 @@
             [doms : OptDomInfo (struct-get context doms)]
             [pred-map : OptPredMap (struct-get context pred-map)]
             [defs : (__tl_dyn-array OptMaybeVarDef)
-              (opt-var-defs-index (opt-var-defs-from-function params blocks))]
+              (opt-var-defs-index params vars blocks)]
             (match (opt-verify-phi-predecessors-blocks pred-map blocks)
               [(ResultCompilerOptimizeVerify.Ok)
                 (opt-verify-block-uses-contextual defs doms blocks 0)]
@@ -12817,24 +12750,8 @@
 (defenum OptGlobalExprFact
   (Fact OptGlobalExprKey i64 i64 i64))
 
-(import (vector.vector OptGlobalExprFact core) as opt_global_expr_fact_vec)
-
-(defstruct OptGlobalExprFacts
-  (items opt_global_expr_fact_vec.Vec))
-
-(defstruct OptGlobalExprFactTable
-  (buckets (__tl_dyn-array OptGlobalExprFacts)))
-
 (defenum OptGlobalCopyFact
   (Fact i64 CompilerIrValue i64 i64))
-
-(import (vector.vector OptGlobalCopyFact core) as opt_global_copy_fact_vec)
-
-(defstruct OptGlobalCopyFacts
-  (items opt_global_copy_fact_vec.Vec))
-
-(defstruct OptGlobalCopyFactTable
-  (buckets (__tl_dyn-array OptGlobalCopyFacts)))
 
 ;; SSA-only Pack/Word facts. Unlike the block-local pre-SSA copy fold, these
 ;; facts may safely carry a Var word across blocks: a verified Pack is dominated
@@ -12843,10 +12760,27 @@
 (defenum OptGlobalPackWordFact
   (Fact i64 i64 CompilerIrValue i64 i64))
 
-(import (vector.vector OptGlobalPackWordFact core) as opt_global_pack_word_fact_vec)
+(defenum OptGlobalDenseFact
+  (Expr OptGlobalExprFact)
+  (Copy OptGlobalCopyFact)
+  (PackWord OptGlobalPackWordFact))
+
+(import (vector.vector OptGlobalDenseFact core) as opt_global_fact_vec)
+
+(defstruct OptGlobalExprFacts
+  (items opt_global_fact_vec.Vec))
+
+(defstruct OptGlobalExprFactTable
+  (buckets (__tl_dyn-array OptGlobalExprFacts)))
+
+(defstruct OptGlobalCopyFacts
+  (items opt_global_fact_vec.Vec))
+
+(defstruct OptGlobalCopyFactTable
+  (buckets (__tl_dyn-array OptGlobalCopyFacts)))
 
 (defstruct OptGlobalPackWordFacts
-  (items opt_global_pack_word_fact_vec.Vec))
+  (items opt_global_fact_vec.Vec))
 
 (defstruct OptGlobalPackWordFactTable
   (buckets (__tl_dyn-array OptGlobalPackWordFacts)))
@@ -12855,75 +12789,81 @@
 ;; physical push is logical prepend. That preserves the old Cons construction
 ;; order while letting collection and bucket insertion grow geometrically.
 (define (opt-global-expr-facts-new) : OptGlobalExprFacts
-  (OptGlobalExprFacts (opt_global_expr_fact_vec.with-capacity 4)))
+  (OptGlobalExprFacts (opt_global_fact_vec.new)))
 
 (define (opt-global-expr-facts-count [facts : OptGlobalExprFacts]) : i64
-  (opt_global_expr_fact_vec.len (& (struct-get facts items))))
+  (opt_global_fact_vec.len (& (struct-get facts items))))
 
 (define (opt-global-expr-facts-prepend
   [facts : OptGlobalExprFacts (:consume)]
   [fact : OptGlobalExprFact]) : OptGlobalExprFacts
   (let
-    [items : opt_global_expr_fact_vec.Vec (struct-get facts items)]
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
     (begin
-      (opt_global_expr_fact_vec.push (&mut items) fact)
+      (opt_global_fact_vec.push (&mut items) (OptGlobalDenseFact.Expr fact))
       (OptGlobalExprFacts items))))
 
 (define (opt-global-expr-facts-ref [facts : OptGlobalExprFacts] [index : i64]) : OptGlobalExprFact
   (let
-    [items : opt_global_expr_fact_vec.Vec (struct-get facts items)]
-    (clone
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    (match (clone
       (array-ref
-        (opt_global_expr_fact_vec.slots (& items))
-        (- (- (opt_global_expr_fact_vec.len (& items)) index) 1)))))
+        (opt_global_fact_vec.slots (& items))
+        (- (- (opt_global_fact_vec.len (& items)) index) 1)))
+      [(OptGlobalDenseFact.Expr fact) fact]
+      [_ (string.tl_oob_abort)])))
 
 (define (opt-global-copy-facts-new) : OptGlobalCopyFacts
-  (OptGlobalCopyFacts (opt_global_copy_fact_vec.with-capacity 4)))
+  (OptGlobalCopyFacts (opt_global_fact_vec.new)))
 
 (define (opt-global-copy-facts-count [facts : OptGlobalCopyFacts]) : i64
-  (opt_global_copy_fact_vec.len (& (struct-get facts items))))
+  (opt_global_fact_vec.len (& (struct-get facts items))))
 
 (define (opt-global-copy-facts-prepend
   [facts : OptGlobalCopyFacts (:consume)]
   [fact : OptGlobalCopyFact]) : OptGlobalCopyFacts
   (let
-    [items : opt_global_copy_fact_vec.Vec (struct-get facts items)]
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
     (begin
-      (opt_global_copy_fact_vec.push (&mut items) fact)
+      (opt_global_fact_vec.push (&mut items) (OptGlobalDenseFact.Copy fact))
       (OptGlobalCopyFacts items))))
 
 (define (opt-global-copy-facts-ref [facts : OptGlobalCopyFacts] [index : i64]) : OptGlobalCopyFact
   (let
-    [items : opt_global_copy_fact_vec.Vec (struct-get facts items)]
-    (clone
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    (match (clone
       (array-ref
-        (opt_global_copy_fact_vec.slots (& items))
-        (- (- (opt_global_copy_fact_vec.len (& items)) index) 1)))))
+        (opt_global_fact_vec.slots (& items))
+        (- (- (opt_global_fact_vec.len (& items)) index) 1)))
+      [(OptGlobalDenseFact.Copy fact) fact]
+      [_ (string.tl_oob_abort)])))
 
 (define (opt-global-pack-word-facts-new) : OptGlobalPackWordFacts
-  (OptGlobalPackWordFacts (opt_global_pack_word_fact_vec.with-capacity 4)))
+  (OptGlobalPackWordFacts (opt_global_fact_vec.new)))
 
 (define (opt-global-pack-word-facts-count [facts : OptGlobalPackWordFacts]) : i64
-  (opt_global_pack_word_fact_vec.len (& (struct-get facts items))))
+  (opt_global_fact_vec.len (& (struct-get facts items))))
 
 (define (opt-global-pack-word-facts-prepend
   [facts : OptGlobalPackWordFacts (:consume)]
   [fact : OptGlobalPackWordFact]) : OptGlobalPackWordFacts
   (let
-    [items : opt_global_pack_word_fact_vec.Vec (struct-get facts items)]
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
     (begin
-      (opt_global_pack_word_fact_vec.push (&mut items) fact)
+      (opt_global_fact_vec.push (&mut items) (OptGlobalDenseFact.PackWord fact))
       (OptGlobalPackWordFacts items))))
 
 (define (opt-global-pack-word-facts-ref
   [facts : OptGlobalPackWordFacts]
   [index : i64]) : OptGlobalPackWordFact
   (let
-    [items : opt_global_pack_word_fact_vec.Vec (struct-get facts items)]
-    (clone
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    (match (clone
       (array-ref
-        (opt_global_pack_word_fact_vec.slots (& items))
-        (- (- (opt_global_pack_word_fact_vec.len (& items)) index) 1)))))
+        (opt_global_fact_vec.slots (& items))
+        (- (- (opt_global_fact_vec.len (& items)) index) 1)))
+      [(OptGlobalDenseFact.PackWord fact) fact]
+      [_ (string.tl_oob_abort)])))
 
 (define (opt-global-expr-key-eq
   [type-segment-bases : i64]
@@ -13124,18 +13064,22 @@
   [facts : OptGlobalCopyFacts]
   [max-dst : i64]) : i64
   (let
-    [count : i64 (opt-global-copy-facts-count facts)]
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    [slots : (& items (Array OptGlobalDenseFact))
+      (opt_global_fact_vec.slots (& items))]
+    [count : i64 (opt_global_fact_vec.len (& items))]
     [index : i64 0]
     [highest : i64 max-dst]
     (begin
       (while (< index count)
-        (match (opt-global-copy-facts-ref facts index)
-          [(OptGlobalCopyFact.Fact dst _ _ _)
+        (match (array-ref slots index)
+          [(OptGlobalDenseFact.Copy (OptGlobalCopyFact.Fact dst _ _ _))
             (begin
               (if (> dst highest)
                 (set! highest dst)
                 unit)
-              (set! index (+ index 1)))]))
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
       highest)))
 
 (define (opt-global-copy-table-insert!
@@ -13147,22 +13091,31 @@
         [buckets : (__tl_dyn-array OptGlobalCopyFacts)
           (struct-get table buckets)]
         (if (and (>= dst 0) (< dst (array-length buckets)))
-          (opt_global_copy_fact_vec.push
+          (opt_global_fact_vec.push
             (&mut (struct-get (array-ref buckets dst) items))
-            (OptGlobalCopyFact.Fact dst src def-block-id def-pos))
+            (OptGlobalDenseFact.Copy
+              (OptGlobalCopyFact.Fact dst src def-block-id def-pos)))
           unit))]))
 
 (define (opt-global-copy-table-insert-reversed!
   [table : OptGlobalCopyFactTable]
   [facts : OptGlobalCopyFacts]) : unit
   (let
-    [index : i64 (- (opt-global-copy-facts-count facts) 1)]
-    (while (>= index 0)
-      (begin
-        (opt-global-copy-table-insert!
-          table
-          (opt-global-copy-facts-ref facts index))
-        (set! index (- index 1))))))
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    [slots : (& items (Array OptGlobalDenseFact))
+      (opt_global_fact_vec.slots (& items))]
+    [count : i64 (opt_global_fact_vec.len (& items))]
+    [index : i64 0]
+    (while (< index count)
+      (match (array-ref slots index)
+        [(OptGlobalDenseFact.Copy
+            (OptGlobalCopyFact.Fact dst src def-block-id def-pos))
+          (begin
+            (opt-global-copy-table-insert!
+              table
+              (OptGlobalCopyFact.Fact dst src def-block-id def-pos))
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))))
 
 (define (opt-global-copy-table-from-facts [facts : OptGlobalCopyFacts]) : OptGlobalCopyFactTable
   (let
@@ -13266,18 +13219,23 @@
   [facts : OptGlobalPackWordFacts]
   [max-group : i64]) : i64
   (let
-    [count : i64 (opt-global-pack-word-facts-count facts)]
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    [slots : (& items (Array OptGlobalDenseFact))
+      (opt_global_fact_vec.slots (& items))]
+    [count : i64 (opt_global_fact_vec.len (& items))]
     [index : i64 0]
     [highest : i64 max-group]
     (begin
       (while (< index count)
-        (match (opt-global-pack-word-facts-ref facts index)
-          [(OptGlobalPackWordFact.Fact group _ _ _ _)
+        (match (array-ref slots index)
+          [(OptGlobalDenseFact.PackWord
+              (OptGlobalPackWordFact.Fact group _ _ _ _))
             (begin
               (if (> group highest)
                 (set! highest group)
                 unit)
-              (set! index (+ index 1)))]))
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
       highest)))
 
 (define (opt-global-pack-word-table-insert!
@@ -13289,22 +13247,41 @@
         [buckets : (__tl_dyn-array OptGlobalPackWordFacts)
           (struct-get table buckets)]
         (if (and (>= group 0) (< group (array-length buckets)))
-          (opt_global_pack_word_fact_vec.push
+          (opt_global_fact_vec.push
             (&mut (struct-get (array-ref buckets group) items))
-            (OptGlobalPackWordFact.Fact group index value def-block-id def-pos))
+            (OptGlobalDenseFact.PackWord
+              (OptGlobalPackWordFact.Fact
+                group
+                index
+                value
+                def-block-id
+                def-pos)))
           unit))]))
 
 (define (opt-global-pack-word-table-insert-reversed!
   [table : OptGlobalPackWordFactTable]
   [facts : OptGlobalPackWordFacts]) : unit
   (let
-    [index : i64 (- (opt-global-pack-word-facts-count facts) 1)]
-    (while (>= index 0)
-      (begin
-        (opt-global-pack-word-table-insert!
-          table
-          (opt-global-pack-word-facts-ref facts index))
-        (set! index (- index 1))))))
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    [slots : (& items (Array OptGlobalDenseFact))
+      (opt_global_fact_vec.slots (& items))]
+    [count : i64 (opt_global_fact_vec.len (& items))]
+    [scan : i64 0]
+    (while (< scan count)
+      (match (array-ref slots scan)
+        [(OptGlobalDenseFact.PackWord
+            (OptGlobalPackWordFact.Fact group index value def-block-id def-pos))
+          (begin
+            (opt-global-pack-word-table-insert!
+              table
+              (OptGlobalPackWordFact.Fact
+                group
+                index
+                value
+                def-block-id
+                def-pos))
+            (set! scan (+ scan 1)))]
+        [_ (set! scan (+ scan 1))]))))
 
 (define (opt-global-pack-word-table-from-facts [facts : OptGlobalPackWordFacts]) : OptGlobalPackWordFactTable
   (let
@@ -13328,19 +13305,22 @@
   [use-block-id : i64]
   [use-pos : i64]) : CompilerIrMaybeValue
   (let
-    [count : i64 (opt-global-pack-word-facts-count facts)]
-    [scan : i64 0]
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    [slots : (& items (Array OptGlobalDenseFact))
+      (opt_global_fact_vec.slots (& items))]
+    [scan : i64 (- (opt_global_fact_vec.len (& items)) 1)]
     [result : CompilerIrMaybeValue (CompilerIrMaybeValue.No)]
     [found? : bool false]
     (begin
-      (while (and (not found?) (< scan count))
-        (match (opt-global-pack-word-facts-ref facts scan)
-          [(OptGlobalPackWordFact.Fact
-              found-group
-              found-index
-              value
-              def-block-id
-              def-pos)
+      (while (and (not found?) (>= scan 0))
+        (match (array-ref slots scan)
+          [(OptGlobalDenseFact.PackWord
+              (OptGlobalPackWordFact.Fact
+                found-group
+                found-index
+                value
+                def-block-id
+                def-pos))
             (begin
               (if (and
                 (= found-group group)
@@ -13352,10 +13332,11 @@
                   use-pos
                   doms))
                 (begin
-                  (set! result (CompilerIrMaybeValue.Some value))
+                  (set! result (CompilerIrMaybeValue.Some (clone value)))
                   (set! found? true))
                 unit)
-              (set! scan (+ scan 1)))]))
+              (set! scan (- scan 1)))]
+          [_ (set! scan (- scan 1))]))
       result)))
 
 (define (opt-global-pack-word-lookup
@@ -13385,14 +13366,17 @@
   [use-block-id : i64]
   [use-pos : i64]) : CompilerIrMaybeValue
   (let
-    [count : i64 (opt-global-copy-facts-count facts)]
-    [index : i64 0]
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    [slots : (& items (Array OptGlobalDenseFact))
+      (opt_global_fact_vec.slots (& items))]
+    [index : i64 (- (opt_global_fact_vec.len (& items)) 1)]
     [result : CompilerIrMaybeValue (CompilerIrMaybeValue.No)]
     [found? : bool false]
     (begin
-      (while (and (not found?) (< index count))
-        (match (opt-global-copy-facts-ref facts index)
-          [(OptGlobalCopyFact.Fact dst src def-block-id def-pos)
+      (while (and (not found?) (>= index 0))
+        (match (array-ref slots index)
+          [(OptGlobalDenseFact.Copy
+              (OptGlobalCopyFact.Fact dst src def-block-id def-pos))
             (begin
               (if (and
                 (= dst var)
@@ -13403,10 +13387,11 @@
                   use-pos
                   doms))
                 (begin
-                  (set! result (CompilerIrMaybeValue.Some src))
+                  (set! result (CompilerIrMaybeValue.Some (clone src)))
                   (set! found? true))
                 unit)
-              (set! index (+ index 1)))]))
+              (set! index (- index 1)))]
+          [_ (set! index (- index 1))]))
       result)))
 
 (define (opt-global-copy-lookup
@@ -14082,23 +14067,32 @@
           (struct-get table buckets)]
         [bucket : i64
           (opt-global-expr-bucket-index type-segment-bases buckets key)]
-        (opt_global_expr_fact_vec.push
+        (opt_global_fact_vec.push
           (&mut (struct-get (array-ref buckets bucket) items))
-          (OptGlobalExprFact.Fact key dst def-block-id def-pos)))]))
+          (OptGlobalDenseFact.Expr
+            (OptGlobalExprFact.Fact key dst def-block-id def-pos))))]))
 
 (define (opt-global-expr-table-insert-reversed!
   [type-segment-bases : i64]
   [table : OptGlobalExprFactTable]
   [facts : OptGlobalExprFacts]) : unit
   (let
-    [index : i64 (- (opt-global-expr-facts-count facts) 1)]
-    (while (>= index 0)
-      (begin
-        (opt-global-expr-table-insert!
-          type-segment-bases
-          table
-          (opt-global-expr-facts-ref facts index))
-        (set! index (- index 1))))))
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    [slots : (& items (Array OptGlobalDenseFact))
+      (opt_global_fact_vec.slots (& items))]
+    [count : i64 (opt_global_fact_vec.len (& items))]
+    [index : i64 0]
+    (while (< index count)
+      (match (array-ref slots index)
+        [(OptGlobalDenseFact.Expr
+            (OptGlobalExprFact.Fact key dst def-block-id def-pos))
+          (begin
+            (opt-global-expr-table-insert!
+              type-segment-bases
+              table
+              (OptGlobalExprFact.Fact key dst def-block-id def-pos))
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))))
 
 (define (opt-global-expr-table-from-facts
   [type-segment-bases : i64]
@@ -14122,14 +14116,17 @@
   [use-block-id : i64]
   [use-pos : i64]) : CompilerIrMaybeValue
   (let
-    [count : i64 (opt-global-expr-facts-count facts)]
-    [index : i64 0]
+    [items : opt_global_fact_vec.Vec (struct-get facts items)]
+    [slots : (& items (Array OptGlobalDenseFact))
+      (opt_global_fact_vec.slots (& items))]
+    [index : i64 (- (opt_global_fact_vec.len (& items)) 1)]
     [result : CompilerIrMaybeValue (CompilerIrMaybeValue.No)]
     [found? : bool false]
     (begin
-      (while (and (not found?) (< index count))
-        (match (opt-global-expr-facts-ref facts index)
-          [(OptGlobalExprFact.Fact fact-key fact-dst def-block-id def-pos)
+      (while (and (not found?) (>= index 0))
+        (match (array-ref slots index)
+          [(OptGlobalDenseFact.Expr
+              (OptGlobalExprFact.Fact fact-key fact-dst def-block-id def-pos))
             (begin
               (if (and
                 (not (= fact-dst dst))
@@ -14146,7 +14143,8 @@
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var fact-dst)))
                   (set! found? true))
                 unit)
-              (set! index (+ index 1)))]))
+              (set! index (- index 1)))]
+          [_ (set! index (- index 1))]))
       result)))
 
 (define (opt-global-expr-lookup
@@ -28061,7 +28059,7 @@
   (SomeBlock CompilerIrBlock))
 
 (define (opt-gvn-scope-changes-new) : OptGvnScopeChanges
-  (OptGvnScopeChanges (opt_dense_i64_vec.with-capacity 8)))
+  (OptGvnScopeChanges (opt_dense_i64_vec.new)))
 
 (define (opt-gvn-scope-changes-count [changes : OptGvnScopeChanges]) : i64
   (opt_dense_i64_vec.len (& (struct-get changes buckets))))

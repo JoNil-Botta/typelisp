@@ -177,24 +177,24 @@
           [(CompilerIrValue.I64 found) (= found expected)]
           [_ false]))]))
 
-(define (opt-dense-test-var-defs
-  [defs : OptVarDefList (:consume)]
-  [next : i64]
-  [last : i64]) : OptVarDefList
-  (if (> next last)
-    defs
-    (opt-dense-test-var-defs
-      (opt-var-defs-prepend defs (OptVarDef.Def next next next))
-      (+ next 1)
-      last)))
+(define (opt-dense-test-var-def-index-is?
+  [defs : (__tl_dyn-array OptMaybeVarDef)]
+  [var : i64]
+  [expected-block : i64]
+  [expected-pos : i64]) : bool
+  (match (opt-var-def-lookup defs var)
+    [(OptMaybeVarDef.No) false]
+    [(OptMaybeVarDef.Some def)
+      (match def
+        [(OptVarDef.Def found block pos)
+          (and (= found var) (= block expected-block) (= pos expected-pos))])]))
 
-(define (opt-dense-test-var-def-is?
-  [defs : OptVarDefList]
-  [index : i64]
-  [expected : i64]) : bool
-  (match (opt-var-defs-ref defs index)
-    [(OptVarDef.Def var block pos)
-      (and (= var expected) (= block expected) (= pos expected))]))
+(define (opt-dense-test-var-def-index-empty?
+  [defs : (__tl_dyn-array OptMaybeVarDef)]
+  [var : i64]) : bool
+  (match (opt-var-def-lookup defs var)
+    [(OptMaybeVarDef.No) true]
+    [(OptMaybeVarDef.Some _) false]))
 
 (define (opt-dense-test-gvn-scope-push
   [type-segment-bases : i64]
@@ -298,7 +298,19 @@
         (opt-global-pack-word-facts-new)
         1
         8)]
-    [var-defs : OptVarDefList (opt-dense-test-var-defs (opt-var-defs-new) 1 16)]
+    [var-defs : (__tl_dyn-array OptMaybeVarDef)
+      (opt-var-defs-index
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "value" (AstType.I64) 0)
+          (CompilerIrParamList.Nil))
+        3
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "dense_var_defs")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 7) (AstType.I64))
+              (CompilerIrInstrList.Nil)))
+          (CompilerIrBlockList.Nil)))]
     [doms : OptDomInfo
       (opt-cfg-dominators
         (compiler-ir-block-cons
@@ -364,9 +376,9 @@
       [(not (= (opt-global-pack-word-facts-count global-pack-word) 8)) 22]
       [(not (opt-dense-test-global-pack-word-fact-is? global-pack-word 0 8)) 23]
       [(not (opt-dense-test-global-pack-word-fact-is? global-pack-word 7 1)) 24]
-      [(not (= (opt-var-defs-count var-defs) 16)) 25]
-      [(not (opt-dense-test-var-def-is? var-defs 0 16)) 26]
-      [(not (opt-dense-test-var-def-is? var-defs 15 1)) 27]
+      [(not (opt-dense-test-var-def-index-is? var-defs 0 0 0)) 25]
+      [(not (opt-dense-test-var-def-index-is? var-defs 2 0 1)) 26]
+      [(not (opt-dense-test-var-def-index-empty? var-defs 1)) 27]
       [(match (opt-global-copy-lookup copy-precedence 7 doms 0 3)
           [(CompilerIrMaybeValue.Some value)
             (match value

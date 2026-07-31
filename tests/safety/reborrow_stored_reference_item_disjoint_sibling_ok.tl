@@ -1,12 +1,12 @@
 ;: A returned stored-reference reborrow protects only its original projection;
 ;: an unrelated sibling remains mutable.
 (defstruct ReborrowSiblingArrays
-  (left (Array i64))
-  (right (Array i64)))
+  (left (__tl_dyn-array i64))
+  (right (__tl_dyn-array i64)))
 
 (defstruct ReborrowSiblingIter
   (:lifetimes source)
-  (slots (& source (Array i64)))
+  (slots (& source (__tl_dyn-array i64)))
   (index i64))
 
 (defenum ReborrowSiblingNext

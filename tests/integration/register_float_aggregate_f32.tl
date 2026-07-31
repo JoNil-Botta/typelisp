@@ -74,7 +74,7 @@
 
 (define (case-array) : bool
   (let
-    [items : (Array Vec2) (array.make-array Vec2 2)]
+    [items : (__tl_dyn-array Vec2) (array.make-array Vec2 2)]
     (begin
       (array-set! items 0 (Vec2 3.0 4.0))
       (array-set! items 1 (Vec2 5.0 6.0))

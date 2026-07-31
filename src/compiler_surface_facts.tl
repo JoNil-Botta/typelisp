@@ -2,10 +2,8 @@
 ;; package surface producers and consumers.
 (import compiler_surface_binary as binary)
 (import compiler_surface_identity as surface_identity)
-(import stdlib.arena)
-
-;; lint-allow: unused-import -- used by compiler-surface-producer builds.
-(import stdlib.byte_buf_core)
+(cfg compiler-surface-producer (import stdlib.arena))
+(cfg compiler-surface-producer (import stdlib.byte_buf_core))
 
 (defstruct SurfaceTypecheckFacts
   (macro-prefix-decl-count i64)
@@ -17,9 +15,11 @@
   (clone-root-keys (__tl_dyn-array i64))
   (clone-call-indices (__tl_dyn-array i64)))
 
-(defenum ResultSurfaceTypecheckFactBytes
-  (Ok (__tl_dyn-array u8))
-  (Err String))
+(cfg
+  compiler-surface-producer
+  (defenum ResultSurfaceTypecheckFactBytes
+    (Ok (__tl_dyn-array u8))
+    (Err String)))
 
 (defenum ResultSurfaceTypecheckFacts
   (Ok SurfaceTypecheckFacts)
@@ -31,58 +31,70 @@
   (ok (__tl_dyn-array bool))
   (message (__tl_dyn-array String)))
 
-(defstruct SurfaceCloneObservation
-  (decl-key i64)
-  (root-key i64)
-  (call-index i64))
+(cfg
+  compiler-surface-producer
+  (defstruct SurfaceCloneObservation
+    (decl-key i64)
+    (root-key i64)
+    (call-index i64)))
 
-(defstruct SurfaceCloneObservationSeq
-  (slots (__tl_dyn-array SurfaceCloneObservation))
-  (len i64))
+(cfg
+  compiler-surface-producer
+  (defstruct SurfaceCloneObservationSeq
+    (slots (__tl_dyn-array SurfaceCloneObservation))
+    (len i64)))
 
-(define (surface-clone-observation-seq-empty) : SurfaceCloneObservationSeq
-  (SurfaceCloneObservationSeq (make-array SurfaceCloneObservation 0) 0))
+(cfg
+  compiler-surface-producer
+  (define (surface-clone-observation-seq-empty) : SurfaceCloneObservationSeq
+    (SurfaceCloneObservationSeq (make-array SurfaceCloneObservation 0) 0)))
 
-(define (surface-clone-observation-copy-range!
-  [dst : (&mut dst (__tl_dyn-array SurfaceCloneObservation))]
-  [src : (& src (__tl_dyn-array SurfaceCloneObservation))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (array-set! dst index (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (surface-clone-observation-seq-grow!
-  [seq : (&mut seq SurfaceCloneObservationSeq)]) : unit
-  (let
-    [count : i64 (struct-get seq len)]
-    [bigger : (__tl_dyn-array SurfaceCloneObservation)
-      (make-array
-        SurfaceCloneObservation
-        (if (< count 1)
-          16
-          (* count 2)))]
-    (begin
-      (surface-clone-observation-copy-range!
-        (&mut bigger)
-        (& (struct-get seq slots))
-        count)
-      (set! (struct-get seq slots) bigger))))
-
-(define (surface-clone-observation-seq-push!
-  [seq : (&mut seq SurfaceCloneObservationSeq)]
-  [observation : SurfaceCloneObservation]) : unit
-  (begin
-    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
-      unit
-      (surface-clone-observation-seq-grow! seq))
+(cfg
+  compiler-surface-producer
+  (define (surface-clone-observation-copy-range!
+    [dst : (&mut dst (__tl_dyn-array SurfaceCloneObservation))]
+    [src : (& src (__tl_dyn-array SurfaceCloneObservation))]
+    [count : i64]) : unit
     (let
-      [index : i64 (struct-get seq len)]
+      [index : i64 0]
+      (while (< index count)
+        (begin
+          (array-set! dst index (array-ref src index))
+          (set! index (+ index 1)))))))
+
+(cfg
+  compiler-surface-producer
+  (define (surface-clone-observation-seq-grow!
+    [seq : (&mut seq SurfaceCloneObservationSeq)]) : unit
+    (let
+      [count : i64 (struct-get seq len)]
+      [bigger : (__tl_dyn-array SurfaceCloneObservation)
+        (make-array
+          SurfaceCloneObservation
+          (if (< count 1)
+            16
+            (* count 2)))]
       (begin
-        (array-set! (struct-get seq slots) index observation)
-        (set! (struct-get seq len) (+ index 1))))))
+        (surface-clone-observation-copy-range!
+          (&mut bigger)
+          (& (struct-get seq slots))
+          count)
+        (set! (struct-get seq slots) bigger)))))
+
+(cfg
+  compiler-surface-producer
+  (define (surface-clone-observation-seq-push!
+    [seq : (&mut seq SurfaceCloneObservationSeq)]
+    [observation : SurfaceCloneObservation]) : unit
+    (begin
+      (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+        unit
+        (surface-clone-observation-seq-grow! seq))
+      (let
+        [index : i64 (struct-get seq len)]
+        (begin
+          (array-set! (struct-get seq slots) index observation)
+          (set! (struct-get seq len) (+ index 1)))))))
 
 (define surface-typecheck-facts-magic : i64
   6073461667468337970)
@@ -125,92 +137,141 @@
 (define (surface-typecheck-facts-current) : SurfaceTypecheckFacts
   surface-typecheck-facts-installed-value)
 
-(define surface-typecheck-facts-recording-active : bool
-  false)
-(define surface-typecheck-facts-recording-arena : i64
-  0)
-(define surface-typecheck-facts-recording-decl-key : i64
-  -1)
-(define surface-typecheck-facts-recording-observations : SurfaceCloneObservationSeq
-  (surface-clone-observation-seq-empty))
-(define surface-typecheck-facts-recording-next-call : i64
-  0)
-(define surface-typecheck-facts-recording-current-call : i64
-  -1)
+(cfg
+  compiler-surface-producer
+  (define surface-typecheck-facts-recording-active : bool
+    false))
+(cfg
+  compiler-surface-producer
+  (define surface-typecheck-facts-recording-arena : i64
+    0))
+(cfg
+  compiler-surface-producer
+  (define surface-typecheck-facts-recording-decl-key : i64
+    -1))
+(cfg
+  compiler-surface-producer
+  (define surface-typecheck-facts-recording-observations : SurfaceCloneObservationSeq
+    (surface-clone-observation-seq-empty)))
+(cfg
+  compiler-surface-producer
+  (define surface-typecheck-facts-recording-next-call : i64
+    0))
+(cfg
+  compiler-surface-producer
+  (define surface-typecheck-facts-recording-current-call : i64
+    -1))
 
-(define (surface-typecheck-facts-recording-start! [arena-handle : i64]) : unit
-  (begin
-    (set! surface-typecheck-facts-recording-arena arena-handle)
-    (set! surface-typecheck-facts-recording-decl-key -1)
-    (set!
-      surface-typecheck-facts-recording-observations
-      (surface-clone-observation-seq-empty))
-    (set! surface-typecheck-facts-recording-next-call 0)
-    (set! surface-typecheck-facts-recording-current-call -1)
-    (set! surface-typecheck-facts-recording-active true)))
-
-(define (surface-typecheck-facts-recording-select-decl! [decl-key : i64]) : unit
-  (if surface-typecheck-facts-recording-active
-    (set! surface-typecheck-facts-recording-decl-key decl-key)
-    unit))
-
-(define (surface-typecheck-facts-recording-start-clone-call!) : unit
-  (if surface-typecheck-facts-recording-active
+(cfg
+  compiler-surface-producer
+  (define (surface-typecheck-facts-recording-start! [arena-handle : i64]) : unit
     (begin
+      (set! surface-typecheck-facts-recording-arena arena-handle)
+      (set! surface-typecheck-facts-recording-decl-key -1)
       (set!
-        surface-typecheck-facts-recording-current-call
-        surface-typecheck-facts-recording-next-call)
-      (set!
-        surface-typecheck-facts-recording-next-call
-        (+ surface-typecheck-facts-recording-next-call 1)))
-    unit))
+        surface-typecheck-facts-recording-observations
+        (surface-clone-observation-seq-empty))
+      (set! surface-typecheck-facts-recording-next-call 0)
+      (set! surface-typecheck-facts-recording-current-call -1)
+      (set! surface-typecheck-facts-recording-active true))))
 
-(define (surface-typecheck-facts-recording-note-clone-root! [root-key : i64]) : unit
-  (if (and
-    surface-typecheck-facts-recording-active
-    (>= surface-typecheck-facts-recording-decl-key 0)
-    (>= surface-typecheck-facts-recording-current-call 0)
-    (>= root-key 0))
-    (let
-      [previous-arena : i64 (arena.tl_arena_current)]
+(cfg
+  compiler-surface-producer
+  (define (surface-typecheck-facts-recording-select-decl! [decl-key : i64]) : unit
+    (if surface-typecheck-facts-recording-active
+      (set! surface-typecheck-facts-recording-decl-key decl-key)
+      unit)))
+
+(cfg
+  compiler-surface-producer
+  (define (surface-typecheck-facts-recording-start-clone-call!) : unit
+    (if surface-typecheck-facts-recording-active
       (begin
-        (unsafe
-          (arena.tl_arena_set surface-typecheck-facts-recording-arena))
-        (surface-clone-observation-seq-push!
-          (&mut surface-typecheck-facts-recording-observations)
-          (SurfaceCloneObservation
-            surface-typecheck-facts-recording-decl-key
-            root-key
-            surface-typecheck-facts-recording-current-call))
-        (set! surface-typecheck-facts-recording-arena (arena.tl_arena_current))
-        (unsafe
-          (arena.tl_arena_set previous-arena))))
-    unit))
+        (set!
+          surface-typecheck-facts-recording-current-call
+          surface-typecheck-facts-recording-next-call)
+        (set!
+          surface-typecheck-facts-recording-next-call
+          (+ surface-typecheck-facts-recording-next-call 1)))
+      unit)))
 
-(define (surface-typecheck-facts-recording-finish
-  [macro-prefix-decl-count : i64]
-  [prefix-decl-count : i64]
-  [summary-values : i64]
-  [summary-functions : i64]
-  [summary-externs : i64]) : SurfaceTypecheckFacts
-  (let
-    [count : i64
-      (struct-get surface-typecheck-facts-recording-observations len)]
-    [decl-keys : (__tl_dyn-array i64) (make-array i64 count)]
-    [root-keys : (__tl_dyn-array i64) (make-array i64 count)]
-    [call-indices : (__tl_dyn-array i64) (make-array i64 count)]
-    [index : i64 0]
-    [slots : (__tl_dyn-array SurfaceCloneObservation)
-      (struct-get surface-typecheck-facts-recording-observations slots)]
+(cfg
+  compiler-surface-producer
+  (define (surface-typecheck-facts-recording-note-clone-root! [root-key : i64]) : unit
+    (if (and
+      surface-typecheck-facts-recording-active
+      (>= surface-typecheck-facts-recording-decl-key 0)
+      (>= surface-typecheck-facts-recording-current-call 0)
+      (>= root-key 0))
+      (let
+        [previous-arena : i64 (arena.tl_arena_current)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set surface-typecheck-facts-recording-arena))
+          (surface-clone-observation-seq-push!
+            (&mut surface-typecheck-facts-recording-observations)
+            (SurfaceCloneObservation
+              surface-typecheck-facts-recording-decl-key
+              root-key
+              surface-typecheck-facts-recording-current-call))
+          (set!
+            surface-typecheck-facts-recording-arena
+            (arena.tl_arena_current))
+          (unsafe
+            (arena.tl_arena_set previous-arena))))
+      unit)))
+
+(cfg
+  compiler-surface-producer
+  (define (surface-typecheck-facts-recording-finish
+    [macro-prefix-decl-count : i64]
+    [prefix-decl-count : i64]
+    [summary-values : i64]
+    [summary-functions : i64]
+    [summary-externs : i64]) : SurfaceTypecheckFacts
+    (let
+      [count : i64
+        (struct-get surface-typecheck-facts-recording-observations len)]
+      [decl-keys : (__tl_dyn-array i64) (make-array i64 count)]
+      [root-keys : (__tl_dyn-array i64) (make-array i64 count)]
+      [call-indices : (__tl_dyn-array i64) (make-array i64 count)]
+      [index : i64 0]
+      [slots : (__tl_dyn-array SurfaceCloneObservation)
+        (struct-get surface-typecheck-facts-recording-observations slots)]
+      (begin
+        (while (< index count)
+          (let
+            [observation : SurfaceCloneObservation (array-ref slots index)]
+            (begin
+              (array-set! decl-keys index (struct-get observation decl-key))
+              (array-set! root-keys index (struct-get observation root-key))
+              (array-set!
+                call-indices
+                index
+                (struct-get observation call-index))
+              (set! index (+ index 1)))))
+        (set! surface-typecheck-facts-recording-active false)
+        (set! surface-typecheck-facts-recording-arena 0)
+        (set! surface-typecheck-facts-recording-decl-key -1)
+        (set!
+          surface-typecheck-facts-recording-observations
+          (surface-clone-observation-seq-empty))
+        (set! surface-typecheck-facts-recording-next-call 0)
+        (set! surface-typecheck-facts-recording-current-call -1)
+        (SurfaceTypecheckFacts
+          macro-prefix-decl-count
+          prefix-decl-count
+          summary-values
+          summary-functions
+          summary-externs
+          decl-keys
+          root-keys
+          call-indices)))))
+
+(cfg
+  compiler-surface-producer
+  (define (surface-typecheck-facts-recording-abort!) : unit
     (begin
-      (while (< index count)
-        (let
-          [observation : SurfaceCloneObservation (array-ref slots index)]
-          (begin
-            (array-set! decl-keys index (struct-get observation decl-key))
-            (array-set! root-keys index (struct-get observation root-key))
-            (array-set! call-indices index (struct-get observation call-index))
-            (set! index (+ index 1)))))
       (set! surface-typecheck-facts-recording-active false)
       (set! surface-typecheck-facts-recording-arena 0)
       (set! surface-typecheck-facts-recording-decl-key -1)
@@ -218,30 +279,12 @@
         surface-typecheck-facts-recording-observations
         (surface-clone-observation-seq-empty))
       (set! surface-typecheck-facts-recording-next-call 0)
-      (set! surface-typecheck-facts-recording-current-call -1)
-      (SurfaceTypecheckFacts
-        macro-prefix-decl-count
-        prefix-decl-count
-        summary-values
-        summary-functions
-        summary-externs
-        decl-keys
-        root-keys
-        call-indices))))
+      (set! surface-typecheck-facts-recording-current-call -1))))
 
-(define (surface-typecheck-facts-recording-abort!) : unit
-  (begin
-    (set! surface-typecheck-facts-recording-active false)
-    (set! surface-typecheck-facts-recording-arena 0)
-    (set! surface-typecheck-facts-recording-decl-key -1)
-    (set!
-      surface-typecheck-facts-recording-observations
-      (surface-clone-observation-seq-empty))
-    (set! surface-typecheck-facts-recording-next-call 0)
-    (set! surface-typecheck-facts-recording-current-call -1)))
-
-(define (surface-typecheck-facts-recording?) : bool
-  surface-typecheck-facts-recording-active)
+(cfg
+  compiler-surface-producer
+  (define (surface-typecheck-facts-recording?) : bool
+    surface-typecheck-facts-recording-active))
 
 (define (surface-typecheck-facts-valid? [facts : SurfaceTypecheckFacts]) : bool
   (let

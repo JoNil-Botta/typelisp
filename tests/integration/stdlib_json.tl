@@ -78,7 +78,7 @@
 
 (define (json-test-f64-from-bits [bits : u64]) : f64
   (let
-    [buf : (Array u64) (array.make-array u64 1)]
+    [buf : (__tl_dyn-array u64) (array.make-array u64 1)]
     (begin
       (array-set! buf 0 bits)
       (unsafe
@@ -86,7 +86,7 @@
 
 (define (json-test-f32-from-bits [bits : u32]) : f32
   (let
-    [buf : (Array u32) (array.make-array u32 1)]
+    [buf : (__tl_dyn-array u32) (array.make-array u32 1)]
     (begin
       (array-set! buf 0 bits)
       (unsafe

@@ -54,7 +54,7 @@
     (if (= total 0)
       ""
       (let
-        [out : (Array u8) (array.make-array u8 total)]
+        [out : (__tl_dyn-array u8) (array.make-array u8 total)]
         [dst : (MutPtr u8)
           (unsafe
             (array-data out))]

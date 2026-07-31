@@ -180,9 +180,6 @@
         (array-set! (struct-get captures slots) index capture)
         (set! (struct-get captures len) (+ index 1))))))
 
-(define embedded-stdlib-tlci-native-floor-name : String
-  "stdlib.array/length")
-
 (define (embedded-stdlib-tlci-unwrap-expr [node : i64]) : AstExpr
   (match (ast-node-get node)
     [(AstExpr.Spanned inner _) (embedded-stdlib-tlci-unwrap-expr inner)]
@@ -204,23 +201,6 @@
                 unit)])
           (set! index (+ index 1))))
       found)))
-
-(define (embedded-stdlib-tlci-type-unquote-param
-  [params : (& params AstMacroParamList)]
-  [ty : AstType]) : i64
-  (match ty
-    [(AstType.VarArgs name lifetimes)
-      (if (and
-        (= name cbi.compiler-builtin-id-fix-unquote)
-        (= (ast-lifetime-list-len (& (box-get lifetimes))) 1))
-        (embedded-stdlib-tlci-param-index
-          params
-          (ast-lifetime-list-get
-            (& (box-get lifetimes))
-            0
-            (ast-lifetime-fallback)))
-        -1)]
-    [_ -1]))
 
 (define embedded-stdlib-tlci-native-report-count : (__tl_dyn-array i64)
   (make-array 0))
@@ -398,28 +378,6 @@
       (< slot embedded-native-ops-cap)
       (array-set! ops slot line)
       (array-set! ops-count 0 (+ slot 1)))))
-
-(define (embedded-native-status-sum [opened : i64]) : String
-  (let
-    [out : String ""]
-    [index : i64 0]
-    (begin
-      (while (< index opened)
-        (begin
-          (set!
-            out
-            (str-cat
-              out
-              (if (< index (- opened 1))
-                (str-cat "(+ q" (string.int->string index) " ")
-                (str-cat "q" (string.int->string index)))))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index (- opened 1))
-        (begin
-          (set! out (str-cat out ")"))
-          (set! index (+ index 1))))
-      out)))
 
 (define (embedded-native-op-open
   [status-index : i64]
@@ -4648,27 +4606,6 @@
 ;: The type-operand index of `(comptime.expr-int (array-length T))` given the
 ;: builder's argument list, or -1 when the argument is any other shape.
 ;: Refs #5701.
-(define (embedded-native-array-length-param-index
-  [params : (& params AstMacroParamList)]
-  [args : (& args AstExprList)]) : i64
-  (if (not (= (ast-expr-list-len args) 1))
-    -1
-    (match (embedded-stdlib-tlci-unwrap-expr (ast-expr-list-get args 0 0))
-      [(AstExpr.Call length-func length-args)
-        (match (embedded-stdlib-tlci-unwrap-expr length-func)
-          [(AstExpr.Var length-head)
-            (if (and
-              (or
-                (string.eq (intern-str length-head) "comptime.array-length")
-                (string.eq (intern-str length-head) "array-length"))
-              (= (ast-expr-list-len (& length-args)) 1))
-              (embedded-native-var-param-index
-                params
-                (ast-expr-list-get (& length-args) 0 0))
-              -1)]
-          [_ -1])]
-      [_ -1])))
-
 ;; A one-entry ops array for a single host op.
 (define (embedded-native-single-op-ops
   [op : String]

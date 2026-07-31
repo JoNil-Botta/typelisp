@@ -2,15 +2,15 @@
 (import stdlib.array)
 
 (defstruct Bags
-  (left (Array i64))
-  (right (Array i64)))
+  (left (__tl_dyn-array i64))
+  (right (__tl_dyn-array i64)))
 
 (define (main) : unit
   (let
-    [left-items : (Array i64) (array.make-array i64 1)]
-    [right-items : (Array i64) (array.make-array i64 1)]
+    [left-items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [right-items : (__tl_dyn-array i64) (array.make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
-      [first : (&mut bags (Array i64)) (&mut (struct-get bags left))]
-      [second : (&mut bags (Array i64)) (&mut (struct-get bags left))]
+      [first : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
+      [second : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
       unit)))

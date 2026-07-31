@@ -5,7 +5,7 @@
 ;; removal issue removes or inverts this test.
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (array-set! items 0 40)
       (array-push! items 2)

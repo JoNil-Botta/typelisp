@@ -2,10 +2,10 @@
 ;: aggregate from a loop body is conservatively live across loop iterations.
 (import stdlib.array)
 
-(define (read-items [items : (Array (& n i64))]) : i64
+(define (read-items [items : (__tl_dyn-array (& n i64))]) : i64
   1)
 
-(define (main [n : i64] [items : (Array (& n i64))] [limit : i64]) : i64
+(define (main [n : i64] [items : (__tl_dyn-array (& n i64))] [limit : i64]) : i64
   (let
     [i : i64 0]
     (begin

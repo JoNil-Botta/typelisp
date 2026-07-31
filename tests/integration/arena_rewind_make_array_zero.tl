@@ -9,7 +9,7 @@
 (import stdlib.array)
 (import stdlib.arena)
 
-(define (dirty-range! [items : (Array i64)] [n : i64]) : unit
+(define (dirty-range! [items : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -17,7 +17,7 @@
         (array-set! items i (+ i 1))
         (set! i (+ i 1))))))
 
-(define (sum-range [items : (Array i64)] [n : i64]) : i64
+(define (sum-range [items : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -31,7 +31,7 @@
 (define (main) : i64
   (let
     ;; Force the program arena into existence before taking the mark.
-    [warm : (Array i64) (array.make-array i64 8)]
+    [warm : (__tl_dyn-array i64) (array.make-array i64 8)]
     [mark : arena.ArenaMark (arena.mark)]
     (begin
       (dirty-range! warm 8)
@@ -39,7 +39,7 @@
       (unsafe
         (arena.rewind mark))
       (let
-        [fresh : (Array i64) (array.make-array i64 1024)]
+        [fresh : (__tl_dyn-array i64) (array.make-array i64 1024)]
         (if (= (sum-range fresh 1024) 0)
           42
           1)))))

@@ -1,20 +1,20 @@
 (import stdlib.array)
 
-(define (put-first [items : (&mut items (Array i64))] [value : i64]) : unit
+(define (put-first [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
   (array-set! items 0 value))
 
-(define (push-tail [items : (&mut items (Array i64))] [value : i64]) : unit
+(define (push-tail [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
   (array-push! items value))
 
 (define (put-fixed [items : (&mut items (Array i64 2))] [value : i64]) : unit
   (array-set! items 1 value))
 
 (defstruct ArrayBag
-  (items (Array i64)))
+  (items (__tl_dyn-array i64)))
 
 (defstruct ArrayBagHandle
   (:lifetimes bag)
-  (items (&mut bag (Array i64)))
+  (items (&mut bag (__tl_dyn-array i64)))
   (index i64))
 
 (define (array-bag-handle [bag : (&mut bag ArrayBag)] [index : i64]) : (ArrayBagHandle
@@ -31,7 +31,7 @@
 
 (define (array-bag-handle-score) : i64
   (let
-    [items : (Array i64) (array.make-array i64 2)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 2)]
     (begin
       (array-set! items 0 7)
       (array-set! items 1 9)
@@ -44,7 +44,7 @@
 
 (define (main) : i64
   (let
-    [items : (Array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     [fixed : (Array i64 2) (array 0 0)]
     (begin
       (array-set! items 0 1)

@@ -18,8 +18,8 @@
     [mk-enum : (-> Box)
       (lambda () : Box
         (BoxI 11))]
-    [mk-array : (-> (Array i64))
-      (lambda () : (Array i64)
+    [mk-array : (-> (__tl_dyn-array i64))
+      (lambda () : (__tl_dyn-array i64)
         (array.make-array i64 13))]
     [mk-struct : (-> Pair)
       (lambda () : Pair

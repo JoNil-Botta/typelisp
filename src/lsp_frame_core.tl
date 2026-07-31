@@ -786,6 +786,28 @@
               (json.JsonString message))
             (json.member-list-empty)))))))
 
+(define (lsp-write-error-with-data
+  [id : json.Json]
+  [code : i64]
+  [message : String]
+  [data : json.Json]) : unit
+  (lsp-write-json
+    (lsp-json-object
+      (lsp-json-rpc-member
+        (lsp-json-member
+          "id"
+          id
+          (lsp-json-member
+            "error"
+            (lsp-json-object3
+              "code"
+              (lsp-json-number code)
+              "message"
+              (json.JsonString message)
+              "data"
+              data)
+            (json.member-list-empty)))))))
+
 (define (lsp-write-error-with-context
   [id : json.Json]
   [code : i64]
@@ -4860,18 +4882,29 @@
     (lsp-skip-paren-group text i n)
     (lsp-scan-ident text i n)))
 
-;; Validate that text contains one or more complete parenthesized forms.
-;; Returns true if all non-whitespace content consists of valid forms.
-;; Now uses the real compiler parser for accurate error reporting.
-(define (lsp-text-is-valid-forms [text : String]) : bool
+(define (lsp-text-has-form-content? [text : String]) : bool
   (let
     [n : i64 (string.string-length text)]
-    [i : i64 (lsp-skip-space text 0 n)]
-    (if (= i n)
-      false
-      (match (lsp-validate-forms-result text)
-        [(LspValidationResult.Valid) true]
-        [(LspValidationResult.Invalid _ _ _ _) false]))))
+    [i : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (begin
+          (set! i (lsp-skip-space text i n))
+          (if (and (< i n) (= (string.string-ref text i) ';'))
+            (set! i (lsp-skip-line text i n))
+            (set! done true))))
+      (< i n))))
+
+;; Validate that text contains one or more complete parenthesized forms.
+;; Returns true if all non-comment content consists of valid forms.
+;; Now uses the real compiler parser for accurate error reporting.
+(define (lsp-text-is-valid-forms [text : String]) : bool
+  (if (not (lsp-text-has-form-content? text))
+    false
+    (match (lsp-validate-forms-result text)
+      [(LspValidationResult.Valid) true]
+      [(LspValidationResult.Invalid _ _ _ _) false])))
 
 (define (lsp-validation-error-message
   [line : i64]
@@ -4886,6 +4919,75 @@
     (string.int->string col)
     " | "
     ctx))
+
+(define (lsp-replace-body-validation-message [new-body : String]) : String
+  (let
+    [detail : String
+      (if (lsp-text-has-form-content? new-body)
+        (match (lsp-validate-forms-result new-body)
+          [(LspValidationResult.Valid) ""]
+          [(LspValidationResult.Invalid line col msg ctx)
+            (lsp-validation-error-message line col msg ctx)])
+        (lsp-validation-error-message
+          1
+          1
+          "expected one or more complete TypeLisp expressions"
+          "<empty body>"))]
+    (if (= (string.string-length detail) 0)
+      ""
+      (lsp-str3
+        "replaceBody rejected before writing: newBody is not a complete TypeLisp body. "
+        detail
+        " No changes were written."))))
+
+(define (lsp-replace-body-validation-data-at
+  [line : i64]
+  [col : i64]
+  [msg : String]
+  [ctx : String]) : json.Json
+  (lsp-json-object
+    (lsp-json-member
+      "operation"
+      (json.JsonString "replaceBody")
+      (lsp-json-member
+        "parameter"
+        (json.JsonString "newBody")
+        (lsp-json-member
+          "expected"
+          (json.JsonString
+            "one or more complete TypeLisp expression(s), without the define/defmacro header")
+          (lsp-json-member
+            "errorCode"
+            (json.JsonString "invalidBody")
+            (lsp-json-member
+              "location"
+              (lsp-json-object2
+                "line"
+                (lsp-json-number line)
+                "column"
+                (lsp-json-number col))
+              (lsp-json-member
+                "parserMessage"
+                (json.JsonString msg)
+                (lsp-json-member
+                  "context"
+                  (json.JsonString ctx)
+                  (lsp-json-member
+                    "written"
+                    (json.JsonBool false)
+                    (json.member-list-empty)))))))))))
+
+(define (lsp-replace-body-validation-data [new-body : String]) : json.Json
+  (if (lsp-text-has-form-content? new-body)
+    (match (lsp-validate-forms-result new-body)
+      [(LspValidationResult.Valid) json.JsonNull]
+      [(LspValidationResult.Invalid line col msg ctx)
+        (lsp-replace-body-validation-data-at line col msg ctx)])
+    (lsp-replace-body-validation-data-at
+      1
+      1
+      "expected one or more complete TypeLisp expressions"
+      "<empty body>")))
 
 ;; Return a formatted error message, or empty string if valid.
 (define (lsp-validate-forms-error [text : String]) : String
@@ -7902,6 +8004,18 @@
       (lsp-write-structural-edit-success id params docs replaced)]
     [(LspEditResult.Err message)
       (lsp-write-contextual-edit-error id params docs message)]))
+
+(define (lsp-write-replace-body-validation-error
+  [id : json.Json]
+  [docs : lsp_document_vec.Vec]
+  [new-body : String]) : LspDocumentHandleResult
+  (begin
+    (lsp-write-error-with-data
+      id
+      -32600
+      (lsp-replace-body-validation-message new-body)
+      (lsp-replace-body-validation-data new-body))
+    (LspDocumentHandleResult.Continue docs)))
 
 (define (lsp-write-read-form-success
   [id : json.Json]
@@ -11654,32 +11768,34 @@
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newBody")
         [(LspJsonText.Ok new-body)
-          (if (lsp-json-has-field? params "path")
-            (match (lsp-json-path-field params)
-              [(LspPathParam.Ok path-items)
-                (lsp-write-structural-edit-result
-                  id
-                  params
-                  docs
-                  (lsp-replace-body-by-path-with-decls
-                    text
-                    path-items
-                    new-body
-                    decls))]
-              [(LspPathParam.Err message)
-                (begin
-                  (lsp-write-error id -32600 message)
-                  (LspDocumentHandleResult.Continue docs))])
-            (let
-              [name : String
-                (lsp-structural-move-name-with-decls params text decls)]
-              (if (= (string.string-length name) 0)
-                (lsp-write-missing-structural-name-error id params docs)
-                (lsp-write-structural-edit-result
-                  id
-                  params
-                  docs
-                  (lsp-replace-body-text-with-decls text name new-body decls)))))]
+          (if (not (lsp-text-is-valid-forms new-body))
+            (lsp-write-replace-body-validation-error id docs new-body)
+            (if (lsp-json-has-field? params "path")
+              (match (lsp-json-path-field params)
+                [(LspPathParam.Ok path-items)
+                  (lsp-write-structural-edit-result
+                    id
+                    params
+                    docs
+                    (lsp-replace-body-by-path-with-decls
+                      text
+                      path-items
+                      new-body
+                      decls))]
+                [(LspPathParam.Err message)
+                  (begin
+                    (lsp-write-error id -32600 message)
+                    (LspDocumentHandleResult.Continue docs))])
+              (let
+                [name : String
+                  (lsp-structural-move-name-with-decls params text decls)]
+                (if (= (string.string-length name) 0)
+                  (lsp-write-missing-structural-name-error id params docs)
+                  (lsp-write-structural-edit-result
+                    id
+                    params
+                    docs
+                    (lsp-replace-body-text-with-decls text name new-body decls))))))]
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newBody parameter")
@@ -12034,6 +12150,15 @@
   [text : String]
   [message : String]) : String
   (cond
+    [(and
+        (string.eq
+          (lsp-json-string-field-default operation "method" "")
+          "tl/replaceBody")
+        (lsp-frame-starts-with? message "newBody is not a valid form: "))
+      (match (lsp-json-string-field operation "newBody")
+        [(LspJsonText.Ok new-body)
+          (lsp-replace-body-validation-message new-body)]
+        [(LspJsonText.Missing) message])]
     [(lsp-batch-position-error? operation message)
       (lsp-batch-position-message operation message)]
     [(string.eq message "Declaration not found")
@@ -12050,7 +12175,16 @@
   [operation : json.Json]
   [text : String]
   [message : String]) : json.Json
-  (lsp-batch-position-context operation text message))
+  (if (and
+    (string.eq
+      (lsp-json-string-field-default operation "method" "")
+      "tl/replaceBody")
+    (lsp-frame-starts-with? message "newBody is not a valid form: "))
+    (match (lsp-json-string-field operation "newBody")
+      [(LspJsonText.Ok new-body) (lsp-replace-body-validation-data new-body)]
+      [(LspJsonText.Missing)
+        (lsp-batch-position-context operation text message)])
+    (lsp-batch-position-context operation text message)))
 
 (define (lsp-batch-apply-operation
   [operation : json.Json]

@@ -284,6 +284,14 @@
 (define (pr-draft? [item : json.Json]) : bool
   (json-field-bool item "isDraft"))
 
+;: Return true when a PR explicitly targets `main`, or when the base is absent
+;: from a legacy payload. An explicit non-main base is a stacked PR and cannot
+;: be merged by an ordinary review worker.
+(define (pr-targets-main? [item : json.Json]) : bool
+  (let
+    [base : String (json-field-string item "baseRefName")]
+    (or (= (string.string-length base) 0) (string.eq base "main"))))
+
 ;: Return true when a check run status is terminal; conclusions may pass/fail.
 (define (pr-check-status-complete? [status : String]) : bool
   (string.eq status "COMPLETED"))
@@ -363,8 +371,8 @@
   (label-list-has? (issue-label-list item) "ready-for-implementation"))
 
 ;: Append a JSON array of PR objects as candidates, preserving source order.
-;: Draft PRs are never eligible, and non-draft PRs whose checks are still
-;: pending or running are skipped until their checks reach a terminal state.
+;: Draft and explicit non-main-base PRs are never eligible, and non-draft PRs
+;: whose checks are pending or running are skipped until they become terminal.
 (define (pr-candidates-into
   [items : json.JsonSeq]
   [out : (&mut out CandBuilder)]) : unit
@@ -375,7 +383,10 @@
       (begin
         (match (json.list-get-index items i)
           [(json.JsonFound head)
-            (if (and (not (pr-draft? head)) (pr-checks-complete? head))
+            (if (and
+              (not (pr-draft? head))
+              (pr-targets-main? head)
+              (pr-checks-complete? head))
               (cand-builder-push! out (pr-candidate head))
               unit)]
           [(json.JsonMissing) unit])
@@ -686,6 +697,24 @@
             (if (= (struct-get (cand-nth cands 4) number) 7)
               unit
               (io.panic "issue should remain after skipped PRs"))))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+
+(test
+  chooser-never-chooses-non-main-base-prs
+  (let
+    [text : String
+      "{\"prs\":[{\"number\":8,\"title\":\"Stacked passing\",\"baseRefName\":\"feature-base\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]},{\"number\":9,\"title\":\"Main passing\",\"baseRefName\":\"main\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]}],\"issues\":[]}"]
+    (match (json.parse (& text))
+      [(json.OkJson root)
+        (let
+          [cands : CandSeq (build-candidates root)]
+          (begin
+            (if (= (cand-count cands) 1)
+              unit
+              (io.panic "only the main-base PR should remain eligible"))
+            (if (= (struct-get (cand-nth cands 0) number) 9)
+              unit
+              (io.panic "the stacked PR must not become a review candidate"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test

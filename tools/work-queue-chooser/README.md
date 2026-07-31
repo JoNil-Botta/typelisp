@@ -26,6 +26,10 @@ Malformed input and a genuinely empty `{"prs":[],"issues":[]}` snapshot remain
 errors. Missing or wrongly typed top-level `prs` and `issues` arrays are
 reported as invalid input.
 
+PR objects should include `baseRefName`. An explicit base other than `main` is
+treated as a stacked PR and is excluded from review; omitting the field retains
+compatibility with older queue snapshots.
+
 Use the TypeLisp command directly:
 
 ```sh

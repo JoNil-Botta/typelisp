@@ -30501,6 +30501,46 @@
     false
     program-index))
 
+;; Private scalar SPMD calls carry the active mask before the source helper
+;; parameters, and their hidden callee signature already records that complete
+;; internal ABI. Size its stack-passed tail from the signature so the ordinary
+;; per-function outgoing area covers these calls too. SIMD private calls make
+;; their own aligned per-call adjustment for uniform stack args and private
+;; vector/mask storage.
+(define (compiler-backend-spmd-scalar-stack-arg-space
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [callee : i64]
+  [program-index : CompilerBackendProgramIndex]) : i64
+  (let
+    [stack-count : i64
+      (compiler-backend-type-list-stack-arg-count
+        type-segment-bases
+        target
+        (compiler-backend-call-param-types-index callee program-index)
+        0
+        0
+        0
+        0
+        program-index)]
+    (if (= stack-count 0)
+      0
+      (compiler-backend-round-up-16 (* stack-count 8)))))
+
+(define (compiler-backend-spmd-outgoing-stack-space
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [payload : CompilerIrInstrSpmdCallPayload]
+  [program-index : CompilerBackendProgramIndex]) : i64
+  (match (struct-get payload backend)
+    [(CompilerIrSpmdBackend.Scalar)
+      (compiler-backend-spmd-scalar-stack-arg-space
+        type-segment-bases
+        target
+        (struct-get payload callee)
+        program-index)]
+    [_ 0]))
+
 ;; Indirect (closure) calls carry no callee signature here, so size conservatively:
 ;; the leading environment pointer plus two stack words per argument is always an
 ;; upper bound on the real footprint.
@@ -30563,6 +30603,12 @@
             (+ (compiler-backend-windows-closure-stack-arg-space args) 16))]
         [(CompilerIrInstr.TailCallIndirect _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
+        [(CompilerIrInstr.SpmdCall payload-box)
+          (compiler-backend-spmd-outgoing-stack-space
+            type-segment-bases
+            target
+            (box-get payload-box)
+            program-index)]
         [_ 0])]
     [(CompilerBackendTarget.Linux)
       ;; Reserve outgoing stack-arg space in the prologue frame so these calls
@@ -30613,6 +30659,12 @@
               16))]
         [(CompilerIrInstr.TailCallIndirect _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
+        [(CompilerIrInstr.SpmdCall payload-box)
+          (compiler-backend-spmd-outgoing-stack-space
+            type-segment-bases
+            target
+            (box-get payload-box)
+            program-index)]
         [_ 0])]))
 
 (defstruct CompilerBackendOutgoingFrameScan
@@ -34687,51 +34739,77 @@
   [value : CompilerIrValue]
   [assignments : CompilerRegAssignmentList]
   [ret-ty : AstType]) : ResultCompilerBackend
-  (if (compiler-backend-spmd-mask-return-function? source-function)
-    (match (compiler-backend-avx512-mask-register-use
-      assignments
-      value
-      "private SPMD return value"
-      64
-      "%k7")
-      [(ResultBackendMaskUse.Ok use)
-        (match use
-          [(CompilerBackendMaskUse.Use load-asm reg)
-            (ResultCompilerBackend.Ok
-              (str_cat.str-cat
-                load-asm
-                (if (string.eq reg "%k1")
-                  ""
-                  (str_cat.str-cat "    kmovq " reg ", %k1\n" ""))
-                ""))])]
-      [(ResultBackendMaskUse.Err message)
-        (ResultCompilerBackend.Err
-          (box (compiler-diagnostic-at-start "" message)))])
-    (match (compiler-backend-vector-register-use
-      assignments
-      value
-      "private SPMD return value"
-      "zmm"
-      ret-ty
-      "%zmm14")
-      [(ResultBackendVectorUse.Ok use)
-        (match use
-          [(CompilerBackendVectorUse.Use load-asm reg)
-            (ResultCompilerBackend.Ok
-              (str_cat.str-cat
-                load-asm
-                (if (string.eq reg "%zmm16")
-                  ""
-                  (str_cat.str-cat
-                    "    "
-                    (compiler-backend-avx512-vector-move ret-ty)
-                    " "
-                    reg
-                    ", %zmm16\n"))
-                ""))])]
-      [(ResultBackendVectorUse.Err message)
-        (ResultCompilerBackend.Err
-          (box (compiler-diagnostic-at-start "" message)))])))
+  (if (compiler-backend-current-mode-avx2?)
+    (let
+      [elem-ty : AstType
+        (if (compiler-backend-spmd-mask-return-function? source-function)
+          (AstType.I8)
+          ret-ty)]
+      (match (compiler-backend-vector-register-use
+        assignments
+        value
+        "private AVX2 SPMD return value"
+        "ymm"
+        elem-ty
+        "%ymm14")
+        [(ResultBackendVectorUse.Ok use)
+          (match use
+            [(CompilerBackendVectorUse.Use load-asm reg)
+              (ResultCompilerBackend.Ok
+                (str_cat.str-cat
+                  load-asm
+                  (if (string.eq reg "%ymm0")
+                    ""
+                    (str_cat.str-cat "    vmovdqu " reg ", %ymm0\n"))
+                  ""))])]
+        [(ResultBackendVectorUse.Err message)
+          (ResultCompilerBackend.Err
+            (box (compiler-diagnostic-at-start "" message)))]))
+    (if (compiler-backend-spmd-mask-return-function? source-function)
+      (match (compiler-backend-avx512-mask-register-use
+        assignments
+        value
+        "private SPMD return value"
+        64
+        "%k7")
+        [(ResultBackendMaskUse.Ok use)
+          (match use
+            [(CompilerBackendMaskUse.Use load-asm reg)
+              (ResultCompilerBackend.Ok
+                (str_cat.str-cat
+                  load-asm
+                  (if (string.eq reg "%k1")
+                    ""
+                    (str_cat.str-cat "    kmovq " reg ", %k1\n" ""))
+                  ""))])]
+        [(ResultBackendMaskUse.Err message)
+          (ResultCompilerBackend.Err
+            (box (compiler-diagnostic-at-start "" message)))])
+      (match (compiler-backend-vector-register-use
+        assignments
+        value
+        "private SPMD return value"
+        "zmm"
+        ret-ty
+        "%zmm14")
+        [(ResultBackendVectorUse.Ok use)
+          (match use
+            [(CompilerBackendVectorUse.Use load-asm reg)
+              (ResultCompilerBackend.Ok
+                (str_cat.str-cat
+                  load-asm
+                  (if (string.eq reg "%zmm16")
+                    ""
+                    (str_cat.str-cat
+                      "    "
+                      (compiler-backend-avx512-vector-move ret-ty)
+                      " "
+                      reg
+                      ", %zmm16\n"))
+                  ""))])]
+        [(ResultBackendVectorUse.Err message)
+          (ResultCompilerBackend.Err
+            (box (compiler-diagnostic-at-start "" message)))]))))
 
 (define (compiler-backend-emit-return-with-return-count
   [type-segment-bases : i64]
@@ -36415,6 +36493,156 @@
             0)
           (compiler-backend-spmd-call-class-count args (+ index 1) want-mask))])))
 
+(define (compiler-backend-spmd-avx2-special-count
+  [args : CompilerIrSpmdCallArgList]) : i64
+  (+
+    1
+    (+
+      (compiler-backend-spmd-call-class-count args 0 false)
+      (compiler-backend-spmd-call-class-count args 0 true))))
+
+(define (compiler-backend-spmd-avx2-save-value
+  [type-segment-bases : i64]
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [mask? : bool]
+  [lanes : i64]
+  [offset : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (if mask?
+    (compiler-backend-avx2-mask-shape-ok? lanes)
+    (compiler-backend-avx2-shape-ok? elem-ty lanes))
+    (let
+      [storage-ty : AstType
+        (if mask?
+          (AstType.I8)
+          elem-ty)]
+      (match (compiler-backend-vector-register-use
+        assignments
+        value
+        "private AVX2 SPMD call argument"
+        "ymm"
+        storage-ty
+        "%ymm14")
+        [(ResultBackendVectorUse.Ok use)
+          (match use
+            [(CompilerBackendVectorUse.Use load-asm src)
+              (ResultCompilerBackend.Ok
+                (str_cat.str-cat
+                  load-asm
+                  "    vmovdqu "
+                  src
+                  ", "
+                  (string.int->string offset)
+                  "(%rsp)\n"))])]
+        [(ResultBackendVectorUse.Err message)
+          (ResultCompilerBackend.Err
+            (box (compiler-diagnostic-with-message instr-diag message)))]))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      (if mask?
+        (AstType.Bool)
+        elem-ty)
+      lanes)))
+
+(define (compiler-backend-spmd-avx2-save-args
+  [type-segment-bases : i64]
+  [assignments : CompilerRegAssignmentList]
+  [args : CompilerIrSpmdCallArgList]
+  [index : i64]
+  [special-index : i64]
+  [lanes : i64]
+  [base-offset : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (>= index (compiler-ir-spmd-call-arg-count args))
+    (ResultCompilerBackend.Ok "")
+    (match (compiler-backend-spmd-call-arg-at args index)
+      [(CompilerIrSpmdCallArg.Arg class value ty)
+        (if (compiler-backend-spmd-class-uniform? class)
+          (compiler-backend-spmd-avx2-save-args
+            type-segment-bases
+            assignments
+            args
+            (+ index 1)
+            special-index
+            lanes
+            base-offset
+            instr-diag)
+          (let
+            [mask? : bool (compiler-backend-spmd-class-mask? class)]
+            (match (compiler-backend-spmd-avx2-save-value
+              type-segment-bases
+              assignments
+              value
+              ty
+              mask?
+              lanes
+              (+ base-offset (* 32 special-index))
+              instr-diag)
+              [(ResultCompilerBackend.Ok head)
+                (match (compiler-backend-spmd-avx2-save-args
+                  type-segment-bases
+                  assignments
+                  args
+                  (+ index 1)
+                  (+ special-index 1)
+                  lanes
+                  base-offset
+                  instr-diag)
+                  [(ResultCompilerBackend.Ok tail)
+                    (ResultCompilerBackend.Ok (string.append head tail))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])))])))
+
+(define (compiler-backend-spmd-avx2-result-store
+  [type-segment-bases : i64]
+  [assignments : CompilerRegAssignmentList]
+  [result : CompilerIrSpmdCallResult]
+  [vars : i64]
+  [program-index : CompilerBackendProgramIndex]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (match result
+    [(CompilerIrSpmdCallResult.Unit) (ResultCompilerBackend.Ok "")]
+    [(CompilerIrSpmdCallResult.Value dst class ty)
+      (if (compiler-backend-spmd-class-uniform? class)
+        (compiler-backend-emit-call-result-store
+          type-segment-bases
+          assignments
+          dst
+          ty
+          vars
+          program-index)
+        (let
+          [storage-ty : AstType
+            (if (compiler-backend-spmd-class-mask? class)
+              (AstType.I8)
+              ty)]
+          (match (compiler-backend-vector-dst-reg
+            assignments
+            dst
+            "private AVX2 SPMD call result"
+            "ymm"
+            "%ymm14")
+            [(ResultBackendReg.Ok home)
+              (ResultCompilerBackend.Ok
+                (str_cat.str-cat
+                  (if (string.eq home "%ymm0")
+                    ""
+                    (str_cat.str-cat "    vmovdqu %ymm0, " home "\n" ""))
+                  (compiler-backend-vector-store-dst
+                    assignments
+                    dst
+                    "ymm"
+                    storage-ty
+                    home)))]
+            [(ResultBackendReg.Err message)
+              (ResultCompilerBackend.Err
+                (box (compiler-diagnostic-with-message instr-diag message)))])))]))
+
 (define (compiler-backend-spmd-private-vector-args-asm
   [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
@@ -36741,8 +36969,13 @@
       (compiler-ir-call-args-from-list uniform-values)]
     [uniform-types : AstTypeList
       (compiler-backend-spmd-call-types-from args 0 true)]
+    ;; The private mask block lives below the ordinary outgoing call layout.
+    ;; This includes Win64's callee-owned shadow space and every stack-passed
+    ;; uniform argument, so neither the callee nor emit-call-args can overwrite
+    ;; masks while the call is active.
     [call-space : i64
-      (compiler-backend-call-arg-space
+      (compiler-backend-call-stack-arg-layout-space
+        type-segment-bases
         target
         uniform-args
         uniform-types
@@ -36834,6 +37067,108 @@
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
+(define (compiler-backend-emit-spmd-call-avx2
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [name : i64]
+  [lanes : i64]
+  [active-mask : CompilerIrValue]
+  [args : CompilerIrSpmdCallArgList]
+  [result : CompilerIrSpmdCallResult]
+  [assignments : CompilerRegAssignmentList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [uniform-values : CompilerIrValueList
+      (compiler-backend-spmd-call-values-from args 0 true)]
+    [uniform-args : CompilerIrCallArgs
+      (compiler-ir-call-args-from-list uniform-values)]
+    [uniform-types : AstTypeList
+      (compiler-backend-spmd-call-types-from args 0 true)]
+    ;; Keep the private vector block disjoint from ordinary outgoing storage.
+    ;; Win64 callees own the first 32 bytes at %rsp, and uniform arguments on
+    ;; either ABI may occupy stack slots beyond their register banks.
+    [call-space : i64
+      (compiler-backend-call-stack-arg-layout-space
+        type-segment-bases
+        target
+        uniform-args
+        uniform-types
+        false
+        program-index)]
+    [special-space : i64 (* 32 (compiler-backend-spmd-avx2-special-count args))]
+    [total-space : i64 (+ call-space special-space)]
+    (match (compiler-backend-emit-call-args
+      type-segment-bases
+      target
+      assignments
+      uniform-args
+      uniform-types
+      false
+      0
+      0
+      0
+      0
+      0
+      ""
+      instr-diag
+      program-index
+      vars)
+      [(ResultCompilerBackend.Ok uniform-asm)
+        (match (compiler-backend-spmd-avx2-save-value
+          type-segment-bases
+          assignments
+          active-mask
+          (AstType.I8)
+          true
+          lanes
+          call-space
+          instr-diag)
+          [(ResultCompilerBackend.Ok active-save)
+            (match (compiler-backend-spmd-avx2-save-args
+              type-segment-bases
+              assignments
+              args
+              0
+              1
+              lanes
+              call-space
+              instr-diag)
+              [(ResultCompilerBackend.Ok arg-saves)
+                (match (compiler-backend-spmd-avx2-result-store
+                  type-segment-bases
+                  assignments
+                  result
+                  vars
+                  program-index
+                  instr-diag)
+                  [(ResultCompilerBackend.Ok result-asm)
+                    (ResultCompilerBackend.Ok
+                      (str_cat.str-cat
+                        (compiler-backend-emit-call-space-sub total-space)
+                        active-save
+                        arg-saves
+                        uniform-asm
+                        "    leaq "
+                        (string.int->string call-space)
+                        "(%rsp), %r10\n    call "
+                        (compiler-backend-call-symbol-index
+                          name
+                          plan
+                          program-index)
+                        "\n"
+                        (compiler-backend-emit-call-space-add total-space)
+                        result-asm))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+
 (define (compiler-backend-emit-spmd-call
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -36877,11 +37212,19 @@
         vars
         instr-diag)]
     [(CompilerIrSpmdBackend.Avx2)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler-diagnostic-with-message
-            instr-diag
-            "backend: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512")))]))
+      (compiler-backend-emit-spmd-call-avx2
+        type-segment-bases
+        target
+        name
+        lanes
+        active-mask
+        args
+        result
+        assignments
+        plan
+        program-index
+        vars
+        instr-diag)]))
 
 (define (compiler-backend-c-abi-return-int-reg [idx : i64]) : String
   (if (= idx 0)
@@ -46526,6 +46869,9 @@
 (define (compiler-backend-spmd-mask-param? [name : String]) : bool
   (compiler-backend-string-prefix-at? name "__tl_spmd_mask_arg_" 0))
 
+(define (compiler-backend-spmd-active-mask-param? [name : String]) : bool
+  (compiler-backend-string-prefix-at? name "__tl_spmd_active_mask" 0))
+
 (define (compiler-backend-spmd-private-vector-arg-reg [index : i64]) : String
   (if (and (>= index 0) (< index 8))
     (string.append "%zmm" (string.int->string (+ 17 index)))
@@ -46542,73 +46888,105 @@
   [ty : AstType]
   [var-id : i64]
   [vector-index : i64]
-  [mask-index : i64]) : ResultCompilerBackend
+  [mask-index : i64]
+  [special-index : i64]) : ResultCompilerBackend
   (if (compiler-backend-var-never-used? var-id)
     (ResultCompilerBackend.Ok "")
-    (if (compiler-backend-spmd-varying-param? name)
-      (let
-        [incoming : String
-          (compiler-backend-spmd-private-vector-arg-reg vector-index)]
-        (if (= (string.string-length incoming) 0)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler-diagnostic-at-start
-                ""
-                "backend: private AVX-512 SPMD call supports at most 8 varying value arguments")))
-          (match (compiler-backend-emit-assignment-lookup assignments var-id)
-            [(CompilerRegMaybeLocation.No) (ResultCompilerBackend.Ok "")]
-            [(CompilerRegMaybeLocation.Some _)
-              (match (compiler-backend-vector-var-reg
-                assignments
-                var-id
-                "private SPMD helper parameter"
-                "zmm")
-                [(ResultBackendReg.Ok home)
-                  (ResultCompilerBackend.Ok
-                    (if (string.eq incoming home)
-                      ""
-                      (str_cat.str-cat
-                        "    "
-                        (compiler-backend-avx512-vector-move ty)
-                        " "
-                        incoming
-                        ", "
-                        home
-                        "\n")))]
-                [(ResultBackendReg.Err message)
-                  (ResultCompilerBackend.Err
-                    (box (compiler-diagnostic-at-start "" message)))])])))
-      (let
-        [incoming : String
-          (if (string.eq name "__tl_spmd_active_mask")
-            "%k1"
-            (compiler-backend-spmd-private-mask-arg-reg mask-index))]
-        (if (= (string.string-length incoming) 0)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler-diagnostic-at-start
-                ""
-                "backend: private AVX-512 SPMD call supports at most 5 varying bool arguments")))
-          (match (compiler-backend-avx512-mask-dst-reg
+    (cond
+      [(compiler-backend-current-mode-avx2?)
+        (let
+          [storage-ty : AstType
+            (if (compiler-backend-spmd-varying-param? name)
+              ty
+              (AstType.I8))]
+          (match (compiler-backend-vector-dst-reg
             assignments
             var-id
-            "private SPMD helper mask parameter"
-            "%k7")
+            "private AVX2 SPMD helper parameter"
+            "ymm"
+            "%ymm14")
             [(ResultBackendReg.Ok home)
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
-                  (if (string.eq incoming home)
-                    ""
-                    (str_cat.str-cat "    kmovq " incoming ", " home "\n" ""))
-                  (compiler-backend-avx512-mask-store-dst
+                  "    vmovdqu "
+                  (string.int->string (* 32 special-index))
+                  "(%r10), "
+                  home
+                  "\n"
+                  (compiler-backend-vector-store-dst
                     assignments
                     var-id
-                    64
-                    home)
-                  ""))]
+                    "ymm"
+                    storage-ty
+                    home)))]
             [(ResultBackendReg.Err message)
               (ResultCompilerBackend.Err
-                (box (compiler-diagnostic-at-start "" message)))]))))))
+                (box (compiler-diagnostic-at-start "" message)))]))]
+      [(compiler-backend-spmd-varying-param? name)
+        (let
+          [incoming : String
+            (compiler-backend-spmd-private-vector-arg-reg vector-index)]
+          (if (= (string.string-length incoming) 0)
+            (ResultCompilerBackend.Err
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: private AVX-512 SPMD call supports at most 8 varying value arguments")))
+            (match (compiler-backend-emit-assignment-lookup assignments var-id)
+              [(CompilerRegMaybeLocation.No) (ResultCompilerBackend.Ok "")]
+              [(CompilerRegMaybeLocation.Some _)
+                (match (compiler-backend-vector-var-reg
+                  assignments
+                  var-id
+                  "private SPMD helper parameter"
+                  "zmm")
+                  [(ResultBackendReg.Ok home)
+                    (ResultCompilerBackend.Ok
+                      (if (string.eq incoming home)
+                        ""
+                        (str_cat.str-cat
+                          "    "
+                          (compiler-backend-avx512-vector-move ty)
+                          " "
+                          incoming
+                          ", "
+                          home
+                          "\n")))]
+                  [(ResultBackendReg.Err message)
+                    (ResultCompilerBackend.Err
+                      (box (compiler-diagnostic-at-start "" message)))])])))]
+      [else
+        (let
+          [incoming : String
+            (if (compiler-backend-spmd-active-mask-param? name)
+              "%k1"
+              (compiler-backend-spmd-private-mask-arg-reg mask-index))]
+          (if (= (string.string-length incoming) 0)
+            (ResultCompilerBackend.Err
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: private AVX-512 SPMD call supports at most 5 varying bool arguments")))
+            (match (compiler-backend-avx512-mask-dst-reg
+              assignments
+              var-id
+              "private SPMD helper mask parameter"
+              "%k7")
+              [(ResultBackendReg.Ok home)
+                (ResultCompilerBackend.Ok
+                  (str_cat.str-cat
+                    (if (string.eq incoming home)
+                      ""
+                      (str_cat.str-cat "    kmovq " incoming ", " home "\n" ""))
+                    (compiler-backend-avx512-mask-store-dst
+                      assignments
+                      var-id
+                      64
+                      home)
+                    ""))]
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
+                  (box (compiler-diagnostic-at-start "" message)))])))])))
 
 (define (compiler-backend-emit-spmd-private-param-spills-from
   [type-segment-bases : i64]
@@ -46621,6 +46999,7 @@
   [stack-idx : i64]
   [vector-index : i64]
   [mask-index : i64]
+  [special-index : i64]
   [vars : i64]) : ResultCompilerBackend
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) (ResultCompilerBackend.Ok "")]
@@ -46636,12 +47015,13 @@
         stack-idx
         vector-index
         mask-index
+        special-index
         vars)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param name ty var-id)
           (let
-            [active? : bool (string.eq name "__tl_spmd_active_mask")]
+            [active? : bool (compiler-backend-spmd-active-mask-param? name)]
             [varying? : bool (compiler-backend-spmd-varying-param? name)]
             [mask? : bool (compiler-backend-spmd-mask-param? name)]
             [special? : bool (or active? varying? mask?)]
@@ -46662,7 +47042,8 @@
                 ty
                 var-id
                 vector-index
-                mask-index)
+                mask-index
+                special-index)
               (if on-stack
                 (ResultCompilerBackend.Ok
                   (let
@@ -46730,6 +47111,9 @@
                   (if mask?
                     (+ mask-index 1)
                     mask-index)
+                  (if special?
+                    (+ special-index 1)
+                    special-index)
                   vars)
                   [(ResultCompilerBackend.Ok tail)
                     (ResultCompilerBackend.Ok (string.append head tail))]
@@ -46749,6 +47133,7 @@
     target
     assignments
     params
+    0
     0
     0
     0
@@ -52733,6 +53118,11 @@
             [(CompilerRegColoring.None) remat-blocks]
             [(CompilerRegColoring.Remap remap _)
               (compiler-reg-remap-blocks remap remat-blocks)])]
+        [emit-params : CompilerIrParamList
+          (match coloring
+            [(CompilerRegColoring.None) params]
+            [(CompilerRegColoring.Remap remap _)
+              (compiler-reg-remap-params remap params)])]
         [slot-vars : i64
           (match coloring
             ;; Synthetic scratch ids are register-only and are not referenced
@@ -52755,7 +53145,7 @@
               [scavenge-func : CompilerIrFunction
                 (CompilerIrFunction.Function
                   name
-                  params
+                  emit-params
                   ret-ty
                   scratch-vars
                   emit-blocks-list)]
@@ -52802,7 +53192,7 @@
             type-segment-bases
             target
             name
-            params
+            emit-params
             emit-blocks-list
             program-index)]
         [shrinkwrap-saving-label : i64 compiler-reg-early-exit-saving-label]
@@ -52816,7 +53206,7 @@
             (compiler-backend-shrinkwrap-prefix-asm
               type-segment-bases
               target
-              params
+              emit-params
               scratch-vars
               assignments
               label-scope
@@ -52835,7 +53225,7 @@
             (compiler-backend-shrinkwrap-prefix-asm
               type-segment-bases
               target
-              params
+              emit-params
               scratch-vars
               assignments
               label-scope
@@ -52961,7 +53351,7 @@
             scavenge-self-check
             (compiler-backend-scavenge-self-check
               name
-              params
+              emit-params
               ret-ty
               scratch-vars
               emit-blocks-list
@@ -52986,13 +53376,13 @@
                   type-segment-bases
                   target
                   assignments
-                  params
+                  emit-params
                   slot-vars)
                 (compiler-backend-emit-param-spills
                   type-segment-bases
                   target
                   assignments
-                  params
+                  emit-params
                   0
                   0
                   0

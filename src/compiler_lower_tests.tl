@@ -9553,12 +9553,33 @@
         (compiler-lower-spmd-out-of-line-unit-source)
         (CompilerLowerMode.Avx512))
       2)
+    (>
+      (compiler-lower-spmd-source-call-count
+        (compiler-lower-spmd-out-of-line-value-source)
+        (CompilerLowerMode.Avx2))
+      0)
+    (>
+      (compiler-lower-spmd-source-call-count
+        (compiler-lower-spmd-out-of-line-unit-source)
+        (CompilerLowerMode.Avx2))
+      0)
+    (>
+      (compiler-lower-spmd-source-call-count
+        (compiler-lower-spmd-out-of-line-masked-source)
+        (CompilerLowerMode.Avx2))
+      0)
+    (>
+      (compiler-lower-spmd-source-function-count
+        (compiler-lower-spmd-out-of-line-value-source)
+        (CompilerLowerMode.Avx2))
+      2)
+    (>
+      (compiler-lower-spmd-source-function-count
+        (compiler-lower-spmd-out-of-line-unit-source)
+        (CompilerLowerMode.Avx2))
+      2)
     (compiler-lower-spmd-varying-local-call-shape-ok?)
-    (compiler-lower-spmd-uniform-arg-call-shape-ok?)
-    (compiler-lower-mode-error-ok?
-      (compiler-lower-spmd-out-of-line-value-source)
-      (CompilerLowerMode.Avx2)
-      (lower-avx2-spmd-call-diagnostic))))
+    (compiler-lower-spmd-uniform-arg-call-shape-ok?)))
 
 (define (compiler-lower-foreach-tests-ok?) : bool
   (and

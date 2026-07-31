@@ -4127,6 +4127,15 @@ SPMD helper calls:
   arguments are scalar lane values. Results may be `unit`, a uniform scalar,
   or a varying scalar lane value; aggregate, string, array, and function
   returns are rejected.
+- For same-program helpers, the AVX2 private ABI represents active masks,
+  varying arguments, and mask arguments as full 256-bit values in caller-owned
+  32-byte stack-block slots. The caller passes the block address in `%r10`;
+  varying and mask results use `%ymm0`. Uniform arguments and results retain
+  the platform scalar ABI. The caller places the block after the platform's
+  outgoing shadow and stack-argument layout, so ordinary uniform arguments and
+  callee-owned call storage do not overlap it. The block is private to one call
+  and remains valid until that call returns. Imported package helpers remain
+  limited to the scalar and AVX-512 private ABIs.
 - Function values and indirect calls, ordinary extern calls, `defdispatch`
   logical calls, and recursion through SPMD helpers are deferred by design;
   they are rejected with diagnostics naming the specific boundary rather than
@@ -6568,7 +6577,7 @@ in documentation passes.
   comparison results stored to bool arrays; AVX2/AVX-512 varying `while` with
   loop-carried active masks and nested masked flow; runtime dispatch via
   `defdispatch` with cached CPUID/XGETBV selection; and native private
-  scalar/AVX-512 out-of-line varying helper-call ABIs with active masks.
+  scalar/AVX2/AVX-512 out-of-line varying helper-call ABIs with active masks.
 - Comptime: declaration-emitting typed macros, type reflection, CTFE with
   deterministic fuel, and per-package `tlci` comptime interface images.
 - Tooling: package builds with lockfiles and dependency DAGs, inline tests,
@@ -6590,7 +6599,6 @@ in documentation passes.
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
 | Narrow integer shifts | AVX2/AVX-512 direct-map and masked `i32`/`u32`/`i64`/`u64` shifts are implemented. `i8`/`u8`/`i16`/`u16` widening/packing expansions are deferred and rejected with stable operator/type/backend diagnostics. |
 | Public vector/mask/varying source value types | Deferred by design. |
-| Out-of-line ABI for non-inlined varying helper calls | Frontend analysis plus private scalar/AVX-512 IR lowering and native emission are implemented; AVX2 native emission is deferred under #5151. |
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |
 | Dotted module imports everywhere | Migration in progress: source/docs use dotted imports as the canonical form; legacy path imports remain accepted only for compatibility fixtures before #2454 removes the syntax. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |

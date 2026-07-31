@@ -95,18 +95,26 @@
   (symbol CompilerSemanticSymbolId)
   (kind CompilerSemanticSymbolKind)
   (display-name String)
-  (resolved-type String))
+  (resolved-type String)
+  (parent i64))
 
-(defenum CompilerSemanticBindingList
-  (Nil)
-  (Cons CompilerSemanticBinding (Box CompilerSemanticBindingList)))
+(defstruct CompilerSemanticBindingVec
+  (items (__tl_dyn-array CompilerSemanticBinding))
+  (live (__tl_dyn-array bool))
+  (len i64))
+
+;; Snapshot heads share one append-only dense store. Each appended binding
+;; remembers the previous head, so child and sibling walks can extend the same
+;; store without mutating a parent view or copying its active bindings.
+(defstruct CompilerSemanticBindingSnapshot
+  (head i64))
 
 (defenum CompilerSemanticMaybeBinding
   (Some CompilerSemanticBinding)
   (None))
 
 (defstruct CompilerSemanticBindResult
-  (scope CompilerSemanticBindingList)
+  (scope CompilerSemanticBindingSnapshot)
   (env TcTypeEnv)
   (next-search i64))
 
@@ -121,6 +129,7 @@
   (generated bool)
   (provenance CompilerSemanticProvenance)
   (records (Box CompilerSemanticRecordVec))
+  (bindings (Box CompilerSemanticBindingVec))
   (visited-expr-ids (__tl_dyn-array i64))
   (next-local-ordinal (Box i64)))
 
@@ -149,6 +158,70 @@
     (array.make-array CompilerSemanticRecord 0)
     0
     false))
+
+(define (compiler-semantic-binding-snapshot-empty) : CompilerSemanticBindingSnapshot
+  (CompilerSemanticBindingSnapshot -1))
+
+(define (compiler-semantic-binding-vec-new [capacity : i64]) : CompilerSemanticBindingVec
+  (CompilerSemanticBindingVec
+    (array.make-array
+      CompilerSemanticBinding
+      (if (< capacity 1)
+        1
+        capacity))
+    (array.make-array
+      bool
+      (if (< capacity 1)
+        1
+        capacity))
+    0))
+
+(define (compiler-semantic-binding-vec-grow!
+  [bindings : (&mut bindings CompilerSemanticBindingVec)]) : unit
+  (let
+    [old-items : (__tl_dyn-array CompilerSemanticBinding)
+      (struct-get bindings items)]
+    [old-live : (__tl_dyn-array bool) (struct-get bindings live)]
+    [old-capacity : i64 (array-length old-items)]
+    [new-capacity : i64
+      (if (< old-capacity 1)
+        1
+        (* old-capacity 2))]
+    [new-items : (__tl_dyn-array CompilerSemanticBinding)
+      (array.make-array CompilerSemanticBinding new-capacity)]
+    [new-live : (__tl_dyn-array bool) (array.make-array bool new-capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index (struct-get bindings len))
+        (let
+          [taken : (Tuple bool CompilerSemanticBinding)
+            (array-take! old-items old-live index)]
+          (begin
+            (if (tuple-ref taken 0)
+              (begin
+                (array-set! new-items index (tuple-ref taken 1))
+                (array-set! new-live index true))
+              unit)
+            (set! index (+ index 1)))))
+      (set! (struct-get bindings items) new-items)
+      (set! (struct-get bindings live) new-live))))
+
+(define (compiler-semantic-binding-vec-push!
+  [bindings : (&mut bindings CompilerSemanticBindingVec)]
+  [binding : CompilerSemanticBinding]) : i64
+  (begin
+    (if (>=
+      (struct-get bindings len)
+      (array-length (struct-get bindings items)))
+      (compiler-semantic-binding-vec-grow! bindings)
+      unit)
+    (let
+      [index : i64 (struct-get bindings len)]
+      (begin
+        (array-set! (struct-get bindings items) index binding)
+        (array-set! (struct-get bindings live) index true)
+        (set! (struct-get bindings len) (+ index 1))
+        index))))
 
 (define (compiler-semantic-record-vec-new [capacity : i64]) : CompilerSemanticRecordVec
   (CompilerSemanticRecordVec
@@ -868,14 +941,21 @@
       (CompilerSemanticSymbolId module-id fallback-ordinal -1)]))
 
 (define (compiler-semantic-binding-lookup
-  [scope : CompilerSemanticBindingList]
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]) : CompilerSemanticMaybeBinding
-  (match scope
-    [(CompilerSemanticBindingList.Nil) CompilerSemanticMaybeBinding.None]
-    [(CompilerSemanticBindingList.Cons binding rest)
-      (if (= (struct-get binding name-id) name-id)
-        (CompilerSemanticMaybeBinding.Some binding)
-        (compiler-semantic-binding-lookup (box-get rest) name-id))]))
+  (let
+    [cursor : i64 (struct-get scope head)]
+    [items : (__tl_dyn-array CompilerSemanticBinding)
+      (struct-get (box-get (struct-get state bindings)) items)]
+    (begin
+      (while (>= cursor 0)
+        (let
+          [binding : CompilerSemanticBinding (array-ref items cursor)]
+          (if (= (struct-get binding name-id) name-id)
+            (return (CompilerSemanticMaybeBinding.Some binding))
+            (set! cursor (struct-get binding parent)))))
+      CompilerSemanticMaybeBinding.None)))
 
 (define (compiler-semantic-record-use-with-binding!
   [state : CompilerSemanticWalkState]
@@ -967,7 +1047,7 @@
 
 (define (compiler-semantic-record-name-use!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
@@ -990,7 +1070,7 @@
             -1
             -1
             (ast-source-span 1 1 1 1))])]
-    (match (compiler-semantic-binding-lookup scope name-id)
+    (match (compiler-semantic-binding-lookup state scope name-id)
       [(CompilerSemanticMaybeBinding.Some binding)
         (compiler-semantic-record-use-with-binding! state binding span)]
       [(CompilerSemanticMaybeBinding.None)
@@ -998,10 +1078,10 @@
 
 (define (compiler-semantic-record-name-use-span!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]
   [span : CompilerSemanticSpan]) : unit
-  (match (compiler-semantic-binding-lookup scope name-id)
+  (match (compiler-semantic-binding-lookup state scope name-id)
     [(CompilerSemanticMaybeBinding.Some binding)
       (compiler-semantic-record-use-with-binding! state binding span)]
     [(CompilerSemanticMaybeBinding.None)
@@ -1009,7 +1089,7 @@
 
 (define (compiler-semantic-bind-local!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [name-id : i64]
   [kind : CompilerSemanticSymbolKind]
@@ -1053,7 +1133,8 @@
         symbol
         kind
         (string.copy (& name))
-        (string.copy (& type-text)))]
+        (string.copy (& type-text))
+        (struct-get scope head))]
     (begin
       (set! (box-get (struct-get state next-local-ordinal)) (+ local-ordinal 1))
       (compiler-semantic-record-vec-push!
@@ -1071,16 +1152,21 @@
             (not (struct-get state generated))
             (>= (struct-get span start-byte) 0))
           (struct-get state provenance)))
-      (CompilerSemanticBindResult
-        (CompilerSemanticBindingList.Cons binding (box scope))
-        (tc-bind-id env name-id binding-ty)
-        (if (>= (struct-get span end-byte) 0)
-          (struct-get span end-byte)
-          search-start)))))
+      (let
+        [head : i64
+          (compiler-semantic-binding-vec-push!
+            (&mut (box-get (struct-get state bindings)))
+            binding)]
+        (CompilerSemanticBindResult
+          (CompilerSemanticBindingSnapshot head)
+          (tc-bind-id env name-id binding-ty)
+          (if (>= (struct-get span end-byte) 0)
+            (struct-get span end-byte)
+            search-start))))))
 
 (define (compiler-semantic-bind-checked-let!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]
@@ -1183,13 +1269,13 @@
 
 (define (compiler-semantic-bind-params!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [params : AstParamList]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
-    [next-scope : CompilerSemanticBindingList scope]
+    [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : TcTypeEnv env]
     [cursor : i64 search-start]
     [index : i64 0]
@@ -1224,13 +1310,13 @@
 
 (define (compiler-semantic-bind-macro-params!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [params : AstMacroParamList]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
-    [next-scope : CompilerSemanticBindingList scope]
+    [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : TcTypeEnv env]
     [cursor : i64 search-start]
     [index : i64 0]
@@ -1268,7 +1354,7 @@
 
 (define (compiler-semantic-walk-expr-list!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [items : AstExprList]) : unit
   (let
@@ -1284,7 +1370,7 @@
 
 (define (compiler-semantic-walk-quasiquote-list!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [items : AstExprList]) : unit
   (let
@@ -1300,7 +1386,7 @@
 
 (define (compiler-semantic-walk-quasiquote-let-bindings!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [bindings : AstLetBindingList]) : unit
   (let
@@ -1317,7 +1403,7 @@
 
 (define (compiler-semantic-walk-quasiquote-match-arms!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [arms : AstMatchArmList]) : unit
   (let
@@ -1331,7 +1417,7 @@
 
 (define (compiler-semantic-walk-quasiquote-resource-bindings!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [bindings : AstResourceBindingList]) : unit
   (let
@@ -1350,7 +1436,7 @@
 
 (define (compiler-semantic-walk-quasiquote-node!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [node-id : i64]) : unit
   (match (ast-node-get node-id)
@@ -1577,13 +1663,13 @@
 
 (define (compiler-semantic-walk-let!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [bindings : AstLetBindingList]
   [body-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
-    [next-scope : CompilerSemanticBindingList scope]
+    [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : TcTypeEnv env]
     [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
     [cursor : i64
@@ -1639,7 +1725,7 @@
 
 (define (compiler-semantic-walk-lambda!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [params : AstParamList]
   [body-id : i64]
@@ -1667,7 +1753,7 @@
 
 (define (compiler-semantic-walk-foreach!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [name : i64]
   [index-ty : AstType]
@@ -1706,7 +1792,7 @@
 
 (define (compiler-semantic-walk-spmd-reduce!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [index-name : i64]
   [index-ty : AstType]
@@ -1744,7 +1830,7 @@
 
 (define (compiler-semantic-walk-spmd-scan!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [index-name : i64]
   [index-ty : AstType]
@@ -1808,7 +1894,7 @@
 
 (define (compiler-semantic-walk-set!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [name-id : i64]
   [value-id : i64]
@@ -1834,7 +1920,7 @@
 
 (define (compiler-semantic-bind-pattern!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [fact-env : TcTypeEnv]
   [facts-available : bool]
@@ -1913,7 +1999,7 @@
 
 (define (compiler-semantic-bind-pattern-list!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [fact-env : TcTypeEnv]
   [facts-available : bool]
@@ -1922,7 +2008,7 @@
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
-    [next-scope : CompilerSemanticBindingList scope]
+    [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : TcTypeEnv env]
     [cursor : i64 search-start]
     [index : i64 0]
@@ -1967,7 +2053,7 @@
 
 (define (compiler-semantic-walk-match-arms!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [scrutinee-ty : AstMaybeType]
   [arms : AstMatchArmList]
@@ -2067,13 +2153,13 @@
 
 (define (compiler-semantic-walk-with-resources!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [bindings : AstResourceBindingList]
   [body : AstExprList]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
-    [next-scope : CompilerSemanticBindingList scope]
+    [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : TcTypeEnv env]
     [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
     [cursor : i64
@@ -2179,7 +2265,7 @@
 
 (define (compiler-semantic-walk-node-with-span!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [node-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
@@ -2206,7 +2292,7 @@
 
 (define (compiler-semantic-walk-node!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [node-id : i64]) : unit
   (compiler-semantic-walk-node-with-span!
@@ -2218,7 +2304,7 @@
 
 (define (compiler-semantic-walk-expr!
   [state : CompilerSemanticWalkState]
-  [scope : CompilerSemanticBindingList]
+  [scope : CompilerSemanticBindingSnapshot]
   [env : TcTypeEnv]
   [expr : AstExpr]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
@@ -2518,7 +2604,7 @@
     [(AstDecl.Def _ _ _ value)
       (compiler-semantic-walk-node!
         state
-        CompilerSemanticBindingList.Nil
+        (compiler-semantic-binding-snapshot-empty)
         (struct-get state top-env)
         value)]
     [(AstDecl.DefFn _ name params _ body _)
@@ -2531,7 +2617,7 @@
         [bound : CompilerSemanticBindResult
           (compiler-semantic-bind-params!
             state
-            CompilerSemanticBindingList.Nil
+            (compiler-semantic-binding-snapshot-empty)
             (struct-get state top-env)
             params
             (compiler-semantic-decl-param-search-start state name body)
@@ -2551,7 +2637,7 @@
         [bound : CompilerSemanticBindResult
           (compiler-semantic-bind-macro-params!
             state
-            CompilerSemanticBindingList.Nil
+            (compiler-semantic-binding-snapshot-empty)
             (struct-get state top-env)
             params
             (compiler-semantic-decl-param-search-start state name body)
@@ -2564,7 +2650,7 @@
     [(AstDecl.Test _ body _)
       (compiler-semantic-walk-node!
         state
-        CompilerSemanticBindingList.Nil
+        (compiler-semantic-binding-snapshot-empty)
         (struct-get state top-env)
         body)]
     [(AstDecl.Unsafe inner)
@@ -2603,6 +2689,9 @@
             CompilerSemanticProvenance.EditableSource
             (box
               (compiler-semantic-record-vec-new
+                (* (ast-decl-list-len (& decls)) 2)))
+            (box
+              (compiler-semantic-binding-vec-new
                 (* (ast-decl-list-len (& decls)) 2)))
             (array.make-array
               i64
@@ -3130,6 +3219,36 @@
               unit)
             (set! record-index (+ record-index 1)))))
       found)))
+
+(define (compiler-semantic-source-index-name-symbol-match?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [path : String]
+  [name : String]
+  [definition-occurrence : i64]
+  [use-occurrence : i64]) : bool
+  (let
+    [definition-index : i64
+      (compiler-semantic-source-index-find-name-occurrence
+        index
+        path
+        name
+        CompilerSemanticRecordRole.Definition
+        definition-occurrence)]
+    [use-index : i64
+      (compiler-semantic-source-index-find-name-occurrence
+        index
+        path
+        name
+        CompilerSemanticRecordRole.Use
+        use-occurrence)]
+    (and
+      (>= definition-index 0)
+      (>= use-index 0)
+      (compiler-semantic-symbol-id-eq?
+        (struct-get
+          (compiler-semantic-source-index-get index definition-index)
+          symbol)
+        (struct-get (compiler-semantic-source-index-get index use-index) symbol)))))
 
 (define (compiler-semantic-record-span-text-eq?
   [source : String]
@@ -3884,7 +4003,173 @@
                     false)]))))]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
+(define (compiler-check-semantic-index-dense-scopes-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_dense_scopes.tl"]
+    [source : String
+      "(defenum ScopeChoice (ScopeNone) (ScopeSome i64))
+
+(define (drop-i64 [_value : i64]) : unit unit)
+
+(defmacro (emit-active [value : Expr]) : Expr
+  `(let [macro-local : i64 1] (+ ,value macro-local)))
+
+(define (deep [shadow : i64]) : i64
+  (begin
+    (let
+      [shadow : i64 (+ shadow 1)]
+      (let
+        [shadow : i64 (+ shadow 1)]
+        (let
+          [shadow : i64 (+ shadow 1)]
+          (let
+            [shadow : i64 (+ shadow 1)]
+            (let
+              [shadow : i64 (+ shadow 1)]
+              (let
+                [shadow : i64 (+ shadow 1)]
+                (let
+                  [shadow : i64 (+ shadow 1)]
+                  (let
+                    [shadow : i64 (+ shadow 1)]
+                    (let
+                      [shadow : i64 (+ shadow 1)]
+                      (let
+                        [shadow : i64 (+ shadow 1)]
+                        shadow))))))))))
+    (let [shadow : i64 (+ shadow 20)] shadow)
+    shadow))
+
+(define (pattern-resource [choice : ScopeChoice]) : i64
+  (match choice
+    [(ScopeSome item)
+      (with ([resource item drop-i64]) (+ item resource))]
+    [ScopeNone 0]))
+
+(define (macro-use [value : i64]) : i64
+  (emit-active value))
+
+(define (spmd-scope [n : i64]) : i64
+  (begin
+    (foreach ([i : i64 0 n]) (let [_seen : i64 i] unit))
+    (spmd-scan
+      sum
+      ([k : i64 0 n] [prefix : i64 0])
+      k
+      (let [_seen-prefix : i64 prefix] unit))
+    (spmd-reduce sum ([j : i64 0 n]) 0 j)))
+
+(define (main) : i64
+  (+ (deep 1) (pattern-resource (ScopeSome 2)) (macro-use 3) (spmd-scope 4)))"]
+    (match (compiler-check-source-index-with-roots path source (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [shadow-chain-ok : bool true]
+          [shadow-occurrence : i64 0]
+          (begin
+            (while (<= shadow-occurrence 10)
+              (begin
+                (if (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "shadow"
+                  shadow-occurrence
+                  shadow-occurrence)
+                  unit
+                  (set! shadow-chain-ok false))
+                (set! shadow-occurrence (+ shadow-occurrence 1))))
+            (let
+              [ok : bool
+                (and
+                  shadow-chain-ok
+                  ;; The first sibling's nested chain must restore the
+                  ;; parameter before the next sibling initializer and after
+                  ;; both siblings have completed.
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "shadow"
+                    0
+                    11)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "shadow"
+                    11
+                    12)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "shadow"
+                    0
+                    13)
+                  ;; Active unquote and its caller parameter retain distinct,
+                  ;; stable local identities.
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "value"
+                    0
+                    0)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "value"
+                    1
+                    1)
+                  (>=
+                    (compiler-semantic-source-index-find-name-occurrence
+                      (& index)
+                      path
+                      "macro-local"
+                      CompilerSemanticRecordRole.Definition
+                      0)
+                    0)
+                  ;; Match patterns, resources, foreach indices, and SPMD
+                  ;; indices all extend only their lexical child snapshots.
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "item"
+                    0
+                    0)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "resource"
+                    0
+                    0)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "i"
+                    0
+                    0)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "j"
+                    0
+                    0)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "k"
+                    0
+                    0)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "prefix"
+                    0
+                    0))]
+              (begin
+                (compiler-semantic-source-index-release! (&mut index))
+                ok))))]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
 (define (compiler-check-semantic-index-ok?) : bool
   (and
     (compiler-check-semantic-index-base-ok?)
-    (compiler-check-semantic-index-inferred-locals-ok?)))
+    (compiler-check-semantic-index-inferred-locals-ok?)
+    (compiler-check-semantic-index-dense-scopes-ok?)))

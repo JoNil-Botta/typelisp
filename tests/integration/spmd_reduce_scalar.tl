@@ -12,7 +12,7 @@
 (import (vector.vector f64) as f64v)
 (import (vector.vector f32) as f32v)
 (import (vector.vector bool) as boolv)
-(import "spmd_vec_support.tl" module spmd.vec.support as spmdv)
+(import spmd_vec_support as spmdv)
 (import (spmdv.zeroed i64 0) as i64z)
 (import (spmdv.zeroed i32 (cast 0 : i32)) as i32z)
 (import (spmdv.zeroed f64 (cast 0 : f64)) as f64z)

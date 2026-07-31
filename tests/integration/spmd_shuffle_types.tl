@@ -6,7 +6,7 @@
 (import (vector.vector u32) as u32v)
 (import (vector.vector f64) as f64v)
 (import (vector.vector f32) as f32v)
-(import "spmd_vec_support.tl" module spmd.vec.support as spmdv)
+(import spmd_vec_support as spmdv)
 (import (spmdv.zeroed u64 (cast 0 : u64)) as u64z)
 (import (spmdv.zeroed u32 (cast 0 : u32)) as u32z)
 (import (spmdv.zeroed f64 (cast 0 : f64)) as f64z)

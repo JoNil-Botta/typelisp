@@ -1,6 +1,6 @@
 (import stdlib.vector)
 (import (vector.vector i64) as i64v)
-(import "spmd_vec_support.tl" module spmd.vec.support as spmdv)
+(import spmd_vec_support as spmdv)
 (import (spmdv.zeroed i64 0) as i64z)
 
 ;; Lane 0 overflows `i + offset` from i64::MAX to i64::MIN. Checked lowering

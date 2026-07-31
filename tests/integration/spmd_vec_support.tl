@@ -1,4 +1,4 @@
-(module spmd.vec.support)
+(module spmd_vec_support)
 
 ;; Test-only constructors for caller-owned generated vectors. The SPMD
 ;; integration fixtures need initialized live elements before borrowing the

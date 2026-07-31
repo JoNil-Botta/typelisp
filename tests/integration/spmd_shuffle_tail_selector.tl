@@ -2,7 +2,7 @@
 ; Inactive destination lanes must not read either input past element 2.
 (import stdlib.vector)
 (import (vector.vector i64) as i64v)
-(import "spmd_vec_support.tl" module spmd.vec.support as spmdv)
+(import spmd_vec_support as spmdv)
 (import (spmdv.zeroed i64 0) as i64z)
 
 (define (main) : i64

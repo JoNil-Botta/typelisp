@@ -1,6 +1,6 @@
 (import stdlib.vector)
 (import (vector.vector i64) as i64v)
-(import "spmd_vec_support.tl" module spmd.vec.support as spmdv)
+(import spmd_vec_support as spmdv)
 (import (spmdv.zeroed i64 0) as i64z)
 
 ;; Two active lanes are invalid. SIMD lowering must validate in logical lane

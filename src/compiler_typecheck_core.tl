@@ -51945,11 +51945,24 @@
 ;; aggregate projections stay rejected until their path/reinitialization policy
 ;; lands; dynamic arrays have a separate diagnostic because element ownership
 ;; cannot be made sound without an index policy.
-(defenum TcMovePathSegments
-  (Nil)
-  (Field i64 (Box TcMovePathSegments))
-  (TupleIndex i64 (Box TcMovePathSegments))
-  (ArrayIndex i64 (Box TcMovePathSegments)))
+(defstruct TcMovePathSegmentNode
+  (parent i64)
+  (kind i64)
+  (value i64))
+
+(defstruct TcMovePathSegmentStoreData
+  (nodes (__tl_dyn-array TcMovePathSegmentNode))
+  (len i64)
+  (owner-arena i64))
+
+(defstruct TcMovePathSegments
+  ;; Empty roots carry address 0 and allocate nothing. The first projection
+  ;; creates one stable store; every later append adds a dense tagged node whose
+  ;; parent is the previous tail. Retained prefixes and siblings therefore share
+  ;; immutable nodes without copying or per-segment boxes.
+  (store-address i64)
+  (tail i64)
+  (len i64))
 
 (defstruct TcMovePath
   (root i64)
@@ -52286,68 +52299,194 @@
 (define (tc-move-path-root-id [path : TcMovePath]) : i64
   (struct-get path root))
 
+(define tc-move-path-segment-kind-field : i64
+  0)
+(define tc-move-path-segment-kind-tuple : i64
+  1)
+(define tc-move-path-segment-kind-array : i64
+  2)
+
+(define (tc-move-path-segments-empty) : TcMovePathSegments
+  (TcMovePathSegments 0 -1 0))
+
+(define (tc-move-path-segment-store-read [address : i64]) : TcMovePathSegmentStoreData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast address : u64) : (Ptr TcMovePathSegmentStoreData)))))
+
+(define (tc-move-path-segment-store-write!
+  [address : i64]
+  [data : TcMovePathSegmentStoreData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast address : u64) : (MutPtr TcMovePathSegmentStoreData))
+      data)))
+
+(define (tc-move-path-segment-store-new) : i64
+  (let
+    [cell : (__tl_dyn-array TcMovePathSegmentStoreData)
+      (array.make-array TcMovePathSegmentStoreData 1)]
+    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    (begin
+      (array-set!
+        cell
+        0
+        (TcMovePathSegmentStoreData
+          (array.make-array TcMovePathSegmentNode 4)
+          0
+          owner))
+      (unsafe
+        (cast
+          (ptr->int
+            (ptr-cast (array-data cell) : (Ptr TcMovePathSegmentStoreData)))
+          : i64)))))
+
+(define (tc-move-path-segment-store-grow!
+  [data : (&mut data TcMovePathSegmentStoreData)]
+  [required : i64]) : unit
+  (let
+    [old : (__tl_dyn-array TcMovePathSegmentNode) (struct-get data nodes)]
+    [old-capacity : i64 (array.length old)]
+    [next-capacity : i64 old-capacity]
+    (if (<= required old-capacity)
+      unit
+      (begin
+        (while (< next-capacity required)
+          (set! next-capacity (* next-capacity 2)))
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [owner : i64 (struct-get data owner-arena)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+            (let
+              [next : (__tl_dyn-array TcMovePathSegmentNode)
+                (array.make-array TcMovePathSegmentNode next-capacity)]
+              [index : i64 0]
+              (begin
+                (while (< index (struct-get data len))
+                  (let
+                    [node : TcMovePathSegmentNode (array-ref old index)]
+                    (begin
+                      (array-set!
+                        next
+                        index
+                        (TcMovePathSegmentNode
+                          (struct-get node parent)
+                          (struct-get node kind)
+                          (struct-get node value)))
+                      (set! index (+ index 1)))))
+                (set! (struct-get data nodes) next)))
+            (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
+
+(define (tc-move-path-segments-node
+  [segments : TcMovePathSegments]
+  [index : i64]) : TcMovePathSegmentNode
+  (let
+    [data : TcMovePathSegmentStoreData
+      (tc-move-path-segment-store-read (struct-get segments store-address))]
+    (array-ref (struct-get data nodes) index)))
+
+(define (tc-move-path-segments-storage-node-count
+  [segments : TcMovePathSegments]) : i64
+  (if (= (struct-get segments store-address) 0)
+    0
+    (struct-get
+      (tc-move-path-segment-store-read (struct-get segments store-address))
+      len)))
+
+(define (tc-move-path-segments-storage-capacity [segments : TcMovePathSegments]) : i64
+  (if (= (struct-get segments store-address) 0)
+    0
+    (array.length
+      (struct-get
+        (tc-move-path-segment-store-read (struct-get segments store-address))
+        nodes))))
+
 (define (tc-move-path-segments-eq?
   [a : TcMovePathSegments]
   [b : TcMovePathSegments]) : bool
-  (match a
-    [(TcMovePathSegments.Nil)
-      (match b
-        [(TcMovePathSegments.Nil) true]
-        [_ false])]
-    [(TcMovePathSegments.Field a-id a-rest)
-      (match b
-        [(TcMovePathSegments.Field b-id b-rest)
-          (and
-            (= a-id b-id)
-            (tc-move-path-segments-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]
-    [(TcMovePathSegments.TupleIndex a-index a-rest)
-      (match b
-        [(TcMovePathSegments.TupleIndex b-index b-rest)
-          (and
-            (= a-index b-index)
-            (tc-move-path-segments-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]
-    [(TcMovePathSegments.ArrayIndex a-index a-rest)
-      (match b
-        [(TcMovePathSegments.ArrayIndex b-index b-rest)
-          (and
-            (= a-index b-index)
-            (tc-move-path-segments-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]))
+  (let
+    [remaining : i64 (struct-get a len)]
+    (if (not (= remaining (struct-get b len)))
+      false
+      (if (and
+        (= (struct-get a store-address) (struct-get b store-address))
+        (= (struct-get a tail) (struct-get b tail)))
+        true
+        (let
+          [a-index : i64 (struct-get a tail)]
+          [b-index : i64 (struct-get b tail)]
+          [equal : bool true]
+          (begin
+            (while (and equal (> remaining 0))
+              (let
+                [a-node : TcMovePathSegmentNode
+                  (tc-move-path-segments-node a a-index)]
+                [b-node : TcMovePathSegmentNode
+                  (tc-move-path-segments-node b b-index)]
+                (begin
+                  (if (and
+                    (= (struct-get a-node kind) (struct-get b-node kind))
+                    (= (struct-get a-node value) (struct-get b-node value)))
+                    unit
+                    (set! equal false))
+                  (set! a-index (struct-get a-node parent))
+                  (set! b-index (struct-get b-node parent))
+                  (set! remaining (- remaining 1)))))
+            equal))))))
 
 (define (tc-move-path-segments-prefix?
   [prefix : TcMovePathSegments]
   [value : TcMovePathSegments]) : bool
-  (match prefix
-    [(TcMovePathSegments.Nil) true]
-    [(TcMovePathSegments.Field prefix-id prefix-rest)
-      (match value
-        [(TcMovePathSegments.Field value-id value-rest)
-          (and
-            (= prefix-id value-id)
-            (tc-move-path-segments-prefix?
-              (box-get prefix-rest)
-              (box-get value-rest)))]
-        [_ false])]
-    [(TcMovePathSegments.TupleIndex prefix-index prefix-rest)
-      (match value
-        [(TcMovePathSegments.TupleIndex value-index value-rest)
-          (and
-            (= prefix-index value-index)
-            (tc-move-path-segments-prefix?
-              (box-get prefix-rest)
-              (box-get value-rest)))]
-        [_ false])]
-    [(TcMovePathSegments.ArrayIndex prefix-index prefix-rest)
-      (match value
-        [(TcMovePathSegments.ArrayIndex value-index value-rest)
-          (and
-            (= prefix-index value-index)
-            (tc-move-path-segments-prefix?
-              (box-get prefix-rest)
-              (box-get value-rest)))]
-        [_ false])]))
+  (let
+    [prefix-len : i64 (struct-get prefix len)]
+    [value-len : i64 (struct-get value len)]
+    (if (= prefix-len 0)
+      true
+      (if (> prefix-len value-len)
+        false
+        (let
+          [prefix-index : i64 (struct-get prefix tail)]
+          [value-index : i64 (struct-get value tail)]
+          [value-depth : i64 value-len]
+          [remaining : i64 prefix-len]
+          [equal : bool true]
+          (begin
+            (while (> value-depth prefix-len)
+              (let
+                [node : TcMovePathSegmentNode
+                  (tc-move-path-segments-node value value-index)]
+                (begin
+                  (set! value-index (struct-get node parent))
+                  (set! value-depth (- value-depth 1)))))
+            (if (and
+              (=
+                (struct-get prefix store-address)
+                (struct-get value store-address))
+              (= prefix-index value-index))
+              true
+              (begin
+                (while (and equal (> remaining 0))
+                  (let
+                    [prefix-node : TcMovePathSegmentNode
+                      (tc-move-path-segments-node prefix prefix-index)]
+                    [value-node : TcMovePathSegmentNode
+                      (tc-move-path-segments-node value value-index)]
+                    (begin
+                      (if (and
+                        (=
+                          (struct-get prefix-node kind)
+                          (struct-get value-node kind))
+                        (=
+                          (struct-get prefix-node value)
+                          (struct-get value-node value)))
+                        unit
+                        (set! equal false))
+                      (set! prefix-index (struct-get prefix-node parent))
+                      (set! value-index (struct-get value-node parent))
+                      (set! remaining (- remaining 1)))))
+                equal))))))))
 
 (define (tc-move-path-eq? [a : TcMovePath] [b : TcMovePath]) : bool
   (and
@@ -52370,20 +52509,61 @@
 ;; diagnostics read like what the user wrote rather than internal place
 ;; encodings. Refs #5149.
 (define (tc-move-path-segments-render [segments : TcMovePathSegments]) : String
-  (match segments
-    [(TcMovePathSegments.Nil) ""]
-    [(TcMovePathSegments.Field field-id rest)
-      (string.append
-        (string.append "." (tc-env-key-name-text field-id))
-        (tc-move-path-segments-render (box-get rest)))]
-    [(TcMovePathSegments.TupleIndex index rest)
-      (string.append
-        (string.append "." (string.int->string index))
-        (tc-move-path-segments-render (box-get rest)))]
-    [(TcMovePathSegments.ArrayIndex index rest)
-      (string.append
-        (string.append "[" (string.int->string index))
-        (string.append "]" (tc-move-path-segments-render (box-get rest))))]))
+  (let
+    [length : i64 (struct-get segments len)]
+    (if (= length 0)
+      ""
+      (let
+        [order : (__tl_dyn-array i64) (array.make-array i64 length)]
+        [cursor : i64 (struct-get segments tail)]
+        [write-index : i64 (- length 1)]
+        [read-index : i64 0]
+        [out : String ""]
+        (begin
+          (while (>= write-index 0)
+            (let
+              [node : TcMovePathSegmentNode
+                (tc-move-path-segments-node segments cursor)]
+              (begin
+                (array-set! order write-index cursor)
+                (set! cursor (struct-get node parent))
+                (set! write-index (- write-index 1)))))
+          (while (< read-index length)
+            (let
+              [node : TcMovePathSegmentNode
+                (tc-move-path-segments-node
+                  segments
+                  (array-ref order read-index))]
+              (begin
+                (cond
+                  [(= (struct-get node kind) tc-move-path-segment-kind-field)
+                    (set!
+                      out
+                      (string.append
+                        out
+                        (string.append
+                          "."
+                          (tc-env-key-name-text (struct-get node value)))))]
+                  [(= (struct-get node kind) tc-move-path-segment-kind-tuple)
+                    (set!
+                      out
+                      (string.append
+                        out
+                        (string.append
+                          "."
+                          (string.int->string (struct-get node value)))))]
+                  [else
+                    (set!
+                      out
+                      (string.append
+                        out
+                        (string.append
+                          "["
+                          (string.append
+                            (string.int->string (struct-get node value))
+                            "]"))))])
+                (set! read-index (+ read-index 1)))))
+          out)))))
 
 (define (tc-move-path-render [path : TcMovePath]) : String
   (string.append
@@ -52417,20 +52597,29 @@
   (bit-xor (* seed 2654435761) (+ component 40503)))
 
 (define (tc-move-path-segments-hash [segments : TcMovePathSegments]) : i64
-  (match segments
-    [(TcMovePathSegments.Nil) 17]
-    [(TcMovePathSegments.Field field-id rest)
-      (tc-move-path-hash-combine
-        (tc-move-path-hash-combine 23 field-id)
-        (tc-move-path-segments-hash (box-get rest)))]
-    [(TcMovePathSegments.TupleIndex index rest)
-      (tc-move-path-hash-combine
-        (tc-move-path-hash-combine 29 index)
-        (tc-move-path-segments-hash (box-get rest)))]
-    [(TcMovePathSegments.ArrayIndex index rest)
-      (tc-move-path-hash-combine
-        (tc-move-path-hash-combine 31 index)
-        (tc-move-path-segments-hash (box-get rest)))]))
+  (let
+    [cursor : i64 (struct-get segments tail)]
+    [remaining : i64 (struct-get segments len)]
+    [out : i64 17]
+    (begin
+      (while (> remaining 0)
+        (let
+          [node : TcMovePathSegmentNode
+            (tc-move-path-segments-node segments cursor)]
+          [seed : i64
+            (cond
+              [(= (struct-get node kind) tc-move-path-segment-kind-field) 23]
+              [(= (struct-get node kind) tc-move-path-segment-kind-tuple) 29]
+              [else 31])]
+          (begin
+            (set!
+              out
+              (tc-move-path-hash-combine
+                (tc-move-path-hash-combine seed (struct-get node value))
+                out))
+            (set! cursor (struct-get node parent))
+            (set! remaining (- remaining 1)))))
+      out)))
 
 (define (tc-moved-path-kind-hash [kind : TcMovedPathKind]) : i64
   (match kind
@@ -53249,62 +53438,51 @@
     [(AstExpr.BoxGet _) true]
     [_ false]))
 
+(define (tc-move-path-segments-append
+  [segments : TcMovePathSegments]
+  [kind : i64]
+  [value : i64]) : TcMovePathSegments
+  (let
+    [address : i64
+      (if (= (struct-get segments store-address) 0)
+        (tc-move-path-segment-store-new)
+        (struct-get segments store-address))]
+    [data : TcMovePathSegmentStoreData
+      (tc-move-path-segment-store-read address)]
+    [index : i64 (struct-get data len)]
+    (begin
+      (tc-move-path-segment-store-grow! (&mut data) (+ index 1))
+      (array-set!
+        (struct-get data nodes)
+        index
+        (TcMovePathSegmentNode (struct-get segments tail) kind value))
+      (set! (struct-get data len) (+ index 1))
+      (tc-move-path-segment-store-write! address data)
+      (TcMovePathSegments address index (+ (struct-get segments len) 1)))))
+
 (define (tc-move-path-segments-append-field
   [segments : TcMovePathSegments]
   [field-id : i64]) : TcMovePathSegments
-  (match segments
-    [(TcMovePathSegments.Nil)
-      (TcMovePathSegments.Field field-id (box TcMovePathSegments.Nil))]
-    [(TcMovePathSegments.Field id rest)
-      (TcMovePathSegments.Field
-        id
-        (box (tc-move-path-segments-append-field (box-get rest) field-id)))]
-    [(TcMovePathSegments.TupleIndex index rest)
-      (TcMovePathSegments.TupleIndex
-        index
-        (box (tc-move-path-segments-append-field (box-get rest) field-id)))]
-    [(TcMovePathSegments.ArrayIndex index rest)
-      (TcMovePathSegments.ArrayIndex
-        index
-        (box (tc-move-path-segments-append-field (box-get rest) field-id)))]))
+  (tc-move-path-segments-append
+    segments
+    tc-move-path-segment-kind-field
+    field-id))
 
 (define (tc-move-path-segments-append-tuple
   [segments : TcMovePathSegments]
   [tuple-index : i64]) : TcMovePathSegments
-  (match segments
-    [(TcMovePathSegments.Nil)
-      (TcMovePathSegments.TupleIndex tuple-index (box TcMovePathSegments.Nil))]
-    [(TcMovePathSegments.Field id rest)
-      (TcMovePathSegments.Field
-        id
-        (box (tc-move-path-segments-append-tuple (box-get rest) tuple-index)))]
-    [(TcMovePathSegments.TupleIndex index rest)
-      (TcMovePathSegments.TupleIndex
-        index
-        (box (tc-move-path-segments-append-tuple (box-get rest) tuple-index)))]
-    [(TcMovePathSegments.ArrayIndex index rest)
-      (TcMovePathSegments.ArrayIndex
-        index
-        (box (tc-move-path-segments-append-tuple (box-get rest) tuple-index)))]))
+  (tc-move-path-segments-append
+    segments
+    tc-move-path-segment-kind-tuple
+    tuple-index))
 
 (define (tc-move-path-segments-append-array
   [segments : TcMovePathSegments]
   [array-index : i64]) : TcMovePathSegments
-  (match segments
-    [(TcMovePathSegments.Nil)
-      (TcMovePathSegments.ArrayIndex array-index (box TcMovePathSegments.Nil))]
-    [(TcMovePathSegments.Field id rest)
-      (TcMovePathSegments.Field
-        id
-        (box (tc-move-path-segments-append-array (box-get rest) array-index)))]
-    [(TcMovePathSegments.TupleIndex index rest)
-      (TcMovePathSegments.TupleIndex
-        index
-        (box (tc-move-path-segments-append-array (box-get rest) array-index)))]
-    [(TcMovePathSegments.ArrayIndex index rest)
-      (TcMovePathSegments.ArrayIndex
-        index
-        (box (tc-move-path-segments-append-array (box-get rest) array-index)))]))
+  (tc-move-path-segments-append
+    segments
+    tc-move-path-segment-kind-array
+    array-index))
 
 (define (tc-move-path-append [base : TcMovePath] [field-id : i64]) : TcMovePath
   (TcMovePath
@@ -53320,6 +53498,118 @@
   (TcMovePath
     (struct-get base root)
     (tc-move-path-segments-append-array (struct-get base segments) index)))
+
+(define (tc-move-path-dense-storage-smoke?) : bool
+  (let
+    [root-id : i64 (intern "dense-root")]
+    [other-root-id : i64 (intern "dense-other")]
+    [alpha-id : i64 (intern "alpha")]
+    [beta-id : i64 (intern "beta")]
+    [empty : TcMovePathSegments (tc-move-path-segments-empty)]
+    [alpha : TcMovePathSegments
+      (tc-move-path-segments-append-field empty alpha-id)]
+    [tuple : TcMovePathSegments (tc-move-path-segments-append-tuple alpha 2)]
+    [array : TcMovePathSegments (tc-move-path-segments-append-array tuple 3)]
+    [mixed : TcMovePathSegments
+      (tc-move-path-segments-append-field array beta-id)]
+    ;; Append a sibling after retaining `mixed`; both share the immutable
+    ;; `alpha.2` prefix, and neither may overwrite the other's tail.
+    [sibling : TcMovePathSegments (tc-move-path-segments-append-array tuple 4)]
+    [same : TcMovePathSegments
+      (tc-move-path-segments-append-field
+        (tc-move-path-segments-append-array
+          (tc-move-path-segments-append-tuple
+            (tc-move-path-segments-append-field
+              (tc-move-path-segments-empty)
+              alpha-id)
+            2)
+          3)
+        beta-id)]
+    [field-kind : TcMovePathSegments
+      (tc-move-path-segments-append-field
+        (tc-move-path-segments-empty)
+        alpha-id)]
+    [tuple-kind : TcMovePathSegments
+      (tc-move-path-segments-append-tuple
+        (tc-move-path-segments-empty)
+        alpha-id)]
+    [array-kind : TcMovePathSegments
+      (tc-move-path-segments-append-array
+        (tc-move-path-segments-empty)
+        alpha-id)]
+    [root : TcMovePath (TcMovePath root-id (tc-move-path-segments-empty))]
+    [prefix : TcMovePath (TcMovePath root-id tuple)]
+    [mixed-path : TcMovePath (TcMovePath root-id mixed)]
+    [same-path : TcMovePath (TcMovePath root-id same)]
+    [sibling-path : TcMovePath (TcMovePath root-id sibling)]
+    [other-root : TcMovePath (TcMovePath other-root-id mixed)]
+    [expected-hash : i64
+      (tc-move-path-hash-combine
+        (tc-move-path-hash-combine 23 alpha-id)
+        (tc-move-path-hash-combine
+          (tc-move-path-hash-combine 29 2)
+          (tc-move-path-hash-combine
+            (tc-move-path-hash-combine 31 3)
+            (tc-move-path-hash-combine
+              (tc-move-path-hash-combine 23 beta-id)
+              17))))]
+    [deep : TcMovePathSegments (tc-move-path-segments-empty)]
+    [deep-render : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index 128)
+        (begin
+          (cond
+            [(= (% index 3) 0)
+              (begin
+                (set! deep (tc-move-path-segments-append-field deep alpha-id))
+                (set! deep-render (string.append deep-render ".alpha")))]
+            [(= (% index 3) 1)
+              (begin
+                (set! deep (tc-move-path-segments-append-tuple deep index))
+                (set!
+                  deep-render
+                  (string.append
+                    deep-render
+                    (string.append "." (string.int->string index)))))]
+            [else
+              (begin
+                (set! deep (tc-move-path-segments-append-array deep index))
+                (set!
+                  deep-render
+                  (string.append
+                    deep-render
+                    (string.append
+                      "["
+                      (string.append (string.int->string index) "]")))))])
+          (set! index (+ index 1))))
+      (and
+        (tc-move-path-eq? mixed-path same-path)
+        (not (tc-move-path-eq? mixed-path sibling-path))
+        (not (tc-move-path-segments-eq? field-kind tuple-kind))
+        (not (tc-move-path-segments-eq? field-kind array-kind))
+        (tc-move-path-conflicts? root mixed-path)
+        (tc-move-path-conflicts? prefix mixed-path)
+        (tc-move-path-conflicts? mixed-path same-path)
+        (not (tc-move-path-conflicts? mixed-path sibling-path))
+        (not (tc-move-path-conflicts? mixed-path other-root))
+        (string.eq (tc-move-path-render prefix) "dense-root.alpha.2")
+        (string.eq
+          (tc-move-path-render mixed-path)
+          "dense-root.alpha.2[3].beta")
+        (string.eq (tc-move-path-render sibling-path) "dense-root.alpha.2[4]")
+        (= (tc-move-path-segments-hash mixed) expected-hash)
+        (= (tc-move-path-segments-storage-node-count mixed) 5)
+        (= (struct-get deep len) 128)
+        (= (tc-move-path-segments-storage-node-count deep) 128)
+        (= (tc-move-path-segments-storage-capacity deep) 128)
+        (string.eq (tc-move-path-segments-render deep) deep-render)))))
+
+(test
+  tc-move-path-dense-storage
+  (if (tc-move-path-dense-storage-smoke?)
+    unit
+    (io.panic "typecheck: dense move-path storage smoke failed")))
 
 (define (tc-move-literal-index [expr-bases : i64] [expr : AstExpr]) : TcMoveMaybeIndex
   (match expr
@@ -53381,7 +53671,7 @@
               [(TcMoveMaybeIndex.No) (TcMaybeMovePath.No)])]
           [(TcMaybeMovePath.No) (TcMaybeMovePath.No)]))]
     [(AstExpr.Var name)
-      (TcMaybeMovePath.Some (TcMovePath name TcMovePathSegments.Nil))]
+      (TcMaybeMovePath.Some (TcMovePath name (tc-move-path-segments-empty)))]
     [_ (TcMaybeMovePath.No)]))
 
 (define (tc-move-struct-field-path [expr-bases : i64] [expr : AstExpr]) : TcMaybeMovePath
@@ -57523,7 +57813,8 @@
       (match (tc-move-direct-root-base-path expr-bases expr)
         [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
         [(TcMaybeMovePath.No)
-          (TcMaybeMovePath.Some (TcMovePath root-id TcMovePathSegments.Nil))])]
+          (TcMaybeMovePath.Some
+            (TcMovePath root-id (tc-move-path-segments-empty)))])]
     [(TcMaybeNameId.No) (TcMaybeMovePath.No)]))
 
 (define (tc-borrow-check-add-borrow-path
@@ -57811,7 +58102,7 @@
           (match (tc-borrow-check-move-conflict
             expr-bases
             borrowed
-            (TcMovePath name-id TcMovePathSegments.Nil)
+            (TcMovePath name-id (tc-move-path-segments-empty))
             init)
             [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
             [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
@@ -58012,7 +58303,7 @@
           (match (tc-borrow-check-move-conflict
             expr-bases
             borrowed
-            (TcMovePath name-id TcMovePathSegments.Nil)
+            (TcMovePath name-id (tc-move-path-segments-empty))
             init)
             [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
             [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
@@ -58147,7 +58438,7 @@
   (tc-borrow-check-assign-conflict
     expr-bases
     borrowed
-    (TcMovePath name-id TcMovePathSegments.Nil)
+    (TcMovePath name-id (tc-move-path-segments-empty))
     primary))
 
 (define (tc-borrow-check-array-set-conflict
@@ -58166,7 +58457,7 @@
           (tc-borrow-check-assign-conflict
             expr-bases
             borrowed
-            (TcMovePath root-id TcMovePathSegments.Nil)
+            (TcMovePath root-id (tc-move-path-segments-empty))
             primary)])]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
@@ -58186,7 +58477,7 @@
           (tc-borrow-check-assign-conflict
             expr-bases
             borrowed
-            (TcMovePath root-id TcMovePathSegments.Nil)
+            (TcMovePath root-id (tc-move-path-segments-empty))
             primary)])]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
@@ -58201,7 +58492,7 @@
       (tc-borrow-check-assign-conflict
         expr-bases
         borrowed
-        (TcMovePath root-id TcMovePathSegments.Nil)
+        (TcMovePath root-id (tc-move-path-segments-empty))
         primary)]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
@@ -58259,7 +58550,7 @@
             (match (tc-borrow-check-assign-conflict
               expr-bases
               borrowed
-              (TcMovePath key TcMovePathSegments.Nil)
+              (TcMovePath key (tc-move-path-segments-empty))
               primary)
               [(ResultTcUnit.Ok)
                 (tc-borrow-check-region-invalidation-scan
@@ -58339,7 +58630,7 @@
             (match (tc-borrow-check-assign-conflict
               expr-bases
               borrowed
-              (TcMovePath key TcMovePathSegments.Nil)
+              (TcMovePath key (tc-move-path-segments-empty))
               primary)
               [(ResultTcUnit.Ok)
                 (tc-borrow-check-owner-invalidation-scan
@@ -58383,7 +58674,7 @@
         (match (tc-borrow-check-assign-conflict
           expr-bases
           borrowed
-          (TcMovePath pid TcMovePathSegments.Nil)
+          (TcMovePath pid (tc-move-path-segments-empty))
           primary)
           [(ResultTcUnit.Ok)
             (match (tc-arena-phase-token-region-active env pid)
@@ -58423,7 +58714,7 @@
           (match (tc-borrow-check-assign-conflict
             expr-bases
             borrowed
-            (TcMovePath oid TcMovePathSegments.Nil)
+            (TcMovePath oid (tc-move-path-segments-empty))
             primary)
             [(ResultTcUnit.Ok)
               (tc-borrow-check-owner-invalidation-scan

@@ -1,53 +1,89 @@
-(import stdlib.array)
+(import stdlib.vector)
+(import (vector.vector i64) as i64v)
+(import (vector.vector i32) as i32v)
+(import (vector.vector u64) as u64v)
+(import (vector.vector u32) as u32v)
+(import (vector.vector i16) as i16v)
+(import (vector.vector u16) as u16v)
+(import (vector.vector i8) as i8v)
+(import (vector.vector u8) as u8v)
+(import (vector.vector f64) as f64v)
+(import (vector.vector f32) as f32v)
+(import "spmd_vec_support.tl" module spmd.vec.support as spmdv)
+(import (spmdv.zeroed i64 0) as i64z)
+(import (spmdv.zeroed i32 (cast 0 : i32)) as i32z)
+(import (spmdv.zeroed u64 (cast 0 : u64)) as u64z)
+(import (spmdv.zeroed u32 (cast 0 : u32)) as u32z)
+(import (spmdv.zeroed i16 (cast 0 : i16)) as i16z)
+(import (spmdv.zeroed u16 (cast 0 : u16)) as u16z)
+(import (spmdv.zeroed i8 (cast 0 : i8)) as i8z)
+(import (spmdv.zeroed u8 (cast 0 : u8)) as u8z)
+(import (spmdv.zeroed f64 (cast 0 : f64)) as f64z)
+(import (spmdv.zeroed f32 (cast 0 : f32)) as f32z)
 
-(define (init-i64 [a : (Array i64)] [b : (Array i64)] [n : i64]) : unit
+(define (init-i64 [a : (&mut a i64v.Vec)] [b : (&mut b i64v.Vec)] [n : i64]) : unit
   (let
+    [a-slots (i64v.slots-mut a)]
+    [b-slots (i64v.slots-mut b)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (+ i 1))
-        (array-set! b i (* i 2))
+        (array-set! a-slots i (+ i 1))
+        (array-set! b-slots i (* i 2))
         (set! i (+ i 1))))))
 
 (define (fill-i64-foreach
-  [a : (Array i64)]
-  [b : (Array i64)]
-  [out : (Array i64)]
-  [n : i64]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array-set!
-      out
-      i
-      (-
-        (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
-        (bit-xor (array-ref b i) 3)))))
-
-(define (fill-i64-scalar
-  [a : (Array i64)]
-  [b : (Array i64)]
-  [out : (Array i64)]
+  [a : (& a i64v.Vec)]
+  [b : (& b i64v.Vec)]
+  [out : (&mut out i64v.Vec)]
   [n : i64]) : unit
   (let
+    [a-slots (i64v.slots a)]
+    [b-slots (i64v.slots b)]
+    [out-slots (i64v.slots-mut out)]
+    (foreach
+      ([i : i64 0 n])
+      (array-set!
+        out-slots
+        i
+        (-
+          (bit-or
+            (+ (array-ref a-slots i) (array-ref b-slots i))
+            (array-ref a-slots i))
+          (bit-xor (array-ref b-slots i) 3))))))
+
+(define (fill-i64-scalar
+  [a : (& a i64v.Vec)]
+  [b : (& b i64v.Vec)]
+  [out : (&mut out i64v.Vec)]
+  [n : i64]) : unit
+  (let
+    [a-slots (i64v.slots a)]
+    [b-slots (i64v.slots b)]
+    [out-slots (i64v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
       (begin
         (array-set!
-          out
+          out-slots
           i
           (-
-            (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
-            (bit-xor (array-ref b i) 3)))
+            (bit-or
+              (+ (array-ref a-slots i) (array-ref b-slots i))
+              (array-ref a-slots i))
+            (bit-xor (array-ref b-slots i) 3)))
         (set! i (+ i 1))))))
 
-(define (eq-i64 [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
+(define (eq-i64 [a : (& a i64v.Vec)] [b : (& b i64v.Vec)] [n : i64]) : bool
   (let
+    [a-slots (i64v.slots a)]
+    [b-slots (i64v.slots b)]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array-ref a-slots i) (array-ref b-slots i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -55,64 +91,79 @@
 
 (define (case-i64 [n : i64]) : bool
   (let
-    [a : (Array i64) (array.make-array i64 n)]
-    [b : (Array i64) (array.make-array i64 n)]
-    [got : (Array i64) (array.make-array i64 n)]
-    [want : (Array i64) (array.make-array i64 n)]
+    [a : i64v.Vec (i64z.make n)]
+    [b : i64v.Vec (i64z.make n)]
+    [got : i64v.Vec (i64z.make n)]
+    [want : i64v.Vec (i64z.make n)]
     (begin
-      (init-i64 a b n)
-      (fill-i64-foreach a b got n)
-      (fill-i64-scalar a b want n)
-      (eq-i64 got want n))))
+      (init-i64 (&mut a) (&mut b) n)
+      (fill-i64-foreach (& a) (& b) (&mut got) n)
+      (fill-i64-scalar (& a) (& b) (&mut want) n)
+      (eq-i64 (& got) (& want) n))))
 
-(define (init-i32 [a : (Array i32)] [b : (Array i32)] [n : i64]) : unit
+(define (init-i32 [a : (&mut a i32v.Vec)] [b : (&mut b i32v.Vec)] [n : i64]) : unit
   (let
+    [a-slots (i32v.slots-mut a)]
+    [b-slots (i32v.slots-mut b)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ i 1) : i32))
-        (array-set! b i (cast (* i 2) : i32))
+        (array-set! a-slots i (cast (+ i 1) : i32))
+        (array-set! b-slots i (cast (* i 2) : i32))
         (set! i (+ i 1))))))
 
 (define (fill-i32-foreach
-  [a : (Array i32)]
-  [b : (Array i32)]
-  [out : (Array i32)]
-  [n : i64]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array-set!
-      out
-      i
-      (-
-        (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
-        (bit-xor (array-ref b i) 3)))))
-
-(define (fill-i32-scalar
-  [a : (Array i32)]
-  [b : (Array i32)]
-  [out : (Array i32)]
+  [a : (& a i32v.Vec)]
+  [b : (& b i32v.Vec)]
+  [out : (&mut out i32v.Vec)]
   [n : i64]) : unit
   (let
+    [a-slots (i32v.slots a)]
+    [b-slots (i32v.slots b)]
+    [out-slots (i32v.slots-mut out)]
+    (foreach
+      ([i : i64 0 n])
+      (array-set!
+        out-slots
+        i
+        (-
+          (bit-or
+            (+ (array-ref a-slots i) (array-ref b-slots i))
+            (array-ref a-slots i))
+          (bit-xor (array-ref b-slots i) 3))))))
+
+(define (fill-i32-scalar
+  [a : (& a i32v.Vec)]
+  [b : (& b i32v.Vec)]
+  [out : (&mut out i32v.Vec)]
+  [n : i64]) : unit
+  (let
+    [a-slots (i32v.slots a)]
+    [b-slots (i32v.slots b)]
+    [out-slots (i32v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
       (begin
         (array-set!
-          out
+          out-slots
           i
           (-
-            (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
-            (bit-xor (array-ref b i) 3)))
+            (bit-or
+              (+ (array-ref a-slots i) (array-ref b-slots i))
+              (array-ref a-slots i))
+            (bit-xor (array-ref b-slots i) 3)))
         (set! i (+ i 1))))))
 
-(define (eq-i32 [a : (Array i32)] [b : (Array i32)] [n : i64]) : bool
+(define (eq-i32 [a : (& a i32v.Vec)] [b : (& b i32v.Vec)] [n : i64]) : bool
   (let
+    [a-slots (i32v.slots a)]
+    [b-slots (i32v.slots b)]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array-ref a-slots i) (array-ref b-slots i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -120,70 +171,85 @@
 
 (define (case-i32 [n : i64]) : bool
   (let
-    [a : (Array i32) (array.make-array i32 n)]
-    [b : (Array i32) (array.make-array i32 n)]
-    [got : (Array i32) (array.make-array i32 n)]
-    [want : (Array i32) (array.make-array i32 n)]
+    [a : i32v.Vec (i32z.make n)]
+    [b : i32v.Vec (i32z.make n)]
+    [got : i32v.Vec (i32z.make n)]
+    [want : i32v.Vec (i32z.make n)]
     (begin
-      (init-i32 a b n)
-      (fill-i32-foreach a b got n)
-      (fill-i32-scalar a b want n)
-      (eq-i32 got want n))))
+      (init-i32 (&mut a) (&mut b) n)
+      (fill-i32-foreach (& a) (& b) (&mut got) n)
+      (fill-i32-scalar (& a) (& b) (&mut want) n)
+      (eq-i32 (& got) (& want) n))))
 
-(define (init-u64 [a : (Array u64)] [b : (Array u64)] [n : i64]) : unit
+(define (init-u64 [a : (&mut a u64v.Vec)] [b : (&mut b u64v.Vec)] [n : i64]) : unit
   (let
+    [a-slots (u64v.slots-mut a)]
+    [b-slots (u64v.slots-mut b)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ (* i 17) 5) : u64))
-        (array-set! b i (cast (+ (* i 3) 11) : u64))
+        (array-set! a-slots i (cast (+ (* i 17) 5) : u64))
+        (array-set! b-slots i (cast (+ (* i 3) 11) : u64))
         (set! i (+ i 1))))))
 
 (define (fill-u64-foreach
-  [a : (Array u64)]
-  [b : (Array u64)]
-  [out : (Array u64)]
-  [n : i64]
-  [factor : u64]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array-set!
-      out
-      i
-      (-
-        (bit-or
-          (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 7 : u64))
-          (array-ref a i))
-        (bit-xor (array-ref b i) (cast 3 : u64))))))
-
-(define (fill-u64-scalar
-  [a : (Array u64)]
-  [b : (Array u64)]
-  [out : (Array u64)]
+  [a : (& a u64v.Vec)]
+  [b : (& b u64v.Vec)]
+  [out : (&mut out u64v.Vec)]
   [n : i64]
   [factor : u64]) : unit
   (let
+    [a-slots (u64v.slots a)]
+    [b-slots (u64v.slots b)]
+    [out-slots (u64v.slots-mut out)]
+    (foreach
+      ([i : i64 0 n])
+      (array-set!
+        out-slots
+        i
+        (-
+          (bit-or
+            (+
+              (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
+              (cast 7 : u64))
+            (array-ref a-slots i))
+          (bit-xor (array-ref b-slots i) (cast 3 : u64)))))))
+
+(define (fill-u64-scalar
+  [a : (& a u64v.Vec)]
+  [b : (& b u64v.Vec)]
+  [out : (&mut out u64v.Vec)]
+  [n : i64]
+  [factor : u64]) : unit
+  (let
+    [a-slots (u64v.slots a)]
+    [b-slots (u64v.slots b)]
+    [out-slots (u64v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
       (begin
         (array-set!
-          out
+          out-slots
           i
           (-
             (bit-or
-              (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 7 : u64))
-              (array-ref a i))
-            (bit-xor (array-ref b i) (cast 3 : u64))))
+              (+
+                (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
+                (cast 7 : u64))
+              (array-ref a-slots i))
+            (bit-xor (array-ref b-slots i) (cast 3 : u64))))
         (set! i (+ i 1))))))
 
-(define (eq-u64 [a : (Array u64)] [b : (Array u64)] [n : i64]) : bool
+(define (eq-u64 [a : (& a u64v.Vec)] [b : (& b u64v.Vec)] [n : i64]) : bool
   (let
+    [a-slots (u64v.slots a)]
+    [b-slots (u64v.slots b)]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array-ref a-slots i) (array-ref b-slots i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -191,71 +257,86 @@
 
 (define (case-u64 [n : i64]) : bool
   (let
-    [a : (Array u64) (array.make-array u64 n)]
-    [b : (Array u64) (array.make-array u64 n)]
-    [got : (Array u64) (array.make-array u64 n)]
-    [want : (Array u64) (array.make-array u64 n)]
+    [a : u64v.Vec (u64z.make n)]
+    [b : u64v.Vec (u64z.make n)]
+    [got : u64v.Vec (u64z.make n)]
+    [want : u64v.Vec (u64z.make n)]
     [factor : u64 (cast 13 : u64)]
     (begin
-      (init-u64 a b n)
-      (fill-u64-foreach a b got n factor)
-      (fill-u64-scalar a b want n factor)
-      (eq-u64 got want n))))
+      (init-u64 (&mut a) (&mut b) n)
+      (fill-u64-foreach (& a) (& b) (&mut got) n factor)
+      (fill-u64-scalar (& a) (& b) (&mut want) n factor)
+      (eq-u64 (& got) (& want) n))))
 
-(define (init-u32 [a : (Array u32)] [b : (Array u32)] [n : i64]) : unit
+(define (init-u32 [a : (&mut a u32v.Vec)] [b : (&mut b u32v.Vec)] [n : i64]) : unit
   (let
+    [a-slots (u32v.slots-mut a)]
+    [b-slots (u32v.slots-mut b)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ (* i 19) 7) : u32))
-        (array-set! b i (cast (+ (* i 5) 23) : u32))
+        (array-set! a-slots i (cast (+ (* i 19) 7) : u32))
+        (array-set! b-slots i (cast (+ (* i 5) 23) : u32))
         (set! i (+ i 1))))))
 
 (define (fill-u32-foreach
-  [a : (Array u32)]
-  [b : (Array u32)]
-  [out : (Array u32)]
-  [n : i64]
-  [factor : u32]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array-set!
-      out
-      i
-      (-
-        (bit-or
-          (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 9 : u32))
-          (array-ref a i))
-        (bit-xor (array-ref b i) (cast 3 : u32))))))
-
-(define (fill-u32-scalar
-  [a : (Array u32)]
-  [b : (Array u32)]
-  [out : (Array u32)]
+  [a : (& a u32v.Vec)]
+  [b : (& b u32v.Vec)]
+  [out : (&mut out u32v.Vec)]
   [n : i64]
   [factor : u32]) : unit
   (let
+    [a-slots (u32v.slots a)]
+    [b-slots (u32v.slots b)]
+    [out-slots (u32v.slots-mut out)]
+    (foreach
+      ([i : i64 0 n])
+      (array-set!
+        out-slots
+        i
+        (-
+          (bit-or
+            (+
+              (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
+              (cast 9 : u32))
+            (array-ref a-slots i))
+          (bit-xor (array-ref b-slots i) (cast 3 : u32)))))))
+
+(define (fill-u32-scalar
+  [a : (& a u32v.Vec)]
+  [b : (& b u32v.Vec)]
+  [out : (&mut out u32v.Vec)]
+  [n : i64]
+  [factor : u32]) : unit
+  (let
+    [a-slots (u32v.slots a)]
+    [b-slots (u32v.slots b)]
+    [out-slots (u32v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
       (begin
         (array-set!
-          out
+          out-slots
           i
           (-
             (bit-or
-              (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 9 : u32))
-              (array-ref a i))
-            (bit-xor (array-ref b i) (cast 3 : u32))))
+              (+
+                (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
+                (cast 9 : u32))
+              (array-ref a-slots i))
+            (bit-xor (array-ref b-slots i) (cast 3 : u32))))
         (set! i (+ i 1))))))
 
-(define (eq-u32 [a : (Array u32)] [b : (Array u32)] [n : i64]) : bool
+(define (eq-u32 [a : (& a u32v.Vec)] [b : (& b u32v.Vec)] [n : i64]) : bool
   (let
+    [a-slots (u32v.slots a)]
+    [b-slots (u32v.slots b)]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array-ref a-slots i) (array-ref b-slots i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -263,65 +344,80 @@
 
 (define (case-u32 [n : i64]) : bool
   (let
-    [a : (Array u32) (array.make-array u32 n)]
-    [b : (Array u32) (array.make-array u32 n)]
-    [got : (Array u32) (array.make-array u32 n)]
-    [want : (Array u32) (array.make-array u32 n)]
+    [a : u32v.Vec (u32z.make n)]
+    [b : u32v.Vec (u32z.make n)]
+    [got : u32v.Vec (u32z.make n)]
+    [want : u32v.Vec (u32z.make n)]
     [factor : u32 (cast 17 : u32)]
     (begin
-      (init-u32 a b n)
-      (fill-u32-foreach a b got n factor)
-      (fill-u32-scalar a b want n factor)
-      (eq-u32 got want n))))
+      (init-u32 (&mut a) (&mut b) n)
+      (fill-u32-foreach (& a) (& b) (&mut got) n factor)
+      (fill-u32-scalar (& a) (& b) (&mut want) n factor)
+      (eq-u32 (& got) (& want) n))))
 
-(define (init-i8 [a : (Array i8)] [b : (Array i8)] [n : i64]) : unit
+(define (init-i8 [a : (&mut a i8v.Vec)] [b : (&mut b i8v.Vec)] [n : i64]) : unit
   (let
+    [a-slots (i8v.slots-mut a)]
+    [b-slots (i8v.slots-mut b)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ i 1) : i8))
-        (array-set! b i (cast (+ (* i 2) 3) : i8))
+        (array-set! a-slots i (cast (+ i 1) : i8))
+        (array-set! b-slots i (cast (+ (* i 2) 3) : i8))
         (set! i (+ i 1))))))
 
 (define (fill-i8-foreach
-  [a : (Array i8)]
-  [b : (Array i8)]
-  [out : (Array i8)]
-  [n : i64]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array-set!
-      out
-      i
-      (-
-        (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
-        (bit-xor (array-ref b i) 3)))))
-
-(define (fill-i8-scalar
-  [a : (Array i8)]
-  [b : (Array i8)]
-  [out : (Array i8)]
+  [a : (& a i8v.Vec)]
+  [b : (& b i8v.Vec)]
+  [out : (&mut out i8v.Vec)]
   [n : i64]) : unit
   (let
+    [a-slots (i8v.slots a)]
+    [b-slots (i8v.slots b)]
+    [out-slots (i8v.slots-mut out)]
+    (foreach
+      ([i : i64 0 n])
+      (array-set!
+        out-slots
+        i
+        (-
+          (bit-or
+            (+ (array-ref a-slots i) (array-ref b-slots i))
+            (array-ref a-slots i))
+          (bit-xor (array-ref b-slots i) 3))))))
+
+(define (fill-i8-scalar
+  [a : (& a i8v.Vec)]
+  [b : (& b i8v.Vec)]
+  [out : (&mut out i8v.Vec)]
+  [n : i64]) : unit
+  (let
+    [a-slots (i8v.slots a)]
+    [b-slots (i8v.slots b)]
+    [out-slots (i8v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
       (begin
         (array-set!
-          out
+          out-slots
           i
           (-
-            (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
-            (bit-xor (array-ref b i) 3)))
+            (bit-or
+              (+ (array-ref a-slots i) (array-ref b-slots i))
+              (array-ref a-slots i))
+            (bit-xor (array-ref b-slots i) 3)))
         (set! i (+ i 1))))))
 
-(define (eq-i8 [a : (Array i8)] [b : (Array i8)] [n : i64]) : bool
+(define (eq-i8 [a : (& a i8v.Vec)] [b : (& b i8v.Vec)] [n : i64]) : bool
   (let
+    [a-slots (i8v.slots a)]
+    [b-slots (i8v.slots b)]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array-ref a-slots i) (array-ref b-slots i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -329,64 +425,79 @@
 
 (define (case-i8 [n : i64]) : bool
   (let
-    [a : (Array i8) (array.make-array i8 n)]
-    [b : (Array i8) (array.make-array i8 n)]
-    [got : (Array i8) (array.make-array i8 n)]
-    [want : (Array i8) (array.make-array i8 n)]
+    [a : i8v.Vec (i8z.make n)]
+    [b : i8v.Vec (i8z.make n)]
+    [got : i8v.Vec (i8z.make n)]
+    [want : i8v.Vec (i8z.make n)]
     (begin
-      (init-i8 a b n)
-      (fill-i8-foreach a b got n)
-      (fill-i8-scalar a b want n)
-      (eq-i8 got want n))))
+      (init-i8 (&mut a) (&mut b) n)
+      (fill-i8-foreach (& a) (& b) (&mut got) n)
+      (fill-i8-scalar (& a) (& b) (&mut want) n)
+      (eq-i8 (& got) (& want) n))))
 
-(define (init-u8 [a : (Array u8)] [b : (Array u8)] [n : i64]) : unit
+(define (init-u8 [a : (&mut a u8v.Vec)] [b : (&mut b u8v.Vec)] [n : i64]) : unit
   (let
+    [a-slots (u8v.slots-mut a)]
+    [b-slots (u8v.slots-mut b)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ i 1) : u8))
-        (array-set! b i (cast (+ (* i 2) 3) : u8))
+        (array-set! a-slots i (cast (+ i 1) : u8))
+        (array-set! b-slots i (cast (+ (* i 2) 3) : u8))
         (set! i (+ i 1))))))
 
 (define (fill-u8-foreach
-  [a : (Array u8)]
-  [b : (Array u8)]
-  [out : (Array u8)]
-  [n : i64]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array-set!
-      out
-      i
-      (-
-        (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
-        (bit-xor (array-ref b i) 3)))))
-
-(define (fill-u8-scalar
-  [a : (Array u8)]
-  [b : (Array u8)]
-  [out : (Array u8)]
+  [a : (& a u8v.Vec)]
+  [b : (& b u8v.Vec)]
+  [out : (&mut out u8v.Vec)]
   [n : i64]) : unit
   (let
+    [a-slots (u8v.slots a)]
+    [b-slots (u8v.slots b)]
+    [out-slots (u8v.slots-mut out)]
+    (foreach
+      ([i : i64 0 n])
+      (array-set!
+        out-slots
+        i
+        (-
+          (bit-or
+            (+ (array-ref a-slots i) (array-ref b-slots i))
+            (array-ref a-slots i))
+          (bit-xor (array-ref b-slots i) 3))))))
+
+(define (fill-u8-scalar
+  [a : (& a u8v.Vec)]
+  [b : (& b u8v.Vec)]
+  [out : (&mut out u8v.Vec)]
+  [n : i64]) : unit
+  (let
+    [a-slots (u8v.slots a)]
+    [b-slots (u8v.slots b)]
+    [out-slots (u8v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
       (begin
         (array-set!
-          out
+          out-slots
           i
           (-
-            (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
-            (bit-xor (array-ref b i) 3)))
+            (bit-or
+              (+ (array-ref a-slots i) (array-ref b-slots i))
+              (array-ref a-slots i))
+            (bit-xor (array-ref b-slots i) 3)))
         (set! i (+ i 1))))))
 
-(define (eq-u8 [a : (Array u8)] [b : (Array u8)] [n : i64]) : bool
+(define (eq-u8 [a : (& a u8v.Vec)] [b : (& b u8v.Vec)] [n : i64]) : bool
   (let
+    [a-slots (u8v.slots a)]
+    [b-slots (u8v.slots b)]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array-ref a-slots i) (array-ref b-slots i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -394,68 +505,81 @@
 
 (define (case-u8 [n : i64]) : bool
   (let
-    [a : (Array u8) (array.make-array u8 n)]
-    [b : (Array u8) (array.make-array u8 n)]
-    [got : (Array u8) (array.make-array u8 n)]
-    [want : (Array u8) (array.make-array u8 n)]
+    [a : u8v.Vec (u8z.make n)]
+    [b : u8v.Vec (u8z.make n)]
+    [got : u8v.Vec (u8z.make n)]
+    [want : u8v.Vec (u8z.make n)]
     (begin
-      (init-u8 a b n)
-      (fill-u8-foreach a b got n)
-      (fill-u8-scalar a b want n)
-      (eq-u8 got want n))))
+      (init-u8 (&mut a) (&mut b) n)
+      (fill-u8-foreach (& a) (& b) (&mut got) n)
+      (fill-u8-scalar (& a) (& b) (&mut want) n)
+      (eq-u8 (& got) (& want) n))))
 
-(define (init-i16 [a : (Array i16)] [b : (Array i16)] [n : i64]) : unit
+(define (init-i16 [a : (&mut a i16v.Vec)] [b : (&mut b i16v.Vec)] [n : i64]) : unit
   (let
+    [a-slots (i16v.slots-mut a)]
+    [b-slots (i16v.slots-mut b)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ (* i 257) 12000) : i16))
-        (array-set! b i (cast (+ (* i 13) 300) : i16))
+        (array-set! a-slots i (cast (+ (* i 257) 12000) : i16))
+        (array-set! b-slots i (cast (+ (* i 13) 300) : i16))
         (set! i (+ i 1))))))
 
 (define (fill-i16-foreach
-  [a : (Array i16)]
-  [b : (Array i16)]
-  [out : (Array i16)]
-  [n : i64]
-  [factor : i16]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array-set!
-      out
-      i
-      (-
-        (bit-or (+ (array-ref a i) (* (array-ref b i) factor)) (array-ref a i))
-        (bit-xor (array-ref b i) (cast 3 : i16))))))
-
-(define (fill-i16-scalar
-  [a : (Array i16)]
-  [b : (Array i16)]
-  [out : (Array i16)]
+  [a : (& a i16v.Vec)]
+  [b : (& b i16v.Vec)]
+  [out : (&mut out i16v.Vec)]
   [n : i64]
   [factor : i16]) : unit
   (let
+    [a-slots (i16v.slots a)]
+    [b-slots (i16v.slots b)]
+    [out-slots (i16v.slots-mut out)]
+    (foreach
+      ([i : i64 0 n])
+      (array-set!
+        out-slots
+        i
+        (-
+          (bit-or
+            (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
+            (array-ref a-slots i))
+          (bit-xor (array-ref b-slots i) (cast 3 : i16)))))))
+
+(define (fill-i16-scalar
+  [a : (& a i16v.Vec)]
+  [b : (& b i16v.Vec)]
+  [out : (&mut out i16v.Vec)]
+  [n : i64]
+  [factor : i16]) : unit
+  (let
+    [a-slots (i16v.slots a)]
+    [b-slots (i16v.slots b)]
+    [out-slots (i16v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
       (begin
         (array-set!
-          out
+          out-slots
           i
           (-
             (bit-or
-              (+ (array-ref a i) (* (array-ref b i) factor))
-              (array-ref a i))
-            (bit-xor (array-ref b i) (cast 3 : i16))))
+              (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
+              (array-ref a-slots i))
+            (bit-xor (array-ref b-slots i) (cast 3 : i16))))
         (set! i (+ i 1))))))
 
-(define (eq-i16 [a : (Array i16)] [b : (Array i16)] [n : i64]) : bool
+(define (eq-i16 [a : (& a i16v.Vec)] [b : (& b i16v.Vec)] [n : i64]) : bool
   (let
+    [a-slots (i16v.slots a)]
+    [b-slots (i16v.slots b)]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array-ref a-slots i) (array-ref b-slots i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -463,69 +587,82 @@
 
 (define (case-i16 [n : i64]) : bool
   (let
-    [a : (Array i16) (array.make-array i16 n)]
-    [b : (Array i16) (array.make-array i16 n)]
-    [got : (Array i16) (array.make-array i16 n)]
-    [want : (Array i16) (array.make-array i16 n)]
+    [a : i16v.Vec (i16z.make n)]
+    [b : i16v.Vec (i16z.make n)]
+    [got : i16v.Vec (i16z.make n)]
+    [want : i16v.Vec (i16z.make n)]
     [factor : i16 (cast 7 : i16)]
     (begin
-      (init-i16 a b n)
-      (fill-i16-foreach a b got n factor)
-      (fill-i16-scalar a b want n factor)
-      (eq-i16 got want n))))
+      (init-i16 (&mut a) (&mut b) n)
+      (fill-i16-foreach (& a) (& b) (&mut got) n factor)
+      (fill-i16-scalar (& a) (& b) (&mut want) n factor)
+      (eq-i16 (& got) (& want) n))))
 
-(define (init-u16 [a : (Array u16)] [b : (Array u16)] [n : i64]) : unit
+(define (init-u16 [a : (&mut a u16v.Vec)] [b : (&mut b u16v.Vec)] [n : i64]) : unit
   (let
+    [a-slots (u16v.slots-mut a)]
+    [b-slots (u16v.slots-mut b)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ (* i 257) 65000) : u16))
-        (array-set! b i (cast (+ (* i 37) 500) : u16))
+        (array-set! a-slots i (cast (+ (* i 257) 65000) : u16))
+        (array-set! b-slots i (cast (+ (* i 37) 500) : u16))
         (set! i (+ i 1))))))
 
 (define (fill-u16-foreach
-  [a : (Array u16)]
-  [b : (Array u16)]
-  [out : (Array u16)]
-  [n : i64]
-  [factor : u16]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array-set!
-      out
-      i
-      (-
-        (bit-or (+ (array-ref a i) (* (array-ref b i) factor)) (array-ref a i))
-        (bit-xor (array-ref b i) (cast 3 : u16))))))
-
-(define (fill-u16-scalar
-  [a : (Array u16)]
-  [b : (Array u16)]
-  [out : (Array u16)]
+  [a : (& a u16v.Vec)]
+  [b : (& b u16v.Vec)]
+  [out : (&mut out u16v.Vec)]
   [n : i64]
   [factor : u16]) : unit
   (let
+    [a-slots (u16v.slots a)]
+    [b-slots (u16v.slots b)]
+    [out-slots (u16v.slots-mut out)]
+    (foreach
+      ([i : i64 0 n])
+      (array-set!
+        out-slots
+        i
+        (-
+          (bit-or
+            (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
+            (array-ref a-slots i))
+          (bit-xor (array-ref b-slots i) (cast 3 : u16)))))))
+
+(define (fill-u16-scalar
+  [a : (& a u16v.Vec)]
+  [b : (& b u16v.Vec)]
+  [out : (&mut out u16v.Vec)]
+  [n : i64]
+  [factor : u16]) : unit
+  (let
+    [a-slots (u16v.slots a)]
+    [b-slots (u16v.slots b)]
+    [out-slots (u16v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
       (begin
         (array-set!
-          out
+          out-slots
           i
           (-
             (bit-or
-              (+ (array-ref a i) (* (array-ref b i) factor))
-              (array-ref a i))
-            (bit-xor (array-ref b i) (cast 3 : u16))))
+              (+ (array-ref a-slots i) (* (array-ref b-slots i) factor))
+              (array-ref a-slots i))
+            (bit-xor (array-ref b-slots i) (cast 3 : u16))))
         (set! i (+ i 1))))))
 
-(define (eq-u16 [a : (Array u16)] [b : (Array u16)] [n : i64]) : bool
+(define (eq-u16 [a : (& a u16v.Vec)] [b : (& b u16v.Vec)] [n : i64]) : bool
   (let
+    [a-slots (u16v.slots a)]
+    [b-slots (u16v.slots b)]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array-ref a-slots i) (array-ref b-slots i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -533,58 +670,76 @@
 
 (define (case-u16 [n : i64]) : bool
   (let
-    [a : (Array u16) (array.make-array u16 n)]
-    [b : (Array u16) (array.make-array u16 n)]
-    [got : (Array u16) (array.make-array u16 n)]
-    [want : (Array u16) (array.make-array u16 n)]
+    [a : u16v.Vec (u16z.make n)]
+    [b : u16v.Vec (u16z.make n)]
+    [got : u16v.Vec (u16z.make n)]
+    [want : u16v.Vec (u16z.make n)]
     [factor : u16 (cast 19 : u16)]
     (begin
-      (init-u16 a b n)
-      (fill-u16-foreach a b got n factor)
-      (fill-u16-scalar a b want n factor)
-      (eq-u16 got want n))))
+      (init-u16 (&mut a) (&mut b) n)
+      (fill-u16-foreach (& a) (& b) (&mut got) n factor)
+      (fill-u16-scalar (& a) (& b) (&mut want) n factor)
+      (eq-u16 (& got) (& want) n))))
 
-(define (init-f64 [a : (Array f64)] [b : (Array f64)] [n : i64]) : unit
+(define (init-f64 [a : (&mut a f64v.Vec)] [b : (&mut b f64v.Vec)] [n : i64]) : unit
   (let
+    [a-slots (f64v.slots-mut a)]
+    [b-slots (f64v.slots-mut b)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i 1.5)
-        (array-set! b i 2.25)
+        (array-set! a-slots i 1.5)
+        (array-set! b-slots i 2.25)
         (set! i (+ i 1))))))
 
 (define (fill-f64-foreach
-  [a : (Array f64)]
-  [b : (Array f64)]
-  [out : (Array f64)]
-  [n : i64]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array-set! out i (- (+ (array-ref a i) (array-ref b i)) (array-ref b i)))))
-
-(define (fill-f64-scalar
-  [a : (Array f64)]
-  [b : (Array f64)]
-  [out : (Array f64)]
+  [a : (& a f64v.Vec)]
+  [b : (& b f64v.Vec)]
+  [out : (&mut out f64v.Vec)]
   [n : i64]) : unit
   (let
+    [a-slots (f64v.slots a)]
+    [b-slots (f64v.slots b)]
+    [out-slots (f64v.slots-mut out)]
+    (foreach
+      ([i : i64 0 n])
+      (array-set!
+        out-slots
+        i
+        (-
+          (+ (array-ref a-slots i) (array-ref b-slots i))
+          (array-ref b-slots i))))))
+
+(define (fill-f64-scalar
+  [a : (& a f64v.Vec)]
+  [b : (& b f64v.Vec)]
+  [out : (&mut out f64v.Vec)]
+  [n : i64]) : unit
+  (let
+    [a-slots (f64v.slots a)]
+    [b-slots (f64v.slots b)]
+    [out-slots (f64v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
       (begin
         (array-set!
-          out
+          out-slots
           i
-          (- (+ (array-ref a i) (array-ref b i)) (array-ref b i)))
+          (-
+            (+ (array-ref a-slots i) (array-ref b-slots i))
+            (array-ref b-slots i)))
         (set! i (+ i 1))))))
 
-(define (eq-f64 [a : (Array f64)] [b : (Array f64)] [n : i64]) : bool
+(define (eq-f64 [a : (& a f64v.Vec)] [b : (& b f64v.Vec)] [n : i64]) : bool
   (let
+    [a-slots (f64v.slots a)]
+    [b-slots (f64v.slots b)]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array-ref a-slots i) (array-ref b-slots i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -592,57 +747,75 @@
 
 (define (case-f64 [n : i64]) : bool
   (let
-    [a : (Array f64) (array.make-array f64 n)]
-    [b : (Array f64) (array.make-array f64 n)]
-    [got : (Array f64) (array.make-array f64 n)]
-    [want : (Array f64) (array.make-array f64 n)]
+    [a : f64v.Vec (f64z.make n)]
+    [b : f64v.Vec (f64z.make n)]
+    [got : f64v.Vec (f64z.make n)]
+    [want : f64v.Vec (f64z.make n)]
     (begin
-      (init-f64 a b n)
-      (fill-f64-foreach a b got n)
-      (fill-f64-scalar a b want n)
-      (eq-f64 got want n))))
+      (init-f64 (&mut a) (&mut b) n)
+      (fill-f64-foreach (& a) (& b) (&mut got) n)
+      (fill-f64-scalar (& a) (& b) (&mut want) n)
+      (eq-f64 (& got) (& want) n))))
 
-(define (init-f32 [a : (Array f32)] [b : (Array f32)] [n : i64]) : unit
+(define (init-f32 [a : (&mut a f32v.Vec)] [b : (&mut b f32v.Vec)] [n : i64]) : unit
   (let
+    [a-slots (f32v.slots-mut a)]
+    [b-slots (f32v.slots-mut b)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i 1.5)
-        (array-set! b i 2.25)
+        (array-set! a-slots i 1.5)
+        (array-set! b-slots i 2.25)
         (set! i (+ i 1))))))
 
 (define (fill-f32-foreach
-  [a : (Array f32)]
-  [b : (Array f32)]
-  [out : (Array f32)]
-  [n : i64]) : unit
-  (foreach
-    ([i : i64 0 n])
-    (array-set! out i (- (+ (array-ref a i) (array-ref b i)) (array-ref b i)))))
-
-(define (fill-f32-scalar
-  [a : (Array f32)]
-  [b : (Array f32)]
-  [out : (Array f32)]
+  [a : (& a f32v.Vec)]
+  [b : (& b f32v.Vec)]
+  [out : (&mut out f32v.Vec)]
   [n : i64]) : unit
   (let
+    [a-slots (f32v.slots a)]
+    [b-slots (f32v.slots b)]
+    [out-slots (f32v.slots-mut out)]
+    (foreach
+      ([i : i64 0 n])
+      (array-set!
+        out-slots
+        i
+        (-
+          (+ (array-ref a-slots i) (array-ref b-slots i))
+          (array-ref b-slots i))))))
+
+(define (fill-f32-scalar
+  [a : (& a f32v.Vec)]
+  [b : (& b f32v.Vec)]
+  [out : (&mut out f32v.Vec)]
+  [n : i64]) : unit
+  (let
+    [a-slots (f32v.slots a)]
+    [b-slots (f32v.slots b)]
+    [out-slots (f32v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
       (begin
         (array-set!
-          out
+          out-slots
           i
-          (- (+ (array-ref a i) (array-ref b i)) (array-ref b i)))
+          (-
+            (+ (array-ref a-slots i) (array-ref b-slots i))
+            (array-ref b-slots i)))
         (set! i (+ i 1))))))
 
-(define (eq-f32 [a : (Array f32)] [b : (Array f32)] [n : i64]) : bool
+(define (eq-f32 [a : (& a f32v.Vec)] [b : (& b f32v.Vec)] [n : i64]) : bool
   (let
+    [a-slots (f32v.slots a)]
+    [b-slots (f32v.slots b)]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array-ref a-slots i) (array-ref b-slots i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -650,32 +823,31 @@
 
 (define (case-f32 [n : i64]) : bool
   (let
-    [a : (Array f32) (array.make-array f32 n)]
-    [b : (Array f32) (array.make-array f32 n)]
-    [got : (Array f32) (array.make-array f32 n)]
-    [want : (Array f32) (array.make-array f32 n)]
+    [a : f32v.Vec (f32z.make n)]
+    [b : f32v.Vec (f32z.make n)]
+    [got : f32v.Vec (f32z.make n)]
+    [want : f32v.Vec (f32z.make n)]
     (begin
-      (init-f32 a b n)
-      (fill-f32-foreach a b got n)
-      (fill-f32-scalar a b want n)
-      (eq-f32 got want n))))
+      (init-f32 (&mut a) (&mut b) n)
+      (fill-f32-foreach (& a) (& b) (&mut got) n)
+      (fill-f32-scalar (& a) (& b) (&mut want) n)
+      (eq-f32 (& got) (& want) n))))
 
 (define (case-end-bound-evaluated-once) : bool
   (let
-    ;; lint-allow: single-element-array-cell
-    [bounds : (Array i64) (array.make-array i64 1)]
-    [out : (Array i64) (array.make-array i64 3)]
+    [bounds : i64v.Vec (i64z.make 1)]
+    [out : i64v.Vec (i64z.make 3)]
     (begin
-      (array-set! bounds 0 3)
-      (array-set! out 0 0)
-      (array-set! out 1 0)
-      (array-set! out 2 0)
-      (foreach
-        ([i : i64 0 (array-ref bounds 0)])
-        (begin
-          (array-set! bounds 0 0)
-          (array-set! out i (+ i 1))))
-      (= (array-ref out 2) 3))))
+      (i64v.set (&mut bounds) 0 3)
+      (let
+        [bound-slots (i64v.slots-mut (&mut bounds))]
+        [out-slots (i64v.slots-mut (&mut out))]
+        (foreach
+          ([i : i64 0 (array-ref bound-slots 0)])
+          (begin
+            (array-set! bound-slots 0 0)
+            (array-set! out-slots i (+ i 1)))))
+      (= (i64v.get (& out) 2 0) 3))))
 
 (define (case-index-binding-is-scoped) : bool
   (=

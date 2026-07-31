@@ -232,23 +232,23 @@ short_circuit|tests/integration/short_circuit.tl|42|-|-|-
 shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/windows/shl_count_width_trap/shl_count_width_trap.tl:3:5: shift count out of range: count=64 width=64\n
 shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/windows/shl_neg_count_trap/shl_neg_count_trap.tl:3:5: shift count out of range: count=-1 width=64\n
 runtime_panic_site_trap|tests/integration/runtime_panic_site_trap.tl|134|-|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/windows/runtime_panic_site_trap/runtime_panic_site_trap.tl:4:4: panic: boom\n
-spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|-
-spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|-
-spmd_gather_oob|tests/integration/spmd_gather_oob.tl|134|-|-|-|expected-stderr:tl: target/integration-verify/windows/spmd_gather_oob/spmd_gather_oob.tl:22:41: array index out of bounds: index=9223372036854775807 length=8\n
-spmd_gather_lane_offset_oob|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|-|expected-stderr:tl: target/integration-verify/windows/spmd_gather_lane_offset_oob/spmd_gather_lane_offset_oob.tl:22:25: array index out of bounds: index=-9223372036854775808 length=8\n
-spmd_atomic_scatter|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl
-spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
-spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|-
-spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|-
-spmd_scan_negative_start_trap|tests/integration/spmd_scan_negative_start_trap.tl|134|-|-|-|expected-stderr:tl: target/integration-verify/windows/spmd_scan_negative_start_trap/spmd_scan_negative_start_trap.tl:13:23: array index out of bounds: index=-1 length=4\n
-spmd_scan_short_output_trap|tests/integration/spmd_scan_short_output_trap.tl|134|-|-|-|expected-stderr:tl: target/integration-verify/windows/spmd_scan_short_output_trap/spmd_scan_short_output_trap.tl:14:25: array index out of bounds: index=6 length=6\n
-spmd_shuffle_scalar|tests/integration/spmd_shuffle_scalar.tl|42|-|-|-
-spmd_shuffle_simd|tests/integration/spmd_shuffle_simd.tl|42|-|-|-
-spmd_shuffle_types|tests/integration/spmd_shuffle_types.tl|42|-|-|-
-spmd_shuffle_reduce|tests/integration/spmd_shuffle_reduce.tl|42|-|-|-
-spmd_shuffle_lane1_trap|tests/integration/spmd_shuffle_lane1_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
-spmd_shuffle_negative_trap|tests/integration/spmd_shuffle_negative_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
-spmd_shuffle_tail_oob|tests/integration/spmd_shuffle_tail_oob.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|spmd_vec_support.tl
+spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|spmd_vec_support.tl
+spmd_gather_oob|tests/integration/spmd_gather_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_gather_oob/spmd_gather_oob.tl:29:55: array index out of bounds: index=9223372036854775807 length=8\n
+spmd_gather_lane_offset_oob|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_gather_lane_offset_oob/spmd_gather_lane_offset_oob.tl:29:33: array index out of bounds: index=-9223372036854775808 length=8\n
+spmd_atomic_scatter|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl spmd_vec_support.tl
+spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|spmd_vec_support.tl
+spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|spmd_vec_support.tl
+spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|spmd_vec_support.tl
+spmd_scan_negative_start_trap|tests/integration/spmd_scan_negative_start_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_scan_negative_start_trap/spmd_scan_negative_start_trap.tl:19:31: array index out of bounds: index=-1 length=4\n
+spmd_scan_short_output_trap|tests/integration/spmd_scan_short_output_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_scan_short_output_trap/spmd_scan_short_output_trap.tl:20:33: array index out of bounds: index=6 length=6\n
+spmd_shuffle_scalar|tests/integration/spmd_shuffle_scalar.tl|42|-|-|spmd_vec_support.tl
+spmd_shuffle_simd|tests/integration/spmd_shuffle_simd.tl|42|-|-|spmd_vec_support.tl
+spmd_shuffle_types|tests/integration/spmd_shuffle_types.tl|42|-|-|spmd_vec_support.tl
+spmd_shuffle_reduce|tests/integration/spmd_shuffle_reduce.tl|42|-|-|spmd_vec_support.tl
+spmd_shuffle_lane1_trap|tests/integration/spmd_shuffle_lane1_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
+spmd_shuffle_negative_trap|tests/integration/spmd_shuffle_negative_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
+spmd_shuffle_tail_oob|tests/integration/spmd_shuffle_tail_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 stdlib_eq_aggregate|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib/eq.tl stdlib/comptime.tl
 stdlib_hash_generated|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/io.tl stdlib/string.tl

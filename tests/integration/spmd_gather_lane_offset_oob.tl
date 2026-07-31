@@ -1,4 +1,7 @@
-(import stdlib.array)
+(import stdlib.vector)
+(import (vector.vector i64) as i64v)
+(import "spmd_vec_support.tl" module spmd.vec.support as spmdv)
+(import (spmdv.zeroed i64 0) as i64z)
 
 ;; Lane 0 overflows `i + offset` from i64::MAX to i64::MIN. Checked lowering
 ;; must preserve signed wrapping arithmetic, validate in logical lane order,
@@ -6,18 +9,22 @@
 ;; verifies that no gather runs after the first invalid active lane.
 (define (main) : i64
   (let
-    [xs : (Array i64) (array.make-array i64 8)]
-    [offsets : (Array i64) (array.make-array i64 16)]
-    [out : (Array i64) (array.make-array i64 9)]
+    [xs : i64v.Vec (i64z.make 8)]
+    [offsets : i64v.Vec (i64z.make 16)]
+    [out : i64v.Vec (i64z.make 9)]
     (begin
-      (array-set! offsets 0 9223372036854775807)
-      (array-set! offsets 1 0)
-      (array-set! offsets 2 0)
-      (array-set! offsets 3 (- 0 7))
-      (foreach
-        ([i : i64 1 9])
-        (array-set!
-          out
-          i
-          (array-ref xs (+ i (array-ref offsets (program-index))))))
+      (i64v.set (&mut offsets) 0 9223372036854775807)
+      (i64v.set (&mut offsets) 1 0)
+      (i64v.set (&mut offsets) 2 0)
+      (i64v.set (&mut offsets) 3 (- 0 7))
+      (let
+        [xs-slots (i64v.slots (& xs))]
+        [offset-slots (i64v.slots (& offsets))]
+        [out-slots (i64v.slots-mut (&mut out))]
+        (foreach
+          ([i : i64 1 9])
+          (array-set!
+            out-slots
+            i
+            (array-ref xs-slots (+ i (array-ref offset-slots (program-index)))))))
       1)))

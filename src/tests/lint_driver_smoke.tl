@@ -1889,6 +1889,9 @@
 
 (define (main) : i64
   (begin
+    ;; This smoke's manifest intentionally covers the stable machine-readable
+    ;; path while verify-public-tools.sh covers the default rich CLI renderer.
+    (set! selfhost-lint-flat-output true)
     ;; The imported driver core defines printing helpers; keep the print-string
     ;; runtime linked even when this smoke only exercises the pure source path.
     (io.print-string "")

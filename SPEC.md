@@ -6585,7 +6585,9 @@ in documentation passes.
   stdio LSP server with diagnostics, definition, completion, inlay hints,
   formatting, hover, document links, flat top-level document-symbol outlines,
   lexical document highlights, lexical folding ranges for multiline forms and
-  comment blocks, and TypeLisp structural-edit/query extensions,
+  comment blocks, a deterministic multi-root workspace source/declaration index
+  with open-document overlays and incremental file/root updates, and TypeLisp
+  structural-edit/query extensions,
   structured source locations for source-authored semantic diagnostics, plus
   a REPL that evaluates through the real compile/link/run pipeline.
 
@@ -6603,7 +6605,7 @@ in documentation passes.
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
 | Compiled comptime execution from embedded/package `tlci` images | In progress: the embedded image is built, embedded, and validated in every bootstrap, but dispatching through it is opt-in via `--cfg tlci-native-route` and is disabled on Windows regardless of that flag, so shipped builds resolve every stdlib macro through CTFE. When the route is enabled, embedded-stdlib compilation without an explicit stdlib root maps the production image, resolves macro identities through its native registration catalog, and commits results from compiled entries directly, with observable catalog hit/miss, load-failure, native-dispatch, and interpreted-fallback counters. Registration shells and uncataloged identities still execute through CTFE, explicit stdlib roots stay on the source path, and the differential gate requires byte-identical assembly between routes. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
-| Richer LSP/IDE features | Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, references/rename through standard methods, and workspace indexing remain pending. |
+| Richer LSP/IDE features | The immutable workspace source/declaration index and overlay/event plumbing are implemented. Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, and references/rename through standard methods remain pending. |
 
 ---
 

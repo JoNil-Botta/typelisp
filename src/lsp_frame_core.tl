@@ -124,9 +124,13 @@
   (Found String String LspDiagnosticUris lsp_decl_vec.Vec)
   (Missing))
 
-(defenum LspHandleResult
+(defenum LspDocumentHandleResult
   (Continue lsp_document_vec.Vec)
   (Exit lsp_document_vec.Vec))
+
+(defenum LspHandleResult
+  (Continue LspServerState)
+  (Exit LspServerState))
 
 (defstruct LspLineCol
   (line i64)
@@ -890,7 +894,16 @@
                             (lsp-json-member
                               "foldingRangeProvider"
                               (json.JsonBool true)
-                              (json.member-list-empty))))))))))))))
+                              (lsp-json-member
+                                "workspace"
+                                (lsp-json-object1
+                                  "workspaceFolders"
+                                  (lsp-json-object2
+                                    "supported"
+                                    (json.JsonBool true)
+                                    "changeNotifications"
+                                    (json.JsonBool true)))
+                                (json.member-list-empty)))))))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -1011,9 +1024,6 @@
 (define (lsp-documents-find-index [docs : lsp_document_vec.Vec] [uri : String]) : i64
   (lsp-documents-find-index-from docs uri 0))
 
-(define lsp-documents-max-capacity : i64
-  16)
-
 (define (lsp-documents-set-versioned
   [docs : lsp_document_vec.Vec]
   [uri : String]
@@ -1070,17 +1080,11 @@
             (lsp_decl_vec.new)
             false
             LspCheckCacheInvalid)]
-        (if (>= (lsp_document_vec.len (& docs)) lsp-documents-max-capacity)
-          (begin
-            (lsp-documents-shift-left! docs 0)
-            (lsp_document_vec.set
-              (&mut docs)
-              (- (lsp_document_vec.len (& docs)) 1)
-              doc)
-            docs)
-          (begin
-            (lsp_document_vec.push (&mut docs) doc)
-            docs))))))
+        (begin
+          ;; Open buffers are correctness state, not an eviction cache. The
+          ;; enclosing LspServerState snapshot bounds their retained storage.
+          (lsp_document_vec.push (&mut docs) doc)
+          docs)))))
 
 (define (lsp-documents-set
   [docs : lsp_document_vec.Vec]
@@ -1161,7 +1165,9 @@
     [doc : LspDocument
       (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
     [path : String (struct-get doc path)]
-    (if (string.eq path "")
+    ;; Versioned documents are client-owned open buffers. Only unversioned
+    ;; entries loaded by tooling may be refreshed from disk.
+    (if (or (string.eq path "") (>= (struct-get doc version) 0))
       doc
       (match (io.try-read-file (& path))
         [(io.OkIoBytes disk-contents)
@@ -1279,7 +1285,7 @@
                 (lsp-diagnostic-uris-empty))]
             (lsp-documents-smoke-check-cache-invalid? invalidated-docs uri)))))))
 
-(define (lsp-documents-cache-bound-smoke-ok?) : bool
+(define (lsp-documents-open-retention-smoke-ok?) : bool
   (let
     [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     [empty-docs : lsp_document_vec.Vec (lsp_document_vec.new)]
@@ -1313,8 +1319,11 @@
           (lsp-diagnostic-uris-single "diag10")))
       (set! docs (lsp-documents-smoke-add docs "file:///doc16.tl"))
       (and
-        (= (lsp_document_vec.len (& docs)) lsp-documents-max-capacity)
-        (lsp-documents-smoke-missing? docs "file:///doc00.tl")
+        (= (lsp_document_vec.len (& docs)) 17)
+        (lsp-documents-smoke-text-eq?
+          docs
+          "file:///doc00.tl"
+          "file:///doc00.tl")
         (lsp-documents-smoke-text-eq?
           docs
           "file:///doc01.tl"
@@ -1329,14 +1338,214 @@
           [trimmed : lsp_document_vec.Vec
             (lsp-documents-remove docs "file:///doc08.tl")]
           [shifted : LspDocument
-            (lsp_document_vec.get (& trimmed) 7 (lsp-document-fallback))]
+            (lsp_document_vec.get (& trimmed) 8 (lsp-document-fallback))]
           [last : LspDocument
-            (lsp_document_vec.get (& trimmed) 14 (lsp-document-fallback))]
+            (lsp_document_vec.get (& trimmed) 15 (lsp-document-fallback))]
           (and
-            (= (lsp_document_vec.len (& trimmed)) 15)
+            (= (lsp_document_vec.len (& trimmed)) 16)
             (lsp-documents-smoke-missing? trimmed "file:///doc08.tl")
             (string.eq (struct-get shifted uri) "file:///doc09.tl")
             (string.eq (struct-get last uri) "file:///doc16.tl")))))))
+
+(define (lsp-workspace-root-fallback) : LspWorkspaceRoot
+  (LspWorkspaceRoot "" ""))
+
+(define (lsp-workspace-source-fallback) : LspWorkspaceSource
+  (LspWorkspaceSource "" "" "" "" "" false false (lsp_decl_vec.new)))
+
+(define (lsp-workspace-roots-new) : LspWorkspaceRoots
+  (LspWorkspaceRoots (make-array LspWorkspaceRoot 0) 0))
+
+(define (lsp-workspace-roots-len [roots : (& roots LspWorkspaceRoots)]) : i64
+  (struct-get roots len))
+
+(define (lsp-workspace-roots-get
+  [roots : (& roots LspWorkspaceRoots)]
+  [index : i64]) : LspWorkspaceRoot
+  (if (and (>= index 0) (< index (struct-get roots len)))
+    (array-ref (struct-get roots slots) index)
+    (lsp-workspace-root-fallback)))
+
+(define (lsp-workspace-roots-copy-range!
+  [dst : (&mut dst (__tl_dyn-array LspWorkspaceRoot))]
+  [src : (& src (__tl_dyn-array LspWorkspaceRoot))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (lsp-workspace-roots-grow! [roots : (&mut roots LspWorkspaceRoots)]) : unit
+  (let
+    [old-cap : i64 (array-length (struct-get roots slots))]
+    [new-cap : i64
+      (if (< old-cap 4)
+        4
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array LspWorkspaceRoot)
+      (make-array LspWorkspaceRoot new-cap)]
+    (begin
+      (lsp-workspace-roots-copy-range!
+        (&mut bigger)
+        (& (struct-get roots slots))
+        (struct-get roots len))
+      (set! (struct-get roots slots) bigger))))
+
+(define (lsp-workspace-roots-push!
+  [roots : (&mut roots LspWorkspaceRoots)]
+  [root : LspWorkspaceRoot]) : unit
+  (begin
+    (if (>= (struct-get roots len) (array-length (struct-get roots slots)))
+      (lsp-workspace-roots-grow! roots)
+      unit)
+    (array-set! (struct-get roots slots) (struct-get roots len) root)
+    (set! (struct-get roots len) (+ (struct-get roots len) 1))))
+
+(define (lsp-workspace-roots-find-uri
+  [roots : (& roots LspWorkspaceRoots)]
+  [uri : String]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< index (struct-get roots len)) (< found 0))
+        (if (string.eq
+          (struct-get (array-ref (struct-get roots slots) index) uri)
+          uri)
+          (set! found index)
+          (set! index (+ index 1))))
+      found)))
+
+(define (lsp-workspace-roots-remove-index!
+  [roots : (&mut roots LspWorkspaceRoots)]
+  [index : i64]) : unit
+  (if (or (< index 0) (>= index (struct-get roots len)))
+    unit
+    (let
+      [cursor : i64 index]
+      [last : i64 (- (struct-get roots len) 1)]
+      (begin
+        (while (< cursor last)
+          (begin
+            (array-set!
+              (struct-get roots slots)
+              cursor
+              (array-ref (struct-get roots slots) (+ cursor 1)))
+            (set! cursor (+ cursor 1))))
+        (set! (struct-get roots len) last)))))
+
+(define (lsp-workspace-sources-new) : LspWorkspaceSources
+  (LspWorkspaceSources (make-array LspWorkspaceSource 0) 0))
+
+(define (lsp-workspace-sources-len [sources : (& sources LspWorkspaceSources)]) : i64
+  (struct-get sources len))
+
+(define (lsp-workspace-sources-get
+  [sources : (& sources LspWorkspaceSources)]
+  [index : i64]) : LspWorkspaceSource
+  (if (and (>= index 0) (< index (struct-get sources len)))
+    (array-ref (struct-get sources slots) index)
+    (lsp-workspace-source-fallback)))
+
+(define (lsp-workspace-sources-copy-range!
+  [dst : (&mut dst (__tl_dyn-array LspWorkspaceSource))]
+  [src : (& src (__tl_dyn-array LspWorkspaceSource))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (lsp-workspace-sources-grow!
+  [sources : (&mut sources LspWorkspaceSources)]) : unit
+  (let
+    [old-cap : i64 (array-length (struct-get sources slots))]
+    [new-cap : i64
+      (if (< old-cap 8)
+        8
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array LspWorkspaceSource)
+      (make-array LspWorkspaceSource new-cap)]
+    (begin
+      (lsp-workspace-sources-copy-range!
+        (&mut bigger)
+        (& (struct-get sources slots))
+        (struct-get sources len))
+      (set! (struct-get sources slots) bigger))))
+
+(define (lsp-workspace-sources-push!
+  [sources : (&mut sources LspWorkspaceSources)]
+  [source : LspWorkspaceSource]) : unit
+  (begin
+    (if (>= (struct-get sources len) (array-length (struct-get sources slots)))
+      (lsp-workspace-sources-grow! sources)
+      unit)
+    (array-set! (struct-get sources slots) (struct-get sources len) source)
+    (set! (struct-get sources len) (+ (struct-get sources len) 1))))
+
+(define (lsp-workspace-sources-set!
+  [sources : (&mut sources LspWorkspaceSources)]
+  [index : i64]
+  [source : LspWorkspaceSource]) : unit
+  (if (and (>= index 0) (< index (struct-get sources len)))
+    (array-set! (struct-get sources slots) index source)
+    unit))
+
+(define (lsp-workspace-sources-find-uri
+  [sources : (& sources LspWorkspaceSources)]
+  [uri : String]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< index (struct-get sources len)) (< found 0))
+        (if (string.eq
+          (struct-get (array-ref (struct-get sources slots) index) uri)
+          uri)
+          (set! found index)
+          (set! index (+ index 1))))
+      found)))
+
+(define (lsp-workspace-sources-remove-index!
+  [sources : (&mut sources LspWorkspaceSources)]
+  [index : i64]) : unit
+  (if (or (< index 0) (>= index (struct-get sources len)))
+    unit
+    (let
+      [cursor : i64 index]
+      [last : i64 (- (struct-get sources len) 1)]
+      (begin
+        (while (< cursor last)
+          (begin
+            (array-set!
+              (struct-get sources slots)
+              cursor
+              (array-ref (struct-get sources slots) (+ cursor 1)))
+            (set! cursor (+ cursor 1))))
+        (set! (struct-get sources len) last)))))
+
+(define (lsp-documents-find-path-index
+  [docs : lsp_document_vec.Vec]
+  [path : String]) : i64
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< index (lsp_document_vec.len (& docs))) (< found 0))
+        (let
+          [doc : LspDocument
+            (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
+          (if (string.eq
+            (compiler-load-normalize-path (struct-get doc path))
+            normalized)
+            (set! found index)
+            (set! index (+ index 1)))))
+      found)))
 
 (define (lsp-hex-value [c : char]) : i64
   (let
@@ -1461,6 +1670,82 @@
           [cwd : String (fs.current-dir)]
           [joined : String (fs.path-join (& cwd) (& normalized))]
           (fs.path-normalize (& joined)))))))
+
+(define (lsp-normalized-absolute-path [path : String]) : String
+  (let
+    [normalized : String (fs.path-normalize (& path))]
+    (if (fs.path-absolute? (& normalized))
+      normalized
+      (let
+        [cwd : String (fs.current-dir)]
+        [joined : String (fs.path-join (& cwd) (& normalized))]
+        (fs.path-normalize (& joined))))))
+
+(define (lsp-workspace-root-from-uri [uri : String]) : LspWorkspaceRootLookup
+  (match (lsp-file-uri-to-path uri)
+    [(LspUriPath.Err _) LspWorkspaceRootLookup.Missing]
+    [(LspUriPath.Ok path)
+      (let
+        [normalized : String (lsp-normalized-absolute-path path)]
+        [canonical-uri : String (lsp-path-to-file-uri normalized)]
+        (LspWorkspaceRootLookup.Found
+          (LspWorkspaceRoot
+            (string.copy (& canonical-uri))
+            (string.copy (& normalized)))))]))
+
+(define (lsp-workspace-roots-add-uri!
+  [roots : (&mut roots LspWorkspaceRoots)]
+  [uri : String]) : unit
+  (match (lsp-workspace-root-from-uri uri)
+    [(LspWorkspaceRootLookup.Missing) unit]
+    [(LspWorkspaceRootLookup.Found root)
+      (if (>= (lsp-workspace-roots-find-uri roots (struct-get root uri)) 0)
+        unit
+        (lsp-workspace-roots-push! roots root))]))
+
+(define (lsp-workspace-roots-add-folder-items!
+  [roots : (&mut roots LspWorkspaceRoots)]
+  [items : json.JsonSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (json.list-count items)]
+    (while (< index count)
+      (begin
+        (match (json.list-get-index items index)
+          [(json.JsonMissing) unit]
+          [(json.JsonFound folder)
+            (match (lsp-json-string-field folder "uri")
+              [(LspJsonText.Missing) unit]
+              [(LspJsonText.Ok uri) (lsp-workspace-roots-add-uri! roots uri)])])
+        (set! index (+ index 1))))))
+
+(define (lsp-initialize-workspace-roots [message : json.Json]) : LspWorkspaceRoots
+  (let
+    [roots : LspWorkspaceRoots (lsp-workspace-roots-new)]
+    [params-key : String "params"]
+    (begin
+      (match (json.object-get message (& params-key))
+        [(json.JsonMissing) unit]
+        [(json.JsonFound params)
+          (let
+            [folders-key : String "workspaceFolders"]
+            (begin
+              (match (json.object-get params (& folders-key))
+                [(json.JsonMissing) unit]
+                [(json.JsonFound folders)
+                  (match folders
+                    [(json.JsonArray items)
+                      (lsp-workspace-roots-add-folder-items!
+                        (&mut roots)
+                        (box-get items))]
+                    [_ unit])])
+              (if (= (lsp-workspace-roots-len (& roots)) 0)
+                (match (lsp-json-string-field params "rootUri")
+                  [(LspJsonText.Missing) unit]
+                  [(LspJsonText.Ok uri)
+                    (lsp-workspace-roots-add-uri! (&mut roots) uri)])
+                unit)))])
+      roots)))
 
 (define (lsp-zero-based [value : i64]) : i64
   (if (> value 0)
@@ -1871,7 +2156,7 @@
       (unless (lsp-definition-smoke-ok?) (return 6))
       (cfg test (unless (lsp-validate-forms-smoke-ok?) (return 7)) unit)
       (cfg test (unless (lsp-validate-forms-line-context-ok?) (return 8)) unit)
-      (unless (lsp-documents-cache-bound-smoke-ok?) (return 12))
+      (unless (lsp-documents-open-retention-smoke-ok?) (return 12))
       (unless (lsp-documents-check-cache-smoke-ok?) (return 13))
       (unless
         (lsp-typecheck-tool-session-preserves-program-cache-ok?)
@@ -2193,7 +2478,7 @@
 (define (lsp-did-open
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -2225,18 +2510,18 @@
                               (struct-get analysis diagnostic-uris))
                             uri
                             (struct-get analysis check-cache))]
-                        (LspHandleResult.Continue updated-docs))))]
+                        (LspDocumentHandleResult.Continue updated-docs))))]
                 [(LspUriPath.Err message)
                   (begin
                     (lsp-publish-uri-diagnostic uri message)
-                    (LspHandleResult.Continue docs))]))]
-          [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
-      [(json.JsonMissing) (LspHandleResult.Continue docs)])))
+                    (LspDocumentHandleResult.Continue docs))]))]
+          [(LspJsonText.Missing) (LspDocumentHandleResult.Continue docs)])]
+      [(json.JsonMissing) (LspDocumentHandleResult.Continue docs)])))
 
 (define (lsp-did-change
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -2274,16 +2559,16 @@
                                   (struct-get analysis diagnostic-uris))
                                 uri
                                 (struct-get analysis check-cache))]
-                            (LspHandleResult.Continue updated-docs))))]
+                            (LspDocumentHandleResult.Continue updated-docs))))]
                     [(LspUriPath.Err message)
                       (begin
                         (lsp-publish-uri-diagnostic uri message)
-                        (LspHandleResult.Continue docs))])]
+                        (LspDocumentHandleResult.Continue docs))])]
                 [(LspJsonText.Missing)
                   (let
                     [idx : i64 (lsp-documents-find-index docs uri)]
                     (if (< idx 0)
-                      (LspHandleResult.Continue docs)
+                      (LspDocumentHandleResult.Continue docs)
                       (let
                         [doc : LspDocument
                           (lsp_document_vec.get
@@ -2297,15 +2582,15 @@
                             (struct-get doc text)
                             (struct-get doc version)
                             stdlib-roots)]
-                        (LspHandleResult.Continue
+                        (LspDocumentHandleResult.Continue
                           (lsp-documents-set-check-cache
                             docs
                             uri
                             (struct-get analysis check-cache))))))]))]
-          [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
-      [(json.JsonMissing) (LspHandleResult.Continue docs)])))
+          [(LspJsonText.Missing) (LspDocumentHandleResult.Continue docs)])]
+      [(json.JsonMissing) (LspDocumentHandleResult.Continue docs)])))
 
-(define (lsp-did-close [params : json.Json] [docs : lsp_document_vec.Vec]) : LspHandleResult
+(define (lsp-did-close [params : json.Json] [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -2314,9 +2599,9 @@
           [(LspJsonText.Ok uri)
             (begin
               (lsp-clear-close-diagnostics docs uri)
-              (LspHandleResult.Continue (lsp-documents-remove docs uri)))]
-          [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
-      [(json.JsonMissing) (LspHandleResult.Continue docs)])))
+              (LspDocumentHandleResult.Continue (lsp-documents-remove docs uri)))]
+          [(LspJsonText.Missing) (LspDocumentHandleResult.Continue docs)])]
+      [(json.JsonMissing) (LspDocumentHandleResult.Continue docs)])))
 
 ;; --------------------------------------------------------------------------
 ;; Quick fixes (textDocument/codeAction).
@@ -5775,6 +6060,918 @@
             [else (set! i (+ i 1))])))
       result)))
 
+(define (lsp-explicit-module-name [text : String]) : String
+  (let
+    [n : i64 (string.string-length text)]
+    [index : i64 0]
+    [depth : i64 0]
+    [module-name : String ""]
+    [found : bool false]
+    (begin
+      (while (and (< index n) (not found))
+        (let
+          [c : char (string.string-ref text index)]
+          (cond
+            [(= c ';') (set! index (lsp-skip-line text index n))]
+            [(= c '\'')
+              (set! index (lsp-skip-apostrophe-char-literal text index n))]
+            [(= c '"') (set! index (lsp-skip-string text index n))]
+            [(= c '(')
+              (let
+                [after-open : i64 (lsp-skip-space text (+ index 1) n)]
+                [keyword-end : i64 (lsp-scan-ident text after-open n)]
+                [keyword : String
+                  (if (> keyword-end after-open)
+                    (string.substring
+                      text
+                      after-open
+                      (- keyword-end after-open))
+                    "")]
+                (begin
+                  (if (and (= depth 0) (string.eq keyword "module"))
+                    (let
+                      [name-start : i64 (lsp-skip-space text keyword-end n)]
+                      [name-end : i64 (lsp-scan-ident text name-start n)]
+                      (if (> name-end name-start)
+                        (begin
+                          (set!
+                            module-name
+                            (string.substring
+                              text
+                              name-start
+                              (- name-end name-start)))
+                          (set! found true))
+                        unit))
+                    unit)
+                  (set! depth (+ depth 1))
+                  (set! index (+ index 1))))]
+            [(= c ')')
+              (begin
+                (if (> depth 0)
+                  (set! depth (- depth 1))
+                  unit)
+                (set! index (+ index 1)))]
+            [else (set! index (+ index 1))])))
+      module-name)))
+
+(define (lsp-decl-entry-copy [entry : LspDeclEntry]) : LspDeclEntry
+  (LspDeclEntry
+    (string.copy (& (struct-get entry kind)))
+    (string.copy (& (struct-get entry name)))
+    (struct-get entry name-line)
+    (struct-get entry name-col)
+    (struct-get entry name-len)
+    (struct-get entry form-start-line)
+    (struct-get entry form-start-col)
+    (struct-get entry form-end-line)
+    (struct-get entry form-end-col)
+    (struct-get entry symbol-kind)))
+
+(define (lsp-decls-copy [decls : lsp_decl_vec.Vec]) : lsp_decl_vec.Vec
+  (let
+    [count : i64 (lsp_decl_vec.len (& decls))]
+    [copy : lsp_decl_vec.Vec (lsp_decl_vec.with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (lsp_decl_vec.push
+            (&mut copy)
+            (lsp-decl-entry-copy
+              (lsp_decl_vec.get (& decls) index (lsp-decl-entry-fallback))))
+          (set! index (+ index 1))))
+      copy)))
+
+(define (lsp-check-cache-copy [cache : LspCheckCache]) : LspCheckCache
+  (match cache
+    [(LspCheckCacheInvalid) LspCheckCacheInvalid]
+    [(LspCheckCacheOk) LspCheckCacheOk]
+    [(LspCheckCacheErr message) (LspCheckCacheErr (string.copy (& message)))]))
+
+(define (lsp-document-copy [doc : LspDocument]) : LspDocument
+  (LspDocument
+    (string.copy (& (struct-get doc uri)))
+    (string.copy (& (struct-get doc path)))
+    (string.copy (& (struct-get doc text)))
+    (struct-get doc version)
+    (lsp-diagnostic-uris-copy (struct-get doc diagnostic-uris))
+    (lsp-decls-copy (struct-get doc decls))
+    (struct-get doc decls-valid)
+    (lsp-check-cache-copy (struct-get doc check-cache))))
+
+(define (lsp-documents-copy [docs : lsp_document_vec.Vec]) : lsp_document_vec.Vec
+  (let
+    [count : i64 (lsp_document_vec.len (& docs))]
+    [copy : lsp_document_vec.Vec (lsp_document_vec.with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (lsp_document_vec.push
+            (&mut copy)
+            (lsp-document-copy
+              (lsp_document_vec.get (& docs) index (lsp-document-fallback))))
+          (set! index (+ index 1))))
+      copy)))
+
+(define (lsp-workspace-root-copy [root : LspWorkspaceRoot]) : LspWorkspaceRoot
+  (LspWorkspaceRoot
+    (string.copy (& (struct-get root uri)))
+    (string.copy (& (struct-get root path)))))
+
+(define (lsp-workspace-roots-copy [roots : LspWorkspaceRoots]) : LspWorkspaceRoots
+  (let
+    [copy : LspWorkspaceRoots (lsp-workspace-roots-new)]
+    [index : i64 0]
+    (begin
+      (while (< index (lsp-workspace-roots-len (& roots)))
+        (begin
+          (lsp-workspace-roots-push!
+            (&mut copy)
+            (lsp-workspace-root-copy (lsp-workspace-roots-get (& roots) index)))
+          (set! index (+ index 1))))
+      copy)))
+
+(define (lsp-workspace-source-copy [source : LspWorkspaceSource]) : LspWorkspaceSource
+  (LspWorkspaceSource
+    (string.copy (& (struct-get source root-uri)))
+    (string.copy (& (struct-get source root-path)))
+    (string.copy (& (struct-get source uri)))
+    (string.copy (& (struct-get source path)))
+    (string.copy (& (struct-get source module)))
+    (struct-get source explicit-module)
+    (struct-get source overlay)
+    (lsp-decls-copy (struct-get source decls))))
+
+(define (lsp-workspace-sources-copy [sources : LspWorkspaceSources]) : LspWorkspaceSources
+  (let
+    [copy : LspWorkspaceSources (lsp-workspace-sources-new)]
+    [index : i64 0]
+    (begin
+      (while (< index (lsp-workspace-sources-len (& sources)))
+        (begin
+          (lsp-workspace-sources-push!
+            (&mut copy)
+            (lsp-workspace-source-copy
+              (lsp-workspace-sources-get (& sources) index)))
+          (set! index (+ index 1))))
+      copy)))
+
+(define (lsp-workspace-index-copy [index : LspWorkspaceIndex]) : LspWorkspaceIndex
+  (LspWorkspaceIndex
+    (lsp-workspace-roots-copy (struct-get index roots))
+    (lsp-workspace-sources-copy (struct-get index sources))))
+
+(define (lsp-workspace-root-for-path
+  [roots : (& roots LspWorkspaceRoots)]
+  [path : String]
+  [require-file : bool]) : LspWorkspaceRootLookup
+  (let
+    [index : i64 0]
+    [found : LspWorkspaceRootLookup LspWorkspaceRootLookup.Missing]
+    [done : bool false]
+    (begin
+      (while (and (< index (lsp-workspace-roots-len roots)) (not done))
+        (let
+          [root : LspWorkspaceRoot (lsp-workspace-roots-get roots index)]
+          [eligible : bool
+            (if require-file
+              (package-source-path-eligible-for-root?
+                (struct-get root path)
+                path)
+              (package-source-path-location-eligible-for-root?
+                (struct-get root path)
+                path))]
+          (if eligible
+            (begin
+              (set! found (LspWorkspaceRootLookup.Found root))
+              (set! done true))
+            (set! index (+ index 1)))))
+      found)))
+
+(define (lsp-workspace-source-module
+  [root-path : String]
+  [path : String]
+  [text : String]) : String
+  (let
+    [explicit : String (lsp-explicit-module-name text)]
+    (if (> (string.string-length explicit) 0)
+      explicit
+      (compiler-load-canonical-module-id-from-path
+        (if (> (string.string-length root-path) 0)
+          (compiler-load-root-relative-path root-path path)
+          (fs.basename (& path)))))))
+
+(define (lsp-workspace-source-from-text
+  [root : LspWorkspaceRootLookup]
+  [path : String]
+  [text : String]
+  [overlay : bool]) : LspWorkspaceSource
+  (let
+    [normalized-path : String (lsp-normalized-absolute-path path)]
+    [uri : String (lsp-path-to-file-uri normalized-path)]
+    [explicit : String (lsp-explicit-module-name text)]
+    [root-uri : String
+      (match root
+        [(LspWorkspaceRootLookup.Found found) (struct-get found uri)]
+        [(LspWorkspaceRootLookup.Missing) ""])]
+    [root-path : String
+      (match root
+        [(LspWorkspaceRootLookup.Found found) (struct-get found path)]
+        [(LspWorkspaceRootLookup.Missing) ""])]
+    [module : String
+      (if (> (string.string-length explicit) 0)
+        explicit
+        (lsp-workspace-source-module root-path normalized-path text))]
+    (LspWorkspaceSource
+      (string.copy (& root-uri))
+      (string.copy (& root-path))
+      (string.copy (& uri))
+      (string.copy (& normalized-path))
+      (string.copy (& module))
+      (> (string.string-length explicit) 0)
+      overlay
+      (lsp-scan-decls text))))
+
+(define (lsp-workspace-index-add-text-source!
+  [index : (&mut index LspWorkspaceIndex)]
+  [root : LspWorkspaceRootLookup]
+  [path : String]
+  [text : String]
+  [overlay : bool]) : unit
+  (let
+    [source : LspWorkspaceSource
+      (lsp-workspace-source-from-text root path text overlay)]
+    [uri : String (struct-get source uri)]
+    (if (>=
+      (lsp-workspace-sources-find-uri (& (struct-get index sources)) uri)
+      0)
+      unit
+      (lsp-workspace-sources-push! (&mut (struct-get index sources)) source))))
+
+(define (lsp-workspace-index-set-text-source!
+  [index : (&mut index LspWorkspaceIndex)]
+  [root : LspWorkspaceRootLookup]
+  [path : String]
+  [text : String]
+  [overlay : bool]) : unit
+  (let
+    [source : LspWorkspaceSource
+      (lsp-workspace-source-from-text root path text overlay)]
+    [existing : i64
+      (lsp-workspace-sources-find-uri
+        (& (struct-get index sources))
+        (struct-get source uri))]
+    (if (>= existing 0)
+      (lsp-workspace-sources-set!
+        (&mut (struct-get index sources))
+        existing
+        source)
+      (lsp-workspace-sources-push! (&mut (struct-get index sources)) source))))
+
+(define (lsp-workspace-index-add-path!
+  [index : (&mut index LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [root : LspWorkspaceRootLookup]
+  [path : String]) : unit
+  (let
+    [doc-index : i64 (lsp-documents-find-path-index docs path)]
+    (if (>= doc-index 0)
+      (let
+        [doc : LspDocument
+          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+        (lsp-workspace-index-add-text-source!
+          index
+          root
+          path
+          (struct-get doc text)
+          true))
+      (match (io.try-read-file (& path))
+        [(io.OkIoBytes contents)
+          (let
+            [text : String (byte_buf.to-string contents)]
+            (lsp-workspace-index-add-text-source! index root path text false))]
+        [(io.ErrIoBytes _) unit]))))
+
+(define (lsp-workspace-index-build-root!
+  [index : (&mut index LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [root : LspWorkspaceRoot]) : unit
+  (match (package-source-discover-root-for "lsp" (struct-get root path))
+    [(ResultPackageSourceList.Err _) unit]
+    [(ResultPackageSourceList.Ok paths)
+      (let
+        [path-index : i64 0]
+        (while (< path-index (lsp_svec.len (& paths)))
+          (begin
+            (lsp-workspace-index-add-path!
+              index
+              docs
+              (LspWorkspaceRootLookup.Found root)
+              (lsp_svec.get (& paths) path-index ""))
+            (set! path-index (+ path-index 1)))))]))
+
+(define (lsp-workspace-index-add-rootless-overlays!
+  [index : (&mut index LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]) : unit
+  (let
+    [doc-index : i64 0]
+    (while (< doc-index (lsp_document_vec.len (& docs)))
+      (let
+        [doc : LspDocument
+          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+        [path : String (struct-get doc path)]
+        [uri : String
+          (if (> (string.string-length path) 0)
+            (lsp-resolved-path-to-file-uri path)
+            "")]
+        (begin
+          (if (and
+            (> (string.string-length path) 0)
+            (<
+              (lsp-workspace-sources-find-uri
+                (& (struct-get index sources))
+                uri)
+              0))
+            (lsp-workspace-index-add-text-source!
+              index
+              LspWorkspaceRootLookup.Missing
+              path
+              (struct-get doc text)
+              true)
+            unit)
+          (set! doc-index (+ doc-index 1)))))))
+
+(define (lsp-workspace-index-build-sources!
+  [index : (&mut index LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]) : unit
+  (let
+    [root-index : i64 0]
+    (begin
+      (while (<
+        root-index
+        (lsp-workspace-roots-len (& (struct-get index roots))))
+        (begin
+          (lsp-workspace-index-build-root!
+            index
+            docs
+            (lsp-workspace-roots-get (& (struct-get index roots)) root-index))
+          (set! root-index (+ root-index 1))))
+      (lsp-workspace-index-add-rootless-overlays! index docs))))
+
+(define (lsp-server-state-copy-in-current [state : LspServerState]) : LspServerState
+  (LspServerState
+    0
+    (lsp-documents-copy (struct-get state documents))
+    (lsp-workspace-index-copy (struct-get state workspace))))
+
+(define (lsp-server-state-finish-swap
+  [old-state : LspServerState]
+  [draft : LspServerState]
+  [previous-arena : i64]) : LspServerState
+  (let
+    [owner : i64 (arena.tl_arena_current)]
+    [next : LspServerState
+      (LspServerState
+        owner
+        (struct-get draft documents)
+        (struct-get draft workspace))]
+    (begin
+      (unsafe
+        (arena.tl_arena_set previous-arena))
+      (if (> (struct-get old-state owner-arena) 0)
+        (unsafe
+          (arena.tl_arena_destroy (struct-get old-state owner-arena)))
+        unit)
+      (set! lsp-document-cache-arena owner)
+      next)))
+
+(define (lsp-server-state-new) : LspServerState
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make)]
+    [_install : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
+    [workspace : LspWorkspaceIndex
+      (LspWorkspaceIndex (lsp-workspace-roots-new) (lsp-workspace-sources-new))]
+    [head : i64 (arena.tl_arena_current)]
+    [_restore : unit
+      (unsafe
+        (arena.tl_arena_set previous))]
+    (begin
+      (set! lsp-document-cache-arena head)
+      (LspServerState head docs workspace))))
+
+(define (lsp-server-state-destroy! [state : LspServerState]) : unit
+  (let
+    [owner : i64 (struct-get state owner-arena)]
+    (begin
+      (set! lsp-document-cache-arena 0)
+      (if (> owner 0)
+        (unsafe
+          (arena.tl_arena_destroy owner))
+        unit))))
+
+(define (lsp-server-state-initialize-workspaces
+  [state : LspServerState]
+  [message : json.Json]) : LspServerState
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make)]
+    [_install : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [docs : lsp_document_vec.Vec
+      (lsp-documents-copy (struct-get state documents))]
+    [workspace : LspWorkspaceIndex
+      (LspWorkspaceIndex
+        (lsp-initialize-workspace-roots message)
+        (lsp-workspace-sources-new))]
+    [_build : unit (lsp-workspace-index-build-sources! (&mut workspace) docs)]
+    [draft : LspServerState (LspServerState 0 docs workspace)]
+    (lsp-server-state-finish-swap state draft previous)))
+
+(define (lsp-workspace-index-declaration-count
+  [index : (& index LspWorkspaceIndex)]) : i64
+  (let
+    [source-index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (<
+        source-index
+        (lsp-workspace-sources-len (& (struct-get index sources))))
+        (let
+          [source : LspWorkspaceSource
+            (lsp-workspace-sources-get
+              (& (struct-get index sources))
+              source-index)]
+          (begin
+            (set!
+              count
+              (+ count (lsp_decl_vec.len (& (struct-get source decls)))))
+            (set! source-index (+ source-index 1)))))
+      count)))
+
+(define (lsp-workspace-index-declaration-at
+  [index : (& index LspWorkspaceIndex)]
+  [wanted : i64]) : LspWorkspaceDeclLookup
+  (if (< wanted 0)
+    LspWorkspaceDeclLookup.Missing
+    (let
+      [source-index : i64 0]
+      [offset : i64 wanted]
+      [result : LspWorkspaceDeclLookup LspWorkspaceDeclLookup.Missing]
+      [done : bool false]
+      (begin
+        (while (and
+          (<
+            source-index
+            (lsp-workspace-sources-len (& (struct-get index sources))))
+          (not done))
+          (let
+            [source : LspWorkspaceSource
+              (lsp-workspace-sources-get
+                (& (struct-get index sources))
+                source-index)]
+            [decls : lsp_decl_vec.Vec (struct-get source decls)]
+            [count : i64 (lsp_decl_vec.len (& decls))]
+            (if (< offset count)
+              (begin
+                (set!
+                  result
+                  (LspWorkspaceDeclLookup.Found
+                    (LspWorkspaceDeclRow
+                      (struct-get source root-uri)
+                      (struct-get source root-path)
+                      (struct-get source uri)
+                      (struct-get source path)
+                      (struct-get source module)
+                      (struct-get source explicit-module)
+                      (struct-get source overlay)
+                      (lsp_decl_vec.get
+                        (& decls)
+                        offset
+                        (lsp-decl-entry-fallback)))))
+                (set! done true))
+              (begin
+                (set! offset (- offset count))
+                (set! source-index (+ source-index 1))))))
+        result))))
+
+(define (lsp-server-state-declaration-count [state : (& state LspServerState)]) : i64
+  (lsp-workspace-index-declaration-count (& (struct-get state workspace))))
+
+(define (lsp-server-state-declaration-at
+  [state : (& state LspServerState)]
+  [index : i64]) : LspWorkspaceDeclLookup
+  (lsp-workspace-index-declaration-at (& (struct-get state workspace)) index))
+
+(define (lsp-workspace-index-refresh-path!
+  [index : (&mut index LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [path : String]
+  [deleted : bool]) : unit
+  (let
+    [normalized : String (lsp-normalized-absolute-path path)]
+    [uri : String (lsp-path-to-file-uri normalized)]
+    [existing : i64
+      (lsp-workspace-sources-find-uri (& (struct-get index sources)) uri)]
+    [doc-index : i64 (lsp-documents-find-path-index docs normalized)]
+    (if (>= doc-index 0)
+      (let
+        [doc : LspDocument
+          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+        [root : LspWorkspaceRootLookup
+          (lsp-workspace-root-for-path
+            (& (struct-get index roots))
+            normalized
+            false)]
+        (lsp-workspace-index-set-text-source!
+          index
+          root
+          normalized
+          (struct-get doc text)
+          true))
+      (if deleted
+        (if (>= existing 0)
+          (lsp-workspace-sources-remove-index!
+            (&mut (struct-get index sources))
+            existing)
+          unit)
+        (match (lsp-workspace-root-for-path
+          (& (struct-get index roots))
+          normalized
+          true)
+          [(LspWorkspaceRootLookup.Missing)
+            (if (>= existing 0)
+              (lsp-workspace-sources-remove-index!
+                (&mut (struct-get index sources))
+                existing)
+              unit)]
+          [(LspWorkspaceRootLookup.Found root)
+            (match (io.try-read-file (& normalized))
+              [(io.OkIoBytes contents)
+                (let
+                  [text : String (byte_buf.to-string contents)]
+                  (lsp-workspace-index-set-text-source!
+                    index
+                    (LspWorkspaceRootLookup.Found root)
+                    normalized
+                    text
+                    false))]
+              [(io.ErrIoBytes _)
+                (if (>= existing 0)
+                  (lsp-workspace-sources-remove-index!
+                    (&mut (struct-get index sources))
+                    existing)
+                  unit)])])))))
+
+(define (lsp-workspace-index-refresh-documents!
+  [index : (&mut index LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]) : unit
+  (let
+    [doc-index : i64 0]
+    (while (< doc-index (lsp_document_vec.len (& docs)))
+      (let
+        [doc : LspDocument
+          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+        (begin
+          (if (> (string.string-length (struct-get doc path)) 0)
+            (lsp-workspace-index-refresh-path!
+              index
+              docs
+              (struct-get doc path)
+              false)
+            unit)
+          (set! doc-index (+ doc-index 1)))))))
+
+(define (lsp-server-state-refresh-document-result
+  [state : LspServerState]
+  [result : LspDocumentHandleResult]
+  [uri : String]
+  [deleted : bool]) : LspHandleResult
+  (match result
+    [(LspDocumentHandleResult.Continue next-documents)
+      (match (lsp-file-uri-to-path uri)
+        [(LspUriPath.Err _) (LspHandleResult.Continue state)]
+        [(LspUriPath.Ok path)
+          (let
+            [previous : i64 (arena.tl_arena_current)]
+            [owner : i64 (arena.tl_arena_make)]
+            [_install : unit
+              (unsafe
+                (arena.tl_arena_set owner))]
+            [docs : lsp_document_vec.Vec (lsp-documents-copy next-documents)]
+            [workspace : LspWorkspaceIndex
+              (lsp-workspace-index-copy (struct-get state workspace))]
+            [_refresh : unit
+              (lsp-workspace-index-refresh-path!
+                (&mut workspace)
+                docs
+                path
+                deleted)]
+            [draft : LspServerState (LspServerState 0 docs workspace)]
+            (LspHandleResult.Continue
+              (lsp-server-state-finish-swap state draft previous)))])]
+    [(LspDocumentHandleResult.Exit next-documents)
+      (match (lsp-server-state-refresh-document-result
+        state
+        (LspDocumentHandleResult.Continue next-documents)
+        uri
+        deleted)
+        [(LspHandleResult.Continue next) (LspHandleResult.Exit next)]
+        [(LspHandleResult.Exit next) (LspHandleResult.Exit next)])]))
+
+(define (lsp-server-state-copy-document-result
+  [state : LspServerState]
+  [result : LspDocumentHandleResult]
+  [refresh-documents : bool]) : LspHandleResult
+  (match result
+    [(LspDocumentHandleResult.Continue next-documents)
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (arena.tl_arena_make)]
+        [_install : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        [docs : lsp_document_vec.Vec (lsp-documents-copy next-documents)]
+        [workspace : LspWorkspaceIndex
+          (lsp-workspace-index-copy (struct-get state workspace))]
+        [_refresh : unit
+          (if refresh-documents
+            (lsp-workspace-index-refresh-documents! (&mut workspace) docs)
+            unit)]
+        [draft : LspServerState (LspServerState 0 docs workspace)]
+        (LspHandleResult.Continue
+          (lsp-server-state-finish-swap state draft previous)))]
+    [(LspDocumentHandleResult.Exit next-documents)
+      (match (lsp-server-state-copy-document-result
+        state
+        (LspDocumentHandleResult.Continue next-documents)
+        refresh-documents)
+        [(LspHandleResult.Continue next) (LspHandleResult.Exit next)]
+        [(LspHandleResult.Exit next) (LspHandleResult.Exit next)])]))
+
+(define (lsp-watched-files-refresh-items!
+  [workspace : (&mut workspace LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [items : json.JsonSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (json.list-count items)]
+    (while (< index count)
+      (begin
+        (match (json.list-get-index items index)
+          [(json.JsonMissing) unit]
+          [(json.JsonFound change)
+            (match (lsp-json-string-field change "uri")
+              [(LspJsonText.Missing) unit]
+              [(LspJsonText.Ok uri)
+                (match (lsp-file-uri-to-path uri)
+                  [(LspUriPath.Err _) unit]
+                  [(LspUriPath.Ok path)
+                    (if (string.eq (fs.extension (& path)) "tl")
+                      (lsp-workspace-index-refresh-path!
+                        workspace
+                        docs
+                        path
+                        (= (lsp-json-int-field-default change "type" 2) 3))
+                      unit)])])])
+        (set! index (+ index 1))))))
+
+(define (lsp-server-state-did-change-watched-files
+  [state : LspServerState]
+  [params : json.Json]) : LspServerState
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make)]
+    [_install : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [draft : LspServerState (lsp-server-state-copy-in-current state)]
+    [changes-key : String "changes"]
+    [_refresh : unit
+      (match (json.object-get params (& changes-key))
+        [(json.JsonMissing) unit]
+        [(json.JsonFound changes)
+          (match changes
+            [(json.JsonArray items)
+              (lsp-watched-files-refresh-items!
+                (&mut (struct-get draft workspace))
+                (struct-get draft documents)
+                (box-get items))]
+            [_ unit])])]
+    (lsp-server-state-finish-swap state draft previous)))
+
+(define (lsp-workspace-index-remove-root-uri!
+  [workspace : (&mut workspace LspWorkspaceIndex)]
+  [uri : String]) : unit
+  (let
+    [root-index : i64
+      (lsp-workspace-roots-find-uri (& (struct-get workspace roots)) uri)]
+    (if (< root-index 0)
+      unit
+      (begin
+        (lsp-workspace-roots-remove-index!
+          (&mut (struct-get workspace roots))
+          root-index)
+        (let
+          [source-index : i64 0]
+          (while (<
+            source-index
+            (lsp-workspace-sources-len (& (struct-get workspace sources))))
+            (let
+              [source : LspWorkspaceSource
+                (lsp-workspace-sources-get
+                  (& (struct-get workspace sources))
+                  source-index)]
+              (if (string.eq (struct-get source root-uri) uri)
+                (lsp-workspace-sources-remove-index!
+                  (&mut (struct-get workspace sources))
+                  source-index)
+                (set! source-index (+ source-index 1))))))))))
+
+(define (lsp-workspace-index-recover-live-paths!
+  [workspace : (&mut workspace LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [paths : lsp_svec.Vec]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (lsp_svec.len (& paths)))
+      (begin
+        (lsp-workspace-index-refresh-path!
+          workspace
+          docs
+          (lsp_svec.get (& paths) index "")
+          false)
+        (set! index (+ index 1))))))
+
+(define (lsp-workspace-index-remove-root!
+  [workspace : (&mut workspace LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [root : LspWorkspaceRoot]) : unit
+  (let
+    [paths : lsp_svec.Vec (lsp_svec.new)]
+    [source-index : i64 0]
+    (begin
+      (while (<
+        source-index
+        (lsp-workspace-sources-len (& (struct-get workspace sources))))
+        (let
+          [source : LspWorkspaceSource
+            (lsp-workspace-sources-get
+              (& (struct-get workspace sources))
+              source-index)]
+          (begin
+            (if (string.eq (struct-get source root-uri) (struct-get root uri))
+              (lsp_svec.push
+                (&mut paths)
+                (string.copy (& (struct-get source path))))
+              unit)
+            (set! source-index (+ source-index 1)))))
+      (lsp-workspace-index-remove-root-uri! workspace (struct-get root uri))
+      ;; Only paths whose owning root disappeared are reconsidered. They may
+      ;; transfer to an overlapping remaining root, remain as open rootless
+      ;; overlays, or disappear.
+      (lsp-workspace-index-recover-live-paths! workspace docs paths))))
+
+(define (lsp-workspace-index-adopt-rootless-overlays!
+  [workspace : (&mut workspace LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [root : LspWorkspaceRoot]) : unit
+  (let
+    [paths : lsp_svec.Vec (lsp_svec.new)]
+    [source-index : i64 0]
+    (begin
+      (while (<
+        source-index
+        (lsp-workspace-sources-len (& (struct-get workspace sources))))
+        (let
+          [source : LspWorkspaceSource
+            (lsp-workspace-sources-get
+              (& (struct-get workspace sources))
+              source-index)]
+          (begin
+            (if (and
+              (string.eq (struct-get source root-uri) "")
+              (package-source-path-location-eligible-for-root?
+                (struct-get root path)
+                (struct-get source path)))
+              (lsp_svec.push
+                (&mut paths)
+                (string.copy (& (struct-get source path))))
+              unit)
+            (set! source-index (+ source-index 1)))))
+      (lsp-workspace-index-recover-live-paths! workspace docs paths))))
+
+(define (lsp-workspace-index-add-root!
+  [workspace : (&mut workspace LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [root : LspWorkspaceRoot]) : unit
+  (if (>=
+    (lsp-workspace-roots-find-uri
+      (& (struct-get workspace roots))
+      (struct-get root uri))
+    0)
+    unit
+    (begin
+      (lsp-workspace-roots-push! (&mut (struct-get workspace roots)) root)
+      (lsp-workspace-index-adopt-rootless-overlays! workspace docs root)
+      ;; Discover only the added root. URI de-duplication preserves the first
+      ;; root in client order when roots overlap.
+      (lsp-workspace-index-build-root! workspace docs root))))
+
+(define (lsp-workspace-folders-remove-items!
+  [workspace : (&mut workspace LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [items : json.JsonSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (json.list-count items)]
+    (while (< index count)
+      (begin
+        (match (json.list-get-index items index)
+          [(json.JsonMissing) unit]
+          [(json.JsonFound folder)
+            (match (lsp-json-string-field folder "uri")
+              [(LspJsonText.Missing) unit]
+              [(LspJsonText.Ok uri)
+                (match (lsp-workspace-root-from-uri uri)
+                  [(LspWorkspaceRootLookup.Missing) unit]
+                  [(LspWorkspaceRootLookup.Found root)
+                    (lsp-workspace-index-remove-root! workspace docs root)])])])
+        (set! index (+ index 1))))))
+
+(define (lsp-workspace-folders-add-items!
+  [workspace : (&mut workspace LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [items : json.JsonSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (json.list-count items)]
+    (while (< index count)
+      (begin
+        (match (json.list-get-index items index)
+          [(json.JsonMissing) unit]
+          [(json.JsonFound folder)
+            (match (lsp-json-string-field folder "uri")
+              [(LspJsonText.Missing) unit]
+              [(LspJsonText.Ok uri)
+                (match (lsp-workspace-root-from-uri uri)
+                  [(LspWorkspaceRootLookup.Missing) unit]
+                  [(LspWorkspaceRootLookup.Found root)
+                    (lsp-workspace-index-add-root! workspace docs root)])])])
+        (set! index (+ index 1))))))
+
+(define (lsp-workspace-folders-apply-event!
+  [workspace : (&mut workspace LspWorkspaceIndex)]
+  [docs : lsp_document_vec.Vec]
+  [event : json.Json]) : unit
+  (let
+    [removed-key : String "removed"]
+    [added-key : String "added"]
+    (begin
+      (match (json.object-get event (& removed-key))
+        [(json.JsonMissing) unit]
+        [(json.JsonFound removed)
+          (match removed
+            [(json.JsonArray items)
+              (lsp-workspace-folders-remove-items!
+                workspace
+                docs
+                (box-get items))]
+            [_ unit])])
+      (match (json.object-get event (& added-key))
+        [(json.JsonMissing) unit]
+        [(json.JsonFound added)
+          (match added
+            [(json.JsonArray items)
+              (lsp-workspace-folders-add-items! workspace docs (box-get items))]
+            [_ unit])]))))
+
+(define (lsp-server-state-did-change-workspace-folders
+  [state : LspServerState]
+  [params : json.Json]) : LspServerState
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make)]
+    [_install : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [draft : LspServerState (lsp-server-state-copy-in-current state)]
+    [event-key : String "event"]
+    [_update : unit
+      (match (json.object-get params (& event-key))
+        [(json.JsonMissing) unit]
+        [(json.JsonFound event)
+          (lsp-workspace-folders-apply-event!
+            (&mut (struct-get draft workspace))
+            (struct-get draft documents)
+            event)])]
+    (lsp-server-state-finish-swap state draft previous)))
+
 ;; Helper: extract document from params
 (define (lsp-get-document [params : json.Json] [docs : lsp_document_vec.Vec]) : LspDocumentLookup
   (let
@@ -6077,42 +7274,42 @@
 (define (lsp-handle-tl-list-functions
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [items : json.JsonSeq (lsp-decls-to-name-list decls 0)]
         (begin
           (lsp-write-response id (lsp-json-array items))
-          (LspHandleResult.Continue docs)))]
+          (LspDocumentHandleResult.Continue docs)))]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/astDump - Return full declaration metadata
 (define (lsp-handle-tl-ast-dump
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [items : json.JsonSeq (lsp-decls-to-json-list decls 0)]
         (begin
           (lsp-write-response id (lsp-json-array items))
-          (LspHandleResult.Continue docs)))]
+          (LspDocumentHandleResult.Continue docs)))]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/find - Find top-level declarations by exact name, substring/prefix, and
 ;; kind. Empty string filters are treated like missing filters.
 (define (lsp-handle-tl-find
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
@@ -6137,17 +7334,17 @@
             kind)]
         (begin
           (lsp-write-response id (lsp-json-array items))
-          (LspHandleResult.Continue docs)))]
+          (LspDocumentHandleResult.Continue docs)))]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/findPosition - Find the name position {line, character} of a top-level form
 (define (lsp-handle-tl-find-position
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -6187,18 +7384,18 @@
                       (lsp-json-number (- result-line 1))
                       "character"
                       (lsp-json-number (- result-col 1))))
-                  (LspHandleResult.Continue docs))
+                  (LspDocumentHandleResult.Continue docs))
                 (begin
                   (lsp-write-declaration-not-found-error id decls name)
-                  (LspHandleResult.Continue docs)))))]
+                  (LspDocumentHandleResult.Continue docs)))))]
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing name parameter")
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/replace - Replace a top-level declaration by name, with position fallback
 ;; tl/deleteFunction - legacy method name routed to tl/delete behavior
@@ -6677,7 +7874,7 @@
   [uri : String]
   [path : String]
   [diagnostic-uris : LspDiagnosticUris]
-  [formatted : String]) : LspHandleResult
+  [formatted : String]) : LspDocumentHandleResult
   (match (lsp-tl-save-doc docs uri path diagnostic-uris formatted)
     [(LspSaveResult.Ok next-docs)
       (begin
@@ -6690,17 +7887,17 @@
             (json.JsonString formatted)
             "positionMap"
             (lsp-position-map-for-text formatted)))
-        (LspHandleResult.Continue next-docs))]
+        (LspDocumentHandleResult.Continue next-docs))]
     [(LspSaveResult.Err message)
       (begin
         (lsp-write-error id -32600 message)
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-tl-save-and-continue
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [formatted : String]) : LspHandleResult
+  [formatted : String]) : LspDocumentHandleResult
   (match (lsp-tl-request-uri params)
     [(LspJsonText.Ok uri)
       (match (lsp-documents-lookup docs uri)
@@ -6725,17 +7922,17 @@
             [(LspUriPath.Err message)
               (begin
                 (lsp-write-error id -32600 message)
-                (LspHandleResult.Continue docs))])])]
+                (LspDocumentHandleResult.Continue docs))])])]
     [(LspJsonText.Missing)
       (begin
         (lsp-write-error id -32600 "Missing uri in textDocument parameter")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-write-structural-edit-success
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [result : String]) : LspHandleResult
+  [result : String]) : LspDocumentHandleResult
   (let
     [formatted : String (lsp-format-edit-text result)]
     (lsp-tl-save-and-continue id params docs formatted)))
@@ -6744,7 +7941,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [base-message : String]) : LspHandleResult
+  [base-message : String]) : LspDocumentHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found _ text _)
       (let
@@ -6756,37 +7953,37 @@
               [col : i64 (lsp-json-int-field-default position "character" 0)]
               (begin
                 (lsp-write-position-context-error id text line col base-message)
-                (LspHandleResult.Continue docs)))]
+                (LspDocumentHandleResult.Continue docs)))]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 base-message)
-              (LspHandleResult.Continue docs))]))]
+              (LspDocumentHandleResult.Continue docs))]))]
     [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 base-message)
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-write-declaration-context-error-from-params
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found _ text _ decls)
       (let
         [name : String (lsp-structural-move-name-with-decls params text decls)]
         (begin
           (lsp-write-declaration-not-found-error id decls name)
-          (LspHandleResult.Continue docs)))]
+          (LspDocumentHandleResult.Continue docs)))]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Declaration not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-write-contextual-edit-error
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [message : String]) : LspHandleResult
+  [message : String]) : LspDocumentHandleResult
   (cond
     [(string.eq message "No form found at position")
       (lsp-write-position-context-error-from-params id params docs message)]
@@ -6795,13 +7992,13 @@
     [else
       (begin
         (lsp-write-error id -32600 message)
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-write-structural-edit-result
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [result : LspEditResult]) : LspHandleResult
+  [result : LspEditResult]) : LspDocumentHandleResult
   (match result
     [(LspEditResult.Ok replaced)
       (lsp-write-structural-edit-success id params docs replaced)]
@@ -6811,19 +8008,19 @@
 (define (lsp-write-replace-body-validation-error
   [id : json.Json]
   [docs : lsp_document_vec.Vec]
-  [new-body : String]) : LspHandleResult
+  [new-body : String]) : LspDocumentHandleResult
   (begin
     (lsp-write-error-with-data
       id
       -32600
       (lsp-replace-body-validation-message new-body)
       (lsp-replace-body-validation-data new-body))
-    (LspHandleResult.Continue docs)))
+    (LspDocumentHandleResult.Continue docs)))
 
 (define (lsp-write-read-form-success
   [id : json.Json]
   [form-text : String]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (begin
     (lsp-write-response
       id
@@ -6832,13 +8029,13 @@
         (json.JsonBool true)
         "form"
         (json.JsonString form-text)))
-    (LspHandleResult.Continue docs)))
+    (LspDocumentHandleResult.Continue docs)))
 
 (define (lsp-write-read-form-result
   [id : json.Json]
   [params : json.Json]
   [result : LspStringResult]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match result
     [(LspStringResult.Ok form-text)
       (lsp-write-read-form-success id form-text docs)]
@@ -6848,7 +8045,7 @@
 (define (lsp-write-missing-structural-name-error
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (let
     [pos-key : String "position"]
     (match (json.object-get params (& pos-key))
@@ -6861,7 +8058,7 @@
       [(json.JsonMissing)
         (begin
           (lsp-write-error id -32600 "Missing name or position parameter")
-          (LspHandleResult.Continue docs))])))
+          (LspDocumentHandleResult.Continue docs))])))
 
 (define (lsp-structural-move-after-destination
   [id : json.Json]
@@ -6870,7 +8067,7 @@
   [text : String]
   [decls : lsp_decl_vec.Vec]
   [name : String]
-  [destination : String]) : LspHandleResult
+  [destination : String]) : LspDocumentHandleResult
   (match (lsp-structural-move-after-destination-text
     text
     decls
@@ -6883,7 +8080,7 @@
         [(string.eq message "Declaration not found")
           (begin
             (lsp-write-declaration-not-found-error id decls name)
-            (LspHandleResult.Continue docs))]
+            (LspDocumentHandleResult.Continue docs))]
         [(string.eq message "Destination declaration not found")
           (begin
             (lsp-write-declaration-context-error
@@ -6891,11 +8088,11 @@
               decls
               destination
               (lsp-str3 "Destination declaration '" destination "' not found"))
-            (LspHandleResult.Continue docs))]
+            (LspDocumentHandleResult.Continue docs))]
         [else
           (begin
             (lsp-write-error id -32600 message)
-            (LspHandleResult.Continue docs))])]))
+            (LspDocumentHandleResult.Continue docs))])]))
 
 (define (lsp-structural-move-direction
   [id : json.Json]
@@ -6904,7 +8101,7 @@
   [text : String]
   [decls : lsp_decl_vec.Vec]
   [name : String]
-  [direction : String]) : LspHandleResult
+  [direction : String]) : LspDocumentHandleResult
   (match (lsp-structural-move-direction-text text decls name direction)
     [(LspEditResult.Ok result)
       (lsp-write-structural-edit-success id params docs result)]
@@ -6912,16 +8109,16 @@
       (if (string.eq message "Declaration not found")
         (begin
           (lsp-write-declaration-not-found-error id decls name)
-          (LspHandleResult.Continue docs))
+          (LspDocumentHandleResult.Continue docs))
         (begin
           (lsp-write-error id -32600 message)
-          (LspHandleResult.Continue docs)))]))
+          (LspDocumentHandleResult.Continue docs)))]))
 
 ;; tl/move - Move a form by name or position.
 (define (lsp-handle-tl-structural-move
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
@@ -6955,11 +8152,11 @@
                       id
                       -32600
                       "Missing direction or destination parameter")
-                    (LspHandleResult.Continue docs))])])))]
+                    (LspDocumentHandleResult.Continue docs))])])))]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/expandMacro - Find the form at cursor position and return its text
 ;; Returns the top-level form by name.
@@ -6967,7 +8164,7 @@
 (define (lsp-handle-tl-expand-macro
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -6987,7 +8184,7 @@
               (if (= found-idx -1)
                 (begin
                   (lsp-write-error id -32600 "Form not found")
-                  (LspHandleResult.Continue docs))
+                  (LspDocumentHandleResult.Continue docs))
                 (let
                   [entry : LspDeclEntry
                     (lsp_decl_vec.get
@@ -7014,15 +8211,15 @@
                         (json.JsonBool true)
                         "text"
                         (json.JsonString result)))
-                    (LspHandleResult.Continue docs))))))]
+                    (LspDocumentHandleResult.Continue docs))))))]
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing name parameter")
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/check - Typecheck a document and return success/error JSON response
 (define (lsp-check-cache-valid? [check-cache : LspCheckCache]) : bool
@@ -7109,7 +8306,7 @@
   [path : String]
   [text : String]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
   (let
     [check-cache : LspCheckCache LspCheckCacheInvalid]
     (begin
@@ -7117,14 +8314,14 @@
       (set! check-cache (lsp-check-source-cache path text stdlib-roots))
       (lsp-typecheck-tool-session-after!)
       (lsp-write-check-cache-response id check-cache)
-      (LspHandleResult.Continue
+      (LspDocumentHandleResult.Continue
         (lsp-documents-set-check-cache docs uri check-cache)))))
 
 (define (lsp-handle-tl-check
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
   (let
     [uri : String
       (match (lsp-json-string-field params "uri")
@@ -7141,7 +8338,7 @@
     (if (string.eq uri "")
       (begin
         (lsp-write-error id -32600 "Missing uri parameter")
-        (LspHandleResult.Continue docs))
+        (LspDocumentHandleResult.Continue docs))
       (let
         [doc-index : i64 (lsp-documents-find-index docs uri)]
         (if (>= doc-index 0)
@@ -7152,7 +8349,7 @@
             (if (lsp-check-cache-valid? check-cache)
               (begin
                 (lsp-write-check-cache-response id check-cache)
-                (LspHandleResult.Continue docs))
+                (LspDocumentHandleResult.Continue docs))
               (lsp-run-check-and-respond
                 id
                 uri
@@ -7173,7 +8370,7 @@
                         (json.JsonBool false)
                         "error"
                         (json.JsonString "Could not read document")))
-                    (LspHandleResult.Continue docs))
+                    (LspDocumentHandleResult.Continue docs))
                   (lsp-run-check-and-respond id uri path text docs stdlib-roots)))]
             [(LspUriPath.Err message)
               (begin
@@ -7184,7 +8381,7 @@
                     (json.JsonBool false)
                     "error"
                     (json.JsonString message)))
-                (LspHandleResult.Continue docs))]))))))
+                (LspDocumentHandleResult.Continue docs))]))))))
 
 (define (lsp-nearest-inlay-hint-index
   [text : String]
@@ -7233,7 +8430,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -7281,7 +8478,7 @@
                                 "error"
                                 (json.JsonString
                                   "No type information at this position")))
-                            (LspHandleResult.Continue docs))
+                            (LspDocumentHandleResult.Continue docs))
                           (begin
                             (lsp-write-response
                               id
@@ -7290,7 +8487,7 @@
                                 (json.JsonBool true)
                                 "type"
                                 (json.JsonString bind-type)))
-                            (LspHandleResult.Continue docs))))
+                            (LspDocumentHandleResult.Continue docs))))
                       (let
                         [found-type : String (tc-inlay-hint-type-at found-idx)]
                         (begin
@@ -7301,15 +8498,15 @@
                               (json.JsonBool true)
                               "type"
                               (json.JsonString found-type)))
-                          (LspHandleResult.Continue docs))))))))]
+                          (LspDocumentHandleResult.Continue docs))))))))]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
-              (LspHandleResult.Continue docs))]))]
+              (LspDocumentHandleResult.Continue docs))]))]
     [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; Helper: find all word-bounded occurrences of name in text
 (define (lsp-find-references-in-text
@@ -7745,7 +8942,7 @@
 (define (lsp-handle-tl-find-references
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found _ text _)
       (let
@@ -7769,7 +8966,7 @@
         (if (string.eq name "")
           (begin
             (lsp-write-error id -32600 "Missing name or position parameter")
-            (LspHandleResult.Continue docs))
+            (LspDocumentHandleResult.Continue docs))
           (let
             [refs : json.JsonSeq
               (lsp-find-references-in-text
@@ -7786,11 +8983,11 @@
                   (json.JsonBool true)
                   "references"
                   (lsp-json-array refs)))
-              (LspHandleResult.Continue docs)))))]
+              (LspDocumentHandleResult.Continue docs)))))]
     [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-tl-source-file-name? [entry : String]) : bool
   (let
@@ -7821,13 +9018,13 @@
 (define (lsp-handle-tl-project-search
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-json-string-field params "name")
     [(LspJsonText.Ok name)
       (if (string.eq name "")
         (begin
           (lsp-write-error id -32600 "name cannot be empty")
-          (LspHandleResult.Continue docs))
+          (LspDocumentHandleResult.Continue docs))
         (let
           [td-key : String "textDocument"]
           (match (json.object-get params (& td-key))
@@ -7890,7 +9087,7 @@
                                     (json.JsonBool true)
                                     "results"
                                     (lsp-json-array results)))
-                                (LspHandleResult.Continue docs)))]
+                                (LspDocumentHandleResult.Continue docs)))]
                           [(fs.ErrIoStringVector message)
                             (begin
                               (lsp-write-error
@@ -7899,32 +9096,32 @@
                                 (lsp-str2
                                   "Failed to read directory: "
                                   (io.error-message message)))
-                              (LspHandleResult.Continue docs))]))]
+                              (LspDocumentHandleResult.Continue docs))]))]
                     [(LspUriPath.Err message)
                       (begin
                         (lsp-write-error id -32600 message)
-                        (LspHandleResult.Continue docs))])]
+                        (LspDocumentHandleResult.Continue docs))])]
                 [(LspJsonText.Missing)
                   (begin
                     (lsp-write-error
                       id
                       -32600
                       "Missing uri in textDocument parameter")
-                    (LspHandleResult.Continue docs))])]
+                    (LspDocumentHandleResult.Continue docs))])]
             [(json.JsonMissing)
               (begin
                 (lsp-write-error id -32600 "Missing textDocument parameter")
-                (LspHandleResult.Continue docs))])))]
+                (LspDocumentHandleResult.Continue docs))])))]
     [(LspJsonText.Missing)
       (begin
         (lsp-write-error id -32600 "Missing name parameter")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/evalAtPoint - Evaluate expression at cursor
 (define (lsp-handle-tl-eval-at-point
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -7939,21 +9136,21 @@
                   (json.JsonBool true)
                   "text"
                   (json.JsonString new-text)))
-              (LspHandleResult.Continue docs))]
+              (LspDocumentHandleResult.Continue docs))]
           [(LspEditResult.Err message)
             (begin
               (lsp-write-error id -32600 message)
-              (LspHandleResult.Continue docs))]))]
+              (LspDocumentHandleResult.Continue docs))]))]
     [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/signatureHelp - Parameter types for function at cursor
 (define (lsp-handle-tl-signature-help
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -7968,21 +9165,21 @@
                   (json.JsonBool true)
                   "text"
                   (json.JsonString new-text)))
-              (LspHandleResult.Continue docs))]
+              (LspDocumentHandleResult.Continue docs))]
           [(LspEditResult.Err message)
             (begin
               (lsp-write-error id -32600 message)
-              (LspHandleResult.Continue docs))]))]
+              (LspDocumentHandleResult.Continue docs))]))]
     [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/appendFunction - Append a form at the end of the file
 (define (lsp-handle-tl-append-function
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -7995,7 +9192,7 @@
                 (lsp-str2
                   "newText is not valid form(s): "
                   (lsp-validate-forms-error new-text)))
-              (LspHandleResult.Continue docs))
+              (LspDocumentHandleResult.Continue docs))
             (let
               [n : i64 (lsp_decl_vec.len (& decls))]
               [result : String ""]
@@ -8021,22 +9218,24 @@
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newText parameter")
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
-;; Main LSP request dispatch
-(define (lsp-handle-message
+;; Document/provider dispatch. The production wrapper below owns workspace
+;; state and adapts these existing document-only handlers.
+(define (lsp-handle-document-message
   [message : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
   (match (lsp-json-string-field message "method")
     [(LspJsonText.Ok method)
       (let
         [handled : bool false]
-        [result : LspHandleResult (LspHandleResult.Continue docs)]
+        [result : LspDocumentHandleResult
+          (LspDocumentHandleResult.Continue docs)]
         (begin
           (if (and (not handled) (string.eq method "initialize"))
             (begin
@@ -8056,12 +9255,12 @@
                       [(LspInitializeLanguageConfig.Err config-error)
                         (lsp-write-error id -32602 config-error)])]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "initialized"))
             (begin
               (set! handled true)
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "shutdown"))
             (begin
@@ -8071,12 +9270,12 @@
                 (match (json.object-get message (& key))
                   [(json.JsonFound id) (lsp-write-response id json.JsonNull)]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "exit"))
             (begin
               (set! handled true)
-              (set! result (LspHandleResult.Exit docs)))
+              (set! result (LspDocumentHandleResult.Exit docs)))
             unit)
           (if (and (not handled) (string.eq method "textDocument/didOpen"))
             (begin
@@ -8087,7 +9286,7 @@
                   [(json.JsonFound params)
                     (set! result (lsp-did-open params docs stdlib-roots))]
                   [(json.JsonMissing)
-                    (set! result (LspHandleResult.Continue docs))])))
+                    (set! result (LspDocumentHandleResult.Continue docs))])))
             unit)
           (if (and (not handled) (string.eq method "textDocument/didChange"))
             (begin
@@ -8098,7 +9297,7 @@
                   [(json.JsonFound params)
                     (set! result (lsp-did-change params docs stdlib-roots))]
                   [(json.JsonMissing)
-                    (set! result (LspHandleResult.Continue docs))])))
+                    (set! result (LspDocumentHandleResult.Continue docs))])))
             unit)
           (if (and (not handled) (string.eq method "textDocument/didClose"))
             (begin
@@ -8109,7 +9308,7 @@
                   [(json.JsonFound params)
                     (set! result (lsp-did-close params docs))]
                   [(json.JsonMissing)
-                    (set! result (LspHandleResult.Continue docs))])))
+                    (set! result (LspDocumentHandleResult.Continue docs))])))
             unit)
           (if (and (not handled) (string.eq method "textDocument/codeAction"))
             (begin
@@ -8128,7 +9327,7 @@
                             id
                             (lsp-json-array (json.list-empty)))]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "textDocument/definition"))
             (begin
@@ -8145,7 +9344,7 @@
                         [(json.JsonMissing)
                           (lsp-write-response id json.JsonNull)]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and
             (not handled)
@@ -8166,7 +9365,7 @@
                             id
                             (lsp-json-array (json.list-empty)))]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and
             (not handled)
@@ -8187,7 +9386,7 @@
                             id
                             (lsp-json-array (json.list-empty)))]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "textDocument/completion"))
             (begin
@@ -8197,7 +9396,7 @@
                 (match (json.object-get message (& id-key))
                   [(json.JsonFound id) (lsp-completion-respond id docs)]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "textDocument/inlayHint"))
             (begin
@@ -8216,7 +9415,7 @@
                             id
                             (lsp-json-array (json.list-empty)))]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "textDocument/formatting"))
             (begin
@@ -8235,7 +9434,7 @@
                             id
                             (lsp-json-array (json.list-empty)))]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "textDocument/hover"))
             (begin
@@ -8252,7 +9451,7 @@
                         [(json.JsonMissing)
                           (lsp-write-response id json.JsonNull)]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "textDocument/documentLink"))
             (begin
@@ -8271,7 +9470,7 @@
                             id
                             (lsp-json-array (json.list-empty)))]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "textDocument/foldingRange"))
             (begin
@@ -8290,16 +9489,21 @@
                             id
                             (lsp-json-array (json.list-empty)))]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspHandleResult.Continue docs)))
+              (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
           (if (not handled)
             (let
               [enclosing : i64 (arena.tl_arena_current)]
               [scratch : i64 (arena.tl_arena_make)]
               [old-cache-arena : i64 lsp-document-cache-arena]
-              [tool-result : LspHandleResult (LspHandleResult.Continue docs)]
+              [tool-result : LspDocumentHandleResult
+                (LspDocumentHandleResult.Continue docs)]
               (begin
-                (set! lsp-document-cache-arena enclosing)
+                (set!
+                  lsp-document-cache-arena
+                  (if (> old-cache-arena 0)
+                    old-cache-arena
+                    enclosing))
                 (unsafe
                   (arena.tl_arena_set scratch))
                 (set!
@@ -8316,7 +9520,150 @@
                     (set! result tool-result)))))
             unit)
           result))]
-    [(LspJsonText.Missing) (LspHandleResult.Continue docs)]))
+    [(LspJsonText.Missing) (LspDocumentHandleResult.Continue docs)]))
+
+(define (lsp-tool-method-mutates-document? [method : String]) : bool
+  (or
+    (string.eq method "tl/replace")
+    (string.eq method "tl/replaceAt")
+    (string.eq method "tl/deleteFunction")
+    (string.eq method "tl/move")
+    (string.eq method "tl/appendFunction")
+    (string.eq method "tl/replaceBody")
+    (string.eq method "tl/replacePattern")
+    (string.eq method "tl/patch")
+    (string.eq method "tl/rename")
+    (string.eq method "tl/delete")
+    (string.eq method "tl/insertAfter")
+    (string.eq method "tl/batch")))
+
+(define (lsp-handle-initialize-state
+  [message : json.Json]
+  [state : LspServerState]) : LspHandleResult
+  (let
+    [id-key : String "id"]
+    (match (json.object-get message (& id-key))
+      [(json.JsonMissing) (LspHandleResult.Continue state)]
+      [(json.JsonFound id)
+        (match (lsp-initialize-language-config message)
+          [(LspInitializeLanguageConfig.Err config-error)
+            (begin
+              (lsp-write-error id -32602 config-error)
+              (LspHandleResult.Continue state))]
+          [(LspInitializeLanguageConfig.Ok target cfg-names)
+            (begin
+              (lsp-language-config-install! target cfg-names)
+              (set!
+                lsp-position-encoding-utf8
+                (lsp-initialize-position-encoding-utf8? message))
+              ;; Declaration ranges are scanned only after the negotiated
+              ;; encoding has been installed.
+              (let
+                [next : LspServerState
+                  (lsp-server-state-initialize-workspaces state message)]
+                (begin
+                  (lsp-write-response id (lsp-initialize-result))
+                  (LspHandleResult.Continue next))))])])))
+
+(define (lsp-handle-document-event
+  [method : String]
+  [params : json.Json]
+  [state : LspServerState]
+  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  (match (lsp-tl-request-uri params)
+    [(LspJsonText.Missing) (LspHandleResult.Continue state)]
+    [(LspJsonText.Ok uri)
+      (cond
+        [(string.eq method "textDocument/didOpen")
+          (lsp-server-state-refresh-document-result
+            state
+            (lsp-did-open params (struct-get state documents) stdlib-roots)
+            uri
+            false)]
+        [(string.eq method "textDocument/didChange")
+          (lsp-server-state-refresh-document-result
+            state
+            (lsp-did-change params (struct-get state documents) stdlib-roots)
+            uri
+            false)]
+        [else
+          ;; Closing an overlay reloads the current disk file when it remains
+          ;; eligible; a preceding watched delete therefore removes the row.
+          (lsp-server-state-refresh-document-result
+            state
+            (lsp-did-close params (struct-get state documents))
+            uri
+            false)])]))
+
+(define (lsp-handle-stateful-notification
+  [method : String]
+  [message : json.Json]
+  [state : LspServerState]
+  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  (let
+    [params-key : String "params"]
+    (match (json.object-get message (& params-key))
+      [(json.JsonMissing) (LspHandleResult.Continue state)]
+      [(json.JsonFound params)
+        (cond
+          [(or
+              (string.eq method "textDocument/didOpen")
+              (string.eq method "textDocument/didChange")
+              (string.eq method "textDocument/didClose"))
+            (lsp-handle-document-event method params state stdlib-roots)]
+          [(string.eq method "workspace/didChangeWatchedFiles")
+            (LspHandleResult.Continue
+              (lsp-server-state-did-change-watched-files state params))]
+          [else
+            (LspHandleResult.Continue
+              (lsp-server-state-did-change-workspace-folders state params))])])))
+
+;; Production state dispatch. All long-lived data crosses the loop through the
+;; explicit aggregate; document providers never receive mutable workspace
+;; vectors.
+(define (lsp-handle-message
+  [message : json.Json]
+  [state : LspServerState]
+  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  (match (lsp-json-string-field message "method")
+    [(LspJsonText.Missing) (LspHandleResult.Continue state)]
+    [(LspJsonText.Ok method)
+      (cond
+        [(string.eq method "initialize")
+          (lsp-handle-initialize-state message state)]
+        [(or
+            (string.eq method "textDocument/didOpen")
+            (string.eq method "textDocument/didChange")
+            (string.eq method "textDocument/didClose")
+            (string.eq method "workspace/didChangeWatchedFiles")
+            (string.eq method "workspace/didChangeWorkspaceFolders"))
+          (lsp-handle-stateful-notification method message state stdlib-roots)]
+        [else
+          (let
+            [document-result : LspDocumentHandleResult
+              (lsp-handle-document-message
+                message
+                (struct-get state documents)
+                stdlib-roots)]
+            (cond
+              [(lsp-tool-method-mutates-document? method)
+                (lsp-server-state-copy-document-result
+                  state
+                  document-result
+                  true)]
+              ;; `tl/check` memoizes its result in the open document without
+              ;; changing text or declarations.
+              [(string.eq method "tl/check")
+                (lsp-server-state-copy-document-result
+                  state
+                  document-result
+                  false)]
+              [else
+                (match document-result
+                  [(LspDocumentHandleResult.Continue _)
+                    (LspHandleResult.Continue state)]
+                  [(LspDocumentHandleResult.Exit _)
+                    (LspHandleResult.Exit state)])]))])]))
 
 (define (lsp-known-tool-method? [method : String]) : bool
   (or
@@ -8371,7 +9718,7 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
   (cond
     [(string.eq method "tl/astDump") (lsp-handle-tl-ast-dump id params docs)]
     [(string.eq method "tl/listFunctions")
@@ -8396,7 +9743,8 @@
       (lsp-handle-tl-check id params docs stdlib-roots)]
     [(string.eq method "tl/getType")
       (let
-        [tool-result : LspHandleResult (LspHandleResult.Continue docs)]
+        [tool-result : LspDocumentHandleResult
+          (LspDocumentHandleResult.Continue docs)]
         (begin
           (lsp-typecheck-tool-session-before!)
           (set!
@@ -8428,13 +9776,13 @@
     [else
       (begin
         (lsp-maybe-write-method-not-found message)
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-handle-tool-message!
   [method : String]
   [message : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
   (let
     [id-key : String "id"]
     (match (json.object-get message (& id-key))
@@ -8453,13 +9801,13 @@
             [(json.JsonMissing)
               (begin
                 (lsp-handle-tool-missing-params! method message id)
-                (LspHandleResult.Continue docs))]))]
+                (LspDocumentHandleResult.Continue docs))]))]
       [(json.JsonMissing)
         (begin
           (if (not (lsp-known-tool-method? method))
             (lsp-maybe-write-method-not-found message)
             unit)
-          (LspHandleResult.Continue docs))])))
+          (LspDocumentHandleResult.Continue docs))])))
 
 (define (lsp-stdlib-roots-from [idx : i64] [count : i64]) : lsp_svec.Vec
   (let
@@ -8508,7 +9856,7 @@
   (let
     [done : bool false]
     [status : i64 0]
-    [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
+    [state : LspServerState (lsp-server-state-new)]
     (begin
       (lsp-language-config-reset!)
       (lsp-frame-session-cache-enable!)
@@ -8519,11 +9867,12 @@
               [text : String payload]
               (match (json.parse (& text))
                 [(json.OkJson message)
-                  (match (lsp-handle-message message docs stdlib-roots)
-                    [(LspHandleResult.Continue next-docs) (set! docs next-docs)]
-                    [(LspHandleResult.Exit next-docs)
+                  (match (lsp-handle-message message state stdlib-roots)
+                    [(LspHandleResult.Continue next-state)
+                      (set! state next-state)]
+                    [(LspHandleResult.Exit next-state)
                       (begin
-                        (set! docs next-docs)
+                        (set! state next-state)
                         (set! done true))])]
                 [(json.ErrJson message) (lsp-write-parse-error message)]))]
           [(LspFrameRead.Eof) (set! done true)]
@@ -8536,12 +9885,12 @@
       (if prefix-cache-stats
         (tc-prefix-snapshot-cache-print-stats "lsp")
         unit)
+      (lsp-server-state-destroy! state)
       status)))
 
 ;; Clear every serial LSP/compiler owner before a transcript arena is retired.
-;; Document storage itself is local to lsp-frame-run-with-config; clearing the
-;; cache arena here makes that empty collection the only document owner visible
-;; to the next run.
+;; Server state is destroyed by lsp-frame-run-with-config; clearing the cache
+;; arena here leaves no owner visible to the next run.
 (define (lsp-frame-fresh-session-reset!) : unit
   (begin
     (lsp-frame-memory-reset!)
@@ -8920,7 +10269,7 @@
 (define (lsp-handle-tl-rename
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -8941,17 +10290,17 @@
         (if (= (string.string-length old-name) 0)
           (begin
             (lsp-write-error id -32600 "Missing oldName or position parameter")
-            (LspHandleResult.Continue docs))
+            (LspDocumentHandleResult.Continue docs))
           (match (lsp-json-string-field params "newName")
             [(LspJsonText.Ok new-name)
               (if (string.eq old-name "")
                 (begin
                   (lsp-write-error id -32600 "oldName cannot be empty")
-                  (LspHandleResult.Continue docs))
+                  (LspDocumentHandleResult.Continue docs))
                 (if (string.eq new-name "")
                   (begin
                     (lsp-write-error id -32600 "newName cannot be empty")
-                    (LspHandleResult.Continue docs))
+                    (LspDocumentHandleResult.Continue docs))
                   (let
                     [result : String
                       (lsp-replace-all-words text old-name new-name)]
@@ -8959,11 +10308,11 @@
             [(LspJsonText.Missing)
               (begin
                 (lsp-write-error id -32600 "Missing newName parameter")
-                (LspHandleResult.Continue docs))])))]
+                (LspDocumentHandleResult.Continue docs))])))]
     [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-replace-body-text-with-decls
   [text : String]
@@ -9229,7 +10578,7 @@
 (define (lsp-handle-tl-patch
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (match (lsp-json-string-field params "oldText")
@@ -9242,19 +10591,19 @@
                 [(LspEditResult.Err message)
                   (begin
                     (lsp-write-error id -32600 message)
-                    (LspHandleResult.Continue docs))])]
+                    (LspDocumentHandleResult.Continue docs))])]
             [(LspJsonText.Missing)
               (begin
                 (lsp-write-error id -32600 "Missing newText parameter")
-                (LspHandleResult.Continue docs))])]
+                (LspDocumentHandleResult.Continue docs))])]
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing oldText parameter")
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-patch-text-smoke-ok?) : bool
   (let
@@ -9329,10 +10678,10 @@
     (io.panic "lsp-validate-forms-line-context failed")))
 
 (test
-  lsp-documents-cache-bound
+  lsp-documents-open-retention
   (unless
-    (lsp-documents-cache-bound-smoke-ok?)
-    (io.panic "lsp-documents-cache-bound failed")))
+    (lsp-documents-open-retention-smoke-ok?)
+    (io.panic "lsp-documents-open-retention failed")))
 
 (define (lsp-declaration-context-smoke-ok?) : bool
   (let
@@ -9505,7 +10854,7 @@
 (define (lsp-handle-tl-structural-replace-at-position
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -9522,17 +10871,17 @@
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newText parameter")
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/replace - Replace a top-level declaration by name, with position fallback
 (define (lsp-handle-tl-structural-replace-at
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -9552,7 +10901,7 @@
               [(LspPathParam.Err message)
                 (begin
                   (lsp-write-error id -32600 message)
-                  (LspHandleResult.Continue docs))])
+                  (LspDocumentHandleResult.Continue docs))])
             (match (lsp-json-string-field params "name")
               [(LspJsonText.Ok name)
                 (if (= (string.string-length name) 0)
@@ -9587,11 +10936,11 @@
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newText parameter")
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; Find the start of the outer form enclosing the form at start.
 ;; outer = 0 means return start itself.
@@ -10069,7 +11418,7 @@
 (define (lsp-handle-tl-list-nested
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -10089,7 +11438,7 @@
               (if (= form-start -1)
                 (begin
                   (lsp-write-error id -32600 "No form found at position")
-                  (LspHandleResult.Continue docs))
+                  (LspDocumentHandleResult.Continue docs))
                 (let
                   [form-end : i64
                     (lsp-skip-paren-group
@@ -10099,7 +11448,7 @@
                   (if (<= form-end form-start)
                     (begin
                       (lsp-write-error id -32600 "No form found at position")
-                      (LspHandleResult.Continue docs))
+                      (LspDocumentHandleResult.Continue docs))
                     (begin
                       (lsp-write-response
                         id
@@ -10108,20 +11457,20 @@
                           form-start
                           form-end
                           safe-depth))
-                      (LspHandleResult.Continue docs))))))]
+                      (LspDocumentHandleResult.Continue docs))))))]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
-              (LspHandleResult.Continue docs))]))]
+              (LspDocumentHandleResult.Continue docs))]))]
     [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-handle-tl-find-path
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-path-field params)
@@ -10132,19 +11481,19 @@
                 (lsp-write-response
                   id
                   (lsp-path-result-json text start end name))
-                (LspHandleResult.Continue docs))]
+                (LspDocumentHandleResult.Continue docs))]
             [(LspPathLookup.Err message)
               (begin
                 (lsp-write-error id -32600 message)
-                (LspHandleResult.Continue docs))])]
+                (LspDocumentHandleResult.Continue docs))])]
         [(LspPathParam.Err message)
           (begin
             (lsp-write-error id -32600 message)
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-delete-form-at-position-with-decls
   [text : String]
@@ -10281,7 +11630,7 @@
 (define (lsp-handle-tl-delete-at
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -10312,13 +11661,13 @@
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/insertAfter - Insert a new form after the form at a given position
 (define (lsp-handle-tl-insert-after
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -10331,11 +11680,11 @@
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newText parameter")
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-is-whitespace [c : char]) : bool
   (lsp-ws? c))
@@ -10414,7 +11763,7 @@
 (define (lsp-handle-tl-replace-body
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newBody")
@@ -10436,7 +11785,7 @@
                 [(LspPathParam.Err message)
                   (begin
                     (lsp-write-error id -32600 message)
-                    (LspHandleResult.Continue docs))])
+                    (LspDocumentHandleResult.Continue docs))])
               (let
                 [name : String
                   (lsp-structural-move-name-with-decls params text decls)]
@@ -10450,17 +11799,17 @@
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newBody parameter")
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/replacePattern - Replace a pattern in a function by name, with position fallback
 (define (lsp-handle-tl-replace-pattern-at
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "oldPattern")
@@ -10485,21 +11834,21 @@
             [(LspJsonText.Missing)
               (begin
                 (lsp-write-error id -32600 "Missing newPattern parameter")
-                (LspHandleResult.Continue docs))])]
+                (LspDocumentHandleResult.Continue docs))])]
         [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing oldPattern parameter")
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 ;; tl/read - Read a top-level declaration by name, with position fallback
 (define (lsp-handle-tl-read-form-at
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -10524,7 +11873,7 @@
     [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-structural-move-after-destination-text
   [text : String]
@@ -10932,29 +12281,29 @@
   [diagnostic-uris : LspDiagnosticUris]
   [edited-text : String]
   [formatted : String]
-  [results : json.JsonSeq]) : LspHandleResult
+  [results : json.JsonSeq]) : LspDocumentHandleResult
   (match (lsp-validate-edited-document formatted)
     [(LspEditResult.Ok _)
       (match (lsp-tl-save-doc docs uri path diagnostic-uris formatted)
         [(LspSaveResult.Ok next-docs)
           (begin
             (lsp-write-response id (lsp-batch-success-json formatted results))
-            (LspHandleResult.Continue next-docs))]
+            (LspDocumentHandleResult.Continue next-docs))]
         [(LspSaveResult.Err message)
           (begin
             (lsp-write-error id -32600 message)
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspEditResult.Err message)
       (begin
         (lsp-write-response
           id
           (lsp-batch-failure-json message -1 edited-text json.JsonNull))
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-handle-tl-batch
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (match (lsp-tl-request-uri params)
     [(LspJsonText.Ok uri)
       (match (lsp-documents-lookup-resynced docs uri)
@@ -10992,23 +12341,23 @@
                               failed-index
                               partial-text
                               context))
-                          (LspHandleResult.Continue docs))])]
+                          (LspDocumentHandleResult.Continue docs))])]
                   [_
                     (begin
                       (lsp-write-error id -32600 "operations must be an array")
-                      (LspHandleResult.Continue docs))])]
+                      (LspDocumentHandleResult.Continue docs))])]
               [(json.JsonMissing)
                 (begin
                   (lsp-write-error id -32600 "Missing operations parameter")
-                  (LspHandleResult.Continue docs))]))]
+                  (LspDocumentHandleResult.Continue docs))]))]
         [(LspDocumentLookup.Missing)
           (begin
             (lsp-write-error id -32600 "Document not found")
-            (LspHandleResult.Continue docs))])]
+            (LspDocumentHandleResult.Continue docs))])]
     [(LspJsonText.Missing)
       (begin
         (lsp-write-error id -32600 "Missing uri in textDocument parameter")
-        (LspHandleResult.Continue docs))]))
+        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-replace-form-at-position-smoke-ok?) : bool
   (let

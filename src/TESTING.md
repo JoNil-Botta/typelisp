@@ -817,6 +817,11 @@ stage with `clang --target=x86_64-pc-windows-msvc -c`, links `stage1.exe` and
 the Windows `stage2.s` and `stage3.s` outputs. Local Windows prerequisites are
 Clang, Visual Studio/MSVC `link.exe`, and a Windows SDK; set
 `TYPELISP_WINDOWS_CLANG` or `TYPELISP_WINDOWS_LINK` to override discovery.
+The Windows native-link gate also requires `llvm-ar` and verifies deterministic
+package `.lib` output through both compiler tool discovery and an explicit
+`TYPELISP_WINDOWS_LIB=llvm-ar` override. That override accepts only MSVC
+`lib[.exe]` and `llvm-ar[.exe]` executable basenames so the compiler can select
+the documented reproducible argument contract.
 The stage1 CLI smoke also runs from a scratch directory without a colocated
 `stdlib/` to verify embedded stdlib fallback, then checks that
 `TYPELISP_STDLIB_ROOT` still overrides embedded contents.

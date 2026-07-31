@@ -3014,7 +3014,13 @@ Example:
   `bin` packages produce `<package-name>` on Linux and `<package-name>.exe` on
   Windows. `staticlib` packages produce `lib<package-name>.a` on Linux and
   `<package-name>.lib` on Windows. Assembly and object side artifacts use the
-  same profile directory. Package builds also produce a host comptime image
+  same profile directory. Windows static archives use a stable member order
+  and reproducible header metadata: TypeLisp invokes discovered MSVC `lib.exe`
+  with `/Brepro`, or falls back to `llvm-ar --format=coff rcsD`.
+  `TYPELISP_WINDOWS_LIB` may name either tool family by the executable basename
+  `lib[.exe]` or `llvm-ar[.exe]`; other basenames are rejected because their
+  deterministic invocation contract is unknown. Package builds also produce a
+  host comptime image
   named `<package-name>.tlci` in the same profile directory; dependency DAG
   builds produce each dependency's tlci next to its static archive without
   changing runtime link behavior. Macro-free packages emit metadata-only

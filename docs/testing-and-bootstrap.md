@@ -101,7 +101,9 @@ and every remaining gate runs on the freshly bootstrapped compiler. On
 Windows the fixpoint script runs from Git Bash and uses `clang
 --target=x86_64-pc-windows-msvc` plus MSVC `link.exe`; set
 `TYPELISP_WINDOWS_CLANG` / `TYPELISP_WINDOWS_LINK` to override tool
-discovery.
+discovery. The Windows package archive gate also requires `llvm-ar` and checks
+the deterministic `TYPELISP_WINDOWS_LIB` contract documented in
+[`packages.md`](packages.md).
 
 ## Documentation site
 

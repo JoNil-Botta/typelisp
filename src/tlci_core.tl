@@ -253,13 +253,6 @@
       TlciProducerIdentityAdmission.ExactMatch]
     [else TlciProducerIdentityAdmission.Mismatch]))
 
-(define (tlci-image-frontend-surface-admission
-  [image : TlciImage]
-  [running-identity : String]) : TlciProducerIdentityAdmission
-  (tlci-producer-identity-admit
-    (struct-get image compiler-build-hash)
-    running-identity))
-
 ;; Additive package payloads live in the v2 rodata section behind a small
 ;; directory/trailer envelope. Native-only v2 images keep their byte layout:
 ;; no envelope is emitted when there are no auxiliary sections. Keeping this
@@ -395,8 +388,6 @@
   1)
 (define tlci-host-callback-status-fuel-exhausted : i64
   2)
-(define tlci-host-callback-status-panic : i64
-  3)
 (define tlci-host-callback-status-bad-request : i64
   4)
 (define tlci-host-callback-name-fuel-check : String
@@ -407,10 +398,6 @@
   "scratch-alloc")
 (define tlci-host-callback-name-scratch-reset : String
   "scratch-reset")
-(define tlci-host-callback-name-expr-bool : String
-  "expr-bool")
-(define tlci-host-callback-name-expr-int : String
-  "expr-int")
 (define tlci-host-callback-name-expr-string : String
   "expr-string")
 (define tlci-host-callback-name-expr-var : String
@@ -423,16 +410,8 @@
   "expr-struct-set")
 (define tlci-host-callback-name-string-eq : String
   "string-eq")
-(define tlci-host-callback-name-string-concat : String
-  "string-concat")
 (define tlci-host-callback-name-string-append : String
   "string-append")
-(define tlci-host-callback-name-string-length : String
-  "string-length")
-(define tlci-host-callback-name-string-ref : String
-  "string-ref")
-(define tlci-host-callback-name-string->int : String
-  "string->int")
 (define tlci-host-callback-name-int->string : String
   "int->string")
 (define tlci-host-callback-name-expr-splice : String
@@ -461,22 +440,14 @@
   "expr-match")
 (define tlci-host-callback-name-expr-type : String
   "expr-type")
-(define tlci-host-callback-name-type-info : String
-  "type-info")
 (define tlci-host-callback-name-module-name : String
   "module-name")
-(define tlci-host-callback-name-module-export-macro? : String
-  "module-export-macro?")
 (define tlci-host-callback-name-module-hook : String
   "module-hook")
 (define tlci-host-callback-name-type-kind : String
   "type-kind")
 (define tlci-host-callback-name-type-key : String
   "type-key")
-(define tlci-host-callback-name-type-nominal-module : String
-  "type-nominal-module")
-(define tlci-host-callback-name-type-nominal-name : String
-  "type-nominal-name")
 (define tlci-host-callback-name-struct-field-count : String
   "struct-field-count")
 (define tlci-host-callback-name-struct-field-name : String
@@ -503,36 +474,12 @@
   "tuple-element-type")
 (define tlci-host-callback-name-function-param-count : String
   "function-param-count")
-(define tlci-host-callback-name-function-param-type : String
-  "function-param-type")
 (define tlci-host-callback-name-function-return-type : String
   "function-return-type")
-(define tlci-host-callback-name-expr-bool? : String
-  "expr-bool?")
-(define tlci-host-callback-name-expr-bool-value : String
-  "expr-bool-value")
-(define tlci-host-callback-name-expr-if? : String
-  "expr-if?")
-(define tlci-host-callback-name-expr-if-cond : String
-  "expr-if-cond")
-(define tlci-host-callback-name-expr-if-then : String
-  "expr-if-then")
-(define tlci-host-callback-name-expr-if-else : String
-  "expr-if-else")
 (define tlci-host-callback-name-expr-list-length : String
   "expr-list-length")
 (define tlci-host-callback-name-expr-list-nth : String
   "expr-list-nth")
-(define tlci-host-callback-name-expr-clause-first : String
-  "expr-clause-first")
-(define tlci-host-callback-name-expr-clause-second : String
-  "expr-clause-second")
-(define tlci-host-callback-name-expr-clause-list-length : String
-  "expr-clause-list-length")
-(define tlci-host-callback-name-expr-clause-list-nth : String
-  "expr-clause-list-nth")
-(define tlci-host-callback-name-expr-clause-list->expr-list : String
-  "expr-clause-list->expr-list")
 (define tlci-host-callback-name-expr-binding-clause-name : String
   "expr-binding-clause-name")
 (define tlci-host-callback-name-expr-binding-clause-has-type? : String
@@ -545,20 +492,12 @@
   "expr-binding-clause-list-length")
 (define tlci-host-callback-name-expr-binding-clause-list-nth : String
   "expr-binding-clause-list-nth")
-(define tlci-host-callback-name-expr-binding-clause-list->expr-list : String
-  "expr-binding-clause-list->expr-list")
 (define tlci-host-callback-name-pattern-list-bindings : String
   "pattern-list-bindings")
 (define tlci-host-callback-name-type-cleanup-owning? : String
   "type-cleanup-owning?")
 (define tlci-host-callback-name-type-cleanup-function : String
   "type-cleanup-function")
-(define tlci-host-callback-name-expr-binary-data : String
-  "expr-binary-data")
-(define tlci-host-callback-name-box-element-type : String
-  "box-element-type")
-(define tlci-host-callback-name-expr-list-type-nth : String
-  "expr-list-type-nth")
 (define tlci-host-callback-name-module-value? : String
   "module-value?")
 (define tlci-host-callback-name-module-value-type : String
@@ -931,8 +870,6 @@
 ;; interpreted quasiquote. Refs #5724.
 (define tlci-host-callback-name-expr-tuple : String
   "expr-tuple")
-(define tlci-host-callback-stdlib-op-count : i64
-  99)
 (define tlci-header-size : i64
   176)
 (define tlci-page-align : i64
@@ -976,8 +913,6 @@
   1)
 (define tlci-aux-kind-frontend-ast : i64
   2)
-(define tlci-aux-kind-frontend-types : i64
-  3)
 (define tlci-aux-kind-frontend-facts : i64
   4)
 
@@ -4221,9 +4156,6 @@
     [(not (tlci-test-producer-identity-admission-ok?)) 16]
     [(not (tlci-test-dense-spmd-sequences?)) 17]
     [else 0]))
-
-(define (tlci-core-self-test-ok?) : bool
-  (= (tlci-core-self-test-status) 0))
 
 (define (tlci-core-self-test) : i64
   (if (= (tlci-core-self-test-status) 0)

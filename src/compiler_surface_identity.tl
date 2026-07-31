@@ -12,9 +12,9 @@
 ;; variant. Later per-package images use the same schema and hydration path.
 (import compiler_intern as ci)
 (import compiler_surface_binary as binary)
-
-;; lint-allow: unused-import -- used by compiler-surface-producer builds.
-(import stdlib.byte_buf_core)
+(cfg
+  (any compiler-surface-producer compiler-surface-selftest)
+  (import stdlib.byte_buf_core))
 
 (defstruct SurfaceIdentityKey
   (package-name String)
@@ -69,8 +69,10 @@
 (define surface-identity-max-count : i64
   1048576)
 
-(define (surface-identity-empty-bytes) : (__tl_dyn-array u8)
-  (make-array u8 0))
+(cfg
+  (any compiler-surface-producer compiler-surface-selftest)
+  (define (surface-identity-empty-bytes) : (__tl_dyn-array u8)
+    (make-array u8 0)))
 
 (define (surface-identity-string-eq? [left : String] [right : String]) : bool
   (let
@@ -176,60 +178,64 @@
       (struct-get left configuration)
       (struct-get right configuration))))
 
-(define (surface-identity-local-ref [id : i64] [source-count : i64]) : i64
-  (cond
-    [(and (>= id 0) (< id source-count)) id]
-    [(ci.intern-generated-id-active? id)
-      (+ source-count (- (- (ci.intern-capacity) 1) id))]
-    [else -2]))
+(cfg
+  (any compiler-surface-producer compiler-surface-selftest)
+  (define (surface-identity-local-ref [id : i64] [source-count : i64]) : i64
+    (cond
+      [(and (>= id 0) (< id source-count)) id]
+      [(ci.intern-generated-id-active? id)
+        (+ source-count (- (- (ci.intern-capacity) 1) id))]
+      [else -2])))
 
 ;; Nominal ids can be either one intern id or a compiler structural pair/triple
 ;; packed with the active interner capacity. Repack the same shape with the
 ;; image identity count as its stride. This keeps every component relocatable
 ;; while preserving one-word AST name fields in the frontend section.
-(define (surface-identity-portable-id
-  [id : i64]
-  [source-count : i64]
-  [identity-count : i64]) : i64
-  (let
-    [session-stride : i64 (ci.intern-capacity)]
-    [session-stride2 : i64 (* session-stride session-stride)]
-    [session-triple-offset : i64 (+ session-stride session-stride2)]
-    [image-stride2 : i64 (* identity-count identity-count)]
-    (cond
-      [(and
-          (>= id session-triple-offset)
-          (< id (+ session-triple-offset (* session-stride2 session-stride))))
-        (let
-          [raw : i64 (- id session-triple-offset)]
-          [module-ref : i64
-            (surface-identity-local-ref (/ raw session-stride2) source-count)]
-          [enum-ref : i64
-            (surface-identity-local-ref
-              (% (/ raw session-stride) session-stride)
-              source-count)]
-          [variant-ref : i64
-            (surface-identity-local-ref (% raw session-stride) source-count)]
-          (if (or (< module-ref 0) (< enum-ref 0) (< variant-ref 0))
-            -2
-            (+
-              identity-count
+(cfg
+  (any compiler-surface-producer compiler-surface-selftest)
+  (define (surface-identity-portable-id
+    [id : i64]
+    [source-count : i64]
+    [identity-count : i64]) : i64
+    (let
+      [session-stride : i64 (ci.intern-capacity)]
+      [session-stride2 : i64 (* session-stride session-stride)]
+      [session-triple-offset : i64 (+ session-stride session-stride2)]
+      [image-stride2 : i64 (* identity-count identity-count)]
+      (cond
+        [(and
+            (>= id session-triple-offset)
+            (< id (+ session-triple-offset (* session-stride2 session-stride))))
+          (let
+            [raw : i64 (- id session-triple-offset)]
+            [module-ref : i64
+              (surface-identity-local-ref (/ raw session-stride2) source-count)]
+            [enum-ref : i64
+              (surface-identity-local-ref
+                (% (/ raw session-stride) session-stride)
+                source-count)]
+            [variant-ref : i64
+              (surface-identity-local-ref (% raw session-stride) source-count)]
+            (if (or (< module-ref 0) (< enum-ref 0) (< variant-ref 0))
+              -2
               (+
-                image-stride2
+                identity-count
                 (+
-                  (* module-ref image-stride2)
-                  (+ (* enum-ref identity-count) variant-ref))))))]
-      [(and (>= id session-stride) (< id (+ session-stride session-stride2)))
-        (let
-          [raw : i64 (- id session-stride)]
-          [module-ref : i64
-            (surface-identity-local-ref (/ raw session-stride) source-count)]
-          [name-ref : i64
-            (surface-identity-local-ref (% raw session-stride) source-count)]
-          (if (or (< module-ref 0) (< name-ref 0))
-            -2
-            (+ identity-count (+ (* module-ref identity-count) name-ref))))]
-      [else (surface-identity-local-ref id source-count)])))
+                  image-stride2
+                  (+
+                    (* module-ref image-stride2)
+                    (+ (* enum-ref identity-count) variant-ref))))))]
+        [(and (>= id session-stride) (< id (+ session-stride session-stride2)))
+          (let
+            [raw : i64 (- id session-stride)]
+            [module-ref : i64
+              (surface-identity-local-ref (/ raw session-stride) source-count)]
+            [name-ref : i64
+              (surface-identity-local-ref (% raw session-stride) source-count)]
+            (if (or (< module-ref 0) (< name-ref 0))
+              -2
+              (+ identity-count (+ (* module-ref identity-count) name-ref))))]
+        [else (surface-identity-local-ref id source-count)]))))
 
 (define (surface-identity-resolve-portable-id
   [id : i64]
@@ -551,9 +557,11 @@
     [(ResultSurfaceIdentityPayload.Ok payload)
       (surface-identity-hydrate-payload payload expected-key)]))
 
-(defenum ResultSurfaceIdentityBytes
-  (Ok (__tl_dyn-array u8))
-  (Err String))
+(cfg
+  (any compiler-surface-producer compiler-surface-selftest)
+  (defenum ResultSurfaceIdentityBytes
+    (Ok (__tl_dyn-array u8))
+    (Err String)))
 
 (cfg
   compiler-surface-producer

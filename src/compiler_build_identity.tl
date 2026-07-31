@@ -3,7 +3,9 @@
 ;; Publication/bootstrap builds provide the source Git hash through the same
 ;; generated input on every host.  Plain source-tool builds deliberately carry
 ;; `unknown`; they may execute callback-ABI-compatible TLCI code, but exact-build
-;; frontend surfaces must fall back to source compilation.
+;; frontend surfaces must fall back to source compilation. The repository root
+;; package build refreshes this input from its own Git HEAD before enabling the
+;; `compiler-build-identity` cfg.
 (import stdlib.string)
 
 (cfg

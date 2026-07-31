@@ -900,7 +900,14 @@ ROOT_PKG_EXE="$ROOT_PKG_OUT_DIR/typelisp"
 if [ "$HOST_OS" = windows ]; then
     ROOT_PKG_EXE="$ROOT_PKG_EXE.exe"
 fi
+ROOT_COMPILER_IDENTITY_DIR="$ROOT/target/build-stage0"
+ROOT_COMPILER_IDENTITY_STAMP="$ROOT_COMPILER_IDENTITY_DIR/git-hash.txt"
+EXPECTED_ROOT_COMPILER_IDENTITY=$(git -C "$ROOT" rev-parse HEAD | tr -d '\r\n')
 rm -rf "$ROOT_PKG_OUT_DIR"
+mkdir -p "$ROOT_COMPILER_IDENTITY_DIR"
+# A package build must derive the checked-in source identity itself. Poison the
+# shared bootstrap input so this gate catches accidental stale-stamp reuse.
+printf '%s' '0000000000000000000000000000000000000000' > "$ROOT_COMPILER_IDENTITY_STAMP"
 
 set +e
 (
@@ -914,6 +921,8 @@ assert_status root-package-build "$status" 0
 assert_empty root-package-build "$WORKDIR/root-package-build.err"
 assert_contains root-package-build "$WORKDIR/root-package-build.out" "Built "
 [ -f "$ROOT_PKG_EXE" ] || fail "root package build did not write executable $ROOT_PKG_EXE"
+assert_contains root-package-build "$ROOT_COMPILER_IDENTITY_STAMP" "$EXPECTED_ROOT_COMPILER_IDENTITY"
+assert_not_contains root-package-build "$ROOT_COMPILER_IDENTITY_STAMP" "0000000000000000000000000000000000000000"
 
 set +e
 # cli-gate-case selfhost-cli-root-package-help direct "$ROOT_PKG_EXE"
@@ -938,6 +947,17 @@ assert_status root-package-version "$status" 0
 assert_empty root-package-version "$WORKDIR/root-package-version.err"
 assert_contains root-package-version "$WORKDIR/root-package-version.out" "typelisp "
 assert_contains root-package-version "$WORKDIR/root-package-version.out" " built "
+assert_not_contains root-package-version "$WORKDIR/root-package-version.out" "typelisp unknown"
+
+set +e
+# cli-gate-case selfhost-cli-root-package-producer-identity direct "$ROOT_PKG_EXE"
+"$ROOT_PKG_EXE" --producer-identity > "$WORKDIR/root-package-producer-identity.out" 2> "$WORKDIR/root-package-producer-identity.err"
+status=$?
+set -e
+assert_status root-package-producer-identity "$status" 0
+assert_empty root-package-producer-identity "$WORKDIR/root-package-producer-identity.err"
+assert_contains root-package-producer-identity "$WORKDIR/root-package-producer-identity.out" "$EXPECTED_ROOT_COMPILER_IDENTITY"
+assert_not_contains root-package-producer-identity "$WORKDIR/root-package-producer-identity.out" "unknown"
 
 set +e
 # cli-gate-case selfhost-cli-root-package-build-help direct "$ROOT_PKG_EXE"
@@ -950,6 +970,19 @@ assert_contains root-package-build-help "$WORKDIR/root-package-build-help.err" "
 assert_contains root-package-build-help "$WORKDIR/root-package-build-help.err" "typelisp build [--manifest-path <typelisp.pkg>]"
 assert_contains root-package-build-help "$WORKDIR/root-package-build-help.err" "--locked"
 assert_contains root-package-build-help "$WORKDIR/root-package-build-help.err" "--update-lock"
+
+rm -rf "$PKG_DIR/target"
+set +e
+(
+    cd "$PKG_DIR"
+    # cli-gate-case selfhost-cli-root-package-downstream-run direct "$ROOT_PKG_EXE"
+    "$ROOT_PKG_EXE" run --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/root-package-downstream-run.out" 2> "$WORKDIR/root-package-downstream-run.err"
+)
+status=$?
+set -e
+assert_status root-package-downstream-run "$status" 29
+assert_empty root-package-downstream-run "$WORKDIR/root-package-downstream-run.out"
+assert_empty root-package-downstream-run "$WORKDIR/root-package-downstream-run.err"
 
 CHAIN_DIR="$WORKDIR/package-graph-chain"
 CHAIN_ROOT="$CHAIN_DIR/root"
@@ -999,8 +1032,8 @@ if [ "$HOST_OS" = windows ]; then
 fi
 
 set +e
-# cli-gate-case selfhost-cli-package-graph-chain direct "$COMPILER"
-"$COMPILER" build --manifest-path "$CHAIN_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-chain.out" 2> "$WORKDIR/package-graph-chain.err"
+# cli-gate-case selfhost-cli-package-graph-chain direct "$ROOT_PKG_EXE"
+"$ROOT_PKG_EXE" build --manifest-path "$CHAIN_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-chain.out" 2> "$WORKDIR/package-graph-chain.err"
 status=$?
 set -e
 assert_status package-graph-chain "$status" 0

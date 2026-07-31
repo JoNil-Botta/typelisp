@@ -1,28 +1,28 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	485
-# count	total	all	annotations	485
+# count	total	all	rows	487
+# count	total	all	annotations	487
 # count	total	all	sources	3
-# count	total	all	source-sites	359
+# count	total	all	source-sites	361
 # count	total	all	expanded-cases	159
 # count	gate	public-tools	rows	306
 # count	gate	public-tools	source-sites	197
 # count	gate	public-tools	expanded-cases	125
-# count	gate	selfhost-cli	rows	77
-# count	gate	selfhost-cli	source-sites	76
+# count	gate	selfhost-cli	rows	79
+# count	gate	selfhost-cli	source-sites	78
 # count	gate	selfhost-cli	expanded-cases	16
 # count	gate	stage1-wrapper	rows	102
 # count	gate	stage1-wrapper	source-sites	86
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	362
+# count	host	all	rows	364
 # count	host	linux	rows	120
 # count	host	windows	rows	3
-# count	platform	linux	rows	482
-# count	platform	windows	rows	365
+# count	platform	linux	rows	484
+# count	platform	windows	rows	367
 # count	kind	delegated	rows	8
-# count	kind	direct	rows	51
+# count	kind	direct	rows	53
 # count	kind	wrapper	rows	426
-# count	process	compiler	rows	314
+# count	process	compiler	rows	315
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -32,9 +32,9 @@
 # count	process	compiler+assembler+linker+program	rows	3
 # count	process	compiler+assembler+linker+test-program	rows	3
 # count	process	compiler+assembler+linker+two-test-programs	rows	2
-# count	process	compiler+git+native-tools	rows	6
-# count	process	compiler+native-tools	rows	65
-# count	process	compiler+native-tools+program	rows	59
+# count	process	compiler+git+native-tools	rows	7
+# count	process	compiler+native-tools	rows	64
+# count	process	compiler+native-tools+program	rows	60
 # count	process	compiler+native-tools+programs	rows	5
 # count	process	compiler+native-tools+scratch-program	rows	1
 # count	process	gate-shell-process	rows	1
@@ -466,7 +466,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	spec-print-string	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp run <spec-work>/print-string.tl	<spec-work>/print-string.tl	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	check_text_file_exact stdout <spec-work>/print-string.stdout	empty	none	spec-print-string	-
 1	spec-extern-tl-alloc	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp run <spec-work>/extern-tl-alloc.tl	<spec-work>/extern-tl-alloc.tl	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	check_text_file_exact stdout <spec-work>/extern-tl-alloc.stdout	empty	none	spec-extern-tl-alloc	-
 # source	scripts/verify-selfhost-cli-build-run.sh
-# selfhost-cli inventory: 76 source sites and 77 behavior rows; the command
+# selfhost-cli inventory: 78 source sites and 79 behavior rows; the command
 # surface contributes 14 explicit one-case expansions, and the host-specific
 # REPL session expands one source site into Linux and Windows behavior rows.
 # The former delegated public LSP corpus duplicate was removed by #4923; its
@@ -513,11 +513,13 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	selfhost-cli-package-build	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --target <host-target> --opt-level 0	bin-package-main-exits-29	inherited	<workdir>/package-build	compiler+native-tools	inherited	0	contains:Built	empty	writes:release-executable;separate-program-exits-29-empty-output	selfhost-cli-package-build	-
 1	selfhost-cli-package-run-default	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp run --target <host-target> --opt-level 0	bin-package-main-exits-29-with-clean-target	inherited	<workdir>/package-build	compiler+native-tools+program	inherited	29	empty	empty	writes:release-executable-and-executes	selfhost-cli-package-run-default	-
 1	selfhost-cli-package-build-dev	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --target <host-target> --profile dev	bin-package-main-exits-29-with-clean-target	inherited	<workdir>/package-build	compiler+native-tools	inherited	0	contains:Built	empty	writes:dev-executable	selfhost-cli-package-build-dev	-
-1	selfhost-cli-root-package-build	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --target <host-target> --opt-level 0	root-typelisp-package-with-clean-release-dir	inherited	repository	compiler+native-tools	inherited	0	contains:Built	empty	writes:fresh-root-typelisp-cli	selfhost-cli-root-package-build	-
+1	selfhost-cli-root-package-build	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --target <host-target> --opt-level 0	root-typelisp-package-with-clean-release-dir-and-poisoned-identity-stamp	inherited	repository	compiler+git+native-tools	inherited	0	contains:Built	empty	overwrites:stale-identity-stamp-with-git-head;writes:fresh-root-typelisp-cli	selfhost-cli-root-package-build	-
 1	selfhost-cli-root-package-help	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2-built-root-cli/direct	typelisp --help	fresh-root-package-cli	inherited	repository	compiler	inherited	0	empty	contains:Usage,Synopsis,Commands,build,inspect,command-help-guidance	none	selfhost-cli-root-package-help	-
-1	selfhost-cli-root-package-version	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2-built-root-cli/direct	typelisp --version	fresh-root-package-cli	inherited	repository	compiler	inherited	0	contains:typelisp,built	empty	none	selfhost-cli-root-package-version	-
+1	selfhost-cli-root-package-version	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2-built-root-cli/direct	typelisp --version	fresh-root-package-cli	inherited	repository	compiler	inherited	0	contains:typelisp,built;excludes:typelisp-unknown	empty	none	selfhost-cli-root-package-version	-
+1	selfhost-cli-root-package-producer-identity	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2-built-root-cli/direct	typelisp --producer-identity	fresh-root-package-cli	inherited	repository	compiler	inherited	0	contains:repository-git-head;excludes:unknown	empty	none	selfhost-cli-root-package-producer-identity	-
 1	selfhost-cli-root-package-build-help	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2-built-root-cli/direct	typelisp build --help	fresh-root-package-cli	inherited	repository	compiler	inherited	0	empty	contains:Summary,build-usage,locked,update-lock	none	selfhost-cli-root-package-build-help	-
-1	selfhost-cli-package-graph-chain	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/package-graph-chain/root/typelisp.pkg --target <host-target> --opt-level 0	root-mid-leaf-path-dependency-chain	inherited	repository	compiler+native-tools	inherited	0	contains:leaf-archive,mid-archive,root-executable	empty	writes:three-artifacts;separate-root-program-exits-42	selfhost-cli-package-graph-chain	-
+1	selfhost-cli-root-package-downstream-run	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2-built-root-cli/direct	typelisp run --target <host-target> --opt-level 0	clean-minimal-bin-package-main-exits-29	inherited	<workdir>/package-build	compiler+native-tools+program	inherited	29	empty	empty	writes:release-executable-and-executes	selfhost-cli-root-package-downstream-run	-
+1	selfhost-cli-package-graph-chain	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2-built-root-cli/direct	typelisp build --manifest-path <workdir>/package-graph-chain/root/typelisp.pkg --target <host-target> --opt-level 0	root-mid-leaf-path-dependency-chain	inherited	repository	compiler+native-tools	inherited	0	contains:leaf-archive,mid-archive,root-executable	empty	writes:three-artifacts;separate-root-program-exits-42	selfhost-cli-package-graph-chain	-
 1	selfhost-cli-package-graph-github-prefetch	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/package-graph-github-prefetch/root/typelisp.pkg --target <host-target> --opt-level 0	prepopulated-github-dependency-worktree	inherited	repository	compiler+native-tools	inherited	0	contains:remote-archive,root-executable	empty	writes:two-artifacts;separate-root-program-exits-43	selfhost-cli-package-graph-github-prefetch	-
 1	selfhost-cli-package-graph-github-cache-first	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0	local-git-rewrite-with-empty-package-cache	inherited	repository	compiler+git+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	0	contains:root-executable	empty	writes:cache-entry-marker,metadata,lockfile,executable	selfhost-cli-package-graph-github-cache-first	-
 1	selfhost-cli-package-graph-github-cache-hit	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0	offline-remote-with-valid-package-cache	inherited	repository	compiler+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	0	contains:root-executable	empty	reuses:package-cache	selfhost-cli-package-graph-github-cache-hit	-

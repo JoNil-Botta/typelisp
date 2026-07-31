@@ -75,6 +75,10 @@
   (Ok CompilerPkgManifest)
   (Err String))
 
+(defstruct BuildPackageCompileContext
+  (root-compiler bool)
+  (error String))
+
 (defstruct BuildPackageGraphNode
   (manifest-path String)
   (manifest CompilerPkgManifest))
@@ -2598,6 +2602,83 @@
     [status : i64 (fs.mkdir-status-owned path)]
     (or (= status build-status-ok) (= status build-status-already-exists))))
 
+(define (build-package-root-compiler?
+  [manifest-dir : String]
+  [manifest : CompilerPkgManifest]) : bool
+  ;; Keep the compiler-only cfg out of ordinary packages. The source marker
+  ;; also prevents an unrelated package named `typelisp` from opting in.
+  (and
+    (string.eq (struct-get manifest name) "typelisp")
+    (string.eq (struct-get manifest entry) "src/main.tl")
+    (io.file-exists?
+      (compiler-load-join-root-path
+        manifest-dir
+        "src/compiler_build_identity.tl"))))
+
+(define (build-package-refresh-root-compiler-identity [manifest-dir : String]) : ResultBuildString
+  ;; Always resolve and overwrite the generated input. Reading a pre-existing
+  ;; bootstrap stamp here could silently give package-built compilers a stale
+  ;; producer identity.
+  (let
+    [repo-root : String
+      (if (= (string.string-length manifest-dir) 0)
+        "."
+        manifest-dir)]
+    [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
+    [identity-dir : String
+      (compiler-load-join-root-path (string.copy target-dir) "build-stage0")]
+    [identity-path : String
+      (compiler-load-join-root-path (string.copy identity-dir) "git-hash.txt")]
+    (match (build-run-captured
+      "build: cannot resolve root compiler source identity"
+      (source-tool-git-rev-parse-command repo-root))
+      [(ResultBuildString.Err message) (ResultBuildString.Err message)]
+      [(ResultBuildString.Ok output)
+        (let
+          [identity : String (build-trim-command-output output)]
+          (cond
+            [(not (tlci-producer-identity-valid? identity))
+              (ResultBuildString.Err
+                "build: root compiler source identity is not a full Git object name")]
+            [(not (build-mkdir-ok-owned? (string.copy target-dir)))
+              (ResultBuildString.Err
+                (str_cat.str-cat
+                  "build: failed to create root compiler identity directory "
+                  target-dir))]
+            [(not (build-mkdir-ok-owned? (string.copy identity-dir)))
+              (ResultBuildString.Err
+                (str_cat.str-cat
+                  "build: failed to create root compiler identity directory "
+                  identity-dir))]
+            [else
+              (match (source-tool-write-file
+                identity-path
+                identity
+                "build: failed to write root compiler identity")
+                [(SourceToolCommandStatus.Err message)
+                  (ResultBuildString.Err message)]
+                [(SourceToolCommandStatus.Ok) (ResultBuildString.Ok identity)])]))])))
+
+(define (build-package-compile-context
+  [manifest-dir : String]
+  [manifest : CompilerPkgManifest]) : BuildPackageCompileContext
+  (if (build-package-root-compiler? manifest-dir manifest)
+    (match (build-package-refresh-root-compiler-identity manifest-dir)
+      [(ResultBuildString.Err message)
+        (BuildPackageCompileContext true message)]
+      [(ResultBuildString.Ok _) (BuildPackageCompileContext true "")])
+    (BuildPackageCompileContext false "")))
+
+(define (build-package-compile-cfgs
+  [target : CompilerBackendTarget]
+  [root-compiler : bool]) : sym_i64_env.SymI64Env
+  (let
+    [cfgs : sym_i64_env.SymI64Env
+      (compiler-driver-target-cfgs target (compiler-cfg-empty))]
+    (if root-compiler
+      (compiler-cfg-enable cfgs "compiler-build-identity")
+      cfgs)))
+
 (define (build-ensure-package-output-dirs
   [manifest-dir : String]
   [_name : String]
@@ -4347,6 +4428,8 @@
     ;; persistent cache floors between dependency and root emits.
     [_ : unit (cfg windows (compiler-driver-reset-file-state!) unit)]
     [manifest-dir : String (compiler-load-dirname manifest-path)]
+    [compile-context : BuildPackageCompileContext
+      (build-package-compile-context manifest-dir manifest)]
     [entry-path : String
       (compiler-load-join-root-path manifest-dir (struct-get manifest entry))]
     [name : String (struct-get manifest name)]
@@ -4364,12 +4447,16 @@
       (build-package-runtime-artifact-path artifact-paths)]
     [tlci-path : String (build-package-host-tlci-artifact-path artifact-paths)]
     [_reset-file-state : unit (compiler-driver-reset-file-state!)]
-    (if (not (build-ensure-package-output-dirs manifest-dir name profile))
+    (if (or
+      (> (string.string-length (struct-get compile-context error)) 0)
+      (not (build-ensure-package-output-dirs manifest-dir name profile)))
       (begin
         (io.print-error
-          (str_cat.str-cat
-            "build: failed to create package output directory "
-            (build-package-output-dir-profile manifest-dir name profile)))
+          (if (> (string.string-length (struct-get compile-context error)) 0)
+            (struct-get compile-context error)
+            (str_cat.str-cat
+              "build: failed to create package output directory "
+              (build-package-output-dir-profile manifest-dir name profile))))
         1)
       (let
         [manifest-link-inputs : SourceToolLinkInputs
@@ -4387,7 +4474,9 @@
             manifest-dir
             name
             (struct-get manifest deps)
-            (compiler-driver-target-cfgs target (compiler-cfg-empty)))]
+            (build-package-compile-cfgs
+              target
+              (struct-get compile-context root-compiler)))]
         [_reset-after-inline-tests : unit
           (if (= inline-test-status 0)
             (begin
@@ -4416,13 +4505,15 @@
                 (compiler-driver-reset-file-state!)
                 (intern-persistent-arena-reset!))]
             (if (= pre-emit-doctest-status 0)
-              (match (compiler-driver-load-package-file-with-runtime
+              (match (compiler-driver-load-package-file-with-runtime-cfg
                 entry-path
-                target
                 stdlib-roots
                 manifest-dir
                 (struct-get manifest deps)
-                emit-entry)
+                emit-entry
+                (build-package-compile-cfgs
+                  target
+                  (struct-get compile-context root-compiler)))
                 [(ResultCompilerLoadWithPaths.Err diag)
                   (begin
                     (io.print-error

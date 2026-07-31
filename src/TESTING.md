@@ -621,9 +621,12 @@ build the next stage0 via [`../scripts/build-stage0.sh`](../scripts/build-stage0
 
 The checkout root also has a `typelisp.pkg` whose binary entry is
 `src/main.tl`, so `typelisp build` from the repository root builds the
-selfhost CLI package into `target/release/`. The CI smoke keeps a
-root package-build check in `scripts/verify-selfhost-cli-build-run.sh`; the
-published stage0 workflow intentionally keeps using the direct
+selfhost CLI package into `target/release/`. That package build refreshes the
+compiler identity from the checkout's exact Git HEAD before compiling. The CI
+smoke poisons the old identity stamp, checks that the root-built compiler
+reports the refreshed identity, and uses it for downstream binary and
+static-library package builds. The published stage0 workflow intentionally
+keeps using the direct
 `compile src/main.tl` path plus native linking so a seed compiler can build
 its successor without depending on its own `build` command.
 

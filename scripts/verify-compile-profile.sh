@@ -1070,6 +1070,9 @@ fi
 # typecheck boundary before the change and 6180 after (+140), and 6144 was the
 # 6-segment capacity. The expr pools grew too (+1838..+2254 nodes) but held
 # their segment counts, which is the sizing this trade was designed to buy.
+# #6193's dotted-module migration crossed the next type-pool typecheck boundary,
+# 7 -> 8 segments: the authoritative Windows selfhost probe measured 7346 used
+# nodes, 8192 capacity, and 196608 physical payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1111,7 +1114,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_type_pool macro_expand 22 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 7 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 8 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

@@ -5213,14 +5213,10 @@
     [arity : i64]
     [calls : i64]
     [total-ms : i64]) : bool
-    (if (and
-      (>= index 0)
-      (< index (struct-get tc_core.compiler-tc-macro-profile-entries len)))
+    (if (and (>= index 0) (< index (tc_core.compiler-tc-macro-profile-count)))
       (let
         [entry : tc_core.CompilerTcMacroProfileEntry
-          (array-ref
-            (struct-get tc_core.compiler-tc-macro-profile-entries slots)
-            index)]
+          (tc_core.compiler-tc-macro-profile-current-entry index)]
         (and
           (= (struct-get entry macro-id) macro-id)
           (string.eq (struct-get entry macro-name) macro-name)
@@ -5242,26 +5238,22 @@
       [ok : bool true]
       (begin
         (tc_core.compiler-tc-macro-profile-reset)
-        (tc_core.compiler-tc-macro-profile-record-in!
-          (&mut tc_core.compiler-tc-macro-profile-entries)
+        (tc_core.compiler-tc-macro-profile-record-entry!
           macro-a
           "profile-dense-module-a/profile-dense-macro"
           2
           3)
-        (tc_core.compiler-tc-macro-profile-record-in!
-          (&mut tc_core.compiler-tc-macro-profile-entries)
+        (tc_core.compiler-tc-macro-profile-record-entry!
           macro-a
           "profile-dense-module-a/profile-dense-macro"
           2
           5)
-        (tc_core.compiler-tc-macro-profile-record-in!
-          (&mut tc_core.compiler-tc-macro-profile-entries)
+        (tc_core.compiler-tc-macro-profile-record-entry!
           macro-a
           "profile-dense-module-a/profile-dense-macro"
           6
           7)
-        (tc_core.compiler-tc-macro-profile-record-in!
-          (&mut tc_core.compiler-tc-macro-profile-entries)
+        (tc_core.compiler-tc-macro-profile-record-entry!
           macro-b
           "profile-dense-module-b/profile-dense-macro"
           2
@@ -5269,32 +5261,23 @@
         (set!
           ok
           (and
-            (= (struct-get tc_core.compiler-tc-macro-profile-entries len) 3)
+            (= (tc_core.compiler-tc-macro-profile-count) 3)
             (compiler-typecheck-smoke-macro-profile-entry-eq?
-              (tc_core.compiler-tc-macro-profile-entry-index
-                (& tc_core.compiler-tc-macro-profile-entries)
-                macro-a
-                2)
+              (tc_core.compiler-tc-macro-profile-current-entry-index macro-a 2)
               macro-a
               "profile-dense-module-a/profile-dense-macro"
               2
               2
               8)
             (compiler-typecheck-smoke-macro-profile-entry-eq?
-              (tc_core.compiler-tc-macro-profile-entry-index
-                (& tc_core.compiler-tc-macro-profile-entries)
-                macro-a
-                6)
+              (tc_core.compiler-tc-macro-profile-current-entry-index macro-a 6)
               macro-a
               "profile-dense-module-a/profile-dense-macro"
               6
               1
               7)
             (compiler-typecheck-smoke-macro-profile-entry-eq?
-              (tc_core.compiler-tc-macro-profile-entry-index
-                (& tc_core.compiler-tc-macro-profile-entries)
-                macro-b
-                2)
+              (tc_core.compiler-tc-macro-profile-current-entry-index macro-b 2)
               macro-b
               "profile-dense-module-b/profile-dense-macro"
               2
@@ -5302,8 +5285,7 @@
               11)))
         (while (< growth-cursor 32)
           (begin
-            (tc_core.compiler-tc-macro-profile-record-in!
-              (&mut tc_core.compiler-tc-macro-profile-entries)
+            (tc_core.compiler-tc-macro-profile-record-entry!
               macro-b
               "profile-dense-module-b/profile-dense-macro"
               (+ growth-cursor 100)
@@ -5313,10 +5295,9 @@
           ok
           (and
             ok
-            (= (struct-get tc_core.compiler-tc-macro-profile-entries len) 35)
+            (= (tc_core.compiler-tc-macro-profile-count) 35)
             (compiler-typecheck-smoke-macro-profile-entry-eq?
-              (tc_core.compiler-tc-macro-profile-entry-index
-                (& tc_core.compiler-tc-macro-profile-entries)
+              (tc_core.compiler-tc-macro-profile-current-entry-index
                 macro-b
                 131)
               macro-b
@@ -5329,16 +5310,12 @@
           ok
           (and
             ok
-            tc_core.compiler-tc-macro-profile-active
-            (= (struct-get tc_core.compiler-tc-macro-profile-entries len) 0)
+            (tc_core.compiler-tc-macro-profile-active?)
+            (= (tc_core.compiler-tc-macro-profile-count) 0)
             (=
-              (tc_core.compiler-tc-macro-profile-entry-index
-                (& tc_core.compiler-tc-macro-profile-entries)
-                macro-a
-                2)
+              (tc_core.compiler-tc-macro-profile-current-entry-index macro-a 2)
               -1)))
-        (tc_core.compiler-tc-macro-profile-record-in!
-          (&mut tc_core.compiler-tc-macro-profile-entries)
+        (tc_core.compiler-tc-macro-profile-record-entry!
           macro-b
           "profile-dense-module-b/profile-dense-macro"
           2
@@ -5357,8 +5334,8 @@
         (tc_core.compiler-tc-macro-profile-clear)
         (and
           ok
-          (not tc_core.compiler-tc-macro-profile-active)
-          (= (struct-get tc_core.compiler-tc-macro-profile-entries len) 0))))))
+          (not (tc_core.compiler-tc-macro-profile-active?))
+          (= (tc_core.compiler-tc-macro-profile-count) 0))))))
 
 (define (main) : i64
   (begin

@@ -4210,6 +4210,31 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-macro-profile-count) : i64
+    (struct-get compiler-tc-macro-profile-entries len)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-active?) : bool
+    compiler-tc-macro-profile-active))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-current-entry-index
+    [macro-id : i64]
+    [arity : i64]) : i64
+    (compiler-tc-macro-profile-entry-index
+      (& compiler-tc-macro-profile-entries)
+      macro-id
+      arity)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-current-entry [index : i64]) : CompilerTcMacroProfileEntry
+    (array-ref (struct-get compiler-tc-macro-profile-entries slots) index)))
+
+(cfg
+  compile-profile
   (define (compiler-tc-macro-profile-emit-entries
     [entries : (& entries CompilerTcMacroProfileEntries)]) : unit
     (let
@@ -59803,58 +59828,82 @@
   [expr-bases : i64]
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [exprs : ast.AstExprList]
   [lifetime : i64]
-  [seen : TcStringList]) : bool
+  [seen : TcStringList]
+  [remaining : i64]) : bool
   ;; Only lexical bindings can carry this function-local lifetime. Follow
-  ;; scan-through caches that compact a local prefix, but stop at the
-  ;; authoritative module/top-level cache instead of resolving every global
-  ;; signature during last-use pruning.
-  (match (tc-type-env-marker-step env)
-    [(TcTypeEnvMarkerStep.Done) false]
-    [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-borrow-check-env-lifetime-used-in-exprs?
-        expr-bases
-        ctx
-        rest-env
-        exprs
-        lifetime
-        seen)]
-    [(TcTypeEnvMarkerStep.Bind name-id ty rest-env)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-env-profile-borrow-lifetime-scan-note-binding!))
-        (let
-          [name : String (tc-env-key-name-text name-id)]
-          (if (tc-string-list-contains seen name)
-            (tc-borrow-check-env-lifetime-used-in-exprs?
-              expr-bases
-              ctx
-              rest-env
-              exprs
-              lifetime
-              seen)
-            (if (and
-              (tc-borrow-check-binding-stores-lifetime? ctx ty lifetime)
-              (tc-expr-list-uses-free-name?
-                expr-bases
-                exprs
-                name
-                TcStringList.Nil))
-              true
-              (tc-borrow-check-env-lifetime-used-in-exprs?
-                expr-bases
-                ctx
-                rest-env
-                exprs
-                lifetime
-                (tc-string-list-add seen name))))))]))
+  ;; scan-through caches that compact a local prefix, but stop after every
+  ;; live local has been seen instead of depending on the module cache shape.
+  (if (<= remaining 0)
+    false
+    (match (tc-type-env-marker-step env)
+      [(TcTypeEnvMarkerStep.Done) false]
+      [(TcTypeEnvMarkerStep.Cache rest-env)
+        (tc-borrow-check-env-lifetime-used-in-exprs?
+          expr-bases
+          ctx
+          rest-env
+          locals
+          exprs
+          lifetime
+          seen
+          remaining)]
+      [(TcTypeEnvMarkerStep.Bind name-id ty rest-env)
+        (if (= name-id (tc-default-boundary-id))
+          false
+          (begin
+            (cfg
+              compile-profile
+              (compiler-tc-env-profile-borrow-lifetime-scan-note-binding!))
+            (let
+              [name : String (tc-env-key-name-text name-id)]
+              (cond
+                [(tc-string-list-contains seen name)
+                  (tc-borrow-check-env-lifetime-used-in-exprs?
+                    expr-bases
+                    ctx
+                    rest-env
+                    locals
+                    exprs
+                    lifetime
+                    seen
+                    remaining)]
+                [(not (tc-moved-contains? locals name-id))
+                  (tc-borrow-check-env-lifetime-used-in-exprs?
+                    expr-bases
+                    ctx
+                    rest-env
+                    locals
+                    exprs
+                    lifetime
+                    (tc-string-list-add seen name)
+                    remaining)]
+                [(and
+                    (tc-borrow-check-binding-stores-lifetime? ctx ty lifetime)
+                    (tc-expr-list-uses-free-name?
+                      expr-bases
+                      exprs
+                      name
+                      TcStringList.Nil))
+                  true]
+                [else
+                  (tc-borrow-check-env-lifetime-used-in-exprs?
+                    expr-bases
+                    ctx
+                    rest-env
+                    locals
+                    exprs
+                    lifetime
+                    (tc-string-list-add seen name)
+                    (- remaining 1))]))))])))
 
 (define (tc-borrow-check-lifetime-used-in-exprs?
   [expr-bases : i64]
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [exprs : ast.AstExprList]
   [lifetime : i64]) : bool
   (begin
@@ -59865,9 +59914,11 @@
           expr-bases
           ctx
           env
+          locals
           exprs
           lifetime
-          TcStringList.Nil)]
+          TcStringList.Nil
+          (tc-moved-len locals))]
       (begin
         (cfg
           compile-profile
@@ -60131,6 +60182,7 @@
   [expr-bases : i64]
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [exprs : ast.AstExprList]
   [protected : TcMovedSet]
   [facts : TcMovedPathFacts]
@@ -60165,6 +60217,7 @@
                   expr-bases
                   ctx
                   env
+                  locals
                   exprs
                   (tc-borrow-check-path-lifetime ctx env path))
                   out
@@ -60173,6 +60226,7 @@
           expr-bases
           ctx
           env
+          locals
           exprs
           protected
           (box-get rest)
@@ -60182,6 +60236,7 @@
   [expr-bases : i64]
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [protected : TcMovedSet]
   [exprs : ast.AstExprList]) : TcMovedSet
@@ -60191,6 +60246,7 @@
       expr-bases
       ctx
       env
+      locals
       exprs
       protected
       (tc-moved-paths borrowed)
@@ -61962,6 +62018,7 @@
           expr-bases
           ctx
           env
+          locals
           borrowed
           protected
           exprs)]
@@ -62522,6 +62579,7 @@
           expr-bases
           ctx
           env
+          locals
           borrowed
           protected
           exprs)]

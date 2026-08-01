@@ -133,7 +133,9 @@ Summary:
       "tlci image\n"
       "format-version: "
       (string.int->string
-        (tlci_core.tlci-read-u64 bytes tlci_core.tlci-format-version-field-offset))
+        (tlci_core.tlci-read-u64
+          bytes
+          tlci_core.tlci-format-version-field-offset))
       "\n"
       "host-arch: "
       (tlci-inspect-host-arch-name host-arch)
@@ -147,10 +149,12 @@ Summary:
       (struct-get image compiler-build-hash)
       "\n"
       "content-hash: "
-      (string.int->string (tlci_core.tlci-read-u64 bytes tlci_core.tlci-hash-field-offset))
+      (string.int->string
+        (tlci_core.tlci-read-u64 bytes tlci_core.tlci-hash-field-offset))
       "\n"
       "file-size: "
-      (string.int->string (tlci_core.tlci-read-u64 bytes tlci_core.tlci-file-size-field-offset))
+      (string.int->string
+        (tlci_core.tlci-read-u64 bytes tlci_core.tlci-file-size-field-offset))
       "\n"
       "metadata-version: "
       (struct-get metadata version)
@@ -195,7 +199,9 @@ Summary:
         (tlci_core.tlci-read-u64 bytes 144)
         tlci_core.tlci-section-symbol-record-size)
       (tlci-inspect-import-line
-        (tlci_core.tlci-read-u64 bytes tlci_core.tlci-import-section-field-offset)
+        (tlci_core.tlci-read-u64
+          bytes
+          tlci_core.tlci-import-section-field-offset)
         (tlci_core.tlci-read-u64 bytes tlci_core.tlci-import-count-field-offset)
         (array-length (struct-get image imports))))))
 

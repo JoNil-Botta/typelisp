@@ -368,7 +368,8 @@
   (let
     [fspan : ast.AstSourceSpan (struct-get finding span)]
     [rule-id : String (struct-get finding rule-id)]
-    [suggestion : String (lint_core.lint-rule-suggestion (string.copy (& rule-id)))]
+    [suggestion : String
+      (lint_core.lint-rule-suggestion (string.copy (& rule-id)))]
     (cdiag.compiler-diagnostic-with-help
       (cdiag.compiler-diagnostic-with-code
         (cdiag.compiler-diagnostic-with-level
@@ -387,7 +388,8 @@
   [source : String]
   [finding : lint_core.LintFinding]) : String
   (let
-    [diag : cdiag.CompilerDiagnostic (selfhost-lint-finding-diagnostic path finding)]
+    [diag : cdiag.CompilerDiagnostic
+      (selfhost-lint-finding-diagnostic path finding)]
     (if selfhost-lint-flat-output
       (cdiag.compiler-diagnostic-render diag)
       (cdiag.compiler-diagnostic-render-source diag source))))
@@ -4215,9 +4217,7 @@
       ;; into this file's scratch arena; release it so the scratch teardown
       ;; cannot leave the global cache pointing into freed memory. A batch
       ;; installs the cache in its own outer arena, which outlives each file.
-      (if (=
-        selfhost-lint-unsafe-surface-cache-arena
-        (arena.tl_arena_current))
+      (if (= selfhost-lint-unsafe-surface-cache-arena (arena.tl_arena_current))
         (selfhost-lint-unsafe-surface-cache-release!)
         unit)
       (unsafe
@@ -4272,9 +4272,7 @@
       ;; into this file's scratch arena; release it so the scratch teardown
       ;; cannot leave the global cache pointing into freed memory. A batch
       ;; installs the cache in its own outer arena, which outlives each file.
-      (if (=
-        selfhost-lint-unsafe-surface-cache-arena
-        (arena.tl_arena_current))
+      (if (= selfhost-lint-unsafe-surface-cache-arena (arena.tl_arena_current))
         (selfhost-lint-unsafe-surface-cache-release!)
         unit)
       (unsafe
@@ -4571,7 +4569,8 @@
     [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (let
         [sources : lint_svec.Vec (struct-get source-set sources)]
-        [manifest : compiler_load.CompilerPkgManifest (struct-get source-set manifest)]
+        [manifest : compiler_load.CompilerPkgManifest
+          (struct-get source-set manifest)]
         [dead-sources-result : ResultSelfhostLintDeadSources
           (selfhost-lint-package-dead-sources source-set stdlib-roots)]
         [package-roots : lint_svec.Vec

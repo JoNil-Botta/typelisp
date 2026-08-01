@@ -59,6 +59,21 @@ case "$(uname -s)" in
         ;;
 esac
 
+# Formatting several files in one process retains their driver state until the
+# batch exits. Keep Windows batches small because hosted runners have much less
+# system commit headroom than Linux runners after the bootstrap gates.
+FORMAT_BATCH_SIZE_DEFAULT=32
+if [ "$HOST_OS" = windows ]; then
+    FORMAT_BATCH_SIZE_DEFAULT=4
+fi
+FORMAT_BATCH_SIZE=${TYPELISP_FORMAT_BATCH_SIZE:-$FORMAT_BATCH_SIZE_DEFAULT}
+case "$FORMAT_BATCH_SIZE" in
+    '' | 0 | *[!0-9]*)
+        echo "TYPELISP_FORMAT_BATCH_SIZE must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+
 if [ "$SELF_TEST_CURRENT_COMPILER_MODE" -eq 1 ]; then
     COMPILER="$ROOT/scripts/check-tl-format.sh"
 elif [ -n "${TYPELISP_BIN:-}" ]; then
@@ -96,12 +111,12 @@ build_current_cli_for_format() {
     CURRENT_CLI_OBJ="$WORKDIR/current-cli.$NL_OBJ_EXT"
     CURRENT_CLI_BIN="$WORKDIR/current-cli$NL_BIN_EXT"
 
-    echo "Building current formatter for current-syntax-aware TypeLisp formatting."
+    echo "Building lightweight current formatter for current-syntax-aware TypeLisp formatting."
     if ! run_with_heartbeat_capture \
         "compile current formatter for format" \
         "$CURRENT_CLI_COMPILE_STDOUT" \
         "$CURRENT_CLI_COMPILE_STDERR" \
-        "$COMPILER" compile src/main.tl -o "$CURRENT_CLI_ASM" \
+        "$COMPILER" compile src/format_cli.tl -o "$CURRENT_CLI_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
@@ -122,10 +137,13 @@ build_current_cli_for_format() {
 }
 
 select_current_cli_for_format() {
-    if [ "$FORMAT_COMPILER_IS_CURRENT_TREE" -eq 1 ]; then
+    if [ "$FORMAT_COMPILER_IS_CURRENT_TREE" -eq 1 ] && [ "$HOST_OS" != windows ]; then
         CURRENT_CLI_BIN=$COMPILER
         echo "Using fixpoint-proven current-tree compiler for current-syntax-aware TypeLisp formatting."
     else
+        # The unified Windows CLI retains the compiler payload even for `fmt`.
+        # Link the formatter-only entry point so large source files have the
+        # runner's commit headroom available for their CST and render tree.
         build_current_cli_for_format
     fi
 }
@@ -148,13 +166,20 @@ verify_current_compiler_mode_control() (
     FORMAT_COMPILER_IS_CURRENT_TREE=1
     COMPILER="$WORKDIR/fixpoint-proven-current-compiler"
     select_current_cli_for_format >/dev/null
-    if [ -e "$marker" ]; then
-        echo "CI-current formatter mode unexpectedly rebuilt the current-tree CLI" >&2
-        exit 1
-    fi
-    if [ "$CURRENT_CLI_BIN" != "$COMPILER" ]; then
-        echo "CI-current formatter mode did not select the supplied compiler" >&2
-        exit 1
+    if [ "$HOST_OS" = windows ]; then
+        if [ ! -f "$marker" ] || [ "$CURRENT_CLI_BIN" != "$WORKDIR/rebuilt-current-formatter" ]; then
+            echo "Windows CI-current formatter mode did not build the lightweight CLI" >&2
+            exit 1
+        fi
+    else
+        if [ -e "$marker" ]; then
+            echo "Linux CI-current formatter mode unexpectedly rebuilt the current-tree CLI" >&2
+            exit 1
+        fi
+        if [ "$CURRENT_CLI_BIN" != "$COMPILER" ]; then
+            echo "Linux CI-current formatter mode did not select the supplied compiler" >&2
+            exit 1
+        fi
     fi
 )
 
@@ -208,12 +233,12 @@ if [ -s "$CHECK_FILES" ] && ! xargs "$COMPILER" fmt --check < "$CHECK_FILES"; th
 fi
 
 if [ -s "$METADATA_FILES" ]; then
-    echo "Checking current-syntax-aware TypeLisp formatting for $metadata_count file(s)."
+    echo "Checking current-syntax-aware TypeLisp formatting for $metadata_count file(s) in batches of up to $FORMAT_BATCH_SIZE."
     select_current_cli_for_format
     # Batch the driver invocations: one process per batch keeps the formatter's
     # arena bounded, which Windows runners enforce as a system commit limit
     # (error 1455) when a single invocation spans the whole tree.
-    if ! xargs -n "${TYPELISP_FORMAT_BATCH_SIZE:-32}" "$CURRENT_CLI_BIN" fmt --check < "$METADATA_FILES"; then
+    if ! xargs -n "$FORMAT_BATCH_SIZE" "$CURRENT_CLI_BIN" fmt --check < "$METADATA_FILES"; then
         echo "Current-syntax-aware TypeLisp format check failed." >&2
         echo "Run: $CURRENT_CLI_BIN fmt --check \$(cat $METADATA_FILES)" >&2
         exit 1

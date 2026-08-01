@@ -12,6 +12,7 @@
 (import compiler_target_cfg_core as target_cfg)
 (import format_tokens as tokens)
 (import format_rules)
+(import format_render_buf as fmt_buf)
 (import package_source_core)
 
 (defenum FmtConfig
@@ -306,24 +307,20 @@
         (fmt-common-suffix-lines a b prefix (+ count 1))
         count))))
 
-(define (fmt-diff-emit-range
+(define (fmt-diff-emit-range-into!
   [lines : fmt_svec.Vec]
   [marker : String]
   [from : i64]
   [to : i64]
-  [acc : String]) : String
-  (if (>= from to)
-    acc
-    (fmt-diff-emit-range
-      lines
-      marker
-      (+ from 1)
-      to
-      (string.append
-        acc
-        (string.append
-          marker
-          (string.append (fmt_svec.get (& lines) from "") "\n"))))))
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : unit
+  (let
+    [index : i64 from]
+    (while (< index to)
+      (begin
+        (fmt_buf.fmt-render-buf-append buf marker)
+        (fmt_buf.fmt-render-buf-append buf (fmt_svec.get (& lines) index ""))
+        (fmt_buf.fmt-render-buf-append buf "\n")
+        (set! index (+ index 1))))))
 
 (define (fmt-diff-hunk-header
   [src-start : i64]
@@ -372,23 +369,25 @@
       (if (< (+ dst-end ctx) dlen)
         (+ dst-end ctx)
         dlen)]
-    (string.append
-      (string.append
-        (string.append "--- a/" (string.append path "\n"))
-        (string.append "+++ b/" (string.append path "\n")))
-      (string.append
+    [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
+    (begin
+      (fmt_buf.fmt-render-buf-append (&mut buf) "--- a/")
+      (fmt_buf.fmt-render-buf-append (&mut buf) path)
+      (fmt_buf.fmt-render-buf-append (&mut buf) "\n+++ b/")
+      (fmt_buf.fmt-render-buf-append (&mut buf) path)
+      (fmt_buf.fmt-render-buf-append (&mut buf) "\n")
+      (fmt_buf.fmt-render-buf-append
+        (&mut buf)
         (fmt-diff-hunk-header
           (+ start 1)
           (- src-ctx-end start)
           (+ start 1)
-          (- dst-ctx-end start))
-        (string.append
-          (fmt-diff-emit-range src " " start prefix "")
-          (string.append
-            (fmt-diff-emit-range src "-" prefix src-end "")
-            (string.append
-              (fmt-diff-emit-range dst "+" prefix dst-end "")
-              (fmt-diff-emit-range src " " src-end src-ctx-end ""))))))))
+          (- dst-ctx-end start)))
+      (fmt-diff-emit-range-into! src " " start prefix (&mut buf))
+      (fmt-diff-emit-range-into! src "-" prefix src-end (&mut buf))
+      (fmt-diff-emit-range-into! dst "+" prefix dst-end (&mut buf))
+      (fmt-diff-emit-range-into! src " " src-end src-ctx-end (&mut buf))
+      (fmt_buf.fmt-render-buf-string buf))))
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
@@ -415,6 +414,12 @@
             (string.append (fmt-source-error-message path err) "\n"))
           1)])))
 
+;; Parsing and rendering retain a complete CST and document tree. Reclaim that
+;; scratch state after each file so multi-file formatter invocations do not grow
+;; the process-lifetime arena with the size of the whole corpus.
+(define (fmt-format-file-scoped [check : bool] [path : String]) : i64
+  (with-arena file-arena (fmt-format-file check path)))
+
 (define (fmt-files-from
   [check : bool]
   [paths : fmt_svec.Vec]
@@ -424,7 +429,7 @@
     status
     (let
       [path : String (fmt_svec.get (& paths) index "")]
-      [file-status : i64 (fmt-format-file check path)]
+      [file-status : i64 (fmt-format-file-scoped check path)]
       (fmt-files-from
         check
         paths
@@ -445,7 +450,7 @@
     status
     (let
       [path : String (fmt_svec.get (& paths) index "")]
-      [file-status : i64 (fmt-format-file check path)]
+      [file-status : i64 (fmt-format-file-scoped check path)]
       (fmt-package-files-from
         check
         paths

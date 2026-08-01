@@ -14156,7 +14156,8 @@
   [lifetime-id : i64]) : bool
   (if (= key (tc-signature-lifetime-marker-id))
     (match ty
-      [(ast.AstType.Var lifetime) (and (>= lifetime-id 0) (= lifetime lifetime-id))]
+      [(ast.AstType.Var lifetime)
+        (and (>= lifetime-id 0) (= lifetime lifetime-id))]
       [_ false])
     false))
 
@@ -25095,7 +25096,8 @@
       skip-id
       (+ index 1)
       (tc-signature-lifetime-type-collect-into
-        (ast.ty-node-get (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
         skip-id
         out))))
 
@@ -25109,15 +25111,30 @@
     [(ast.AstType.Tuple elems)
       (tc-signature-lifetime-type-list-collect-into (box-get elems) skip-id out)]
     [(ast.AstType.Array elem _)
-      (tc-signature-lifetime-type-collect-into (ast.ty-node-get elem) skip-id out)]
+      (tc-signature-lifetime-type-collect-into
+        (ast.ty-node-get elem)
+        skip-id
+        out)]
     [(ast.AstType.DynArray elem)
-      (tc-signature-lifetime-type-collect-into (ast.ty-node-get elem) skip-id out)]
+      (tc-signature-lifetime-type-collect-into
+        (ast.ty-node-get elem)
+        skip-id
+        out)]
     [(ast.AstType.Box elem)
-      (tc-signature-lifetime-type-collect-into (ast.ty-node-get elem) skip-id out)]
+      (tc-signature-lifetime-type-collect-into
+        (ast.ty-node-get elem)
+        skip-id
+        out)]
     [(ast.AstType.Ptr elem)
-      (tc-signature-lifetime-type-collect-into (ast.ty-node-get elem) skip-id out)]
+      (tc-signature-lifetime-type-collect-into
+        (ast.ty-node-get elem)
+        skip-id
+        out)]
     [(ast.AstType.MutPtr elem)
-      (tc-signature-lifetime-type-collect-into (ast.ty-node-get elem) skip-id out)]
+      (tc-signature-lifetime-type-collect-into
+        (ast.ty-node-get elem)
+        skip-id
+        out)]
     [(ast.AstType.Ref lifetime inner)
       (tc-signature-lifetime-type-collect-into
         (ast.ty-node-get inner)
@@ -25133,7 +25150,10 @@
           out
           (tc-name-id-list-add out lifetime)))]
     [(ast.AstType.Region _ inner)
-      (tc-signature-lifetime-type-collect-into (ast.ty-node-get inner) skip-id out)]
+      (tc-signature-lifetime-type-collect-into
+        (ast.ty-node-get inner)
+        skip-id
+        out)]
     [(ast.AstType.EnumArgs _ lifetimes)
       (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
     [(ast.AstType.StructArgs _ lifetimes)
@@ -25141,7 +25161,10 @@
     [(ast.AstType.VarArgs _ lifetimes)
       (tc-lifetime-list-to-name-id-list-into (box-get lifetimes) out)]
     [(ast.AstType.Consume inner)
-      (tc-signature-lifetime-type-collect-into (ast.ty-node-get inner) skip-id out)]
+      (tc-signature-lifetime-type-collect-into
+        (ast.ty-node-get inner)
+        skip-id
+        out)]
     [_ out]))
 
 (define (tc-param-list-has-name-id-at?
@@ -55895,14 +55918,17 @@
       [(ast.AstParam.Param name _ _ _)
         (tc-move-params-locals-at params (+ index 1) (tc-moved-add acc name))])))
 
-(define (tc-param-storage-memory-class-type? [ctx : TcContext] [ty : ast.AstType]) : bool
+(define (tc-param-storage-memory-class-type?
+  [ctx : TcContext]
+  [ty : ast.AstType]) : bool
   (let
     [unwrapped : ast.AstType
       (ast.ast-type-strip-consuming-param-with-pools (tc-context-pools ctx) ty)]
     (if (tc-poison-type? unwrapped)
       false
       (match (tc-type-strip-region (tc-resolve-type ctx unwrapped))
-        [(ast.AstType.Struct name) (not (tc-name-register-resident-id? ctx name))]
+        [(ast.AstType.Struct name)
+          (not (tc-name-register-resident-id? ctx name))]
         [(ast.AstType.StructArgs name _)
           (not (tc-name-register-resident-id? ctx name))]
         [(ast.AstType.Enum name) (not (tc-name-register-resident-id? ctx name))]
@@ -55937,7 +55963,9 @@
             (tc-param-storage-origin-bind-in-set moved name name)
             moved))])))
 
-(define (tc-param-storage-fixed-array-type? [ctx : TcContext] [ty : ast.AstType]) : bool
+(define (tc-param-storage-fixed-array-type?
+  [ctx : TcContext]
+  [ty : ast.AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(ast.AstType.Array _ _) true]
     [_ false]))
@@ -55991,7 +56019,8 @@
           [(ResultTcType.Err _) TcMaybeNameId.No]))]
     [(ast.AstExpr.ArrayRef array-box _)
       (let
-        [array : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases array-box)]
+        [array : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases array-box)]
         (match (tc-expr ctx env array)
           [(ResultTcType.Ok array-ty)
             (if (tc-param-storage-fixed-array-type? ctx array-ty)
@@ -59764,7 +59793,10 @@
     false
     (match (tc-type-strip-region (tc-resolve-type ctx ty))
       [(ast.AstType.Func _ ret)
-        (tc-borrow-check-type-contains-lifetime? ctx (ast.ty-node-get ret) lifetime)]
+        (tc-borrow-check-type-contains-lifetime?
+          ctx
+          (ast.ty-node-get ret)
+          lifetime)]
       [_ (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)])))
 
 (define (tc-borrow-check-env-lifetime-used-in-exprs?
@@ -74385,7 +74417,9 @@
               (array-set! macro-unqualified-import-cache-module-keys i 0)
               (set! i (+ i 1))))
           (set! macro-unqualified-import-cache-count 0)
-          (set! macro-unqualified-import-cache-generation (ci.intern-generation))
+          (set!
+            macro-unqualified-import-cache-generation
+            (ci.intern-generation))
           (set! macro-unqualified-import-cache-ready true))))))
 
 (define (macro-unqualified-import-cache-bucket

@@ -1256,7 +1256,9 @@
   [docs : lsp_document_vec.Vec (:consume)]
   [uri : String]
   [version : i64]
-  [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex (:consume)]) : lsp_document_vec.Vec
+  [semantic-index
+    : compiler_semantic_index.CompilerSemanticSourceIndex
+    (:consume)]) : lsp_document_vec.Vec
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
@@ -1363,7 +1365,8 @@
   (let
     [doc : lsp_vector_families.LspDocument
       (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-    [slots : (__tl_dyn-array lsp_vector_families.LspDocument) (struct-get docs slots)]
+    [slots : (__tl_dyn-array lsp_vector_families.LspDocument)
+      (struct-get docs slots)]
     [path : String (struct-get doc path)]
     ;; Versioned documents are client-owned open buffers. Only unversioned
     ;; entries loaded by tooling may be refreshed from disk.
@@ -1466,7 +1469,10 @@
         "same"
         (lsp-diagnostic-uris-empty))]
     (begin
-      (lsp-documents-set-check-cache! (&mut docs) uri lsp_vector_families.LspCheckCacheOk)
+      (lsp-documents-set-check-cache!
+        (&mut docs)
+        uri
+        lsp_vector_families.LspCheckCacheOk)
       (let
         [preserved-docs : lsp_document_vec.Vec
           (lsp-documents-set
@@ -7062,7 +7068,8 @@
       (set! lsp-document-cache-arena head)
       (lsp_vector_families.LspServerState head docs workspace))))
 
-(define (lsp-server-state-destroy! [state : lsp_vector_families.LspServerState (:consume)]) : unit
+(define (lsp-server-state-destroy!
+  [state : lsp_vector_families.LspServerState (:consume)]) : unit
   (let
     [owner : i64 (struct-get state owner-arena)]
     (begin
@@ -7621,7 +7628,8 @@
     [text : String (struct-get doc text)]
     [uri : String (struct-get doc uri)]
     [scanned : lsp_decl_vec.Vec (lsp-scan-decls text)]
-    [slots : (__tl_dyn-array lsp_vector_families.LspDocument) (struct-get docs slots)]
+    [slots : (__tl_dyn-array lsp_vector_families.LspDocument)
+      (struct-get docs slots)]
     [idx : i64 (lsp-documents-find-index docs uri)]
     (begin
       (if (>= idx 0)

@@ -67397,7 +67397,7 @@
           asm
           "    movq %fs:tl_current_arena@tpoff, %r8\n")
         (compiler-backend-string-contains? asm ".L_tl_alloc_new_arena:\n")
-        (compiler-backend-string-contains? asm "    movq $0x10000000, %rdx\n")
+        (compiler-backend-string-contains? asm "    movq $0x4000000, %rdx\n")
         (compiler-backend-string-contains? asm "    addq $64, %rcx\n")
         (compiler-backend-string-contains? asm "    movq $0, 32(%rax)\n")
         (compiler-backend-string-contains? asm "    movq %r10, 40(%rax)\n")

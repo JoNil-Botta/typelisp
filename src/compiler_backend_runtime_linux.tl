@@ -151,7 +151,7 @@ tl_alloc:
     movq $1, 48(%r9)
     jmp .L_tl_alloc_abort
 .L_tl_alloc_atomic_map:
-    movq $0x10000000, %rdx
+    movq $0x4000000, %rdx
     movq %rsi, %rcx
     addq $64, %rcx
     jc .L_tl_alloc_abort
@@ -198,7 +198,7 @@ tl_alloc:
     [ordinary-new-asm : String
       "    ret
 .L_tl_alloc_new_arena:
-    movq $0x10000000, %rdx
+    movq $0x4000000, %rdx
     movq %rsi, %rcx
     addq $64, %rcx
     jc .L_tl_alloc_abort
@@ -344,7 +344,7 @@ tl_arena_poison_enable:
 
     .globl tl_arena_make
 tl_arena_make:
-    movq $0x10000000, %rsi
+    movq $0x4000000, %rsi
     jmp .L_tl_arena_make_sized
 
     .globl tl_arena_make_small
@@ -379,7 +379,7 @@ tl_arena_make_small:
 
     .globl tl_arena_make_atomic
 tl_arena_make_atomic:
-    movq $0x10000000, %rsi
+    movq $0x4000000, %rsi
     xorq %rdi, %rdi
     movq $3, %rdx
     movq $0x22, %r10
@@ -398,7 +398,7 @@ tl_arena_make_atomic:
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
-    addq $0x10000000, %rcx
+    addq $0x4000000, %rcx
     movq %rcx, 24(%rax)
     ret
 .L_tl_arena_make_atomic_abort:

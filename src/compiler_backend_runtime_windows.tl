@@ -287,7 +287,7 @@ tl_arena_make:
     push %rbx
     push %rsi
     sub $48, %rsp
-    movq $0x10000000, %rsi
+    movq $0x4000000, %rsi
     jmp .L_tl_arena_make_win_sized
 
     .globl tl_arena_make_small
@@ -370,7 +370,7 @@ tl_arena_make_atomic:
     push %rsi
     sub $48, %rsp
     xorq %rcx, %rcx
-    movq $0x10000000, %rdx
+    movq $0x4000000, %rdx
     movq $0x2000, %r8
     movq $0x4, %r9
     call VirtualAlloc
@@ -396,7 +396,7 @@ tl_arena_make_atomic:
     addq $0x400000, %rsi
     movq %rsi, 64(%rbx)
     movq %rbx, %rcx
-    addq $0x10000000, %rcx
+    addq $0x4000000, %rcx
     movq %rcx, 24(%rbx)
     movq %rbx, %rax
     add $48, %rsp
@@ -411,7 +411,7 @@ tl_arena_make_atomic:
     movq $0, 32(%rsp)
     movq $1, %rcx
     xorq %rdx, %rdx
-    movq $0x10000000, %r8
+    movq $0x4000000, %r8
     xorq %r9, %r9
     call tl_windows_allocation_abort
     call tl_oom_abort
@@ -427,7 +427,7 @@ tl_arena_make_atomic:
     movq $1, %rcx
     movq $1, %rdx
     movq $0x400000, %r8
-    movq $0x10000000, %r9
+    movq $0x4000000, %r9
     call tl_windows_allocation_abort
     call tl_oom_abort
 
@@ -829,7 +829,7 @@ tl_alloc:
     jmp .L_tl_alloc_abort
 .L_tl_alloc_atomic_map:
     movq %r11, -8(%rbp)
-    movq $0x10000000, %rdx
+    movq $0x4000000, %rdx
     movq %r11, %rax
     addq $72, %rax
     jc .L_tl_alloc_atomic_abort_locked
@@ -931,7 +931,7 @@ tl_alloc:
     jmp .L_tl_alloc_abort
 .L_tl_alloc_new_arena:
     movq %r11, -8(%rbp)
-    movq $0x10000000, %rdx
+    movq $0x4000000, %rdx
     movq %r11, %rax
     addq $72, %rax
     jc .L_tl_alloc_abort

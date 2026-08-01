@@ -3263,6 +3263,17 @@
     (compiler-ir-lifetime-list-render lifetimes)
     ")"))
 
+;; A lifetime id outside the intern table's renderable range would abort the
+;; whole dump on the lookup below. Developer observability must not fail over
+;; an unrenderable annotation: keep the numeric id visible instead.
+(define (compiler-ir-lifetime-renderable? [region : i64]) : bool
+  (and (>= region 0) (< region (ci.intern-capacity))))
+
+(define (compiler-ir-lifetime-render [region : i64]) : String
+  (if (compiler-ir-lifetime-renderable? region)
+    (ci.intern-str region)
+    (str_cat.str-cat "<id:" (string.int->string region) ">")))
+
 (define (compiler-ir-type-render [type-segment-bases : i64] [ty : AstType]) : String
   (match ty
     [(AstType.I64) "i64"]
@@ -3324,7 +3335,7 @@
     [(AstType.Region region inner)
       (str_cat.str-cat
         "(Region "
-        (ci.intern-str region)
+        (compiler-ir-lifetime-render region)
         " "
         (compiler-ir-type-render
           type-segment-bases
@@ -3333,7 +3344,7 @@
     [(AstType.Ref region inner)
       (str_cat.str-cat
         "(& "
-        (ci.intern-str region)
+        (compiler-ir-lifetime-render region)
         " "
         (compiler-ir-type-render
           type-segment-bases
@@ -3342,7 +3353,7 @@
     [(AstType.MutRef region inner)
       (str_cat.str-cat
         "(&mut "
-        (ci.intern-str region)
+        (compiler-ir-lifetime-render region)
         " "
         (compiler-ir-type-render
           type-segment-bases
@@ -6307,7 +6318,7 @@
     [(AstType.Region region inner)
       (str_cat.str-cat
         "(in "
-        (ci.intern-str region)
+        (compiler-ir-lifetime-render region)
         " "
         (compiler-ir-type-name
           type-segment-bases
@@ -6316,7 +6327,7 @@
     [(AstType.Ref region inner)
       (str_cat.str-cat
         "(& "
-        (ci.intern-str region)
+        (compiler-ir-lifetime-render region)
         " "
         (compiler-ir-type-name
           type-segment-bases
@@ -6325,7 +6336,7 @@
     [(AstType.MutRef region inner)
       (str_cat.str-cat
         "(&mut "
-        (ci.intern-str region)
+        (compiler-ir-lifetime-render region)
         " "
         (compiler-ir-type-name
           type-segment-bases

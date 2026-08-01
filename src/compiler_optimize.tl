@@ -56,6 +56,7 @@
   false)
 (define compiler-opt-debug-dump-pass : String
   "")
+
 ;; Pass snapshots accumulate in a segmented buffer: each observation is
 ;; O(its rendered size) instead of a whole-prefix string copy (#6115).
 (define compiler-opt-debug-dump-buf : text_buf.TextBuf

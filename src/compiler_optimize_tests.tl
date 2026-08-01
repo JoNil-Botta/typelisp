@@ -27802,19 +27802,20 @@
   [j : i64]
   [prev : CompilerIrValue]) : CompilerIrInstrList
   (if (>= j 8)
-    (if (= mode 4)
-      (compiler-ir-instr-cons
-        (CompilerIrInstr.BinOp
-          300
-          (CompilerIrBinOp.Add)
-          prev
-          (CompilerIrValue.Var 133)
-          (AstType.I64))
+    (cond
+      [(= mode 4)
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Return
-            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 300)))
-          (CompilerIrInstrList.Nil)))
-      (if (= mode 8)
+          (CompilerIrInstr.BinOp
+            300
+            (CompilerIrBinOp.Add)
+            prev
+            (CompilerIrValue.Var 133)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 300)))
+            (CompilerIrInstrList.Nil)))]
+      [(= mode 8)
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             310
@@ -27832,19 +27833,20 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 311)))
-              (CompilerIrInstrList.Nil))))
-        (if (= mode 9)
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.BinOp
-              310
-              (CompilerIrBinOp.Shl)
-              (CompilerIrValue.I64 0)
-              (CompilerIrValue.I64 64)
-              (AstType.I64))
-            (opt-lc-compose-test-nest 7))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Return (CompilerIrMaybeValue.Some prev))
-            (CompilerIrInstrList.Nil)))))
+              (CompilerIrInstrList.Nil))))]
+      [(= mode 9)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            310
+            (CompilerIrBinOp.Shl)
+            (CompilerIrValue.I64 0)
+            (CompilerIrValue.I64 64)
+            (AstType.I64))
+          (opt-lc-compose-test-nest 7))]
+      [else
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return (CompilerIrMaybeValue.Some prev))
+          (CompilerIrInstrList.Nil))])
     (let
       [k : i64
         (if (= mode 5)

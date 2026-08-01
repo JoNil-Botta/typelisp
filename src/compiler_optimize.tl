@@ -10652,9 +10652,71 @@
   (No)
   (Some AstType))
 
-(defenum OptSsaVarTypes
-  (Nil)
-  (Cons i64 AstType (Box OptSsaVarTypes)))
+(defstruct OptSsaVarTypeEntry
+  (present bool)
+  (ty AstType))
+
+(import (vector.vector OptSsaVarTypeEntry core) as opt_ssa_var_type_vec)
+
+;; Dense SSA var -> AstType table. Function-local vreg ids are dense, so the
+;; table is a direct-index vector; lookup is O(1) by construction instead of a
+;; linear chain walk. The insertion-order sidecar preserves the retired
+;; chain's newest-first walk order exactly (#5731).
+(defstruct OptSsaVarTypes
+  (entries opt_ssa_var_type_vec.Vec)
+  (order opt_dense_i64_vec.Vec))
+
+(define (opt-ssa-var-types-new) : OptSsaVarTypes
+  (OptSsaVarTypes (opt_ssa_var_type_vec.new) (opt_dense_i64_vec.new)))
+
+(define (opt-ssa-var-types-lookup [types : OptSsaVarTypes] [var : i64]) : OptMaybeAstType
+  (let
+    [entries : opt_ssa_var_type_vec.Vec (struct-get types entries)]
+    (if (or (< var 0) (>= var (opt_ssa_var_type_vec.len (& entries))))
+      (OptMaybeAstType.No)
+      (let
+        [entry : OptSsaVarTypeEntry
+          (array-ref (opt_ssa_var_type_vec.slots (& entries)) var)]
+        (if (struct-get entry present)
+          (OptMaybeAstType.Some (struct-get entry ty))
+          (OptMaybeAstType.No))))))
+
+;; Newest binding wins; only a first-time binding joins the walk order.
+(define (opt-ssa-var-types-set
+  [types : OptSsaVarTypes (:consume)]
+  [var : i64]
+  [ty : AstType]) : OptSsaVarTypes
+  (let
+    [entries : opt_ssa_var_type_vec.Vec (struct-get types entries)]
+    [order : opt_dense_i64_vec.Vec (struct-get types order)]
+    (begin
+      (while (<= (opt_ssa_var_type_vec.len (& entries)) var)
+        (opt_ssa_var_type_vec.push
+          (&mut entries)
+          (OptSsaVarTypeEntry false (AstType.I64))))
+      (let
+        [was-present? : bool
+          (struct-get
+            (array-ref (opt_ssa_var_type_vec.slots (& entries)) var)
+            present)]
+        (begin
+          (opt_ssa_var_type_vec.set
+            (&mut entries)
+            var
+            (OptSsaVarTypeEntry true ty))
+          (unless was-present? (opt_dense_i64_vec.push (&mut order) var))
+          (OptSsaVarTypes entries order))))))
+
+;; Newest-first walk support: the number of bound vars and the i-th newest.
+(define (opt-ssa-var-types-count [types : OptSsaVarTypes]) : i64
+  (opt_dense_i64_vec.len (& (struct-get types order))))
+
+(define (opt-ssa-var-types-newest-var [types : OptSsaVarTypes] [index : i64]) : i64
+  (let
+    [order : opt_dense_i64_vec.Vec (struct-get types order)]
+    (array-ref
+      (opt_dense_i64_vec.slots (& order))
+      (- (- (opt_dense_i64_vec.len (& order)) index) 1))))
 
 (defenum OptSsaFacts
   (Facts opt_i64_i64_map.Map opt_i64_i64_map.Map OptSsaVarTypes))
@@ -10743,14 +10805,6 @@
     [(AstType.MutRef _ _) true]
     [_ false]))
 
-(define (opt-ssa-var-type-lookup [types : OptSsaVarTypes] [var : i64]) : OptMaybeAstType
-  (match types
-    [(OptSsaVarTypes.Nil) (OptMaybeAstType.No)]
-    [(OptSsaVarTypes.Cons id ty rest)
-      (if (= id var)
-        (OptMaybeAstType.Some ty)
-        (opt-ssa-var-type-lookup (box-get rest) var))]))
-
 (define (opt-ssa-facts-bad-var [facts : OptSsaFacts (:consume)] [var : i64]) : OptSsaFacts
   (match facts
     [(OptSsaFacts.Facts counts bad types)
@@ -10775,12 +10829,12 @@
         [next-counts : opt_i64_i64_map.Map (opt-ssa-count-add counts var)]
         (if (not (opt-ssa-scalar-type? ty))
           (OptSsaFacts.Facts next-counts (opt-used-add bad var) types)
-          (match (opt-ssa-var-type-lookup types var)
+          (match (opt-ssa-var-types-lookup types var)
             [(OptMaybeAstType.No)
               (OptSsaFacts.Facts
                 next-counts
                 bad
-                (OptSsaVarTypes.Cons var ty (box types)))]
+                (opt-ssa-var-types-set types var ty))]
             [(OptMaybeAstType.Some old)
               (OptSsaFacts.Facts
                 next-counts
@@ -10957,7 +11011,7 @@
       (OptSsaFacts.Facts
         (opt_i64_i64_map.with-capacity 64)
         (opt_i64_i64_map.with-capacity 64)
-        (OptSsaVarTypes.Nil)))))
+        (opt-ssa-var-types-new)))))
 
 (define (opt-ssa-candidate? [facts : OptSsaFacts] [var : i64]) : bool
   (match facts
@@ -10965,23 +11019,23 @@
       (and
         (> (opt-ssa-count counts var) 1)
         (not (opt-used-contains bad var))
-        (match (opt-ssa-var-type-lookup types var)
+        (match (opt-ssa-var-types-lookup types var)
           [(OptMaybeAstType.Some _) true]
           [(OptMaybeAstType.No) false]))]))
 
 (define (opt-ssa-any-candidate-types?
   [facts : OptSsaFacts]
-  [types : OptSsaVarTypes]) : bool
-  (match types
-    [(OptSsaVarTypes.Nil) false]
-    [(OptSsaVarTypes.Cons var _ rest)
-      (if (opt-ssa-candidate? facts var)
-        true
-        (opt-ssa-any-candidate-types? facts (box-get rest)))]))
+  [types : OptSsaVarTypes]
+  [index : i64]) : bool
+  (if (>= index (opt-ssa-var-types-count types))
+    false
+    (if (opt-ssa-candidate? facts (opt-ssa-var-types-newest-var types index))
+      true
+      (opt-ssa-any-candidate-types? facts types (+ index 1)))))
 
 (define (opt-ssa-any-candidate? [facts : OptSsaFacts]) : bool
   (match facts
-    [(OptSsaFacts.Facts _ _ types) (opt-ssa-any-candidate-types? facts types)]))
+    [(OptSsaFacts.Facts _ _ types) (opt-ssa-any-candidate-types? facts types 0)]))
 
 (define (opt-ssa-label-members-new [index : OptCfgIndex]) : (__tl_dyn-array
     bool)
@@ -11287,19 +11341,33 @@
   [blocks : CompilerIrBlockList]
   [defs : OptSsaVarBlocks]
   [types : OptSsaVarTypes]
-  [state : OptSsaPhiInsertState]) : OptSsaPhiInsertState
-  (match types
-    [(OptSsaVarTypes.Nil) state]
-    [(OptSsaVarTypes.Cons var ty rest)
-      (opt-ssa-insert-phis-types
-        facts
-        context
-        blocks
-        defs
-        (box-get rest)
-        (if (opt-ssa-candidate? facts var)
-          (opt-ssa-insert-phis-for-var context blocks defs state var ty)
-          state))]))
+  [state : OptSsaPhiInsertState]
+  [index : i64]) : OptSsaPhiInsertState
+  (if (>= index (opt-ssa-var-types-count types))
+    state
+    (let
+      [var : i64 (opt-ssa-var-types-newest-var types index)]
+      (match (opt-ssa-var-types-lookup types var)
+        [(OptMaybeAstType.Some ty)
+          (opt-ssa-insert-phis-types
+            facts
+            context
+            blocks
+            defs
+            types
+            (if (opt-ssa-candidate? facts var)
+              (opt-ssa-insert-phis-for-var context blocks defs state var ty)
+              state)
+            (+ index 1))]
+        [(OptMaybeAstType.No)
+          (opt-ssa-insert-phis-types
+            facts
+            context
+            blocks
+            defs
+            types
+            state
+            (+ index 1))]))))
 
 (define (opt-ssa-insert-phis
   [facts : OptSsaFacts]
@@ -11324,7 +11392,8 @@
             frame
             (OptLabelSet.Nil)
             work-members
-            site-members)))]))
+            site-members)
+          0))]))
 
 (define (opt-ssa-env-lookup [env : OptSsaRenameEnv] [var : i64]) : option_i64.Option
   (match env
@@ -17383,7 +17452,7 @@
   [types : OptSsaVarTypes]
   [var : i64]
   [ty : AstType]) : OptSsaVarTypes
-  (OptSsaVarTypes.Cons var ty (box types)))
+  (opt-ssa-var-types-set types var ty))
 
 (define (opt-licm-type-env-add-param
   [types : OptSsaVarTypes]
@@ -17459,7 +17528,7 @@
   [blocks : CompilerIrBlockList]) : OptSsaVarTypes
   (opt-licm-type-env-add-blocks
     blocks
-    (opt-licm-type-env-add-params params (OptSsaVarTypes.Nil))))
+    (opt-licm-type-env-add-params params (opt-ssa-var-types-new))))
 
 (define (opt-licm-param-root
   [type-segment-bases : i64]
@@ -17575,7 +17644,7 @@
   [type-segment-bases : i64]
   [types : OptSsaVarTypes]
   [var : i64]) : bool
-  (match (opt-ssa-var-type-lookup types var)
+  (match (opt-ssa-var-types-lookup types var)
     [(OptMaybeAstType.Some ty)
       (opt-licm-array-header-type? type-segment-bases ty)]
     [(OptMaybeAstType.No) false]))
@@ -18088,7 +18157,7 @@
     [state : OptLicmStoreState
       (opt-licm-store-state-blocks
         type-segment-bases
-        (OptSsaVarTypes.Nil)
+        (opt-ssa-var-types-new)
         blocks
         (opt_i64_i64_map.with-capacity 1)
         true
@@ -30370,7 +30439,7 @@
   [fallback : AstType]) : AstType
   (match value
     [(CompilerIrValue.Var var)
-      (match (opt-ssa-var-type-lookup types var)
+      (match (opt-ssa-var-types-lookup types var)
         [(OptMaybeAstType.Some ty) ty]
         [(OptMaybeAstType.No) fallback])]
     [_ fallback]))

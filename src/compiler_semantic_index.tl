@@ -6,6 +6,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import (option.option i64) as option_i64)
+(import compiler_intern as ci)
 (import "compiler_check_core.tl")
 
 ;; Tool-facing semantic data is copied into an explicitly owned arena. None of
@@ -30,7 +31,10 @@
   (Struct)
   (Enum)
   (Parameter)
-  (Local))
+  (Local)
+  (Module)
+  (Field)
+  (EnumMember))
 
 (defenum CompilerSemanticRecordRole
   (Definition)
@@ -131,7 +135,10 @@
   (records (Box CompilerSemanticRecordVec))
   (bindings (Box CompilerSemanticBindingVec))
   (visited-expr-ids (__tl_dyn-array i64))
-  (next-local-ordinal (Box i64)))
+  (next-local-ordinal (Box i64))
+  ;; Per-decl monotonic scan cursor for locating dotted field-access tokens;
+  ;; reset from form-start at each top-level declaration.
+  (dotted-search-start (Box i64)))
 
 (define (compiler-semantic-record-fallback) : CompilerSemanticRecord
   (CompilerSemanticRecord
@@ -940,6 +947,51 @@
     [(CompilerSemanticMaybeHandle.None)
       (CompilerSemanticSymbolId module-id fallback-ordinal -1)]))
 
+;; Member symbols (struct fields, enum variants) anchor to their owning type's
+;; module and carry the full registry handle as declaration-ordinal. Plain
+;; declaration ordinals are handle indices below 1e9, so member handles
+;; (kind*1e9 + owner*1000 + child) never collide with them while remaining
+;; deterministic across repeated checks.
+(define (compiler-semantic-member-symbol
+  [ctx : TcContext]
+  [owner-handle : i64]
+  [member-handle : i64]) : CompilerSemanticSymbolId
+  (CompilerSemanticSymbolId
+    (compiler-semantic-handle-module-id ctx owner-handle)
+    member-handle
+    -1))
+
+(define (compiler-semantic-field-handle-in-module
+  [ctx : TcContext]
+  [module-id : i64]
+  [struct-name-id : i64]
+  [field-name-id : i64]) : CompilerSemanticMaybeHandle
+  (match (tc-context-registries ctx)
+    [(CompilerRegistries _ fields _)
+      (match (compiler-symbol-map-lookup-id
+        (& fields)
+        (compiler-struct-field-key-id-in-module-by-id
+          module-id
+          struct-name-id
+          field-name-id))
+        [(option_i64.Some handle) (CompilerSemanticMaybeHandle.Some handle)]
+        [(option_i64.None) CompilerSemanticMaybeHandle.None])]))
+
+(define (compiler-semantic-variant-handle-in-module
+  [ctx : TcContext]
+  [module-id : i64]
+  [enum-name-id : i64]
+  [variant-name-id : i64]) : CompilerSemanticMaybeHandle
+  (match (tc-context-registries ctx)
+    [(CompilerRegistries variants _ _)
+      (match (compiler-symbol-map-lookup-id
+        (& variants)
+        (compiler-symbol-module-key-id-by-id
+          module-id
+          (compiler-enum-qualified-variant-name-id enum-name-id variant-name-id)))
+        [(option_i64.Some handle) (CompilerSemanticMaybeHandle.Some handle)]
+        [(option_i64.None) CompilerSemanticMaybeHandle.None])]))
+
 (define (compiler-semantic-binding-lookup
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
@@ -977,6 +1029,114 @@
         (>= (struct-get span start-byte) 0))
       (struct-get state provenance))))
 
+(define (compiler-semantic-record-variant-use!
+  [state : CompilerSemanticWalkState]
+  [lookup-id : i64]
+  [handle : i64]
+  [span : CompilerSemanticSpan]) : unit
+  (let
+    [ctx : TcContext (struct-get state ctx)]
+    [env : TcTypeEnv (struct-get state top-env)]
+    [owner-handle : i64 (compiler-registry-variant-owner-handle handle)]
+    [owner-decl : AstDecl (compiler-semantic-handle-decl ctx owner-handle)]
+    [child-index : i64 (compiler-registry-handle-child-index handle)]
+    (match owner-decl
+      [(AstDecl.DefEnum _ _ _ variants)
+        (compiler-semantic-record-variant-use-with-list!
+          state
+          ctx
+          env
+          lookup-id
+          handle
+          owner-handle
+          variants
+          child-index
+          span)]
+      [(AstDecl.DefEnumLifetimes _ _ _ _ variants)
+        (compiler-semantic-record-variant-use-with-list!
+          state
+          ctx
+          env
+          lookup-id
+          handle
+          owner-handle
+          variants
+          child-index
+          span)]
+      [(AstDecl.Unsafe inner)
+        (let
+          [inner-decl : AstDecl (box-get inner)]
+          (match inner-decl
+            [(AstDecl.DefEnum _ _ _ variants)
+              (compiler-semantic-record-variant-use-with-list!
+                state
+                ctx
+                env
+                lookup-id
+                handle
+                owner-handle
+                variants
+                child-index
+                span)]
+            [(AstDecl.DefEnumLifetimes _ _ _ _ variants)
+              (compiler-semantic-record-variant-use-with-list!
+                state
+                ctx
+                env
+                lookup-id
+                handle
+                owner-handle
+                variants
+                child-index
+                span)]
+            [_ unit]))]
+      [_ unit])))
+
+(define (compiler-semantic-record-variant-use-with-list!
+  [state : CompilerSemanticWalkState]
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lookup-id : i64]
+  [handle : i64]
+  [owner-handle : i64]
+  [variants : AstVariantDefList]
+  [child-index : i64]
+  [span : CompilerSemanticSpan]) : unit
+  (let
+    [written : String (tc-hygiene-name-text-id lookup-id)]
+    [display-name : String
+      (if (and
+        (>= child-index 0)
+        (< child-index (ast-variant-def-list-len (& variants))))
+        (match (ast-variant-def-list-get
+          (& variants)
+          child-index
+          (ast-variant-def-fallback))
+          [(AstVariantDef.Def variant-name-id _ _)
+            (tc-env-key-name-text variant-name-id)])
+        written)]
+    [type-text : String
+      (match (tc-lookup-visible-id ctx env lookup-id)
+        [(ResultTcType.Ok ty) (tc-type-render ty)]
+        [(ResultTcType.Err _) ""])]
+    [symbol : CompilerSemanticSymbolId
+      (compiler-semantic-member-symbol ctx owner-handle handle)]
+    (compiler-semantic-record-vec-push!
+      (&mut (box-get (struct-get state records)))
+      (CompilerSemanticRecord
+        symbol
+        CompilerSemanticRecordRole.Use
+        CompilerSemanticSymbolKind.EnumMember
+        (string.copy (& display-name))
+        (string.copy (& type-text))
+        ""
+        (struct-get symbol module-id)
+        span
+        (and
+          (not (struct-get state generated))
+          (>= (struct-get span start-byte) 0))
+        (struct-get state provenance)))))
+
 (define (compiler-semantic-record-top-use!
   [state : CompilerSemanticWalkState]
   [name-id : i64]
@@ -994,54 +1154,75 @@
       [(TcNameLookup.Ok _ lookup-id)
         (match (compiler-semantic-use-handle ctx lookup-id)
           [(CompilerSemanticMaybeHandle.Some handle)
-            (let
-              [decl : AstDecl (compiler-semantic-handle-decl ctx handle)]
-              (match (compiler-semantic-decl-symbol decl)
-                [(CompilerSemanticMaybeDecl.Some decl-name-id kind)
-                  (let
-                    [module-id : i64
-                      (compiler-semantic-handle-module-id ctx handle)]
-                    [decl-ctx : TcContext
-                      (if (= module-id cbi.compiler-builtin-id-fix-empty)
-                        (tc-context-with-module-id
-                          ctx
+            (if (=
+              (compiler-symbol-handle-kind handle)
+              (compiler-symbol-kind-enum-variant))
+              (compiler-semantic-record-variant-use!
+                state
+                lookup-id
+                handle
+                span)
+              (let
+                [decl : AstDecl (compiler-semantic-handle-decl ctx handle)]
+                (match (compiler-semantic-decl-symbol decl)
+                  [(CompilerSemanticMaybeDecl.Some decl-name-id kind)
+                    (let
+                      [module-id : i64
+                        (compiler-semantic-handle-module-id ctx handle)]
+                      [decl-ctx : TcContext
+                        (if (= module-id cbi.compiler-builtin-id-fix-empty)
+                          (tc-context-with-module-id
+                            ctx
+                            ""
+                            cbi.compiler-builtin-id-fix-empty)
+                          (tc-context-with-module-id
+                            ctx
+                            (macro-decl-module-display module-id)
+                            module-id))]
+                      [display-name : String
+                        (tc-env-key-name-text decl-name-id)]
+                      [type-text : String
+                        (match (tc-lookup-visible-id ctx env lookup-id)
+                          [(ResultTcType.Ok ty) (tc-type-render ty)]
+                          [(ResultTcType.Err _)
+                            (compiler-semantic-decl-type
+                              decl-ctx
+                              env
+                              decl
+                              kind
+                              decl-name-id
+                              display-name)])]
+                      [member-start : i64
+                        (compiler-semantic-qualified-member-span
+                          state
+                          name-id
+                          span)]
+                      [record-span : CompilerSemanticSpan
+                        (if (>= member-start 0)
+                          (compiler-semantic-subspan
+                            state
+                            member-start
+                            (struct-get span end-byte))
+                          span)]
+                      (compiler-semantic-record-vec-push!
+                        (&mut (box-get (struct-get state records)))
+                        (CompilerSemanticRecord
+                          (CompilerSemanticSymbolId
+                            module-id
+                            (compiler-symbol-handle-index handle)
+                            -1)
+                          CompilerSemanticRecordRole.Use
+                          kind
+                          (string.copy (& display-name))
+                          (string.copy (& type-text))
                           ""
-                          cbi.compiler-builtin-id-fix-empty)
-                        (tc-context-with-module-id
-                          ctx
-                          (macro-decl-module-display module-id)
-                          module-id))]
-                    [display-name : String (tc-env-key-name-text decl-name-id)]
-                    [type-text : String
-                      (match (tc-lookup-visible-id ctx env lookup-id)
-                        [(ResultTcType.Ok ty) (tc-type-render ty)]
-                        [(ResultTcType.Err _)
-                          (compiler-semantic-decl-type
-                            decl-ctx
-                            env
-                            decl
-                            kind
-                            decl-name-id
-                            display-name)])]
-                    (compiler-semantic-record-vec-push!
-                      (&mut (box-get (struct-get state records)))
-                      (CompilerSemanticRecord
-                        (CompilerSemanticSymbolId
                           module-id
-                          (compiler-symbol-handle-index handle)
-                          -1)
-                        CompilerSemanticRecordRole.Use
-                        kind
-                        (string.copy (& display-name))
-                        (string.copy (& type-text))
-                        ""
-                        module-id
-                        span
-                        (and
-                          (not (struct-get state generated))
-                          (>= (struct-get span start-byte) 0))
-                        (struct-get state provenance))))]
-                [(CompilerSemanticMaybeDecl.None) unit]))]
+                          record-span
+                          (and
+                            (not (struct-get state generated))
+                            (>= (struct-get span start-byte) 0))
+                          (struct-get state provenance))))]
+                  [(CompilerSemanticMaybeDecl.None) unit])))]
           [(CompilerSemanticMaybeHandle.None) unit])]
       [(TcNameLookup.Err _) unit])))
 
@@ -1076,6 +1257,61 @@
       [(CompilerSemanticMaybeBinding.None)
         (compiler-semantic-record-top-use! state name-id span)])))
 
+(define (compiler-semantic-record-module-component-use!
+  [state : CompilerSemanticWalkState]
+  [qualifier-id : i64]
+  [target-module-id : i64]
+  [span : CompilerSemanticSpan]) : unit
+  (let
+    [name : String (tc-env-key-name-text qualifier-id)]
+    [module-text : String (macro-decl-module-display target-module-id)]
+    (compiler-semantic-record-vec-push!
+      (&mut (box-get (struct-get state records)))
+      (CompilerSemanticRecord
+        (CompilerSemanticSymbolId target-module-id -1 -1)
+        CompilerSemanticRecordRole.Use
+        CompilerSemanticSymbolKind.Module
+        (string.copy (& name))
+        (string.copy (& module-text))
+        ""
+        target-module-id
+        span
+        (and
+          (not (struct-get state generated))
+          (>= (struct-get span start-byte) 0))
+        (struct-get state provenance)))))
+
+(define (compiler-semantic-qualified-member-span
+  [state : CompilerSemanticWalkState]
+  [written-name-id : i64]
+  [span : CompilerSemanticSpan]) : i64
+  ;; When the written spelling is `alias.member...` with an import alias in
+  ;; the leading segment, emits the alias component as a Module use resolving
+  ;; to the owning module and returns the byte offset of the first member
+  ;; component; -1 otherwise (callers keep the whole-token span).
+  (let
+    [ctx : TcContext (struct-get state ctx)]
+    [first-dot : i64 (tc-name-first-dot-id written-name-id)]
+    (if (< first-dot 0)
+      -1
+      (let
+        [qualifier-id : i64 (ci.intern-leading-dot-id written-name-id)]
+        [target-module-id : i64
+          (tc-qualified-access-target-module-id ctx qualifier-id)]
+        [span-start : i64 (struct-get span start-byte)]
+        (if (or (= target-module-id qualifier-id) (< span-start 0))
+          -1
+          (begin
+            (compiler-semantic-record-module-component-use!
+              state
+              qualifier-id
+              target-module-id
+              (compiler-semantic-subspan
+                state
+                span-start
+                (+ span-start first-dot)))
+            (+ span-start first-dot 1)))))))
+
 (define (compiler-semantic-record-name-use-span!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
@@ -1086,6 +1322,699 @@
       (compiler-semantic-record-use-with-binding! state binding span)]
     [(CompilerSemanticMaybeBinding.None)
       (compiler-semantic-record-top-use! state name-id span)]))
+
+(define (compiler-semantic-subspan
+  [state : CompilerSemanticWalkState]
+  [start : i64]
+  [end : i64]) : CompilerSemanticSpan
+  (let
+    [source : String (struct-get state source)]
+    [start-position : AstSourceSpan
+      (compiler-semantic-source-position source start)]
+    [end-position : AstSourceSpan
+      (compiler-semantic-source-position source end)]
+    (CompilerSemanticSpan
+      (string.copy (& (struct-get state path)))
+      start
+      end
+      (ast-source-span
+        (ast-source-span-start-line start-position)
+        (ast-source-span-start-col start-position)
+        (ast-source-span-start-line end-position)
+        (ast-source-span-start-col end-position)))))
+
+(define (compiler-semantic-record-field-use-with-handle!
+  [state : CompilerSemanticWalkState]
+  [struct-name-id : i64]
+  [field-name-id : i64]
+  [handle : i64]
+  [span : CompilerSemanticSpan]) : unit
+  (let
+    [ctx : TcContext (struct-get state ctx)]
+    [owner-handle : i64
+      (compiler-symbol-make-handle
+        (compiler-symbol-kind-defstruct)
+        (compiler-registry-handle-owner-index handle))]
+    [name : String (tc-env-key-name-text field-name-id)]
+    [type-text : String
+      (match (tc-struct-field-type-id ctx struct-name-id field-name-id)
+        [(ResultTcType.Ok ty) (tc-type-render ty)]
+        [(ResultTcType.Err _) ""])]
+    [symbol : CompilerSemanticSymbolId
+      (compiler-semantic-member-symbol ctx owner-handle handle)]
+    (compiler-semantic-record-vec-push!
+      (&mut (box-get (struct-get state records)))
+      (CompilerSemanticRecord
+        symbol
+        CompilerSemanticRecordRole.Use
+        CompilerSemanticSymbolKind.Field
+        (string.copy (& name))
+        (string.copy (& type-text))
+        ""
+        (struct-get symbol module-id)
+        span
+        (and
+          (not (struct-get state generated))
+          (>= (struct-get span start-byte) 0))
+        (struct-get state provenance)))))
+
+(define (compiler-semantic-record-field-use-for-struct!
+  [state : CompilerSemanticWalkState]
+  [struct-name-id : i64]
+  [field-name-id : i64]
+  [span : CompilerSemanticSpan]) : bool
+  (match (compiler-registries-lookup-struct-field-id
+    (tc-context-registries (struct-get state ctx))
+    struct-name-id
+    field-name-id)
+    [(option_i64.Some handle)
+      (begin
+        (compiler-semantic-record-field-use-with-handle!
+          state
+          struct-name-id
+          field-name-id
+          handle
+          span)
+        true)]
+    [(option_i64.None) false]))
+
+(define (compiler-semantic-record-field-use-for-type!
+  [state : CompilerSemanticWalkState]
+  [ty : AstType]
+  [field-name-id : i64]
+  [span : CompilerSemanticSpan]) : bool
+  (match ty
+    [(AstType.Struct struct-name-id)
+      (compiler-semantic-record-field-use-for-struct!
+        state
+        struct-name-id
+        field-name-id
+        span)]
+    [(AstType.StructArgs struct-name-id _)
+      (compiler-semantic-record-field-use-for-struct!
+        state
+        struct-name-id
+        field-name-id
+        span)]
+    [_ false]))
+
+(define (compiler-semantic-type-name-handle [ctx : TcContext] [name-id : i64]) : i64
+  ;; Type-name resolution reuses the checker's alias/full-path keying so
+  ;; qualified spellings resolve to the owning module's declaration without a
+  ;; spelling rescan.
+  (let
+    [symbols : CompilerSymbols (tc-context-symbols ctx)]
+    [plain : i64
+      (compiler-symbols-lookup-type-id-or
+        symbols
+        name-id
+        (compiler-symbols-missing-handle))]
+    (if (compiler-symbols-handle-found? plain)
+      plain
+      (match (tc-dotted-type-name-lookup-from-id
+        ctx
+        (tc-env-key-name-text name-id)
+        name-id)
+        [(TcNameLookup.Ok _ key-id)
+          (compiler-symbols-lookup-type-id-or
+            symbols
+            key-id
+            (compiler-symbols-missing-handle))]
+        [(TcNameLookup.Err _) (compiler-symbols-missing-handle)]))))
+
+(define (compiler-semantic-record-type-name-use!
+  [state : CompilerSemanticWalkState]
+  [name-id : i64]
+  [span : CompilerSemanticSpan]) : unit
+  (let
+    [ctx : TcContext (struct-get state ctx)]
+    [handle : i64 (compiler-semantic-type-name-handle ctx name-id)]
+    (if (not (compiler-symbols-handle-found? handle))
+      unit
+      (let
+        [decl : AstDecl (compiler-semantic-handle-decl ctx handle)]
+        (match (compiler-semantic-decl-symbol decl)
+          [(CompilerSemanticMaybeDecl.Some decl-name-id kind)
+            (match kind
+              [(CompilerSemanticSymbolKind.Struct)
+                (compiler-semantic-record-type-name-use-with-kind!
+                  state
+                  ctx
+                  decl
+                  handle
+                  decl-name-id
+                  kind
+                  span)]
+              [(CompilerSemanticSymbolKind.Enum)
+                (compiler-semantic-record-type-name-use-with-kind!
+                  state
+                  ctx
+                  decl
+                  handle
+                  decl-name-id
+                  kind
+                  span)]
+              [_ unit])]
+          [(CompilerSemanticMaybeDecl.None) unit])))))
+
+(define (compiler-semantic-record-type-name-use-with-kind!
+  [state : CompilerSemanticWalkState]
+  [ctx : TcContext]
+  [decl : AstDecl]
+  [handle : i64]
+  [decl-name-id : i64]
+  [kind : CompilerSemanticSymbolKind]
+  [span : CompilerSemanticSpan]) : unit
+  (let
+    [module-id : i64 (compiler-semantic-handle-module-id ctx handle)]
+    [decl-ctx : TcContext
+      (if (= module-id cbi.compiler-builtin-id-fix-empty)
+        (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
+        (tc-context-with-module-id
+          ctx
+          (macro-decl-module-display module-id)
+          module-id))]
+    [display-name : String (tc-env-key-name-text decl-name-id)]
+    [type-text : String
+      (compiler-semantic-decl-type
+        decl-ctx
+        (struct-get state top-env)
+        decl
+        kind
+        decl-name-id
+        display-name)]
+    (compiler-semantic-record-vec-push!
+      (&mut (box-get (struct-get state records)))
+      (CompilerSemanticRecord
+        (CompilerSemanticSymbolId
+          module-id
+          (compiler-symbol-handle-index handle)
+          -1)
+        CompilerSemanticRecordRole.Use
+        kind
+        (string.copy (& display-name))
+        (string.copy (& type-text))
+        ""
+        module-id
+        span
+        (and
+          (not (struct-get state generated))
+          (>= (struct-get span start-byte) 0))
+        (struct-get state provenance)))))
+
+(define (compiler-semantic-walk-type-name!
+  [state : CompilerSemanticWalkState]
+  [name-id : i64]
+  [search-start : i64]
+  [search-limit : i64]) : i64
+  (let
+    [name : String (tc-env-key-name-text name-id)]
+    [span : CompilerSemanticSpan
+      (compiler-semantic-name-span-in-range
+        (struct-get state path)
+        (struct-get state source)
+        name
+        search-start
+        search-limit)]
+    [member-start : i64
+      (compiler-semantic-qualified-member-span state name-id span)]
+    [record-span : CompilerSemanticSpan
+      (if (>= member-start 0)
+        (compiler-semantic-subspan
+          state
+          member-start
+          (struct-get span end-byte))
+        span)]
+    (begin
+      (compiler-semantic-record-type-name-use! state name-id record-span)
+      (if (>= (struct-get span end-byte) 0)
+        (struct-get span end-byte)
+        search-start))))
+
+(define (compiler-semantic-walk-type!
+  [state : CompilerSemanticWalkState]
+  [ty : AstType]
+  [search-start : i64]
+  [search-limit : i64]) : i64
+  ;; Emits use records for user-written type names (struct/enum/qualified)
+  ;; anywhere inside ty, scanning each name in source order and returning the
+  ;; byte just past the last one located so siblings continue after it.
+  (match ty
+    [(AstType.Struct name-id)
+      (compiler-semantic-walk-type-name!
+        state
+        name-id
+        search-start
+        search-limit)]
+    [(AstType.StructArgs name-id _)
+      (compiler-semantic-walk-type-name!
+        state
+        name-id
+        search-start
+        search-limit)]
+    [(AstType.Enum name-id)
+      (compiler-semantic-walk-type-name!
+        state
+        name-id
+        search-start
+        search-limit)]
+    [(AstType.EnumArgs name-id _)
+      (compiler-semantic-walk-type-name!
+        state
+        name-id
+        search-start
+        search-limit)]
+    [(AstType.Var name-id)
+      (compiler-semantic-walk-type-name!
+        state
+        name-id
+        search-start
+        search-limit)]
+    [(AstType.VarArgs name-id _)
+      (compiler-semantic-walk-type-name!
+        state
+        name-id
+        search-start
+        search-limit)]
+    [(AstType.Func args ret)
+      (let
+        [after-args : i64
+          (compiler-semantic-walk-type-list!
+            state
+            (box-get args)
+            search-start
+            search-limit)]
+        (compiler-semantic-walk-type!
+          state
+          (ty-node-get ret)
+          after-args
+          search-limit))]
+    [(AstType.Tuple items)
+      (compiler-semantic-walk-type-list!
+        state
+        (box-get items)
+        search-start
+        search-limit)]
+    [(AstType.Array elem _)
+      (compiler-semantic-walk-type!
+        state
+        (ty-node-get elem)
+        search-start
+        search-limit)]
+    [(AstType.DynArray elem)
+      (compiler-semantic-walk-type!
+        state
+        (ty-node-get elem)
+        search-start
+        search-limit)]
+    [(AstType.Box elem)
+      (compiler-semantic-walk-type!
+        state
+        (ty-node-get elem)
+        search-start
+        search-limit)]
+    [(AstType.Region _ elem)
+      (compiler-semantic-walk-type!
+        state
+        (ty-node-get elem)
+        search-start
+        search-limit)]
+    [(AstType.Ref _ elem)
+      (compiler-semantic-walk-type!
+        state
+        (ty-node-get elem)
+        search-start
+        search-limit)]
+    [(AstType.MutRef _ elem)
+      (compiler-semantic-walk-type!
+        state
+        (ty-node-get elem)
+        search-start
+        search-limit)]
+    [(AstType.Ptr elem)
+      (compiler-semantic-walk-type!
+        state
+        (ty-node-get elem)
+        search-start
+        search-limit)]
+    [(AstType.MutPtr elem)
+      (compiler-semantic-walk-type!
+        state
+        (ty-node-get elem)
+        search-start
+        search-limit)]
+    [(AstType.Consume elem)
+      (compiler-semantic-walk-type!
+        state
+        (ty-node-get elem)
+        search-start
+        search-limit)]
+    [_ search-start]))
+
+(define (compiler-semantic-walk-type-list!
+  [state : CompilerSemanticWalkState]
+  [types : AstTypeList]
+  [search-start : i64]
+  [search-limit : i64]) : i64
+  (let
+    [count : i64 (ast-type-list-len (& types))]
+    [index : i64 0]
+    [cursor : i64 search-start]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            cursor
+            (compiler-semantic-walk-type!
+              state
+              (ty-node-get (ast-type-list-get (& types) index -1))
+              cursor
+              search-limit))
+          (set! index (+ index 1))))
+      cursor)))
+
+(define (compiler-semantic-record-struct-get-field-use!
+  [state : CompilerSemanticWalkState]
+  [env : TcTypeEnv]
+  [target-id : i64]
+  [field-name-id : i64]
+  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  (let
+    [ctx : TcContext (struct-get state ctx)]
+    [source : String (struct-get state source)]
+    (match (tc-expr-id ctx env target-id)
+      [(ResultTcType.Ok receiver-ty)
+        (let
+          [name : String (tc-env-key-name-text field-name-id)]
+          [search-start : i64
+            (compiler-semantic-expr-end-offset
+              state
+              target-id
+              (compiler-semantic-maybe-span-start state maybe-span 0))]
+          [search-limit : i64
+            (match maybe-span
+              [(CompilerSemanticMaybeSpan.Some form-span)
+                (compiler-semantic-source-offset
+                  source
+                  (ast-source-span-end-line form-span)
+                  (ast-source-span-end-col form-span))]
+              [(CompilerSemanticMaybeSpan.None) (string.string-length source)])]
+          [span : CompilerSemanticSpan
+            (compiler-semantic-name-span-in-range
+              (struct-get state path)
+              source
+              name
+              search-start
+              search-limit)]
+          (if (compiler-semantic-record-field-use-for-type!
+            state
+            receiver-ty
+            field-name-id
+            span)
+            unit
+            unit))]
+      [(ResultTcType.Err _) unit])))
+
+;; Typecheck normalizes dotted local field access (`pair.left`,
+;; `outer.inner.left`) into fresh StructGet chains before the index walk, so
+;; the chain's receiver and intermediate nodes arrive spanless. A chain is
+;; recognized by a spanless bottom Var; its exact component spans are located
+;; by scanning the declaration's source for the `recv.field[.field...]` token
+;; whose segments all match, advancing a per-decl cursor so repeated chains
+;; locate in text order. String/comment/char-literal contents are skipped so
+;; they cannot match. Resolution still uses the receiver type the checker
+;; already computed -- the scan only locates spans.
+(define (compiler-semantic-dotted-chain-depth [node-id : i64] [depth : i64]) : i64
+  (match (ast-node-get node-id)
+    [(AstExpr.StructGet target _)
+      (compiler-semantic-dotted-chain-depth target (+ depth 1))]
+    [_ depth]))
+
+(define (compiler-semantic-dotted-chain-bottom [node-id : i64]) : i64
+  ;; Bottom receiver name-id of a StructGet chain, or -1 when the chain ends
+  ;; at anything but a Var.
+  (match (ast-node-get node-id)
+    [(AstExpr.StructGet target _)
+      (compiler-semantic-dotted-chain-bottom target)]
+    [(AstExpr.Var recv-id) recv-id]
+    [_ -1]))
+
+(define (compiler-semantic-dotted-chain-bottom-spanless? [node-id : i64]) : bool
+  (match (ast-node-get node-id)
+    [(AstExpr.StructGet target _)
+      (compiler-semantic-dotted-chain-bottom-spanless? target)]
+    [(AstExpr.Var _)
+      (match (tc-expr-id-maybe-span node-id)
+        [(TcMaybeAstSourceSpan.Some _) false]
+        [(TcMaybeAstSourceSpan.No) true])]
+    [_ false]))
+
+(define (compiler-semantic-dotted-chain-segments-match?
+  [source : String]
+  [fields : (__tl_dyn-array i64)]
+  [field-count : i64]
+  [pos : i64]) : bool
+  ;; pos is the byte just past the receiver spelling; expects
+  ;; ".field[.field...]" with a delimiter (or source end) past the last one.
+  (let
+    [cursor : i64 pos]
+    [index : i64 0]
+    [ok : bool true]
+    [len : i64 (string.string-length source)]
+    (begin
+      (while (and ok (< index field-count))
+        (let
+          [text : String (tc-env-key-name-text (array-ref fields index))]
+          [text-len : i64 (string.string-length text)]
+          [after : i64 (+ cursor 1 text-len)]
+          (begin
+            (if (and
+              (< cursor len)
+              (= (string.string-ref source cursor) '.')
+              (<= after len)
+              (string.eq (string.substring source (+ cursor 1) text-len) text)
+              (if (= index (- field-count 1))
+                (or
+                  (= after len)
+                  (compiler-semantic-delimiter?
+                    (string.string-ref source after)))
+                true))
+              (set! cursor after)
+              (set! ok false))
+            (set! index (+ index 1)))))
+      ok)))
+
+(define (compiler-semantic-dotted-chain-locate
+  [state : CompilerSemanticWalkState]
+  [recv-name : String]
+  [fields : (__tl_dyn-array i64)]
+  [field-count : i64]
+  [search-start : i64]) : i64
+  (let
+    [source : String (struct-get state source)]
+    [len : i64 (string.string-length source)]
+    [recv-len : i64 (string.string-length recv-name)]
+    [cursor : i64
+      (if (< search-start 0)
+        0
+        search-start)]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< cursor len))
+        (let
+          [current : char (string.string-ref source cursor)]
+          (cond
+            [(= current ';')
+              (begin
+                (while (and
+                  (< cursor len)
+                  (not (= (string.string-ref source cursor) '\n')))
+                  (set! cursor (+ cursor 1)))
+                (set! cursor (+ cursor 1)))]
+            [(= current '"')
+              (set!
+                cursor
+                (compiler-semantic-double-quote-end source cursor len))]
+            [(= current '\'')
+              (let
+                [char-end : i64
+                  (compiler-semantic-single-quote-end source cursor (- len 1))]
+                (if (>= char-end 0)
+                  (set! cursor (+ char-end 1))
+                  (set! cursor (+ cursor 1))))]
+            [(and
+                (<= (+ cursor recv-len) len)
+                (or
+                  (= cursor 0)
+                  (compiler-semantic-delimiter?
+                    (string.string-ref source (- cursor 1))))
+                (string.eq (string.substring source cursor recv-len) recv-name)
+                (compiler-semantic-dotted-chain-segments-match?
+                  source
+                  fields
+                  field-count
+                  (+ cursor recv-len)))
+              (set! found cursor)]
+            [else (set! cursor (+ cursor 1))])))
+      found)))
+
+(define (compiler-semantic-dotted-chain-emit!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingSnapshot]
+  [env : TcTypeEnv]
+  [recv-id : i64]
+  [fields : (__tl_dyn-array i64)]
+  [field-count : i64]
+  [located : i64]) : i64
+  ;; Emits the receiver use and every field segment use. Returns the byte
+  ;; offset just past the last segment, or -1 when spans were not located.
+  (let
+    [ctx : TcContext (struct-get state ctx)]
+    [recv-name : String (tc-env-key-name-text recv-id)]
+    (begin
+      (if (>= located 0)
+        (compiler-semantic-record-name-use-span!
+          state
+          scope
+          recv-id
+          (compiler-semantic-subspan
+            state
+            located
+            (+ located (string.string-length recv-name))))
+        (compiler-semantic-record-name-use!
+          state
+          scope
+          recv-id
+          CompilerSemanticMaybeSpan.None))
+      (match (tc-lookup-visible-id ctx env recv-id)
+        [(ResultTcType.Ok first-ty)
+          (let
+            [index : i64 0]
+            [current-ty : AstType first-ty]
+            [cursor : i64
+              (if (>= located 0)
+                (+ located (string.string-length recv-name))
+                -1)]
+            [stop : bool false]
+            (begin
+              (while (and (not stop) (< index field-count))
+                (let
+                  [field-name-id : i64 (array-ref fields index)]
+                  [field-text : String (tc-env-key-name-text field-name-id)]
+                  [struct-name-id : i64
+                    (match current-ty
+                      [(AstType.Struct name) name]
+                      [(AstType.StructArgs name _) name]
+                      [_ -1])]
+                  (begin
+                    (if (< struct-name-id 0)
+                      (set! stop true)
+                      (match (compiler-registries-lookup-struct-field-id
+                        (tc-context-registries ctx)
+                        struct-name-id
+                        field-name-id)
+                        [(option_i64.Some handle)
+                          (let
+                            [seg-span : CompilerSemanticSpan
+                              (if (>= cursor 0)
+                                (compiler-semantic-subspan
+                                  state
+                                  (+ cursor 1)
+                                  (+
+                                    (+ cursor 1)
+                                    (string.string-length field-text)))
+                                (CompilerSemanticSpan
+                                  (string.copy (& (struct-get state path)))
+                                  -1
+                                  -1
+                                  (ast-source-span 1 1 1 1)))]
+                            (begin
+                              (compiler-semantic-record-field-use-with-handle!
+                                state
+                                struct-name-id
+                                field-name-id
+                                handle
+                                seg-span)
+                              (set!
+                                cursor
+                                (if (>= cursor 0)
+                                  (+
+                                    (+ cursor 1)
+                                    (string.string-length field-text))
+                                  -1))
+                              (if (< index (- field-count 1))
+                                (match (tc-struct-field-type-id
+                                  ctx
+                                  struct-name-id
+                                  field-name-id)
+                                  [(ResultTcType.Ok next-ty)
+                                    (set! current-ty next-ty)]
+                                  [(ResultTcType.Err _) (set! stop true)])
+                                unit)))]
+                        [(option_i64.None) (set! stop true)]))
+                    (set! index (+ index 1)))))
+              cursor))]
+        [(ResultTcType.Err _) -1]))))
+
+(define (compiler-semantic-walk-struct-get-like!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingSnapshot]
+  [env : TcTypeEnv]
+  [target-id : i64]
+  [field-name-id : i64]
+  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  (let
+    [inner-depth : i64 (compiler-semantic-dotted-chain-depth target-id 0)]
+    [fields : (__tl_dyn-array i64) (array.make-array i64 (+ inner-depth 1))]
+    [recv-id : i64 (compiler-semantic-dotted-chain-bottom target-id)]
+    [_fill : unit
+      (let
+        [walk : i64 0]
+        [node : i64 target-id]
+        (while (< walk inner-depth)
+          (match (ast-node-get node)
+            [(AstExpr.StructGet walk-target walk-field)
+              (begin
+                (array-set! fields (- (- inner-depth 1) walk) walk-field)
+                (set! node walk-target)
+                (set! walk (+ walk 1)))]
+            [_ (set! walk inner-depth)])))]
+    (if (and
+      (>= recv-id 0)
+      (not (struct-get state generated))
+      (compiler-semantic-dotted-chain-bottom-spanless? target-id))
+      (let
+        [recv-name : String (tc-env-key-name-text recv-id)]
+        [_own-field : unit (array-set! fields inner-depth field-name-id)]
+        [field-count : i64 (+ inner-depth 1)]
+        [located : i64
+          (compiler-semantic-dotted-chain-locate
+            state
+            recv-name
+            fields
+            field-count
+            (box-get (struct-get state dotted-search-start)))]
+        (let
+          [chain-end : i64
+            (compiler-semantic-dotted-chain-emit!
+              state
+              scope
+              env
+              recv-id
+              fields
+              field-count
+              located)]
+          (if (>= chain-end 0)
+            (set! (box-get (struct-get state dotted-search-start)) chain-end)
+            unit)))
+      (begin
+        (compiler-semantic-walk-node! state scope env target-id)
+        (compiler-semantic-record-struct-get-field-use!
+          state
+          env
+          target-id
+          field-name-id
+          maybe-span)))))
 
 (define (compiler-semantic-bind-local!
   [state : CompilerSemanticWalkState]
@@ -1211,13 +2140,24 @@
               recorded-maybe-ty
               search-start
               search-limit)]
-          (CompilerSemanticBindResult
-            (struct-get bound scope)
-            ;; Reproduce the successful checker's special arena-owner,
-            ;; arena-phase, and raw C function-pointer binding transition so a
-            ;; later inferred binding sees the same exact lexical environment.
-            (tc-bind-c-abi-fnptr-if-needed-id ctx env name-id binding-ty init)
-            (struct-get bound next-search)))]
+          (begin
+            (match maybe-ty
+              [(AstMaybeType.Some ty)
+                (begin
+                  (compiler-semantic-walk-type!
+                    state
+                    ty
+                    (struct-get bound next-search)
+                    search-limit)
+                  unit)]
+              [(AstMaybeType.No) unit])
+            (CompilerSemanticBindResult
+              (struct-get bound scope)
+              ;; Reproduce the successful checker's special arena-owner,
+              ;; arena-phase, and raw C function-pointer binding transition so a
+              ;; later inferred binding sees the same exact lexical environment.
+              (tc-bind-c-abi-fnptr-if-needed-id ctx env name-id binding-ty init)
+              (struct-get bound next-search))))]
       [(ResultTcType.Err _)
         ;; A complete check reached this walk successfully, so this is only a
         ;; fail-closed fallback for facts the replay cannot reproduce.
@@ -1297,6 +2237,11 @@
                     cursor
                     search-limit)]
                 (begin
+                  (compiler-semantic-walk-type!
+                    state
+                    ty
+                    (struct-get bound next-search)
+                    search-limit)
                   (set! next-scope (struct-get bound scope))
                   (set! next-env (struct-get bound env))
                   (set!
@@ -1341,6 +2286,11 @@
                     cursor
                     search-limit)]
                 (begin
+                  (compiler-semantic-walk-type!
+                    state
+                    ty
+                    (struct-get bound next-search)
+                    search-limit)
                   (set! next-scope (struct-get bound scope))
                   (set! next-env (struct-get bound env))
                   (set!
@@ -1351,6 +2301,31 @@
                       search-limit))))])
           (set! index (+ index 1))))
       (CompilerSemanticBindResult next-scope next-env cursor))))
+
+(define (compiler-semantic-walk-expr-type!
+  [state : CompilerSemanticWalkState]
+  [ty-id : i64]
+  [search-start : i64]
+  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  (let
+    [source : String (struct-get state source)]
+    [limit : i64
+      (match maybe-span
+        [(CompilerSemanticMaybeSpan.Some form-span)
+          (compiler-semantic-source-offset
+            source
+            (ast-source-span-end-line form-span)
+            (ast-source-span-end-col form-span))]
+        [(CompilerSemanticMaybeSpan.None) (string.string-length source)])]
+    (if (and (>= search-start 0) (< search-start limit))
+      (begin
+        (compiler-semantic-walk-type!
+          state
+          (ty-node-get ty-id)
+          search-start
+          limit)
+        unit)
+      unit)))
 
 (define (compiler-semantic-walk-expr-list!
   [state : CompilerSemanticWalkState]
@@ -1918,6 +2893,63 @@
       (compiler-semantic-record-name-use-span! state scope name-id span)
       (compiler-semantic-walk-node! state scope env value-id))))
 
+(define (compiler-semantic-record-variant-pattern-use!
+  [state : CompilerSemanticWalkState]
+  [scrutinee-maybe-ty : AstMaybeType]
+  [variant-name-id : i64]
+  [search-start : i64]
+  [search-limit : i64]) : unit
+  (match scrutinee-maybe-ty
+    [(AstMaybeType.Some scrutinee-ty)
+      (let
+        [ctx : TcContext (struct-get state ctx)]
+        [enum-name-id : i64
+          (match scrutinee-ty
+            [(AstType.Enum name) name]
+            [(AstType.EnumArgs name _) name]
+            [_ -1])]
+        (if (< enum-name-id 0)
+          unit
+          (let
+            [handle : i64
+              (tc-source-variant-handle-for-enum-id-or
+                ctx
+                enum-name-id
+                variant-name-id
+                (compiler-symbols-missing-handle))]
+            (if (not (compiler-symbols-handle-found? handle))
+              unit
+              (let
+                [name : String (tc-env-key-name-text variant-name-id)]
+                [span : CompilerSemanticSpan
+                  (compiler-semantic-name-span-in-range
+                    (struct-get state path)
+                    (struct-get state source)
+                    name
+                    search-start
+                    search-limit)]
+                [owner-handle : i64
+                  (compiler-registry-variant-owner-handle handle)]
+                [enum-text : String (tc-env-key-name-text enum-name-id)]
+                [symbol : CompilerSemanticSymbolId
+                  (compiler-semantic-member-symbol ctx owner-handle handle)]
+                (compiler-semantic-record-vec-push!
+                  (&mut (box-get (struct-get state records)))
+                  (CompilerSemanticRecord
+                    symbol
+                    CompilerSemanticRecordRole.Use
+                    CompilerSemanticSymbolKind.EnumMember
+                    (string.copy (& name))
+                    (string.copy (& enum-text))
+                    ""
+                    (struct-get symbol module-id)
+                    span
+                    (and
+                      (not (struct-get state generated))
+                      (>= (struct-get span start-byte) 0))
+                    (struct-get state provenance))))))))]
+    [(AstMaybeType.No) unit]))
+
 (define (compiler-semantic-bind-pattern!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
@@ -1926,36 +2958,61 @@
   [facts-available : bool]
   [bound-names : TcNameIdList]
   [pattern : AstPattern]
+  [scrutinee-maybe-ty : AstMaybeType]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (match pattern
     [(AstPattern.Var name maybe-ty)
       (if (tc-name-id-list-contains bound-names name)
-        (compiler-semantic-bind-local!
-          state
-          scope
-          env
-          name
-          CompilerSemanticSymbolKind.Local
-          (match maybe-ty
-            [(AstMaybeType.Some ty)
-              ;; Preserve the existing public annotation text while the arm
-              ;; body uses the checker's exact fact environment.
-              (AstMaybeType.Some (tc-resolve-type (struct-get state ctx) ty))]
-            [(AstMaybeType.No)
-              (if facts-available
-                (match (tc-lookup-visible-id
-                  (struct-get state ctx)
-                  fact-env
-                  name)
-                  [(ResultTcType.Ok ty)
-                    (AstMaybeType.Some
-                      (tc-resolve-type (struct-get state ctx) ty))]
-                  [(ResultTcType.Err _) AstMaybeType.No])
-                AstMaybeType.No)])
-          search-start
-          search-limit)
-        (CompilerSemanticBindResult scope env search-start))]
+        (let
+          [bound : CompilerSemanticBindResult
+            (compiler-semantic-bind-local!
+              state
+              scope
+              env
+              name
+              CompilerSemanticSymbolKind.Local
+              (match maybe-ty
+                [(AstMaybeType.Some ty)
+                  ;; Preserve the existing public annotation text while the arm
+                  ;; body uses the checker's exact fact environment.
+                  (AstMaybeType.Some
+                    (tc-resolve-type (struct-get state ctx) ty))]
+                [(AstMaybeType.No)
+                  (if facts-available
+                    (match (tc-lookup-visible-id
+                      (struct-get state ctx)
+                      fact-env
+                      name)
+                      [(ResultTcType.Ok ty)
+                        (AstMaybeType.Some
+                          (tc-resolve-type (struct-get state ctx) ty))]
+                      [(ResultTcType.Err _) AstMaybeType.No])
+                    AstMaybeType.No)])
+              search-start
+              search-limit)]
+          (begin
+            (match maybe-ty
+              [(AstMaybeType.Some ty)
+                (begin
+                  (compiler-semantic-walk-type!
+                    state
+                    ty
+                    (struct-get bound next-search)
+                    search-limit)
+                  unit)]
+              [(AstMaybeType.No) unit])
+            bound))
+        (begin
+          ;; A bare pattern name that binds nothing is a candidate enum variant
+          ;; reference; the emission no-ops unless it resolves as one.
+          (compiler-semantic-record-variant-pattern-use!
+            state
+            scrutinee-maybe-ty
+            name
+            search-start
+            search-limit)
+          (CompilerSemanticBindResult scope env search-start)))]
     [(AstPattern.Binding name)
       (if (tc-name-id-list-contains bound-names name)
         (compiler-semantic-bind-local!
@@ -1972,7 +3029,16 @@
             AstMaybeType.No)
           search-start
           search-limit)
-        (CompilerSemanticBindResult scope env search-start))]
+        (begin
+          ;; A bare pattern name that binds nothing is a candidate enum variant
+          ;; reference; the emission no-ops unless it resolves as one.
+          (compiler-semantic-record-variant-pattern-use!
+            state
+            scrutinee-maybe-ty
+            name
+            search-start
+            search-limit)
+          (CompilerSemanticBindResult scope env search-start)))]
     [(AstPattern.Tuple items)
       (compiler-semantic-bind-pattern-list!
         state
@@ -1982,19 +3048,28 @@
         facts-available
         bound-names
         (box-get items)
+        AstMaybeType.No
         search-start
         search-limit)]
-    [(AstPattern.Variant _ items)
-      (compiler-semantic-bind-pattern-list!
-        state
-        scope
-        env
-        fact-env
-        facts-available
-        bound-names
-        (box-get items)
-        search-start
-        search-limit)]
+    [(AstPattern.Variant variant-name-id items)
+      (begin
+        (compiler-semantic-record-variant-pattern-use!
+          state
+          scrutinee-maybe-ty
+          variant-name-id
+          search-start
+          search-limit)
+        (compiler-semantic-bind-pattern-list!
+          state
+          scope
+          env
+          fact-env
+          facts-available
+          bound-names
+          (box-get items)
+          AstMaybeType.No
+          search-start
+          search-limit))]
     [_ (CompilerSemanticBindResult scope env search-start)]))
 
 (define (compiler-semantic-bind-pattern-list!
@@ -2005,6 +3080,7 @@
   [facts-available : bool]
   [bound-names : TcNameIdList]
   [patterns : AstPatternList]
+  [scrutinee-maybe-ty : AstMaybeType]
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
@@ -2024,6 +3100,7 @@
               facts-available
               bound-names
               (ast-pattern-list-get (& patterns) index (ast-pattern-fallback))
+              scrutinee-maybe-ty
               cursor
               search-limit)]
           (begin
@@ -2095,6 +3172,7 @@
                                 ty
                                 pattern)
                               pattern
+                              (AstMaybeType.Some ty)
                               cursor
                               body-start)]
                           (compiler-semantic-walk-node!
@@ -2115,6 +3193,7 @@
                                 pattern
                                 TcNameIdList.Nil)
                               pattern
+                              AstMaybeType.No
                               cursor
                               body-start)]
                           (compiler-semantic-walk-node!
@@ -2135,6 +3214,7 @@
                             pattern
                             TcNameIdList.Nil)
                           pattern
+                          AstMaybeType.No
                           cursor
                           body-start)]
                       (compiler-semantic-walk-node!
@@ -2355,8 +3435,14 @@
       (compiler-semantic-walk-expr-list! state scope env items)]
     [(AstExpr.DynArray items)
       (compiler-semantic-walk-expr-list! state scope env items)]
-    [(AstExpr.MakeArray _ size)
-      (compiler-semantic-walk-node! state scope env size)]
+    [(AstExpr.MakeArray ty-id size)
+      (begin
+        (compiler-semantic-walk-expr-type!
+          state
+          ty-id
+          (compiler-semantic-maybe-span-start state maybe-span 0)
+          maybe-span)
+        (compiler-semantic-walk-node! state scope env size))]
     [(AstExpr.ArrayRef target index)
       (begin
         (compiler-semantic-walk-node! state scope env target)
@@ -2389,9 +3475,28 @@
       (compiler-semantic-walk-expr-list! state scope env items)]
     [(AstExpr.Set name value)
       (compiler-semantic-walk-set! state scope env name value maybe-span)]
-    [(AstExpr.Ann inner _) (compiler-semantic-walk-node! state scope env inner)]
-    [(AstExpr.Cast inner _)
-      (compiler-semantic-walk-node! state scope env inner)]
+    [(AstExpr.Ann inner ty-id)
+      (begin
+        (compiler-semantic-walk-node! state scope env inner)
+        (compiler-semantic-walk-expr-type!
+          state
+          ty-id
+          (compiler-semantic-expr-end-offset
+            state
+            inner
+            (compiler-semantic-maybe-span-start state maybe-span 0))
+          maybe-span))]
+    [(AstExpr.Cast inner ty-id)
+      (begin
+        (compiler-semantic-walk-node! state scope env inner)
+        (compiler-semantic-walk-expr-type!
+          state
+          ty-id
+          (compiler-semantic-expr-end-offset
+            state
+            inner
+            (compiler-semantic-maybe-span-start state maybe-span 0))
+          maybe-span))]
     [(AstExpr.Borrow _ _ inner)
       (compiler-semantic-walk-node! state scope env inner)]
     [(AstExpr.Match payload)
@@ -2473,11 +3578,23 @@
       (begin
         (compiler-semantic-walk-node! state scope env value)
         (compiler-semantic-walk-node! state scope env lane))]
-    [(AstExpr.StructGet target _)
-      (compiler-semantic-walk-node! state scope env target)]
-    [(AstExpr.StructSet target _ value)
+    [(AstExpr.StructGet target field-name-id)
+      (compiler-semantic-walk-struct-get-like!
+        state
+        scope
+        env
+        target
+        field-name-id
+        maybe-span)]
+    [(AstExpr.StructSet target field-name-id value)
       (begin
-        (compiler-semantic-walk-node! state scope env target)
+        (compiler-semantic-walk-struct-get-like!
+          state
+          scope
+          env
+          target
+          field-name-id
+          maybe-span)
         (compiler-semantic-walk-node! state scope env value))]
     [(AstExpr.WithRegion _ body)
       (compiler-semantic-walk-expr-list! state scope env body)]
@@ -2538,10 +3655,29 @@
       (begin
         (compiler-semantic-walk-node! state scope env ptr)
         (compiler-semantic-walk-node! state scope env offset))]
-    [(AstExpr.PtrCast ptr _) (compiler-semantic-walk-node! state scope env ptr)]
+    [(AstExpr.PtrCast ptr ty-id)
+      (begin
+        (compiler-semantic-walk-node! state scope env ptr)
+        (compiler-semantic-walk-expr-type!
+          state
+          ty-id
+          (compiler-semantic-expr-end-offset
+            state
+            ptr
+            (compiler-semantic-maybe-span-start state maybe-span 0))
+          maybe-span))]
     [(AstExpr.PtrToInt ptr) (compiler-semantic-walk-node! state scope env ptr)]
-    [(AstExpr.IntToPtr value _)
-      (compiler-semantic-walk-node! state scope env value)]
+    [(AstExpr.IntToPtr value ty-id)
+      (begin
+        (compiler-semantic-walk-node! state scope env value)
+        (compiler-semantic-walk-expr-type!
+          state
+          ty-id
+          (compiler-semantic-expr-end-offset
+            state
+            value
+            (compiler-semantic-maybe-span-start state maybe-span 0))
+          maybe-span))]
     [(AstExpr.StringData value)
       (compiler-semantic-walk-node! state scope env value)]
     [(AstExpr.StringFromBytes data len)
@@ -2570,6 +3706,32 @@
       (compiler-semantic-walk-node! state scope env index)]
     [(AstExpr.Syscall args)
       (compiler-semantic-walk-expr-list! state scope env args)]
+    [(AstExpr.TypeLiteral ty-id)
+      (if (>= ty-id 0)
+        (compiler-semantic-walk-expr-type!
+          state
+          ty-id
+          (compiler-semantic-maybe-span-start state maybe-span 0)
+          maybe-span)
+        unit)]
+    [(AstExpr.PtrNull ty-id)
+      (if (>= ty-id 0)
+        (compiler-semantic-walk-expr-type!
+          state
+          ty-id
+          (compiler-semantic-maybe-span-start state maybe-span 0)
+          maybe-span)
+        unit)]
+    ;; Bare `(init)` carries a contextual-type sentinel instead of a type
+    ;; node; the let/parameter annotation carries the written type reference.
+    [(AstExpr.Init ty-id)
+      (if (>= ty-id 0)
+        (compiler-semantic-walk-expr-type!
+          state
+          ty-id
+          (compiler-semantic-maybe-span-start state maybe-span 0)
+          maybe-span)
+        unit)]
     [_ unit]))
 
 (define (compiler-semantic-decl-param-search-start
@@ -2597,65 +3759,465 @@
       (struct-get name-span end-byte)
       (compiler-semantic-form-head-end (struct-get state source) form-start))))
 
+(define (compiler-semantic-member-definition-span
+  [state : CompilerSemanticWalkState]
+  [name : String]
+  [origin : AstSourceSpan]) : CompilerSemanticSpan
+  (let
+    [path : String (struct-get state path)]
+    [source : String (struct-get state source)]
+    [start : i64
+      (compiler-semantic-source-offset
+        source
+        (ast-source-span-start-line origin)
+        (ast-source-span-start-col origin))]
+    [name-len : i64 (string.string-length name)]
+    (cond
+      [(string.eq source "")
+        (CompilerSemanticSpan (string.copy (& path)) -1 -1 origin)]
+      [(compiler-semantic-source-name-at? source name start (+ start name-len))
+        (let
+          [position : AstSourceSpan
+            (compiler-semantic-source-position source start)]
+          [line : i64 (ast-source-span-start-line position)]
+          [col : i64 (ast-source-span-start-col position)]
+          (CompilerSemanticSpan
+            (string.copy (& path))
+            start
+            (+ start name-len)
+            (ast-source-span line col line (+ col name-len))))]
+      ;; The member sidecar falls back to the aggregate-name marker when a
+      ;; transform rebuilt the member list; locate the member in a bounded
+      ;; window instead, or report no bytes so the record stays non-editable
+      ;; rather than fabricating a span.
+      [else
+        (compiler-semantic-name-span-in-range
+          path
+          source
+          name
+          start
+          (+ start 4096))])))
+
+(define (compiler-semantic-record-field-definition!
+  [state : CompilerSemanticWalkState]
+  [fields : AstFieldDefList]
+  [index : i64]
+  [struct-name-id : i64]
+  [field-name-id : i64]
+  [field-ty : AstType]) : unit
+  (let
+    [ctx : TcContext (struct-get state ctx)]
+    [module-id : i64 (struct-get state module-id)]
+    (match (compiler-semantic-field-handle-in-module
+      ctx
+      module-id
+      struct-name-id
+      field-name-id)
+      [(CompilerSemanticMaybeHandle.Some handle)
+        (let
+          [owner-handle : i64
+            (compiler-symbol-make-handle
+              (compiler-symbol-kind-defstruct)
+              (compiler-registry-handle-owner-index handle))]
+          [name : String (tc-env-key-name-text field-name-id)]
+          [origin : AstSourceSpan
+            (compiler-parse-field-def-list-span-get
+              (& fields)
+              index
+              (ast-source-span 1 1 1 1))]
+          [span : CompilerSemanticSpan
+            (compiler-semantic-member-definition-span state name origin)]
+          [type-text : String (tc-type-render (tc-resolve-type ctx field-ty))]
+          [symbol : CompilerSemanticSymbolId
+            (compiler-semantic-member-symbol ctx owner-handle handle)]
+          (begin
+            (compiler-semantic-record-vec-push!
+              (&mut (box-get (struct-get state records)))
+              (CompilerSemanticRecord
+                symbol
+                CompilerSemanticRecordRole.Definition
+                CompilerSemanticSymbolKind.Field
+                (string.copy (& name))
+                (string.copy (& type-text))
+                ""
+                (struct-get symbol module-id)
+                span
+                (and
+                  (not (struct-get state generated))
+                  (>= (struct-get span start-byte) 0))
+                (struct-get state provenance)))
+            ;; Walk the payload type only when the member's own span anchored:
+            ;; scanning from an unanchored position could match unrelated text.
+            (if (>= (struct-get span end-byte) 0)
+              (begin
+                (compiler-semantic-walk-type!
+                  state
+                  field-ty
+                  (struct-get span end-byte)
+                  (string.string-length (struct-get state source)))
+                unit)
+              unit)))]
+      [(CompilerSemanticMaybeHandle.None) unit])))
+
+(define (compiler-semantic-walk-field-defs!
+  [state : CompilerSemanticWalkState]
+  [struct-name-id : i64]
+  [fields : AstFieldDefList]) : unit
+  (let
+    [count : i64 (ast-field-def-list-len (& fields))]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (ast-field-def-list-get
+          (& fields)
+          index
+          (ast-field-def-fallback))
+          [(AstFieldDef.Def field-name-id field-ty _)
+            (compiler-semantic-record-field-definition!
+              state
+              fields
+              index
+              struct-name-id
+              field-name-id
+              field-ty)])
+        (set! index (+ index 1))))))
+
+(define (compiler-semantic-record-variant-definition!
+  [state : CompilerSemanticWalkState]
+  [variants : AstVariantDefList]
+  [index : i64]
+  [enum-name-id : i64]
+  [variant-name-id : i64]
+  [payload-types : AstTypeList]) : unit
+  (let
+    [ctx : TcContext (struct-get state ctx)]
+    [module-id : i64 (struct-get state module-id)]
+    (match (compiler-semantic-variant-handle-in-module
+      ctx
+      module-id
+      enum-name-id
+      variant-name-id)
+      [(CompilerSemanticMaybeHandle.Some handle)
+        (let
+          [owner-handle : i64 (compiler-registry-variant-owner-handle handle)]
+          [name : String (tc-env-key-name-text variant-name-id)]
+          [origin : AstSourceSpan
+            (compiler-parse-variant-def-list-span-get
+              (& variants)
+              index
+              (ast-source-span 1 1 1 1))]
+          [span : CompilerSemanticSpan
+            (compiler-semantic-member-definition-span state name origin)]
+          [symbol : CompilerSemanticSymbolId
+            (compiler-semantic-member-symbol ctx owner-handle handle)]
+          [enum-text : String (tc-env-key-name-text enum-name-id)]
+          (begin
+            (compiler-semantic-record-vec-push!
+              (&mut (box-get (struct-get state records)))
+              (CompilerSemanticRecord
+                symbol
+                CompilerSemanticRecordRole.Definition
+                CompilerSemanticSymbolKind.EnumMember
+                (string.copy (& name))
+                (string.copy (& enum-text))
+                ""
+                (struct-get symbol module-id)
+                span
+                (and
+                  (not (struct-get state generated))
+                  (>= (struct-get span start-byte) 0))
+                (struct-get state provenance)))
+            ;; Walk payload types only when the member's own span anchored.
+            (if (>= (struct-get span end-byte) 0)
+              (begin
+                (compiler-semantic-walk-type-list!
+                  state
+                  payload-types
+                  (struct-get span end-byte)
+                  (string.string-length (struct-get state source)))
+                unit)
+              unit)))]
+      [(CompilerSemanticMaybeHandle.None) unit])))
+
+(define (compiler-semantic-walk-variant-defs!
+  [state : CompilerSemanticWalkState]
+  [enum-name-id : i64]
+  [variants : AstVariantDefList]) : unit
+  (let
+    [count : i64 (ast-variant-def-list-len (& variants))]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (ast-variant-def-list-get
+          (& variants)
+          index
+          (ast-variant-def-fallback))
+          [(AstVariantDef.Def variant-name-id payload-types _)
+            (compiler-semantic-record-variant-definition!
+              state
+              variants
+              index
+              enum-name-id
+              variant-name-id
+              payload-types)])
+        (set! index (+ index 1))))))
+
+(define (compiler-semantic-walk-dispatch-variants!
+  [state : CompilerSemanticWalkState]
+  [variants : AstDispatchVariantList]) : unit
+  (let
+    [count : i64 (ast-dispatch-variant-list-len (& variants))]
+    [index : i64 0]
+    [cursor : i64 (struct-get state form-start)]
+    (begin
+      (while (< index count)
+        (match (ast-dispatch-variant-list-get
+          (& variants)
+          index
+          (ast-dispatch-variant-fallback))
+          [(AstDispatchVariant.Variant _ fn-name-id)
+            (let
+              [name : String (tc-env-key-name-text fn-name-id)]
+              [span : CompilerSemanticSpan
+                (compiler-semantic-name-span-in-range
+                  (struct-get state path)
+                  (struct-get state source)
+                  name
+                  cursor
+                  (string.string-length (struct-get state source)))]
+              (begin
+                (compiler-semantic-record-top-use! state fn-name-id span)
+                (if (>= (struct-get span end-byte) 0)
+                  (set! cursor (struct-get span end-byte))
+                  unit)
+                (set! index (+ index 1))))])))))
+
+(define (compiler-semantic-record-module-declaration!
+  [state : CompilerSemanticWalkState]
+  [module-name-id : i64]) : unit
+  (let
+    [name : String (tc-env-key-name-text module-name-id)]
+    [form-head : i64
+      (compiler-semantic-form-head-end
+        (struct-get state source)
+        (struct-get state form-start))]
+    [span : CompilerSemanticSpan
+      (compiler-semantic-name-span-in-range
+        (struct-get state path)
+        (struct-get state source)
+        name
+        form-head
+        (+ form-head 4096))]
+    (compiler-semantic-record-vec-push!
+      (&mut (box-get (struct-get state records)))
+      (CompilerSemanticRecord
+        (CompilerSemanticSymbolId module-name-id -1 -1)
+        CompilerSemanticRecordRole.Definition
+        CompilerSemanticSymbolKind.Module
+        (string.copy (& name))
+        (string.copy (& name))
+        ""
+        module-name-id
+        span
+        (and
+          (not (struct-get state generated))
+          (>= (struct-get span start-byte) 0))
+        (struct-get state provenance)))))
+
+(define (compiler-semantic-walk-import!
+  [state : CompilerSemanticWalkState]
+  [spec : AstImportSpec]) : unit
+  (match spec
+    [(AstImportSpec.Spec _ _ maybe-module maybe-alias span-box)
+      (let
+        [form-span : AstSourceSpan (box-get span-box)]
+        [source : String (struct-get state source)]
+        [form-start : i64
+          (compiler-semantic-source-offset
+            source
+            (ast-source-span-start-line form-span)
+            (ast-source-span-start-col form-span))]
+        (match maybe-module
+          [(AstMaybeModuleName.Some module-name-id)
+            (let
+              [module-text : String (tc-env-key-name-text module-name-id)]
+              [module-span : CompilerSemanticSpan
+                (compiler-semantic-name-span-in-range
+                  (struct-get state path)
+                  source
+                  module-text
+                  form-start
+                  (string.string-length source))]
+              (compiler-semantic-record-vec-push!
+                (&mut (box-get (struct-get state records)))
+                (CompilerSemanticRecord
+                  (CompilerSemanticSymbolId module-name-id -1 -1)
+                  CompilerSemanticRecordRole.Use
+                  CompilerSemanticSymbolKind.Module
+                  (string.copy (& module-text))
+                  (string.copy (& module-text))
+                  ""
+                  module-name-id
+                  module-span
+                  (and
+                    (not (struct-get state generated))
+                    (>= (struct-get module-span start-byte) 0))
+                  (struct-get state provenance))))]
+          [(AstMaybeModuleName.No) unit])
+        (match maybe-alias
+          [(AstMaybeImportAlias.Some alias-id)
+            (let
+              [target-module-id : i64
+                (match maybe-module
+                  [(AstMaybeModuleName.Some module-name-id) module-name-id]
+                  [(AstMaybeModuleName.No)
+                    (tc-qualified-access-target-module-id
+                      (struct-get state ctx)
+                      alias-id)])]
+              [alias-text : String (tc-env-key-name-text alias-id)]
+              [alias-span : CompilerSemanticSpan
+                (compiler-semantic-name-span-in-range
+                  (struct-get state path)
+                  source
+                  alias-text
+                  form-start
+                  (string.string-length source))]
+              [module-text : String
+                (macro-decl-module-display target-module-id)]
+              (compiler-semantic-record-vec-push!
+                (&mut (box-get (struct-get state records)))
+                (CompilerSemanticRecord
+                  (CompilerSemanticSymbolId
+                    target-module-id
+                    (struct-get state declaration-ordinal)
+                    -1)
+                  CompilerSemanticRecordRole.Definition
+                  CompilerSemanticSymbolKind.Module
+                  (string.copy (& alias-text))
+                  (string.copy (& module-text))
+                  ""
+                  target-module-id
+                  alias-span
+                  (and
+                    (not (struct-get state generated))
+                    (>= (struct-get alias-span start-byte) 0))
+                  (struct-get state provenance))))]
+          [(AstMaybeImportAlias.No) unit]))]))
+
 (define (compiler-semantic-walk-decl!
   [state : CompilerSemanticWalkState]
   [decl : AstDecl]) : unit
-  (match decl
-    [(AstDecl.Def _ _ _ value)
-      (compiler-semantic-walk-node!
-        state
-        (compiler-semantic-binding-snapshot-empty)
-        (struct-get state top-env)
-        value)]
-    [(AstDecl.DefFn _ name params _ body _)
-      (let
-        [body-start : i64
-          (compiler-semantic-expr-start-offset
-            state
-            body
-            (string.string-length (struct-get state source)))]
-        [bound : CompilerSemanticBindResult
-          (compiler-semantic-bind-params!
-            state
-            (compiler-semantic-binding-snapshot-empty)
-            (struct-get state top-env)
-            params
-            (compiler-semantic-decl-param-search-start state name body)
-            body-start)]
-        (compiler-semantic-walk-node!
-          state
-          (struct-get bound scope)
-          (struct-get bound env)
-          body))]
-    [(AstDecl.DefMacro _ name params _ body)
-      (let
-        [body-start : i64
-          (compiler-semantic-expr-start-offset
-            state
-            body
-            (string.string-length (struct-get state source)))]
-        [bound : CompilerSemanticBindResult
-          (compiler-semantic-bind-macro-params!
+  (begin
+    (set!
+      (box-get (struct-get state dotted-search-start))
+      (struct-get state form-start))
+    (match decl
+      [(AstDecl.Def _ _ maybe-ty value)
+        (begin
+          (match maybe-ty
+            [(AstMaybeType.Some ty)
+              (begin
+                (compiler-semantic-walk-type!
+                  state
+                  ty
+                  (compiler-semantic-form-head-end
+                    (struct-get state source)
+                    (struct-get state form-start))
+                  (compiler-semantic-expr-start-offset
+                    state
+                    value
+                    (string.string-length (struct-get state source))))
+                unit)]
+            [(AstMaybeType.No) unit])
+          (compiler-semantic-walk-node!
             state
             (compiler-semantic-binding-snapshot-empty)
             (struct-get state top-env)
-            params
-            (compiler-semantic-decl-param-search-start state name body)
-            body-start)]
+            value))]
+      [(AstDecl.DefFn _ name params ret body _)
+        (let
+          [body-start : i64
+            (compiler-semantic-expr-start-offset
+              state
+              body
+              (string.string-length (struct-get state source)))]
+          [bound : CompilerSemanticBindResult
+            (compiler-semantic-bind-params!
+              state
+              (compiler-semantic-binding-snapshot-empty)
+              (struct-get state top-env)
+              params
+              (compiler-semantic-decl-param-search-start state name body)
+              body-start)]
+          (begin
+            (compiler-semantic-walk-type!
+              state
+              ret
+              (struct-get bound next-search)
+              body-start)
+            (compiler-semantic-walk-node!
+              state
+              (struct-get bound scope)
+              (struct-get bound env)
+              body)))]
+      [(AstDecl.DefMacro _ name params ret body)
+        (let
+          [body-start : i64
+            (compiler-semantic-expr-start-offset
+              state
+              body
+              (string.string-length (struct-get state source)))]
+          [bound : CompilerSemanticBindResult
+            (compiler-semantic-bind-macro-params!
+              state
+              (compiler-semantic-binding-snapshot-empty)
+              (struct-get state top-env)
+              params
+              (compiler-semantic-decl-param-search-start state name body)
+              body-start)]
+          (begin
+            (compiler-semantic-walk-type!
+              state
+              ret
+              (struct-get bound next-search)
+              body-start)
+            (compiler-semantic-walk-node!
+              state
+              (struct-get bound scope)
+              (struct-get bound env)
+              body)))]
+      [(AstDecl.Extern _ _ _ _ ty)
+        (begin
+          (compiler-semantic-walk-type!
+            state
+            ty
+            (compiler-semantic-form-head-end
+              (struct-get state source)
+              (struct-get state form-start))
+            (string.string-length (struct-get state source)))
+          unit)]
+      [(AstDecl.Test _ body _)
         (compiler-semantic-walk-node!
           state
-          (struct-get bound scope)
-          (struct-get bound env)
-          body))]
-    [(AstDecl.Test _ body _)
-      (compiler-semantic-walk-node!
-        state
-        (compiler-semantic-binding-snapshot-empty)
-        (struct-get state top-env)
-        body)]
-    [(AstDecl.Unsafe inner)
-      (compiler-semantic-walk-decl! state (box-get inner))]
-    [_ unit]))
+          (compiler-semantic-binding-snapshot-empty)
+          (struct-get state top-env)
+          body)]
+      [(AstDecl.DefEnum _ name-id _ variants)
+        (compiler-semantic-walk-variant-defs! state name-id variants)]
+      [(AstDecl.DefEnumLifetimes _ name-id _ _ variants)
+        (compiler-semantic-walk-variant-defs! state name-id variants)]
+      [(AstDecl.DefStruct _ name-id _ _ fields)
+        (compiler-semantic-walk-field-defs! state name-id fields)]
+      [(AstDecl.DefStructLifetimes _ name-id _ _ _ fields)
+        (compiler-semantic-walk-field-defs! state name-id fields)]
+      [(AstDecl.DefDispatch _ _ variants)
+        (compiler-semantic-walk-dispatch-variants! state variants)]
+      [(AstDecl.Module module-name-id)
+        (compiler-semantic-record-module-declaration! state module-name-id)]
+      [(AstDecl.Import _ spec) (compiler-semantic-walk-import! state spec)]
+      [(AstDecl.Unsafe inner)
+        (compiler-semantic-walk-decl! state (box-get inner))]
+      [_ unit])))
 
 (define (compiler-semantic-index-build-owned
   [ctx : TcContext]
@@ -2696,6 +4258,7 @@
             (array.make-array
               i64
               (ast-node-pool-context-expr-len (tc-context-pools ctx)))
+            (box 0)
             (box 0))]
         [index : i64 0]
         [cached-path : String ""]
@@ -3093,6 +4656,26 @@
           (match (struct-get record kind)
             [(CompilerSemanticSymbolKind.Struct) true]
             [_ false])]
+        [(CompilerSemanticSymbolKind.Module)
+          (match (struct-get record kind)
+            [(CompilerSemanticSymbolKind.Module) true]
+            [_ false])]
+        [(CompilerSemanticSymbolKind.Field)
+          (match (struct-get record kind)
+            [(CompilerSemanticSymbolKind.Field) true]
+            [_ false])]
+        [(CompilerSemanticSymbolKind.EnumMember)
+          (match (struct-get record kind)
+            [(CompilerSemanticSymbolKind.EnumMember) true]
+            [_ false])]
+        [(CompilerSemanticSymbolKind.Parameter)
+          (match (struct-get record kind)
+            [(CompilerSemanticSymbolKind.Parameter) true]
+            [_ false])]
+        [(CompilerSemanticSymbolKind.Local)
+          (match (struct-get record kind)
+            [(CompilerSemanticSymbolKind.Local) true]
+            [_ false])]
         [_ false])
       (>= start 0)
       (= (- end start) (string.string-length name))
@@ -3389,6 +4972,13 @@
               "imported-value"
               CompilerSemanticRecordRole.Use
               -1)]
+          [dep-component-use-index : i64
+            (compiler-semantic-source-index-find-record
+              (& first)
+              path
+              "dep"
+              CompilerSemanticRecordRole.Use
+              -1)]
           [answer-use-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
@@ -3451,6 +5041,7 @@
             (< macro-param-use-index 0)
             (< import-definition-index 0)
             (< import-use-index 0)
+            (< dep-component-use-index 0)
             (< answer-use-index 0)
             (< function-use-index 0)
             (< generated-index 0)
@@ -3494,6 +5085,10 @@
                   import-definition-index)]
               [import-use : CompilerSemanticRecord
                 (compiler-semantic-source-index-get (& first) import-use-index)]
+              [dep-component-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  dep-component-use-index)]
               [answer-use : CompilerSemanticRecord
                 (compiler-semantic-source-index-get (& first) answer-use-index)]
               [function-use : CompilerSemanticRecord
@@ -3667,7 +5262,15 @@
                         (compiler-semantic-record-span-text-eq?
                           source
                           import-use
-                          "dep.imported-value")
+                          "imported-value")
+                        (compiler-check-semantic-index-record-ok?
+                          source
+                          dep-component-use
+                          "dep"
+                          CompilerSemanticSymbolKind.Module)
+                        (string.eq
+                          (struct-get dep-component-use resolved-type)
+                          "semantic.index.import_dep")
                         (compiler-semantic-symbol-id-eq?
                           (struct-get import-definition symbol)
                           (struct-get import-use symbol))
@@ -3830,7 +5433,7 @@
             (< outer-callback-definition-index 0)
             (< inner-callback-definition-index 0)
             (< resource-definition-index 0)
-            (>= enum-variant-definition-index 0)
+            (< enum-variant-definition-index 0)
             (< enum-item-definition-index 0))
             (begin
               (compiler-semantic-source-index-release! (&mut first))
@@ -3860,6 +5463,10 @@
                 (compiler-semantic-source-index-get
                   (& first)
                   resource-definition-index)]
+              [enum-variant-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  enum-variant-definition-index)]
               [enum-item-definition : CompilerSemanticRecord
                 (compiler-semantic-source-index-get
                   (& first)
@@ -3960,6 +5567,14 @@
                         (string.eq
                           (struct-get enum-item-definition resolved-type)
                           "i64")
+                        (compiler-check-semantic-index-record-ok?
+                          source
+                          enum-variant-definition
+                          "SemanticEmpty"
+                          CompilerSemanticSymbolKind.EnumMember)
+                        (string.eq
+                          (struct-get enum-variant-definition resolved-type)
+                          "SemanticChoice")
                         (string.eq
                           (struct-get closure-use resolved-type)
                           "(-> i64 i64)")
@@ -4168,8 +5783,725 @@
                 ok))))]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
+(define (compiler-check-semantic-index-members-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_members.tl"]
+    [source : String
+      "(defstruct SemanticPair (left i64) (right i64))
+(defstruct OtherPair (left i64))
+(defstruct SemanticOuter (inner SemanticPair))
+(defenum SemanticChoice (SemanticEmpty) (SemanticFull i64))
+(defenum OtherChoice (OtherEmpty) (SemanticFull String))
+(define (make-full [x : i64]) : SemanticChoice (SemanticFull x))
+(define (make-pair [x : i64]) : SemanticPair (SemanticPair x x))
+(define (pair-sum [p : SemanticPair]) : i64 (+ (struct-get p left) p.right))
+(define (nested-left [o : SemanticOuter]) : i64 o.inner.left)
+(define (probe [c : SemanticChoice]) : i64
+  (match c
+    [SemanticEmpty 0]
+    [(SemanticFull item) item]))
+(define (probe-other [c : OtherChoice]) : i64
+  (match c
+    [OtherEmpty 0]
+    [(SemanticFull s) 1]))
+(define (dot-scalar [x : i64]) : i64 x)
+(defdispatch dot (scalar dot-scalar))"]
+    (match (compiler-check-source-index-with-roots path source (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
+        (let
+          [left-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "left"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [other-left-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "left"
+              CompilerSemanticRecordRole.Definition
+              1)]
+          [right-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "right"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [inner-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "inner"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [empty-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticEmpty"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [variant-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticFull"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [variant2-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticFull"
+              CompilerSemanticRecordRole.Definition
+              1)]
+          [o-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "o"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [p-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "p"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [dot-scalar-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "dot-scalar"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [left-use0-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "left"
+              CompilerSemanticRecordRole.Use
+              0)]
+          [left-use1-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "left"
+              CompilerSemanticRecordRole.Use
+              1)]
+          [p-use0-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "p"
+              CompilerSemanticRecordRole.Use
+              0)]
+          [p-use1-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "p"
+              CompilerSemanticRecordRole.Use
+              1)]
+          [full-use0-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticFull"
+              CompilerSemanticRecordRole.Use
+              0)]
+          [full-use1-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticFull"
+              CompilerSemanticRecordRole.Use
+              1)]
+          [full-use2-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticFull"
+              CompilerSemanticRecordRole.Use
+              2)]
+          (if (or
+            (< left-def-i 0)
+            (< other-left-def-i 0)
+            (< right-def-i 0)
+            (< inner-def-i 0)
+            (< empty-def-i 0)
+            (< variant-def-i 0)
+            (< variant2-def-i 0)
+            (< o-def-i 0)
+            (< p-def-i 0)
+            (< dot-scalar-def-i 0)
+            (< left-use0-i 0)
+            (< left-use1-i 0)
+            (< p-use0-i 0)
+            (< p-use1-i 0)
+            (< full-use0-i 0)
+            (< full-use1-i 0)
+            (< full-use2-i 0))
+            (begin
+              (compiler-semantic-source-index-release! (&mut first))
+              false)
+            (let
+              [left-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) left-def-i)]
+              [other-left-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) other-left-def-i)]
+              [right-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) right-def-i)]
+              [inner-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) inner-def-i)]
+              [empty-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) empty-def-i)]
+              [variant-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) variant-def-i)]
+              [variant2-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) variant2-def-i)]
+              [o-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) o-def-i)]
+              [p-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) p-def-i)]
+              [dot-scalar-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) dot-scalar-def-i)]
+              [left-use0 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) left-use0-i)]
+              [left-use1 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) left-use1-i)]
+              [p-use0 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) p-use0-i)]
+              [p-use1 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) p-use1-i)]
+              [full-use0 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) full-use0-i)]
+              [full-use1 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) full-use1-i)]
+              [full-use2 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) full-use2-i)]
+              [right-use-i : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get right-def symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [inner-use-i : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get inner-def symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [variant-use-i : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get variant-def symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [empty-use-i : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get empty-def symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [o-use-i : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get o-def symbol)
+                  CompilerSemanticRecordRole.Use)]
+              [dot-scalar-use-i : i64
+                (compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  (struct-get dot-scalar-def symbol)
+                  CompilerSemanticRecordRole.Use)]
+              (if (or
+                (< right-use-i 0)
+                (< inner-use-i 0)
+                (< variant-use-i 0)
+                (< empty-use-i 0)
+                (< o-use-i 0)
+                (< dot-scalar-use-i 0))
+                (begin
+                  (compiler-semantic-source-index-release! (&mut first))
+                  false)
+                (let
+                  [right-use : CompilerSemanticRecord
+                    (compiler-semantic-source-index-get (& first) right-use-i)]
+                  [inner-use : CompilerSemanticRecord
+                    (compiler-semantic-source-index-get (& first) inner-use-i)]
+                  [variant-use : CompilerSemanticRecord
+                    (compiler-semantic-source-index-get (& first) variant-use-i)]
+                  [empty-use : CompilerSemanticRecord
+                    (compiler-semantic-source-index-get (& first) empty-use-i)]
+                  [o-use : CompilerSemanticRecord
+                    (compiler-semantic-source-index-get (& first) o-use-i)]
+                  [dot-scalar-use : CompilerSemanticRecord
+                    (compiler-semantic-source-index-get
+                      (& first)
+                      dot-scalar-use-i)]
+                  [ok : bool
+                    (and
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        left-def
+                        "left"
+                        CompilerSemanticSymbolKind.Field)
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        other-left-def
+                        "left"
+                        CompilerSemanticSymbolKind.Field)
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        right-def
+                        "right"
+                        CompilerSemanticSymbolKind.Field)
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        inner-def
+                        "inner"
+                        CompilerSemanticSymbolKind.Field)
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        empty-def
+                        "SemanticEmpty"
+                        CompilerSemanticSymbolKind.EnumMember)
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        variant-def
+                        "SemanticFull"
+                        CompilerSemanticSymbolKind.EnumMember)
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        variant2-def
+                        "SemanticFull"
+                        CompilerSemanticSymbolKind.EnumMember)
+                      (string.eq (struct-get left-def resolved-type) "i64")
+                      (string.eq
+                        (struct-get inner-def resolved-type)
+                        "SemanticPair")
+                      (string.eq
+                        (struct-get empty-def resolved-type)
+                        "SemanticChoice")
+                      (string.eq
+                        (struct-get variant-def resolved-type)
+                        "SemanticChoice")
+                      (string.eq
+                        (struct-get variant2-def resolved-type)
+                        "OtherChoice")
+                      ;; Same-spelled fields and variants on different owners
+                      ;; never share an identity.
+                      (not
+                        (compiler-semantic-symbol-id-eq?
+                          (struct-get left-def symbol)
+                          (struct-get other-left-def symbol)))
+                      (not
+                        (compiler-semantic-symbol-id-eq?
+                          (struct-get variant-def symbol)
+                          (struct-get variant2-def symbol)))
+                      ;; (struct-get p left) and chained o.inner.left resolve to
+                      ;; the same SemanticPair.left identity.
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        left-use0
+                        "left"
+                        CompilerSemanticSymbolKind.Field)
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        left-use1
+                        "left"
+                        CompilerSemanticSymbolKind.Field)
+                      (compiler-semantic-symbol-id-eq?
+                        (struct-get left-use0 symbol)
+                        (struct-get left-def symbol))
+                      (compiler-semantic-symbol-id-eq?
+                        (struct-get left-use1 symbol)
+                        (struct-get left-def symbol))
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        right-use
+                        "right"
+                        CompilerSemanticSymbolKind.Field)
+                      (compiler-semantic-symbol-id-eq?
+                        (struct-get right-use symbol)
+                        (struct-get right-def symbol))
+                      (match (struct-get inner-use kind)
+                        [(CompilerSemanticSymbolKind.Field) true]
+                        [_ false])
+                      (compiler-semantic-symbol-id-eq?
+                        (struct-get inner-use symbol)
+                        (struct-get inner-def symbol))
+                      ;; Constructor and both match-pattern uses of
+                      ;; SemanticChoice.SemanticFull share one identity...
+                      (match (struct-get variant-use kind)
+                        [(CompilerSemanticSymbolKind.EnumMember) true]
+                        [_ false])
+                      (compiler-semantic-symbol-id-eq?
+                        (struct-get variant-use symbol)
+                        (struct-get variant-def symbol))
+                      (compiler-semantic-symbol-id-eq?
+                        (struct-get full-use0 symbol)
+                        (struct-get variant-def symbol))
+                      (compiler-semantic-symbol-id-eq?
+                        (struct-get full-use1 symbol)
+                        (struct-get variant-def symbol))
+                      ;; ...while the same-spelled OtherChoice pattern resolves
+                      ;; to the OtherChoice member, never across owners.
+                      (compiler-semantic-symbol-id-eq?
+                        (struct-get full-use2 symbol)
+                        (struct-get variant2-def symbol))
+                      (not
+                        (compiler-semantic-symbol-id-eq?
+                          (struct-get full-use2 symbol)
+                          (struct-get variant-def symbol)))
+                      (match (struct-get empty-use kind)
+                        [(CompilerSemanticSymbolKind.EnumMember) true]
+                        [_ false])
+                      (compiler-semantic-symbol-id-eq?
+                        (struct-get empty-use symbol)
+                        (struct-get empty-def symbol))
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        empty-use
+                        "SemanticEmpty"
+                        CompilerSemanticSymbolKind.EnumMember)
+                      ;; ISA dispatch specializations record function uses.
+                      (match (struct-get dot-scalar-use kind)
+                        [(CompilerSemanticSymbolKind.Function) true]
+                        [_ false])
+                      (compiler-semantic-symbol-id-eq?
+                        (struct-get dot-scalar-use symbol)
+                        (struct-get dot-scalar-def symbol))
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        dot-scalar-use
+                        "dot-scalar"
+                        CompilerSemanticSymbolKind.Function)
+                      ;; Dotted receivers record the leading component only.
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        o-use
+                        "o"
+                        CompilerSemanticSymbolKind.Parameter)
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        p-use0
+                        "p"
+                        CompilerSemanticSymbolKind.Parameter)
+                      (compiler-check-semantic-index-record-ok?
+                        source
+                        p-use1
+                        "p"
+                        CompilerSemanticSymbolKind.Parameter))]
+                  (begin
+                    (compiler-semantic-source-index-release! (&mut first))
+                    (and
+                      ok
+                      (= (compiler-semantic-source-index-len (& first)) 0))))))))]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-types-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_types.tl"]
+    [dep-path : String "src/tests/semantic_index_import_dep.tl"]
+    [source : String
+      "(module semantic.types.demo)
+(import \"semantic_index_import_dep.tl\" module semantic.index.import_dep as dep)
+(defstruct SemanticPair (left i64) (right i64))
+(defstruct SemanticOuter (inner SemanticPair))
+(defenum SemanticChoice (SemanticEmpty) (SemanticFull i64))
+(define (make-outer [p : SemanticPair]) : SemanticOuter (SemanticOuter p))
+(define (sum-fields [v : (Array SemanticPair)]) : i64 0)
+(define (probe-size) : i64 (comptime (size-of (type SemanticPair))))
+(define (let-typed [o : SemanticOuter]) : SemanticOuter
+  (let [copy : SemanticOuter o] copy))
+(define (make-imported [v : dep.ImportedPair]) : dep.ImportedPair v)
+;; A bare `(init)` carries no type node; the annotation carries the written
+;; type reference (regression: contextual init must not abort the walk).
+(define (probe-init) : (Array i64 2)
+  (let [arr : (Array i64 2) (init)] arr))
+(define (probe-text) : String \"ππ\")
+(define (after-text [marked : i64]) : i64 marked)"]
+    (match (compiler-check-source-index-with-roots path source (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
+        (let
+          [pair-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticPair"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [outer-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticOuter"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [imported-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              ""
+              "ImportedPair"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [marked-def-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "marked"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [pair-use0-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticPair"
+              CompilerSemanticRecordRole.Use
+              0)]
+          [pair-use1-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticPair"
+              CompilerSemanticRecordRole.Use
+              1)]
+          [pair-use2-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticPair"
+              CompilerSemanticRecordRole.Use
+              2)]
+          [pair-use3-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticPair"
+              CompilerSemanticRecordRole.Use
+              3)]
+          [outer-use0-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticOuter"
+              CompilerSemanticRecordRole.Use
+              0)]
+          [outer-use1-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticOuter"
+              CompilerSemanticRecordRole.Use
+              1)]
+          [outer-use2-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticOuter"
+              CompilerSemanticRecordRole.Use
+              2)]
+          [outer-use3-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "SemanticOuter"
+              CompilerSemanticRecordRole.Use
+              3)]
+          [imported-use0-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "ImportedPair"
+              CompilerSemanticRecordRole.Use
+              0)]
+          [imported-use1-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "ImportedPair"
+              CompilerSemanticRecordRole.Use
+              1)]
+          [dep-use0-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "dep"
+              CompilerSemanticRecordRole.Use
+              0)]
+          [dep-use1-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "dep"
+              CompilerSemanticRecordRole.Use
+              1)]
+          [marked-use-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "marked"
+              CompilerSemanticRecordRole.Use
+              0)]
+          (if (or
+            (< pair-def-i 0)
+            (< outer-def-i 0)
+            (< imported-def-i 0)
+            (< marked-def-i 0)
+            (< pair-use0-i 0)
+            (< pair-use1-i 0)
+            (< pair-use2-i 0)
+            (< pair-use3-i 0)
+            (< outer-use0-i 0)
+            (< outer-use1-i 0)
+            (< outer-use2-i 0)
+            (< outer-use3-i 0)
+            (< imported-use0-i 0)
+            (< imported-use1-i 0)
+            (< dep-use0-i 0)
+            (< dep-use1-i 0)
+            (< marked-use-i 0))
+            (begin
+              (compiler-semantic-source-index-release! (&mut first))
+              false)
+            (let
+              [pair-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) pair-def-i)]
+              [outer-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) outer-def-i)]
+              [imported-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) imported-def-i)]
+              [marked-def : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) marked-def-i)]
+              [pair-use0 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) pair-use0-i)]
+              [pair-use1 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) pair-use1-i)]
+              [pair-use2 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) pair-use2-i)]
+              [pair-use3 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) pair-use3-i)]
+              [outer-use0 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) outer-use0-i)]
+              [outer-use1 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) outer-use1-i)]
+              [outer-use2 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) outer-use2-i)]
+              [outer-use3 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) outer-use3-i)]
+              [imported-use0 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) imported-use0-i)]
+              [imported-use1 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) imported-use1-i)]
+              [dep-use0 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) dep-use0-i)]
+              [dep-use1 : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) dep-use1-i)]
+              [marked-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get (& first) marked-use-i)]
+              [ok : bool
+                (and
+                  ;; Field payload, param/return annotations, nested array
+                  ;; element, and a type literal all resolve to the one
+                  ;; SemanticPair definition.
+                  (compiler-check-semantic-index-record-ok?
+                    source
+                    pair-use0
+                    "SemanticPair"
+                    CompilerSemanticSymbolKind.Struct)
+                  (compiler-check-semantic-index-record-ok?
+                    source
+                    pair-use1
+                    "SemanticPair"
+                    CompilerSemanticSymbolKind.Struct)
+                  (compiler-check-semantic-index-record-ok?
+                    source
+                    pair-use2
+                    "SemanticPair"
+                    CompilerSemanticSymbolKind.Struct)
+                  (compiler-check-semantic-index-record-ok?
+                    source
+                    pair-use3
+                    "SemanticPair"
+                    CompilerSemanticSymbolKind.Struct)
+                  (compiler-semantic-symbol-id-eq?
+                    (struct-get pair-use0 symbol)
+                    (struct-get pair-def symbol))
+                  (compiler-semantic-symbol-id-eq?
+                    (struct-get pair-use1 symbol)
+                    (struct-get pair-def symbol))
+                  (compiler-semantic-symbol-id-eq?
+                    (struct-get pair-use2 symbol)
+                    (struct-get pair-def symbol))
+                  (compiler-semantic-symbol-id-eq?
+                    (struct-get pair-use3 symbol)
+                    (struct-get pair-def symbol))
+                  ;; Return annotation, constructor, and both let positions
+                  ;; resolve to SemanticOuter.
+                  (compiler-semantic-symbol-id-eq?
+                    (struct-get outer-use0 symbol)
+                    (struct-get outer-def symbol))
+                  (compiler-semantic-symbol-id-eq?
+                    (struct-get outer-use1 symbol)
+                    (struct-get outer-def symbol))
+                  (compiler-semantic-symbol-id-eq?
+                    (struct-get outer-use2 symbol)
+                    (struct-get outer-def symbol))
+                  (compiler-semantic-symbol-id-eq?
+                    (struct-get outer-use3 symbol)
+                    (struct-get outer-def symbol))
+                  ;; Qualified spellings resolve to the dep module's struct
+                  ;; while the alias component records a Module use.
+                  (compiler-check-semantic-index-record-ok?
+                    source
+                    imported-use0
+                    "ImportedPair"
+                    CompilerSemanticSymbolKind.Struct)
+                  (compiler-check-semantic-index-record-ok?
+                    source
+                    imported-use1
+                    "ImportedPair"
+                    CompilerSemanticSymbolKind.Struct)
+                  (compiler-semantic-symbol-id-eq?
+                    (struct-get imported-use0 symbol)
+                    (struct-get imported-def symbol))
+                  (compiler-semantic-symbol-id-eq?
+                    (struct-get imported-use1 symbol)
+                    (struct-get imported-def symbol))
+                  (compiler-check-semantic-index-record-ok?
+                    source
+                    dep-use0
+                    "dep"
+                    CompilerSemanticSymbolKind.Module)
+                  (compiler-check-semantic-index-record-ok?
+                    source
+                    dep-use1
+                    "dep"
+                    CompilerSemanticSymbolKind.Module)
+                  (=
+                    (struct-get (struct-get dep-use0 symbol) module-id)
+                    (struct-get (struct-get imported-def symbol) module-id))
+                  ;; Byte-exact spans after multi-byte UTF-8 content.
+                  (compiler-check-semantic-index-record-ok?
+                    source
+                    marked-def
+                    "marked"
+                    CompilerSemanticSymbolKind.Parameter)
+                  (compiler-check-semantic-index-record-ok?
+                    source
+                    marked-use
+                    "marked"
+                    CompilerSemanticSymbolKind.Parameter))]
+              (begin
+                (compiler-semantic-source-index-release! (&mut first))
+                (and ok (= (compiler-semantic-source-index-len (& first)) 0))))))]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
 (define (compiler-check-semantic-index-ok?) : bool
   (and
     (compiler-check-semantic-index-base-ok?)
     (compiler-check-semantic-index-inferred-locals-ok?)
-    (compiler-check-semantic-index-dense-scopes-ok?)))
+    (compiler-check-semantic-index-dense-scopes-ok?)
+    (compiler-check-semantic-index-members-ok?)
+    (compiler-check-semantic-index-types-ok?)))

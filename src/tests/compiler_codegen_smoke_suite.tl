@@ -69,6 +69,8 @@
       (if (compiler-driver-typecheck-cache-owner-smoke-ok?)
         42
         1)]
+    [(string.eq name "driver-base-transients")
+      (compiler-driver-base-transients-smoke-main)]
     [else 1]))
 
 (define (main) : i64
@@ -114,4 +116,7 @@
       (compiler-smoke-suite-require-child
         "driver-typecheck-cache-owner"
         "compiler smoke suite: typecheck cache owner isolation failed")
+      (compiler-smoke-suite-require-child
+        "driver-base-transients"
+        "compiler smoke suite: compiler_driver_base_transients_smoke failed")
       42)))

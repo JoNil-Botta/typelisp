@@ -730,6 +730,158 @@
             name-b)
           72)))))
 
+;; Base-transient A/B interleaving smoke (refs #4723). Builtin/CTFE id state
+;; and lower scratch/IR arenas are owned by each driver state: a state-owned
+;; reset or release touches the compatibility globals only while they name
+;; that state's handles, and never disturbs another state's installed storage.
+(define (compiler-driver-base-transients-lower-arenas-ok?
+  [state-a : CompilerDriverState]
+  [state-b : CompilerDriverState]) : bool
+  (let
+    [lower-a : CompilerLowerArenaState
+      (compiler-driver-state-owned-lower-arenas state-a)]
+    [lower-b : CompilerLowerArenaState
+      (compiler-driver-state-owned-lower-arenas state-b)]
+    (begin
+      ;; A installs empty cells; the lazy selectors create its arenas.
+      (compiler-driver-state-install-lower-arenas! state-a)
+      (let
+        [_a-scratch : i64 (lower-scratch-arena-get)]
+        [_a-ir : i64 (lower-ir-arena-get)]
+        (begin
+          (compiler-driver-state-capture-active-lower-arenas! state-a)
+          ;; Installed release: A's cells and the selectors both zero.
+          (compiler-driver-state-release-lower-arenas! state-a)
+          (let
+            [released-ok? : bool
+              (and
+                (= (compiler-lower-arena-state-scratch-arena lower-a) 0)
+                (= (compiler-lower-arena-state-ir-arena lower-a) 0)
+                (= lower-scratch-arena 0)
+                (= lower-ir-arena 0))]
+            ;; State reuse: fresh arenas recreate through the selectors.
+            [_a-scratch-2 : i64 (lower-scratch-arena-get)]
+            [_a-ir-2 : i64 (lower-ir-arena-get)]
+            (begin
+              (compiler-driver-state-capture-active-lower-arenas! state-a)
+              ;; B parks its own arena chain in the selectors.
+              (compiler-lower-arena-state-set!
+                lower-b
+                (arena.tl_arena_make)
+                (arena.tl_arena_make))
+              (compiler-driver-state-install-lower-arenas! state-b)
+              ;; Isolation: A's release must not zero or destroy B's arenas.
+              (compiler-driver-state-release-lower-arenas! state-a)
+              (let
+                [isolated-ok? : bool
+                  (and
+                    released-ok?
+                    (> _a-scratch-2 0)
+                    (> _a-ir-2 0)
+                    (=
+                      (lower-scratch-arena-get)
+                      (compiler-lower-arena-state-scratch-arena lower-b))
+                    (=
+                      (lower-ir-arena-get)
+                      (compiler-lower-arena-state-ir-arena lower-b)))]
+                (begin
+                  ;; B's own release still zeroes the selectors it owns.
+                  (compiler-driver-state-release-lower-arenas! state-b)
+                  (let
+                    [b-released-ok? : bool
+                      (and
+                        (= (compiler-lower-arena-state-scratch-arena lower-b) 0)
+                        (= (compiler-lower-arena-state-ir-arena lower-b) 0)
+                        (= lower-scratch-arena 0)
+                        (= lower-ir-arena 0))]
+                    (begin
+                      ;; Reuse once more after B's release, then clean up.
+                      (lower-scratch-arena-get)
+                      (lower-ir-arena-get)
+                      (lower-arenas-release!)
+                      (and isolated-ok? b-released-ok?))))))))))))
+
+(define (compiler-driver-base-transients-smoke-ok?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
+    [state-b : CompilerDriverState (compiler-driver-state-new-for-compile)]
+    [intern-a : ci.InternCompatState
+      (compiler-driver-state-owned-interns state-a)]
+    [intern-b : ci.InternCompatState
+      (compiler-driver-state-owned-interns state-b)]
+    [builtins-a : cbi.CompilerBuiltinIdsState
+      (compiler-driver-state-owned-builtins state-a)]
+    [builtins-b : cbi.CompilerBuiltinIdsState
+      (compiler-driver-state-owned-builtins state-b)]
+    [table-a : i64 (ci.intern-compat-state-table-id intern-a)]
+    [table-b : i64 (ci.intern-compat-state-table-id intern-b)]
+    (begin
+      ;; Derive A's builtin table from A's own intern state. The first intern
+      ;; into the fresh table lazily resets it, so read the owning intern
+      ;; identity from the freshly captured cells, as production validation
+      ;; does after the session-floor capture.
+      (ci.intern-compat-state-install! intern-a)
+      (cbi.compiler-builtin-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (compiler-driver-state-capture-active-builtins! state-a)
+      (compiler-driver-state-capture-active-interns! state-a)
+      (let
+        [gen-a : i64 (compiler-driver-state-intern-generation state-a)]
+        [gen-b0 : i64 (compiler-driver-state-intern-generation state-b)]
+        [loaded-ok? : bool
+          (and
+            ;; Builtin lookup + CTFE success: A's snapshot serves the ids and
+            ;; validates against A's own intern identity.
+            (cbi.state-table-current-with? builtins-a gen-a table-a)
+            (not (cbi.state-table-current-with? builtins-a gen-b0 table-b))
+            (>= (cbi.state-ctfe-ref builtins-a 0) 0)
+            (=
+              (cbi.state-ctfe-ref builtins-a 0)
+              (cbi.compiler-builtin-ctfe-ref 0))
+            ;; Decoy: B's compatibility state never saw a load.
+            (not (cbi.state-table-current-with? builtins-b gen-b0 table-b)))]
+        (begin
+          ;; CTFE failure/reset: A is installed, so its state-owned reset
+          ;; invalidates the compatibility table too.
+          (compiler-driver-state-reset-builtins! state-a)
+          (let
+            [reset-ok? : bool
+              (and
+                (not (cbi.state-table-current-with? builtins-a gen-a table-a))
+                (not (cbi.compiler-builtin-table-current?)))]
+            (begin
+              ;; Install B: derive B's table from B's own intern state.
+              (ci.intern-compat-state-install! intern-b)
+              (cbi.compiler-builtin-reset!)
+              (cbi.compiler-builtin-initialize-for-parse!)
+              (compiler-driver-state-capture-active-builtins! state-b)
+              (compiler-driver-state-capture-active-interns! state-b)
+              ;; Isolation: resetting uninstalled A must not disturb B's
+              ;; installed compatibility table -- the retired install/reset
+              ;; bridge invalidated it unconditionally.
+              (compiler-driver-state-reset-builtins! state-a)
+              (let
+                [gen-b : i64 (compiler-driver-state-intern-generation state-b)]
+                [isolated-ok? : bool
+                  (and
+                    (cbi.compiler-builtin-table-current?)
+                    (cbi.state-table-current-with? builtins-b gen-b table-b)
+                    (=
+                      (cbi.state-ctfe-ref builtins-b 0)
+                      (cbi.compiler-builtin-ctfe-ref 0)))]
+                (and
+                  loaded-ok?
+                  reset-ok?
+                  isolated-ok?
+                  (compiler-driver-base-transients-lower-arenas-ok?
+                    state-a
+                    state-b))))))))))
+
+(define (compiler-driver-base-transients-smoke-main) : i64
+  (if (compiler-driver-base-transients-smoke-ok?)
+    42
+    1))
+
 (define (compiler-driver-pic-smoke-extern-reject-ok?) : bool
   (match (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
     (compiler-driver-pic-smoke-write-extern-fixture)

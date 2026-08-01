@@ -851,6 +851,24 @@
 (define (state-ref [state : CompilerBuiltinIdsState] [index : i64]) : i64
   (array-ref (struct-get state ids) index))
 
+;; State-owned CTFE builtin lookup: reads the state's own snapshot instead of
+;; the compatibility-global CTFE id array, so an uninstalled state's table can
+;; be queried without installing it.
+(define (state-ctfe-ref [state : CompilerBuiltinIdsState] [index : i64]) : i64
+  (array-ref (struct-get state ctfe-ids) index))
+
+;; State-owned table validation: does this state's builtin table belong to the
+;; given intern generation and table id? Mirrors
+;; `compiler-builtin-table-current?` for a state that may not be installed in
+;; the compatibility globals; the caller passes its owning intern identity.
+(define (state-table-current-with?
+  [state : CompilerBuiltinIdsState]
+  [generation : i64]
+  [table-id : i64]) : bool
+  (and
+    (= (state-generation state) generation)
+    (= (state-table-id state) table-id)))
+
 (define (state-set!
   [state : CompilerBuiltinIdsState]
   [index : i64]
@@ -879,10 +897,23 @@
         (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
         (set! i (+ i 1))))))
 
+;; State-owned reset: the state's own metadata always clears so its next parse
+;; re-derives the table. The compatibility-global metadata is invalidated only
+;; when this state's table is the installed one -- resetting an uninstalled
+;; state must not disturb whichever table the serial/legacy paths (or another
+;; job state) currently have installed.
 (define (state-reset! [state : CompilerBuiltinIdsState]) : unit
-  (begin
-    (state-set-generation! state -1)
-    (state-set-metadata! state -1 -1 false)))
+  (let
+    [installed? : bool
+      (and
+        (>= (state-table-id state) 0)
+        (= (state-table-id state) compiler-builtin-table-id))]
+    (begin
+      (state-set-generation! state -1)
+      (state-set-metadata! state -1 -1 false)
+      (if installed?
+        (compiler-builtin-reset!)
+        unit))))
 
 (define (state-capture-from-globals! [state : CompilerBuiltinIdsState]) : unit
   (begin

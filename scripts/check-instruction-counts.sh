@@ -21,8 +21,9 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
+. "$ROOT/scripts/lib-benchmark-ci-cases.sh"
 
-DEFAULT_BENCHMARKS="cfg_domloops,gvn_table,intern_table,lex_source,liveness_scan,peephole_lines"
+DEFAULT_BENCHMARKS=$(benchmark_ci_case_csv "$ROOT" instruction-main)
 DEFAULT_BASELINE="$ROOT/perf/insn-exec-baseline.tsv"
 DEFAULT_WORKDIR="target/instruction-count-check"
 BASELINE=${TYPELISP_IR_CHECK_BASELINE:-$DEFAULT_BASELINE}

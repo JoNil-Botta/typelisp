@@ -161,7 +161,9 @@ auto-vectorization enabled, making the auto-vectorizer gap visible while SPMD
 backends close it. The measurement report writes `ratios.tsv` with both
 `typelisp_over_clang_scalar_x` and `typelisp_over_clang_auto_x`, but the default
 `perf/insn-exec-baseline.tsv` deliberately gates only the TypeLisp and
-scalar-fair rows.
+scalar-fair rows. Every measured benchmark run must also reproduce exact
+stdout, stderr, and exit status across TypeLisp, auto-vectorized C, and
+scalar-fair C; repeated runs must reproduce the same observable output.
 
 TypeLisp-generated executables use `benchmark/typelisp/<name>`.
 A selected benchmark case must contain both `bench.tl` and `baseline.c`;
@@ -192,6 +194,13 @@ the six kernels derived from compiler self-compilation: `cfg_domloops`,
 scoped against those selected cases even when the baseline carries additional
 rows. Alternate baseline files such as the scheduled heavy corpus retain their
 own checked row policy.
+
+`perf/benchmark-ci-cases.tsv` assigns positive membership to the Linux generic
+benchmark, opt2 optimizer-corpus, and instruction-count suites. The eleven
+instruction-count workloads are absent from the generic benchmark suite, and
+the six main workloads are absent from the separate opt2 suite. Their measured
+execution supplies both output parity and instruction-count coverage; local
+case and filter selections remain independent of CI membership.
 
 The same required Linux PR leg reuses its already bootstrapped stage2 compiler
 for a benchmark-only pass over `spmd_map`, `spmd_mask`, `spmd_zip`,

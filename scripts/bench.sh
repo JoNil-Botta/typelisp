@@ -5,8 +5,10 @@ export LC_ALL
 
 # scripts/bench.sh - TypeLisp vs clang paired benchmark harness. refs #1097
 #
-# Required CI uses --correctness: build every comparison pair and compare exact
-# stdout, stderr, and exit status without collecting timings.
+# Required CI uses --correctness to build comparison pairs and compare exact
+# stdout, stderr, and exit status without collecting timings. Linux CI passes
+# the positive benchmark suite from perf/benchmark-ci-cases.tsv; instruction
+# suites validate their output parity while collecting cachegrind counts.
 #
 # Manual timing builds three fixed optimization legs, warms each binary once,
 # then rotates their execution order in paired rounds:

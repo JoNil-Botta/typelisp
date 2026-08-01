@@ -1256,9 +1256,10 @@
     [(CompilerPkgKindLib)
       (build-package-lib-path-profile manifest-dir name profile target)]))
 
-;; The v1 tlci path is target-independent because package images are
-;; metadata-only host compile-time interfaces. Runtime artifacts still
-;; carry the selected target through their filename/extension.
+;; The v2 tlci image follows the build host: it is the host comptime
+;; interface (metadata-only or code-bearing), separate from the
+;; runtime-target artifact, which still carries the selected target through
+;; its filename/extension.
 (define (build-package-artifact-paths
   [manifest-dir : String]
   [name : String]

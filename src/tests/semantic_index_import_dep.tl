@@ -6,4 +6,5 @@
   9)
 
 ;: Imported pair documentation.
-(defstruct ImportedPair (a i64))
+(defstruct ImportedPair
+  (a i64))

@@ -1,4 +1,4 @@
-;; tlci_core.tl - TypeLisp comptime image v1 and metadata v1/v2 parse/emit helpers.
+;; tlci_core.tl - TypeLisp comptime image v2 and metadata v1/v2 parse/emit helpers.
 ;;
 ;; Package emission selects metadata-only or deterministic multi-entry native
 ;; images, and this module also assembles the focused dispatch proof used by

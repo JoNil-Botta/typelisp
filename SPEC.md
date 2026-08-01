@@ -3036,9 +3036,10 @@ Example:
   unsupported bodies retain an explicit registered shell and interpreted
   fallback. General
   consumer catalog
-  discovery/dispatch is a separate integration layer. The tlci path is
-  target-independent in v1: cross-target builds keep target runtime artifacts
-  separate while sharing the host comptime image path.
+  discovery/dispatch is a separate integration layer. The tlci image follows
+  the build host in v2: it always executes on the host platform that produced
+  it and stays separate from the selected runtime target's artifacts; it is
+  not portable code across host operating systems.
 - The optional top-level `(link ...)` section declares native link inputs for
   `bin` package builds, so a package that links system or vendored libraries
   does not need `(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)`

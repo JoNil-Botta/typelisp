@@ -385,6 +385,46 @@
   (No)
   (Some lower_i64_i64_map.Map (Array ast.AstType) i64 LowerTypeParent))
 
+;; Flattened dotted imports emit a module marker when entering an imported file
+;; and another when returning to its importer. Lowering can therefore revisit
+;; one module many times even though its immutable local name/type view is
+;; unchanged. Keep one phase-local entry per distinct module instead of
+;; rebuilding the overlay at every marker.
+(defenum LowerMaybeModuleNameCache
+  (No)
+  (Some LowerNameCache))
+
+(defenum LowerModuleNameCacheList
+  (Nil)
+  (Cons i64 LowerNameCache (Box LowerModuleNameCacheList)))
+
+(defstruct LowerModuleLocalView
+  (local-top-env tc_core.TcTypeEnv)
+  (name-cache LowerNameCache)
+  (type-cache LowerTypeCache))
+
+(defenum ResultLowerModuleLocalView
+  (Ok LowerModuleLocalView)
+  (Err String))
+
+(defenum LowerMaybeModuleLocalView
+  (No)
+  (Some LowerModuleLocalView))
+
+(defenum LowerModuleLocalViewList
+  (Nil)
+  (Cons i64 LowerModuleLocalView (Box LowerModuleLocalViewList)))
+
+(define lower-active-module-name-caches : LowerModuleNameCacheList
+  (LowerModuleNameCacheList.Nil))
+(define lower-active-module-local-views : LowerModuleLocalViewList
+  (LowerModuleLocalViewList.Nil))
+
+(define (lower-module-phase-caches-reset!) : unit
+  (begin
+    (set! lower-active-module-name-caches (LowerModuleNameCacheList.Nil))
+    (set! lower-active-module-local-views (LowerModuleLocalViewList.Nil))))
+
 ;; The shared global decl-lowering type cache (built once per lower-decls
 ;; from top-env). Per-module overlay caches (LowerTypeParent.Global) fall through
 ;; here on a miss. Set by lower-decls before the per-module loop runs.
@@ -441,6 +481,7 @@
 (define (lower-reach-scratch-globals-reset!) : unit
   (begin
     (set! lower-active-global-name-cache (lower-empty-global-name-cache))
+    (lower-module-phase-caches-reset!)
     (set! lower-reach-active-runtime-paths (lower_i64_i64_map.with-capacity 8))
     (set!
       lower-reach-active-body-used-types
@@ -2413,6 +2454,31 @@
           (clone_support.CloneNameList.Nil)
           module-id
           (LowerNameParent.Global))))))
+
+(define (lower-module-name-cache-list-lookup
+  [entries : LowerModuleNameCacheList]
+  [module-id : i64]) : LowerMaybeModuleNameCache
+  (match entries
+    [(LowerModuleNameCacheList.Nil) (LowerMaybeModuleNameCache.No)]
+    [(LowerModuleNameCacheList.Cons entry-module-id cache rest)
+      (if (= entry-module-id module-id)
+        (LowerMaybeModuleNameCache.Some cache)
+        (lower-module-name-cache-list-lookup (box-get rest) module-id))]))
+
+(define (lower-active-module-name-cache-lookup [module-id : i64]) : LowerMaybeModuleNameCache
+  (lower-module-name-cache-list-lookup
+    lower-active-module-name-caches
+    module-id))
+
+(define (lower-active-module-name-cache-insert!
+  [module-id : i64]
+  [cache : LowerNameCache]) : unit
+  (set!
+    lower-active-module-name-caches
+    (LowerModuleNameCacheList.Cons
+      module-id
+      cache
+      (box lower-active-module-name-caches))))
 
 (define (lower-name-cache-with-module-id
   [cache : LowerNameCache]
@@ -5856,6 +5922,60 @@
             module
             module-id))])))
 
+(define (lower-module-local-view-list-lookup
+  [entries : LowerModuleLocalViewList]
+  [module-id : i64]) : LowerMaybeModuleLocalView
+  (match entries
+    [(LowerModuleLocalViewList.Nil) (LowerMaybeModuleLocalView.No)]
+    [(LowerModuleLocalViewList.Cons entry-module-id view rest)
+      (if (= entry-module-id module-id)
+        (LowerMaybeModuleLocalView.Some view)
+        (lower-module-local-view-list-lookup (box-get rest) module-id))]))
+
+(define (lower-active-module-local-view-insert!
+  [module-id : i64]
+  [view : LowerModuleLocalView]) : unit
+  (set!
+    lower-active-module-local-views
+    (LowerModuleLocalViewList.Cons
+      module-id
+      view
+      (box lower-active-module-local-views))))
+
+(define (lower-module-local-view-cached
+  [ctx : tc_core.TcContext]
+  [top-env : tc_core.TcTypeEnv]
+  [names : LowerNameEnv]
+  [module : String]
+  [module-id : i64]) : ResultLowerModuleLocalView
+  (match (lower-module-local-view-list-lookup
+    lower-active-module-local-views
+    module-id)
+    [(LowerMaybeModuleLocalView.Some view) (ResultLowerModuleLocalView.Ok view)]
+    [(LowerMaybeModuleLocalView.No)
+      (match (lower-module-local-envs
+        ctx
+        top-env
+        names
+        lower-active-global-name-cache
+        module
+        module-id)
+        [(ResultLowerModuleLocalEnv.Ok
+            local-top-env
+            local-type-env
+            local-name-only)
+          (let
+            [view : LowerModuleLocalView
+              (LowerModuleLocalView
+                local-top-env
+                (lower-name-cache-overlay local-name-only module-id)
+                (lower-type-cache-overlay local-type-env))]
+            (begin
+              (lower-active-module-local-view-insert! module-id view)
+              (ResultLowerModuleLocalView.Ok view)))]
+        [(ResultLowerModuleLocalEnv.Err message)
+          (ResultLowerModuleLocalView.Err message)])]))
+
 (define (lower-id-set-empty) : LowerIdSet
   (LowerIdSet (make-array i64 0) 0))
 
@@ -7797,6 +7917,7 @@
               ""
               cbi.compiler-builtin-id-fix-empty)
             top-env
+            top-env
             source-decls
             ""
             cbi.compiler-builtin-id-fix-empty
@@ -9154,29 +9275,36 @@
   [module-id : i64]) : LowerNameCache
   (if (string.eq module "")
     base-cache
-    (let
-      [module-base-names : LowerNameEnv
-        (lower-name-env-with-import-aliases-in-module-cache
-          decls
-          base-names
-          base-cache
-          module-id)]
-      [alias-only-names : LowerNameEnv
-        (lower-name-env-with-import-aliases-in-module-cache
-          decls
-          (LowerNameEnv.Nil)
-          base-cache
-          module-id)]
-      (lower-name-cache-overlay
-        (lower-function-body-local-names-in-module-resolve
-          decls
-          alias-only-names
-          module-base-names
-          base-cache
-          module
-          module-id
-          cbi.compiler-builtin-id-fix-empty)
-        module-id))))
+    (match (lower-active-module-name-cache-lookup module-id)
+      [(LowerMaybeModuleNameCache.Some cache) cache]
+      [(LowerMaybeModuleNameCache.No)
+        (let
+          [module-base-names : LowerNameEnv
+            (lower-name-env-with-import-aliases-in-module-cache
+              decls
+              base-names
+              base-cache
+              module-id)]
+          [alias-only-names : LowerNameEnv
+            (lower-name-env-with-import-aliases-in-module-cache
+              decls
+              (LowerNameEnv.Nil)
+              base-cache
+              module-id)]
+          [cache : LowerNameCache
+            (lower-name-cache-overlay
+              (lower-function-body-local-names-in-module-resolve
+                decls
+                alias-only-names
+                module-base-names
+                base-cache
+                module
+                module-id
+                cbi.compiler-builtin-id-fix-empty)
+              module-id)]
+          (begin
+            (lower-active-module-name-cache-insert! module-id cache)
+            cache))])))
 
 (define (lower-function-decl-count-one [decl : ast.AstDecl]) : i64
   (match decl
@@ -9345,21 +9473,23 @@
   [entry-path : String]
   [names : LowerNameEnv]
   [count : i64]) : LowerFunctionBodyIndex
-  (let
-    [name-cache : LowerNameCache (lower-name-cache-from-env names)]
-    (lower-function-body-index-from-decls-in-module
-      pools
-      decls
-      paths
-      entry-path
-      ""
-      cbi.compiler-builtin-id-fix-empty
-      decls
-      paths
-      names
-      name-cache
-      name-cache
-      (lower-function-body-index-empty count))))
+  (begin
+    (set! lower-active-module-name-caches (LowerModuleNameCacheList.Nil))
+    (let
+      [name-cache : LowerNameCache (lower-name-cache-from-env names)]
+      (lower-function-body-index-from-decls-in-module
+        pools
+        decls
+        paths
+        entry-path
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        decls
+        paths
+        names
+        name-cache
+        name-cache
+        (lower-function-body-index-empty count)))))
 
 (define (lower-reach-process
   [pools : ast.AstNodePoolContext]
@@ -58799,6 +58929,7 @@
       ;; empty overlays (everything resolves via the global caches) for decls in
       ;; the leading "" module before the first (module ...) marker.
       (set! lower-active-global-name-cache dispatch-name-cache)
+      (set! lower-active-module-local-views (LowerModuleLocalViewList.Nil))
       (set! lower-decls-global-type-cache (lower-type-cache-from-env top-env))
       (set!
         lower-rvo-early-return-functions
@@ -59320,35 +59451,19 @@
                     [next-module-str : String (ci.intern-str next-module)]
                     [skip-runtime : bool
                       (lower-comptime-runtime-skip-module? next-module-str)]
-                    (match (lower-module-local-envs
+                    (match (lower-module-local-view-cached
                       ctx
                       top-env
                       names
-                      cur-name-cache
                       next-module-str
                       next-module)
-                      [(ResultLowerModuleLocalEnv.Ok
-                          next-local-top-env
-                          local-type-env
-                          local-name-only)
+                      [(ResultLowerModuleLocalView.Ok view)
                         (begin
-                          (set! cur-local-top-env next-local-top-env)
-                          ;; Overlay just this module's local names;
-                          ;; misses fall through to the shared global name cache
-                          ;; (set once) instead of rebuilding the whole global
-                          ;; name set per module.
                           (set!
-                            cur-name-cache
-                            (lower-name-cache-overlay
-                              local-name-only
-                              next-module))
-                          ;; Overlay just this module's local type
-                          ;; bindings; misses fall through to the shared global
-                          ;; type cache (set once from top-env) instead of
-                          ;; rebuilding the whole global type set per module.
-                          (set!
-                            cur-type-cache
-                            (lower-type-cache-overlay local-type-env))
+                            cur-local-top-env
+                            (struct-get view local-top-env))
+                          (set! cur-name-cache (struct-get view name-cache))
+                          (set! cur-type-cache (struct-get view type-cache))
                           (set! cur-module next-module-str)
                           (set! cur-module-id next-module)
                           (if skip-runtime
@@ -59362,7 +59477,7 @@
                                   (set! cur-decls kept-decls)
                                   (set! cur-paths kept-paths))])
                             (set! cur-decls rest)))]
-                      [(ResultLowerModuleLocalEnv.Err message)
+                      [(ResultLowerModuleLocalView.Err message)
                         (begin
                           (set!
                             result

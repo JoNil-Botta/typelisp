@@ -10142,6 +10142,16 @@
   (tc-empty-type-env))
 (define tc-hygiene-module-env-cache : TcModuleLocalEnvCache
   (tc-empty-module-local-env-cache))
+(define tc-macro-module-env-cache-ready : bool
+  false)
+(define tc-macro-module-env-cache-store : i64
+  0)
+(define tc-macro-module-env-cache-head : i64
+  -1)
+(define tc-macro-module-env-cache-module-id : i64
+  cbi.compiler-builtin-id-fix-empty)
+(define tc-macro-module-env-cache-value : TcTypeEnv
+  (tc-empty-type-env))
 
 ;; Arena that owns the module-local env cache chain. The cache lives in
 ;; the GLOBAL above, but hygiene lookups fire deep inside per-decl typechecking
@@ -10200,6 +10210,14 @@
           (unsafe
             (arena.tl_arena_destroy head))
           (tc-hygiene-module-env-cache-arena-install! (arena.tl_arena_make)))))))
+
+(define (tc-macro-module-env-cache-clear!) : unit
+  (begin
+    (set! tc-macro-module-env-cache-ready false)
+    (set! tc-macro-module-env-cache-store 0)
+    (set! tc-macro-module-env-cache-head -1)
+    (set! tc-macro-module-env-cache-module-id cbi.compiler-builtin-id-fix-empty)
+    (set! tc-macro-module-env-cache-value (tc-empty-type-env))))
 
 (define (tc-hygiene-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -66552,6 +66570,7 @@
     (tc-macro-abstract-proof-reset!)
     (macro-generated-decls-memo-reset!)
     (tc-macro-helper-env-cache-reset!)
+    (tc-macro-module-env-cache-clear!)
     (tc-nominal-owner-cache-reset!)
     (macro-alias-derived-cache-reset!)
     (set! tc-hygiene-active-top-env-ready false)
@@ -79373,6 +79392,34 @@
       (ast.ast-decl-cons decl (ast.ast-decl-list-new))
       path)))
 
+(define (tc-macro-module-local-env-id
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [module : String]
+  [module-id : i64]) : ResultTcEnv
+  (let
+    [store-handle : i64 (struct-get top-env store)]
+    [head : i64 (struct-get top-env head)]
+    (if (and
+      tc-macro-module-env-cache-ready
+      (= tc-macro-module-env-cache-store store-handle)
+      (= tc-macro-module-env-cache-head head)
+      (= tc-macro-module-env-cache-module-id module-id))
+      (ResultTcEnv.Ok tc-macro-module-env-cache-value)
+      ;; The persistent environment store allocates appended nodes in the top
+      ;; environment's owner arena. Do not switch the ambient macro-generation
+      ;; arena here: doing so breaks the generation's allocator bookkeeping.
+      (match (tc-module-local-env-id ctx top-env module module-id)
+        [(ResultTcEnv.Ok env)
+          (begin
+            (set! tc-macro-module-env-cache-ready true)
+            (set! tc-macro-module-env-cache-store store-handle)
+            (set! tc-macro-module-env-cache-head head)
+            (set! tc-macro-module-env-cache-module-id module-id)
+            (set! tc-macro-module-env-cache-value env)
+            (ResultTcEnv.Ok tc-macro-module-env-cache-value))]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))))
+
 (define (macro-env-for-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -79380,7 +79427,7 @@
   [module-id : i64]) : ResultTcEnv
   (if (= module-id cbi.compiler-builtin-id-fix-empty)
     (ResultTcEnv.Ok top-env)
-    (tc-module-local-env-id ctx top-env module module-id)))
+    (tc-macro-module-local-env-id ctx top-env module module-id)))
 
 (define (macro-module-import-marker-decls
   [target-module : String]
@@ -80471,6 +80518,7 @@
 (define (macro-expand-decl-with-path
   [ctx : TcContext]
   [top-env : TcTypeEnv]
+  [local-env : TcTypeEnv]
   [orig-decls : ast.AstDeclList]
   [module : String]
   [module-id : i64]
@@ -80519,21 +80567,12 @@
             (if (macro-decl-expansion-can-change-program? decl)
               (macro-expand-program-structural-change-note! 1)
               unit)
-            (match (macro-env-for-module ctx top-env module module-id)
-              [(ResultTcEnv.Ok local-env)
-                (match (macro-expand-decl
-                  decl-ctx
-                  local-env
-                  orig-decls
-                  template)
-                  [(ResultMacroDecl.Ok expanded)
-                    (macro-single-decl-expansion
-                      (ast.ast-decl-with-meta (ast.ast-decl-meta decl) expanded)
-                      decl-path)]
-                  [(ResultMacroDecl.Err diag)
-                    (ResultMacroDeclExpansion.Err diag)])]
-              [(ResultTcEnv.Err message)
-                (ResultMacroDeclExpansion.Err (box (tc-decl-diag decl message)))]))))]))
+            (match (macro-expand-decl decl-ctx local-env orig-decls template)
+              [(ResultMacroDecl.Ok expanded)
+                (macro-single-decl-expansion
+                  (ast.ast-decl-with-meta (ast.ast-decl-meta decl) expanded)
+                  decl-path)]
+              [(ResultMacroDecl.Err diag) (ResultMacroDeclExpansion.Err diag)]))))]))
 
 ;; R3-P1 copy-out. Rebuild the declaration paths in the arena that is current on
 ;; entry; the path strings themselves can be generation-resident.
@@ -80648,6 +80687,7 @@
 (define (macro-expand-decl-with-path-generational
   [ctx : TcContext]
   [top-env : TcTypeEnv]
+  [local-env : TcTypeEnv]
   [orig-decls : ast.AstDeclList]
   [module : String]
   [module-id : i64]
@@ -80656,6 +80696,7 @@
   (macro-expand-decl-with-path-in-generation
     ctx
     top-env
+    local-env
     orig-decls
     module
     module-id
@@ -80670,6 +80711,7 @@
 (define (macro-expand-decl-with-path-splice-generational
   [ctx : TcContext]
   [top-env : TcTypeEnv]
+  [local-env : TcTypeEnv]
   [orig-decls : ast.AstDeclList]
   [module : String]
   [module-id : i64]
@@ -80678,6 +80720,7 @@
   (macro-expand-decl-with-path-in-generation
     ctx
     top-env
+    local-env
     orig-decls
     module
     module-id
@@ -80688,6 +80731,7 @@
 (define (macro-expand-decl-with-path-in-generation
   [ctx : TcContext]
   [top-env : TcTypeEnv]
+  [local-env : TcTypeEnv]
   [orig-decls : ast.AstDeclList]
   [module : String]
   [module-id : i64]
@@ -80701,6 +80745,7 @@
       (macro-expand-decl-with-path
         ctx
         top-env
+        local-env
         orig-decls
         module
         module-id
@@ -80731,6 +80776,7 @@
         (macro-expand-decl-with-path
           ctx
           top-env
+          local-env
           orig-decls
           module
           module-id
@@ -82590,6 +82636,7 @@
                           (match (macro-expand-decl-with-path-splice-generational
                             cur-ctx
                             cur-top-env
+                            cur-top-env
                             cur-orig-decls
                             cur-module
                             cur-module-id
@@ -83250,14 +83297,24 @@
                           ;; a declaration body, and its superseded intermediate
                           ;; forms are the macro arena's dominant owner. Expand
                           ;; it in its own generation and commit the survivor.
-                          (match (macro-expand-decl-with-path-generational
+                          (match (match (macro-env-for-module
                             cur-ctx
                             cur-top-env
-                            cur-orig-decls
                             cur-module
-                            cur-module-id
-                            decl
-                            decl-path)
+                            cur-module-id)
+                            [(ResultTcEnv.Ok local-env)
+                              (macro-expand-decl-with-path-generational
+                                cur-ctx
+                                cur-top-env
+                                local-env
+                                cur-orig-decls
+                                cur-module
+                                cur-module-id
+                                decl
+                                decl-path)]
+                            [(ResultTcEnv.Err message)
+                              (ResultMacroDeclExpansion.Err
+                                (box (tc-decl-diag decl message)))])
                             [(ResultMacroDeclExpansion.Ok
                                 expanded
                                 expanded-paths)
@@ -86421,6 +86478,7 @@
     (tc-unbound-suggestion-snapshot-reset!)
     (tc-clone-able-cache-reset!)
     (tc-macro-helper-env-cache-reset!)
+    (tc-macro-module-env-cache-clear!)
     (tc-spmd-inline-helper-stack-reset!)
     (tc-agg-caches-reset!)
     (tc-nominal-owner-cache-reset!)
@@ -86462,6 +86520,7 @@
     (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
     (tc-clone-able-cache-reset!)
     (tc-macro-helper-env-cache-reset!)
+    (tc-macro-module-env-cache-clear!)
     (tc-spmd-inline-helper-stack-reset!)
     (tc-agg-caches-reset!)
     (tc-nominal-owner-cache-reset!)

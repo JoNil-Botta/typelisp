@@ -1997,15 +1997,15 @@
         [chain-end : i64
           (compiler-semantic-dotted-chain-emit!
             state
-              scope
-              env
-              recv-id
-              fields
-              field-count
-              located)]
-          (if (>= chain-end 0)
-            (set! (box-get (struct-get state dotted-search-start)) chain-end)
-            unit))
+            scope
+            env
+            recv-id
+            fields
+            field-count
+            located)]
+        (if (>= chain-end 0)
+          (set! (box-get (struct-get state dotted-search-start)) chain-end)
+          unit))
       (begin
         (compiler-semantic-walk-node! state scope env target-id)
         (compiler-semantic-record-struct-get-field-use!
@@ -3969,26 +3969,26 @@
     [index : i64 0]
     [cursor : i64 (struct-get state form-start)]
     (while (< index count)
-        (match (ast-dispatch-variant-list-get
-          (& variants)
-          index
-          (ast-dispatch-variant-fallback))
-          [(AstDispatchVariant.Variant _ fn-name-id)
-            (let
-              [name : String (tc-env-key-name-text fn-name-id)]
-              [span : CompilerSemanticSpan
-                (compiler-semantic-name-span-in-range
-                  (struct-get state path)
-                  (struct-get state source)
-                  name
-                  cursor
-                  (string.string-length (struct-get state source)))]
-              (begin
-                (compiler-semantic-record-top-use! state fn-name-id span)
-                (if (>= (struct-get span end-byte) 0)
-                  (set! cursor (struct-get span end-byte))
-                  unit)
-                (set! index (+ index 1))))]))))
+      (match (ast-dispatch-variant-list-get
+        (& variants)
+        index
+        (ast-dispatch-variant-fallback))
+        [(AstDispatchVariant.Variant _ fn-name-id)
+          (let
+            [name : String (tc-env-key-name-text fn-name-id)]
+            [span : CompilerSemanticSpan
+              (compiler-semantic-name-span-in-range
+                (struct-get state path)
+                (struct-get state source)
+                name
+                cursor
+                (string.string-length (struct-get state source)))]
+            (begin
+              (compiler-semantic-record-top-use! state fn-name-id span)
+              (if (>= (struct-get span end-byte) 0)
+                (set! cursor (struct-get span end-byte))
+                unit)
+              (set! index (+ index 1))))]))))
 
 (define (compiler-semantic-record-module-declaration!
   [state : CompilerSemanticWalkState]

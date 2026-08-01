@@ -2354,25 +2354,25 @@
                   module-name))))
           (match (compiler-load-pkg-dep-lookup deps first)
             [(CompilerLoadNoPath)
-              (if (and
-                (compiler-load-nested-import-root? importer-dir)
-                (io.file-exists? primary))
-                (ResultPkgResolve.Ok primary)
-                (if (io.file-exists? fallback)
-                  (ResultPkgResolve.Ok fallback)
-                  (if (=
+              (cond
+                [(and
+                    (compiler-load-nested-import-root? importer-dir)
+                    (io.file-exists? primary))
+                  (ResultPkgResolve.Ok primary)]
+                [(io.file-exists? fallback) (ResultPkgResolve.Ok fallback)]
+                [(=
                     (compiler-pkg-dep-list-count (compiler-pkg-deps-list deps))
                     0)
-                    ;; A dotted alias with no declared dependencies and no
-                    ;; local module is an unknown package alias; with a deps
-                    ;; graph the name may be a vendored local source module.
-                    (ResultPkgResolve.Err
+                  ;; A dotted alias with no declared dependencies and no local
+                  ;; module is an unknown package alias; with a deps graph the
+                  ;; name may be a vendored local source module.
+                  (ResultPkgResolve.Err
+                    (string.append
+                      "compiler-load: unknown package alias '"
                       (string.append
-                        "compiler-load: unknown package alias '"
-                        (string.append
-                          first
-                          (string.append "': pkg:" module-path))))
-                    (ResultPkgResolve.Ok fallback))))]
+                        first
+                        (string.append "': pkg:" module-path))))]
+                [else (ResultPkgResolve.Ok fallback)])]
             [(CompilerLoadSomePath dep-path)
               (if (compiler-load-github-dependency-path? dep-path)
                 (ResultPkgResolve.Err

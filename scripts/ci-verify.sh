@@ -13,6 +13,7 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
+. "$ROOT/scripts/lib-benchmark-ci-cases.sh"
 
 usage() {
     cat >&2 <<'EOF'
@@ -45,6 +46,15 @@ case "$(uname -s)" in
         exit 1
         ;;
 esac
+
+BENCHMARK_CORRECTNESS_CASES=
+OPT2_CORRECTNESS_CASES=
+HEAVY_INSTRUCTION_COUNT_BENCHMARKS=
+if [ "$HOST_OS" = linux ]; then
+    BENCHMARK_CORRECTNESS_CASES=$(benchmark_ci_case_csv "$ROOT" benchmark)
+    OPT2_CORRECTNESS_CASES=$(benchmark_ci_case_csv "$ROOT" optimization-opt2)
+    HEAVY_INSTRUCTION_COUNT_BENCHMARKS=$(benchmark_ci_case_csv "$ROOT" instruction-heavy)
+fi
 
 if [ "${TYPELISP_CI_TIMING:-0}" = 1 ]; then
     ci_timing_init "$ROOT/target/ci-timing/$HOST_OS.tsv" "$HOST_OS"
@@ -490,10 +500,22 @@ if [ "$HOST_OS" = linux ]; then
 fi
 run_with_compiler "$STAGE2_BIN" "stage2 examples" scripts/verify-examples.sh
 run_gate "benchmark wall-clock harness self-tests" scripts/bench.sh --self-test
-run_with_compiler "$STAGE2_BIN" "stage2 benchmark comparison correctness" scripts/bench.sh --correctness
+if [ "$HOST_OS" = linux ]; then
+    run_with_compiler "$STAGE2_BIN" "stage2 benchmark comparison correctness" \
+        scripts/bench.sh --correctness --cases "$BENCHMARK_CORRECTNESS_CASES"
+else
+    run_with_compiler "$STAGE2_BIN" "stage2 benchmark comparison correctness" \
+        scripts/bench.sh --correctness
+fi
 run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus correctness" scripts/run-optimization-benchmarks.sh --correctness
-run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus opt2 runtime correctness" \
-    scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2
+if [ "$HOST_OS" = linux ]; then
+    run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus opt2 runtime correctness" \
+        scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2 \
+        --cases "$OPT2_CORRECTNESS_CASES"
+else
+    run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus opt2 runtime correctness" \
+        scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2
+fi
 run_with_compiler "$STAGE2_BIN" "stage2 stdlib modules and fixtures" scripts/verify-stdlib.sh
 run_with_compiler "$STAGE2_BIN" "stage2 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD SIMD comparison" scripts/verify-spmd-simd.sh
@@ -517,7 +539,7 @@ if [ "$HOST_OS" = linux ]; then
         env TYPELISP_IR_CHECK_COMPILER="$STAGE2_BIN" \
         scripts/check-instruction-counts.sh \
         --baseline perf/insn-exec-heavy-baseline.tsv \
-        --benchmarks spmd_map,spmd_mask,spmd_zip,spmd_short_tail,string_scan \
+        --benchmarks "$HEAVY_INSTRUCTION_COUNT_BENCHMARKS" \
         --benchmarks-only \
         --runs 1 \
         --output target/instruction-count-heavy

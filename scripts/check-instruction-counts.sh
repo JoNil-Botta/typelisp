@@ -3,13 +3,14 @@ set -eu
 
 # check-instruction-counts.sh - Linux cachegrind instruction-count baseline gate.
 #
-# Benchmark metrics are exact. Each scalar TypeLisp benchmark is paired with
-# both auto-vectorized clang -O2 and scalar-fair clang -O2
-# -fno-vectorize/-fno-slp-vectorize rows. The self-compile metric carries a small
-# CI tolerance, but its absolute cachegrind count is not portable between local
-# WSL/Linux environments and GitHub-hosted Linux. Local comparisons therefore
-# report that row without gating it; reviewers measure branch deltas by running
-# measure-instruction-counts.sh on both trees on one host.
+# Benchmark metrics are exact. Each scalar TypeLisp benchmark is paired with a
+# scalar-fair clang -O2 -fno-vectorize/-fno-slp-vectorize row. Measurement may
+# also report auto-vectorized clang -O2, but a baseline chooses whether that row
+# is gated by including benchmark/c/<name>. The self-compile metric carries a
+# small CI tolerance, but its absolute cachegrind count is not portable between
+# local WSL/Linux environments and GitHub-hosted Linux. Local comparisons
+# therefore report that row without gating it; reviewers measure branch deltas
+# by running measure-instruction-counts.sh on both trees on one host.
 #
 # That tolerance absorbs real drift as well as noise, and a tolerated result
 # never refreshes the baseline. Drift is therefore cumulative against a fixed
@@ -20,8 +21,9 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
+. "$ROOT/scripts/lib-benchmark-ci-cases.sh"
 
-DEFAULT_BENCHMARKS="arith_loop,array_sum,borrowed_disjoint_store,hashmap_churn,hashmap_grow,hashmap_insert,hashmap_get,spmd_reduce,opt_quicksort,opt_crc32,opt_bytecode_vm"
+DEFAULT_BENCHMARKS=$(benchmark_ci_case_csv "$ROOT" instruction-main)
 DEFAULT_BASELINE="$ROOT/perf/insn-exec-baseline.tsv"
 DEFAULT_WORKDIR="target/instruction-count-check"
 BASELINE=${TYPELISP_IR_CHECK_BASELINE:-$DEFAULT_BASELINE}
@@ -55,8 +57,8 @@ Options:
                        needs no compiler, valgrind, or Linux host
   --self-compile-only  Measure and compare self_compile/compile_cli_opt1 only;
                        with --update-baseline, rewrites only that row and
-                       preserves every benchmark row (benchmark/c and
-                       benchmark/c-scalar rows depend on the local clang;
+                       preserves every benchmark row (benchmark/c-scalar rows
+                       depend on the local clang;
                        benchmark/typelisp rows are deterministic and unaffected
                        by a self-compile ratchet)
   --output DIR         Work directory (default: target/instruction-count-check)
@@ -180,6 +182,18 @@ esac
 # The comparison program, held in a variable so --self-test can exercise the
 # exact logic CI runs rather than a copy of it. Contains no single quotes.
 IR_COMPARE_AWK='
+function benchmark_case(name,    part, count) {
+    count = split(name, part, "/")
+    if (count == 3 && part[1] == "benchmark") {
+        return part[3]
+    }
+    return ""
+}
+function selected_metric(name,    case_name) {
+    case_name = benchmark_case(name)
+    return case_name == "" || benchmarks == "" ||
+        (case_name in selected_benchmark)
+}
 function signed(n,    s) {
     s = sprintf("%.0f", n)
     if (n > 0) {
@@ -209,6 +223,10 @@ function budget_used(delta, tolerance,    d) {
     return (d * 100.0) / tolerance
 }
 BEGIN {
+    selected_count = split(benchmarks, selected_name, ",")
+    for (selected_i = 1; selected_i <= selected_count; selected_i++) {
+        selected_benchmark[selected_name[selected_i]] = 1
+    }
     print "metric | baseline | current | delta | pct | tolerance | status"
     stale = 0
     unverified = 0
@@ -226,6 +244,9 @@ NR == FNR {
     if (benchmarks_only == 1 && $1 == "self_compile/compile_cli_opt1") {
         next
     }
+    if (!selected_metric($1)) {
+        next
+    }
     baseline[$1] = $2
     baseline_order[++baseline_count] = $1
     next
@@ -235,6 +256,9 @@ FNR == 1 && $1 == "name" {
 }
 {
     if (NF < 2) {
+        next
+    }
+    if (!selected_metric($1)) {
         next
     }
     current[$1] = $2
@@ -312,6 +336,7 @@ compare_counts() {
         -v self_compile_only="$SELF_COMPILE_ONLY" \
         -v self_compile_absolute_authoritative="$SELF_COMPILE_ABSOLUTE_AUTHORITATIVE" \
         -v stale_budget_pct="$STALE_BUDGET_PCT" \
+        -v benchmarks="$BENCHMARKS" \
         "$IR_COMPARE_AWK" "$1" "$2"
 }
 
@@ -443,8 +468,8 @@ merge_baseline_rows() {
     ' "$_mbr_current" "$_mbr_baseline" > "$_mbr_output"
 }
 
-# Every TypeLisp benchmark row in a baseline must have both clang rows beside
-# it. Checking the *baseline* rather than the measurement is what keeps the hole
+# Every TypeLisp benchmark row in a baseline must have a scalar-fair clang row
+# beside it. Checking the *baseline* rather than the measurement keeps the hole
 # from reopening: a leg that stopped measuring scalar-fair rows, or a refresh
 # taken without them, would otherwise compare cleanly against a baseline that
 # had quietly lost the comparison (#5678).
@@ -461,17 +486,9 @@ assert_scalar_fair_baseline() {
             scalar[substr($1, length("benchmark/c-scalar/") + 1)] = 1
             next
         }
-        $1 ~ /^benchmark\/c\// {
-            auto[substr($1, length("benchmark/c/") + 1)] = 1
-        }
         END {
             for (i = 1; i <= count; i++) {
                 name = order[i]
-                if (!(name in auto)) {
-                    print "[ir-check] " file ": benchmark/c/" name \
-                        " is missing" > "/dev/stderr"
-                    missing += 1
-                }
                 if (!(name in scalar)) {
                     print "[ir-check] " file ": benchmark/c-scalar/" name \
                         " is missing" > "/dev/stderr"
@@ -479,8 +496,8 @@ assert_scalar_fair_baseline() {
                 }
             }
             if (missing > 0) {
-                print "[ir-check] every benchmark case needs both a" \
-                    " scalar-fair and an auto-vectorized clang row" \
+                print "[ir-check] every benchmark case needs a" \
+                    " scalar-fair clang row" \
                     > "/dev/stderr"
                 print "[ir-check] see perf/README.md; refresh with" \
                     " --update-baseline on Linux" > "/dev/stderr"
@@ -496,6 +513,7 @@ self_test() {
     # Exercise the CI gate semantics first. A separate case below pins the
     # non-authoritative local rendering.
     SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
+    BENCHMARKS=arith_loop
     # 55356290376 is the committed self_compile baseline these cases were taken
     # against; 276781451 is its 0.5% tolerance.
     self_test_row 437500077 55356290376 > "$SELF_TEST_DIR/base.tsv"
@@ -546,6 +564,39 @@ self_test() {
         _st_status=1
     fi
     SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
+
+    # Explicit benchmark subsets compare only their selected rows, even when
+    # the baseline carries other cases (#5592). Selected mismatches still fail.
+    printf 'name\tir_count\nbenchmark/typelisp/a\t20\nbenchmark/c-scalar/a\t10\nbenchmark/typelisp/b\t30\nbenchmark/c-scalar/b\t15\n' \
+        > "$SELF_TEST_DIR/subset-base.tsv"
+    printf 'benchmark/typelisp/a\t20\nbenchmark/c-scalar/a\t10\n' \
+        > "$SELF_TEST_DIR/subset-current.tsv"
+    printf 'benchmark/typelisp/a\t21\nbenchmark/c-scalar/a\t10\n' \
+        > "$SELF_TEST_DIR/subset-regressed.tsv"
+    BENCHMARKS=a
+    BENCHMARKS_ONLY=1
+    set +e
+    _st_subset_out=$(compare_counts \
+        "$SELF_TEST_DIR/subset-base.tsv" "$SELF_TEST_DIR/subset-current.tsv" 2>&1)
+    _st_subset_exit=$?
+    _st_subset_regressed_out=$(compare_counts \
+        "$SELF_TEST_DIR/subset-base.tsv" "$SELF_TEST_DIR/subset-regressed.tsv" 2>&1)
+    _st_subset_regressed_exit=$?
+    set -e
+    if [ "$_st_subset_exit" -ne 0 ] ||
+        printf '%s\n' "$_st_subset_out" | grep -q 'missing-current'; then
+        echo "self-test benchmark-subset: unselected baseline rows affected comparison" >&2
+        echo "$_st_subset_out" >&2
+        _st_status=1
+    fi
+    if [ "$_st_subset_regressed_exit" -ne 1 ] ||
+        ! printf '%s\n' "$_st_subset_regressed_out" | grep -q 'REGRESSION'; then
+        echo "self-test benchmark-subset-regression: selected mismatch passed" >&2
+        echo "$_st_subset_regressed_out" >&2
+        _st_status=1
+    fi
+    BENCHMARKS=arith_loop
+    BENCHMARKS_ONLY=0
 
     set +e
     _st_update_out=$(assert_baseline_update_origin 1 0 0 2>&1)
@@ -598,7 +649,7 @@ self_test() {
 
     printf 'name\tir_count\nself_compile/compile_cli_opt1\t10\nbenchmark/typelisp/a\t20\n' \
         > "$SELF_TEST_DIR/merge-base.tsv"
-    printf 'benchmark/typelisp/a\t21\nbenchmark/c/a\t7\n' \
+    printf 'benchmark/typelisp/a\t21\nbenchmark/c-scalar/a\t7\n' \
         > "$SELF_TEST_DIR/merge-current.tsv"
     merge_baseline_rows \
         "$SELF_TEST_DIR/merge-current.tsv" \
@@ -607,7 +658,7 @@ self_test() {
     if ! awk -F '\t' '
         $1 == "self_compile/compile_cli_opt1" && $2 == 10 { self = 1 }
         $1 == "benchmark/typelisp/a" && $2 == 21 { tl = 1 }
-        $1 == "benchmark/c/a" && $2 == 7 { c = 1 }
+        $1 == "benchmark/c-scalar/a" && $2 == 7 { c = 1 }
         END { exit self && tl && c ? 0 : 1 }
     ' "$SELF_TEST_DIR/merge-result.tsv"; then
         echo "self-test partial-refresh: selected rows did not merge while preserving self_compile" >&2
@@ -617,25 +668,18 @@ self_test() {
     # The scalar-fair row contract (#5678). The committed baselines are checked
     # too, not just fixtures: the hole this closes was a real baseline missing
     # real rows, so a fixture-only test would have passed throughout it.
-    printf 'name\tir_count\nbenchmark/typelisp/a\t1\nbenchmark/c/a\t2\nbenchmark/c-scalar/a\t3\n' \
+    printf 'name\tir_count\nbenchmark/typelisp/a\t1\nbenchmark/c-scalar/a\t3\n' \
         > "$SELF_TEST_DIR/scalar-complete.tsv"
     if ! (assert_scalar_fair_baseline "$SELF_TEST_DIR/scalar-complete.tsv") \
         >/dev/null 2>&1; then
         echo "self-test scalar-complete: a complete baseline was rejected" >&2
         _st_status=1
     fi
-    printf 'name\tir_count\nbenchmark/typelisp/a\t1\nbenchmark/c/a\t2\n' \
+    printf 'name\tir_count\nbenchmark/typelisp/a\t1\n' \
         > "$SELF_TEST_DIR/scalar-missing.tsv"
     if (assert_scalar_fair_baseline "$SELF_TEST_DIR/scalar-missing.tsv") \
         >/dev/null 2>&1; then
         echo "self-test scalar-missing: a baseline with no c-scalar row passed" >&2
-        _st_status=1
-    fi
-    printf 'name\tir_count\nbenchmark/typelisp/a\t1\nbenchmark/c-scalar/a\t3\n' \
-        > "$SELF_TEST_DIR/auto-missing.tsv"
-    if (assert_scalar_fair_baseline "$SELF_TEST_DIR/auto-missing.tsv") \
-        >/dev/null 2>&1; then
-        echo "self-test auto-missing: a baseline with no benchmark/c row passed" >&2
         _st_status=1
     fi
     for _st_baseline in perf/insn-exec-baseline.tsv \
@@ -764,6 +808,17 @@ MEASURE_OUT="$WORKDIR/measure"
 CURRENT="$WORKDIR/current.tsv"
 DIFF_OUT="$WORKDIR/diff.txt"
 
+# A baseline opts into auto-vectorized clang gating by carrying benchmark/c
+# rows. The default per-PR baseline deliberately gates only TypeLisp and the
+# scalar-fair comparison; the heavy baseline retains its existing three rows.
+GATE_AUTO_C=1
+if [ -f "$BASELINE" ] && ! awk -F '\t' '
+    $1 ~ /^benchmark\/c\// { found = 1 }
+    END { exit found ? 0 : 1 }
+' "$BASELINE"; then
+    GATE_AUTO_C=0
+fi
+
 # CI builds the compiler exactly once (the bootstrap fixpoint chain) and passes
 # its stage2 in via TYPELISP_IR_CHECK_COMPILER; the seed->stage1->stage2 builds
 # below are the standalone/local fallback only.
@@ -807,9 +862,10 @@ env -i PATH="$PATH" HOME="${HOME:-}" LC_ALL=C \
     $measure_args \
     "$CHECK_COMPILER"
 
-awk -F '\t' '
+awk -F '\t' -v gate_auto_c="$GATE_AUTO_C" '
 BEGIN { OFS = "\t" }
 NR == 1 { next }
+$1 == "benchmark/c" && gate_auto_c != 1 { next }
 { print $1 "/" $2, $3 }
 ' "$MEASURE_OUT/summary.tsv" > "$CURRENT"
 

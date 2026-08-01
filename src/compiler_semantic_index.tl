@@ -1994,10 +1994,9 @@
             fields
             field-count
             (box-get (struct-get state dotted-search-start)))]
-        (let
-          [chain-end : i64
-            (compiler-semantic-dotted-chain-emit!
-              state
+        [chain-end : i64
+          (compiler-semantic-dotted-chain-emit!
+            state
               scope
               env
               recv-id
@@ -2006,7 +2005,7 @@
               located)]
           (if (>= chain-end 0)
             (set! (box-get (struct-get state dotted-search-start)) chain-end)
-            unit)))
+            unit))
       (begin
         (compiler-semantic-walk-node! state scope env target-id)
         (compiler-semantic-record-struct-get-field-use!
@@ -3969,8 +3968,7 @@
     [count : i64 (ast-dispatch-variant-list-len (& variants))]
     [index : i64 0]
     [cursor : i64 (struct-get state form-start)]
-    (begin
-      (while (< index count)
+    (while (< index count)
         (match (ast-dispatch-variant-list-get
           (& variants)
           index
@@ -3990,7 +3988,7 @@
                 (if (>= (struct-get span end-byte) 0)
                   (set! cursor (struct-get span end-byte))
                   unit)
-                (set! index (+ index 1))))])))))
+                (set! index (+ index 1))))]))))
 
 (define (compiler-semantic-record-module-declaration!
   [state : CompilerSemanticWalkState]
@@ -5865,13 +5863,6 @@
               "o"
               CompilerSemanticRecordRole.Definition
               0)]
-          [p-def-i : i64
-            (compiler-semantic-source-index-find-name-occurrence
-              (& first)
-              path
-              "p"
-              CompilerSemanticRecordRole.Definition
-              0)]
           [dot-scalar-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& first)
@@ -5937,7 +5928,6 @@
             (< variant-def-i 0)
             (< variant2-def-i 0)
             (< o-def-i 0)
-            (< p-def-i 0)
             (< dot-scalar-def-i 0)
             (< left-use0-i 0)
             (< left-use1-i 0)
@@ -5966,8 +5956,6 @@
                 (compiler-semantic-source-index-get (& first) variant2-def-i)]
               [o-def : CompilerSemanticRecord
                 (compiler-semantic-source-index-get (& first) o-def-i)]
-              [p-def : CompilerSemanticRecord
-                (compiler-semantic-source-index-get (& first) p-def-i)]
               [dot-scalar-def : CompilerSemanticRecord
                 (compiler-semantic-source-index-get (& first) dot-scalar-def-i)]
               [left-use0 : CompilerSemanticRecord
@@ -6203,7 +6191,6 @@
 (define (compiler-check-semantic-index-types-ok?) : bool
   (let
     [path : String "src/tests/semantic_index_types.tl"]
-    [dep-path : String "src/tests/semantic_index_import_dep.tl"]
     [source : String
       "(module semantic.types.demo)
 (import \"semantic_index_import_dep.tl\" module semantic.index.import_dep as dep)

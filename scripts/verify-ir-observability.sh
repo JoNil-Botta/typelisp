@@ -118,4 +118,52 @@ fi
 grep -F "optimizer pass 'no-such-pass' did not run" "$WORKDIR/missing.stderr" >/dev/null
 test ! -e "$WORKDIR/should-not-exist.ir"
 
-echo "[ir-observability] dump golden, pass trace, and verifier passed"
+# #6115 regression: a scaled dump must render with memory proportional to the
+# output, not the retired quadratic recursive concatenation. 6000 tiny
+# functions render ~1.5MB of IR text; the old render copied the remaining
+# suffix once per element and blew past 11GB within seconds on this input, so
+# a 6GB address-space cap fails fast there while the buffered render finishes
+# well under 250MB. On Windows hosts the runner's commit limit bounds the old
+# behavior the same way.
+STRESS_SOURCE="$WORKDIR/dump_ir_stress.tl"
+awk 'BEGIN {
+  for (i = 0; i < 6000; i++) {
+    printf "(define (f%d [x : i64]) : i64 (+ x %d))\n", i, i
+  }
+  print "(define (main) : i64"
+  print "  (let [acc : i64 0]"
+  print "    (begin"
+  for (i = 0; i < 6000; i++) {
+    printf "      (set! acc (+ acc (f%d 1)))\n", i
+  }
+  print "      acc)))"
+}' >"$STRESS_SOURCE"
+
+case "$(uname -s)" in
+    Linux*)
+        (
+            ulimit -v 6291456
+            "$COMPILER" compile "$STRESS_SOURCE" \
+                --dump-ir \
+                --opt-level 0 \
+                -o "$WORKDIR/dump_ir_stress.ir" \
+                --stdlib-root "$ROOT/stdlib" \
+                --stdlib-root "$ROOT/src"
+        )
+        ;;
+    *)
+        "$COMPILER" compile "$STRESS_SOURCE" \
+            --dump-ir \
+            --opt-level 0 \
+            -o "$WORKDIR/dump_ir_stress.ir" \
+            --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/src"
+        ;;
+esac
+test -s "$WORKDIR/dump_ir_stress.ir"
+if [ "$(grep -c '^function @' "$WORKDIR/dump_ir_stress.ir")" -ne 6001 ]; then
+    echo "scaled dump-ir regression: expected 6001 functions in the dump" >&2
+    exit 1
+fi
+
+echo "[ir-observability] dump golden, pass trace, verifier, and scaled dump passed"

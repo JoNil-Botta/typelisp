@@ -521,6 +521,12 @@
   (struct-get command stdin))
 
 ;: Return the process exit status.
+;:
+;: On Linux this is the small wait(2) exit status. On Windows it is the
+;: child's exit DWORD zero-extended into i64: every completed child reports a
+;: non-negative status in 0..0xFFFFFFFF, including high-bit NTSTATUS
+;: terminations such as 0xC0000005 (reported as 3221225477). Spawn and wait
+;: failures are never encoded in this field; they are `ProcessError` values.
 (define (output-status [output : ProcessOutput]) : i64
   (struct-get output status))
 

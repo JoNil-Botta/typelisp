@@ -427,6 +427,17 @@
 (cfg
   windows
   (extern (win-get-exit-code [arg0 : i64] [arg1 : (MutPtr i32)]) : i32 (:symbol "GetExitCodeProcess")))
+
+(cfg
+  windows
+  (define (windows-exit-dword->status [code : i32]) : i64
+    ;; Conversion policy: GetExitCodeProcess yields an unsigned 32-bit DWORD.
+    ;; The public i64 status is its zero-extended value (0..0xFFFFFFFF), so a
+    ;; completed child always reports a non-negative status -- including
+    ;; high-bit NTSTATUS terminations such as 0xC0000005 -- and the internal
+    ;; -1 spawn-failure sentinel never collides with a valid exit code.
+    (bit-and (cast code : i64) 4294967295)))
+
 (cfg
   windows
   (extern (win-create-file
@@ -1748,7 +1759,8 @@
                     (ptr-cast (array-data codebuf) : (MutPtr i32))))
                 (stdlib.process_runtime.win-close-handle process-handle)
                 (stdlib.process_runtime.win-close-handle worker-handle)
-                (cast (array-ref codebuf 0) : i64)))))))))
+                (stdlib.process_runtime.windows-exit-dword->status
+                  (array-ref codebuf 0))))))))))
 
 ;: Launch a process with duplicated caller standard handles, wait for its exit,
 ;: and return the exit code. The child writes directly to the caller's stdout
@@ -1819,7 +1831,8 @@
                         (ptr-cast (array-data codebuf) : (MutPtr i32))))
                     (stdlib.process_runtime.win-close-handle process-handle)
                     (stdlib.process_runtime.win-close-handle worker-handle)
-                    (cast (array-ref codebuf 0) : i64)))))))))))
+                    (stdlib.process_runtime.windows-exit-dword->status
+                      (array-ref codebuf 0))))))))))))
 
 ;: Seek a raw Windows file HANDLE and return the resulting offset.
 (cfg

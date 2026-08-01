@@ -154,6 +154,15 @@
         "echo inherit-stdout&& 1>&2 echo inherit-stderr&& exit /b 9"
         (process.args-empty)))))
 
+;; A completed child whose exit DWORD has the high bit set (0xC0000005 as an
+;; unsigned value). It must report 3221225477, not a spawn failure.
+(define (windows-high-exit-command) : process.ProcessCommand
+  (process.command
+    "C:\\Windows\\System32\\cmd.exe"
+    (process.args-cons
+      "/C"
+      (process.args-cons "exit /b -1073741819" (process.args-empty)))))
+
 (define (windows-borrowed-argv-output [exe : String] [argv : String]) : process.ResultProcessOutput
   (let
     [args : (process_borrowed.ProcessBorrowedStringList argv)
@@ -268,6 +277,16 @@
       (assert-process-output-result
         (process.inherit (windows-inherit-command))
         9
+        ""
+        "")
+      (assert-process-output-result
+        (process.output (windows-high-exit-command))
+        3221225477
+        ""
+        "")
+      (assert-process-output-result
+        (process.inherit (windows-high-exit-command))
+        3221225477
         ""
         "")
       (assert-process-spawn-failed (process.output (windows-missing-command)))

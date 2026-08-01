@@ -22032,6 +22032,480 @@
       [(< (opt-bce-version-test-prefix-checks blocks "" 0) 2) 4]
       [else 42])))
 
+;; --- multi-block eq-loop bce-version self-tests --------------------------------
+;;
+;; The byte-compare loop shape (intern_table's it-slice-eq?): a top-tested
+;; counted loop (the counter compare ends the header, the latch jumps back)
+;; with a second header phi carrying the running flag, two variable-base
+;; checked loads whose lengths are per-iteration descriptor loads, and a
+;; direct outside use of the flag in an exit block reached through two
+;; single-edge forwarding stubs. Variant 1 versions: the guard hoists one
+;; gep+load per descriptor length, both checks leave the fast clone, the
+;; stubs gain fast twins, and the materialized exit phi carries the fast-edge
+;; inputs. Variant 2 gives the check index an in-loop base (underivable), 3
+;; scales the counter by two (outside the monotone scale-1 argument), and 4
+;; stores into the loop body (the descriptor-length hoist needs a write-free
+;; loop); the last three leave the function untouched.
+(define (opt-bce-mb-eq-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "arr" (AstType.DynArray 0) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "arr2" (AstType.DynArray 0) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "len" (AstType.I64) 2)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "start" (AstType.I64) 3)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "start2" (AstType.I64) 4)
+            (CompilerIrParamList.Nil)))))))
+
+(define (opt-bce-mb-eq-test-header-block) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "header")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        5
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.I64 0)
+          (compiler-ir-label "entry")
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 13)
+            (compiler-ir-label "latch")
+            (CompilerIrPhiInputList.Nil)))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Phi
+          6
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Bool true)
+            (compiler-ir-label "entry")
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 14)
+              (compiler-ir-label "latch")
+              (CompilerIrPhiInputList.Nil)))
+          (AstType.Bool))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            7
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 5)
+            (CompilerIrValue.Var 2)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 7)
+              (compiler-ir-label "flagtest")
+              (compiler-ir-label "exita"))
+            (CompilerIrInstrList.Nil)))))))
+
+;; The two var-base checked byte loads over descriptor lengths. Variant 2
+;; moves the base into the loop (`(i*i) + i`), 3 scales the counter
+;; (`start + 2*i`), and 4 stores into the body.
+(define (opt-bce-mb-eq-test-body-block [variant : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "body")
+    (compiler-ir-instr-cons
+      (cond
+        [(= variant 2)
+          (CompilerIrInstr.BinOp
+            30
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 5)
+            (CompilerIrValue.Var 5)
+            (AstType.I64))]
+        [(= variant 3)
+          (CompilerIrInstr.BinOp
+            30
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 5)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))]
+        [else (CompilerIrInstr.Mov 30 (CompilerIrValue.I64 0) (AstType.I64))])
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          8
+          (CompilerIrBinOp.Add)
+          (if (= variant 2)
+            (CompilerIrValue.Var 30)
+            (CompilerIrValue.Var 3))
+          (if (= variant 3)
+            (CompilerIrValue.Var 30)
+            (CompilerIrValue.Var 5))
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Cast
+            9
+            (CompilerIrValue.Var 8)
+            (AstType.I64)
+            (AstType.U64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              10
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 11 (CompilerIrValue.Var 10) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Cast
+                  12
+                  (CompilerIrValue.Var 11)
+                  (AstType.I64)
+                  (AstType.U64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BoundsCheck
+                    (CompilerIrValue.Var 9)
+                    (CompilerIrValue.Var 12)
+                    (compiler-ir-label "mbe_ok0"))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      15
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 4)
+                      (CompilerIrValue.Var 5)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Cast
+                        16
+                        (CompilerIrValue.Var 15)
+                        (AstType.I64)
+                        (AstType.U64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Gep
+                          17
+                          (CompilerIrValue.Var 1)
+                          (CompilerIrValue.I64 1)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Load
+                            18
+                            (CompilerIrValue.Var 17)
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.Cast
+                              19
+                              (CompilerIrValue.Var 18)
+                              (AstType.I64)
+                              (AstType.U64))
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.BoundsCheck
+                                (CompilerIrValue.Var 16)
+                                (CompilerIrValue.Var 19)
+                                (compiler-ir-label "mbe_ok1"))
+                              (compiler-ir-instr-cons
+                                (CompilerIrInstr.Gep
+                                  20
+                                  (CompilerIrValue.Var 0)
+                                  (CompilerIrValue.I64 0)
+                                  (AstType.I64))
+                                (compiler-ir-instr-cons
+                                  (CompilerIrInstr.Load
+                                    21
+                                    (CompilerIrValue.Var 20)
+                                    (AstType.U64))
+                                  (compiler-ir-instr-cons
+                                    (CompilerIrInstr.Gep
+                                      22
+                                      (CompilerIrValue.Var 21)
+                                      (CompilerIrValue.Var 8)
+                                      (AstType.U8))
+                                    (compiler-ir-instr-cons
+                                      (CompilerIrInstr.Load
+                                        23
+                                        (CompilerIrValue.Var 22)
+                                        (AstType.U8))
+                                      (compiler-ir-instr-cons
+                                        (if (= variant 4)
+                                          (CompilerIrInstr.StorePtr
+                                            (CompilerIrValue.Var 21)
+                                            (CompilerIrValue.Var 23)
+                                            (AstType.U8))
+                                          (CompilerIrInstr.Mov
+                                            29
+                                            (CompilerIrValue.Var 23)
+                                            (AstType.U8)))
+                                        (compiler-ir-instr-cons
+                                          (CompilerIrInstr.Gep
+                                            24
+                                            (CompilerIrValue.Var 1)
+                                            (CompilerIrValue.I64 0)
+                                            (AstType.I64))
+                                          (compiler-ir-instr-cons
+                                            (CompilerIrInstr.Load
+                                              25
+                                              (CompilerIrValue.Var 24)
+                                              (AstType.U64))
+                                            (compiler-ir-instr-cons
+                                              (CompilerIrInstr.Gep
+                                                26
+                                                (CompilerIrValue.Var 25)
+                                                (CompilerIrValue.Var 15)
+                                                (AstType.U8))
+                                              (compiler-ir-instr-cons
+                                                (CompilerIrInstr.Load
+                                                  27
+                                                  (CompilerIrValue.Var 26)
+                                                  (AstType.U8))
+                                                (compiler-ir-instr-cons
+                                                  (CompilerIrInstr.BinOp
+                                                    28
+                                                    (CompilerIrBinOp.Eq)
+                                                    (CompilerIrValue.Var 23)
+                                                    (CompilerIrValue.Var 27)
+                                                    (AstType.U8))
+                                                  (compiler-ir-instr-cons
+                                                    (CompilerIrInstr.Branch
+                                                      (CompilerIrValue.Var 28)
+                                                      (compiler-ir-label "then")
+                                                      (compiler-ir-label "else"))
+                                                    (CompilerIrInstrList.Nil)))))))))))))))))))))))))))
+
+(define (opt-bce-mb-eq-test-blocks [variant : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump (compiler-ir-label "header"))
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (opt-bce-mb-eq-test-header-block)
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "flagtest")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 6)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exitb"))
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (opt-bce-mb-eq-test-body-block variant)
+          (compiler-ir-block-cons
+            (opt-bce-mb-test-jump-block
+              (compiler-ir-label "then")
+              (compiler-ir-label "latch"))
+            (compiler-ir-block-cons
+              (opt-bce-mb-test-jump-block
+                (compiler-ir-label "else")
+                (compiler-ir-label "latch"))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  (compiler-ir-label "latch")
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Phi
+                      14
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Var 6)
+                        (compiler-ir-label "then")
+                        (compiler-ir-phi-input-cons
+                          (CompilerIrValue.Bool false)
+                          (compiler-ir-label "else")
+                          (CompilerIrPhiInputList.Nil)))
+                      (AstType.Bool))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        13
+                        (CompilerIrBinOp.Add)
+                        (CompilerIrValue.Var 5)
+                        (CompilerIrValue.I64 1)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Jump (compiler-ir-label "header"))
+                        (CompilerIrInstrList.Nil)))))
+                (compiler-ir-block-cons
+                  (opt-bce-mb-test-jump-block
+                    (compiler-ir-label "exita")
+                    (compiler-ir-label "exit"))
+                  (compiler-ir-block-cons
+                    (opt-bce-mb-test-jump-block
+                      (compiler-ir-label "exitb")
+                      (compiler-ir-label "exit"))
+                    (compiler-ir-block-cons
+                      (compiler-ir-block
+                        (compiler-ir-label "exit")
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Return
+                            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
+                          (CompilerIrInstrList.Nil)))
+                      CompilerIrBlockList.Nil)))))))))))
+
+(define (opt-bce-mb-eq-test-function [variant : i64]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_mb_eq_fixture")
+    (opt-bce-mb-eq-test-params)
+    (AstType.Bool)
+    31
+    (opt-bce-mb-eq-test-blocks variant)))
+
+(define (opt-bce-mb-eq-test-no-fast? [blocks : CompilerIrBlockList]) : bool
+  (match (opt-cfg-find-block blocks (compiler-ir-label "header__bce_fast"))
+    [(OptMaybeBlock.No) true]
+    [(OptMaybeBlock.Some _) false]))
+
+(define (compiler-optimize-bce-version-mb-eq-self-test) : i64
+  (let
+    [versioned : CompilerIrFunction
+      (opt-bce-version-function-with-types
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-bce-mb-eq-test-function 1))]
+    [out : CompilerIrBlockList (opt-function-blocks versioned)]
+    [in-loop-base-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function-with-types
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-bce-mb-eq-test-function 2)))]
+    [scaled-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function-with-types
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-bce-mb-eq-test-function 3)))]
+    [stored-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function-with-types
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-bce-mb-eq-test-function 4)))]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function versioned))) 1]
+      ;; ten originals + guard + six fast loop blocks + two stub twins.
+      [(not (= (compiler-ir-block-list-count out) 19)) 2]
+      [(match (opt-cfg-find-block out (compiler-ir-label "header__bce_guard"))
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        3]
+      ;; both checks left the fast clone body; the slow body keeps both.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler-ir-label "body__bce_fast"))
+            0))
+        4]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks out (compiler-ir-label "body"))
+            2))
+        5]
+      ;; the forwarding stubs gained fast twins.
+      [(opt-bce-mb-eq-test-no-fast? out) 6]
+      [(match (opt-cfg-find-block out (compiler-ir-label "exita__bce_fast"))
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        7]
+      [(match (opt-cfg-find-block out (compiler-ir-label "exitb__bce_fast"))
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        8]
+      ;; the materialized exit phi carries both slow and both fast edges.
+      [(not
+          (=
+            (opt-bce-version-test-exit-phi-inputs
+              out
+              (compiler-ir-label "exit"))
+            4))
+        9]
+      ;; the scale-1 quotient is exact: the guard needs no division.
+      [(not (= (opt-count-binop-op-blocks out (CompilerIrBinOp.Div)) 0)) 10]
+      ;; an in-loop base cannot prove invariance: that check stays, but the
+      ;; second check still derives, so the loop PARTIALLY versions.
+      [(not (= (compiler-ir-block-list-count in-loop-base-out) 19)) 11]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              in-loop-base-out
+              (compiler-ir-label "body__bce_fast"))
+            1))
+        12]
+      ;; scale-2 with a variable base is outside the monotone argument: same
+      ;; partial shape (the underivable check stays in the fast clone).
+      [(not (= (compiler-ir-block-list-count scaled-out) 19)) 13]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              scaled-out
+              (compiler-ir-label "body__bce_fast"))
+            1))
+        14]
+      ;; a store in the body blocks the descriptor-length hoist: no
+      ;; derivable check, so the loop is left untouched.
+      [(not (= (compiler-ir-block-list-count stored-out) 10)) 15]
+      [(not (opt-bce-mb-eq-test-no-fast? stored-out)) 16]
+      [else 42])))
+
+;; Runtime boundary behavior of the versioned eq loop: windows ending exactly
+;; at the array end still pass the guard, and every window compares the same
+;; with or without versioning.
+(define (opt-bce-mb-eq-runtime-make [n : i64] [seed : i64]) : (Array u8)
+  (let
+    [out : (Array u8) (array.make-array u8 n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! out i (cast (+ seed i) : u8))
+          (set! i (+ i 1))))
+      out)))
+
+(define (opt-bce-mb-eq-runtime-slice-eq?
+  [a : (Array u8)]
+  [a-start : i64]
+  [b : (Array u8)]
+  [b-start : i64]
+  [len : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and (< i len) ok)
+        (begin
+          (if (= (array-ref a (+ a-start i)) (array-ref b (+ b-start i)))
+            unit
+            (set! ok false))
+          (set! i (+ i 1))))
+      ok)))
+
+(test
+  bce-version-mb-eq-loop-ir
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-eq-self-test)
+    42
+    "top-tested eq loop with var-base descriptor-length checks versions check-free"))
+
+(test
+  bce-version-mb-eq-loop-runtime-boundary
+  (let
+    [buf : (Array u8) (opt-bce-mb-eq-runtime-make 16 0)]
+    [other : (Array u8) (opt-bce-mb-eq-runtime-make 16 0)]
+    (begin
+      (array-set! other 15 255)
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 8 buf 8 8)
+        true
+        "equal window ending exactly at the array end")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 0 other 0 8)
+        true
+        "equal window from a zero base")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 8 other 8 8)
+        false
+        "last byte differs at the array end")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 8 other 8 7)
+        true
+        "shared prefix compares equal")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 0 buf 1 8)
+        false
+        "offset windows differ")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 15 buf 15 1)
+        true
+        "single byte at the last slot")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 4 buf 4 0)
+        true
+        "empty window"))))
+
 (define (opt-unroll-mb-read-only-test-body) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block

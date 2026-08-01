@@ -463,10 +463,15 @@
   (make-array value))
 
 (define (compiler-load-session-state-flags-new) : (__tl_dyn-array bool)
-  ;; Slot 0 is cache-enabled; slot 1 records embedded-stdlib source use. Keep
-  ;; both session flags in one allocation so the published seed backend does
-  ;; not cross its per-function aggregate-allocation label limit here.
-  (array.make-array bool 2))
+  ;; Slot 0 is cache-enabled; slot 1 records embedded-stdlib source use; slot 2
+  ;; enables lazy imports. Keep the flags in one allocation so the published
+  ;; seed backend does not cross its per-function aggregate-allocation label
+  ;; limit here.
+  (let
+    [flags : (__tl_dyn-array bool) (array.make-array bool 3)]
+    (begin
+      (array-set! flags 2 true)
+      flags)))
 
 (define (compiler-load-session-state-i64-cell [value : i64]) : (__tl_dyn-array
     i64)
@@ -1779,11 +1784,32 @@
         (string.eq value "off"))]
     [(env.EnvNoString) false]))
 
-(define (compiler-load-lazy-imports-enabled?) : bool
-  (not
-    (or
-      (compiler-load-lazy-env-disabled? "TYPELISP_LAZY_IMPORTS")
-      (compiler-load-lazy-env-disabled? "TYPELISP_LAZY_DOTTED_IMPORTS"))))
+(define (compiler-load-session-state-lazy-import-mode-enabled?
+  [state : CompilerLoadSessionState]) : bool
+  (array-ref (struct-get state cache-enabled) 2))
+
+(define (compiler-load-session-lazy-import-mode-enabled?) : bool
+  (compiler-load-session-state-lazy-import-mode-enabled?
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-lazy-import-mode-set-enabled!
+  [state : CompilerLoadSessionState]
+  [enabled : bool]) : unit
+  (array-set! (struct-get state cache-enabled) 2 enabled))
+
+(define (compiler-load-session-lazy-import-mode-set-enabled! [enabled : bool]) : unit
+  (compiler-load-session-state-lazy-import-mode-set-enabled!
+    compiler-load-active-session-state
+    enabled))
+
+(define (compiler-load-session-state-lazy-imports-enabled?
+  [state : CompilerLoadSessionState]) : bool
+  (and
+    (compiler-load-session-state-lazy-import-mode-enabled? state)
+    (not
+      (or
+        (compiler-load-lazy-env-disabled? "TYPELISP_LAZY_IMPORTS")
+        (compiler-load-lazy-env-disabled? "TYPELISP_LAZY_DOTTED_IMPORTS")))))
 
 (define (compiler-load-prelude-importer? [path : String]) : bool
   (let
@@ -6597,12 +6623,13 @@
     rest
     pools))
 
-(define (compiler-load-lazy-import-preload-candidate?
+(define (compiler-load-session-state-lazy-import-preload-candidate?
+  [load-state : CompilerLoadSessionState]
   [importer-path : String]
   [kind : ast.AstImportKind]
   [alias : ast.AstMaybeImportAlias]) : bool
   (and
-    (compiler-load-lazy-imports-enabled?)
+    (compiler-load-session-state-lazy-imports-enabled? load-state)
     (not (compiler-load-prelude-importer? importer-path))
     (match kind
       [(ast.AstImportKind.Module) true]
@@ -6610,6 +6637,18 @@
     (match alias
       [(ast.AstMaybeImportAlias.Some _) true]
       [(ast.AstMaybeImportAlias.No) false])))
+
+;; Serial/test compatibility adapter. Stateful loader traversal must use the
+;; session-explicit candidate above.
+(define (compiler-load-lazy-import-preload-candidate?
+  [importer-path : String]
+  [kind : ast.AstImportKind]
+  [alias : ast.AstMaybeImportAlias]) : bool
+  (compiler-load-session-state-lazy-import-preload-candidate?
+    compiler-load-active-session-state
+    importer-path
+    kind
+    alias))
 
 (define (compiler-load-lazy-import-preload-summary-with-state-and-pools
   [load-state : CompilerLoadSessionState]
@@ -6683,7 +6722,7 @@
   (let
     [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
     (if (or
-      (not (compiler-load-lazy-imports-enabled?))
+      (not (compiler-load-session-state-lazy-imports-enabled? load-state))
       (compiler-load-prelude-importer? importer-path))
       false
       (match (compiler-load-session-state-surface-summary-find-source
@@ -7696,7 +7735,8 @@
                   (let
                     [resolved-id : i64 (compiler-load-source-path-id resolved)]
                     [preload-candidate : bool
-                      (compiler-load-lazy-import-preload-candidate?
+                      (compiler-load-session-state-lazy-import-preload-candidate?
+                        (struct-get traversal load-state)
                         importer-path
                         kind
                         alias)]

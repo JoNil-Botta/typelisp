@@ -2646,6 +2646,7 @@ EOF
     DOC_GRAPH_DIR="$WORKDIR/doc-module-graph"
     DOC_GRAPH_STDLIB="$DOC_GRAPH_DIR/repo-stdlib"
     DOC_GRAPH_LOCAL="$DOC_GRAPH_DIR/local.tl"
+    DOC_GRAPH_UNUSED="$DOC_GRAPH_DIR/unused.tl"
     DOC_GRAPH_STDLIB_SOURCE="$DOC_GRAPH_STDLIB/docfixture.tl"
     DOC_GRAPH_ENTRY="$DOC_GRAPH_DIR/entry.tl"
     DOC_GRAPH_OUT="$DOC_GRAPH_DIR/graph.md"
@@ -2662,12 +2663,19 @@ EOF
 ;: Stdlib answer docs.
 (define stdlib-answer : i64 35)
 EOF
+    cat > "$DOC_GRAPH_UNUSED" <<'EOF'
+;# Unused imported module docs.
+
+;: Unused answer docs.
+(define unused-answer : i64 99)
+EOF
     cat > "$DOC_GRAPH_ENTRY" <<'EOF'
 ;# Entry module docs.
 
 (import local)
 (import local)
 (import stdlib.docfixture)
+(import unused)
 
 ;: Entry docs.
 (define (main) : i64 (+ local.local-answer docfixture.stdlib-answer))
@@ -2680,17 +2688,21 @@ EOF
 
     DOC_GRAPH_ENTRY_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_ENTRY")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_ENTRY")")
     DOC_GRAPH_LOCAL_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_LOCAL")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_LOCAL")")
+    DOC_GRAPH_UNUSED_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_UNUSED")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_UNUSED")")
     DOC_GRAPH_STDLIB_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_STDLIB_SOURCE")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_STDLIB_SOURCE")")
     DOC_GRAPH_ENTRY_DISPLAY=$(native_arg_path "$DOC_GRAPH_ENTRY_PATH")
     DOC_GRAPH_LOCAL_DISPLAY=$(native_arg_path "$DOC_GRAPH_LOCAL_PATH")
+    DOC_GRAPH_UNUSED_DISPLAY=$(native_arg_path "$DOC_GRAPH_UNUSED_PATH")
     DOC_GRAPH_STDLIB_DISPLAY=$(native_arg_path "$DOC_GRAPH_STDLIB_PATH")
     assert_contains "$DOC_GRAPH_OUT" "## Modules"
     assert_contains "$DOC_GRAPH_OUT" "- [$DOC_GRAPH_ENTRY_DISPLAY](#"
     assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_LOCAL_DISPLAY\`"
     assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_STDLIB_DISPLAY\`"
+    assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_UNUSED_DISPLAY\`"
     assert_contains "$DOC_GRAPH_OUT" "Entry module docs."
     assert_contains "$DOC_GRAPH_OUT" "Local module docs."
     assert_contains "$DOC_GRAPH_OUT" "Stdlib module docs."
+    assert_contains "$DOC_GRAPH_OUT" "Unused imported module docs."
     DOC_GRAPH_LOCAL_DOCS=$(grep -F "Local module docs." "$DOC_GRAPH_OUT" | wc -l | tr -d ' ')
     [ "$DOC_GRAPH_LOCAL_DOCS" -eq 1 ] || fail "doc module graph duplicated local docs"
     DOC_GRAPH_ENTRY_LINE=$(grep -nF "## $DOC_GRAPH_ENTRY_DISPLAY" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)

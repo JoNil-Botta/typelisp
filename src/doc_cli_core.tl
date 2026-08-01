@@ -196,14 +196,33 @@
       (doc_render.doc-render-module-graph-markdown all-modules)
       (doc_render.doc-render-markdown (doc_extract.doc-extract-file input-path)))))
 
+;; Compilation may elide unused dotted imports after reading their surfaces.
+;; Documentation graphs instead describe the source's complete explicit import
+;; closure, so temporarily make this loader session eager and restore its prior
+;; mode before rendering or reporting a diagnostic.
+(define (doc-load-file-with-all-import-paths
+  [input-path : String]
+  [stdlib-roots : doc_svec.Vec]) : compiler_load.ResultCompilerLoadWithPaths
+  (let
+    [lazy-mode : bool
+      (compiler_load.compiler-load-session-lazy-import-mode-enabled?)]
+    [_eager : unit
+      (compiler_load.compiler-load-session-lazy-import-mode-set-enabled! false)]
+    [loaded : compiler_load.ResultCompilerLoadWithPaths
+      (compiler_load.compiler-load-file-with-paths-and-roots
+        input-path
+        (sym_i64_env.sym-i64-empty)
+        stdlib-roots)]
+    [_restore : unit
+      (compiler_load.compiler-load-session-lazy-import-mode-set-enabled!
+        lazy-mode)]
+    loaded))
+
 (define (doc-generate-loaded-file
   [input-path : String]
   [output-path : String]
   [stdlib-roots : doc_svec.Vec]) : i64
-  (match (compiler_load.compiler-load-file-with-paths-and-roots
-    input-path
-    (sym_i64_env.sym-i64-empty)
-    stdlib-roots)
+  (match (doc-load-file-with-all-import-paths input-path stdlib-roots)
     [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (match (doc-generated-modules-from-source-paths
         (ast.ast-decl-root-path-cons input-path paths)

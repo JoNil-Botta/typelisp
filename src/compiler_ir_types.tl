@@ -9,6 +9,7 @@
 (import compiler_builtin_ids as cbi)
 (import "compiler_ast_types.tl")
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.text_buf)
 (import stdlib.hashmap)
 (import stdlib.arena)
 (import (hashmap.hashmap String i64) as ir_label_map)
@@ -4355,18 +4356,39 @@
         "] default "
         (compiler-ir-label-text default-label))]))
 
+;; Render into a segmented text buffer: appending one instruction is O(its
+;; rendered size), so a full program render is linear in output bytes instead
+;; of the retired recursive suffix concatenation, which copied the remaining
+;; text once per element (#6115).
+(define (compiler-ir-instr-seq-render-into
+  [type-segment-bases : i64]
+  [buf : text_buf.TextBuf]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : text_buf.TextBuf
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    buf
+    (compiler-ir-instr-seq-render-into
+      type-segment-bases
+      (text_buf.append
+        (text_buf.append
+          buf
+          (compiler-ir-instr-render
+            type-segment-bases
+            (compiler-ir-instr-seq-ref instrs index)))
+        "\n")
+      instrs
+      (+ index 1))))
+
 (define (compiler-ir-instr-seq-render-from
   [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : String
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    ""
-    (str_cat.str-cat
-      (compiler-ir-instr-render
-        type-segment-bases
-        (compiler-ir-instr-seq-ref instrs index))
-      "\n"
-      (compiler-ir-instr-seq-render-from type-segment-bases instrs (+ index 1)))))
+  (text_buf.render
+    (compiler-ir-instr-seq-render-into
+      type-segment-bases
+      (text_buf.empty)
+      instrs
+      index)))
 
 (define (compiler-ir-block-render
   [type-segment-bases : i64]
@@ -4379,24 +4401,41 @@
 "
         (compiler-ir-instr-seq-render-from type-segment-bases instrs 0))]))
 
+(define (compiler-ir-block-list-render-into
+  [type-segment-bases : i64]
+  [buf : text_buf.TextBuf]
+  [blocks : CompilerIrBlockList]) : text_buf.TextBuf
+  (match (compiler-ir-block-list-force-cons blocks)
+    [(CompilerIrBlockList.Nil) buf]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-ir-block-list-render-into
+        type-segment-bases
+        buf
+        (compiler-ir-block-seq-to-list seq))]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-list-render-into
+        type-segment-bases
+        (match (compiler-ir-block-list-force-cons (box-get rest))
+          [(CompilerIrBlockList.Nil)
+            (text_buf.append
+              buf
+              (compiler-ir-block-render type-segment-bases block))]
+          [_
+            (text_buf.append
+              (text_buf.append
+                buf
+                (compiler-ir-block-render type-segment-bases block))
+              "\n")])
+        (box-get rest))]))
+
 (define (compiler-ir-block-list-render
   [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]) : String
-  (match (compiler-ir-block-list-force-cons blocks)
-    [(CompilerIrBlockList.Nil) ""]
-    [(CompilerIrBlockList.Array seq)
-      (compiler-ir-block-list-render
-        type-segment-bases
-        (compiler-ir-block-seq-to-list seq))]
-    [(CompilerIrBlockList.Cons block rest)
-      (str_cat.str-cat
-        (compiler-ir-block-render type-segment-bases block)
-        (match (compiler-ir-block-list-force-cons (box-get rest))
-          [(CompilerIrBlockList.Nil) ""]
-          [_
-            (str_cat.str-cat
-              "\n"
-              (compiler-ir-block-list-render type-segment-bases (box-get rest)))]))]))
+  (text_buf.render
+    (compiler-ir-block-list-render-into
+      type-segment-bases
+      (text_buf.empty)
+      blocks)))
 
 (define (compiler-ir-param-render
   [type-segment-bases : i64]
@@ -4447,26 +4486,41 @@
         (compiler-ir-block-list-render type-segment-bases blocks)
         "}\n")]))
 
+(define (compiler-ir-function-list-render-into
+  [type-segment-bases : i64]
+  [buf : text_buf.TextBuf]
+  [functions : CompilerIrFunctionList]) : text_buf.TextBuf
+  (match (compiler-ir-function-list-force-cons functions)
+    [(CompilerIrFunctionList.Nil) buf]
+    [(CompilerIrFunctionList.Array seq)
+      (compiler-ir-function-list-render-into
+        type-segment-bases
+        buf
+        (compiler-ir-function-seq-to-list seq))]
+    [(CompilerIrFunctionList.Cons func rest)
+      (compiler-ir-function-list-render-into
+        type-segment-bases
+        (match (compiler-ir-function-list-force-cons (box-get rest))
+          [(CompilerIrFunctionList.Nil)
+            (text_buf.append
+              buf
+              (compiler-ir-function-render type-segment-bases func))]
+          [_
+            (text_buf.append
+              (text_buf.append
+                buf
+                (compiler-ir-function-render type-segment-bases func))
+              "\n")])
+        (box-get rest))]))
+
 (define (compiler-ir-function-list-render
   [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]) : String
-  (match (compiler-ir-function-list-force-cons functions)
-    [(CompilerIrFunctionList.Nil) ""]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-list-render
-        type-segment-bases
-        (compiler-ir-function-seq-to-list seq))]
-    [(CompilerIrFunctionList.Cons func rest)
-      (str_cat.str-cat
-        (compiler-ir-function-render type-segment-bases func)
-        (match (compiler-ir-function-list-force-cons (box-get rest))
-          [(CompilerIrFunctionList.Nil) ""]
-          [_
-            (str_cat.str-cat
-              "\n"
-              (compiler-ir-function-list-render
-                type-segment-bases
-                (box-get rest)))]))]))
+  (text_buf.render
+    (compiler-ir-function-list-render-into
+      type-segment-bases
+      (text_buf.empty)
+      functions)))
 
 (define (compiler-ir-global-render
   [type-segment-bases : i64]
@@ -4482,19 +4536,33 @@
         (compiler-ir-value-render value)
         "\n")]))
 
+(define (compiler-ir-global-list-render-into
+  [type-segment-bases : i64]
+  [buf : text_buf.TextBuf]
+  [globals : CompilerIrGlobalList]) : text_buf.TextBuf
+  (match globals
+    [(CompilerIrGlobalList.Nil) buf]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-ir-global-list-render-into
+        type-segment-bases
+        buf
+        (compiler-ir-global-seq-to-list seq))]
+    [(CompilerIrGlobalList.Cons global rest)
+      (compiler-ir-global-list-render-into
+        type-segment-bases
+        (text_buf.append
+          buf
+          (compiler-ir-global-render type-segment-bases global))
+        (box-get rest))]))
+
 (define (compiler-ir-global-list-render
   [type-segment-bases : i64]
   [globals : CompilerIrGlobalList]) : String
-  (match globals
-    [(CompilerIrGlobalList.Nil) ""]
-    [(CompilerIrGlobalList.Array seq)
-      (compiler-ir-global-list-render
-        type-segment-bases
-        (compiler-ir-global-seq-to-list seq))]
-    [(CompilerIrGlobalList.Cons global rest)
-      (str_cat.str-cat
-        (compiler-ir-global-render type-segment-bases global)
-        (compiler-ir-global-list-render type-segment-bases (box-get rest)))]))
+  (text_buf.render
+    (compiler-ir-global-list-render-into
+      type-segment-bases
+      (text_buf.empty)
+      globals)))
 
 (define (compiler-ir-extern-abi-render
   [type-segment-bases : i64]
@@ -4526,36 +4594,63 @@
           "")
         "\n")]))
 
+(define (compiler-ir-extern-list-render-into
+  [type-segment-bases : i64]
+  [buf : text_buf.TextBuf]
+  [externs : CompilerIrExternList]) : text_buf.TextBuf
+  (match externs
+    [(CompilerIrExternList.Nil) buf]
+    [(CompilerIrExternList.Array seq)
+      (compiler-ir-extern-list-render-into
+        type-segment-bases
+        buf
+        (compiler-ir-extern-seq-to-list seq))]
+    [(CompilerIrExternList.Cons extern rest)
+      (compiler-ir-extern-list-render-into
+        type-segment-bases
+        (text_buf.append
+          buf
+          (compiler-ir-extern-render type-segment-bases extern))
+        (box-get rest))]))
+
 (define (compiler-ir-extern-list-render
   [type-segment-bases : i64]
   [externs : CompilerIrExternList]) : String
-  (match externs
-    [(CompilerIrExternList.Nil) ""]
-    [(CompilerIrExternList.Array seq)
-      (compiler-ir-extern-list-render
-        type-segment-bases
-        (compiler-ir-extern-seq-to-list seq))]
-    [(CompilerIrExternList.Cons extern rest)
-      (str_cat.str-cat
-        (compiler-ir-extern-render type-segment-bases extern)
-        (compiler-ir-extern-list-render type-segment-bases (box-get rest)))]))
+  (text_buf.render
+    (compiler-ir-extern-list-render-into
+      type-segment-bases
+      (text_buf.empty)
+      externs)))
 
 (define (compiler-ir-program-render
   [type-segment-bases : i64]
   [program : CompilerIrProgram]) : String
   (match program
     [(CompilerIrProgram.Program globals functions externs)
-      (str_cat.str-cat
-        "typelisp-ir v1\n"
-        (compiler-ir-global-list-render type-segment-bases globals)
-        (if (= (compiler-ir-global-list-count globals) 0)
-          ""
-          "\n")
-        (compiler-ir-extern-list-render type-segment-bases externs)
-        (if (= (compiler-ir-extern-list-count externs) 0)
-          ""
-          "\n")
-        (compiler-ir-function-list-render type-segment-bases functions))]))
+      (let
+        [globals-buf : text_buf.TextBuf
+          (compiler-ir-global-list-render-into
+            type-segment-bases
+            (text_buf.append (text_buf.empty) "typelisp-ir v1\n")
+            globals)]
+        [globals-sep-buf : text_buf.TextBuf
+          (if (= (compiler-ir-global-list-count globals) 0)
+            globals-buf
+            (text_buf.append globals-buf "\n"))]
+        [externs-buf : text_buf.TextBuf
+          (compiler-ir-extern-list-render-into
+            type-segment-bases
+            globals-sep-buf
+            externs)]
+        [externs-sep-buf : text_buf.TextBuf
+          (if (= (compiler-ir-extern-list-count externs) 0)
+            externs-buf
+            (text_buf.append externs-buf "\n"))]
+        (text_buf.render
+          (compiler-ir-function-list-render-into
+            type-segment-bases
+            externs-sep-buf
+            functions)))]))
 
 (defenum CompilerIrEffect
   (Pure)

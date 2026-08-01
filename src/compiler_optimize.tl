@@ -23,6 +23,7 @@
 (cfg compile-profile (import stdlib.profile))
 (import stdlib.array)
 (import stdlib.vector)
+(import stdlib.text_buf)
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_profile_state as profile_state)
 (import compiler_builtin_ids as cbi)
@@ -55,8 +56,10 @@
   false)
 (define compiler-opt-debug-dump-pass : String
   "")
-(define compiler-opt-debug-dump-text : String
-  "")
+;; Pass snapshots accumulate in a segmented buffer: each observation is
+;; O(its rendered size) instead of a whole-prefix string copy (#6115).
+(define compiler-opt-debug-dump-buf : text_buf.TextBuf
+  (text_buf.empty))
 (define compiler-opt-debug-dump-arena : i64
   0)
 (define compiler-opt-debug-verify-ir : bool
@@ -71,13 +74,13 @@
   (begin
     (set! compiler-opt-debug-trace-passes trace-passes)
     (set! compiler-opt-debug-dump-pass dump-pass)
-    (set! compiler-opt-debug-dump-text "")
+    (set! compiler-opt-debug-dump-buf (text_buf.empty))
     (set! compiler-opt-debug-dump-arena (arena.tl_arena_current))
     (set! compiler-opt-debug-verify-ir verify-ir)
     (set! compiler-opt-debug-verify-error "")))
 
 (define (compiler-opt-debug-dump-result) : String
-  compiler-opt-debug-dump-text)
+  (text_buf.render compiler-opt-debug-dump-buf))
 
 (define (compiler-opt-debug-verification-error) : String
   compiler-opt-debug-verify-error)
@@ -115,20 +118,18 @@
               (begin
                 (arena.tl_arena_set compiler-opt-debug-dump-arena)
                 (set!
-                  compiler-opt-debug-dump-text
-                  (str_cat.str-cat
-                    compiler-opt-debug-dump-text
-                    (if (=
-                      (string.string-length compiler-opt-debug-dump-text)
-                      0)
-                      ""
-                      "\n")
-                    "after "
-                    pass
-                    " @"
-                    (compiler-ir-symbol-text name)
-                    "\n"
-                    (compiler-ir-function-render type-segment-bases func)))
+                  compiler-opt-debug-dump-buf
+                  (text_buf.append
+                    (if (text_buf.empty? compiler-opt-debug-dump-buf)
+                      compiler-opt-debug-dump-buf
+                      (text_buf.append compiler-opt-debug-dump-buf "\n"))
+                    (str_cat.str-cat
+                      "after "
+                      pass
+                      " @"
+                      (compiler-ir-symbol-text name)
+                      "\n"
+                      (compiler-ir-function-render type-segment-bases func))))
                 (set! compiler-opt-debug-dump-arena (arena.tl_arena_current))
                 (arena.tl_arena_set pass-arena))))
           unit)

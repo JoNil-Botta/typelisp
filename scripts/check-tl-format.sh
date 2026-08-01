@@ -59,9 +59,9 @@ case "$(uname -s)" in
         ;;
 esac
 
-# Formatting several files in one process retains their driver state until the
-# batch exits. Keep Windows batches small because hosted runners have much less
-# system commit headroom than Linux runners after the bootstrap gates.
+# Each file's CST/render scratch is reclaimed by the formatter core. Keep the
+# remaining argument/config state in smaller Windows batches because hosted
+# runners have less system commit headroom after the bootstrap gates.
 FORMAT_BATCH_SIZE_DEFAULT=32
 if [ "$HOST_OS" = windows ]; then
     FORMAT_BATCH_SIZE_DEFAULT=4
@@ -111,12 +111,12 @@ build_current_cli_for_format() {
     CURRENT_CLI_OBJ="$WORKDIR/current-cli.$NL_OBJ_EXT"
     CURRENT_CLI_BIN="$WORKDIR/current-cli$NL_BIN_EXT"
 
-    echo "Building lightweight current formatter for current-syntax-aware TypeLisp formatting."
+    echo "Building current formatter for current-syntax-aware TypeLisp formatting."
     if ! run_with_heartbeat_capture \
         "compile current formatter for format" \
         "$CURRENT_CLI_COMPILE_STDOUT" \
         "$CURRENT_CLI_COMPILE_STDERR" \
-        "$COMPILER" compile src/format_cli.tl -o "$CURRENT_CLI_ASM" \
+        "$COMPILER" compile src/main.tl -o "$CURRENT_CLI_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
@@ -137,13 +137,10 @@ build_current_cli_for_format() {
 }
 
 select_current_cli_for_format() {
-    if [ "$FORMAT_COMPILER_IS_CURRENT_TREE" -eq 1 ] && [ "$HOST_OS" != windows ]; then
+    if [ "$FORMAT_COMPILER_IS_CURRENT_TREE" -eq 1 ]; then
         CURRENT_CLI_BIN=$COMPILER
         echo "Using fixpoint-proven current-tree compiler for current-syntax-aware TypeLisp formatting."
     else
-        # The unified Windows CLI retains the compiler payload even for `fmt`.
-        # Link the formatter-only entry point so large source files have the
-        # runner's commit headroom available for their CST and render tree.
         build_current_cli_for_format
     fi
 }
@@ -166,20 +163,13 @@ verify_current_compiler_mode_control() (
     FORMAT_COMPILER_IS_CURRENT_TREE=1
     COMPILER="$WORKDIR/fixpoint-proven-current-compiler"
     select_current_cli_for_format >/dev/null
-    if [ "$HOST_OS" = windows ]; then
-        if [ ! -f "$marker" ] || [ "$CURRENT_CLI_BIN" != "$WORKDIR/rebuilt-current-formatter" ]; then
-            echo "Windows CI-current formatter mode did not build the lightweight CLI" >&2
-            exit 1
-        fi
-    else
-        if [ -e "$marker" ]; then
-            echo "Linux CI-current formatter mode unexpectedly rebuilt the current-tree CLI" >&2
-            exit 1
-        fi
-        if [ "$CURRENT_CLI_BIN" != "$COMPILER" ]; then
-            echo "Linux CI-current formatter mode did not select the supplied compiler" >&2
-            exit 1
-        fi
+    if [ -e "$marker" ]; then
+        echo "CI-current formatter mode unexpectedly rebuilt the current-tree CLI" >&2
+        exit 1
+    fi
+    if [ "$CURRENT_CLI_BIN" != "$COMPILER" ]; then
+        echo "CI-current formatter mode did not select the supplied compiler" >&2
+        exit 1
     fi
 )
 

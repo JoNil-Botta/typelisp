@@ -639,10 +639,6 @@ contains|doc-test-run: unexpected-error mismatch
 contains|was expected to fail
 end
 
-case|selfhost_format_cli|src/format_cli.tl|assembly|exactly-one|direct
-contains|_tl_format_cli_core_format_cli_core_fmt_run_from:
-end
-
 case|selfhost_format_cst|src/format_cst.tl|assembly|skip|direct
 contains|_tl_format_lex:
 contains|_tl_parse_format_source:

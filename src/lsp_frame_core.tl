@@ -1711,13 +1711,13 @@
       [uri : String "file:///lsp-semantic-snapshot-smoke.tl"]
       [path : String "src/tests/lsp_semantic_snapshot_smoke.tl"]
       [source1 : String
-        "(module lsp.semantic.snapshot.smoke)\n(import \"semantic_index_import_dep.tl\" module semantic.index.import_dep as dep)\n(define answer : i64 1)\n(define (use) : i64 (+ answer dep.imported-value))\n"]
+        "(module lsp.semantic.snapshot.smoke)\n(import semantic.index.import_dep as dep)\n(define answer : i64 1)\n(define (use) : i64 (+ answer dep.imported-value))\n"]
       [invalid-source : String
         "(module lsp.semantic.snapshot.smoke)\n(define answer : i64"]
       [source2 : String
-        "(module lsp.semantic.snapshot.smoke)\n(import \"semantic_index_import_dep.tl\" module semantic.index.import_dep as dep)\n(define answer : i64 2)\n(define (use) : i64 (+ answer dep.imported-value))\n"]
+        "(module lsp.semantic.snapshot.smoke)\n(import semantic.index.import_dep as dep)\n(define answer : i64 2)\n(define (use) : i64 (+ answer dep.imported-value))\n"]
       [source3 : String
-        "(module lsp.semantic.snapshot.smoke)\n(import \"semantic_index_import_dep.tl\" module semantic.index.import_dep as dep)\n(define answer : i64 3)\n(define (use) : i64 (+ answer dep.imported-value))\n"]
+        "(module lsp.semantic.snapshot.smoke)\n(import semantic.index.import_dep as dep)\n(define answer : i64 3)\n(define (use) : i64 (+ answer dep.imported-value))\n"]
       [roots : lsp_svec.Vec (lsp_svec.new)]
       [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
       (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg

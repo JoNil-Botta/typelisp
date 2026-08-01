@@ -3756,7 +3756,7 @@
   (begin
     (let
       [text : String \"ok\"]
-      (stdout-write (byte_buf.str-as-bytes (& text))))
+      (io.stdout-write (byte_buf.str-as-bytes (& text))))
     0))
 ")
           (match (driver.compiler-driver-load-file-with-runtime

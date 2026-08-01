@@ -4,6 +4,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import compiler_backend)
+(import compiler_abi as abi)
 (import compiler_ir_types as ir)
 (import compiler_ast_types as ast)
 (import compiler_regalloc as regalloc)
@@ -140,7 +141,7 @@
   ;; clobber instead of being stack-homed -- the same soundness property (b is
   ;; not left in a div-clobbered register) with a better home.
   (match (regalloc.compiler-reg-plan-function-scalar-for-abi
-    CompilerRegTargetAbi.Windows
+    abi.CompilerRegTargetAbi.Windows
     (win-param-preassign-safe-div-function))
     [(regalloc.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
       (and

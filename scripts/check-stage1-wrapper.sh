@@ -528,10 +528,10 @@ EOF
         "$COMPILER" run "$ROOT/src/tests/compiler_tlci_native_producer_smoke.tl" \
         --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -- \
         "$PKG_TLCI" \
-        "stage1.macros/add-one-macro" \
-        "add-one" \
-        "stage1.macros/all-macro" \
-        "stage1.macros/unsupported-macro"
+        "macros/add-one-macro" \
+        "math.add-one" \
+        "macros/all-macro" \
+        "macros/unsupported-macro"
     assert_empty "$WORKDIR/package-tlci-native-verify.stdout"
     assert_empty "$WORKDIR/package-tlci-native-verify.stderr"
     cp "$PKG_TLCI" "$WORKDIR/stage1_pkg.first.tlci"

@@ -149,31 +149,29 @@ scripts/analyze-ci-timing-trends.sh --self-test
 
 TypeLisp deliberately does not auto-vectorize ordinary loops. Explicit SPMD
 (`foreach`, `spmd-reduce`, and `spmd-scan`) is the data-parallel model.
-Accordingly, the per-PR scalar gate compares every TypeLisp row with two clang
-rows:
+Accordingly, the per-PR scalar gate compares every TypeLisp row with scalar-fair
+clang:
 
 - `benchmark/c-scalar/<name>` uses
   `clang -O2 -fno-vectorize -fno-slp-vectorize` and is the scalar-fair codegen
   comparison.
-- `benchmark/c/<name>` keeps ordinary `clang -O2` auto-vectorization enabled,
-  making the auto-vectorizer gap visible while SPMD backends close it.
 
-TypeLisp-generated executables use `benchmark/typelisp/<name>`. The measurement
-report writes `ratios.tsv` with both
-`typelisp_over_clang_scalar_x` and `typelisp_over_clang_auto_x`; all three
-instruction-count rows are exact gate inputs.
+The measurement also runs `benchmark/c/<name>` with ordinary `clang -O2`
+auto-vectorization enabled, making the auto-vectorizer gap visible while SPMD
+backends close it. The measurement report writes `ratios.tsv` with both
+`typelisp_over_clang_scalar_x` and `typelisp_over_clang_auto_x`, but the default
+`perf/insn-exec-baseline.tsv` deliberately gates only the TypeLisp and
+scalar-fair rows.
+
+TypeLisp-generated executables use `benchmark/typelisp/<name>`.
 A selected benchmark case must contain both `bench.tl` and `baseline.c`;
 unpaired benchmark directories are skipped only when no explicit benchmark
 filter or case list selected them.
 
-**Both baselines carry all three rows**, and this is enforced rather than
-described: `check-instruction-counts.sh` refuses to compare a baseline in which
-any `benchmark/typelisp/<name>` row lacks its `benchmark/c/<name>` or
-`benchmark/c-scalar/<name>` counterpart. That check exists because the contract
-above was true of `perf/insn-exec-baseline.tsv` and silently false of
-`perf/insn-exec-heavy-baseline.tsv` for as long as the heavy corpus was a
-required gate (#5678); scalar-fair measurement is a property of a benchmark leg,
-not of which baseline file it writes.
+Every TypeLisp baseline row must carry its `benchmark/c-scalar/<name>`
+counterpart, and `check-instruction-counts.sh` enforces that contract. A
+baseline opts into gating the diagnostic auto-vectorized row by carrying
+`benchmark/c/<name>` rows; the scheduled heavy baseline retains those rows.
 
 `--self-compile-only` is the one leg that measures no benchmark rows, so it
 neither requests scalar-fair measurement nor checks for it, and its
@@ -187,11 +185,12 @@ recorded in its row name (`self_compile/compile_cli_opt1`).
 
 The checker builds a fresh full CLI stage1 and stage2 under
 `target/instruction-count-check` and measures that fixed stage2 compiler. The
-default per-PR subset is `self_compile` plus TypeLisp/auto-clang/scalar-clang
-rows for `arith_loop`, `array_sum`, `borrowed_disjoint_store`, `hashmap_churn`,
-`hashmap_grow`, `hashmap_insert`, `hashmap_get`, `spmd_reduce`,
-`opt_quicksort`, `opt_crc32`, and `opt_bytecode_vm`, each with one cachegrind
-run. Alternate baseline files such as the scheduled heavy corpus retain their
+default per-PR subset is `self_compile` plus TypeLisp and scalar-clang rows for
+the six kernels derived from compiler self-compilation: `cfg_domloops`,
+`gvn_table`, `intern_table`, `lex_source`, `liveness_scan`, and
+`peephole_lines`, each with one cachegrind run. Explicit benchmark subsets are
+scoped against those selected cases even when the baseline carries additional
+rows. Alternate baseline files such as the scheduled heavy corpus retain their
 own checked row policy.
 
 The same required Linux PR leg reuses its already bootstrapped stage2 compiler

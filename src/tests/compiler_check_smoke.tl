@@ -1,7 +1,11 @@
 ;; compiler_check_smoke.tl - Runnable smoke for virtual-source check helpers.
-(import "../compiler_check_core.tl")
-(import "../compiler_semantic_index.tl")
+(import stdlib.string)
+(import compiler_check_core as check_core)
+(import compiler_diagnostic as cdiag)
+(import compiler_semantic_index as semantic_index)
 (import compiler_builtin_ids as cbi)
+(import compiler_typecheck_api as tc_api)
+(import compiler_typecheck_core as tc_core)
 
 (define (compiler-check-fix-test-position-index
   [source : String]
@@ -30,26 +34,27 @@
 
 (define (compiler-check-fix-test-apply
   [source : String]
-  [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticMaybeString
+  [edit : cdiag.CompilerDiagnosticTextEdit]) : cdiag.CompilerDiagnosticMaybeString
   (let
-    [span : CompilerDiagnosticSpan (compiler-diagnostic-text-edit-span edit)]
+    [span : cdiag.CompilerDiagnosticSpan
+      (cdiag.compiler-diagnostic-text-edit-span edit)]
     [start : i64
       (compiler-check-fix-test-position-index
         source
-        (compiler-diagnostic-span-start-line span)
-        (compiler-diagnostic-span-start-col span))]
+        (cdiag.compiler-diagnostic-span-start-line span)
+        (cdiag.compiler-diagnostic-span-start-col span))]
     [end : i64
       (compiler-check-fix-test-position-index
         source
-        (compiler-diagnostic-span-end-line span)
-        (compiler-diagnostic-span-end-col span))]
+        (cdiag.compiler-diagnostic-span-end-line span)
+        (cdiag.compiler-diagnostic-span-end-col span))]
     [source-len : i64 (string.string-length source)]
     (if (or (< start 0) (< end start))
-      CompilerDiagnosticNoString
-      (CompilerDiagnosticSomeString
+      cdiag.CompilerDiagnosticNoString
+      (cdiag.CompilerDiagnosticSomeString
         (string.concat3
           (string.substring source 0 start)
-          (compiler-diagnostic-text-edit-replacement edit)
+          (cdiag.compiler-diagnostic-text-edit-replacement edit)
           (string.substring source end (- source-len end)))))))
 
 (define (compiler-check-near-miss-fix-source) : String
@@ -70,61 +75,64 @@
   (let
     [path : String "tests/near_miss_fix.tl"]
     [source : String (compiler-check-near-miss-fix-source)]
-    (match (compiler-check-source path source)
-      [(ResultCompilerCheck.Ok _) false]
-      [(ResultCompilerCheck.Err diag-box)
+    (match (compiler_check_core.compiler-check-source path source)
+      [(compiler_check_core.ResultCompilerCheck.Ok _) false]
+      [(compiler_check_core.ResultCompilerCheck.Err diag-box)
         (let
-          [diag : CompilerDiagnostic
-            (compiler-diagnostic-list-first (box-get diag-box))]
-          [fixes : CompilerDiagnosticFixSeq (compiler-diagnostic-fixes diag)]
+          [diag : cdiag.CompilerDiagnostic
+            (cdiag.compiler-diagnostic-list-first (box-get diag-box))]
+          [fixes : cdiag.CompilerDiagnosticFixSeq
+            (cdiag.compiler-diagnostic-fixes diag)]
           (and
             (= (struct-get fixes len) 1)
             (let
-              [fix : CompilerDiagnosticFix
+              [fix : cdiag.CompilerDiagnosticFix
                 (array-ref (struct-get fixes slots) 0)]
-              [edits : CompilerDiagnosticTextEditSeq
-                (compiler-diagnostic-fix-edits fix)]
+              [edits : cdiag.CompilerDiagnosticTextEditSeq
+                (cdiag.compiler-diagnostic-fix-edits fix)]
               (and
                 (string.eq
-                  (compiler-diagnostic-fix-title fix)
+                  (cdiag.compiler-diagnostic-fix-title fix)
                   "Replace misspelled name")
-                (match (compiler-diagnostic-fix-applicability fix)
-                  [CompilerDiagnosticMachineApplicable true]
+                (match (cdiag.compiler-diagnostic-fix-applicability fix)
+                  [cdiag.CompilerDiagnosticMachineApplicable true]
                   [_ false])
                 (= (struct-get edits len) 1)
                 (let
-                  [edit : CompilerDiagnosticTextEdit
+                  [edit : cdiag.CompilerDiagnosticTextEdit
                     (array-ref (struct-get edits slots) 0)]
-                  [span : CompilerDiagnosticSpan
-                    (compiler-diagnostic-text-edit-span edit)]
+                  [span : cdiag.CompilerDiagnosticSpan
+                    (cdiag.compiler-diagnostic-text-edit-span edit)]
                   (and
-                    (string.eq (compiler-diagnostic-span-path span) path)
-                    (= (compiler-diagnostic-span-start-line span) 5)
-                    (= (compiler-diagnostic-span-start-col span) 4)
-                    (= (compiler-diagnostic-span-end-line span) 5)
-                    (= (compiler-diagnostic-span-end-col span) 16)
+                    (string.eq (cdiag.compiler-diagnostic-span-path span) path)
+                    (= (cdiag.compiler-diagnostic-span-start-line span) 5)
+                    (= (cdiag.compiler-diagnostic-span-start-col span) 4)
+                    (= (cdiag.compiler-diagnostic-span-end-line span) 5)
+                    (= (cdiag.compiler-diagnostic-span-end-col span) 16)
                     (string.eq
-                      (compiler-diagnostic-text-edit-replacement edit)
+                      (cdiag.compiler-diagnostic-text-edit-replacement edit)
                       "render-value")
                     (match (compiler-check-fix-test-apply source edit)
-                      [(CompilerDiagnosticSomeString updated)
+                      [(cdiag.CompilerDiagnosticSomeString updated)
                         (and
                           (string.eq
                             updated
                             (compiler-check-near-miss-fixed-source))
-                          (compiler-check-source-ok? path updated))]
-                      [CompilerDiagnosticNoString false])))))))])))
+                          (compiler_check_core.compiler-check-source-ok?
+                            path
+                            updated))]
+                      [cdiag.CompilerDiagnosticNoString false])))))))])))
 
 (define (compiler-check-import-help-not-machine-fix-ok?) : bool
-  (match (compiler-check-source
+  (match (compiler_check_core.compiler-check-source
     "tests/import_help_only.tl"
     "(define (main) : i64 (begin (print 1) 0))")
-    [(ResultCompilerCheck.Ok _) false]
-    [(ResultCompilerCheck.Err diag)
+    [(compiler_check_core.ResultCompilerCheck.Ok _) false]
+    [(compiler_check_core.ResultCompilerCheck.Err diag)
       (=
         (struct-get
-          (compiler-diagnostic-fixes
-            (compiler-diagnostic-list-first (box-get diag)))
+          (cdiag.compiler-diagnostic-fixes
+            (cdiag.compiler-diagnostic-list-first (box-get diag)))
           len)
         0)]))
 
@@ -136,21 +144,21 @@
   [col : i64]
   [end-line : i64]
   [end-col : i64]) : bool
-  (match (compiler-check-source path source)
-    [(ResultCompilerCheck.Ok _) false]
-    [(ResultCompilerCheck.Err diagnostics-box)
+  (match (check_core.compiler-check-source path source)
+    [(check_core.ResultCompilerCheck.Ok _) false]
+    [(check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
-        [diagnostics : CompilerDiagnosticList (box-get diagnostics-box)]
-        [diagnostic : CompilerDiagnostic
-          (compiler-diagnostic-list-first diagnostics)]
+        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostic : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
-          (= (compiler-diagnostic-list-count diagnostics) 1)
-          (string.eq (compiler-diagnostic-message diagnostic) message)
-          (string.eq (compiler-diagnostic-path diagnostic) path)
-          (= (compiler-diagnostic-line diagnostic) line)
-          (= (compiler-diagnostic-col diagnostic) col)
-          (= (compiler-diagnostic-end-line diagnostic) end-line)
-          (= (compiler-diagnostic-end-col diagnostic) end-col)))]))
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
+          (string.eq (cdiag.compiler-diagnostic-message diagnostic) message)
+          (string.eq (cdiag.compiler-diagnostic-path diagnostic) path)
+          (= (cdiag.compiler-diagnostic-line diagnostic) line)
+          (= (cdiag.compiler-diagnostic-col diagnostic) col)
+          (= (cdiag.compiler-diagnostic-end-line diagnostic) end-line)
+          (= (cdiag.compiler-diagnostic-end-col diagnostic) end-col)))]))
 
 (define (compiler-check-subform-diagnostic-spans-ok?) : bool
   (and
@@ -213,65 +221,66 @@
       10)))
 
 (define (compiler-check-qualified-near-miss-ok?) : bool
-  (match (typecheck-compiler-source
+  (match (tc_api.typecheck-compiler-source
     "(module data)
 (define (print [text : String]) : unit unit)
 (module main)
-(import \"data.tl\" module data :as io)
+(import data as io)
 (define (main) : i64
   (begin
     (io.prnit \"hello\")
     0))")
-    [(ResultCompilerTypecheck.Ok _) false]
-    [(ResultCompilerTypecheck.Err diagnostics-box)
+    [(tc_core.ResultCompilerTypecheck.Ok _) false]
+    [(tc_core.ResultCompilerTypecheck.Err diagnostics-box)
       (let
-        [diagnostics : CompilerDiagnosticList (box-get diagnostics-box)]
-        [diagnostic : CompilerDiagnostic
-          (compiler-diagnostic-list-first diagnostics)]
-        [fixes : CompilerDiagnosticFixSeq
-          (compiler-diagnostic-fixes diagnostic)]
+        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostic : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
+        [fixes : cdiag.CompilerDiagnosticFixSeq
+          (cdiag.compiler-diagnostic-fixes diagnostic)]
         (and
-          (= (compiler-diagnostic-list-count diagnostics) 1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
-            (compiler-diagnostic-message diagnostic)
+            (cdiag.compiler-diagnostic-message diagnostic)
             "typecheck: unbound name io.prnit")
           (= (struct-get fixes len) 1)
           (let
-            [fix : CompilerDiagnosticFix (array-ref (struct-get fixes slots) 0)]
-            [edits : CompilerDiagnosticTextEditSeq
-              (compiler-diagnostic-fix-edits fix)]
+            [fix : cdiag.CompilerDiagnosticFix
+              (array-ref (struct-get fixes slots) 0)]
+            [edits : cdiag.CompilerDiagnosticTextEditSeq
+              (cdiag.compiler-diagnostic-fix-edits fix)]
             (and
               (string.eq
-                (compiler-diagnostic-fix-title fix)
+                (cdiag.compiler-diagnostic-fix-title fix)
                 "Replace misspelled name")
               (= (struct-get edits len) 1)
               (string.eq
-                (compiler-diagnostic-text-edit-replacement
+                (cdiag.compiler-diagnostic-text-edit-replacement
                   (array-ref (struct-get edits slots) 0))
                 "io.print")))))]))
 
 (define (compiler-check-qualified-unbound-display-ok?) : bool
-  (match (typecheck-compiler-source
+  (match (tc_api.typecheck-compiler-source
     "(module data)
 (define (print [text : String]) : unit unit)
 (module main)
-(import \"data.tl\" module data :as io)
+(import data as io)
 (define (main) : i64
   (begin
     (io.missing \"hello\")
     0))")
-    [(ResultCompilerTypecheck.Ok _) false]
-    [(ResultCompilerTypecheck.Err diagnostics-box)
+    [(tc_core.ResultCompilerTypecheck.Ok _) false]
+    [(tc_core.ResultCompilerTypecheck.Err diagnostics-box)
       (let
-        [diagnostics : CompilerDiagnosticList (box-get diagnostics-box)]
-        [diagnostic : CompilerDiagnostic
-          (compiler-diagnostic-list-first diagnostics)]
+        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostic : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
-          (= (compiler-diagnostic-list-count diagnostics) 1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
-            (compiler-diagnostic-message diagnostic)
+            (cdiag.compiler-diagnostic-message diagnostic)
             "typecheck: unbound name io.missing")
-          (= (struct-get (compiler-diagnostic-fixes diagnostic) len) 0)))]))
+          (= (struct-get (cdiag.compiler-diagnostic-fixes diagnostic) len) 0)))]))
 
 (define (compiler-check-duplicate-type-location-ok?) : bool
   (let
@@ -280,76 +289,76 @@
       "(defstruct Point (x i64))
 (defstruct Point (y i64))
 (define (main) : i64 0)"]
-    (match (compiler-check-source path source)
-      [(ResultCompilerCheck.Ok _) false]
-      [(ResultCompilerCheck.Err diag-box)
+    (match (compiler_check_core.compiler-check-source path source)
+      [(compiler_check_core.ResultCompilerCheck.Ok _) false]
+      [(compiler_check_core.ResultCompilerCheck.Err diag-box)
         (let
-          [diag : CompilerDiagnostic
-            (compiler-diagnostic-list-first (box-get diag-box))]
+          [diag : cdiag.CompilerDiagnostic
+            (cdiag.compiler-diagnostic-list-first (box-get diag-box))]
           (and
             (string.eq
-              (compiler-diagnostic-message diag)
+              (cdiag.compiler-diagnostic-message diag)
               "symbols: duplicate type declaration Point")
-            (string.eq (compiler-diagnostic-path diag) path)
-            (= (compiler-diagnostic-line diag) 2)
-            (= (compiler-diagnostic-col diag) 1)))])))
+            (string.eq (cdiag.compiler-diagnostic-path diag) path)
+            (= (cdiag.compiler-diagnostic-line diag) 2)
+            (= (cdiag.compiler-diagnostic-col diag) 1)))])))
 
 (define (compiler-check-independent-diagnostics-ok?) : bool
-  (match (compiler-check-source
+  (match (compiler_check_core.compiler-check-source
     "tests/multiple_diagnostics.tl"
     "(define (a) : i64 (unknown-one 1))
 (define (b) : i64 (unknown-two 2))
 (define (c) : i64 (+ \"str\" 1))
 (define (main) : i64 0)")
-    [(ResultCompilerCheck.Ok _) false]
-    [(ResultCompilerCheck.Err diagnostics-box)
+    [(compiler_check_core.ResultCompilerCheck.Ok _) false]
+    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
-        [diagnostics : CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
         (and
-          (= (compiler-diagnostic-list-count diagnostics) 3)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
           (match diagnostics
-            [(CompilerDiagnosticList.Cons first first-rest)
+            [(cdiag.CompilerDiagnosticList.Cons first first-rest)
               (match (box-get first-rest)
-                [(CompilerDiagnosticList.Cons second second-rest)
+                [(cdiag.CompilerDiagnosticList.Cons second second-rest)
                   (match (box-get second-rest)
-                    [(CompilerDiagnosticList.Cons third third-rest)
+                    [(cdiag.CompilerDiagnosticList.Cons third third-rest)
                       (and
                         (string.eq
-                          (compiler-diagnostic-message first)
+                          (cdiag.compiler-diagnostic-message first)
                           "typecheck: unbound name unknown-one")
-                        (= (compiler-diagnostic-line first) 1)
+                        (= (cdiag.compiler-diagnostic-line first) 1)
                         (string.eq
-                          (compiler-diagnostic-message second)
+                          (cdiag.compiler-diagnostic-message second)
                           "typecheck: unbound name unknown-two")
-                        (= (compiler-diagnostic-line second) 2)
+                        (= (cdiag.compiler-diagnostic-line second) 2)
                         (string.eq
-                          (compiler-diagnostic-message third)
+                          (cdiag.compiler-diagnostic-message third)
                           "typecheck: integer operator expects matching integer operands")
-                        (= (compiler-diagnostic-line third) 3)
+                        (= (cdiag.compiler-diagnostic-line third) 3)
                         (match (box-get third-rest)
-                          [(CompilerDiagnosticList.Nil) true]
+                          [(cdiag.CompilerDiagnosticList.Nil) true]
                           [_ false]))]
                     [_ false])]
                 [_ false])]
             [_ false])))]))
 
 (define (compiler-check-poison-suppresses-derived-diagnostics-ok?) : bool
-  (match (compiler-check-source
+  (match (compiler_check_core.compiler-check-source
     "tests/poison_diagnostics.tl"
     "(define (broken) : i64 (unknown-origin 1))
 (define (derived-one) : i64 (broken))
 (define (derived-two) : i64 (+ (derived-one) 1))
 (define (derived-three) : i64 (derived-two))
 (define (main) : i64 0)")
-    [(ResultCompilerCheck.Ok _) false]
-    [(ResultCompilerCheck.Err diagnostics-box)
+    [(compiler_check_core.ResultCompilerCheck.Ok _) false]
+    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
-        [diagnostics : CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
         (and
-          (= (compiler-diagnostic-list-count diagnostics) 1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
-            (compiler-diagnostic-message
-              (compiler-diagnostic-list-first diagnostics))
+            (cdiag.compiler-diagnostic-message
+              (cdiag.compiler-diagnostic-list-first diagnostics))
             "typecheck: unbound name unknown-origin")))]))
 
 (define (main) : i64
@@ -357,13 +366,13 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (cond
       [(and
-          (= (compiler-check-self-test) 42)
+          (= (compiler_check_core.compiler-check-self-test) 42)
           (compiler-check-near-miss-fix-ok?)
           (compiler-check-import-help-not-machine-fix-ok?)
           (compiler-check-duplicate-type-location-ok?)
           (compiler-check-independent-diagnostics-ok?)
           (compiler-check-poison-suppresses-derived-diagnostics-ok?)
-          (compiler-check-semantic-index-ok?)
+          (semantic_index.compiler-check-semantic-index-ok?)
           (compiler-check-subform-diagnostic-spans-ok?)
           (compiler-check-qualified-near-miss-ok?)
           (compiler-check-qualified-unbound-display-ok?))

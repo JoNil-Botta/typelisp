@@ -27,11 +27,11 @@
 ;; lost in the original investigation.
 ;;
 ;; usage: stress <tier> <iterations> <progress-file>   (tier: 1, 2, or 3)
-(import "../../src/compiler_embedded_stdlib_tlci.tl")
-(import "../../src/tlci_core.tl")
-(import "../../src/tlci_loader.tl")
-(import "../../src/compiler_ast_types.tl")
-(import "../../src/compiler_ctfe.tl")
+(import compiler_embedded_stdlib_tlci)
+(import tlci_core)
+(import tlci_loader)
+(import compiler_ast_types)
+(import compiler_ctfe)
 (import compiler_intern as ci)
 (import stdlib.array)
 (import stdlib.arena)
@@ -149,23 +149,25 @@
 
 ;: Confirm the chosen identity really is a registration shell before the loop:
 ;: a shell commits no result and reports ok for an ordinary dispatch.
-(define (stress-tier1-shell-ok? [loaded : (& loaded TlciLoadedImage)]) : bool
-  (match (tlci-loader-dispatch-macro
+(define (stress-tier1-shell-ok?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]) : bool
+  (match (tlci_loader.tlci-loader-dispatch-macro
     loaded
     stress-shell-identity
     stress-cookie
     (array.make-array i64 0)
     0)
-    [(ResultTlciMacroDispatch.Err _) false]
-    [(ResultTlciMacroDispatch.Ok dispatch)
+    [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+    [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
       (and
-        (= (struct-get dispatch status) tlci-host-callback-status-ok)
-        (not (compiler-comptime-host-result-ready?)))]))
+        (= (struct-get dispatch status) tlci_core.tlci-host-callback-status-ok)
+        (not
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)))]))
 
 ;: Tier 1: sustained raw-entry dispatch. Returns `stress-status-ok` or the
 ;: first distinguishing failure status; `failed-at` records the iteration.
 (define (stress-tier1
-  [loaded : (& loaded TlciLoadedImage)]
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [iterations : i64]
   [progress-path : String]
   [failed-at : (Array i64)]) : i64
@@ -189,21 +191,21 @@
               0
               (array-ref canaries 0)
               (array-ref canaries 1)))
-          (match (tlci-loader-dispatch-macro
+          (match (tlci_loader.tlci-loader-dispatch-macro
             loaded
             stress-shell-identity
             stress-cookie
             (array.make-array i64 0)
             0)
-            [(ResultTlciMacroDispatch.Err _)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _)
               (set! outcome stress-status-dispatch-error)]
-            [(ResultTlciMacroDispatch.Ok dispatch)
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
               (let
                 [status : i64 (struct-get dispatch status)]
                 (cond
                   ;; This is #5460's signature: a shell reporting anything but
                   ;; ok means its `count` argument did not survive the bridge.
-                  [(not (= status tlci-host-callback-status-ok))
+                  [(not (= status tlci_core.tlci-host-callback-status-ok))
                     (begin
                       (stress-progress-write!
                         progress-path
@@ -213,7 +215,7 @@
                         (array-ref canaries 0)
                         (array-ref canaries 1))
                       (set! outcome stress-status-bad-status))]
-                  [(compiler-comptime-host-result-ready?)
+                  [(compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
                     (set! outcome stress-status-unexpected-result)]
                   [(not (stress-canaries-ok? canaries))
                     (set! outcome stress-status-canary-clobbered)]
@@ -232,21 +234,25 @@
 ;: The committed expansion `stdlib.array/length` must produce, checked every
 ;: iteration so a silently wrong commit cannot pass as a clean run.
 (define (stress-tier3-result-ok?
-  [pools : AstNodePoolContext]
+  [pools : compiler_ast_types.AstNodePoolContext]
   [operand-node : i64]) : bool
-  (match (compiler-comptime-host-result-value)
-    [(CompilerCtfeValue.Expr node _)
-      (match (ast-node-pool-context-expr-get pools node)
-        [(AstExpr.Call callee-id args)
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr node _)
+      (match (compiler_ast_types.ast-node-pool-context-expr-get pools node)
+        [(compiler_ast_types.AstExpr.Call callee-id args)
           (and
-            (match (ast-node-pool-context-expr-get pools callee-id)
-              [(AstExpr.Var name-id)
+            (match (compiler_ast_types.ast-node-pool-context-expr-get
+              pools
+              callee-id)
+              [(compiler_ast_types.AstExpr.Var name-id)
                 (=
                   name-id
                   (ci.intern-template-source-id (ci.intern "__tl_array-length")))]
               [_ false])
-            (= (ast-expr-list-len (& args)) 1)
-            (= (ast-expr-list-get (& args) 0 -1) operand-node))]
+            (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
+            (=
+              (compiler_ast_types.ast-expr-list-get (& args) 0 -1)
+              operand-node))]
         [_ false])]
     [_ false]))
 
@@ -266,22 +272,29 @@
   [expected-operand-node : i64]
   [outcome : (Array i64)]) : bool
   (cond
-    [(not (= compiler-comptime-host-operand-count 1))
+    [(not
+        (= compiler_embedded_stdlib_tlci.compiler-comptime-host-operand-count 1))
       (begin
         (array-set! outcome 0 stress-status-tier2-count-clobbered)
         false)]
     [(not
-        (match (array-ref compiler-comptime-host-operands 0)
-          [(CompilerCtfeValue.Expr node _) (= node expected-operand-node)]
+        (match (array-ref
+          compiler_embedded_stdlib_tlci.compiler-comptime-host-operands
+          0)
+          [(compiler_ctfe.CompilerCtfeValue.Expr node _)
+            (= node expected-operand-node)]
           [_ false]))
       (begin
         (array-set! outcome 0 stress-status-tier2-operand-clobbered)
         false)]
-    [(not (= compiler-comptime-host-session-cookie stress-cookie))
+    [(not
+        (=
+          compiler_embedded_stdlib_tlci.compiler-comptime-host-session-cookie
+          stress-cookie))
       (begin
         (array-set! outcome 0 stress-status-tier2-cookie-clobbered)
         false)]
-    [(not (= compiler-comptime-host-stack-len 0))
+    [(not (= compiler_embedded_stdlib_tlci.compiler-comptime-host-stack-len 0))
       (begin
         (array-set! outcome 0 stress-status-tier2-stack-not-drained)
         false)]
@@ -305,17 +318,20 @@
 ;; and which is the integrity #5460's corrupted-argument symptom actually
 ;; implicates. Refs #5528, #5460.
 (define (stress-tier2
-  [loaded : (& loaded TlciLoadedImage)]
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [iterations : i64]
   [progress-path : String]
   [failed-at : (Array i64)]) : i64
   (let
     [canaries : (Array i64) (array.make-array i64 2)]
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operand-node : i64
-      (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "xs")))]
-    [operands : (Array CompilerCtfeValue)
-      (array.make-array CompilerCtfeValue 1)]
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools
+        (compiler_ast_types.AstExpr.Var (ci.intern "xs")))]
+    [operands : (Array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     [detail : (Array i64) (make-array stress-status-ok)]
     [i : i64 0]
     [outcome : i64 stress-status-ok]
@@ -325,7 +341,9 @@
       (array-set!
         operands
         0
-        (CompilerCtfeValue.Expr operand-node (AstType.Expr)))
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          operand-node
+          (compiler_ast_types.AstType.Expr)))
       (while (and (= outcome stress-status-ok) (< i iterations))
         (begin
           (when
@@ -339,27 +357,27 @@
               (array-ref canaries 1)))
           ;; Keep the mapped image, pools, and operand storage alive across the
           ;; run, but give each entry invocation its transactional result slot.
-          (compiler-comptime-host-session-open!
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
             pools
             operands
             1
             64
             stress-cookie
-            (ctfe-reflect-info-list-empty))
-          (match (tlci-loader-dispatch-macro
+            (compiler_ctfe.ctfe-reflect-info-list-empty))
+          (match (tlci_loader.tlci-loader-dispatch-macro
             loaded
             stress-native-identity
             stress-cookie
             (array.make-array i64 0)
             0)
-            [(ResultTlciMacroDispatch.Err _)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _)
               (set! outcome stress-status-dispatch-error)]
-            [(ResultTlciMacroDispatch.Ok dispatch)
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
               (cond
                 [(not
                     (=
                       (struct-get dispatch status)
-                      tlci-host-callback-status-ok))
+                      tlci_core.tlci-host-callback-status-ok))
                   (begin
                     (stress-progress-write!
                       progress-path
@@ -369,7 +387,8 @@
                       (array-ref canaries 0)
                       (array-ref canaries 1))
                     (set! outcome stress-status-tier2-status))]
-                [(not (compiler-comptime-host-result-ready?))
+                [(not
+                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?))
                   (set! outcome stress-status-tier2-no-result)]
                 [(not (stress-tier3-result-ok? pools operand-node))
                   (set! outcome stress-status-tier2-shape)]
@@ -378,7 +397,7 @@
                 [(not (stress-canaries-ok? canaries))
                   (set! outcome stress-status-canary-clobbered)]
                 [else unit])])
-          (compiler-comptime-host-session-close!)
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (when (not (= outcome stress-status-ok)) (array-set! failed-at 0 i))
           (set! i (+ i 1))))
       (stress-progress-write!
@@ -395,7 +414,7 @@
 ;: in. This is the tier that exercises the allocator and pool-commit paths
 ;: #5460's follow-on crashes pointed at. Refs #5528.
 (define (stress-tier3
-  [loaded : (& loaded TlciLoadedImage)]
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [iterations : i64]
   [progress-path : String]
   [failed-at : (Array i64)]) : i64
@@ -408,13 +427,14 @@
       (array-set! canaries 1 stress-canary-b)
       (while (and (= outcome stress-status-ok) (< i iterations))
         (let
-          [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+          [pools : compiler_ast_types.AstNodePoolContext
+            (compiler_ast_types.ast-node-pool-context-capture-active)]
           [operand-node : i64
-            (ast-node-pool-context-expr-push
+            (compiler_ast_types.ast-node-pool-context-expr-push
               pools
-              (AstExpr.Var (ci.intern "xs")))]
-          [operands : (Array CompilerCtfeValue)
-            (array.make-array CompilerCtfeValue 1)]
+              (compiler_ast_types.AstExpr.Var (ci.intern "xs")))]
+          [operands : (Array compiler_ctfe.CompilerCtfeValue)
+            (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
           (begin
             (when
               (= (% i 1000) 0)
@@ -428,28 +448,30 @@
             (array-set!
               operands
               0
-              (CompilerCtfeValue.Expr operand-node (AstType.Expr)))
-            (compiler-comptime-host-session-open!
+              (compiler_ctfe.CompilerCtfeValue.Expr
+                operand-node
+                (compiler_ast_types.AstType.Expr)))
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
               pools
               operands
               1
               64
               stress-cookie
-              (ctfe-reflect-info-list-empty))
-            (match (tlci-loader-dispatch-macro
+              (compiler_ctfe.ctfe-reflect-info-list-empty))
+            (match (tlci_loader.tlci-loader-dispatch-macro
               loaded
               stress-native-identity
               stress-cookie
               (array.make-array i64 0)
               0)
-              [(ResultTlciMacroDispatch.Err _)
+              [(tlci_loader.ResultTlciMacroDispatch.Err _)
                 (set! outcome stress-status-dispatch-error)]
-              [(ResultTlciMacroDispatch.Ok dispatch)
+              [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
                 (cond
                   [(not
                       (=
                         (struct-get dispatch status)
-                        tlci-host-callback-status-ok))
+                        tlci_core.tlci-host-callback-status-ok))
                     (begin
                       (stress-progress-write!
                         progress-path
@@ -459,14 +481,15 @@
                         (array-ref canaries 0)
                         (array-ref canaries 1))
                       (set! outcome stress-status-tier3-status))]
-                  [(not (compiler-comptime-host-result-ready?))
+                  [(not
+                      (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?))
                     (set! outcome stress-status-tier3-no-result)]
                   [(not (stress-tier3-result-ok? pools operand-node))
                     (set! outcome stress-status-tier3-shape)]
                   [(not (stress-canaries-ok? canaries))
                     (set! outcome stress-status-canary-clobbered)]
                   [else unit])])
-            (compiler-comptime-host-session-close!)
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
             (when (not (= outcome stress-status-ok)) (array-set! failed-at 0 i))
             (set! i (+ i 1)))))
       (stress-progress-write!
@@ -488,29 +511,30 @@
       [iterations : i64 (string.>int (io.arg 2))]
       [progress-path : String (io.arg 3)]
       [failed-at : (Array i64) (make-array -1)]
-      (match (tlci-loader-load-from-bytes-with-host
+      (match (tlci_loader.tlci-loader-load-from-bytes-with-host
         (arena.tl_arena_current)
-        (compiler-embedded-stdlib-tlci-copy)
-        (compiler-comptime-host-table))
-        [(ResultTlciLoadedImage.Err _)
+        (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)
+        (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+        [(tlci_loader.ResultTlciLoadedImage.Err _)
           (begin
             (io.print-error "stress: embedded image failed to load\n")
             stress-status-load-failed)]
-        [(ResultTlciLoadedImage.Ok loaded)
+        [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
           (let
-            [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-            [operands : (Array CompilerCtfeValue)
-              (array.make-array CompilerCtfeValue 0)]
+            [pools : compiler_ast_types.AstNodePoolContext
+              (compiler_ast_types.ast-node-pool-context-capture-active)]
+            [operands : (Array compiler_ctfe.CompilerCtfeValue)
+              (array.make-array compiler_ctfe.CompilerCtfeValue 0)]
             (begin
               ;; One session and one mapped-image lifetime for the whole run,
               ;; which is the shape #5460 failed in.
-              (compiler-comptime-host-session-open!
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
                 pools
                 operands
                 0
                 0x7FFFFFFF
                 stress-cookie
-                (ctfe-reflect-info-list-empty))
+                (compiler_ctfe.ctfe-reflect-info-list-empty))
               (let
                 [outcome : i64
                   (cond
@@ -518,7 +542,7 @@
                     ;; one before it starts cycling its own.
                     [(= tier 3)
                       (begin
-                        (compiler-comptime-host-session-close!)
+                        (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
                         (stress-tier3
                           (& loaded)
                           iterations
@@ -528,7 +552,7 @@
                     ;; for the same reason.
                     [(= tier 2)
                       (begin
-                        (compiler-comptime-host-session-close!)
+                        (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
                         (stress-tier2
                           (& loaded)
                           iterations
@@ -556,7 +580,7 @@
                               progress-path
                               failed-at)]
                           (begin
-                            (compiler-comptime-host-session-close!)
+                            (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
                             tier1)))])]
                 (begin
                   (io.print-string
@@ -574,6 +598,7 @@
                       " failed-at="
                       (string.int->string (array-ref failed-at 0))
                       "\n"))
-                  (match (tlci-loader-release loaded)
-                    [(ResultTlciLoaderUnit.Ok) outcome]
-                    [(ResultTlciLoaderUnit.Err _) stress-status-release-failed])))))]))))
+                  (match (tlci_loader.tlci-loader-release loaded)
+                    [(tlci_loader.ResultTlciLoaderUnit.Ok) outcome]
+                    [(tlci_loader.ResultTlciLoaderUnit.Err _)
+                      stress-status-release-failed])))))]))))

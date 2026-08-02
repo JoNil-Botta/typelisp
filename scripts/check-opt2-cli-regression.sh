@@ -104,6 +104,7 @@ echo "[opt2-cli-gate] scratch-region optimizer smoke at opt2"
 scratch_status=0
 "$COMPILER" run src/tests/compiler_optimize_smoke.tl \
     --stdlib-root stdlib \
+    --stdlib-root src \
     --opt-level 2 \
     >"$SCRATCH_STDOUT" 2>"$SCRATCH_STDERR" || scratch_status=$?
 if [ "$scratch_status" -ne 42 ]; then

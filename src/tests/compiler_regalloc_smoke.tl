@@ -1,179 +1,198 @@
 ;; compiler_regalloc_smoke.tl - Runnable smoke for compiler_regalloc.tl.
-(import "../compiler_liveness.tl")
-(import "../compiler_regalloc.tl")
-(import "../compiler_regalloc_tests.tl")
-(import "../compiler_intern.tl" as ci)
+(import compiler_liveness as live)
+(import compiler_regalloc as reg)
+(import compiler_regalloc_tests as reg_tests)
+(import compiler_ir_types as ir)
+(import compiler_ast_types as ast)
+(import compiler_intern as ci)
 (import stdlib.string)
 
-(define (compiler-reg-smoke-spmd-call-function) : CompilerIrFunction
+(define (compiler-reg-smoke-spmd-call-function) : ir.CompilerIrFunction
   (let
-    [spmd-args : CompilerIrSpmdCallArgList
-      (ir-spmd-call-arg-cons
-        (CompilerIrSpmdCallArg.Arg
-          (CompilerIrSpmdValueClass.Uniform)
-          (CompilerIrValue.Var 1)
-          (compiler-reg-i64-ty))
-        (ir-spmd-call-arg-cons
-          (CompilerIrSpmdCallArg.Arg
-            (CompilerIrSpmdValueClass.Varying)
-            (CompilerIrValue.Var 2)
-            (compiler-reg-i64-ty))
-          CompilerIrSpmdCallArgList.Nil))]
-    (CompilerIrFunction.Function
+    [spmd-args : ir.CompilerIrSpmdCallArgList
+      (ir.ir-spmd-call-arg-cons
+        (ir.CompilerIrSpmdCallArg.Arg
+          (ir.CompilerIrSpmdValueClass.Uniform)
+          (ir.CompilerIrValue.Var 1)
+          (reg.compiler-reg-i64-ty))
+        (ir.ir-spmd-call-arg-cons
+          (ir.CompilerIrSpmdCallArg.Arg
+            (ir.CompilerIrSpmdValueClass.Varying)
+            (ir.CompilerIrValue.Var 2)
+            (reg.compiler-reg-i64-ty))
+          ir.CompilerIrSpmdCallArgList.Nil))]
+    (ir.CompilerIrFunction.Function
       (ci.intern-generated-canonical-name "spmd_call")
-      CompilerIrParamList.Nil
-      (compiler-reg-i64-ty)
+      ir.CompilerIrParamList.Nil
+      (reg.compiler-reg-i64-ty)
       5
-      (compiler-ir-block-cons
-        (compiler-ir-block
-          (compiler-ir-label "entry")
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Mov
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
               0
-              (CompilerIrValue.I64 1)
-              (compiler-reg-i64-ty))
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Mov
+              (ir.CompilerIrValue.I64 1)
+              (reg.compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
                 1
-                (CompilerIrValue.I64 2)
-                (compiler-reg-i64-ty))
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.Mov
+                (ir.CompilerIrValue.I64 2)
+                (reg.compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Mov
                   2
-                  (CompilerIrValue.I64 3)
-                  (compiler-reg-i64-ty))
-                (compiler-ir-instr-cons
-                  (ir-instr-spmd-call
+                  (ir.CompilerIrValue.I64 3)
+                  (reg.compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.ir-instr-spmd-call
                     (ci.intern-generated-canonical-name "spmd_helper")
-                    (CompilerIrSpmdBackend.Avx512)
+                    (ir.CompilerIrSpmdBackend.Avx512)
                     8
-                    (CompilerIrValue.Var 0)
+                    (ir.CompilerIrValue.Var 0)
                     spmd-args
-                    (CompilerIrSpmdCallResult.Value
+                    (ir.CompilerIrSpmdCallResult.Value
                       3
-                      (CompilerIrSpmdValueClass.Varying)
-                      (compiler-reg-i64-ty)))
-                  (compiler-ir-instr-cons
-                    (CompilerIrInstr.Mov
+                      (ir.CompilerIrSpmdValueClass.Varying)
+                      (reg.compiler-reg-i64-ty)))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Mov
                       4
-                      (CompilerIrValue.Var 3)
-                      (compiler-reg-i64-ty))
-                    (compiler-ir-instr-cons
-                      (CompilerIrInstr.Return
-                        (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
-                      CompilerIrInstrList.Nil)))))))
-        CompilerIrBlockList.Nil))))
+                      (ir.CompilerIrValue.Var 3)
+                      (reg.compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Return
+                        (ir.CompilerIrMaybeValue.Some
+                          (ir.CompilerIrValue.Var 4)))
+                      ir.CompilerIrInstrList.Nil)))))))
+        ir.CompilerIrBlockList.Nil))))
 
 (define (compiler-reg-smoke-spmd-call-shape-ok?) : bool
   (let
-    [func : CompilerIrFunction (compiler-reg-smoke-spmd-call-function)]
-    [blocks : CompilerIrBlockList
+    [func : ir.CompilerIrFunction (compiler-reg-smoke-spmd-call-function)]
+    [blocks : ir.CompilerIrBlockList
       (match func
-        [(CompilerIrFunction.Function _ _ _ _ inner) inner])]
-    [call-args : CompilerLiveI64Set
-      (compiler-reg-call-arg-vars-blocks blocks (compiler-live-set-empty))]
-    [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
-    [call-live : CompilerLiveI64Set
-      (compiler-reg-call-live-blocks blocks liveness (compiler-live-set-empty))]
-    [direct-calls : CompilerLiveI64Set (compiler-reg-direct-call-points func)]
-    (match (compiler-reg-plan-function func)
-      [(CompilerRegPlan.Plan _ ineligible _ _ _ _)
+        [(ir.CompilerIrFunction.Function _ _ _ _ inner) inner])]
+    [call-args : live.CompilerLiveI64Set
+      (reg.compiler-reg-call-arg-vars-blocks
+        blocks
+        (live.compiler-live-set-empty))]
+    [liveness : live.CompilerFunctionLiveness
+      (live.compiler-live-analyze-function func)]
+    [call-live : live.CompilerLiveI64Set
+      (reg.compiler-reg-call-live-blocks
+        blocks
+        liveness
+        (live.compiler-live-set-empty))]
+    [direct-calls : live.CompilerLiveI64Set
+      (reg.compiler-reg-direct-call-points func)]
+    (match (reg.compiler-reg-plan-function func)
+      [(reg.CompilerRegPlan.Plan _ ineligible _ _ _ _)
         (and
-          (compiler-live-set-eq? call-args (compiler-live-set3 0 1 2))
-          (compiler-live-set-contains? call-live 3)
-          (compiler-live-set-contains? direct-calls 6)
+          (live.compiler-live-set-eq? call-args (live.compiler-live-set3 0 1 2))
+          (live.compiler-live-set-contains? call-live 3)
+          (live.compiler-live-set-contains? direct-calls 6)
           ;; Call operands retain ordinary spill eligibility; only hidden helper
           ;; parameters are admitted to the fixed private-register allocator.
-          (compiler-live-set-contains? ineligible 0)
-          (compiler-live-set-contains? ineligible 1)
-          (compiler-live-set-contains? ineligible 2))])))
+          (live.compiler-live-set-contains? ineligible 0)
+          (live.compiler-live-set-contains? ineligible 1)
+          (live.compiler-live-set-contains? ineligible 2))])))
 
-(define (compiler-reg-smoke-descriptor-pair-function) : CompilerIrFunction
-  (CompilerIrFunction.Function
+(define (compiler-reg-smoke-descriptor-pair-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
     (ci.intern-generated-canonical-name "descriptor_pair")
-    (compiler-ir-param-cons
-      (CompilerIrParam.Param "handle" (AstType.String) 0)
-      CompilerIrParamList.Nil)
-    (AstType.I64)
+    (ir.compiler-ir-param-cons
+      (ir.CompilerIrParam.Param "handle" (ast.AstType.String) 0)
+      ir.CompilerIrParamList.Nil)
+    (ast.AstType.I64)
     8
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        (compiler-ir-label "entry")
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.Load 1 (CompilerIrValue.Var 0) (AstType.U64))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Gep
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Load
+            1
+            (ir.CompilerIrValue.Var 0)
+            (ast.AstType.U64))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Gep
               2
-              (CompilerIrValue.Var 0)
-              (CompilerIrValue.I64 8)
-              (AstType.U8))
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.Pack
+              (ir.CompilerIrValue.Var 0)
+              (ir.CompilerIrValue.I64 8)
+              (ast.AstType.U8))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Load
+                3
+                (ir.CompilerIrValue.Var 2)
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Pack
                   4
-                  (compiler-ir-value-cons
-                    (CompilerIrValue.Var 1)
-                    (compiler-ir-value-cons
-                      (CompilerIrValue.Var 3)
-                      CompilerIrValueList.Nil))
-                  (AstType.String))
-                (compiler-ir-instr-cons
-                  (CompilerIrInstr.Mov
+                  (ir.compiler-ir-value-cons
+                    (ir.CompilerIrValue.Var 1)
+                    (ir.compiler-ir-value-cons
+                      (ir.CompilerIrValue.Var 3)
+                      ir.CompilerIrValueList.Nil))
+                  (ast.AstType.String))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Mov
                     5
-                    (CompilerIrValue.Var 4)
-                    (AstType.String))
-                  (compiler-ir-instr-cons
-                    (ir-instr-descriptor-pair-data 6 (CompilerIrValue.Var 5))
-                    (compiler-ir-instr-cons
-                      (ir-instr-descriptor-pair-length
+                    (ir.CompilerIrValue.Var 4)
+                    (ast.AstType.String))
+                  (ir.compiler-ir-instr-cons
+                    (ir.ir-instr-descriptor-pair-data
+                      6
+                      (ir.CompilerIrValue.Var 5))
+                    (ir.compiler-ir-instr-cons
+                      (ir.ir-instr-descriptor-pair-length
                         7
-                        (CompilerIrValue.Var 5))
-                      (compiler-ir-instr-cons
-                        (CompilerIrInstr.Return
-                          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
-                        CompilerIrInstrList.Nil)))))))))
-      CompilerIrBlockList.Nil)))
+                        (ir.CompilerIrValue.Var 5))
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Return
+                          (ir.CompilerIrMaybeValue.Some
+                            (ir.CompilerIrValue.Var 7)))
+                        ir.CompilerIrInstrList.Nil)))))))))
+      ir.CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-smoke-descriptor-pair-group-ok?) : bool
   (let
-    [func : CompilerIrFunction (compiler-reg-smoke-descriptor-pair-function)]
-    [types : CompilerRegVarTypes (compiler-reg-function-var-types func)]
-    [groups : CompilerLiveI64Set
-      (compiler-reg-function-group-vars
-        (ast-node-pool-reader-type-segment-bases)
+    [func : ir.CompilerIrFunction (compiler-reg-smoke-descriptor-pair-function)]
+    [types : reg.CompilerRegVarTypes (reg.compiler-reg-function-var-types func)]
+    [groups : live.CompilerLiveI64Set
+      (reg.compiler-reg-function-group-vars
+        (ast.ast-node-pool-reader-type-segment-bases)
         func
         types)]
     (and
       ;; Source handles remain scalar even though structurally-created pair
       ;; vars with the same provenance type occupy two homes.
       (not
-        (compiler-reg-type-register-group?
-          (ast-node-pool-reader-type-segment-bases)
-          (AstType.String)))
+        (reg.compiler-reg-type-register-group?
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ast.AstType.String)))
       (not
-        (compiler-reg-type-register-group?
-          (ast-node-pool-reader-type-segment-bases)
-          (AstType.DynArray 1)))
-      (= (compiler-live-set-count groups) 2)
-      (not (compiler-live-set-contains? groups 0))
-      (compiler-live-set-contains? groups 4)
-      (compiler-live-set-contains? groups 5)
-      (not (compiler-live-set-contains? groups 6))
-      (not (compiler-live-set-contains? groups 7)))))
+        (reg.compiler-reg-type-register-group?
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ast.AstType.DynArray 1)))
+      (= (live.compiler-live-set-count groups) 2)
+      (not (live.compiler-live-set-contains? groups 0))
+      (live.compiler-live-set-contains? groups 4)
+      (live.compiler-live-set-contains? groups 5)
+      (not (live.compiler-live-set-contains? groups 6))
+      (not (live.compiler-live-set-contains? groups 7)))))
 
 (define (main) : i64
   (begin
-    (compiler-regalloc-self-test-require!
+    (reg_tests.compiler-regalloc-self-test-require!
       "named failure message renderer"
       (string.eq
-        (compiler-regalloc-self-test-failure-message "register reuse")
+        (reg_tests.compiler-regalloc-self-test-failure-message "register reuse")
         "regalloc self-test failed: register reuse"))
-    (compiler-regalloc-self-test)
-    (compiler-regalloc-self-test-require!
+    (reg_tests.compiler-regalloc-self-test)
+    (reg_tests.compiler-regalloc-self-test-require!
       "compiler-reg-smoke-spmd-call-shape-ok?"
       (compiler-reg-smoke-spmd-call-shape-ok?))
-    (compiler-regalloc-self-test-require!
+    (reg_tests.compiler-regalloc-self-test-require!
       "compiler-reg-smoke-descriptor-pair-group-ok?"
       (compiler-reg-smoke-descriptor-pair-group-ok?))
     42))

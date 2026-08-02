@@ -9,24 +9,29 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
-(import "build_run_core.tl")
-(import "build_cli_core.tl")
-(import "doc_test.tl")
-(import "test_cli_core.tl")
+(import build_run_core)
+(import compiler_backend as backend)
+(import compiler_driver_core as driver)
+(import compiler_ir_types as ir)
+(import compiler_load as load)
+(import compiler_optimize as opt)
+(import build_cli_core)
+(import doc_test)
+(import test_cli_core)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
 (defenum RunCliConfig
   (Config
     String
-    CompilerBackendTarget
-    CompilerBackendMode
+    backend.CompilerBackendTarget
+    backend.CompilerBackendMode
     cli_svec.Vec
-    SourceToolCfgNames
+    build_run_core.SourceToolCfgNames
     process.ProcessStringList
     i64
-    SourceToolLinkInputs)
-  (Package BuildConfig process.ProcessStringList))
+    build_run_core.SourceToolLinkInputs)
+  (Package build_cli_core.BuildConfig process.ProcessStringList))
 
 (defenum ResultRunCliConfig
   (Ok RunCliConfig)
@@ -70,16 +75,19 @@
     [separator : i64 (run-cli-runtime-separator-index idx count)]
     [runtime-args : process.ProcessStringList
       (if (< separator count)
-        (source-tool-args-from-argv (+ separator 1) count (process.args-empty))
+        (build_run_core.source-tool-args-from-argv
+          (+ separator 1)
+          count
+          (process.args-empty))
         (process.args-empty))]
-    (match (build-config-from idx separator)
-      [(ResultBuildConfig.Err message)
+    (match (build_cli_core.build-config-from idx separator)
+      [(build_cli_core.ResultBuildConfig.Err message)
         (ResultRunCliConfig.Err (run-cli-rewrite-build-error message))]
-      [(ResultBuildConfig.Ok config)
+      [(build_cli_core.ResultBuildConfig.Ok config)
         (match config
-          [(BuildConfig.Package _ _ _ _ _ _ _ _ _ _)
+          [(build_cli_core.BuildConfig.Package _ _ _ _ _ _ _ _ _ _)
             (ResultRunCliConfig.Ok (RunCliConfig.Package config runtime-args))]
-          [(BuildConfig.Source _ _ _ _ _ _ _ _)
+          [(build_cli_core.BuildConfig.Source _ _ _ _ _ _ _ _)
             (ResultRunCliConfig.Err
               "run: source file arguments must appear before run options; use -- before package runtime args")])])))
 
@@ -87,13 +95,13 @@
   [idx : i64]
   [count : i64]
   [source : String]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]
   [stdlib-roots : cli_svec.Vec (:consume)]
-  [cfgs : SourceToolCfgNames]
+  [cfgs : build_run_core.SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
-  [link-inputs : SourceToolLinkInputs]) : ResultRunCliConfig
+  [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultRunCliConfig
   (if (>= idx count)
     (ResultRunCliConfig.Ok
       (RunCliConfig.Config
@@ -141,13 +149,13 @@
                 target
                 mode
                 stdlib-roots
-                (source-tool-cfg-names-add cfgs value)
+                (build_run_core.source-tool-cfg-names-add cfgs value)
                 runtime-args
                 opt-level
                 link-inputs)]
             [(cli_option.CliCommonOptionKind.Target)
-              (match (source-tool-target value)
-                [(ResultSourceToolTarget.Ok parsed-target)
+              (match (build_run_core.source-tool-target value)
+                [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
                   (run-cli-parse-options
                     next-idx
                     count
@@ -159,10 +167,10 @@
                     runtime-args
                     opt-level
                     link-inputs)]
-                [(ResultSourceToolTarget.Err _)
+                [(build_run_core.ResultSourceToolTarget.Err _)
                   (ResultRunCliConfig.Err (run-cli-unknown-target value))])]
             [(cli_option.CliCommonOptionKind.OptLevel)
-              (if (source-tool-opt-level-valid? value)
+              (if (build_run_core.source-tool-opt-level-valid? value)
                 (run-cli-parse-options
                   next-idx
                   count
@@ -179,7 +187,7 @@
           (cond
             [(or (string.eq current "--debug") (string.eq current "-g"))
               (begin
-                (compiler-debug-info-set-enabled! true)
+                (ir.compiler-debug-info-set-enabled! true)
                 (run-cli-parse-options
                   (+ idx 1)
                   count
@@ -199,7 +207,10 @@
                   mode
                   stdlib-roots
                   cfgs
-                  (source-tool-args-from-argv (+ idx 1) count runtime-args)
+                  (build_run_core.source-tool-args-from-argv
+                    (+ idx 1)
+                    count
+                    runtime-args)
                   opt-level
                   link-inputs))]
             [(string.eq current "--backend-mode")
@@ -207,8 +218,8 @@
                 (ResultRunCliConfig.Err "run: --backend-mode requires a value")
                 (let
                   [value : String (io.arg (+ idx 1))]
-                  (match (source-tool-backend-mode "run" value)
-                    [(ResultSourceToolBackendMode.Ok parsed-mode)
+                  (match (build_run_core.source-tool-backend-mode "run" value)
+                    [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
                       (run-cli-parse-options
                         (+ idx 2)
                         count
@@ -220,7 +231,7 @@
                         runtime-args
                         opt-level
                         link-inputs)]
-                    [(ResultSourceToolBackendMode.Err message)
+                    [(build_run_core.ResultSourceToolBackendMode.Err message)
                       (ResultRunCliConfig.Err message)])))]
             [(string.eq current "--link-lib")
               (if (>= (+ idx 1) count)
@@ -235,7 +246,7 @@
                   cfgs
                   runtime-args
                   opt-level
-                  (source-tool-link-inputs-add-lib
+                  (build_run_core.source-tool-link-inputs-add-lib
                     link-inputs
                     (io.arg (+ idx 1)))))]
             [(string.eq current "--link-search")
@@ -251,7 +262,7 @@
                   cfgs
                   runtime-args
                   opt-level
-                  (source-tool-link-inputs-add-search-dir
+                  (build_run_core.source-tool-link-inputs-add-search-dir
                     link-inputs
                     (io.arg (+ idx 1)))))]
             [(string.eq current "--link-arg")
@@ -267,7 +278,7 @@
                   cfgs
                   runtime-args
                   opt-level
-                  (source-tool-link-inputs-add-raw-arg
+                  (build_run_core.source-tool-link-inputs-add-raw-arg
                     link-inputs
                     (io.arg (+ idx 1)))))]
             [else
@@ -278,12 +289,15 @@
                   mode
                   stdlib-roots
                   cfgs
-                  (source-tool-args-from-argv idx count runtime-args)
+                  (build_run_core.source-tool-args-from-argv
+                    idx
+                    count
+                    runtime-args)
                   opt-level
                   link-inputs))])]))))
 
 (define (run-cli-config-from [idx : i64] [count : i64]) : ResultRunCliConfig
-  (if (or (<= count idx) (source-tool-flag? (io.arg idx)))
+  (if (or (<= count idx) (build_run_core.source-tool-flag? (io.arg idx)))
     (run-cli-package-config-from idx count)
     (let
       [source : String (io.arg idx)]
@@ -291,13 +305,13 @@
         (+ idx 1)
         count
         source
-        (source-tool-default-target)
-        (CompilerBackendMode.Scalar)
+        (build_run_core.source-tool-default-target)
+        (backend.CompilerBackendMode.Scalar)
         (cli_svec.new)
-        (source-tool-cfg-names-empty)
+        (build_run_core.source-tool-cfg-names-empty)
         (process.args-empty)
-        (compiler-optimize-default-level)
-        (source-tool-link-inputs-empty)))))
+        (opt.compiler-optimize-default-level)
+        (build_run_core.source-tool-link-inputs-empty)))))
 
 (define (run-cli-typecheck-doctests
   [source : String]
@@ -307,39 +321,42 @@
     [(io.OkIoBytes contents)
       (let
         [text : String (byte_buf.to-string contents)]
-        [report : DocTestRunReport
-          (doc-test-typecheck-source-with-roots source text stdlib-roots)]
-        (if (doc-test-run-report-ok? report)
+        [report : doc_test.DocTestRunReport
+          (doc_test.doc-test-typecheck-source-with-roots
+            source
+            text
+            stdlib-roots)]
+        (if (doc_test.doc-test-run-report-ok? report)
           0
           (begin
-            (io.print-error (doc-test-run-report-render report))
+            (io.print-error (doc_test.doc-test-run-report-render report))
             1)))]))
 
 (define (run-cli-run-source-with-doctests
   [source : String]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : SourceToolCfgNames]
+  [cfgs : build_run_core.SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [link-inputs : SourceToolLinkInputs]) : i64
+  [mode : backend.CompilerBackendMode]
+  [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
   (let
     [doctest-status : i64 (run-cli-typecheck-doctests source stdlib-roots)]
     (if (= doctest-status 0)
       (let
         [inline-test-status : i64
-          (tltest-inline-typecheck-file-with-cfg
+          (test_cli_core.tltest-inline-typecheck-file-with-cfg
             source
             stdlib-roots
-            (compiler-driver-target-cfgs
+            (driver.compiler-driver-target-cfgs
               target
-              (source-tool-cfg-names-to-env cfgs))
+              (build_run_core.source-tool-cfg-names-to-env cfgs))
             "typecheck-prefix-inline-run")]
         (if (= inline-test-status 0)
           (begin
-            (compiler-driver-reset-file-state!)
-            (source-tool-run-source
+            (driver.compiler-driver-reset-file-state!)
+            (build_run_core.source-tool-run-source
               source
               target
               stdlib-roots
@@ -354,9 +371,12 @@
 
 (define (run-cli-run-package-artifact
   [bin-path : String]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [runtime-args : process.ProcessStringList]) : i64
-  (match (source-tool-run-executable-inherit bin-path target runtime-args)
+  (match (build_run_core.source-tool-run-executable-inherit
+    bin-path
+    target
+    runtime-args)
     [(process.OkProcessOutput output)
       (let
         [status : i64 (process.output-status output)]
@@ -368,60 +388,62 @@
             "Error: failed to run executable '"
             bin-path
             "' for target "
-            (source-tool-target-name target)
+            (build_run_core.source-tool-target-name target)
             ": "
             (process.error-message error)))
         1)]))
 
 (define (run-cli-package-artifact-path
   [manifest-path : String]
-  [manifest : CompilerPkgManifest]
-  [profile : BuildProfile]
-  [target : CompilerBackendTarget]) : String
+  [manifest : load.CompilerPkgManifest]
+  [profile : build_cli_core.BuildProfile]
+  [target : backend.CompilerBackendTarget]) : String
   (let
     [normalized-path : String
-      (build-package-normalize-manifest-path manifest-path)]
-    [manifest-dir : String (compiler-load-dirname normalized-path)]
-    [artifacts : BuildPackageArtifactPaths
-      (build-package-artifact-paths
+      (build_cli_core.build-package-normalize-manifest-path manifest-path)]
+    [manifest-dir : String (load.compiler-load-dirname normalized-path)]
+    [artifacts : build_cli_core.BuildPackageArtifactPaths
+      (build_cli_core.build-package-artifact-paths
         manifest-dir
         (struct-get manifest name)
         (struct-get manifest kind)
         profile
         target)]
-    (build-package-runtime-artifact-path artifacts)))
+    (build_cli_core.build-package-runtime-artifact-path artifacts)))
 
 (define (run-cli-run-package-from-path
   [manifest-path : String]
   [target-text : String]
   [has-target : bool]
   [mode : String]
-  [profile : BuildProfile]
+  [profile : build_cli_core.BuildProfile]
   [opt-level : i64]
-  [lock-policy : BuildPackageLockPolicy]
+  [lock-policy : build_cli_core.BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
-  (match (build-parse-target target-text)
-    [(ResultBuildTarget.Err message)
+  (match (build_cli_core.build-parse-target target-text)
+    [(build_cli_core.ResultBuildTarget.Err message)
       (begin
         (io.print-error (run-cli-rewrite-build-error message))
         1)]
-    [(ResultBuildTarget.Ok target)
-      (match (build-load-manifest manifest-path)
-        [(ResultBuildManifest.Err message)
+    [(build_cli_core.ResultBuildTarget.Ok target)
+      (match (build_cli_core.build-load-manifest manifest-path)
+        [(build_cli_core.ResultBuildManifest.Err message)
           (begin
             (io.print-error (str_cat.str-cat "Error: " message))
             1)]
-        [(ResultBuildManifest.Ok manifest)
-          (if (not (build-package-kind-entry? (struct-get manifest kind)))
+        [(build_cli_core.ResultBuildManifest.Ok manifest)
+          (if (not
+            (build_cli_core.build-package-kind-entry?
+              (struct-get manifest kind)))
             (begin
               (io.print-error
                 "run: package manifest kind must be bin to execute")
               1)
             (let
               [build-status : i64
-                (build-package-from-path-announce
+                (build_cli_core.build-package-from-path-announce
                   manifest-path
                   target-text
                   has-target
@@ -444,11 +466,11 @@
                 build-status)))])]))
 
 (define (run-cli-run-package
-  [config : BuildConfig]
+  [config : build_cli_core.BuildConfig]
   [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
   (match config
-    [(BuildConfig.Package
+    [(build_cli_core.BuildConfig.Package
         manifest-path
         has-manifest
         target-text
@@ -460,10 +482,10 @@
         lock-policy
         stdlib-roots)
       (let
-        [resolved-manifest : CompilerLoadMaybePath
+        [resolved-manifest : load.CompilerLoadMaybePath
           (if has-manifest
             (CompilerLoadSomePath manifest-path)
-            (build-discover-manifest-up "" 256))]
+            (build_cli_core.build-discover-manifest-up "" 256))]
         (match resolved-manifest
           [(CompilerLoadNoPath)
             (begin
@@ -518,7 +540,7 @@
 ;; in-process.
 (define (run-run-from [start : i64] [count : i64] [producer-identity : String]) : i64
   (begin
-    (compiler-debug-info-set-enabled! false)
+    (ir.compiler-debug-info-set-enabled! false)
     (if (and (> count start) (string.eq (io.arg start) "--direct"))
       (run-direct-from (+ start 1) count producer-identity)
       (run-direct-from start count producer-identity))))

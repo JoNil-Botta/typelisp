@@ -4,37 +4,41 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
-(import "../compiler_backend_tests.tl")
+(import compiler_backend_tests)
+(import compiler_backend as backend)
+(import compiler_diagnostic as diagnostic)
 
-(define (compiler-backend-raw-pointer-fixture-for-name [target-name : String]) : ResultCompilerBackend
+(define (compiler-backend-raw-pointer-fixture-for-name [target-name : String]) : backend.ResultCompilerBackend
   (if (string.eq target-name "linux-x86_64")
-    (compiler-backend-raw-pointer-fixture-emit (CompilerBackendTarget.Linux))
+    (compiler_backend_tests.compiler-backend-raw-pointer-fixture-emit
+      (backend.CompilerBackendTarget.Linux))
     (if (string.eq target-name "windows-x86_64")
-      (compiler-backend-raw-pointer-fixture-emit
-        (CompilerBackendTarget.Windows))
-      (ResultCompilerBackend.Err
+      (compiler_backend_tests.compiler-backend-raw-pointer-fixture-emit
+        (backend.CompilerBackendTarget.Windows))
+      (backend.ResultCompilerBackend.Err
         (box
-          (compiler-diagnostic-at-start
+          (diagnostic.compiler-diagnostic-at-start
             ""
             "compiler-backend-raw-pointer-fixture: unknown target"))))))
 
 (define (main) : i64
-  (if (< (arg-count) 2)
+  (if (< (io.arg-count) 2)
     (begin
       (io.print-error
         "compiler-backend-raw-pointer-fixture: expected output path")
       1)
     (let
       [target-name : String
-        (if (< (arg-count) 3)
+        (if (< (io.arg-count) 3)
           "linux-x86_64"
           (io.arg 2))]
       (match (compiler-backend-raw-pointer-fixture-for-name target-name)
-        [(ResultCompilerBackend.Ok asm)
+        [(backend.ResultCompilerBackend.Ok asm)
           (begin
             (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
             0)]
-        [(ResultCompilerBackend.Err diag)
+        [(backend.ResultCompilerBackend.Err diag)
           (begin
-            (io.print-error (compiler-diagnostic-render (box-get diag)))
+            (io.print-error
+              (diagnostic.compiler-diagnostic-render (box-get diag)))
             1)]))))

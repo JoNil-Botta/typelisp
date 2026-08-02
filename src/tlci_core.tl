@@ -322,6 +322,10 @@
   "v1")
 (define tlci-metadata-version-v2 : String
   "v2")
+
+(define (tlci-metadata-version-v2-current) : String
+  tlci-metadata-version-v2)
+
 (define tlci-host-arch-x86-64 : i64
   1)
 (define tlci-callback-abi-version : i64

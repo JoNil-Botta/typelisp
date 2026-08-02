@@ -8,8 +8,13 @@
 (import doc_extract)
 (import (vector.vector doc_render.DocModule core) as doc_module_vec)
 (import (vector.vector doc_extract.DocItem core) as doc_item_vec)
-(import "compiler_load.tl")
-(import "compiler_typecheck_api.tl")
+(import compiler_load)
+(import compiler_ast_types as ast)
+(import compiler_diagnostic as cdiag)
+(import compiler_intern as ci)
+(import compiler_parse_core as parser)
+(import compiler_typecheck_core as tc)
+(import compiler_typecheck_api)
 
 (define (doc-cat2 [a : String] [b : String]) : String
   (string.concat3 a b ""))
@@ -99,22 +104,22 @@
 (define (doc-import-form-list-source [forms : doc_import_form_vec.Vec]) : String
   (doc-import-form-list-source-from forms 0 (doc_import_form_vec.len (& forms))))
 
-(define (doc-import-alias-string [alias : AstMaybeImportAlias]) : String
+(define (doc-import-alias-string [alias : ast.AstMaybeImportAlias]) : String
   (match alias
-    [(AstMaybeImportAlias.Some name) (intern-str name)]
-    [(AstMaybeImportAlias.No) ""]))
+    [(ast.AstMaybeImportAlias.Some name) (ci.intern-str name)]
+    [(ast.AstMaybeImportAlias.No) ""]))
 
 (define (doc-symbol-text [name-id : i64]) : String
-  (tc-hygiene-name-text-id name-id))
+  (tc.tc-hygiene-name-text-id name-id))
 
 (define (doc-ast-type-id-source [type-segment-bases : i64] [ty-id : i64]) : String
   (doc-ast-type-source
     type-segment-bases
-    (ast-type-segment-bases-get type-segment-bases ty-id)))
+    (ast.ast-type-segment-bases-get type-segment-bases ty-id)))
 
 (define (doc-ast-type-list-source-from
   [type-segment-bases : i64]
-  [types : AstTypeList]
+  [types : ast.AstTypeList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -125,20 +130,20 @@
         " ")
       (doc-ast-type-id-source
         type-segment-bases
-        (ast-type-list-get (& types) index 0))
+        (ast.ast-type-list-get (& types) index 0))
       (doc-ast-type-list-source-from type-segment-bases types (+ index 1) count))))
 
 (define (doc-ast-type-list-source
   [type-segment-bases : i64]
-  [types : AstTypeList]) : String
+  [types : ast.AstTypeList]) : String
   (doc-ast-type-list-source-from
     type-segment-bases
     types
     0
-    (ast-type-list-len (& types))))
+    (ast.ast-type-list-len (& types))))
 
 (define (doc-ast-lifetime-list-source-from
-  [lifetimes : AstLifetimeList]
+  [lifetimes : ast.AstLifetimeList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -148,12 +153,15 @@
         ""
         " ")
       (doc-symbol-text
-        (ast-lifetime-list-get (& lifetimes) index (ast-lifetime-fallback)))
+        (ast.ast-lifetime-list-get
+          (& lifetimes)
+          index
+          (ast.ast-lifetime-fallback)))
       (doc-ast-lifetime-list-source-from lifetimes (+ index 1) count))))
 
-(define (doc-ast-lifetime-list-source [lifetimes : AstLifetimeList]) : String
+(define (doc-ast-lifetime-list-source [lifetimes : ast.AstLifetimeList]) : String
   (let
-    [count : i64 (ast-lifetime-list-len (& lifetimes))]
+    [count : i64 (ast.ast-lifetime-list-len (& lifetimes))]
     (if (= count 0)
       ""
       (doc-cat3
@@ -161,82 +169,82 @@
         (doc-ast-lifetime-list-source-from lifetimes 0 count)
         ")"))))
 
-(define (doc-ast-type-source [type-segment-bases : i64] [ty : AstType]) : String
+(define (doc-ast-type-source [type-segment-bases : i64] [ty : ast.AstType]) : String
   (match ty
-    [(AstType.I64) "i64"]
-    [(AstType.I32) "i32"]
-    [(AstType.I16) "i16"]
-    [(AstType.I8) "i8"]
-    [(AstType.U64) "u64"]
-    [(AstType.U32) "u32"]
-    [(AstType.U16) "u16"]
-    [(AstType.U8) "u8"]
-    [(AstType.F64) "f64"]
-    [(AstType.F32) "f32"]
-    [(AstType.Bool) "bool"]
-    [(AstType.Char) "char"]
-    [(AstType.String) "String"]
-    [(AstType.Str) "str"]
-    [(AstType.Bytes) "bytes"]
-    [(AstType.Unit) "unit"]
-    [(AstType.Never) "never"]
-    [(AstType.Expr) "Expr"]
-    [(AstType.ExprList) "ExprList"]
-    [(AstType.Func args-box ret)
+    [(ast.AstType.I64) "i64"]
+    [(ast.AstType.I32) "i32"]
+    [(ast.AstType.I16) "i16"]
+    [(ast.AstType.I8) "i8"]
+    [(ast.AstType.U64) "u64"]
+    [(ast.AstType.U32) "u32"]
+    [(ast.AstType.U16) "u16"]
+    [(ast.AstType.U8) "u8"]
+    [(ast.AstType.F64) "f64"]
+    [(ast.AstType.F32) "f32"]
+    [(ast.AstType.Bool) "bool"]
+    [(ast.AstType.Char) "char"]
+    [(ast.AstType.String) "String"]
+    [(ast.AstType.Str) "str"]
+    [(ast.AstType.Bytes) "bytes"]
+    [(ast.AstType.Unit) "unit"]
+    [(ast.AstType.Never) "never"]
+    [(ast.AstType.Expr) "Expr"]
+    [(ast.AstType.ExprList) "ExprList"]
+    [(ast.AstType.Func args-box ret)
       (doc-cat5
         "(-> "
         (doc-ast-type-list-source type-segment-bases (box-get args-box))
         " "
         (doc-ast-type-id-source type-segment-bases ret)
         ")")]
-    [(AstType.Tuple elems-box)
+    [(ast.AstType.Tuple elems-box)
       (doc-cat3
         "(Tuple "
         (doc-ast-type-list-source type-segment-bases (box-get elems-box))
         ")")]
-    [(AstType.Array elem size)
+    [(ast.AstType.Array elem size)
       (doc-cat5
         "(Array "
         (doc-ast-type-id-source type-segment-bases elem)
         " "
         (string.int->string size)
         ")")]
-    [(AstType.DynArray elem)
+    [(ast.AstType.DynArray elem)
       (doc-cat3 "(Array " (doc-ast-type-id-source type-segment-bases elem) ")")]
-    [(AstType.Box elem)
+    [(ast.AstType.Box elem)
       (doc-cat3 "(Box " (doc-ast-type-id-source type-segment-bases elem) ")")]
-    [(AstType.Region region elem)
+    [(ast.AstType.Region region elem)
       (doc-cat5
         "(Region "
         (doc-symbol-text region)
         " "
         (doc-ast-type-id-source type-segment-bases elem)
         ")")]
-    [(AstType.Ref lifetime elem)
+    [(ast.AstType.Ref lifetime elem)
       (doc-cat5
         "(& "
         (doc-symbol-text lifetime)
         " "
         (doc-ast-type-id-source type-segment-bases elem)
         ")")]
-    [(AstType.MutRef lifetime elem)
+    [(ast.AstType.MutRef lifetime elem)
       (doc-cat5
         "(&mut "
         (doc-symbol-text lifetime)
         " "
         (doc-ast-type-id-source type-segment-bases elem)
         ")")]
-    [(AstType.Enum name) (doc-symbol-text name)]
-    [(AstType.EnumArgs name _) (doc-symbol-text name)]
-    [(AstType.Struct name) (doc-symbol-text name)]
-    [(AstType.StructArgs name _) (doc-symbol-text name)]
-    [(AstType.Var name) (doc-symbol-text name)]
-    [(AstType.VarArgs name _) (doc-symbol-text name)]
-    [(AstType.Ptr elem)
+    [(ast.AstType.Enum name) (doc-symbol-text name)]
+    [(ast.AstType.EnumArgs name _) (doc-symbol-text name)]
+    [(ast.AstType.Struct name) (doc-symbol-text name)]
+    [(ast.AstType.StructArgs name _) (doc-symbol-text name)]
+    [(ast.AstType.Var name) (doc-symbol-text name)]
+    [(ast.AstType.VarArgs name _) (doc-symbol-text name)]
+    [(ast.AstType.Ptr elem)
       (doc-cat3 "(Ptr " (doc-ast-type-id-source type-segment-bases elem) ")")]
-    [(AstType.MutPtr elem)
+    [(ast.AstType.MutPtr elem)
       (doc-cat3 "(MutPtr " (doc-ast-type-id-source type-segment-bases elem) ")")]
-    [(AstType.Consume inner)
+    [(ast.AstType.Consume inner)
       (doc-cat3
         "(:consume "
         (doc-ast-type-id-source type-segment-bases inner)
@@ -266,22 +274,22 @@
 (define (doc-expand-escape-string [text : String]) : String
   (doc-expand-escape-string-loop text 0 (string.string-length text) ""))
 
-(define (doc-ast-literal-source [lit : AstLiteral]) : String
+(define (doc-ast-literal-source [lit : ast.AstLiteral]) : String
   (match lit
-    [(AstLiteral.Int _ _) (ast-lit-int-text lit)]
-    [(AstLiteral.Float text) text]
-    [(AstLiteral.Bool value)
+    [(ast.AstLiteral.Int _ _) (ast.ast-lit-int-text lit)]
+    [(ast.AstLiteral.Float text) text]
+    [(ast.AstLiteral.Bool value)
       (if value
         "true"
         "false")]
-    [(AstLiteral.Char _) "'?'"]
-    [(AstLiteral.String string-id)
-      (doc-cat3 "\"" (doc-expand-escape-string (intern-str string-id)) "\"")]
-    [(AstLiteral.Unit) "unit"]))
+    [(ast.AstLiteral.Char _) "'?'"]
+    [(ast.AstLiteral.String string-id)
+      (doc-cat3 "\"" (doc-expand-escape-string (ci.intern-str string-id)) "\"")]
+    [(ast.AstLiteral.Unit) "unit"]))
 
 (define (doc-ast-expr-list-source-from
   [type-segment-bases : i64]
-  [exprs : AstExprList]
+  [exprs : ast.AstExprList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -290,32 +298,33 @@
       " "
       (doc-ast-expr-source
         type-segment-bases
-        (ast-expr-list-get (& exprs) index 0))
+        (ast.ast-expr-list-get (& exprs) index 0))
       (doc-ast-expr-list-source-from type-segment-bases exprs (+ index 1) count))))
 
 (define (doc-ast-expr-list-source
   [type-segment-bases : i64]
-  [exprs : AstExprList]) : String
+  [exprs : ast.AstExprList]) : String
   (doc-ast-expr-list-source-from
     type-segment-bases
     exprs
     0
-    (ast-expr-list-len (& exprs))))
+    (ast.ast-expr-list-len (& exprs))))
 
 (define (doc-ast-expr-source [type-segment-bases : i64] [expr-id : i64]) : String
-  (match (ast-expr-unspan (ast-node-get expr-id))
-    [(AstExpr.Literal lit) (doc-ast-literal-source lit)]
-    [(AstExpr.Var name) (intern-str name)]
-    [(AstExpr.Call callee args)
+  (match (ast.ast-expr-unspan (ast.ast-node-get expr-id))
+    [(ast.AstExpr.Literal lit) (doc-ast-literal-source lit)]
+    [(ast.AstExpr.Var name) (ci.intern-str name)]
+    [(ast.AstExpr.Call callee args)
       (doc-cat4
         "("
         (doc-ast-expr-source type-segment-bases callee)
         (doc-ast-expr-list-source type-segment-bases args)
         ")")]
-    [(AstExpr.TypeLiteral ty-id)
+    [(ast.AstExpr.TypeLiteral ty-id)
       (doc-cat3 "(type " (doc-ast-type-id-source type-segment-bases ty-id) ")")]
-    [(AstExpr.Ann inner _) (doc-ast-expr-source type-segment-bases inner)]
-    [(AstExpr.Spanned inner _) (doc-ast-expr-source type-segment-bases inner)]
+    [(ast.AstExpr.Ann inner _) (doc-ast-expr-source type-segment-bases inner)]
+    [(ast.AstExpr.Spanned inner _)
+      (doc-ast-expr-source type-segment-bases inner)]
     [_ "..."]))
 
 (define (doc-macro-import-example-fallback) : DocMacroImportExample
@@ -356,37 +365,37 @@
 (define (doc-macro-import-form
   [type-segment-bases : i64]
   [call-id : i64]
-  [alias : AstMaybeImportAlias]) : String
+  [alias : ast.AstMaybeImportAlias]) : String
   (match alias
-    [(AstMaybeImportAlias.Some name)
+    [(ast.AstMaybeImportAlias.Some name)
       (doc-cat5
         "(import "
         (doc-ast-expr-source type-segment-bases call-id)
         " as "
-        (intern-str name)
+        (ci.intern-str name)
         ")")]
-    [(AstMaybeImportAlias.No)
+    [(ast.AstMaybeImportAlias.No)
       (doc-cat3 "(import " (doc-ast-expr-source type-segment-bases call-id) ")")]))
 
 (define (doc-macro-import-examples-from-decl
   [type-segment-bases : i64]
-  [decl : AstDecl]
+  [decl : ast.AstDecl]
   [examples : (&mut examples doc_macro_import_example_vec.Vec)]) : unit
   (match decl
-    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ alias _))
+    [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind _ _ alias _))
       (match kind
-        [(AstImportKind.Macro call-id _)
+        [(ast.AstImportKind.Macro call-id _)
           (doc-macro-import-example-push!
             examples
             (doc-import-alias-string alias)
             (doc-macro-import-form type-segment-bases call-id alias))]
         [_ unit])]
-    [(AstDecl.Unsafe inner-box)
+    [(ast.AstDecl.Unsafe inner-box)
       (doc-macro-import-examples-from-decl
         type-segment-bases
         (box-get inner-box)
         examples)]
-    [(AstDecl.ModuleBody _ body-box)
+    [(ast.AstDecl.ModuleBody _ body-box)
       (doc-macro-import-examples-from-decls-into
         type-segment-bases
         (box-get body-box)
@@ -395,11 +404,11 @@
 
 (define (doc-macro-import-examples-from-decls-into
   [type-segment-bases : i64]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [examples : (&mut examples doc_macro_import_example_vec.Vec)]) : unit
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) unit]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) unit]
+    [(ast.AstDeclListStep.Cons decl rest)
       (begin
         (doc-macro-import-examples-from-decl type-segment-bases decl examples)
         (doc-macro-import-examples-from-decls-into
@@ -409,7 +418,7 @@
 
 (define (doc-macro-import-examples-from-decls
   [type-segment-bases : i64]
-  [decls : AstDeclList]) : doc_macro_import_example_vec.Vec
+  [decls : ast.AstDeclList]) : doc_macro_import_example_vec.Vec
   (let
     [examples : doc_macro_import_example_vec.Vec
       (doc_macro_import_example_vec.new)]
@@ -488,15 +497,17 @@
       (DocGeneratedTargetExample target form))))
 
 (define (doc-generated-target-examples-from-decl
-  [decl : AstDecl]
+  [decl : ast.AstDecl]
   [macro-examples : doc_macro_import_example_vec.Vec]
   [targets : (&mut targets doc_generated_target_example_vec.Vec)]) : unit
   (match decl
-    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ expected alias _))
+    [(ast.AstDecl.Import
+        decl-meta
+        (ast.AstImportSpec.Spec kind _ expected alias _))
       (match kind
-        [(AstImportKind.Module)
+        [(ast.AstImportKind.Module)
           (match expected
-            [(AstMaybeModuleName.Some target-module)
+            [(ast.AstMaybeModuleName.Some target-module)
               (let
                 [form : String
                   (doc-macro-import-example-find
@@ -504,16 +515,16 @@
                     (doc-import-alias-string alias))]
                 (doc-generated-target-example-add!
                   targets
-                  (intern-str target-module)
+                  (ci.intern-str target-module)
                   form))]
-            [(AstMaybeModuleName.No) unit])]
+            [(ast.AstMaybeModuleName.No) unit])]
         [_ unit])]
-    [(AstDecl.Unsafe inner-box)
+    [(ast.AstDecl.Unsafe inner-box)
       (doc-generated-target-examples-from-decl
         (box-get inner-box)
         macro-examples
         targets)]
-    [(AstDecl.ModuleBody _ body-box)
+    [(ast.AstDecl.ModuleBody _ body-box)
       (doc-generated-target-examples-from-decls-into
         (box-get body-box)
         macro-examples
@@ -521,12 +532,12 @@
     [_ unit]))
 
 (define (doc-generated-target-examples-from-decls-into
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [macro-examples : doc_macro_import_example_vec.Vec]
   [targets : (&mut targets doc_generated_target_example_vec.Vec)]) : unit
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) unit]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) unit]
+    [(ast.AstDeclListStep.Cons decl rest)
       (begin
         (doc-generated-target-examples-from-decl decl macro-examples targets)
         (doc-generated-target-examples-from-decls-into
@@ -535,7 +546,7 @@
           targets))]))
 
 (define (doc-generated-target-examples-from-decls
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [macro-examples : doc_macro_import_example_vec.Vec]) : doc_generated_target_example_vec.Vec
   (let
     [targets : doc_generated_target_example_vec.Vec
@@ -549,33 +560,33 @@
 
 (define (doc-ast-maybe-type-source
   [type-segment-bases : i64]
-  [maybe-ty : AstMaybeType]) : String
+  [maybe-ty : ast.AstMaybeType]) : String
   (match maybe-ty
-    [(AstMaybeType.No) ""]
-    [(AstMaybeType.Some ty)
+    [(ast.AstMaybeType.No) ""]
+    [(ast.AstMaybeType.Some ty)
       (doc-cat2 " : " (doc-ast-type-source type-segment-bases ty))]))
 
-(define (doc-ast-param-source [type-segment-bases : i64] [param : AstParam]) : String
+(define (doc-ast-param-source [type-segment-bases : i64] [param : ast.AstParam]) : String
   (match param
-    [(AstParam.Param name ty _ consume?)
+    [(ast.AstParam.Param name ty _ consume?)
       (if consume?
         (doc-cat6
           "["
-          (intern-str name)
+          (ci.intern-str name)
           " : "
           (doc-ast-type-source type-segment-bases ty)
           " (:consume)"
           "]")
         (doc-cat5
           "["
-          (intern-str name)
+          (ci.intern-str name)
           " : "
           (doc-ast-type-source type-segment-bases ty)
           "]"))]))
 
 (define (doc-ast-param-list-source-from
   [type-segment-bases : i64]
-  [params : AstParamList]
+  [params : ast.AstParamList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -584,10 +595,10 @@
       " "
       (doc-ast-param-source
         type-segment-bases
-        (ast-param-list-get
+        (ast.ast-param-list-get
           (& params)
           index
-          (AstParam.Param 0 (AstType.Unit) false false)))
+          (ast.AstParam.Param 0 (ast.AstType.Unit) false false)))
       (doc-ast-param-list-source-from
         type-segment-bases
         params
@@ -596,37 +607,37 @@
 
 (define (doc-ast-param-list-source
   [type-segment-bases : i64]
-  [params : AstParamList]) : String
+  [params : ast.AstParamList]) : String
   (doc-ast-param-list-source-from
     type-segment-bases
     params
     0
-    (ast-param-list-len (& params))))
+    (ast.ast-param-list-len (& params))))
 
 (define (doc-ast-macro-type-kind-items-source-from
-  [kinds : (& kinds AstMacroTypeKindList)]
+  [kinds : (& kinds ast.AstMacroTypeKindList)]
   [index : i64]) : String
-  (if (>= index (ast-macro-type-kind-list-len kinds))
+  (if (>= index (ast.ast-macro-type-kind-list-len kinds))
     ""
     (doc-cat3
       " "
-      (intern-str (ast-macro-type-kind-list-get kinds index 0))
+      (ci.intern-str (ast.ast-macro-type-kind-list-get kinds index 0))
       (doc-ast-macro-type-kind-items-source-from kinds (+ index 1)))))
 
 (define (doc-ast-macro-type-kind-constraint-source
-  [kinds : (& kinds AstMacroTypeKindList)]) : String
-  (if (ast-macro-type-kind-list-empty? kinds)
+  [kinds : (& kinds ast.AstMacroTypeKindList)]) : String
+  (if (ast.ast-macro-type-kind-list-empty? kinds)
     ""
     (doc-cat3 " (:kind" (doc-ast-macro-type-kind-items-source-from kinds 0) ")")))
 
 (define (doc-ast-macro-param-source
   [type-segment-bases : i64]
-  [param : AstMacroParam]) : String
+  [param : ast.AstMacroParam]) : String
   (match param
-    [(AstMacroParam.Param name ty _ type-kinds)
+    [(ast.AstMacroParam.Param name ty _ type-kinds)
       (doc-cat6
         "["
-        (intern-str name)
+        (ci.intern-str name)
         " : "
         (doc-ast-type-source type-segment-bases ty)
         (doc-ast-macro-type-kind-constraint-source (& type-kinds))
@@ -634,7 +645,7 @@
 
 (define (doc-ast-macro-param-list-source-from
   [type-segment-bases : i64]
-  [params : AstMacroParamList]
+  [params : ast.AstMacroParamList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -643,7 +654,10 @@
       " "
       (doc-ast-macro-param-source
         type-segment-bases
-        (ast-macro-param-list-get (& params) index (ast-macro-param-fallback)))
+        (ast.ast-macro-param-list-get
+          (& params)
+          index
+          (ast.ast-macro-param-fallback)))
       (doc-ast-macro-param-list-source-from
         type-segment-bases
         params
@@ -652,26 +666,28 @@
 
 (define (doc-ast-macro-param-list-source
   [type-segment-bases : i64]
-  [params : AstMacroParamList]) : String
+  [params : ast.AstMacroParamList]) : String
   (doc-ast-macro-param-list-source-from
     type-segment-bases
     params
     0
-    (ast-macro-param-list-len (& params))))
+    (ast.ast-macro-param-list-len (& params))))
 
-(define (doc-ast-field-source [type-segment-bases : i64] [field : AstFieldDef]) : String
+(define (doc-ast-field-source
+  [type-segment-bases : i64]
+  [field : ast.AstFieldDef]) : String
   (match field
-    [(AstFieldDef.Def name ty _)
+    [(ast.AstFieldDef.Def name ty _)
       (doc-cat5
         "\n  ("
-        (intern-str name)
+        (ci.intern-str name)
         " "
         (doc-ast-type-source type-segment-bases ty)
         ")")]))
 
 (define (doc-ast-field-list-source-from
   [type-segment-bases : i64]
-  [fields : AstFieldDefList]
+  [fields : ast.AstFieldDefList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -679,10 +695,10 @@
     (doc-cat2
       (doc-ast-field-source
         type-segment-bases
-        (ast-field-def-list-get
+        (ast.ast-field-def-list-get
           (& fields)
           index
-          (AstFieldDef.Def 0 (AstType.Unit) AstFieldCleanup.No)))
+          (ast.AstFieldDef.Def 0 (ast.AstType.Unit) ast.AstFieldCleanup.No)))
       (doc-ast-field-list-source-from
         type-segment-bases
         fields
@@ -691,16 +707,16 @@
 
 (define (doc-ast-field-list-source
   [type-segment-bases : i64]
-  [fields : AstFieldDefList]) : String
+  [fields : ast.AstFieldDefList]) : String
   (doc-ast-field-list-source-from
     type-segment-bases
     fields
     0
-    (ast-field-def-list-len (& fields))))
+    (ast.ast-field-def-list-len (& fields))))
 
 (define (doc-ast-variant-payload-source-from
   [type-segment-bases : i64]
-  [fields : AstTypeList]
+  [fields : ast.AstTypeList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -709,7 +725,7 @@
       " "
       (doc-ast-type-id-source
         type-segment-bases
-        (ast-type-list-get (& fields) index 0))
+        (ast.ast-type-list-get (& fields) index 0))
       (doc-ast-variant-payload-source-from
         type-segment-bases
         fields
@@ -718,22 +734,22 @@
 
 (define (doc-ast-variant-source
   [type-segment-bases : i64]
-  [variant : AstVariantDef]) : String
+  [variant : ast.AstVariantDef]) : String
   (match variant
-    [(AstVariantDef.Def name fields _)
+    [(ast.AstVariantDef.Def name fields _)
       (doc-cat4
         "\n  ("
-        (intern-str name)
+        (ci.intern-str name)
         (doc-ast-variant-payload-source-from
           type-segment-bases
           fields
           0
-          (ast-type-list-len (& fields)))
+          (ast.ast-type-list-len (& fields)))
         ")")]))
 
 (define (doc-ast-variant-list-source-from
   [type-segment-bases : i64]
-  [variants : AstVariantDefList]
+  [variants : ast.AstVariantDefList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -741,13 +757,13 @@
     (doc-cat2
       (doc-ast-variant-source
         type-segment-bases
-        (ast-variant-def-list-get
+        (ast.ast-variant-def-list-get
           (& variants)
           index
-          (AstVariantDef.Def
+          (ast.AstVariantDef.Def
             0
-            (ast-type-list-new)
-            (ast-variant-payload-cleanup-list-new))))
+            (ast.ast-type-list-new)
+            (ast.ast-variant-payload-cleanup-list-new))))
       (doc-ast-variant-list-source-from
         type-segment-bases
         variants
@@ -756,31 +772,31 @@
 
 (define (doc-ast-variant-list-source
   [type-segment-bases : i64]
-  [variants : AstVariantDefList]) : String
+  [variants : ast.AstVariantDefList]) : String
   (doc-ast-variant-list-source-from
     type-segment-bases
     variants
     0
-    (ast-variant-def-list-len (& variants))))
+    (ast.ast-variant-def-list-len (& variants))))
 
 (define (doc-ast-define-signature
   [type-segment-bases : i64]
   [name : i64]
-  [maybe-ty : AstMaybeType]) : String
+  [maybe-ty : ast.AstMaybeType]) : String
   (doc-cat4
     "(define "
-    (intern-str name)
+    (ci.intern-str name)
     (doc-ast-maybe-type-source type-segment-bases maybe-ty)
     " ...)"))
 
 (define (doc-ast-function-signature
   [type-segment-bases : i64]
   [name : i64]
-  [params : AstParamList]
-  [ret : AstType]) : String
+  [params : ast.AstParamList]
+  [ret : ast.AstType]) : String
   (doc-cat6
     "(define ("
-    (intern-str name)
+    (ci.intern-str name)
     (doc-ast-param-list-source type-segment-bases params)
     ") : "
     (doc-ast-type-source type-segment-bases ret)
@@ -789,11 +805,11 @@
 (define (doc-ast-macro-signature
   [type-segment-bases : i64]
   [name : i64]
-  [params : AstMacroParamList]
-  [ret : AstType]) : String
+  [params : ast.AstMacroParamList]
+  [ret : ast.AstType]) : String
   (doc-cat6
     "(defmacro ("
-    (intern-str name)
+    (ci.intern-str name)
     (doc-ast-macro-param-list-source type-segment-bases params)
     ") : "
     (doc-ast-type-source type-segment-bases ret)
@@ -803,10 +819,10 @@
   [type-segment-bases : i64]
   [name : i64]
   [lifetimes : String]
-  [fields : AstFieldDefList]) : String
+  [fields : ast.AstFieldDefList]) : String
   (doc-cat5
     "(defstruct "
-    (intern-str name)
+    (ci.intern-str name)
     lifetimes
     (doc-ast-field-list-source type-segment-bases fields)
     ")"))
@@ -815,10 +831,10 @@
   [type-segment-bases : i64]
   [name : i64]
   [lifetimes : String]
-  [variants : AstVariantDefList]) : String
+  [variants : ast.AstVariantDefList]) : String
   (doc-cat5
     "(defenum "
-    (intern-str name)
+    (ci.intern-str name)
     lifetimes
     (doc-ast-variant-list-source type-segment-bases variants)
     ")"))
@@ -826,91 +842,91 @@
 (define (doc-ast-extern-signature
   [type-segment-bases : i64]
   [name : i64]
-  [ty : AstType]) : String
+  [ty : ast.AstType]) : String
   (doc-cat5
     "(extern "
-    (intern-str name)
+    (ci.intern-str name)
     " : "
     (doc-ast-type-source type-segment-bases ty)
     ")"))
 
-(define (doc-ast-decl-item [type-segment-bases : i64] [decl : AstDecl]) : DocMaybeItem
+(define (doc-ast-decl-item [type-segment-bases : i64] [decl : ast.AstDecl]) : DocMaybeItem
   (match decl
-    [(AstDecl.Def decl-meta name maybe-ty _)
+    [(ast.AstDecl.Def decl-meta name maybe-ty _)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.Define)
-          (intern-str name)
+          (ci.intern-str name)
           ""
           (doc-ast-define-signature type-segment-bases name maybe-ty)))]
-    [(AstDecl.DefFn decl-meta name params ret _ _)
+    [(ast.AstDecl.DefFn decl-meta name params ret _ _)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.Function)
-          (intern-str name)
+          (ci.intern-str name)
           ""
           (doc-ast-function-signature type-segment-bases name params ret)))]
-    [(AstDecl.DefMacro decl-meta name params ret _)
+    [(ast.AstDecl.DefMacro decl-meta name params ret _)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefMacro)
-          (intern-str name)
+          (ci.intern-str name)
           ""
           (doc-ast-macro-signature type-segment-bases name params ret)))]
-    [(AstDecl.Extern decl-meta name _ _ ty)
+    [(ast.AstDecl.Extern decl-meta name _ _ ty)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.Extern)
-          (intern-str name)
+          (ci.intern-str name)
           ""
           (doc-ast-extern-signature type-segment-bases name ty)))]
-    [(AstDecl.DefEnum decl-meta name _ variants)
+    [(ast.AstDecl.DefEnum decl-meta name _ variants)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefEnum)
-          (intern-str name)
+          (ci.intern-str name)
           ""
           (doc-ast-enum-signature type-segment-bases name "" variants)))]
-    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes _ variants)
+    [(ast.AstDecl.DefEnumLifetimes decl-meta name lifetimes _ variants)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefEnum)
-          (intern-str name)
+          (ci.intern-str name)
           ""
           (doc-ast-enum-signature
             type-segment-bases
             name
             (doc-ast-lifetime-list-source lifetimes)
             variants)))]
-    [(AstDecl.DefStruct decl-meta name _ _ fields)
+    [(ast.AstDecl.DefStruct decl-meta name _ _ fields)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefStruct)
-          (intern-str name)
+          (ci.intern-str name)
           ""
           (doc-ast-struct-signature type-segment-bases name "" fields)))]
-    [(AstDecl.DefStructLifetimes decl-meta name lifetimes _ _ fields)
+    [(ast.AstDecl.DefStructLifetimes decl-meta name lifetimes _ _ fields)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefStruct)
-          (intern-str name)
+          (ci.intern-str name)
           ""
           (doc-ast-struct-signature
             type-segment-bases
             name
             (doc-ast-lifetime-list-source lifetimes)
             fields)))]
-    [(AstDecl.Unsafe inner-box)
+    [(ast.AstDecl.Unsafe inner-box)
       (doc-ast-decl-item type-segment-bases (box-get inner-box))]
     [_ (DocMaybeItem.No)]))
 
 (define (doc-ast-generated-decl-item
   [type-segment-bases : i64]
-  [decl : AstDecl]) : DocMaybeItem
-  (match (ast-decl-generated-meta decl)
-    [(AstGeneratedDeclMeta.Some _ _ _ _)
+  [decl : ast.AstDecl]) : DocMaybeItem
+  (match (ast.ast-decl-generated-meta decl)
+    [(ast.AstGeneratedDeclMeta.Some _ _ _ _)
       (doc-ast-decl-item type-segment-bases decl)]
-    [(AstGeneratedDeclMeta.No) (DocMaybeItem.No)]))
+    [(ast.AstGeneratedDeclMeta.No) (DocMaybeItem.No)]))
 
 (define (doc-generated-import-item [form : String]) : doc_extract.DocItem
   (doc_extract.DocItem.Item
@@ -962,10 +978,10 @@
 
 (define (doc-generated-modules-from-expanded-decls
   [type-segment-bases : i64]
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [targets : doc_generated_target_example_vec.Vec]) : doc_module_vec.Vec
   (let
-    [cursor : AstDeclList decls]
+    [cursor : ast.AstDeclList decls]
     [current-module : String ""]
     [items : doc_item_vec.Vec (doc_item_vec.new)]
     [has-generated : bool false]
@@ -973,8 +989,8 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil)
+        (match (ast.ast-decl-list-step cursor)
+          [(ast.AstDeclListStep.Nil)
             (begin
               (doc-generated-flush-module!
                 current-module
@@ -983,10 +999,10 @@
                 targets
                 (&mut modules))
               (set! done true))]
-          [(AstDeclListStep.Cons decl rest)
+          [(ast.AstDeclListStep.Cons decl rest)
             (begin
               (match decl
-                [(AstDecl.Module next-module)
+                [(ast.AstDecl.Module next-module)
                   (begin
                     (doc-generated-flush-module!
                       current-module
@@ -994,7 +1010,7 @@
                       has-generated
                       targets
                       (&mut modules))
-                    (set! current-module (intern-str next-module))
+                    (set! current-module (ci.intern-str next-module))
                     (set! items (doc_item_vec.new))
                     (set! has-generated false))]
                 [_
@@ -1008,24 +1024,25 @@
       modules)))
 
 (define (doc-expanded-generated-modules-from-loaded-decls
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : doc_svec.Vec]) : ResultDocExpandedModules
   (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [type-segment-bases : i64 (ast-node-pool-context-type-segment-bases pools)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [type-segment-bases : i64
+      (ast.ast-node-pool-context-type-segment-bases pools)]
     [macro-examples : doc_macro_import_example_vec.Vec
       (doc-macro-import-examples-from-decls type-segment-bases decls)]
-    (match (typecheck-compiler-doc-expand-program-with-paths-and-pools
-      (ast-program decls)
+    (match (compiler_typecheck_api.typecheck-compiler-doc-expand-program-with-paths-and-pools
+      (ast.ast-program decls)
       paths
       stdlib-roots
       pools)
-      [(ResultCompilerDocExpand.Ok expanded _)
+      [(compiler_typecheck_api.ResultCompilerDocExpand.Ok expanded _)
         (match expanded
-          [(AstProgram.Program expanded-box)
+          [(ast.AstProgram.Program expanded-box)
             (let
-              [expanded-decls : AstDeclList (box-get expanded-box)]
+              [expanded-decls : ast.AstDeclList (box-get expanded-box)]
               [targets : doc_generated_target_example_vec.Vec
                 (doc-generated-target-examples-from-decls
                   expanded-decls
@@ -1035,9 +1052,9 @@
                   type-segment-bases
                   expanded-decls
                   targets)))])]
-      [(ResultCompilerDocExpand.Err diag)
+      [(compiler_typecheck_api.ResultCompilerDocExpand.Err diag)
         (ResultDocExpandedModules.Err
-          (compiler-diagnostic-render (box-get diag)))])))
+          (cdiag.compiler-diagnostic-render (box-get diag)))])))
 
 (define (doc-expand-find-prefix [text : String] [prefix : String] [from : i64]) : i64
   (let
@@ -1151,19 +1168,19 @@
         [scan : DocImportFormScan (doc-import-forms-from-doc-text module-doc)]
         (if (not (struct-get scan has-macro))
           (ResultDocExpandedModules.Ok (doc_module_vec.new))
-          (match (compiler-load-source-with-paths-and-roots
+          (match (compiler_load.compiler-load-source-with-paths-and-roots
             (doc-cat2 source-path ".doc-examples.tl")
             (doc-expanded-example-source (struct-get scan forms))
             (sym_i64_env.sym-i64-empty)
             stdlib-roots)
-            [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (doc-expanded-generated-modules-from-loaded-decls
                 decls
                 paths
                 stdlib-roots)]
-            [(ResultCompilerLoadWithPaths.Err diag)
+            [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
               (ResultDocExpandedModules.Err
-                (compiler-diagnostic-render (box-get diag)))])))]))
+                (cdiag.compiler-diagnostic-render (box-get diag)))])))]))
 
 (define (doc-expand-smoke-source) : String
   "(module doc.generated.fixture)
@@ -1189,32 +1206,34 @@
 
 (define (doc-expand-macro-type-kind-constraint-source-smoke?
   [type-segment-bases : i64]) : bool
-  (match (parse-ast-source
+  (match (parser.parse-ast-source
     "(defmacro (catalog [T : type (:kind i64 struct)]) : Module unit)")
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (match (ast-decl-list-step (box-get decls-box))
-        [(AstDeclListStep.Cons (AstDecl.DefMacro decl-meta _ params _ _) rest)
+    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+      (match (ast.ast-decl-list-step (box-get decls-box))
+        [(ast.AstDeclListStep.Cons
+            (ast.AstDecl.DefMacro decl-meta _ params _ _)
+            rest)
           (and
-            (match (ast-decl-list-step rest)
-              [(AstDeclListStep.Nil) true]
+            (match (ast.ast-decl-list-step rest)
+              [(ast.AstDeclListStep.Nil) true]
               [_ false])
-            (= (ast-macro-param-list-len (& params)) 1)
+            (= (ast.ast-macro-param-list-len (& params)) 1)
             (string.eq
               (doc-ast-macro-param-source
                 type-segment-bases
-                (ast-macro-param-list-get
+                (ast.ast-macro-param-list-get
                   (& params)
                   0
-                  (ast-macro-param-fallback)))
+                  (ast.ast-macro-param-fallback)))
               "[T : type (:kind i64 struct)]"))]
         [_ false])]
-    [(ResultAstProgram.Err _) false]))
+    [(parser.ResultAstProgram.Err _) false]))
 
 (test
   doc-macro-type-kind-constraint-source
   (unless
     (doc-expand-macro-type-kind-constraint-source-smoke?
-      (ast-node-pool-reader-type-segment-bases))
+      (ast.ast-node-pool-reader-type-segment-bases))
     (io.panic "doc-expand: macro type-kind constraint signature mismatch")))
 
 (test
@@ -1295,12 +1314,12 @@
 (define (doc-expand-smoke) : i64
   (let
     [roots : doc_svec.Vec (doc_svec.new)]
-    (match (compiler-load-source-with-paths-and-roots
+    (match (compiler_load.compiler-load-source-with-paths-and-roots
       "doc_expand_smoke.tl"
       (doc-expand-smoke-source)
       (sym_i64_env.sym-i64-empty)
       roots)
-      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (match (doc-expanded-generated-modules-from-loaded-decls
           decls
           paths
@@ -1323,11 +1342,11 @@
                 (io.panic "doc-expand: generated module docs smoke mismatch")))]
           [(ResultDocExpandedModules.Err message)
             (io.panic (doc-cat2 "doc-expand: expansion failed: " message))])]
-      [(ResultCompilerLoadWithPaths.Err diag)
+      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
         (io.panic
           (doc-cat2
             "doc-expand: load failed: "
-            (compiler-diagnostic-render (box-get diag))))])))
+            (cdiag.compiler-diagnostic-render (box-get diag))))])))
 
 (define (doc-expand-ignore-fence-smoke) : i64
   (let

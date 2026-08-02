@@ -6,7 +6,10 @@
 ;; experiment cleanup is constrained to the manifest's target/exp directory.
 (import stdlib.io)
 (import stdlib.fs)
-(import "build_cli_core.tl")
+(import build_cli_core)
+(import build_run_core as build_run)
+(import compiler_backend as backend)
+(import compiler_load as load)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -96,7 +99,7 @@
     (clean-vcs-metadata-path? path)))
 
 (define (clean-file-exists? [path : String]) : bool
-  (match (source-tool-try-file-exists? path)
+  (match (build_run.source-tool-try-file-exists? path)
     [(io.OkIoBool exists) exists]
     [(io.ErrIoBool _) false]))
 
@@ -115,7 +118,7 @@
       (begin
         (clean-report true path)
         0)
-      (match (source-tool-try-remove-file-if-exists path)
+      (match (build_run.source-tool-try-remove-file-if-exists path)
         [(io.OkIoUnit)
           (begin
             (clean-report false path)
@@ -137,7 +140,7 @@
       (begin
         (clean-report true path)
         0)
-      (match (source-tool-try-remove-dir-if-exists path)
+      (match (build_run.source-tool-try-remove-dir-if-exists path)
         [(io.OkIoUnit)
           (begin
             (clean-report false path)
@@ -174,7 +177,7 @@
         (cond
           [(fs.file-kind-directory? kind) (clean-remove-tree-dir path)]
           [(fs.file-kind-regular? kind)
-            (match (source-tool-try-remove-file-if-exists path)
+            (match (build_run.source-tool-try-remove-file-if-exists path)
               [(io.OkIoUnit) 0]
               [(io.ErrIoUnit error)
                 (clean-report-error "clean: failed to remove file " path error)])]
@@ -210,7 +213,7 @@
         [status : i64 (clean-remove-tree-entries path entries 0)]
         (if (not (= status 0))
           status
-          (match (source-tool-try-remove-dir-if-exists path)
+          (match (build_run.source-tool-try-remove-dir-if-exists path)
             [(io.OkIoUnit) 0]
             [(io.ErrIoUnit error)
               (clean-report-error
@@ -263,7 +266,7 @@
           (clean-remove-source-artifact
             source
             dry-run
-            (source-tool-replace-extension source ".s"))))
+            (build_run.source-tool-replace-extension source ".s"))))
       (set!
         status
         (clean-merge-status
@@ -271,7 +274,7 @@
           (clean-remove-source-artifact
             source
             dry-run
-            (source-tool-replace-extension source ".ir"))))
+            (build_run.source-tool-replace-extension source ".ir"))))
       (set!
         status
         (clean-merge-status
@@ -279,7 +282,7 @@
           (clean-remove-source-artifact
             source
             dry-run
-            (source-tool-replace-extension source ".o"))))
+            (build_run.source-tool-replace-extension source ".o"))))
       (set!
         status
         (clean-merge-status
@@ -287,7 +290,7 @@
           (clean-remove-source-artifact
             source
             dry-run
-            (source-tool-replace-extension source ".obj"))))
+            (build_run.source-tool-replace-extension source ".obj"))))
       (set!
         status
         (clean-merge-status
@@ -295,7 +298,7 @@
           (clean-remove-source-artifact
             source
             dry-run
-            (source-tool-replace-extension source ""))))
+            (build_run.source-tool-replace-extension source ""))))
       (set!
         status
         (clean-merge-status
@@ -303,12 +306,12 @@
           (clean-remove-source-artifact
             source
             dry-run
-            (source-tool-replace-extension source ".exe"))))
+            (build_run.source-tool-replace-extension source ".exe"))))
       status)))
 
 (define (clean-package-name-safe? [name : String]) : bool
   (and
-    (compiler-load-package-token-valid? name)
+    (load.compiler-load-package-token-valid? name)
     (not (clean-string-contains? name "/"))
     (not (clean-string-contains? name "\\"))))
 
@@ -317,7 +320,8 @@
   [name : String]
   [path : String]) : bool
   (let
-    [output-dir : String (build-package-output-dir manifest-dir name)]
+    [output-dir : String
+      (build_cli_core.build-package-output-dir manifest-dir name)]
     [output-prefix : String (string.append output-dir "/")]
     (and
       (not (clean-dangerous-path? path))
@@ -348,14 +352,14 @@
       1)))
 
 (define (clean-package-from-path [manifest-path : String] [dry-run : bool]) : i64
-  (match (build-load-manifest manifest-path)
-    [(ResultBuildManifest.Err message)
+  (match (build_cli_core.build-load-manifest manifest-path)
+    [(build_cli_core.ResultBuildManifest.Err message)
       (begin
         (io.print-error (string.append "Error: " message))
         1)]
-    [(ResultBuildManifest.Ok manifest)
+    [(build_cli_core.ResultBuildManifest.Ok manifest)
       (let
-        [manifest-dir : String (compiler-load-dirname manifest-path)]
+        [manifest-dir : String (load.compiler-load-dirname manifest-path)]
         [name : String (struct-get manifest name)]
         [status : i64 0]
         (if (not (clean-package-name-safe? name))
@@ -372,7 +376,7 @@
                   manifest-dir
                   name
                   dry-run
-                  (build-package-asm-path manifest-dir name))))
+                  (build_cli_core.build-package-asm-path manifest-dir name))))
             (set!
               status
               (clean-merge-status
@@ -381,10 +385,10 @@
                   manifest-dir
                   name
                   dry-run
-                  (build-package-obj-path
+                  (build_cli_core.build-package-obj-path
                     manifest-dir
                     name
-                    (CompilerBackendTarget.Linux)))))
+                    (backend.CompilerBackendTarget.Linux)))))
             (set!
               status
               (clean-merge-status
@@ -393,10 +397,10 @@
                   manifest-dir
                   name
                   dry-run
-                  (build-package-obj-path
+                  (build_cli_core.build-package-obj-path
                     manifest-dir
                     name
-                    (CompilerBackendTarget.Windows)))))
+                    (backend.CompilerBackendTarget.Windows)))))
             (set!
               status
               (clean-merge-status
@@ -405,10 +409,10 @@
                   manifest-dir
                   name
                   dry-run
-                  (build-package-bin-path
+                  (build_cli_core.build-package-bin-path
                     manifest-dir
                     name
-                    (CompilerBackendTarget.Linux)))))
+                    (backend.CompilerBackendTarget.Linux)))))
             (set!
               status
               (clean-merge-status
@@ -417,10 +421,10 @@
                   manifest-dir
                   name
                   dry-run
-                  (build-package-bin-path
+                  (build_cli_core.build-package-bin-path
                     manifest-dir
                     name
-                    (CompilerBackendTarget.Windows)))))
+                    (backend.CompilerBackendTarget.Windows)))))
             (set!
               status
               (clean-merge-status
@@ -429,10 +433,10 @@
                   manifest-dir
                   name
                   dry-run
-                  (build-package-lib-path
+                  (build_cli_core.build-package-lib-path
                     manifest-dir
                     name
-                    (CompilerBackendTarget.Linux)))))
+                    (backend.CompilerBackendTarget.Linux)))))
             (set!
               status
               (clean-merge-status
@@ -441,10 +445,10 @@
                   manifest-dir
                   name
                   dry-run
-                  (build-package-lib-path
+                  (build_cli_core.build-package-lib-path
                     manifest-dir
                     name
-                    (CompilerBackendTarget.Windows)))))
+                    (backend.CompilerBackendTarget.Windows)))))
             (set!
               status
               (clean-merge-status
@@ -453,7 +457,7 @@
                   manifest-dir
                   name
                   dry-run
-                  (build-package-tlci-path manifest-dir name))))
+                  (build_cli_core.build-package-tlci-path manifest-dir name))))
             (set!
               status
               (clean-merge-status
@@ -462,7 +466,7 @@
                   manifest-dir
                   name
                   dry-run
-                  (build-package-output-dir manifest-dir name))))
+                  (build_cli_core.build-package-output-dir manifest-dir name))))
             status)))]))
 
 (define (clean-package
@@ -470,10 +474,10 @@
   [has-manifest : bool]
   [dry-run : bool]) : i64
   (let
-    [resolved-manifest : CompilerLoadMaybePath
+    [resolved-manifest : load.CompilerLoadMaybePath
       (if has-manifest
         (CompilerLoadSomePath manifest-path)
-        (build-discover-manifest-up "" 256))]
+        (build_cli_core.build-discover-manifest-up "" 256))]
     (match resolved-manifest
       [(CompilerLoadNoPath)
         (begin
@@ -483,9 +487,9 @@
       [(CompilerLoadSomePath path) (clean-package-from-path path dry-run)])))
 
 (define (clean-experiments-artifact-path [manifest-path : String]) : String
-  (compiler-load-normalize-path
-    (compiler-load-join-root-path
-      (compiler-load-dirname manifest-path)
+  (load.compiler-load-normalize-path
+    (load.compiler-load-join-root-path
+      (load.compiler-load-dirname manifest-path)
       "target/exp")))
 
 (define (clean-experiments-artifact-safe?
@@ -493,7 +497,7 @@
   [path : String]) : bool
   (let
     [expected : String (clean-experiments-artifact-path manifest-path)]
-    [normalized : String (compiler-load-normalize-path path)]
+    [normalized : String (load.compiler-load-normalize-path path)]
     (and
       (not (clean-dangerous-path? normalized))
       (string.eq normalized expected)
@@ -503,12 +507,12 @@
         (clean-string-suffix? expected "\\target\\exp")))))
 
 (define (clean-experiments-from-path [manifest-path : String] [dry-run : bool]) : i64
-  (match (build-load-manifest manifest-path)
-    [(ResultBuildManifest.Err message)
+  (match (build_cli_core.build-load-manifest manifest-path)
+    [(build_cli_core.ResultBuildManifest.Err message)
       (begin
         (io.print-error (string.append "Error: " message))
         1)]
-    [(ResultBuildManifest.Ok _)
+    [(build_cli_core.ResultBuildManifest.Ok _)
       (let
         [path : String (clean-experiments-artifact-path manifest-path)]
         (if (clean-experiments-artifact-safe? manifest-path path)
@@ -526,10 +530,10 @@
   [has-manifest : bool]
   [dry-run : bool]) : i64
   (let
-    [resolved-manifest : CompilerLoadMaybePath
+    [resolved-manifest : load.CompilerLoadMaybePath
       (if has-manifest
         (CompilerLoadSomePath manifest-path)
-        (build-discover-manifest-up "" 256))]
+        (build_cli_core.build-discover-manifest-up "" 256))]
     (match resolved-manifest
       [(CompilerLoadNoPath)
         (begin

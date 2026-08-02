@@ -343,7 +343,7 @@
       (io.panic (tokens.format-source-error-message err))]))
 
 (define (format-cst-fixture) : String
-  "(import \"std.tl\")
+  "(import std)
 ; header comment
 (extern (io.print [arg0 : i64]) : unit)
 (defenum Maybe (Some i64) (None))

@@ -161,10 +161,9 @@ for active work and design decisions.
 
 New code should use dotted module imports, qualified standard-library names,
 fixed-size `Array`, `ByteBuf` for mutable binary data, in-place mutation with
-`set!`, and declaration-emitting comptime macros. Compatibility spellings may
-remain in migration fixtures, but new code should not imitate them. The
-[language guide](docs/language-guide.md) shows the current surface, and
-`typelisp lint` reports several staged migrations.
+`set!`, and declaration-emitting comptime macros. String-path imports are no
+longer accepted. The [language guide](docs/language-guide.md) shows the current
+surface, and `typelisp lint` reports several staged migrations.
 
 ## Editor support
 

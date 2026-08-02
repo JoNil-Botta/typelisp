@@ -29,7 +29,7 @@ contains|_tl_token_tag:
 contains|_tl_token_int:
 contains|call tl_alloc
 contains|call tl_oob_abort
-contains|call _tl_panic
+contains|call _tl_panic_at
 contains|call _tl_lex
 contains|call _tl_parse
 contains|call _tl_parse_expr
@@ -65,7 +65,7 @@ contains|_tl_token_int:
 contains|parser: unexpected token
 contains|call tl_alloc
 contains|call tl_oob_abort
-contains|call _tl_panic
+contains|call _tl_panic_at
 contains|call _tl_parse_term
 contains|call _tl_parse_factor
 contains|call _tl_parse_expr
@@ -96,7 +96,7 @@ contains|match_nested
 contains|string_eq
 contains|call _tl_eval_sexpr
 contains|call _tl_eval_atom
-contains|call _tl_panic
+contains|call _tl_panic_at
 end
 
 case|integration_nullary_variant_call|tests/integration/nullary_variant_call.tl|assembly|skip|direct
@@ -381,7 +381,7 @@ decision|src/compiler_backend_tests.tl|backend smoke-test helper module (main-le
 decision|src/compiler_driver_smoke_tests.tl|shared driver/lowering smoke-test helper module (main-less): imported by the thin compiler_driver_pic/compiler_lower_symbol_identity wrappers and the consolidated compiler_codegen_smoke_suite; kept in src/ for native integration staging; no direct CLI/main compile case
 decision|src/compiler_lower_package_tests.tl|SPMD package callable smoke-test helper module (main-less): imported by the package fixture drivers; kept in src/ for native integration staging without adding test-only lowering support to the compiler; no direct CLI/main compile case
 decision|src/compiler_parallel_move.tl|target-neutral parallel move graph solver (#4365): main-less, imported by compiler_backend.tl for call/syscall argument moves and phi edge copies and by compiler_regalloc.tl for coalescing move-chain validation; exercised through compiler_backend_smoke and compiler_regalloc_smoke
-decision|src/compiler_regalloc_tests.tl|register-allocator self-test companion split from compiler_regalloc.tl (#5169): main-less, imported by src/tests/compiler_regalloc_smoke.tl; holds the 135 (cfg test) blocks only. The regalloc-census and (any regalloc-census test) blocks stay in the production module because they compile into instrumentation builds, as does compiler-regalloc-self-test, which selfhost_compiler_regalloc asserts by symbol
+decision|src/compiler_regalloc_tests.tl|register-allocator self-test companion split from compiler_regalloc.tl (#5169): main-less, imported by src/tests/compiler_regalloc_smoke.tl; holds the 135 (cfg test) blocks plus the compiler-regalloc-self-test entry that drives them. The regalloc-census and (any regalloc-census test) blocks stay in the production module because they compile into instrumentation builds, as do the compiler-regalloc-self-test-require!/failure-message helpers, whose symbols selfhost_compiler_regalloc asserts
 case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|skip|direct
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_file_with_roots_and_cfg:
@@ -523,7 +523,7 @@ end
 
 case|selfhost_compiler_regalloc|src/compiler_regalloc.tl|assembly|skip|direct
 contains|_tl_compiler_reg_plan_function:
-contains|_tl_compiler_regalloc_self_test:
+contains|_tl_compiler_regalloc_self_test_require_bang:
 contains|regalloc self-test failed:
 end
 
@@ -737,8 +737,6 @@ end
 decision|src/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); imported by src/lint_smoke.tl and exercised through the selfhost_lint_smoke case; has no main to compile directly
 
 decision|src/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by src/main.tl and src/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_main cases; has no main to compile directly
-
-decision|src/legacy_path_import_audit.tl|standalone reader-form audit for the legacy path-import ratchet (#6052): compiled and run by scripts/check-tl-lint.sh on every platform, with focused inline tests discovered by typelisp test; intentionally outside the compiler import graph
 
 # Optimization-benchmark codegen smoke. Each flattened opt_* TypeLisp source
 # must compile to assembly that defines main: with no backend "# TODO" (the

@@ -7,11 +7,12 @@
 ;; entry point through the backend runtime's raw C-ABI bridge, validate its
 ;; macro table, and invoke registered entries through the six-argument ABI.
 (import stdlib.arena)
+(import stdlib.array)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hash)
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
-(import "tlci_core.tl")
+(import tlci_core as tlci)
 (import tlci_pages as pages)
 
 (unsafe
@@ -155,7 +156,9 @@
     (ResultTlciLoaderUnit.Ok)
     (let
       [slot-offset : i64
-        (tlci-read-u64 fixups (* index tlci-section-fixup-record-size))]
+        (tlci.tlci-read-u64
+          fixups
+          (* index tlci.tlci-section-fixup-record-size))]
       (if (tlci-loader-fixup-offset-ok?
         slot-offset
         rodata-offset
@@ -176,13 +179,15 @@
             (string.int->string slot-offset)))))))
 
 (define (tlci-loader-validate-fixups
-  [image : TlciImage]
+  [image : tlci.TlciImage]
   [rodata-offset : i64]
   [code-offset : i64]) : ResultTlciLoaderUnit
   (tlci-loader-validate-fixups-at
     (struct-get image fixups)
     0
-    (/ (array-length (struct-get image fixups)) tlci-section-fixup-record-size)
+    (/
+      (array-length (struct-get image fixups))
+      tlci.tlci-section-fixup-record-size)
     rodata-offset
     (array-length (struct-get image rodata))
     code-offset
@@ -201,9 +206,9 @@
     (let
       [record : i64
         (+
-          tlci-section-import-header-size
-          (* index tlci-section-import-record-size))]
-      [slot-offset : i64 (tlci-read-u64 imports record)]
+          tlci.tlci-section-import-header-size
+          (* index tlci.tlci-section-import-record-size))]
+      [slot-offset : i64 (tlci.tlci-read-u64 imports record)]
       (if (tlci-loader-fixup-offset-ok?
         slot-offset
         rodata-offset
@@ -224,13 +229,13 @@
             (string.int->string slot-offset)))))))
 
 (define (tlci-loader-validate-imports
-  [image : TlciImage]
+  [image : tlci.TlciImage]
   [rodata-offset : i64]
   [code-offset : i64]) : ResultTlciLoaderUnit
   (tlci-loader-validate-imports-at
     (struct-get image imports)
     0
-    (tlci-import-section-count (struct-get image imports))
+    (tlci.tlci-import-section-count (struct-get image imports))
     rodata-offset
     (array-length (struct-get image rodata))
     code-offset
@@ -256,8 +261,8 @@
     true
     (and
       (=
-        (tlci-byte-at symbols (+ offset index))
-        (cast (tlci-string-ref expected index) : i64))
+        (tlci.tlci-byte-at symbols (+ offset index))
+        (cast (tlci.tlci-string-ref expected index) : i64))
       (tlci-loader-symbol-name-eq-at? symbols offset expected (+ index 1) len))))
 
 (define (tlci-loader-symbol-name-eq?
@@ -266,7 +271,7 @@
   [len : i64]
   [expected : String]) : bool
   (and
-    (= len (tlci-string-length expected))
+    (= len (tlci.tlci-string-length expected))
     (tlci-loader-symbol-range-ok? symbols offset len)
     (tlci-loader-symbol-name-eq-at? symbols offset expected 0 len)))
 
@@ -283,15 +288,19 @@
       (ResultTlciLoaderI64.Ok found-code-offset)
       (ResultTlciLoaderI64.Err "tlci loader: missing tlci_image_entry entry"))
     (let
-      [record-offset : i64 (* index tlci-section-entry-record-size)]
+      [record-offset : i64 (* index tlci.tlci-section-entry-record-size)]
       [name-offset : i64
-        (tlci-read-u64 entries (+ record-offset tlci-loader-entry-name-offset))]
+        (tlci.tlci-read-u64
+          entries
+          (+ record-offset tlci-loader-entry-name-offset))]
       [name-len : i64
-        (tlci-read-u64
+        (tlci.tlci-read-u64
           entries
           (+ record-offset tlci-loader-entry-name-len-offset))]
       [code-offset : i64
-        (tlci-read-u64 entries (+ record-offset tlci-loader-entry-code-offset))]
+        (tlci.tlci-read-u64
+          entries
+          (+ record-offset tlci-loader-entry-code-offset))]
       (cond
         [(not (tlci-loader-symbol-range-ok? symbols name-offset name-len))
           (ResultTlciLoaderI64.Err
@@ -303,7 +312,7 @@
             symbols
             name-offset
             name-len
-            tlci-image-entry-symbol)
+            tlci.tlci-image-entry-symbol)
           (if found
             (ResultTlciLoaderI64.Err
               "tlci loader: duplicate tlci_image_entry entry")
@@ -329,19 +338,19 @@
 ;; single entries record named tlci_macro_table whose code offset points at an
 ;; in-code count word followed by the macro-entry records. Such images have no
 ;; registration entry: the loader reads the table directly.
-(define (tlci-loader-native-table-offset [image : TlciImage]) : i64
+(define (tlci-loader-native-table-offset [image : tlci.TlciImage]) : i64
   (let
     [entries : (__tl_dyn-array u8) (struct-get image entries)]
     [symbols : (__tl_dyn-array u8) (struct-get image symbols)]
-    [count : i64 (/ (array-length entries) tlci-section-entry-record-size)]
+    [count : i64 (/ (array-length entries) tlci.tlci-section-entry-record-size)]
     [index : i64 0]
     [found : i64 -1]
     (begin
       (while (and (< found 0) (< index count))
         (let
-          [record-offset : i64 (* index tlci-section-entry-record-size)]
-          [name-offset : i64 (tlci-read-u64 entries record-offset)]
-          [name-len : i64 (tlci-read-u64 entries (+ record-offset 8))]
+          [record-offset : i64 (* index tlci.tlci-section-entry-record-size)]
+          [name-offset : i64 (tlci.tlci-read-u64 entries record-offset)]
+          [name-len : i64 (tlci.tlci-read-u64 entries (+ record-offset 8))]
           (begin
             (if (and
               (tlci-loader-symbol-range-ok? symbols name-offset name-len)
@@ -349,22 +358,22 @@
                 symbols
                 name-offset
                 name-len
-                tlci-macro-table-symbol))
-              (set! found (tlci-read-u64 entries (+ record-offset 16)))
+                tlci.tlci-macro-table-symbol))
+              (set! found (tlci.tlci-read-u64 entries (+ record-offset 16)))
               unit)
             (set! index (+ index 1)))))
       found)))
 
-(define (tlci-loader-native-image? [image : TlciImage]) : bool
+(define (tlci-loader-native-image? [image : tlci.TlciImage]) : bool
   (>= (tlci-loader-native-table-offset image) 0))
 
-(define (tlci-loader-find-entry-code-offset [image : TlciImage]) : ResultTlciLoaderI64
+(define (tlci-loader-find-entry-code-offset [image : tlci.TlciImage]) : ResultTlciLoaderI64
   (let
     [code-len : i64 (array-length (struct-get image code))]
     [entry-count : i64
       (/
         (array-length (struct-get image entries))
-        tlci-section-entry-record-size)]
+        tlci.tlci-section-entry-record-size)]
     (if (= entry-count 0)
       (ResultTlciLoaderI64.Err "tlci loader: missing entry table")
       (tlci-loader-find-entry-at
@@ -430,7 +439,7 @@
 
 (define (tlci-loader-host-table-storage
   [owner-arena : i64]
-  [table : TlciHostCallbackTable]) : (__tl_dyn-array i64)
+  [table : tlci.TlciHostCallbackTable]) : (__tl_dyn-array i64)
   (let
     [items : (__tl_dyn-array i64)
       (tlci-loader-alloc-i64-array-in-arena owner-arena 8)]
@@ -449,23 +458,24 @@
     i64)
   (tlci-loader-alloc-i64-array-in-arena owner-arena 8))
 
-(define (tlci-loader-read-registration [addr : i64]) : TlciImageRegistration
-  (TlciImageRegistration
-    (tlci-loader-read-mapped-i64 (+ addr tlci-image-registration-magic-offset))
+(define (tlci-loader-read-registration [addr : i64]) : tlci.TlciImageRegistration
+  (tlci.TlciImageRegistration
     (tlci-loader-read-mapped-i64
-      (+ addr tlci-image-registration-abi-version-offset))
+      (+ addr tlci.tlci-image-registration-magic-offset))
     (tlci-loader-read-mapped-i64
-      (+ addr tlci-image-registration-byte-size-offset))
+      (+ addr tlci.tlci-image-registration-abi-version-offset))
     (tlci-loader-read-mapped-i64
-      (+ addr tlci-image-registration-image-context-offset))
+      (+ addr tlci.tlci-image-registration-byte-size-offset))
     (tlci-loader-read-mapped-i64
-      (+ addr tlci-image-registration-reserved0-offset))
+      (+ addr tlci.tlci-image-registration-image-context-offset))
     (tlci-loader-read-mapped-i64
-      (+ addr tlci-image-registration-reserved1-offset))
+      (+ addr tlci.tlci-image-registration-reserved0-offset))
     (tlci-loader-read-mapped-i64
-      (+ addr tlci-image-registration-macro-entry-table-offset))
+      (+ addr tlci.tlci-image-registration-reserved1-offset))
     (tlci-loader-read-mapped-i64
-      (+ addr tlci-image-registration-macro-entry-count-offset))))
+      (+ addr tlci.tlci-image-registration-macro-entry-table-offset))
+    (tlci-loader-read-mapped-i64
+      (+ addr tlci.tlci-image-registration-macro-entry-count-offset))))
 
 (define (tlci-loader-apply-fixups-at!
   [image-base : i64]
@@ -476,24 +486,28 @@
     unit
     (let
       [slot-offset : i64
-        (tlci-read-u64 fixups (* index tlci-section-fixup-record-size))]
+        (tlci.tlci-read-u64
+          fixups
+          (* index tlci.tlci-section-fixup-record-size))]
       [slot-addr : i64 (+ image-base slot-offset)]
       [current : i64 (tlci-loader-read-mapped-i64 slot-addr)]
       (begin
         (tlci-loader-write-mapped-i64! slot-addr (+ current image-base))
         (tlci-loader-apply-fixups-at! image-base fixups (+ index 1) count)))))
 
-(define (tlci-loader-apply-fixups! [image-base : i64] [image : TlciImage]) : unit
+(define (tlci-loader-apply-fixups! [image-base : i64] [image : tlci.TlciImage]) : unit
   (tlci-loader-apply-fixups-at!
     image-base
     (struct-get image fixups)
     0
-    (/ (array-length (struct-get image fixups)) tlci-section-fixup-record-size)))
+    (/
+      (array-length (struct-get image fixups))
+      tlci.tlci-section-fixup-record-size)))
 
 ;; Resolve one image import against the compiler's static host registry. The
 ;; registry is validated before mapping, so a found address is always nonzero.
 (define (tlci-loader-host-import-address
-  [host-table : (& host-table TlciHostCallbackTable)]
+  [host-table : (& host-table tlci.TlciHostCallbackTable)]
   [name : String]) : ResultTlciLoaderI64
   (let
     [index : i64 0]
@@ -517,7 +531,7 @@
   [image-base : i64]
   [imports : (__tl_dyn-array u8)]
   [image-identity : String]
-  [host-table : (& host-table TlciHostCallbackTable)]
+  [host-table : (& host-table tlci.TlciHostCallbackTable)]
   [index : i64]
   [count : i64]) : ResultTlciLoaderUnit
   (if (>= index count)
@@ -525,12 +539,12 @@
     (let
       [record : i64
         (+
-          tlci-section-import-header-size
-          (* index tlci-section-import-record-size))]
-      [slot-offset : i64 (tlci-read-u64 imports record)]
-      [name-offset : i64 (tlci-read-u64 imports (+ record 8))]
-      [name-len : i64 (tlci-read-u64 imports (+ record 16))]
-      [name : String (tlci-bytes->string imports name-offset name-len)]
+          tlci.tlci-section-import-header-size
+          (* index tlci.tlci-section-import-record-size))]
+      [slot-offset : i64 (tlci.tlci-read-u64 imports record)]
+      [name-offset : i64 (tlci.tlci-read-u64 imports (+ record 8))]
+      [name-len : i64 (tlci.tlci-read-u64 imports (+ record 16))]
+      [name : String (tlci.tlci-bytes->string imports name-offset name-len)]
       (match (tlci-loader-host-import-address host-table name)
         [(ResultTlciLoaderI64.Err missing)
           (ResultTlciLoaderUnit.Err
@@ -554,8 +568,8 @@
 
 (define (tlci-loader-bind-imports!
   [image-base : i64]
-  [image : TlciImage]
-  [host-table : (& host-table TlciHostCallbackTable)]) : ResultTlciLoaderUnit
+  [image : tlci.TlciImage]
+  [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoaderUnit
   (tlci-loader-bind-imports-at!
     image-base
     (struct-get image imports)
@@ -566,7 +580,7 @@
         (struct-get (struct-get image metadata) package-version)))
     host-table
     0
-    (tlci-import-section-count (struct-get image imports))))
+    (tlci.tlci-import-section-count (struct-get image imports))))
 
 (define (tlci-loader-protect-rodata
   [image-base : i64]
@@ -669,7 +683,7 @@
   [registration-storage : (__tl_dyn-array i64)]
   [host-table-addr : i64]
   [registration-addr : i64]
-  [registration : TlciImageRegistration]) : TlciLoadedImage
+  [registration : tlci.TlciImageRegistration]) : TlciLoadedImage
   (TlciLoadedImage
     (struct-get loaded image-region-addr)
     (struct-get loaded image-region-size)
@@ -715,10 +729,10 @@
   [owner-arena : i64]
   [bytes : (__tl_dyn-array u8)]
   [loaded : TlciLoadedImage]
-  [host-table : TlciHostCallbackTable]
+  [host-table : tlci.TlciHostCallbackTable]
   [table-offset : i64]) : ResultTlciLoadedImage
   (let
-    [code-file-offset : i64 (tlci-read-u64 bytes 88)]
+    [code-file-offset : i64 (tlci.tlci-read-u64 bytes 88)]
     [count-addr : i64
       (+
         (struct-get loaded image-region-addr)
@@ -766,10 +780,10 @@
 (define (tlci-loader-load-from-bytes-with-registration
   [owner-arena : i64]
   [bytes : (__tl_dyn-array u8)]
-  [host-table : TlciHostCallbackTable]) : ResultTlciLoadedImage
-  (match (tlci-parse-image bytes)
-    [(ResultTlciImage.Err message) (ResultTlciLoadedImage.Err message)]
-    [(ResultTlciImage.Ok parsed)
+  [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
+  (match (tlci.tlci-parse-image bytes)
+    [(tlci.ResultTlciImage.Err message) (ResultTlciLoadedImage.Err message)]
+    [(tlci.ResultTlciImage.Ok parsed)
       (let
         [native-table : i64 (tlci-loader-native-table-offset parsed)]
         (match (tlci-loader-load-parsed bytes parsed (& host-table))
@@ -788,7 +802,7 @@
 (define (tlci-loader-finish-registration
   [owner-arena : i64]
   [loaded : TlciLoadedImage]
-  [host-table : TlciHostCallbackTable]) : ResultTlciLoadedImage
+  [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
   (match (ResultTlciLoadedImage.Ok loaded)
     [(ResultTlciLoadedImage.Err message) (ResultTlciLoadedImage.Err message)]
     [(ResultTlciLoadedImage.Ok loaded)
@@ -806,21 +820,21 @@
               (struct-get loaded entry-addr)
               host-table-addr
               registration-addr))]
-        (if (not (= status tlci-image-entry-success))
+        (if (not (= status tlci.tlci-image-entry-success))
           (begin
             (tlci-loader-release loaded)
             (ResultTlciLoadedImage.Err
               (tlci-loader-registration-status-error status)))
           (let
-            [registration : TlciImageRegistration
+            [registration : tlci.TlciImageRegistration
               (tlci-loader-read-registration registration-addr)]
-            (match (tlci-validate-image-registration registration)
-              [(ResultTlciHostAbi.Err message)
+            (match (tlci.tlci-validate-image-registration registration)
+              [(tlci.ResultTlciHostAbi.Err message)
                 (begin
                   (tlci-loader-release loaded)
                   (ResultTlciLoadedImage.Err
                     (tlci-loader-registration-error message)))]
-              [(ResultTlciHostAbi.Ok)
+              [(tlci.ResultTlciHostAbi.Ok)
                 (let
                   [registered : TlciLoadedImage
                     (tlci-loader-loaded-image-with-registration
@@ -840,12 +854,12 @@
 
 (define (tlci-loader-load-mapped-region
   [bytes : (__tl_dyn-array u8)]
-  [image : TlciImage]
+  [image : tlci.TlciImage]
   [image-region : pages.TlciPageRegion]
   [entry-code-offset : i64]
   [rodata-offset : i64]
   [code-offset : i64]
-  [host-table : (& host-table TlciHostCallbackTable)]) : ResultTlciLoadedImage
+  [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
   (let
     [image-base : i64 (struct-get image-region addr)]
     [rodata-len : i64 (array-length (struct-get image rodata))]
@@ -853,15 +867,15 @@
     [fixup-count : i64
       (/
         (array-length (struct-get image fixups))
-        tlci-section-fixup-record-size)]
+        tlci.tlci-section-fixup-record-size)]
     [entry-count : i64
       (/
         (array-length (struct-get image entries))
-        tlci-section-entry-record-size)]
+        tlci.tlci-section-entry-record-size)]
     [symbol-count : i64
       (/
         (array-length (struct-get image symbols))
-        tlci-section-symbol-record-size)]
+        tlci.tlci-section-symbol-record-size)]
     (begin
       (match (pages.tlci-pages-copy-from-array! image-region bytes)
         [(pages.ResultTlciPageUnit.Err message)
@@ -903,11 +917,11 @@
 
 (define (tlci-loader-load-parsed
   [bytes : (__tl_dyn-array u8)]
-  [image : TlciImage]
-  [host-table : (& host-table TlciHostCallbackTable)]) : ResultTlciLoadedImage
+  [image : tlci.TlciImage]
+  [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
   (let
-    [rodata-offset : i64 (tlci-read-u64 bytes 72)]
-    [code-offset : i64 (tlci-read-u64 bytes 88)]
+    [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
+    [code-offset : i64 (tlci.tlci-read-u64 bytes 88)]
     [code-len : i64 (array-length (struct-get image code))]
     (if (= code-len 0)
       (ResultTlciLoadedImage.Err "tlci loader: image has no code section")
@@ -940,11 +954,11 @@
                         code-offset
                         host-table)])])])]))))
 
-(define (tlci-loader-empty-host-table) : TlciHostCallbackTable
-  (TlciHostCallbackTable
-    tlci-host-callback-table-magic
-    tlci-host-abi-version
-    tlci-host-callback-table-size
+(define (tlci-loader-empty-host-table) : tlci.TlciHostCallbackTable
+  (tlci.TlciHostCallbackTable
+    tlci.tlci-host-callback-table-magic
+    tlci.tlci-host-abi-version
+    tlci.tlci-host-callback-table-size
     0
     0
     0
@@ -955,11 +969,11 @@
     0))
 
 (define (tlci-loader-load-from-bytes [bytes : (__tl_dyn-array u8)]) : ResultTlciLoadedImage
-  (match (tlci-parse-image bytes)
-    [(ResultTlciImage.Err message) (ResultTlciLoadedImage.Err message)]
-    [(ResultTlciImage.Ok image)
+  (match (tlci.tlci-parse-image bytes)
+    [(tlci.ResultTlciImage.Err message) (ResultTlciLoadedImage.Err message)]
+    [(tlci.ResultTlciImage.Ok image)
       (let
-        [host-table : TlciHostCallbackTable (tlci-loader-empty-host-table)]
+        [host-table : tlci.TlciHostCallbackTable (tlci-loader-empty-host-table)]
         (tlci-loader-load-parsed bytes image (& host-table)))]))
 
 ;: `owner-arena` owns the storage the returned image RETAINS, and must outlive
@@ -970,10 +984,10 @@
 (define (tlci-loader-load-from-bytes-with-host
   [owner-arena : i64]
   [bytes : (__tl_dyn-array u8)]
-  [host-table : TlciHostCallbackTable]) : ResultTlciLoadedImage
-  (match (tlci-validate-host-callback-table host-table)
-    [(ResultTlciHostAbi.Err message) (ResultTlciLoadedImage.Err message)]
-    [(ResultTlciHostAbi.Ok)
+  [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
+  (match (tlci.tlci-validate-host-callback-table host-table)
+    [(tlci.ResultTlciHostAbi.Err message) (ResultTlciLoadedImage.Err message)]
+    [(tlci.ResultTlciHostAbi.Ok)
       (tlci-loader-load-from-bytes-with-registration
         owner-arena
         bytes
@@ -1018,7 +1032,7 @@
           (unsafe
             (ptr-read (ptr-offset (pages.tlci-pages-addr->ptr-u8 addr) index)))
           : i64)
-        (cast (tlci-string-ref expected index) : i64))
+        (cast (tlci.tlci-string-ref expected index) : i64))
       (tlci-loader-mapped-name-eq-at? addr expected (+ index 1) len))))
 
 (define (tlci-loader-mapped-name-eq?
@@ -1027,7 +1041,7 @@
   [len : i64]
   [expected : String]) : bool
   (and
-    (= len (tlci-string-length expected))
+    (= len (tlci.tlci-string-length expected))
     (tlci-loader-image-range-contained? loaded addr len)
     (tlci-loader-mapped-name-eq-at? addr expected 0 len)))
 
@@ -1037,7 +1051,7 @@
   (let
     [count : i64 (struct-get loaded macro-entry-count)]
     [table : i64 (struct-get loaded macro-entry-table)]
-    [record-size : i64 tlci-macro-entry-record-size]
+    [record-size : i64 tlci.tlci-macro-entry-record-size]
     (cond
       [(or (< index 0) (>= index count))
         (ResultTlciMacroEntry.Err "tlci loader: macro entry index out of range")]
@@ -1060,16 +1074,16 @@
           [record : i64 (+ table (* index record-size))]
           [name-addr : i64
             (tlci-loader-read-mapped-i64
-              (+ record tlci-macro-entry-name-ptr-offset))]
+              (+ record tlci.tlci-macro-entry-name-ptr-offset))]
           [name-len : i64
             (tlci-loader-read-mapped-i64
-              (+ record tlci-macro-entry-name-len-offset))]
+              (+ record tlci.tlci-macro-entry-name-len-offset))]
           [function-addr : i64
             (tlci-loader-read-mapped-i64
-              (+ record tlci-macro-entry-function-offset))]
+              (+ record tlci.tlci-macro-entry-function-offset))]
           [reserved0 : i64
             (tlci-loader-read-mapped-i64
-              (+ record tlci-macro-entry-reserved0-offset))]
+              (+ record tlci.tlci-macro-entry-reserved0-offset))]
           (cond
             [(not (= reserved0 0))
               (ResultTlciMacroEntry.Err
@@ -1349,7 +1363,7 @@
   (let
     [count : i64 (struct-get loaded macro-entry-count)]
     [table : i64 (struct-get loaded macro-entry-table)]
-    [record-size : i64 tlci-macro-entry-record-size]
+    [record-size : i64 tlci.tlci-macro-entry-record-size]
     (cond
       [(or
           (< count 0)
@@ -1550,7 +1564,7 @@
       (tlci-loader-read-mapped-i64
         (+
           (struct-get loaded host-table-addr)
-          tlci-host-callback-table-host-context-offset))]
+          tlci.tlci-host-callback-table-host-context-offset))]
     [status : i64
       (unsafe
         (tlci-loader-call-macro-entry-raw
@@ -1604,7 +1618,7 @@
 ;; uses the same leading message; the registered macro name supplies the native
 ;; symbol context until general source-span metadata is carried in tlci images.
 (define (tlci-loader-macro-status-diagnostic [name : String] [status : i64]) : String
-  (if (= status tlci-host-callback-status-fuel-exhausted)
+  (if (= status tlci.tlci-host-callback-status-fuel-exhausted)
     (str_cat.str-cat
       (comptime_diagnostics.compiler-comptime-fuel-diagnostic-message)
       (str_cat.str-cat " in macro " name))
@@ -1620,11 +1634,14 @@
   [text : String]) : unit
   (let
     [i : i64 0]
-    [n : i64 (tlci-string-length text)]
+    [n : i64 (tlci.tlci-string-length text)]
     (begin
       (while (< i n)
         (begin
-          (array-set! bytes (+ offset i) (cast (tlci-string-ref text i) : u8))
+          (array-set!
+            bytes
+            (+ offset i)
+            (cast (tlci.tlci-string-ref text i) : u8))
           (set! i (+ i 1))))
       unit)))
 
@@ -1675,16 +1692,16 @@
     [record : i64 (+ base offset)]
     (begin
       (tlci-loader-write-mapped-i64!
-        (+ record tlci-macro-entry-name-ptr-offset)
+        (+ record tlci.tlci-macro-entry-name-ptr-offset)
         (+ base name-offset))
       (tlci-loader-write-mapped-i64!
-        (+ record tlci-macro-entry-name-len-offset)
+        (+ record tlci.tlci-macro-entry-name-len-offset)
         name-len)
       (tlci-loader-write-mapped-i64!
-        (+ record tlci-macro-entry-function-offset)
+        (+ record tlci.tlci-macro-entry-function-offset)
         (+ base function-offset))
       (tlci-loader-write-mapped-i64!
-        (+ record tlci-macro-entry-reserved0-offset)
+        (+ record tlci.tlci-macro-entry-reserved0-offset)
         reserved0))))
 
 (define (tlci-loader-test-validation-error?
@@ -1719,7 +1736,7 @@
             [(ResultTlciLoaderUnit.Err _) false])]
         [_reserved : unit
           (tlci-loader-write-mapped-i64!
-            (+ base tlci-macro-entry-reserved0-offset)
+            (+ base tlci.tlci-macro-entry-reserved0-offset)
             1)]
         [reserved-loaded : TlciLoadedImage
           (tlci-loader-test-macro-loaded storage base 1)]
@@ -1821,7 +1838,7 @@
                     (struct-get first catalog-generation))]
                 [_tamper : unit
                   (tlci-loader-write-mapped-i64!
-                    (+ base tlci-macro-entry-function-offset)
+                    (+ base tlci.tlci-macro-entry-function-offset)
                     (+ base 112))]
                 [cached-after-tamper-ok : bool
                   (tlci-loader-test-resolved-function?
@@ -1878,9 +1895,10 @@
 
 (define (tlci-loader-test-u64-record [value : i64]) : (__tl_dyn-array u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 tlci-section-fixup-record-size)]
+    [out : (__tl_dyn-array u8)
+      (make-array u8 tlci.tlci-section-fixup-record-size)]
     (begin
-      (tlci-set-u64! out 0 value)
+      (tlci.tlci-set-u64! out 0 value)
       out)))
 
 (define (tlci-loader-test-entry-record
@@ -1888,25 +1906,27 @@
   [name-len : i64]
   [code-offset : i64]) : (__tl_dyn-array u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 tlci-section-entry-record-size)]
+    [out : (__tl_dyn-array u8)
+      (make-array u8 tlci.tlci-section-entry-record-size)]
     (begin
-      (tlci-set-u64! out tlci-loader-entry-name-offset name-offset)
-      (tlci-set-u64! out tlci-loader-entry-name-len-offset name-len)
-      (tlci-set-u64! out tlci-loader-entry-code-offset code-offset)
+      (tlci.tlci-set-u64! out tlci-loader-entry-name-offset name-offset)
+      (tlci.tlci-set-u64! out tlci-loader-entry-name-len-offset name-len)
+      (tlci.tlci-set-u64! out tlci-loader-entry-code-offset code-offset)
       out)))
 
 (define (tlci-loader-test-symbol-bytes) : (__tl_dyn-array u8)
   (let
-    [out : (__tl_dyn-array u8) (make-array u8 tlci-section-symbol-record-size)]
+    [out : (__tl_dyn-array u8)
+      (make-array u8 tlci.tlci-section-symbol-record-size)]
     (begin
-      (tlci-loader-test-put-string! out 0 tlci-image-entry-symbol)
+      (tlci-loader-test-put-string! out 0 tlci.tlci-image-entry-symbol)
       out)))
 
 (define (tlci-loader-test-set-byte!
   [bytes : (__tl_dyn-array u8)]
   [offset : i64]
   [value : i64]) : unit
-  (array-set! bytes offset (tlci-byte value)))
+  (array-set! bytes offset (tlci.tlci-byte value)))
 
 (define (tlci-loader-test-success-code-for-target
   [reg-direct-modrm : i64]
@@ -1917,7 +1937,7 @@
     (begin
       (tlci-loader-test-set-byte! out 0 0x48)
       (tlci-loader-test-set-byte! out 1 0xb8)
-      (tlci-set-u64! out 2 tlci-image-registration-magic)
+      (tlci.tlci-set-u64! out 2 tlci.tlci-image-registration-magic)
       (tlci-loader-test-set-byte! out 10 0x48)
       (tlci-loader-test-set-byte! out 11 0x89)
       (tlci-loader-test-set-byte! out 12 reg-direct-modrm)
@@ -1925,7 +1945,7 @@
       (tlci-loader-test-set-byte! out 14 0xc7)
       (tlci-loader-test-set-byte! out 15 reg-disp-modrm)
       (tlci-loader-test-set-byte! out 16 0x08)
-      (tlci-loader-test-set-byte! out 17 tlci-host-abi-version)
+      (tlci-loader-test-set-byte! out 17 tlci.tlci-host-abi-version)
       (tlci-loader-test-set-byte! out 18 0x00)
       (tlci-loader-test-set-byte! out 19 0x00)
       (tlci-loader-test-set-byte! out 20 0x00)
@@ -1978,84 +1998,98 @@
   (let
     [out : (__tl_dyn-array u8) (make-array u8 8)]
     (begin
-      (tlci-set-u64! out 0 0)
+      (tlci.tlci-set-u64! out 0 0)
       out)))
 
 (define (tlci-loader-test-image-with-code-and-imports
   [fixup-offset : i64]
   [code : (__tl_dyn-array u8)]
-  [imports : (__tl_dyn-array u8)]) : TlciImage
-  (tlci-make-image
-    tlci-host-arch-x86-64
-    tlci-callback-abi-version
+  [imports : (__tl_dyn-array u8)]) : tlci.TlciImage
+  (tlci.tlci-make-image
+    tlci.tlci-host-arch-x86-64
+    tlci.tlci-callback-abi-version
     "abcdef0"
-    (tlci-test-metadata)
+    (tlci.tlci-test-metadata)
     (tlci-loader-test-rodata-bytes)
     code
     (tlci-loader-test-u64-record fixup-offset)
     (tlci-loader-test-entry-record
       0
-      (tlci-string-length tlci-image-entry-symbol)
+      (tlci.tlci-string-length tlci.tlci-image-entry-symbol)
       0)
     (tlci-loader-test-symbol-bytes)
     imports))
 
 (define (tlci-loader-test-image-with-code
   [fixup-offset : i64]
-  [code : (__tl_dyn-array u8)]) : TlciImage
+  [code : (__tl_dyn-array u8)]) : tlci.TlciImage
   (tlci-loader-test-image-with-code-and-imports
     fixup-offset
     code
-    (tlci-empty-bytes)))
+    (tlci.tlci-empty-bytes)))
 
-(define (tlci-loader-test-image [fixup-offset : i64]) : TlciImage
+(define (tlci-loader-test-image [fixup-offset : i64]) : tlci.TlciImage
   (tlci-loader-test-image-with-code
     fixup-offset
     (tlci-loader-test-success-code-bytes)))
 
-(define (tlci-loader-test-emit-with-code [code : (__tl_dyn-array u8)]) : ResultTlciBytes
-  (match (tlci-emit-image (tlci-loader-test-image-with-code 0 code))
-    [(ResultTlciBytes.Err message) (ResultTlciBytes.Err message)]
-    [(ResultTlciBytes.Ok bytes)
+(define (tlci-loader-test-emit-with-code [code : (__tl_dyn-array u8)]) : tlci.ResultTlciBytes
+  (match (tlci.tlci-emit-image (tlci-loader-test-image-with-code 0 code))
+    [(tlci.ResultTlciBytes.Err message) (tlci.ResultTlciBytes.Err message)]
+    [(tlci.ResultTlciBytes.Ok bytes)
       (let
-        [rodata-offset : i64 (tlci-read-u64 bytes 72)]
-        [fixups-offset : i64 (tlci-read-u64 bytes 104)]
+        [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
+        [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
         (begin
-          (tlci-set-u64! bytes fixups-offset rodata-offset)
-          (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
-          (ResultTlciBytes.Ok bytes)))]))
+          (tlci.tlci-set-u64! bytes fixups-offset rodata-offset)
+          (tlci.tlci-set-u64!
+            bytes
+            tlci.tlci-hash-field-offset
+            (tlci.tlci-content-hash bytes))
+          (tlci.ResultTlciBytes.Ok bytes)))]))
 
-(define (tlci-loader-test-emit-with-real-fixup) : ResultTlciBytes
-  (match (tlci-emit-image (tlci-loader-test-image 0))
-    [(ResultTlciBytes.Err message) (ResultTlciBytes.Err message)]
-    [(ResultTlciBytes.Ok bytes)
+(define (tlci-loader-test-emit-with-real-fixup) : tlci.ResultTlciBytes
+  (match (tlci.tlci-emit-image (tlci-loader-test-image 0))
+    [(tlci.ResultTlciBytes.Err message) (tlci.ResultTlciBytes.Err message)]
+    [(tlci.ResultTlciBytes.Ok bytes)
       (let
-        [rodata-offset : i64 (tlci-read-u64 bytes 72)]
-        [fixups-offset : i64 (tlci-read-u64 bytes 104)]
+        [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
+        [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
         (begin
-          (tlci-set-u64! bytes fixups-offset rodata-offset)
-          (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
-          (ResultTlciBytes.Ok bytes)))]))
+          (tlci.tlci-set-u64! bytes fixups-offset rodata-offset)
+          (tlci.tlci-set-u64!
+            bytes
+            tlci.tlci-hash-field-offset
+            (tlci.tlci-content-hash bytes))
+          (tlci.ResultTlciBytes.Ok bytes)))]))
 
 (define (tlci-loader-test-imports [name : String]) : (__tl_dyn-array u8)
   (let
-    [name-len : i64 (tlci-string-length name)]
+    [name-len : i64 (tlci.tlci-string-length name)]
     [name-offset : i64
-      (+ tlci-section-import-header-size tlci-section-import-record-size)]
+      (+
+        tlci.tlci-section-import-header-size
+        tlci.tlci-section-import-record-size)]
     [out : (__tl_dyn-array u8) (make-array u8 (+ name-offset name-len))]
     (begin
-      (tlci-set-u64! out 0 1)
-      (tlci-set-u64! out tlci-section-import-header-size 0)
-      (tlci-set-u64! out (+ tlci-section-import-header-size 8) name-offset)
-      (tlci-set-u64! out (+ tlci-section-import-header-size 16) name-len)
+      (tlci.tlci-set-u64! out 0 1)
+      (tlci.tlci-set-u64! out tlci.tlci-section-import-header-size 0)
+      (tlci.tlci-set-u64!
+        out
+        (+ tlci.tlci-section-import-header-size 8)
+        name-offset)
+      (tlci.tlci-set-u64!
+        out
+        (+ tlci.tlci-section-import-header-size 16)
+        name-len)
       (tlci-loader-test-put-string! out name-offset name)
       out)))
 
-(define (tlci-loader-test-host-table [name : String] [address : i64]) : TlciHostCallbackTable
-  (TlciHostCallbackTable
-    tlci-host-callback-table-magic
-    tlci-host-abi-version
-    tlci-host-callback-table-size
+(define (tlci-loader-test-host-table [name : String] [address : i64]) : tlci.TlciHostCallbackTable
+  (tlci.TlciHostCallbackTable
+    tlci.tlci-host-callback-table-magic
+    tlci.tlci-host-abi-version
+    tlci.tlci-host-callback-table-size
     0
     0
     0
@@ -2065,26 +2099,29 @@
     (make-array address)
     1))
 
-(define (tlci-loader-test-emit-with-import [name : String]) : ResultTlciBytes
-  (match (tlci-emit-image
+(define (tlci-loader-test-emit-with-import [name : String]) : tlci.ResultTlciBytes
+  (match (tlci.tlci-emit-image
     (tlci-loader-test-image-with-code-and-imports
       0
       (tlci-loader-test-success-code-bytes)
       (tlci-loader-test-imports name)))
-    [(ResultTlciBytes.Err message) (ResultTlciBytes.Err message)]
-    [(ResultTlciBytes.Ok bytes)
+    [(tlci.ResultTlciBytes.Err message) (tlci.ResultTlciBytes.Err message)]
+    [(tlci.ResultTlciBytes.Ok bytes)
       (let
-        [rodata-offset : i64 (tlci-read-u64 bytes 72)]
-        [fixups-offset : i64 (tlci-read-u64 bytes 104)]
-        [imports-offset : i64 (tlci-read-u64 bytes 152)]
+        [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
+        [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
+        [imports-offset : i64 (tlci.tlci-read-u64 bytes 152)]
         (begin
-          (tlci-set-u64! bytes fixups-offset rodata-offset)
-          (tlci-set-u64!
+          (tlci.tlci-set-u64! bytes fixups-offset rodata-offset)
+          (tlci.tlci-set-u64!
             bytes
-            (+ imports-offset tlci-section-import-header-size)
+            (+ imports-offset tlci.tlci-section-import-header-size)
             rodata-offset)
-          (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
-          (ResultTlciBytes.Ok bytes)))]))
+          (tlci.tlci-set-u64!
+            bytes
+            tlci.tlci-hash-field-offset
+            (tlci.tlci-content-hash bytes))
+          (tlci.ResultTlciBytes.Ok bytes)))]))
 
 ;: Owner arena for the loader's own self-test loads. Every one of them either
 ;: rejects the image or releases it before returning, so the arena that is
@@ -2095,8 +2132,8 @@
 
 (define (tlci-loader-test-named-imports-status) : i64
   (match (tlci-loader-test-emit-with-import "fuel-check")
-    [(ResultTlciBytes.Err _) 1]
-    [(ResultTlciBytes.Ok bytes)
+    [(tlci.ResultTlciBytes.Err _) 1]
+    [(tlci.ResultTlciBytes.Ok bytes)
       (let
         [bound : bool
           (match (tlci-loader-load-from-bytes-with-host
@@ -2121,18 +2158,18 @@
               bytes
               (tlci-loader-test-host-table "other" 8192))
             "tlci loader: image `demo@0.1.0` has unresolved host import `fuel-check`")]
-        [bad-slot-bytes : (__tl_dyn-array u8) (tlci-copy-bytes bytes)]
-        [imports-offset : i64 (tlci-read-u64 bad-slot-bytes 152)]
+        [bad-slot-bytes : (__tl_dyn-array u8) (tlci.tlci-copy-bytes bytes)]
+        [imports-offset : i64 (tlci.tlci-read-u64 bad-slot-bytes 152)]
         [_bad-slot : unit
           (begin
-            (tlci-set-u64!
+            (tlci.tlci-set-u64!
               bad-slot-bytes
-              (+ imports-offset tlci-section-import-header-size)
+              (+ imports-offset tlci.tlci-section-import-header-size)
               8)
-            (tlci-set-u64!
+            (tlci.tlci-set-u64!
               bad-slot-bytes
-              tlci-hash-field-offset
-              (tlci-content-hash bad-slot-bytes)))]
+              tlci.tlci-hash-field-offset
+              (tlci.tlci-content-hash bad-slot-bytes)))]
         [bad-slot : bool
           (tlci-loader-test-rejects?
             (tlci-loader-load-from-bytes-with-host
@@ -2144,12 +2181,12 @@
 
 (define (tlci-loader-test-loads-and-fixes-up-status) : i64
   (match (tlci-loader-test-emit-with-real-fixup)
-    [(ResultTlciBytes.Err _) 10]
-    [(ResultTlciBytes.Ok bytes)
+    [(tlci.ResultTlciBytes.Err _) 10]
+    [(tlci.ResultTlciBytes.Ok bytes)
       (match (tlci-loader-load-from-bytes-with-host
         (tlci-loader-test-owner-arena)
         bytes
-        (tlci-test-host-callback-table))
+        (tlci.tlci-test-host-callback-table))
         [(ResultTlciLoadedImage.Err _) 11]
         [(ResultTlciLoadedImage.Ok loaded)
           (let
@@ -2175,11 +2212,11 @@
                 (=
                   (tlci-loader-read-mapped-i64
                     (struct-get loaded registration-addr))
-                  tlci-image-registration-magic)
+                  tlci.tlci-image-registration-magic)
                 (=
                   (tlci-loader-read-mapped-i64
                     (struct-get loaded host-table-addr))
-                  tlci-host-callback-table-magic))]
+                  tlci.tlci-host-callback-table-magic))]
             [release-ok : bool
               (match (tlci-loader-release loaded)
                 [(ResultTlciLoaderUnit.Ok) true]
@@ -2204,45 +2241,46 @@
 
 (define (tlci-loader-test-registration-rejections-ok?) : bool
   (match (tlci-loader-test-emit-with-code
-    (tlci-loader-test-status-code-bytes tlci-host-callback-status-bad-request))
-    [(ResultTlciBytes.Err _) false]
-    [(ResultTlciBytes.Ok status-bytes)
+    (tlci-loader-test-status-code-bytes
+      tlci.tlci-host-callback-status-bad-request))
+    [(tlci.ResultTlciBytes.Err _) false]
+    [(tlci.ResultTlciBytes.Ok status-bytes)
       (match (tlci-loader-test-emit-with-code
         (tlci-loader-test-bad-registration-code-bytes))
-        [(ResultTlciBytes.Err _) false]
-        [(ResultTlciBytes.Ok bad-registration-bytes)
+        [(tlci.ResultTlciBytes.Err _) false]
+        [(tlci.ResultTlciBytes.Ok bad-registration-bytes)
           (and
             (tlci-loader-test-rejects?
               (tlci-loader-load-from-bytes-with-host
                 (tlci-loader-test-owner-arena)
                 status-bytes
-                (tlci-test-host-callback-table))
+                (tlci.tlci-test-host-callback-table))
               "tlci loader: tlci_image_entry returned status 4")
             (tlci-loader-test-rejects?
               (tlci-loader-load-from-bytes-with-host
                 (tlci-loader-test-owner-arena)
                 bad-registration-bytes
-                (tlci-test-host-callback-table))
+                (tlci.tlci-test-host-callback-table))
               (str_cat.str-cat
                 "tlci loader: invalid image registration: "
                 "tlci host ABI: bad image registration magic")))])]))
 
 (define (tlci-loader-test-rejections-ok?) : bool
   (match (tlci-loader-test-emit-with-real-fixup)
-    [(ResultTlciBytes.Err _) false]
-    [(ResultTlciBytes.Ok bytes)
+    [(tlci.ResultTlciBytes.Err _) false]
+    [(tlci.ResultTlciBytes.Ok bytes)
       (let
-        [bad-fixup : (__tl_dyn-array u8) (tlci-copy-bytes bytes)]
-        [fixups-offset : i64 (tlci-read-u64 bytes 104)]
+        [bad-fixup : (__tl_dyn-array u8) (tlci.tlci-copy-bytes bytes)]
+        [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
         (begin
-          (tlci-set-u64! bad-fixup fixups-offset 8)
-          (tlci-set-u64!
+          (tlci.tlci-set-u64! bad-fixup fixups-offset 8)
+          (tlci.tlci-set-u64!
             bad-fixup
-            tlci-hash-field-offset
-            (tlci-content-hash bad-fixup))
+            tlci.tlci-hash-field-offset
+            (tlci.tlci-content-hash bad-fixup))
           (and
             (tlci-loader-test-rejects?
-              (tlci-loader-load-from-bytes (tlci-slice-bytes bytes 0 20))
+              (tlci-loader-load-from-bytes (tlci.tlci-slice-bytes bytes 0 20))
               "tlci: truncated header")
             (tlci-loader-test-rejects?
               (tlci-loader-load-from-bytes bad-fixup)
@@ -2251,10 +2289,10 @@
               (tlci-loader-load-from-bytes-with-host
                 (tlci-loader-test-owner-arena)
                 bytes
-                (TlciHostCallbackTable
-                  tlci-host-callback-table-magic
-                  (+ tlci-host-abi-version 1)
-                  tlci-host-callback-table-size
+                (tlci.TlciHostCallbackTable
+                  tlci.tlci-host-callback-table-magic
+                  (+ tlci.tlci-host-abi-version 1)
+                  tlci.tlci-host-callback-table-size
                   0
                   0
                   0
@@ -2277,8 +2315,8 @@
 ;; SIGSEGV rather than returning a status.
 (define (tlci-loader-test-retained-storage-outlives-load-arena-status) : i64
   (match (tlci-loader-test-emit-with-real-fixup)
-    [(ResultTlciBytes.Err _) 70]
-    [(ResultTlciBytes.Ok bytes)
+    [(tlci.ResultTlciBytes.Err _) 70]
+    [(tlci.ResultTlciBytes.Ok bytes)
       (let
         [owner : i64 (arena.tl_arena_current)]
         [transient : i64 (arena.tl_arena_make)]
@@ -2289,7 +2327,7 @@
           (tlci-loader-load-from-bytes-with-host
             owner
             bytes
-            (tlci-test-host-callback-table))]
+            (tlci.tlci-test-host-callback-table))]
         [_leave : unit
           (unsafe
             (arena.tl_arena_set owner))]
@@ -2308,7 +2346,7 @@
                 (tlci-loader-read-mapped-i64
                   (+
                     (struct-get loaded host-table-addr)
-                    tlci-host-callback-table-host-context-offset))]
+                    tlci.tlci-host-callback-table-host-context-offset))]
               [registration-magic : i64
                 (tlci-loader-read-mapped-i64
                   (struct-get loaded registration-addr))]
@@ -2317,9 +2355,10 @@
                   [(ResultTlciLoaderUnit.Ok) true]
                   [(ResultTlciLoaderUnit.Err _) false])]
               (cond
-                [(not (= host-magic tlci-host-callback-table-magic)) 72]
+                [(not (= host-magic tlci.tlci-host-callback-table-magic)) 72]
                 [(not (= host-context 1234)) 73]
-                [(not (= registration-magic tlci-image-registration-magic)) 74]
+                [(not (= registration-magic tlci.tlci-image-registration-magic))
+                  74]
                 [(not released) 75]
                 [else 0]))]))]))
 

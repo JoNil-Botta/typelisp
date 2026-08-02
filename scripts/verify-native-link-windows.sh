@@ -475,8 +475,8 @@ cat > "$LINK_METADATA_MODULE" <<EOF
 (extern (ffi_add7 [x : i64]) : i64 (:link-search "$LINK_SEARCH_METADATA") (:link-lib "ffi_add7"))
 EOF
 cat > "$LINK_METADATA_SRC" <<'EOF'
-(import "link-metadata-module.tl")
-(define (main) : i64 (ffi_add7 35))
+(import link-metadata-module as linkmeta)
+(define (main) : i64 (linkmeta.ffi_add7 35))
 EOF
 LINK_METADATA_BIN="$WORKDIR/link-metadata-main.exe"
 LINK_METADATA_BIN_DISPLAY=$LINK_METADATA_BIN
@@ -644,8 +644,8 @@ EOF
     (archive_lib "../archive-lib")))
 EOF
     cat > "$ARCHIVE_APP_PKG/src/main.tl" <<'EOF'
-(import "pkg:archive_lib/src/lib.tl")
-(define (main) : i64 (archive-answer))
+(import archive_lib.src.lib as archive_lib)
+(define (main) : i64 (archive_lib.archive-answer))
 EOF
 
     if [ -n "$ARCHIVER_OVERRIDE" ]; then

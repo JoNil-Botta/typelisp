@@ -4,12 +4,12 @@
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.string)
-(import "../compiler_symbols.tl")
-(import "../compiler_check_core.tl")
-(import "../compiler_semantic_index.tl")
-(import "../compiler_typecheck.tl")
-(import "../compiler_ctfe.tl")
-(import "../doc_test.tl")
+(import compiler_symbols)
+(import compiler_check_core)
+(import compiler_semantic_index)
+(import compiler_typecheck)
+(import compiler_ctfe)
+(import doc_test)
 (import compiler_builtin_ids as cbi)
 
 (define (compiler-smoke-suite-child-ok? [name : String]) : bool
@@ -27,23 +27,23 @@
     [(string.eq name "symbols")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
-        (compiler-symbols-self-test))]
+        (compiler_symbols.compiler-symbols-self-test))]
     [(string.eq name "check")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
         (if (and
-          (= (compiler-check-self-test) 42)
-          (compiler-check-semantic-index-ok?))
+          (= (compiler_check_core.compiler-check-self-test) 42)
+          (compiler_semantic_index.compiler-check-semantic-index-ok?))
           42
           1))]
-    [(string.eq name "ctfe") (compiler-ctfe-self-test)]
+    [(string.eq name "ctfe") (compiler_ctfe.compiler-ctfe-self-test)]
     [(string.eq name "reflection")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
-        (if (compiler-typecheck-reflection-tests-ok?)
+        (if (compiler_typecheck.compiler-typecheck-reflection-tests-ok?)
           42
           1))]
-    [(string.eq name "doc-test") (doc-test-smoke-all)]
+    [(string.eq name "doc-test") (doc_test.doc-test-smoke-all)]
     [else 1]))
 
 (define (main) : i64

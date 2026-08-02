@@ -1,9 +1,5 @@
 ;; module_macro_stdlib_vector_qualified_flat_provider.tl - helper for exported
 ;; module macros whose generated bodies flat-import generated stdlib vectors.
-;; Its explicit dotted identity is intentional: generated bodies refer to this
-;; provider through that legacy-compatible module path.
-(module tests.module_macro_stdlib_vector_qualified_flat_provider)
-
 (import stdlib.vector)
 
 (defmacro (vector-user [T : type]) : Module

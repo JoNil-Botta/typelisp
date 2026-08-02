@@ -59,6 +59,21 @@ case "$(uname -s)" in
         ;;
 esac
 
+# Each file's CST/render scratch is reclaimed by the formatter core. Keep the
+# remaining argument/config state in smaller Windows batches because hosted
+# runners have less system commit headroom after the bootstrap gates.
+FORMAT_BATCH_SIZE_DEFAULT=32
+if [ "$HOST_OS" = windows ]; then
+    FORMAT_BATCH_SIZE_DEFAULT=4
+fi
+FORMAT_BATCH_SIZE=${TYPELISP_FORMAT_BATCH_SIZE:-$FORMAT_BATCH_SIZE_DEFAULT}
+case "$FORMAT_BATCH_SIZE" in
+    '' | 0 | *[!0-9]*)
+        echo "TYPELISP_FORMAT_BATCH_SIZE must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+
 if [ "$SELF_TEST_CURRENT_COMPILER_MODE" -eq 1 ]; then
     COMPILER="$ROOT/scripts/check-tl-format.sh"
 elif [ -n "${TYPELISP_BIN:-}" ]; then
@@ -208,9 +223,12 @@ if [ -s "$CHECK_FILES" ] && ! xargs "$COMPILER" fmt --check < "$CHECK_FILES"; th
 fi
 
 if [ -s "$METADATA_FILES" ]; then
-    echo "Checking current-syntax-aware TypeLisp formatting for $metadata_count file(s)."
+    echo "Checking current-syntax-aware TypeLisp formatting for $metadata_count file(s) in batches of up to $FORMAT_BATCH_SIZE."
     select_current_cli_for_format
-    if ! xargs "$CURRENT_CLI_BIN" fmt --check < "$METADATA_FILES"; then
+    # Batch the driver invocations: one process per batch keeps the formatter's
+    # arena bounded, which Windows runners enforce as a system commit limit
+    # (error 1455) when a single invocation spans the whole tree.
+    if ! xargs -n "$FORMAT_BATCH_SIZE" "$CURRENT_CLI_BIN" fmt --check < "$METADATA_FILES"; then
         echo "Current-syntax-aware TypeLisp format check failed." >&2
         echo "Run: $CURRENT_CLI_BIN fmt --check \$(cat $METADATA_FILES)" >&2
         exit 1

@@ -271,7 +271,7 @@ prepare_cli_surface_files() {
     printf '%s' '(define (main) : i64
   0)' > "$CLI_SURFACE_SRC"
     cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.byte_buf)
 
 (define (fixture-cstr-len [p : (Ptr u8)]) : i64
@@ -282,7 +282,7 @@ prepare_cli_surface_files() {
         (set! n (+ n 1)))
       n)))
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (byte_buf.str-as-bytes (& text))))
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
@@ -310,8 +310,8 @@ EOF
 ;# ```typelisp
 ;# (define doc-entry-example : i64 1)
 ;# ```
-(import "extra.tl")
-(define (main) : i64 (doc-extra))
+(import extra)
+(define (main) : i64 (extra.doc-extra))
 EOF
     cat > "$CLI_SURFACE_DOC_PKG/src/extra.tl" <<'EOF'
 ;# Package extra docs.
@@ -328,8 +328,8 @@ EOF
   (entry "src/main.tl"))
 EOF
     cat > "$CLI_SURFACE_CHECK_PKG/src/main.tl" <<'EOF'
-(import "extra.tl")
-(define (main) : i64 (surface-extra))
+(import extra)
+(define (main) : i64 (extra.surface-extra))
 EOF
     cat > "$CLI_SURFACE_CHECK_PKG/src/extra.tl" <<'EOF'
 (define (surface-extra) : i64 0)
@@ -998,8 +998,8 @@ cat > "$CHAIN_ROOT/typelisp.pkg" <<'EOF'
     (mid "../mid")))
 EOF
 cat > "$CHAIN_ROOT/src/main.tl" <<'EOF'
-(import "pkg:mid/src/lib.tl")
-(define (main) : i64 (mid-answer))
+(import mid.src.lib as mid)
+(define (main) : i64 (mid.mid-answer))
 EOF
 cat > "$CHAIN_MID/typelisp.pkg" <<'EOF'
 (package
@@ -1010,8 +1010,8 @@ cat > "$CHAIN_MID/typelisp.pkg" <<'EOF'
     (leaf "../leaf")))
 EOF
 cat > "$CHAIN_MID/src/lib.tl" <<'EOF'
-(import "pkg:leaf/src/lib.tl")
-(define (mid-answer) : i64 (leaf-answer))
+(import leaf.src.lib as leaf)
+(define (mid-answer) : i64 (leaf.leaf-answer))
 EOF
 cat > "$CHAIN_LEAF/typelisp.pkg" <<'EOF'
 (package
@@ -1063,8 +1063,8 @@ cat > "$GITHUB_ROOT/typelisp.pkg" <<'EOF'
     (remote (github "JoNil-Botta/typelisp-test-dep" (rev "abc123")))))
 EOF
 cat > "$GITHUB_ROOT/src/main.tl" <<'EOF'
-(import "pkg:remote/src/lib.tl")
-(define (main) : i64 (remote-answer))
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.remote-answer))
 EOF
 cat > "$GITHUB_REMOTE/typelisp.pkg" <<'EOF'
 (package
@@ -1132,8 +1132,8 @@ cat > "$GITHUB_CACHE_ROOT/typelisp.pkg" <<EOF
     (remote (github "a/b" (rev "$GITHUB_CACHE_REV")))))
 EOF
 cat > "$GITHUB_CACHE_ROOT/src/main.tl" <<'EOF'
-(import "pkg:remote/src/lib.tl")
-(define (main) : i64 (remote-answer))
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.remote-answer))
 EOF
 cat > "$GITHUB_CACHE_CONFIG" <<EOF
 [url "$GITHUB_CACHE_REMOTE"]
@@ -1231,8 +1231,8 @@ cat > "$GITHUB_LOCK_ROOT/typelisp.pkg" <<'EOF'
     (remote (github "l/b" (branch "main")))))
 EOF
 cat > "$GITHUB_LOCK_ROOT/src/main.tl" <<'EOF'
-(import "pkg:remote/src/lib.tl")
-(define (main) : i64 (remote-answer))
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.remote-answer))
 EOF
 cat > "$GITHUB_LOCK_CONFIG" <<EOF
 [url "$GITHUB_LOCK_REMOTE"]
@@ -1374,9 +1374,9 @@ cat > "$DIAMOND_ROOT/typelisp.pkg" <<'EOF'
     (right "../right")))
 EOF
 cat > "$DIAMOND_ROOT/src/main.tl" <<'EOF'
-(import "pkg:left/src/lib.tl")
-(import "pkg:right/src/lib.tl")
-(define (main) : i64 (+ (left-answer) (right-answer)))
+(import left.src.lib as left)
+(import right.src.lib as right)
+(define (main) : i64 (+ (left.left-answer) (right.right-answer)))
 EOF
 cat > "$DIAMOND_LEFT/typelisp.pkg" <<'EOF'
 (package
@@ -1387,8 +1387,8 @@ cat > "$DIAMOND_LEFT/typelisp.pkg" <<'EOF'
     (shared "../shared")))
 EOF
 cat > "$DIAMOND_LEFT/src/lib.tl" <<'EOF'
-(import "pkg:shared/src/lib.tl")
-(define (left-answer) : i64 (shared-answer))
+(import shared.src.lib as shared)
+(define (left-answer) : i64 (shared.shared-answer))
 EOF
 cat > "$DIAMOND_RIGHT/typelisp.pkg" <<'EOF'
 (package
@@ -1399,8 +1399,8 @@ cat > "$DIAMOND_RIGHT/typelisp.pkg" <<'EOF'
     (shared "../shared")))
 EOF
 cat > "$DIAMOND_RIGHT/src/lib.tl" <<'EOF'
-(import "pkg:shared/src/lib.tl")
-(define (right-answer) : i64 (shared-answer))
+(import shared.src.lib as shared)
+(define (right-answer) : i64 (shared.shared-answer))
 EOF
 cat > "$DIAMOND_SHARED/typelisp.pkg" <<'EOF'
 (package
@@ -1457,8 +1457,8 @@ cat > "$FAIL_ROOT/typelisp.pkg" <<'EOF'
     (bad "../bad")))
 EOF
 cat > "$FAIL_ROOT/src/main.tl" <<'EOF'
-(import "pkg:good/src/lib.tl")
-(define (main) : i64 (good-answer))
+(import good.src.lib as good)
+(define (main) : i64 (good.good-answer))
 EOF
 cat > "$FAIL_GOOD/typelisp.pkg" <<'EOF'
 (package
@@ -1502,8 +1502,8 @@ cat > "$CYCLE_ROOT/typelisp.pkg" <<'EOF'
     (a "../cycle_a")))
 EOF
 cat > "$CYCLE_ROOT/src/main.tl" <<'EOF'
-(import "pkg:a/src/lib.tl")
-(define (main) : i64 (a-answer))
+(import a.src.lib as a)
+(define (main) : i64 (a.a-answer))
 EOF
 cat > "$CYCLE_A/typelisp.pkg" <<'EOF'
 (package
@@ -1795,7 +1795,7 @@ assert_contains scaffold-init-lib-source "$INIT_LIB_DIR/src/lib.tl" 'answer-is-4
 
 RUN_SRC="$WORKDIR/run-main.tl"
 cat > "$RUN_SRC" <<'EOF'
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.byte_buf)
 
 (define (fixture-cstr-len [p : (Ptr u8)]) : i64
@@ -1806,7 +1806,7 @@ cat > "$RUN_SRC" <<'EOF'
         (set! n (+ n 1)))
       n)))
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (byte_buf.str-as-bytes (& text))))
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]

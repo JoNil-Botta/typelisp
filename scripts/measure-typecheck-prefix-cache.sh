@@ -84,10 +84,10 @@ write_stdlib_import_batch() {
     while [ "$i" -le "${TYPELISP_PREFIX_CACHE_STDLIB_IMPORT_COUNT:-12}" ]; do
         path="$WORKDIR/repeated-stdlib-import-$i.tl"
         cat > "$path" <<EOF_INNER
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : i64
-  (string-length "prefix-cache"))
+  (string.string-length "prefix-cache"))
 EOF_INNER
         echo "$path|$outdir/repeated-stdlib-import-$i.s" >> "$batch"
         i=$((i + 1))
@@ -124,8 +124,8 @@ write_doctest_batch() {
         cat > "$path" <<EOF_INNER
 ;# Prefix cache doctest $i
 ;# \`\`\`typelisp
-;# (import "stdlib/string.tl")
-;# (define (main) : i64 (string-length "prefix-cache"))
+;# (import stdlib.string)
+;# (define (main) : i64 (string.string-length "prefix-cache"))
 ;# \`\`\`
 
 (define doctest_prefix_cache_$i : i64 $i)

@@ -40392,6 +40392,16 @@
 ;;   * idx == the counter phi      -> every trip index lies in [seed, bound),
 ;;     so `seed >= 0 && bound <= len` (signed) proves every check passes;
 ;;   * idx == BitAnd(_, M), M >= 0 -> the index lies in [0, M], so `M < len`;
+;;   * idx == scale*counter+k (literal coefficients, scale > 0), or the same
+;;     PLUS a loop-invariant VARIABLE base B when scale > 1 (either Add
+;;     operand order), or idx == B + dphi + k with dphi a derived induction
+;;     phi (invariant init, literal step > 1) -> a wrap-safe quotient guard
+;;     over the trip range; the variable-base forms synthesize the derived
+;;     seed in the guard (see opt-bce-version-var-base-scaled-guard and
+;;     opt-bce-version-var-base-derived-guard). Scale-1 variable-base indices
+;;     stay OUT of this pass on purpose: one guard per loop entry cannot pay
+;;     for one removed check per trip on pico-trip loops (measured on
+;;     intern_table's tail and miss-copy loops);
 ;;   * idx loop-invariant          -> `idx >= 0 && idx < len`.
 ;; The loop is VERSIONED on the conjunction: a fresh guard block on the entry
 ;; edge branches to a check-free fast clone when every condition holds and to
@@ -40402,6 +40412,14 @@
 ;; non-negative. Store-bearing bodies are ADMITTED (unlike the unroller):
 ;; under a true guard the clone is instruction-for-instruction the original.
 ;;
+;; A check whose condition cannot be derived no longer rejects the loop: with
+;; at least one derived check the loop PARTIALLY versions, and each
+;; underivable check STAYS (remapped) in the fast clone, preserving the slow
+;; path's exact abort semantics for its index. The guard then constrains only
+;; the removed checks; kept checks still execute (and may still abort) on the
+;; fast path. A kept check was underivable when its clone was built, so the
+;; fast clone cannot re-version on a later pipeline round.
+;;
 ;; Exit wiring exploits the post-rotation invariant: the loop block does not
 ;; dominate its exit when the exit has another predecessor, so loop defs reach
 ;; outside code only as exit-phi inputs on the loop edge -- each such input
@@ -40410,8 +40428,8 @@
 ;;
 ;; The pass runs between induction and unroll so the fast clone -- now a pure
 ;; whitelisted body -- unrolls in the SAME pipeline iteration. Rejections:
-;; non-canonical counters, multi-block loops, a check whose condition cannot
-;; be derived, and pre-existing version labels (idempotence). Verifier-gated
+;; non-canonical counters, multi-block loops, a loop with NO derivable check,
+;; and pre-existing version labels (idempotence). Verifier-gated
 ;; with fallback like unroll.
 (defenum OptBceVersionGuardAcc
   (No)
@@ -40420,6 +40438,37 @@
 (defenum OptBceVersionGuardResult
   (No)
   (Some CompilerIrInstrList CompilerIrValue))
+
+;; Underivable checks kept in the fast clone, identified by instruction index:
+;; guard derivation and cloning walk the same block instruction sequence in
+;; the same order, so the index is a stable identity between the two.
+(defenum OptBceVersionKeep
+  (Nil)
+  (Cons i64 (Box OptBceVersionKeep)))
+
+(define (opt-bce-version-keep-contains?
+  [keep : OptBceVersionKeep]
+  [index : i64]) : bool
+  (match keep
+    [(OptBceVersionKeep.Nil) false]
+    [(OptBceVersionKeep.Cons item rest)
+      (if (= item index)
+        true
+        (opt-bce-version-keep-contains? (box-get rest) index))]))
+
+;; Derivation fold state: the guard accumulator (conditions for REMOVED
+;; checks), the kept-check set, and how many checks derived -- partial
+;; versioning requires at least one derivable check to make cloning pay.
+(defstruct OptBceVersionDerive
+  (guard OptBceVersionGuardAcc)
+  (keep OptBceVersionKeep)
+  (derived i64))
+
+;; guard-conds output: the guard instructions + value plus the kept-check set
+;; the clone must preserve (remapped) instead of dropping.
+(defenum OptBceVersionGuardOut
+  (No)
+  (Some CompilerIrInstrList CompilerIrValue OptBceVersionKeep))
 
 (define (opt-bce-version-body-max) : i64
   48)
@@ -40969,6 +41018,580 @@
               capacity-safe)]
           (opt-bce-version-cond-counter-seen minimum-safe))])))
 
+;; --- strided variable-base indices ----------------------------------------------
+;;
+;; A check index of the form `B + T + k` with a loop-invariant VARIABLE base B
+;; (either Add operand order, literal k peeled off either level) and T a
+;; strided trip expression:
+;;
+;;   * T = scale*counter + k2 with a literal scale > 1 -- induction lowering
+;;     has not (or not yet) strength-reduced the multiply. Scale 1 stays out
+;;     of this pass: one guard per loop entry cannot pay for one removed
+;;     check per trip on pico-trip loops (the measured intern_table
+;;     regression), so the literal scale-1 counter forms keep their existing
+;;     handling and variable-base scale-1 forms reject;
+;;   * T = dphi + k2 with dphi a derived induction phi (invariant init d0,
+;;     literal step > 1) -- the shape induction lowering leaves behind for
+;;     `B + scale*counter + k` once the multiply becomes the phi's step.
+;;     Step 1 stays out for the same reason as scale 1: it degenerates to
+;;     one removed check per trip per entry guard (the measured pico-trip
+;;     loser class), and the primary counter is itself a step-1 phi, so an
+;;     ungated step-1 form would smuggle `base + counter` back in.
+;;
+;; Overflow-checked literal accumulation for the offset peeling below: the
+;; coefficients must stay mathematical (a wrapped offset could disguise an
+;; unbounded index expression), so an overflow rejects the whole recovery.
+(defenum OptBceVersionKSum
+  (No)
+  (Some i64))
+
+(define (opt-bce-version-k-add [a : i64] [b : i64]) : OptBceVersionKSum
+  (let
+    [minimum : i64 (- (- 0 9223372036854775807) 1)]
+    (if (or
+      (and (> b 0) (> a (- 9223372036854775807 b)))
+      (and (< b 0) (< a (- minimum b))))
+      (OptBceVersionKSum.No)
+      (OptBceVersionKSum.Some (+ a b)))))
+
+;; A strided trip expression under the variable base: `scale*counter + k`
+;; with literal scale > 1, or a derived induction phi (invariant init d0,
+;; literal step > 0) plus peeled literal k.
+(defenum OptBceVarBaseStrided
+  (No)
+  (Scaled i64 i64)
+  (Derived CompilerIrValue i64 i64))
+
+;; The peel result: the remaining core variable and the accumulated literal.
+(defenum OptBceVersionStridedCore
+  (No)
+  (Some i64 i64))
+
+;; Peel literal Add/Sub addends off an index expression, returning the
+;; remaining core variable and the accumulated literal. Peeling stops at the
+;; first definition that is not a literal addend link (a var+var Add, a phi,
+;; a load, ...); a non-variable expression rejects.
+(define (opt-bce-version-strided-peel
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [value : CompilerIrValue]
+  [k : i64]
+  [fuel : i64]) : OptBceVersionStridedCore
+  (match value
+    [(CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
+        [slots : (__tl_dyn-array CompilerIrInstr) (struct-get instrs slots)]
+        [def-index : i64 (opt-unroll-def-index slots 0 last id)]
+        (if (or (<= fuel 0) (< def-index 0))
+          (OptBceVersionStridedCore.Some id k)
+          (match (array-ref slots def-index)
+            [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not (opt-affine-64bit-type? ty))
+                (OptBceVersionStridedCore.Some id k)
+                (match op
+                  [(CompilerIrBinOp.Add)
+                    (match (opt-affine-var-const lhs rhs)
+                      [(OptAffineOperands.Some src c)
+                        (match (opt-bce-version-k-add k c)
+                          [(OptBceVersionKSum.No) (OptBceVersionStridedCore.No)]
+                          [(OptBceVersionKSum.Some next)
+                            (opt-bce-version-strided-peel
+                              instrs
+                              phi-count
+                              last
+                              (CompilerIrValue.Var src)
+                              next
+                              (- fuel 1))])]
+                      [(OptAffineOperands.No)
+                        (OptBceVersionStridedCore.Some id k)])]
+                  [(CompilerIrBinOp.Sub)
+                    (match lhs
+                      [(CompilerIrValue.Var src)
+                        (match rhs
+                          [(CompilerIrValue.I64 c)
+                            (if (= c (- (- 0 9223372036854775807) 1))
+                              (OptBceVersionStridedCore.Some id k)
+                              (match (opt-bce-version-k-add k (- 0 c))
+                                [(OptBceVersionKSum.No)
+                                  (OptBceVersionStridedCore.No)]
+                                [(OptBceVersionKSum.Some next)
+                                  (opt-bce-version-strided-peel
+                                    instrs
+                                    phi-count
+                                    last
+                                    (CompilerIrValue.Var src)
+                                    next
+                                    (- fuel 1))]))]
+                          [_ (OptBceVersionStridedCore.Some id k)])]
+                      [_ (OptBceVersionStridedCore.Some id k)])]
+                  [_ (OptBceVersionStridedCore.Some id k)]))]
+            [_ (OptBceVersionStridedCore.Some id k)])))]
+    [_ (OptBceVersionStridedCore.No)]))
+
+;; The strided side as a derived induction phi (possibly under peeled literal
+;; addends): opt-bce-version-derived-induction pins the invariant init and
+;; the positive literal step.
+(define (opt-bce-version-strided-derived
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
+  [value : CompilerIrValue]
+  [fuel : i64]) : OptBceVarBaseStrided
+  (match (opt-bce-version-strided-peel instrs phi-count last value 0 fuel)
+    [(OptBceVersionStridedCore.No) (OptBceVarBaseStrided.No)]
+    [(OptBceVersionStridedCore.Some core total)
+      (let
+        [slots : (__tl_dyn-array CompilerIrInstr) (struct-get instrs slots)]
+        [def-index : i64 (opt-unroll-def-index slots 0 last core)]
+        (if (< def-index 0)
+          (OptBceVarBaseStrided.No)
+          (match (array-ref slots def-index)
+            [(CompilerIrInstr.Phi _ inputs pty)
+              (match pty
+                [(AstType.I64)
+                  (match (opt-bce-version-derived-induction
+                    instrs
+                    phi-count
+                    last
+                    defs
+                    loop-label
+                    pred-label
+                    core
+                    inputs)
+                    [(OptBceDerivedInduction.No) (OptBceVarBaseStrided.No)]
+                    [(OptBceDerivedInduction.Some d0 step)
+                      (if (> step 1)
+                        (OptBceVarBaseStrided.Derived d0 step total)
+                        (OptBceVarBaseStrided.No))])]
+                [_ (OptBceVarBaseStrided.No)])]
+            [_ (OptBceVarBaseStrided.No)])))]))
+
+;; One Add side as the strided part: the literal-coefficient recovery first
+;; (it sees through Add/Sub/Mul chains over the counter), then the
+;; derived-induction form for the strength-reduced shape.
+(define (opt-bce-version-strided-side
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
+  [iphi : i64]
+  [value : CompilerIrValue]
+  [fuel : i64]) : OptBceVarBaseStrided
+  (match (opt-bce-version-counter-affine instrs phi-count last iphi value fuel)
+    [(OptBceCounterAffine.No)
+      (opt-bce-version-strided-derived
+        instrs
+        phi-count
+        last
+        defs
+        loop-label
+        pred-label
+        value
+        fuel)]
+    [(OptBceCounterAffine.Some scale k)
+      (if (> scale 1)
+        (OptBceVarBaseStrided.Scaled scale k)
+        (OptBceVarBaseStrided.No))]))
+
+;; The synthesized derived seed: an invariant base value, an optional second
+;; invariant value, a literal offset, and the guard instruction stream the
+;; emitted adds landed on.
+(defstruct OptBceSynthSeed
+  (value CompilerIrValue)
+  (instrs CompilerIrInstrList))
+
+;; Fold the literal pieces and emit the adds for `base + extra + offset` into
+;; the guard stream. Every fold and every emitted Add wraps exactly like the
+;; body's own arithmetic: the language defines i64 arithmetic to wrap, so the
+;; synthesized seed equals `base + extra + offset` modulo 2^64 no matter how
+;; the pieces associate -- the same value the body's index computation
+;; produces, and the value the derived-induction guard's conditions judge
+;; (see opt-bce-version-var-base-scaled-guard for the full argument).
+(define (opt-bce-version-guard-seed-sum
+  [cell : (__tl_dyn-array i64)]
+  [instrs : CompilerIrInstrList]
+  [base : CompilerIrValue]
+  [extra : CompilerIrMaybeValue]
+  [offset : i64]) : OptBceSynthSeed
+  (let
+    [off1 : i64
+      (match base
+        [(CompilerIrValue.I64 b) (+ offset b)]
+        [_ offset])]
+    [base-term : CompilerIrMaybeValue
+      (match base
+        [(CompilerIrValue.I64 _) (CompilerIrMaybeValue.No)]
+        [_ (CompilerIrMaybeValue.Some base)])]
+    [off2 : i64
+      (match extra
+        [(CompilerIrMaybeValue.No) off1]
+        [(CompilerIrMaybeValue.Some ev)
+          (match ev
+            [(CompilerIrValue.I64 e) (+ off1 e)]
+            [_ off1])])]
+    [extra-term : CompilerIrMaybeValue
+      (match extra
+        [(CompilerIrMaybeValue.No) (CompilerIrMaybeValue.No)]
+        [(CompilerIrMaybeValue.Some ev)
+          (match ev
+            [(CompilerIrValue.I64 _) (CompilerIrMaybeValue.No)]
+            [_ (CompilerIrMaybeValue.Some ev)])])]
+    (match base-term
+      [(CompilerIrMaybeValue.No)
+        (match extra-term
+          [(CompilerIrMaybeValue.No)
+            (OptBceSynthSeed (CompilerIrValue.I64 off2) instrs)]
+          [(CompilerIrMaybeValue.Some v)
+            (if (= off2 0)
+              (OptBceSynthSeed v instrs)
+              (let
+                [d : i64 (opt-bce-version-alloc-var cell)]
+                (OptBceSynthSeed
+                  (CompilerIrValue.Var d)
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      d
+                      (CompilerIrBinOp.Add)
+                      v
+                      (CompilerIrValue.I64 off2)
+                      (AstType.I64))
+                    instrs))))])]
+      [(CompilerIrMaybeValue.Some u)
+        (match extra-term
+          [(CompilerIrMaybeValue.No)
+            (if (= off2 0)
+              (OptBceSynthSeed u instrs)
+              (let
+                [d : i64 (opt-bce-version-alloc-var cell)]
+                (OptBceSynthSeed
+                  (CompilerIrValue.Var d)
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      d
+                      (CompilerIrBinOp.Add)
+                      u
+                      (CompilerIrValue.I64 off2)
+                      (AstType.I64))
+                    instrs))))]
+          [(CompilerIrMaybeValue.Some v)
+            (let
+              [d1 : i64 (opt-bce-version-alloc-var cell)]
+              [with-sum : CompilerIrInstrList
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    d1
+                    (CompilerIrBinOp.Add)
+                    u
+                    v
+                    (AstType.I64))
+                  instrs)]
+              (if (= off2 0)
+                (OptBceSynthSeed (CompilerIrValue.Var d1) with-sum)
+                (let
+                  [d2 : i64 (opt-bce-version-alloc-var cell)]
+                  (OptBceSynthSeed
+                    (CompilerIrValue.Var d2)
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        d2
+                        (CompilerIrBinOp.Add)
+                        (CompilerIrValue.Var d1)
+                        (CompilerIrValue.I64 off2)
+                        (AstType.I64))
+                      with-sum)))))])])))
+
+;; Prove `base + scale*counter + offset` stays in [0, length) for every
+;; counter in [seed, bound), with `base` loop-invariant and `scale` a literal
+;; greater than 1. With trip = counter - seed the index is
+;;
+;;   derived-seed + trip * scale    where    derived-seed = base + scale*seed + offset
+;;
+;; so the positive-step derived-induction guard (step = scale) applies once
+;; the guard stream synthesizes derived-seed -- one mul by the literal scale
+;; when the seed is not a literal, plus the adds opt-bce-version-guard-seed-sum
+;; needs. The synthesis arithmetic wraps exactly like the body's own: the
+;; language defines i64 arithmetic to wrap, and the body computes its index
+;; as wrap(base + wrap(scale*counter) + offset), which two's-complement
+;; arithmetic rewrites as wrap(derived-seed + scale*trip) -- the SAME wrapped
+;; value the guard's conditions inspect. Where those conditions hold they pin
+;; derived-seed + scale*trip into [0, length) inside [0, 2^63), where
+;; wrapping is the identity, so every executed trip's index equals the
+;; mathematical in-range value and the removed check would have passed;
+;; anywhere they fail the checked slow path runs. A wrapped synthesis
+;; intermediate therefore needs no special rejection: it can only produce a
+;; derived-seed the guard then judges on its own terms (a wrapped-negative
+;; one fails `derived-seed >= 0`; a wrapped-positive one still makes every
+;; index coincide with the body's own wrapped computation). The INT64_MIN
+;; offset rejection is shared caution with the literal affine guard, not a
+;; soundness requirement of this construction.
+(define (opt-bce-version-var-base-scaled-guard
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [base : CompilerIrValue]
+  [scale : i64]
+  [offset : i64]
+  [length : CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (if (or (<= scale 1) (= offset (- (- 0 9223372036854775807) 1)))
+    (OptBceVersionGuardAcc.No)
+    (match acc
+      [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+      [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+        (match seed
+          [(CompilerIrValue.I64 sk)
+            ;; The literal seed folds the product into the offset; the fold
+            ;; wraps like the runtime mul would.
+            (let
+              [synth : OptBceSynthSeed
+                (opt-bce-version-guard-seed-sum
+                  cell
+                  instrs
+                  base
+                  (CompilerIrMaybeValue.No)
+                  (+ offset (* scale sk)))]
+              (opt-bce-version-derived-guard
+                seed
+                bound
+                (struct-get synth value)
+                scale
+                length
+                cell
+                (OptBceVersionGuardAcc.Some
+                  (struct-get synth instrs)
+                  values
+                  counter-seen)))]
+          [_
+            (let
+              [product : i64 (opt-bce-version-alloc-var cell)]
+              [synth : OptBceSynthSeed
+                (opt-bce-version-guard-seed-sum
+                  cell
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      product
+                      (CompilerIrBinOp.Mul)
+                      seed
+                      (CompilerIrValue.I64 scale)
+                      (AstType.I64))
+                    instrs)
+                  base
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var product))
+                  offset)]
+              (opt-bce-version-derived-guard
+                seed
+                bound
+                (struct-get synth value)
+                scale
+                length
+                cell
+                (OptBceVersionGuardAcc.Some
+                  (struct-get synth instrs)
+                  values
+                  counter-seen)))])])))
+
+;; Prove `base + dphi + offset` stays in [0, length) for every counter in
+;; [seed, bound), with `base` loop-invariant and dphi a derived induction phi
+;; (invariant init d0, literal step > 1 -- step 1 is the pico-trip
+;; guard-economics class and the primary counter's own step, so it stays
+;; out). With trip = counter - seed the phi is d0 + step*trip and the index
+;; is
+;;
+;;   derived-seed + trip * step    where    derived-seed = base + d0 + offset
+;;
+;; -- the derived-induction guard again, with the seed synthesized from
+;; invariant pieces (adds only; the multiply already lives on the phi's
+;; step). The wrap argument of opt-bce-version-var-base-scaled-guard applies
+;; unchanged: the body's wrapped index is wrap(derived-seed + step*trip) and
+;; the guard's conditions pin that value into the range where wrapping is
+;; the identity.
+(define (opt-bce-version-var-base-derived-guard
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [base : CompilerIrValue]
+  [d0 : CompilerIrValue]
+  [step : i64]
+  [offset : i64]
+  [length : CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (if (or (<= step 1) (= offset (- (- 0 9223372036854775807) 1)))
+    (OptBceVersionGuardAcc.No)
+    (match acc
+      [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+      [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+        (let
+          [synth : OptBceSynthSeed
+            (opt-bce-version-guard-seed-sum
+              cell
+              instrs
+              base
+              (CompilerIrMaybeValue.Some d0)
+              offset)]
+          (opt-bce-version-derived-guard
+            seed
+            bound
+            (struct-get synth value)
+            step
+            length
+            cell
+            (OptBceVersionGuardAcc.Some
+              (struct-get synth instrs)
+              values
+              counter-seen)))])))
+
+;; One Add side as the strided part, the other as the invariant base. Exactly
+;; one side may involve the counter: an in-loop base fails the
+;; invariant-operand check.
+(define (opt-bce-version-var-base-side-strided
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
+  [iphi : i64]
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [k0 : i64]
+  [affine-side : CompilerIrValue]
+  [base-side : CompilerIrValue]
+  [length-value : CompilerIrValue]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match (opt-bce-version-strided-side
+    instrs
+    phi-count
+    last
+    defs
+    loop-label
+    pred-label
+    iphi
+    affine-side
+    16)
+    [(OptBceVarBaseStrided.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVarBaseStrided.Scaled scale k2)
+      (match (opt-bce-version-k-add k0 k2)
+        [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
+        [(OptBceVersionKSum.Some offset)
+          (match (opt-bce-version-invariant-operand
+            instrs
+            phi-count
+            last
+            defs
+            base-side)
+            [(CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
+            [(CompilerIrMaybeValue.Some base)
+              (opt-bce-version-var-base-scaled-guard
+                seed
+                bound
+                base
+                scale
+                offset
+                length-value
+                cell
+                acc)])])]
+    [(OptBceVarBaseStrided.Derived d0 step k2)
+      (match (opt-bce-version-k-add k0 k2)
+        [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
+        [(OptBceVersionKSum.Some offset)
+          (match (opt-bce-version-invariant-operand
+            instrs
+            phi-count
+            last
+            defs
+            base-side)
+            [(CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
+            [(CompilerIrMaybeValue.Some base)
+              (opt-bce-version-var-base-derived-guard
+                seed
+                bound
+                base
+                d0
+                step
+                offset
+                length-value
+                cell
+                acc)])])]))
+
+;; The full variable-base retry for a rejected literal-affine index: peel
+;; literal addends, then split the remaining var+var Add into an invariant
+;; base and a strided trip expression (either operand order).
+(define (opt-bce-version-var-base-strided
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
+  [iphi : i64]
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [index-value : CompilerIrValue]
+  [length-value : CompilerIrValue]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match (opt-bce-version-strided-peel instrs phi-count last index-value 0 8)
+    [(OptBceVersionStridedCore.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVersionStridedCore.Some core k0)
+      (let
+        [slots : (__tl_dyn-array CompilerIrInstr) (struct-get instrs slots)]
+        [def-index : i64 (opt-unroll-def-index slots 0 last core)]
+        (if (< def-index 0)
+          (OptBceVersionGuardAcc.No)
+          (match (array-ref slots def-index)
+            [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not (opt-affine-64bit-type? ty))
+                (OptBceVersionGuardAcc.No)
+                (match op
+                  [(CompilerIrBinOp.Add)
+                    (let
+                      [attempt : OptBceVersionGuardAcc
+                        (opt-bce-version-var-base-side-strided
+                          instrs
+                          phi-count
+                          last
+                          defs
+                          loop-label
+                          pred-label
+                          iphi
+                          seed
+                          bound
+                          cell
+                          k0
+                          lhs
+                          rhs
+                          length-value
+                          acc)]
+                      (match attempt
+                        [(OptBceVersionGuardAcc.No)
+                          (opt-bce-version-var-base-side-strided
+                            instrs
+                            phi-count
+                            last
+                            defs
+                            loop-label
+                            pred-label
+                            iphi
+                            seed
+                            bound
+                            cell
+                            k0
+                            rhs
+                            lhs
+                            length-value
+                            acc)]
+                        [_ attempt]))]
+                  [_ (OptBceVersionGuardAcc.No)]))]
+            [_ (OptBceVersionGuardAcc.No)])))]))
+
 ;; Derive the sufficient invariant condition for one check's index operand.
 (define (opt-bce-version-derive-index
   [instrs : CompilerIrInstrSeq]
@@ -41052,7 +41675,24 @@
                           iphi
                           (CompilerIrValue.Var id)
                           16)
-                          [(OptBceCounterAffine.No) (OptBceVersionGuardAcc.No)]
+                          [(OptBceCounterAffine.No)
+                            ;; A var+var Add defeats the literal-coefficient
+                            ;; recovery: retry as `base + strided + k` with a
+                            ;; loop-invariant variable base.
+                            (opt-bce-version-var-base-strided
+                              instrs
+                              phi-count
+                              last
+                              defs
+                              loop-label
+                              pred-label
+                              iphi
+                              seed
+                              bound
+                              cell
+                              (CompilerIrValue.Var id)
+                              length-value
+                              acc)]
                           [(OptBceCounterAffine.Some scale offset)
                             (opt-bce-version-affine-guard
                               seed
@@ -41089,6 +41729,12 @@
                   [_ (OptBceVersionGuardAcc.No)]))))))]
     [_ (OptBceVersionGuardAcc.No)]))
 
+;; Fold the per-check derivations over the loop body. A check whose length
+;; is not invariant or whose index does not derive is KEPT (remapped) in the
+;; fast clone instead of rejecting the whole loop -- the guard constrains
+;; only the removed checks, and the kept check preserves the slow path's
+;; exact abort semantics for its index. A failed derivation reverts to the
+;; state's guard, so no half-built condition survives.
 (define (opt-bce-version-derive-checks
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -41101,9 +41747,9 @@
   [seed : CompilerIrValue]
   [bound : CompilerIrValue]
   [cell : (__tl_dyn-array i64)]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [state : OptBceVersionDerive]) : OptBceVersionDerive
   (if (>= index last)
-    acc
+    state
     (opt-bce-version-derive-checks
       instrs
       (+ index 1)
@@ -41125,22 +41771,41 @@
             defs
             length-value)
             [(CompilerIrMaybeValue.Some length-invariant)
-              (opt-bce-version-derive-index
-                instrs
-                phi-count
-                last
-                defs
-                loop-label
-                pred-label
-                iphi
-                seed
-                bound
-                cell
-                index-value
-                length-invariant
-                acc)]
-            [(CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)])]
-        [_ acc]))))
+              (let
+                [derived-guard : OptBceVersionGuardAcc
+                  (opt-bce-version-derive-index
+                    instrs
+                    phi-count
+                    last
+                    defs
+                    loop-label
+                    pred-label
+                    iphi
+                    seed
+                    bound
+                    cell
+                    index-value
+                    length-invariant
+                    (struct-get state guard))]
+                (match derived-guard
+                  [(OptBceVersionGuardAcc.No)
+                    (OptBceVersionDerive
+                      (struct-get state guard)
+                      (OptBceVersionKeep.Cons
+                        index
+                        (box (struct-get state keep)))
+                      (struct-get state derived))]
+                  [(OptBceVersionGuardAcc.Some _ _ _)
+                    (OptBceVersionDerive
+                      derived-guard
+                      (struct-get state keep)
+                      (+ (struct-get state derived) 1))]))]
+            [(CompilerIrMaybeValue.No)
+              (OptBceVersionDerive
+                (struct-get state guard)
+                (OptBceVersionKeep.Cons index (box (struct-get state keep)))
+                (struct-get state derived))])]
+        [_ state]))))
 
 (define (opt-bce-version-and-chain
   [cell : (__tl_dyn-array i64)]
@@ -41276,27 +41941,43 @@
   [iphi : i64]
   [seed : CompilerIrValue]
   [bound : CompilerIrValue]
-  [cell : (__tl_dyn-array i64)]) : OptBceVersionGuardResult
-  (opt-bce-version-guard-finish
-    seed
-    bound
-    cell
-    (opt-bce-version-derive-checks
-      instrs
-      phi-count
-      phi-count
-      last
-      defs
-      loop-label
-      pred-label
-      iphi
-      seed
-      bound
-      cell
-      (OptBceVersionGuardAcc.Some
-        (CompilerIrInstrList.Nil)
-        (CompilerIrValueList.Nil)
-        false))))
+  [cell : (__tl_dyn-array i64)]) : OptBceVersionGuardOut
+  (let
+    [state : OptBceVersionDerive
+      (opt-bce-version-derive-checks
+        instrs
+        phi-count
+        phi-count
+        last
+        defs
+        loop-label
+        pred-label
+        iphi
+        seed
+        bound
+        cell
+        (OptBceVersionDerive
+          (OptBceVersionGuardAcc.Some
+            (CompilerIrInstrList.Nil)
+            (CompilerIrValueList.Nil)
+            false)
+          (OptBceVersionKeep.Nil)
+          0))]
+    ;; Partial versioning still needs at least one REMOVED check to pay for
+    ;; the clone; with none, the loop is left untouched.
+    (if (= (struct-get state derived) 0)
+      (OptBceVersionGuardOut.No)
+      (match (opt-bce-version-guard-finish
+        seed
+        bound
+        cell
+        (struct-get state guard))
+        [(OptBceVersionGuardResult.No) (OptBceVersionGuardOut.No)]
+        [(OptBceVersionGuardResult.Some guard-instrs guard-value)
+          (OptBceVersionGuardOut.Some
+            guard-instrs
+            guard-value
+            (struct-get state keep))]))))
 
 ;; --- shape scan ---------------------------------------------------------------
 (define (opt-bce-version-shape-phi
@@ -41608,26 +42289,47 @@
               fast-label
               tail))])]))
 
+;; Clone the loop body for the fast path, dropping the checks the guard
+;; covers and KEEPING (remapped) each underivable check in the keep set:
+;; a kept check still executes -- and may still abort -- on the fast path,
+;; exactly as on the slow path.
 (define (opt-bce-version-clone-body
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [last : i64]
   [remap : (__tl_dyn-array CompilerIrValue)]
-  [cell : (__tl_dyn-array i64)]) : CompilerIrInstrList
+  [cell : (__tl_dyn-array i64)]
+  [keep : OptBceVersionKeep]) : CompilerIrInstrList
   (if (>= index last)
     (CompilerIrInstrList.Nil)
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (match instr
         [(CompilerIrInstr.BoundsCheck _ _ _)
-          (opt-bce-version-clone-body instrs (+ index 1) last remap cell)]
+          (if (opt-bce-version-keep-contains? keep index)
+            (compiler-ir-instr-cons
+              (opt-unroll-clone-instr remap cell 0 instr)
+              (opt-bce-version-clone-body
+                instrs
+                (+ index 1)
+                last
+                remap
+                cell
+                keep))
+            (opt-bce-version-clone-body instrs (+ index 1) last remap cell keep))]
         [_
           (let
             [cloned : CompilerIrInstr
               (opt-unroll-clone-instr remap cell 0 instr)]
             (compiler-ir-instr-cons
               cloned
-              (opt-bce-version-clone-body instrs (+ index 1) last remap cell)))]))))
+              (opt-bce-version-clone-body
+                instrs
+                (+ index 1)
+                last
+                remap
+                cell
+                keep)))]))))
 
 ;; Relabel the loop phis' outside-pred inputs to the guard block.
 (define (opt-relabel-phi-inputs
@@ -41863,9 +42565,9 @@
               seed
               bound
               cell)
-              [(OptBceVersionGuardResult.No)
+              [(OptBceVersionGuardOut.No)
                 (OptUnrollResult.Result blocks frame false)]
-              [(OptBceVersionGuardResult.Some guard-instrs guard-value)
+              [(OptBceVersionGuardOut.Some guard-instrs guard-value keep)
                 (let
                   [remap : (__tl_dyn-array CompilerIrValue)
                     (array.make-array CompilerIrValue frame)]
@@ -41881,7 +42583,8 @@
                       phi-count
                       last
                       remap
-                      cell)]
+                      cell
+                      keep)]
                   [fast-block : CompilerIrBlock
                     (compiler-ir-block
                       fast-label
@@ -44600,21 +45303,23 @@
   (No)
   (Some CompilerIrInstrList CompilerIrValue OptBceMbKeep))
 
-;; A multi-block index of the form `base + counter + offset` (either operand
-;; order): one Add operand recovers counter-affine with scale exactly 1 and a
-;; literal offset, the other resolves to a loop-invariant value -- the
-;; `text[start + i]` byte-loop idiom. The invariant base rides along because
-;; the guard must reference the RESOLVED definition that dominates the loop
-;; entry edge.
+;; A multi-block index of the form `base + scale*counter + offset` (either
+;; operand order): one Add operand recovers counter-affine with a positive
+;; literal scale and a literal offset, the other resolves to a loop-invariant
+;; value -- the `text[start + i]` byte-loop idiom (scale 1) and its strided
+;; CSR/word cousins (scale > 1). The invariant base rides along because the
+;; guard must reference the RESOLVED definition that dominates the loop entry
+;; edge.
 (defenum OptBceCounterAffineBase
   (No)
-  ;; literal offset, invariant base value (scale is implicitly 1)
-  (Some i64 CompilerIrValue))
+  ;; literal scale, literal offset, invariant base value
+  (Some i64 i64 CompilerIrValue))
 
 ;; One Add side as the counter-affine part, the other as the invariant base.
 ;; Exactly one side may involve the counter: an in-loop base fails the
-;; invariant-operand check, and a scale other than 1 stays outside this
-;; monotone argument (a `2*counter + base` index rejects).
+;; invariant-operand check. Scale 1 keeps the division-free
+;; opt-bce-version-var-base-guard; larger scales route to the synthesized
+;; derived-seed guard at the dispatch site.
 (define (opt-bce-mb-var-base-side
   [body-blocks : CompilerIrBlockList]
   [defs : opt_i64_i64_map.Map]
@@ -44624,12 +45329,12 @@
   (match (opt-bce-mb-counter-affine body-blocks iphi affine-side 16)
     [(OptBceCounterAffine.No) (OptBceCounterAffineBase.No)]
     [(OptBceCounterAffine.Some scale offset)
-      (if (not (= scale 1))
+      (if (< scale 1)
         (OptBceCounterAffineBase.No)
         (match (opt-bce-mb-invariant-operand body-blocks defs base-side)
           [(CompilerIrMaybeValue.No) (OptBceCounterAffineBase.No)]
           [(CompilerIrMaybeValue.Some base)
-            (OptBceCounterAffineBase.Some offset base)]))]))
+            (OptBceCounterAffineBase.Some scale offset base)]))]))
 
 ;; Try either operand order: `counter... + base` and `base + counter...`.
 (define (opt-bce-mb-var-base-add
@@ -44639,8 +45344,8 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]) : OptBceCounterAffineBase
   (match (opt-bce-mb-var-base-side body-blocks defs iphi lhs rhs)
-    [(OptBceCounterAffineBase.Some offset base)
-      (OptBceCounterAffineBase.Some offset base)]
+    [(OptBceCounterAffineBase.Some scale offset base)
+      (OptBceCounterAffineBase.Some scale offset base)]
     [(OptBceCounterAffineBase.No)
       (opt-bce-mb-var-base-side body-blocks defs iphi rhs lhs)]))
 
@@ -45036,15 +45741,31 @@
                                     rhs)
                                     [(OptBceCounterAffineBase.No)
                                       (OptBceVersionGuardAcc.No)]
-                                    [(OptBceCounterAffineBase.Some offset base)
-                                      (opt-bce-version-var-base-guard
-                                        seed
-                                        bound
-                                        base
+                                    [(OptBceCounterAffineBase.Some
+                                        scale
                                         offset
-                                        length-value
-                                        cell
-                                        acc)])]
+                                        base)
+                                      (if (= scale 1)
+                                        (opt-bce-version-var-base-guard
+                                          seed
+                                          bound
+                                          base
+                                          offset
+                                          length-value
+                                          cell
+                                          acc)
+                                        ;; Strided variable base: the guard
+                                        ;; synthesizes the derived seed and
+                                        ;; reuses the positive-step quotient.
+                                        (opt-bce-version-var-base-scaled-guard
+                                          seed
+                                          bound
+                                          base
+                                          scale
+                                          offset
+                                          length-value
+                                          cell
+                                          acc))])]
                                 [_ (OptBceVersionGuardAcc.No)]))]
                           [(OptBceCounterAffine.Some scale offset)
                             (opt-bce-version-affine-guard

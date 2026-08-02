@@ -20106,8 +20106,39 @@
 ;; and is underivable; 1 checks i directly; 2 checks i*3; 3 checks i-2; 4
 ;; checks i*(-3), whose decreasing/wrapping range must remain underivable; and
 ;; 5 checks a strength-reduced derived phi that starts at 1 and steps by 3.
+;; Variants 6-13 cover the strided variable-base forms: 6 checks base+2*i
+;; (Mul form) and 7 does the same with a StorePtr body; 8 checks base+dphi
+;; and 9 checks (base+dphi)+1, where dphi is a derived phi stepping by 2
+;; (the shape induction lowering leaves for base+2*i); 10 adds a second,
+;; underivable data check that must STAY in the fast clone (partial
+;; versioning); 11 gives the strided offset INT64_MIN (rejects), 12 scales by
+;; -2 (rejects), 13 scales by 0 (rejects), 14 checks base+i directly, and 15
+;; gives the base an in-loop definition (rejects) -- the scale-1/step-1 and
+;; non-invariant-base forms stay out (guard economics / the invariance
+;; requirement).
 (define (opt-bce-version-test-check-tail [variant : i64]) : CompilerIrInstrList
   (let
+    [after-check : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          6
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            7
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 6)
+            (CompilerIrValue.Var 0)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 7)
+              (compiler-ir-label "loop")
+              (compiler-ir-label "done"))
+            (CompilerIrInstrList.Nil))))]
     [check : CompilerIrInstrList
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
@@ -20117,26 +20148,25 @@
             [else (CompilerIrValue.Var 9)])
           (CompilerIrValue.Var 1)
           (compiler-ir-label "bce_version_ok"))
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.BinOp
-            6
-            (CompilerIrBinOp.Add)
-            (CompilerIrValue.Var 3)
-            (CompilerIrValue.I64 1)
-            (AstType.I64))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.BinOp
-              7
-              (CompilerIrBinOp.Lt)
-              (CompilerIrValue.Var 6)
-              (CompilerIrValue.Var 0)
-              (AstType.Bool))
+        (cond
+          ;; 7 stores through the checked index.
+          [(= variant 7)
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch
-                (CompilerIrValue.Var 7)
-                (compiler-ir-label "loop")
-                (compiler-ir-label "done"))
-              (CompilerIrInstrList.Nil)))))]
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.Var 9)
+                (AstType.I64))
+              after-check)]
+          ;; 10's second check is data-shaped (a product of two in-loop
+          ;; values): underivable, so it must stay in the fast clone.
+          [(= variant 10)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BoundsCheck
+                (CompilerIrValue.Var 15)
+                (CompilerIrValue.Var 1)
+                (compiler-ir-label "bce_version_ok_data"))
+              after-check)]
+          [else after-check]))]
     (cond
       [(= variant 2)
         (compiler-ir-instr-cons
@@ -20174,6 +20204,158 @@
             (CompilerIrValue.I64 3)
             (AstType.I64))
           check)]
+      [(or (= variant 6) (= variant 7))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            11
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              9
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 11)
+              (AstType.I64))
+            check))]
+      [(= variant 8)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            13
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 12)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              9
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 12)
+              (AstType.I64))
+            check))]
+      [(= variant 9)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            13
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 12)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              14
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 12)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                9
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 14)
+                (CompilerIrValue.I64 1)
+                (AstType.I64))
+              check)))]
+      [(= variant 10)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            11
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              9
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 11)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                15
+                (CompilerIrBinOp.Mul)
+                (CompilerIrValue.Var 9)
+                (CompilerIrValue.Var 9)
+                (AstType.I64))
+              check)))]
+      [(= variant 11)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            11
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              16
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 11)
+              (CompilerIrValue.I64 (- (- 0 9223372036854775807) 1))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                9
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.Var 16)
+                (AstType.I64))
+              check)))]
+      [(= variant 15)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            11
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              16
+              (CompilerIrBinOp.Mul)
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.Var 3)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                9
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 16)
+                (CompilerIrValue.Var 11)
+                (AstType.I64))
+              check)))]
+      [(= variant 14)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            9
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.Var 3)
+            (AstType.I64))
+          check)]
+      [(or (= variant 12) (= variant 13))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            11
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64
+              (if (= variant 12)
+                -2
+                0))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              9
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 11)
+              (AstType.I64))
+            check))]
       [else check])))
 
 (define (opt-bce-version-test-blocks [variant : i64]) : CompilerIrBlockList
@@ -20211,18 +20393,48 @@
                   (compiler-ir-label "loop")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
-            (if (= variant 5)
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.Phi
-                  9
-                  (compiler-ir-phi-input-cons
-                    (CompilerIrValue.I64 1)
-                    (compiler-ir-label "entry")
+            (cond
+              [(= variant 5)
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    9
                     (compiler-ir-phi-input-cons
-                      (CompilerIrValue.Var 10)
-                      (compiler-ir-label "loop")
-                      (CompilerIrPhiInputList.Nil)))
-                  (AstType.I64))
+                      (CompilerIrValue.I64 1)
+                      (compiler-ir-label "entry")
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Var 10)
+                        (compiler-ir-label "loop")
+                        (CompilerIrPhiInputList.Nil)))
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      5
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 4)
+                      (CompilerIrValue.Var 3)
+                      (AstType.I64))
+                    (opt-bce-version-test-check-tail variant)))]
+              [(or (= variant 8) (= variant 9))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    12
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.I64 0)
+                      (compiler-ir-label "entry")
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Var 13)
+                        (compiler-ir-label "loop")
+                        (CompilerIrPhiInputList.Nil)))
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      5
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 4)
+                      (CompilerIrValue.Var 3)
+                      (AstType.I64))
+                    (opt-bce-version-test-check-tail variant)))]
+              [else
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.BinOp
                     5
@@ -20230,15 +20442,7 @@
                     (CompilerIrValue.Var 4)
                     (CompilerIrValue.Var 3)
                     (AstType.I64))
-                  (opt-bce-version-test-check-tail variant)))
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.BinOp
-                  5
-                  (CompilerIrBinOp.Add)
-                  (CompilerIrValue.Var 4)
-                  (CompilerIrValue.Var 3)
-                  (AstType.I64))
-                (opt-bce-version-test-check-tail variant))))))
+                  (opt-bce-version-test-check-tail variant))]))))
       (compiler-ir-block-cons
         (compiler-ir-block
           (compiler-ir-label "done")
@@ -20261,7 +20465,7 @@
     (opt-test-symbol "bce_version_fixture")
     (opt-bce-version-test-params)
     (AstType.I64)
-    11
+    17
     blocks))
 
 (define (opt-bce-version-test-block-checks
@@ -20597,6 +20801,193 @@
             0))
         7]
       [else 42])))
+
+;; --- strided variable-base bce-version self-tests ---------------------------------
+;;
+;; The `tokens[edge-base + 2*edge]` CSR idiom: the check index is an Add of a
+;; loop-invariant VARIABLE base and a strided trip expression -- either a
+;; literal-scale multiply of the counter (Mul form) or a derived induction
+;; phi carrying the stride as its step (the form induction lowering leaves
+;; behind). The guard synthesizes the derived seed and reuses the
+;; positive-step quotient guard. Fixture variant 6 loads through base+2*i, 7
+;; stores through it, 8 loads through base+dphi, 9 through (base+dphi)+1, 10
+;; adds an underivable data check that must stay in the fast clone, and
+;; 11-13 are the rejections (offset INT64_MIN, scale -2, scale 0).
+(define (opt-bce-sb-test-block-stores-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-bce-sb-test-block-stores-from
+      instrs
+      (+ index 1)
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.StorePtr _ _ _) (+ acc 1)]
+        [_ acc]))))
+
+(define (opt-bce-sb-test-block-stores
+  [blocks : CompilerIrBlockList]
+  [label-want : i64]) : i64
+  (match (opt-cfg-find-block blocks label-want)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bce-sb-test-block-stores-from instrs 0 0)])]))
+
+(define (compiler-optimize-bce-version-strided-self-test) : i64
+  (let
+    [mul-load : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 6)))]
+    [mul-load-out : CompilerIrBlockList (opt-function-blocks mul-load)]
+    [mul-store : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 7)))]
+    [mul-store-out : CompilerIrBlockList (opt-function-blocks mul-store)]
+    [dphi : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 8)))]
+    [dphi-out : CompilerIrBlockList (opt-function-blocks dphi)]
+    [dphi-off : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 9)))]
+    [dphi-off-out : CompilerIrBlockList (opt-function-blocks dphi-off)]
+    [partial : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 10)))]
+    [partial-out : CompilerIrBlockList (opt-function-blocks partial)]
+    [kmin-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 11))))]
+    [neg-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 12))))]
+    [zero-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 13))))]
+    [base-counter-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 14))))]
+    [in-loop-base-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 15))))]
+    (cond
+      ;; scale-2 Mul-form variable-base load: versions through the
+      ;; synthesized derived-seed quotient guard (one division by the step).
+      [(not (opt-verify-ok? (opt-verify-function mul-load))) 1]
+      ;; entry, guard, fast, slow loop, exit.
+      [(not (= (compiler-ir-block-list-count mul-load-out) 5)) 2]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              mul-load-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        3]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              mul-load-out
+              (compiler-ir-label "loop"))
+            1))
+        4]
+      [(not
+          (= (opt-count-binop-op-blocks mul-load-out (CompilerIrBinOp.Div)) 1))
+        5]
+      ;; the store form versions identically and keeps its (remapped) store.
+      [(not (opt-verify-ok? (opt-verify-function mul-store))) 6]
+      [(not (= (compiler-ir-block-list-count mul-store-out) 5)) 7]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              mul-store-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        8]
+      [(not
+          (=
+            (opt-bce-sb-test-block-stores
+              mul-store-out
+              (compiler-ir-label "loop__bce_fast"))
+            1))
+        9]
+      [(not
+          (=
+            (opt-bce-sb-test-block-stores
+              mul-store-out
+              (compiler-ir-label "loop"))
+            1))
+        10]
+      ;; the derived-phi form (induction lowering's shape) versions too.
+      [(not (opt-verify-ok? (opt-verify-function dphi))) 11]
+      [(not (= (compiler-ir-block-list-count dphi-out) 5)) 12]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              dphi-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        13]
+      [(not (= (opt-count-binop-op-blocks dphi-out (CompilerIrBinOp.Div)) 1))
+        14]
+      ;; ... including a literal offset peeled above the base add.
+      [(not (opt-verify-ok? (opt-verify-function dphi-off))) 15]
+      [(not (= (compiler-ir-block-list-count dphi-off-out) 5)) 16]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              dphi-off-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        17]
+      [(not
+          (= (opt-count-binop-op-blocks dphi-off-out (CompilerIrBinOp.Div)) 1))
+        18]
+      ;; partial versioning: the strided check leaves the fast clone, the
+      ;; underivable data check STAYS (remapped); the slow loop keeps both.
+      [(not (opt-verify-ok? (opt-verify-function partial))) 19]
+      [(not (= (compiler-ir-block-list-count partial-out) 5)) 20]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              partial-out
+              (compiler-ir-label "loop__bce_fast"))
+            1))
+        21]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              partial-out
+              (compiler-ir-label "loop"))
+            2))
+        22]
+      [(not (= (opt-count-binop-op-blocks partial-out (CompilerIrBinOp.Div)) 1))
+        23]
+      ;; an INT64_MIN strided offset rejects (nothing derives: untouched).
+      [(not (= (compiler-ir-block-list-count kmin-out) 3)) 24]
+      ;; non-positive literal scales reject.
+      [(not (= (compiler-ir-block-list-count neg-out) 3)) 25]
+      [(not (= (compiler-ir-block-list-count zero-out) 3)) 26]
+      ;; scale-1/step-1 variable-base forms reject on guard economics:
+      ;; base+i stays checked even though the counter is a step-1 phi.
+      [(not (= (compiler-ir-block-list-count base-counter-out) 3)) 27]
+      ;; an in-loop base definition cannot prove invariance: untouched.
+      [(not (= (compiler-ir-block-list-count in-loop-base-out) 3)) 28]
+      [else 42])))
+
+(test
+  bce-version-strided-var-base-ir
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-strided-self-test)
+    42
+    "strided variable-base indices version through the synthesized derived-seed guard"))
 
 ;; --- multi-block bce-version self-tests -------------------------------------------
 ;;
@@ -22043,10 +22434,13 @@
 ;; single-edge forwarding stubs. Variant 1 versions: the guard hoists one
 ;; gep+load per descriptor length, both checks leave the fast clone, the
 ;; stubs gain fast twins, and the materialized exit phi carries the fast-edge
-;; inputs. Variant 2 gives the check index an in-loop base (underivable), 3
-;; scales the counter by two (outside the monotone scale-1 argument), and 4
-;; stores into the loop body (the descriptor-length hoist needs a write-free
-;; loop); the last three leave the function untouched.
+;; inputs. Variant 2 gives the check index an in-loop base (that check stays
+;; underivable; the second still derives, so the loop partially versions), 3
+;; scales the counter by two (the scale-N variable-base guard covers it: the
+;; check derives through a synthesized derived seed, so the loop versions
+;; check-free), and 4 stores into the loop body (the descriptor-length hoist
+;; needs a write-free loop, so no check derives and the function is
+;; untouched).
 (define (opt-bce-mb-eq-test-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "arr" (AstType.DynArray 0) 0)
@@ -22416,20 +22810,24 @@
               (compiler-ir-label "body__bce_fast"))
             1))
         12]
-      ;; scale-2 with a variable base is outside the monotone argument: same
-      ;; partial shape (the underivable check stays in the fast clone).
+      ;; scale-2 with a variable base now DERIVES through the scale-N
+      ;; variable-base guard (a synthesized derived seed with step 2), so the
+      ;; loop versions check-free instead of keeping the strided check.
       [(not (= (compiler-ir-block-list-count scaled-out) 19)) 13]
       [(not
           (=
             (opt-bce-version-test-block-checks
               scaled-out
               (compiler-ir-label "body__bce_fast"))
-            1))
+            0))
         14]
       ;; a store in the body blocks the descriptor-length hoist: no
       ;; derivable check, so the loop is left untouched.
       [(not (= (compiler-ir-block-list-count stored-out) 10)) 15]
       [(not (opt-bce-mb-eq-test-no-fast? stored-out)) 16]
+      ;; the scale-2 variable-base check pays one quotient division.
+      [(not (= (opt-count-binop-op-blocks scaled-out (CompilerIrBinOp.Div)) 1))
+        17]
       [else 42])))
 
 ;; Runtime boundary behavior of the versioned eq loop: windows ending exactly
@@ -22506,6 +22904,235 @@
         (opt-bce-mb-eq-runtime-slice-eq? buf 4 buf 4 0)
         true
         "empty window"))))
+
+;; --- strided variable-base runtime boundary tests ---------------------------------
+;;
+;; Strided windows with a variable base: `base + scale*i + k` exactly at the
+;; array end still passes the synthesized derived-seed guard, and every
+;; in-bounds window computes the same result with or without versioning. A
+;; window one past the end fails the guard and aborts on the checked slow
+;; path; the inline harness has no way to assert aborts, so only correct
+;; results are asserted here.
+(define (opt-bce-sb-runtime-make [n : i64] [step : i64]) : (Array i64)
+  (let
+    [out : (Array i64) (array.make-array i64 n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! out i (* i step))
+          (set! i (+ i 1))))
+      out)))
+
+(define (opt-bce-sb-runtime-sum2
+  [text : (Array i64)]
+  [base : i64]
+  [count : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set! acc (+ acc (array-ref text (+ base (* i 2)))))
+          (set! acc (+ acc (array-ref text (+ (+ base (* i 2)) 1))))
+          (set! i (+ i 1))))
+      acc)))
+
+(define (opt-bce-sb-runtime-sum8
+  [text : (Array i64)]
+  [base : i64]
+  [count : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set! acc (+ acc (array-ref text (+ base (* i 8)))))
+          (set! i (+ i 1))))
+      acc)))
+
+(define (opt-bce-sb-runtime-fill2
+  [out : (Array i64)]
+  [base : i64]
+  [count : i64]
+  [value : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! out (+ base (* i 2)) value)
+          (set! i (+ i 1))))
+      unit)))
+
+(define (opt-bce-sb-runtime-fill8
+  [out : (Array i64)]
+  [base : i64]
+  [count : i64]
+  [value : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! out (+ base (* i 8)) value)
+          (set! i (+ i 1))))
+      unit)))
+
+;; The CSR counting-fill shape: a strided variable-base token read (derivable)
+;; feeding a data-indexed fill read+write (kept in the fast clone).
+(define (opt-bce-sb-runtime-hist2
+  [tokens : (Array i64)]
+  [fill : (Array i64)]
+  [base : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (let
+          [src : i64 (array-ref tokens (+ base (* i 2)))]
+          (begin
+            (array-set! fill src (+ (array-ref fill src) 1))
+            (set! i (+ i 1)))))
+      unit)))
+
+(test
+  bce-version-strided-runtime-load2-boundary
+  (let
+    [buf : (Array i64) (opt-bce-sb-runtime-make 16 3)]
+    (begin
+      ;; base + 2*(count-1) + 1 == 15: the pair window ends exactly at the
+      ;; array end, so the guard accepts at equality.
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum2 buf 4 6)
+        342
+        "scale-2 pair window ending exactly at the array end")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum2 buf 0 8)
+        360
+        "scale-2 whole array from a zero base")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum2 buf 14 1)
+        87
+        "scale-2 single pair at the last slots")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum2 buf 4 0)
+        0
+        "scale-2 empty window"))))
+
+(test
+  bce-version-strided-runtime-load8-boundary
+  (let
+    [buf : (Array i64) (opt-bce-sb-runtime-make 25 1)]
+    (begin
+      ;; base + 8*(count-1) == 24: the stride lands exactly on the last slot.
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum8 buf 0 4)
+        48
+        "scale-8 window landing exactly on the last slot")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum8 buf 1 3)
+        27
+        "scale-8 interior window")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum8 buf 24 1)
+        24
+        "scale-8 single read at the last slot")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum8 buf 3 0)
+        0
+        "scale-8 empty window"))))
+
+(test
+  bce-version-strided-runtime-store2-boundary
+  (let
+    [buf : (Array i64) (opt-bce-sb-runtime-make 16 1)]
+    (begin
+      ;; base + 2*(count-1) == 14: the last store lands at the stride boundary.
+      (opt-bce-sb-runtime-fill2 buf 4 6 7)
+      (test.assert-i64-eq
+        (array-ref buf 14)
+        7
+        "scale-2 store at the stride boundary")
+      (test.assert-i64-eq
+        (array-ref buf 15)
+        15
+        "slot past the stride untouched")
+      (test.assert-i64-eq
+        (array-ref buf 2)
+        2
+        "slot before the window untouched")
+      (opt-bce-sb-runtime-fill2 buf 0 8 9)
+      (test.assert-i64-eq (array-ref buf 0) 9 "scale-2 store from a zero base")
+      (test.assert-i64-eq
+        (array-ref buf 14)
+        9
+        "scale-2 boundary store from a zero base"))))
+
+(test
+  bce-version-strided-runtime-store8-boundary
+  (let
+    [buf : (Array i64) (opt-bce-sb-runtime-make 25 1)]
+    (begin
+      ;; base + 8*(count-1) == 24: the last store lands exactly on the last slot.
+      (opt-bce-sb-runtime-fill8 buf 0 4 7)
+      (test.assert-i64-eq (array-ref buf 24) 7 "scale-8 store on the last slot")
+      (test.assert-i64-eq
+        (array-ref buf 23)
+        23
+        "slot beside the stride untouched")
+      (test.assert-i64-eq (array-ref buf 8) 7 "scale-8 interior stride slot")
+      (opt-bce-sb-runtime-fill8 buf 1 3 9)
+      (test.assert-i64-eq
+        (array-ref buf 17)
+        9
+        "scale-8 store from a nonzero base")
+      (test.assert-i64-eq
+        (array-ref buf 18)
+        18
+        "slot past the nonzero stride untouched"))))
+
+(test
+  bce-version-strided-runtime-partial-hist
+  (let
+    [tokens : (Array i64) (opt-bce-sb-runtime-make 16 0)]
+    [fill : (Array i64) (opt-bce-sb-runtime-make 8 0)]
+    (begin
+      (array-set! tokens 0 7)
+      (array-set! tokens 2 3)
+      (array-set! tokens 4 7)
+      (array-set! tokens 6 1)
+      (array-set! tokens 8 3)
+      (array-set! tokens 10 7)
+      (array-set! tokens 12 2)
+      (array-set! tokens 14 5)
+      ;; base + 2*(count-1) == 14: the last token read is in bounds; the
+      ;; fill checks ride along in the fast clone.
+      (opt-bce-sb-runtime-hist2 tokens fill 0 8)
+      (test.assert-i64-eq
+        (array-ref fill 7)
+        3
+        "histogram slot 7 counted three hits")
+      (test.assert-i64-eq
+        (array-ref fill 3)
+        2
+        "histogram slot 3 counted two hits")
+      (test.assert-i64-eq
+        (array-ref fill 1)
+        1
+        "histogram slot 1 counted one hit")
+      (test.assert-i64-eq
+        (array-ref fill 2)
+        1
+        "histogram slot 2 counted one hit")
+      (test.assert-i64-eq
+        (array-ref fill 5)
+        1
+        "histogram slot 5 counted one hit")
+      (test.assert-i64-eq (array-ref fill 0) 0 "histogram slot 0 stayed empty"))))
 
 (define (opt-unroll-mb-read-only-test-body) : CompilerIrBlockList
   (compiler-ir-block-cons

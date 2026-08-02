@@ -2708,10 +2708,20 @@
         (= source-key-id source-id)
         (tc_core.tc-env-key-has-name-id? source-id)
         (not (ci.intern-dotted? source-id)))
-        (lower-name-cache-lookup-logical-id
-          cache
-          (csym.compiler-symbol-module-key-id-by-id module-id source-id)
-          -1)
+        (let
+          [qualified-id : i64
+            (csym.compiler-symbol-module-key-id-by-id module-id source-id)]
+          ;; Module overlays contain import aliases only. A canonical
+          ;; current-module key cannot be present there, so avoid one guaranteed
+          ;; local-map miss before consulting the shared global cache.
+          (match (struct-get cache parent)
+            [(LowerNameParent.Global)
+              (lower-name-cache-lookup-logical-id
+                (& lower-active-global-name-cache)
+                qualified-id
+                -1)]
+            [(LowerNameParent.None)
+              (lower-name-cache-lookup-logical-id cache qualified-id -1)]))
         -1)]
     (if (>= module-local 0)
       module-local
@@ -3174,8 +3184,17 @@
     [(lower_i64_i64_map.LookupFound _) true]
     [(lower_i64_i64_map.LookupMissing) false]))
 
-(define (lower-alias-overlay-record! [source-id : i64]) : unit
-  (lower_i64_i64_map.insert-ref! (&mut lower-alias-overlay-ids) source-id 1))
+(define (lower-alias-overlay-logical-id-or [source-id : i64] [fallback : i64]) : i64
+  (lower_i64_i64_map.get-value-or
+    (& lower-alias-overlay-ids)
+    source-id
+    fallback))
+
+(define (lower-alias-overlay-record! [source-id : i64] [logical-id : i64]) : unit
+  (lower_i64_i64_map.insert-ref!
+    (&mut lower-alias-overlay-ids)
+    source-id
+    logical-id))
 
 ;; Seed the overlay membership set from an existing base environment.
 (define (lower-alias-overlay-seed-from-env! [names : LowerNameEnv]) : unit
@@ -3189,14 +3208,14 @@
         [_ true])
         (match (lower-name-env-view cur)
           [(LowerNameEnvView.Nil) unit]
-          [(LowerNameEnvView.Bind bind-id _ _ rest)
+          [(LowerNameEnvView.Bind bind-id logical-id _ rest)
             (begin
               (if (< bind-id 0)
                 (set! lower-alias-overlay-valid false)
                 (lower_i64_i64_map.insert-ref!
                   (&mut lower-alias-overlay-ids)
                   bind-id
-                  1))
+                  logical-id))
               (set! cur rest))])))))
 
 (define (lower-name-env-add-import-alias-binding-symbol-id
@@ -3209,11 +3228,18 @@
   [symbol-id : i64]) : LowerNameEnv
   (begin
     (when (< source-id 0) (set! lower-alias-overlay-valid false))
-    ;; Aliased import (non-empty alias): unconditional bind; keep the overlay set
-    ;; in sync so a later empty-alias dedup still sees this id as present.
+    ;; Re-entering a flattened module can repeat the exact same aliased import.
+    ;; Its source and logical IDs are identical, so another shadowing node cannot
+    ;; change resolution. A later reuse of the alias for a different logical ID
+    ;; still binds and replaces the tracked value.
     (when
       (not (string.eq alias ""))
-      (when lower-alias-overlay-valid (lower-alias-overlay-record! source-id))
+      (when
+        lower-alias-overlay-valid
+        (when
+          (= (lower-alias-overlay-logical-id-or source-id -1) logical-id)
+          (return names))
+        (lower-alias-overlay-record! source-id logical-id))
       (return
         (lower-name-env-bind-logical-symbol-id
           source-id
@@ -3236,7 +3262,7 @@
     ;; Fast path: O(1) membership check against the base-seeded overlay set,
     ;; same accept decision as scanning `names`.
     (when (lower-alias-overlay-contains? source-id) (return names))
-    (lower-alias-overlay-record! source-id)
+    (lower-alias-overlay-record! source-id logical-id)
     (lower-name-env-bind-logical-symbol-id source-id logical-id symbol-id names)))
 
 (define (lower-name-env-add-import-alias-binding-id
@@ -3343,11 +3369,17 @@
       (csym.compiler-symbol-module-key-id-by-id alias-id base-id)]
     (begin
       (when (< source-id 0) (set! lower-alias-overlay-valid false))
-      ;; Aliased import (non-empty alias): unconditional bind; keep the overlay
-      ;; set in sync so a later empty-alias dedup still sees this id as present.
+      ;; Identical aliased imports may recur when a flattened module is
+      ;; re-entered. Skip only an identical source/logical pair; a different
+      ;; logical target still shadows and updates the tracked value.
       (when
         (not (string.eq alias ""))
-        (when lower-alias-overlay-valid (lower-alias-overlay-record! source-id))
+        (when
+          lower-alias-overlay-valid
+          (when
+            (= (lower-alias-overlay-logical-id-or source-id -1) logical-id)
+            (return names))
+          (lower-alias-overlay-record! source-id logical-id))
         (return
           (lower-name-env-bind-logical-symbol-id
             source-id
@@ -3375,7 +3407,7 @@
                 names)])))
       ;; Fast path: O(1) overlay dedup, same accept decision as scanning `names`.
       (when (lower-alias-overlay-contains? source-id) (return names))
-      (lower-alias-overlay-record! source-id)
+      (lower-alias-overlay-record! source-id logical-id)
       (lower-name-env-bind-logical-symbol-id
         source-id
         logical-id
@@ -5815,10 +5847,10 @@
   [decls : ast.AstDeclList]
   [type-env : tc_core.TcTypeEnv]
   [local-type-env : tc_core.TcTypeEnv]
-  [resolve-names : LowerNameEnv]
+  [_resolve-names : LowerNameEnv]
   [local-names : LowerNameEnv]
-  [name-cache : LowerNameCache]
-  [target-module : String]
+  [_name-cache : LowerNameCache]
+  [_target-module : String]
   [target-module-id : i64]) : ResultLowerModuleLocalEnv
   (let
     [cur-type-env : tc_core.TcTypeEnv type-env]
@@ -5860,18 +5892,9 @@
                   [(ResultLowerModuleTypeEnvs.Ok
                       next-type-env
                       next-local-type-env)
-                    (let
-                      [next-local-names : LowerNameEnv
-                        (lower-name-env-add-local-decl-resolve
-                          cur-local-names
-                          resolve-names
-                          name-cache
-                          target-module
-                          decl)]
-                      (begin
-                        (set! cur-type-env next-type-env)
-                        (set! cur-local-type-env next-local-type-env)
-                        (set! cur-local-names next-local-names)))]
+                    (begin
+                      (set! cur-type-env next-type-env)
+                      (set! cur-local-type-env next-local-type-env))]
                   [(ResultLowerModuleTypeEnvs.Err message)
                     (begin
                       (set! result (ResultLowerModuleLocalEnv.Err message))
@@ -5902,9 +5925,10 @@
           [decls : ast.AstDeclList (box-get decls-box)]
           ;; The module's import aliases resolve against the global
           ;; name-cache (not the env base), so building them on an empty base
-          ;; yields the module-local-only alias env -- the starting point for the
-          ;; per-module name-cache overlay (local decl names are added on top in
-          ;; lower-module-local-envs-list).
+          ;; yields the module-local-only alias env used by the per-module
+          ;; name-cache overlay. Unqualified declarations owned by this module
+          ;; resolve through the shared cache's canonical module-qualified keys,
+          ;; so copying every local declaration into the overlay is redundant.
           [local-alias-names : LowerNameEnv
             (lower-name-env-with-import-aliases-in-module-cache
               decls
@@ -9217,59 +9241,16 @@
     (make-array LowerMaybeFunctionBody count)
     0))
 
-;; Accumulate a module's local decl names onto `base-names` while
-;; resolving dispatch logical names against `resolve-names` (the full module
-;; env), so a module-local-only env can be built for the per-module body
-;; name-cache overlay without changing dispatch results.
-;; Iterate only the target module's decls through the shared module-decl
-;; position index (same classification: decls before the first Module marker
-;; belong to the empty module, marker decls excluded, program order kept)
-;; instead of filtering the whole program's decl list per module.
-(define (lower-function-body-local-names-in-module-resolve
-  [decls : ast.AstDeclList]
-  [base-names : LowerNameEnv]
-  [resolve-names : LowerNameEnv]
-  [base-cache : LowerNameCache]
-  [target-module : String]
-  [target-module-id : i64]
-  [_module-id : i64]) : LowerNameEnv
-  (let
-    [out : LowerNameEnv base-names]
-    [decl-offset : i64 (struct-get decls offset)]
-    [_ensure : unit (lower-module-decl-index-ensure! decls)]
-    [slot : i64 (lower-module-decl-index-slot target-module-id)]
-    (if (< slot 0)
-      out
-      (let
-        [j : i64 (array-ref lower-module-decl-index-starts slot)]
-        [end : i64 (array-ref lower-module-decl-index-ends slot)]
-        (begin
-          (while (< j end)
-            (begin
-              (set!
-                out
-                (lower-name-env-add-local-decl-resolve
-                  out
-                  resolve-names
-                  base-cache
-                  target-module
-                  (array-ref
-                    (struct-get decls slots)
-                    (+
-                      decl-offset
-                      (array-ref lower-module-decl-index-positions j)))))
-              (set! j (+ j 1))))
-          out)))))
-
 ;; Build a small per-module overlay name cache holding only the module's
-;; import aliases + local decl names; misses fall through to the shared global
+;; import aliases; module-owned declarations resolve through canonical
+;; module-qualified keys in the shared global cache. Misses fall through to that
 ;; cache `lower-active-global-name-cache` (set by the prune body-index pass).
 ;; Was O(modules x global-names): a fresh full cache was rebuilt per module.
 (define (lower-function-body-name-cache-for-module
   [decls : ast.AstDeclList]
   [_paths : ast.AstDeclPathList]
   [_entry-path : String]
-  [base-names : LowerNameEnv]
+  [_base-names : LowerNameEnv]
   [base-cache : LowerNameCache]
   [module : String]
   [module-id : i64]) : LowerNameCache
@@ -9279,12 +9260,6 @@
       [(LowerMaybeModuleNameCache.Some cache) cache]
       [(LowerMaybeModuleNameCache.No)
         (let
-          [module-base-names : LowerNameEnv
-            (lower-name-env-with-import-aliases-in-module-cache
-              decls
-              base-names
-              base-cache
-              module-id)]
           [alias-only-names : LowerNameEnv
             (lower-name-env-with-import-aliases-in-module-cache
               decls
@@ -9292,16 +9267,7 @@
               base-cache
               module-id)]
           [cache : LowerNameCache
-            (lower-name-cache-overlay
-              (lower-function-body-local-names-in-module-resolve
-                decls
-                alias-only-names
-                module-base-names
-                base-cache
-                module
-                module-id
-                cbi.compiler-builtin-id-fix-empty)
-              module-id)]
+            (lower-name-cache-overlay alias-only-names module-id)]
           (begin
             (lower-active-module-name-cache-insert! module-id cache)
             cache))])))

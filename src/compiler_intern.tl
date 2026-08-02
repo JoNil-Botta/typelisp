@@ -492,6 +492,7 @@
   (lefts (__tl_dyn-array i64))
   (middles (__tl_dyn-array i64))
   (rights (__tl_dyn-array i64))
+  (rendered-names (__tl_dyn-array String))
   (map-slots (__tl_dyn-array i64))
   (structural-cache-raws (__tl_dyn-array i64))
   (len i64))
@@ -542,6 +543,7 @@
     (make-array i64 256)
     (make-array i64 256)
     (make-array i64 256)
+    (make-array String 256)
     (make-array i64 512)
     (make-array i64 (intern-structural-cache-capacity))
     0))
@@ -712,6 +714,8 @@
         [next-lefts : (__tl_dyn-array i64) (make-array i64 new-capacity)]
         [next-middles : (__tl_dyn-array i64) (make-array i64 new-capacity)]
         [next-rights : (__tl_dyn-array i64) (make-array i64 new-capacity)]
+        [next-rendered-names : (__tl_dyn-array String)
+          (make-array String new-capacity)]
         (begin
           (unsafe
             (tl_arena_set previous-arena))
@@ -731,10 +735,20 @@
             (struct-get table rights)
             next-rights
             (* count 8))
+          (let
+            [index : i64 0]
+            (while (< index count)
+              (begin
+                (array-set!
+                  next-rendered-names
+                  index
+                  (array-ref (struct-get table rendered-names) index))
+                (set! index (+ index 1)))))
           (set! (struct-get table kinds) next-kinds)
           (set! (struct-get table lefts) next-lefts)
           (set! (struct-get table middles) next-middles)
           (set! (struct-get table rights) next-rights)
+          (set! (struct-get table rendered-names) next-rendered-names)
           (if (= (struct-get table owner) intern-active-structural-owner)
             (begin
               (set!
@@ -843,6 +857,7 @@
   (let
     [table : InternStructuralTable (array-ref cell 0)]
     [slots : (__tl_dyn-array i64) (struct-get table map-slots)]
+    [rendered-names : (__tl_dyn-array String) (struct-get table rendered-names)]
     [structural-cache-raws : (__tl_dyn-array i64)
       (struct-get table structural-cache-raws)]
     [index : i64 0]
@@ -850,6 +865,11 @@
       (while (< index (array-length slots))
         (begin
           (array-set! slots index 0)
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index (struct-get table len))
+        (begin
+          (array-set! rendered-names index "")
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index (array-length structural-cache-raws))
@@ -1821,6 +1841,30 @@
 
 (define (intern-persistent-copy [text : String]) : String
   (intern-persistent-substring text 0 (__tl_string_length text)))
+
+(define (intern-composite-rendered-name [id : i64]) : String
+  (if (or (intern-composite-pair-id? id) (intern-composite-triple-id? id))
+    (array-ref
+      (struct-get (array-ref intern-structural-table-cell 0) rendered-names)
+      (- (bit-and id (intern-structural-key-index-mask)) 1))
+    ""))
+
+(define (intern-composite-rendered-name-record! [id : i64] [name : String]) : String
+  (let
+    [cached : String (intern-composite-rendered-name id)]
+    (if (> (__tl_string_length cached) 0)
+      cached
+      (let
+        [persistent : String (intern-persistent-copy name)]
+        [index : i64 (- (bit-and id (intern-structural-key-index-mask)) 1)]
+        (begin
+          (array-set!
+            (struct-get
+              (array-ref intern-structural-table-cell 0)
+              rendered-names)
+            index
+            persistent)
+          persistent)))))
 
 ;: Reserve a source id from the low end of the shared pool. Generated ids grow
 ;: down from the high end, so neither kind can silently overwrite the other.

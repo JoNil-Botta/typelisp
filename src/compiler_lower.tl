@@ -321,6 +321,15 @@
     cbi.compiler-builtin-id-fix-empty
     (LowerNameParent.None)))
 
+;; Final declaration lowering can prove ownership for an unqualified source
+;; name even when an in-memory entry point has no filesystem-derived canonical
+;; name-cache row. Keep only the already-built symbol registries here; copying
+;; CompilerSymbols copies their array/map handles rather than their contents.
+(define lower-active-symbols : csym.CompilerSymbols
+  (csym.compiler-symbols-empty))
+(define lower-active-symbols-ready : bool
+  false)
+
 (define (lower-active-global-name-cache-current) : LowerNameCache
   lower-active-global-name-cache)
 
@@ -481,6 +490,7 @@
 (define (lower-reach-scratch-globals-reset!) : unit
   (begin
     (set! lower-active-global-name-cache (lower-empty-global-name-cache))
+    (set! lower-active-symbols-ready false)
     (lower-module-phase-caches-reset!)
     (set! lower-reach-active-runtime-paths (lower_i64_i64_map.with-capacity 8))
     (set!
@@ -2711,17 +2721,34 @@
         (let
           [qualified-id : i64
             (csym.compiler-symbol-module-key-id-by-id module-id source-id)]
-          ;; Module overlays contain import aliases only. A canonical
-          ;; current-module key cannot be present there, so avoid one guaranteed
-          ;; local-map miss before consulting the shared global cache.
-          (match (struct-get cache parent)
-            [(LowerNameParent.Global)
-              (lower-name-cache-lookup-logical-id
-                (& lower-active-global-name-cache)
-                qualified-id
-                -1)]
-            [(LowerNameParent.None)
-              (lower-name-cache-lookup-logical-id cache qualified-id -1)]))
+          [cached-logical-id
+            : i64
+            ;; Module overlays contain import aliases only. A canonical
+            ;; current-module key cannot be present there, so avoid one
+            ;; guaranteed local-map miss before consulting the shared cache.
+            (match (struct-get cache parent)
+              [(LowerNameParent.Global)
+                (lower-name-cache-lookup-logical-id
+                  (& lower-active-global-name-cache)
+                  qualified-id
+                  -1)]
+              [(LowerNameParent.None)
+                (lower-name-cache-lookup-logical-id cache qualified-id -1)])]
+          (if (>= cached-logical-id 0)
+            cached-logical-id
+            ;; Unlocated compiler-source entry points have no owner path from
+            ;; which to build canonical name rows. The typechecker registries
+            ;; still prove whether this module owns the source declaration.
+            (if (and
+              lower-active-symbols-ready
+              (csym.compiler-symbols-handle-found?
+                (csym.compiler-symbols-lookup-value-in-module-id-or
+                  lower-active-symbols
+                  module-id
+                  source-id
+                  (csym.compiler-symbols-missing-handle))))
+              qualified-id
+              -1)))
         -1)]
     (if (>= module-local 0)
       module-local
@@ -2780,13 +2807,16 @@
     [source-key-id : i64 (tc_core.tc-env-name-key-id source-id)]
     [logical-id : i64
       (lower-name-cache-resolve-logical-id (& cache) source-id -1)]
-    (match (lower-name-cache-lookup-id cache source-key-id)
-      [(tc_core.TcMaybeString.Some logical-name)
-        (tc_core.TcMaybeString.Some logical-name)]
-      [(tc_core.TcMaybeString.No)
-        (if (< logical-id 0)
-          (tc_core.TcMaybeString.No)
-          (lower-name-cache-lookup-id cache logical-id))])))
+    (if (< logical-id 0)
+      (tc_core.TcMaybeString.No)
+      (if (= logical-id source-key-id)
+        (lower-name-cache-lookup-id cache source-key-id)
+        (match (lower-name-cache-lookup-id cache logical-id)
+          [(tc_core.TcMaybeString.Some logical-name)
+            (tc_core.TcMaybeString.Some logical-name)]
+          [(tc_core.TcMaybeString.No)
+            (tc_core.TcMaybeString.Some
+              (tc_core.tc-env-key-name-text logical-id))])))))
 
 (define (lower-type-env-count [env : tc_core.TcTypeEnv]) : i64
   (match (tc_core.tc-type-env-spine-step env)
@@ -58878,48 +58908,51 @@
   [names : LowerNameEnv]
   [clone-roots : clone_support.CloneNameList]
   [mode : CompilerLowerMode]) : ResultLowerDecls
-  (let
-    [dispatch-name-cache : LowerNameCache
-      (lower-name-cache-with-clone-roots
-        (lower-name-cache-from-env names)
-        clone-roots)]
-    [dispatch-variants : lower_i64_i64_map.Map
-      (lower-dispatch-variant-set-from-decls
-        decls
-        paths
-        entry-path
-        dispatch-name-cache)]
-    (begin
-      ;; Build the shared global name/type caches once; per-module caches
-      ;; are small overlays that fall through to them. The initial cur caches are
-      ;; empty overlays (everything resolves via the global caches) for decls in
-      ;; the leading "" module before the first (module ...) marker.
-      (set! lower-active-global-name-cache dispatch-name-cache)
-      (set! lower-active-module-local-views (LowerModuleLocalViewList.Nil))
-      (set! lower-decls-global-type-cache (lower-type-cache-from-env top-env))
-      (set!
-        lower-rvo-early-return-functions
-        (lower-rvo-early-return-functions-from-decls ctx decls names))
-      (lower-decls-in-module
-        ctx
-        top-env
-        top-env
-        decls
-        paths
-        entry-path
-        globals
-        functions
-        externs
-        spans
-        names
-        (lower-name-cache-overlay
-          (LowerNameEnv.Nil)
-          cbi.compiler-builtin-id-fix-empty)
-        (lower-type-cache-overlay (tc_core.tc-empty-env))
-        dispatch-variants
-        mode
-        ""
-        cbi.compiler-builtin-id-fix-empty))))
+  (begin
+    (set! lower-active-symbols (tc_core.tc-context-symbols ctx))
+    (set! lower-active-symbols-ready true)
+    (let
+      [dispatch-name-cache : LowerNameCache
+        (lower-name-cache-with-clone-roots
+          (lower-name-cache-from-env names)
+          clone-roots)]
+      [dispatch-variants : lower_i64_i64_map.Map
+        (lower-dispatch-variant-set-from-decls
+          decls
+          paths
+          entry-path
+          dispatch-name-cache)]
+      (begin
+        ;; Build the shared global name/type caches once; per-module caches
+        ;; are small overlays that fall through to them. The initial cur caches are
+        ;; empty overlays (everything resolves via the global caches) for decls in
+        ;; the leading "" module before the first (module ...) marker.
+        (set! lower-active-global-name-cache dispatch-name-cache)
+        (set! lower-active-module-local-views (LowerModuleLocalViewList.Nil))
+        (set! lower-decls-global-type-cache (lower-type-cache-from-env top-env))
+        (set!
+          lower-rvo-early-return-functions
+          (lower-rvo-early-return-functions-from-decls ctx decls names))
+        (lower-decls-in-module
+          ctx
+          top-env
+          top-env
+          decls
+          paths
+          entry-path
+          globals
+          functions
+          externs
+          spans
+          names
+          (lower-name-cache-overlay
+            (LowerNameEnv.Nil)
+            cbi.compiler-builtin-id-fix-empty)
+          (lower-type-cache-overlay (tc_core.tc-empty-env))
+          dispatch-variants
+          mode
+          ""
+          cbi.compiler-builtin-id-fix-empty)))))
 
 ;; Lower every top-level decl of the expanded program. This used to be
 ;; a tail-recursive walk (one call per decl), but the inline-aggregate TCO

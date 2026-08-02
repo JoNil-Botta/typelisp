@@ -27143,23 +27143,29 @@
             (+ index 1)))])))
 
 ;; Most module-owned values are uniquely named and can resolve through their
-;; canonical module-qualified top-env key. Keep only bindings whose source name
-;; must preserve the module overlay's shadowing order: a repeated local name, or
-;; a declaration that shadows an already-visible import/global.
+;; canonical module-qualified top-env key. Keep bindings whose source spelling
+;; cannot be recovered from that key (root/dotted names), plus bindings whose
+;; source name must preserve module-overlay shadowing order.
 (define (tc-module-local-name-should-bind!
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [seen : (&mut seen tc_i64_i64_map.Map)]
   [name-id : i64]) : bool
-  (let
-    [key-id : i64 (tc-env-name-key-id name-id)]
-    (match (tc_i64_i64_map.get seen key-id)
-      [(tc_i64_i64_map.LookupFound _) true]
-      [(tc_i64_i64_map.LookupMissing)
-        (begin
-          (tc_i64_i64_map.insert-ref! seen key-id 1)
-          (tc-name-bound-before-hygiene-global-boundary-id? env key-id))])))
+  (if (or
+    (csym.compiler-symbol-root-module-id? (tc-context-module-id ctx))
+    (ci.intern-dotted? name-id))
+    true
+    (let
+      [key-id : i64 (tc-env-name-key-id name-id)]
+      (match (tc_i64_i64_map.get seen key-id)
+        [(tc_i64_i64_map.LookupFound _) true]
+        [(tc_i64_i64_map.LookupMissing)
+          (begin
+            (tc_i64_i64_map.insert-ref! seen key-id 1)
+            (tc-name-bound-before-hygiene-global-boundary-id? env key-id))]))))
 
 (define (tc-bind-struct-cleanup-local-shadowed!
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [seen : (&mut seen tc_i64_i64_map.Map)]
   [cleanup : ast.AstStructCleanup]
@@ -27167,7 +27173,7 @@
   (match cleanup
     [(ast.AstStructCleanup.No) env]
     [(ast.AstStructCleanup.Fn cleanup-name)
-      (if (tc-module-local-name-should-bind! env seen cleanup-name)
+      (if (tc-module-local-name-should-bind! ctx env seen cleanup-name)
         (tc-bind-id
           env
           cleanup-name
@@ -27175,6 +27181,7 @@
         env)]))
 
 (define (tc-bind-enum-cleanup-local-shadowed!
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [seen : (&mut seen tc_i64_i64_map.Map)]
   [cleanup : ast.AstEnumCleanup]
@@ -27182,7 +27189,7 @@
   (match cleanup
     [(ast.AstEnumCleanup.No) env]
     [(ast.AstEnumCleanup.Fn cleanup-name)
-      (if (tc-module-local-name-should-bind! env seen cleanup-name)
+      (if (tc-module-local-name-should-bind! ctx env seen cleanup-name)
         (tc-bind-id env cleanup-name (tc-enum-cleanup-function-type enum-ty))
         env)]))
 
@@ -27203,7 +27210,7 @@
       [(ast.AstVariantDef.Def name fields _)
         (tc-bind-enum-variants-local-shadowed-at!
           ctx
-          (if (tc-module-local-name-should-bind! env seen name)
+          (if (tc-module-local-name-should-bind! ctx env seen name)
             (tc-bind-id
               env
               name
@@ -27228,45 +27235,43 @@
     [(ast.AstDecl.Unsafe inner-box)
       (let
         [inner : ast.AstDecl (box-get inner-box)]
+        ;; Unsafety is carried by the local env binding, not the canonical
+        ;; top-env key, so unsafe value declarations must always be overlaid.
         (match inner
           [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-            (if (tc-module-local-name-should-bind! env seen name)
-              (match (tc-top-decl-type ctx inner)
-                [(ResultTcType.Ok ty)
-                  (ResultTcEnv.Ok (tc-bind-unsafe-id env name ty))]
-                [(ResultTcType.Err message) (ResultTcEnv.Err message)])
-              (ResultTcEnv.Ok env))]
+            (match (tc-top-decl-type ctx inner)
+              [(ResultTcType.Ok ty)
+                (ResultTcEnv.Ok (tc-bind-unsafe-id env name ty))]
+              [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [(ast.AstDecl.Extern decl-meta name kind _ _)
-            (if (tc-module-local-name-should-bind! env seen name)
-              (match (tc-top-decl-type ctx inner)
-                [(ResultTcType.Ok ty)
-                  (ResultTcEnv.Ok
-                    (if (tc-extern-value-c-abi-fnptr? ctx kind ty)
-                      (tc-bind-unsafe-c-abi-fnptr-id env name ty)
-                      (tc-bind-unsafe-id env name ty)))]
-                [(ResultTcType.Err message) (ResultTcEnv.Err message)])
-              (ResultTcEnv.Ok env))]
+            (match (tc-top-decl-type ctx inner)
+              [(ResultTcType.Ok ty)
+                (ResultTcEnv.Ok
+                  (if (tc-extern-value-c-abi-fnptr? ctx kind ty)
+                    (tc-bind-unsafe-c-abi-fnptr-id env name ty)
+                    (tc-bind-unsafe-id env name ty)))]
+              [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
-      (if (tc-module-local-name-should-bind! env seen name)
+      (if (tc-module-local-name-should-bind! ctx env seen name)
         (match (tc-top-decl-type-with-env ctx env decl)
           [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)])
         (ResultTcEnv.Ok env))]
     [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-      (if (tc-module-local-name-should-bind! env seen name)
+      (if (tc-module-local-name-should-bind! ctx env seen name)
         (match (tc-top-decl-type ctx decl)
           [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)])
         (ResultTcEnv.Ok env))]
     [(ast.AstDecl.DefDispatch decl-meta name _)
-      (if (tc-module-local-name-should-bind! env seen name)
+      (if (tc-module-local-name-should-bind! ctx env seen name)
         (match (tc-top-decl-type ctx decl)
           [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)])
         (ResultTcEnv.Ok env))]
     [(ast.AstDecl.Extern decl-meta name kind _ _)
-      (if (tc-module-local-name-should-bind! env seen name)
+      (if (tc-module-local-name-should-bind! ctx env seen name)
         (match (tc-top-decl-type ctx decl)
           [(ResultTcType.Ok ty)
             (ResultTcEnv.Ok
@@ -27282,6 +27287,7 @@
         [enum-ty : ast.AstType (ast.AstType.Enum scoped-name)]
         (ResultTcEnv.Ok
           (tc-bind-enum-cleanup-local-shadowed!
+            ctx
             (tc-bind-enum-variants-local-shadowed-at!
               ctx
               env
@@ -27300,6 +27306,7 @@
         [enum-ty : ast.AstType (ast.ast-ty-enum-args scoped-name lifetimes)]
         (ResultTcEnv.Ok
           (tc-bind-enum-cleanup-local-shadowed!
+            ctx
             (tc-bind-enum-variants-local-shadowed-at!
               ctx
               env
@@ -27320,7 +27327,8 @@
           (ast.ast-ty-func (tc-field-type-list ctx fields) struct-ty)]
         (ResultTcEnv.Ok
           (tc-bind-struct-cleanup-local-shadowed!
-            (if (tc-module-local-name-should-bind! env seen name)
+            ctx
+            (if (tc-module-local-name-should-bind! ctx env seen name)
               (tc-bind-id env name constructor-ty)
               env)
             seen
@@ -27336,7 +27344,8 @@
           (ast.ast-ty-func (tc-field-type-list ctx fields) struct-ty)]
         (ResultTcEnv.Ok
           (tc-bind-struct-cleanup-local-shadowed!
-            (if (tc-module-local-name-should-bind! env seen name)
+            ctx
+            (if (tc-module-local-name-should-bind! ctx env seen name)
               (tc-bind-id env name constructor-ty)
               env)
             seen

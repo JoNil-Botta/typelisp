@@ -10518,6 +10518,13 @@
 (define tc-unused-unsafe-block-len : i64
   0)
 
+;; Set once the block arrays have been reallocated into the never-reset lazy
+;; global table arena. The define-time initializers above run under whatever
+;; arena is active at program init, so array capacity cannot be used to detect
+;; that migration; track it explicitly instead.
+(define tc-unused-unsafe-blocks-stable : bool
+  false)
+
 (define (tc-unused-unsafe-no-span) : ast.AstSourceSpan
   (ast.ast-source-span 0 0 0 0))
 
@@ -10539,9 +10546,35 @@
 (define (tc-unused-unsafe-tracking-clear!) : unit
   (begin
     (tc-unused-unsafe-tracking-disable!)
-    (set! tc-unused-unsafe-block-spans (array.make-array ast.AstSourceSpan 128))
-    (set! tc-unused-unsafe-block-paths (array.make-array String 128))
-    (set! tc-unused-unsafe-block-used (array.make-array bool 128))
+    ;; Allocate the block arrays in the never-reset lazy global table arena.
+    ;; The lint pass runs its nested check in transient per-module arenas that
+    ;; are finished as the check progresses; allocating under the caller's
+    ;; transient arena would leave these globals dangling when the LSP runs
+    ;; lint and check back-to-back in one process (array index OOB).
+    ;;
+    ;; Allocate only once. This runs per linted file, and the stable arena is
+    ;; never reset, so reallocating here would leak three arrays (plus every
+    ;; grow-doubling step) per file. The buffers stay valid across files
+    ;; because every read is guarded by tc-unused-unsafe-block-len, which both
+    ;; this function and tracking-reset! zero before any push; entries left
+    ;; above the length are unreachable. Reusing them also preserves grown
+    ;; capacity, so grow! runs once per high-water mark instead of per file.
+    (if tc-unused-unsafe-blocks-stable
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+        [_set-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        (begin
+          (set!
+            tc-unused-unsafe-block-spans
+            (array.make-array ast.AstSourceSpan 128))
+          (set! tc-unused-unsafe-block-paths (array.make-array String 128))
+          (set! tc-unused-unsafe-block-used (array.make-array bool 128))
+          (tc-lazy-global-table-arena-finish! previous owner)
+          (set! tc-unused-unsafe-blocks-stable true))))
     (set! tc-unused-unsafe-block-len 0)))
 
 (define (tc-unused-unsafe-block-count) : i64
@@ -10622,6 +10655,11 @@
   (let
     [old-cap : i64 (array.length tc-unused-unsafe-block-spans)]
     [new-cap : i64 (* old-cap 2)]
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+    [_set-owner : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
     [new-spans : (__tl_dyn-array ast.AstSourceSpan)
       (array.make-array ast.AstSourceSpan new-cap)]
     [new-paths : (__tl_dyn-array String) (array.make-array String new-cap)]
@@ -10630,7 +10668,8 @@
       (tc-unused-unsafe-grow-copy new-spans new-paths new-used 0)
       (set! tc-unused-unsafe-block-spans new-spans)
       (set! tc-unused-unsafe-block-paths new-paths)
-      (set! tc-unused-unsafe-block-used new-used))))
+      (set! tc-unused-unsafe-block-used new-used)
+      (tc-lazy-global-table-arena-finish! previous owner))))
 
 (define (tc-unused-unsafe-push [span : ast.AstSourceSpan]) : i64
   (let
@@ -35062,6 +35101,48 @@
 (define tc-inlay-hint-types : (__tl_dyn-array String)
   (array.make-array String 0))
 
+;; Rendered hint type strings are copied out of the typecheck's transient
+;; arenas (they would dangle once the check tears down) but must not go into
+;; the never-reset lazy global table arena either: every inlayHint/tl/getType
+;; request re-records up to tc-inlay-hint-capacity strings, so a long LSP
+;; session would grow without bound. Give the strings their own arena that
+;; tc-inlay-hints-enable! destroys once per request generation. The hint arrays
+;; themselves stay in the lazy global table arena.
+(define tc-inlay-hint-string-arena : i64
+  0)
+
+(define (tc-inlay-hint-string-arena-ensure!) : i64
+  (if (= tc-inlay-hint-string-arena 0)
+    (begin
+      (set! tc-inlay-hint-string-arena (arena.tl_arena_make_small))
+      tc-inlay-hint-string-arena)
+    tc-inlay-hint-string-arena))
+
+;; Republish the newest segment head: the arena grows by chaining segments and
+;; the stored handle has to track the head so a later switch does not re-anchor
+;; allocation onto an exhausted segment.
+(define (tc-inlay-hint-string-arena-finish! [previous : i64] [owner : i64]) : unit
+  (let
+    [head : i64 (arena.tl_arena_current)]
+    (begin
+      (set! tc-inlay-hint-string-arena head)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous owner)
+            head
+            previous))))))
+
+;; Destroying any segment of the chain frees the whole arena: the runtime
+;; resolves the handle to its root (header +40) and unmaps the active chain
+;; from the root's head (+56) plus the retired list (+32).
+(define (tc-inlay-hint-string-arena-release!) : unit
+  (if (= tc-inlay-hint-string-arena 0)
+    unit
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy tc-inlay-hint-string-arena))
+      (set! tc-inlay-hint-string-arena 0))))
+
 (define (tc-inlay-hint-storage-ensure!) : unit
   (if (= (array-length tc-inlay-hint-lines) tc-inlay-hint-capacity)
     unit
@@ -35082,7 +35163,15 @@
 (define (tc-inlay-hints-enable!) : unit
   (begin
     (tc-inlay-hint-storage-ensure!)
+    ;; Drop the previous generation's strings. Zero the count first: readers
+    ;; only ever walk i < tc-inlay-hints-size, which is count-bounded, so the
+    ;; slots still holding now-freed Strings become unreachable before the
+    ;; memory goes away. Every reader finishes with the hints it collected
+    ;; before the next enable! (the server is single-threaded and each request
+    ;; reads its hints before answering), so this bounds hint string memory to
+    ;; a single request instead of a whole session.
     (set! tc-inlay-hint-count 0)
+    (tc-inlay-hint-string-arena-release!)
     (set! tc-inlay-hint-enabled true)))
 
 (define (tc-inlay-hints-disable!) : unit
@@ -35103,12 +35192,23 @@
   (array-ref tc-inlay-hint-types i))
 
 (define (tc-inlay-hint-record! [line : i64] [col : i64] [ty : String]) : unit
+  ;; The hint arrays live in the never-reset lazy global table arena, but the
+  ;; rendered type string was allocated in the typecheck's transient arena and
+  ;; dangles once the check tears down (tl/getType JSON-encodes it afterwards).
+  ;; Copy it into the per-generation hint string arena so it outlives the check
+  ;; without accumulating across requests.
   (let
     [slot : i64 (% tc-inlay-hint-count tc-inlay-hint-capacity)]
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (tc-inlay-hint-string-arena-ensure!)]
+    [_set-owner : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
     (begin
       (array-set! tc-inlay-hint-lines slot line)
       (array-set! tc-inlay-hint-cols slot col)
-      (array-set! tc-inlay-hint-types slot ty)
+      (array-set! tc-inlay-hint-types slot (string.copy (& ty)))
+      (tc-inlay-hint-string-arena-finish! previous owner)
       (set! tc-inlay-hint-count (+ tc-inlay-hint-count 1)))))
 
 ;; Record the inferred type of an un-annotated let binding value, if collection
@@ -74622,6 +74722,118 @@
           (array.make-array i64 macro-unqualified-import-cache-capacity))
         (tc-lazy-global-table-arena-finish! previous owner)))))
 
+(define (tc-unused-unsafe-storage-lifetime-fill! [index : i64]) : unit
+  (if (>= index 129)
+    unit
+    (let
+      [line : i64 (+ 100 index)]
+      [col : i64 (+ 200 index)]
+      [span : ast.AstSourceSpan (ast.ast-source-span line col line (+ col 1))]
+      [previous : i64
+        (tc-unused-unsafe-enter-block (TcMaybeAstSourceSpan.Some span))]
+      (begin
+        (if (= index 128)
+          (tc-unused-unsafe-mark-current-used!)
+          unit)
+        (tc-unused-unsafe-restore-block! previous)
+        (tc-unused-unsafe-storage-lifetime-fill! (+ index 1))))))
+
+(define (tc-unused-unsafe-storage-lifetime-ok?) : bool
+  (let
+    [caller : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
+    [path : String "tc-unused-unsafe-lifetime"]
+    (begin
+      ;; The first clear must run while a disposable arena is current. The
+      ;; arrays must migrate to the lazy global arena before that producer is
+      ;; destroyed, and later growth must use the same owner.
+      (unsafe
+        (arena.set! scratch))
+      (tc-unused-unsafe-tracking-clear!)
+      (unsafe
+        (arena.set! caller))
+      (unsafe
+        (arena.destroy scratch))
+      (tc-unused-unsafe-tracking-reset! path)
+      (tc-unused-unsafe-set-current-path! path)
+      (tc-unused-unsafe-storage-lifetime-fill! 0)
+      (let
+        [first-span : ast.AstSourceSpan (tc-unused-unsafe-block-span 0)]
+        [last-span : ast.AstSourceSpan (tc-unused-unsafe-block-span 128)]
+        [survived? : bool
+          (and
+            (= (tc-unused-unsafe-block-count) 129)
+            (string.eq (tc-unused-unsafe-block-path 0) path)
+            (string.eq (tc-unused-unsafe-block-path 128) path)
+            (= (ast.ast-source-span-start-line first-span) 100)
+            (= (ast.ast-source-span-start-col first-span) 200)
+            (= (ast.ast-source-span-end-line first-span) 100)
+            (= (ast.ast-source-span-end-col first-span) 201)
+            (= (ast.ast-source-span-start-line last-span) 228)
+            (= (ast.ast-source-span-start-col last-span) 328)
+            (= (ast.ast-source-span-end-line last-span) 228)
+            (= (ast.ast-source-span-end-col last-span) 329)
+            (not (tc-unused-unsafe-block-used? 0))
+            (tc-unused-unsafe-block-used? 128)
+            (= tc-unused-unsafe-current-block -1))]
+        (begin
+          ;; Clear after capturing all assertions so the helper always leaves
+          ;; the global tracker disabled and with no logical entries.
+          (tc-unused-unsafe-tracking-clear!)
+          (and
+            survived?
+            (= (tc-unused-unsafe-block-count) 0)
+            (not tc-unused-unsafe-tracking-enabled)
+            (= tc-unused-unsafe-current-block -1)
+            (string.eq tc-unused-unsafe-current-path "")
+            (string.eq tc-unused-unsafe-target-path "")))))))
+
+(define (tc-inlay-hint-string-lifetime-record-in-arena!
+  [producer : arena.Arena]) : unit
+  (begin
+    (unsafe
+      (arena.set! producer))
+    (let
+      [ty : String (string.append "lifetime-hint-" (string.int->string 42))]
+      (tc-inlay-hint-record! 7 11 ty))))
+
+(define (tc-inlay-hint-string-lifetime-ok?) : bool
+  (let
+    [caller : arena.Arena (arena.current)]
+    [producer : arena.Arena (arena.make)]
+    (begin
+      ;; Start from a fresh generation, then record a dynamically allocated
+      ;; producer string while a disposable arena is current.
+      (tc-inlay-hints-enable!)
+      (tc-inlay-hint-string-lifetime-record-in-arena! producer)
+      (unsafe
+        (arena.set! caller))
+      (unsafe
+        (arena.destroy producer))
+      ;; tl/getType reads after disable!, so this boundary must retain strings.
+      (tc-inlay-hints-disable!)
+      (let
+        [survived? : bool
+          (and
+            (= (tc-inlay-hints-size) 1)
+            (= (tc-inlay-hint-line-at 0) 7)
+            (= (tc-inlay-hint-col-at 0) 11)
+            (string.eq (tc-inlay-hint-type-at 0) "lifetime-hint-42"))]
+        (begin
+          ;; Enabling again drops this generation's strings; disable once
+          ;; more so the helper leaves the collector in its normal idle state.
+          (tc-inlay-hints-enable!)
+          (let
+            [cleared? : bool (= (tc-inlay-hints-size) 0)]
+            (begin
+              (tc-inlay-hints-disable!)
+              (and
+                survived?
+                cleared?
+                (not tc-inlay-hint-enabled)
+                (= tc-inlay-hint-count 0)
+                (= tc-inlay-hint-string-arena 0)))))))))
+
 (define (tc-lazy-table-storage-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]
@@ -74725,7 +74937,17 @@
           (array-set! tc-agg-regwords-cache 0 0)
           (array-set! tc-lazy-import-stub-module-ids 0 0)
           (array-set! macro-unqualified-import-cache-module-keys 0 0)
-          (and initially-lazy? restored-caller? exact-capacities? survived?))))))
+          (let
+            [unused-unsafe-lifetime? : bool
+              (tc-unused-unsafe-storage-lifetime-ok?)]
+            [inlay-hint-lifetime? : bool (tc-inlay-hint-string-lifetime-ok?)]
+            (and
+              initially-lazy?
+              restored-caller?
+              exact-capacities?
+              survived?
+              unused-unsafe-lifetime?
+              inlay-hint-lifetime?)))))))
 
 (define (macro-decl-list-slots-data-addr [decls : ast.AstDeclList]) : i64
   (cast

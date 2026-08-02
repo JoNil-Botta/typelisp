@@ -7524,15 +7524,59 @@
                   (tc-type-env-cache-ptr
                     store-handle
                     (tc-type-env-cache-index head)))]
-              (begin
-                (if (struct-get cache scan-through)
-                  unit
-                  (set! found true))
-                (set! done true)))]
+              (if (struct-get cache scan-through)
+                (if (struct-get cache partial)
+                  (let
+                    [shadow-flags : (__tl_dyn-array i64)
+                      (struct-get cache shadow-flags)]
+                    [capacity : i64 (array.length shadow-flags)]
+                    [covered : i64 (array-ref shadow-flags (- capacity 1))]
+                    (begin
+                      (set! count (+ count covered))
+                      (set! head (struct-get cache below))))
+                  (set! done true))
+                (begin
+                  (set! found true)
+                  (set! done true))))]
           [else (set! done true)]))
       (if found
         count
         -1))))
+
+;; Walk an exact binding count through both ordinary spine nodes and partial
+;; cache nodes. `rest` is the original covered spine, so it is the authoritative
+;; route when the requested boundary lies inside or immediately after a partial
+;; layer.
+(define (tc-env-after-cache-expanded-prefix [env : TcTypeEnv] [remaining : i64]) : TcTypeEnv
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    [left : i64 remaining]
+    [done : bool false]
+    (begin
+      (while (and (not done) (> left 0))
+        (cond
+          [(>= head 0)
+            (let
+              [binding-ptr : (Ptr TcTypeEnvBinding)
+                (tc-type-env-binding-ptr store-handle head)]
+              (begin
+                (set! head (tc-type-env-binding-parent-at binding-ptr))
+                (set! left (- left 1))))]
+          [(< head -1)
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr
+                    store-handle
+                    (tc-type-env-cache-index head)))]
+              (if (and
+                (struct-get cache scan-through)
+                (struct-get cache partial))
+                (set! head (struct-get cache rest))
+                (set! done true)))]
+          [else (set! done true)]))
+      (TcTypeEnv store-handle head 0))))
 
 (define (tc-env-compact-local-if-threshold [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -9752,7 +9796,7 @@
           env
           prefix-count
           false
-          (tc-env-after-prefix env prefix-count))]
+          (tc-env-after-cache-expanded-prefix env prefix-count))]
       [else (tc-env-with-cache-mode env false)])))
 
 ;; Explicit top-env/module caches: marker scans terminate here.
@@ -10142,16 +10186,18 @@
   (tc-empty-type-env))
 (define tc-hygiene-module-env-cache : TcModuleLocalEnvCache
   (tc-empty-module-local-env-cache))
-(define tc-macro-module-env-cache-ready : bool
-  false)
 (define tc-macro-module-env-cache-store : i64
   0)
 (define tc-macro-module-env-cache-head : i64
   -1)
-(define tc-macro-module-env-cache-module-id : i64
-  cbi.compiler-builtin-id-fix-empty)
-(define tc-macro-module-env-cache-value : TcTypeEnv
-  (tc-empty-type-env))
+(define tc-macro-module-env-cache-capacity : i64
+  256)
+(define tc-macro-module-env-cache-module-ids : (__tl_dyn-array i64)
+  (array.make-array i64 tc-macro-module-env-cache-capacity))
+(define tc-macro-module-env-cache-values : (__tl_dyn-array TcTypeEnv)
+  (array.make-array TcTypeEnv tc-macro-module-env-cache-capacity))
+(define tc-macro-module-env-cache-len : i64
+  0)
 
 ;; Arena that owns the module-local env cache chain. The cache lives in
 ;; the GLOBAL above, but hygiene lookups fire deep inside per-decl typechecking
@@ -10213,11 +10259,9 @@
 
 (define (tc-macro-module-env-cache-clear!) : unit
   (begin
-    (set! tc-macro-module-env-cache-ready false)
     (set! tc-macro-module-env-cache-store 0)
     (set! tc-macro-module-env-cache-head -1)
-    (set! tc-macro-module-env-cache-module-id cbi.compiler-builtin-id-fix-empty)
-    (set! tc-macro-module-env-cache-value (tc-empty-type-env))))
+    (set! tc-macro-module-env-cache-len 0)))
 
 (define (tc-hygiene-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -23813,6 +23857,7 @@
         base
         (* (tc-local-cache-threshold) (+ (tc-local-cache-partial-layer-cap) 1)))]
     [deep : TcTypeEnv (struct-get bound env)]
+    [layered : TcTypeEnv (tc-env-with-cache-layer-over-explicit deep)]
     (and
       (tc-type-env-cache-head? deep)
       (tc-type-env-cache-partial-head? deep)
@@ -23830,6 +23875,21 @@
         [(ResultTcType.Ok (ast.AstType.I64)) true]
         [_ false])
       (match (tc-lookup-id deep (struct-get bound last-id))
+        [(ResultTcType.Ok (ast.AstType.I64)) true]
+        [_ false])
+      ;; Explicitly layering a module-sized prefix must flatten all partial
+      ;; windows without absorbing the global cache below them.
+      (match (tc-type-env-view layered)
+        [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
+        [_ false])
+      (tc-type-env-cache-partial-head? layered)
+      (match (tc-lookup-id layered global-id)
+        [(ResultTcType.Ok (ast.AstType.String)) true]
+        [_ false])
+      (match (tc-lookup-id layered (struct-get bound first-id))
+        [(ResultTcType.Ok (ast.AstType.I64)) true]
+        [_ false])
+      (match (tc-lookup-id layered (struct-get bound last-id))
         [(ResultTcType.Ok (ast.AstType.I64)) true]
         [_ false]))))
 
@@ -27181,13 +27241,20 @@
       [(ast.AstProgram.Program decls-box)
         (let
           [decls : ast.AstDeclList (box-get decls-box)]
-          (tc-module-local-env-list
+          (match (tc-module-local-env-list
             (tc-context-with-module-id ctx module module-id)
             decls
             top-env
             module
             module-id
-            ""))])))
+            "")
+            [(ResultTcEnv.Ok env)
+              ;; A module view is immutable once built. Publish its local
+              ;; bindings as one explicit cache layer so every function-local
+              ;; cache falls through to it instead of copying the complete
+              ;; module prefix again.
+              (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit env))]
+            [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))])))
 
 (define (tc-module-local-env-cache-lookup-at
   [cache : TcModuleLocalEnvCache]
@@ -79392,6 +79459,27 @@
       (ast.ast-decl-cons decl (ast.ast-decl-list-new))
       path)))
 
+(define (tc-macro-module-env-cache-lookup [module-id : i64] [index : i64]) : TcMaybeTypeEnv
+  (if (>= index tc-macro-module-env-cache-len)
+    (TcMaybeTypeEnv.No)
+    (if (= (array-ref tc-macro-module-env-cache-module-ids index) module-id)
+      (TcMaybeTypeEnv.Some (array-ref tc-macro-module-env-cache-values index))
+      (tc-macro-module-env-cache-lookup module-id (+ index 1)))))
+
+(define (tc-macro-module-env-cache-insert! [module-id : i64] [env : TcTypeEnv]) : unit
+  (if (< tc-macro-module-env-cache-len tc-macro-module-env-cache-capacity)
+    (begin
+      (array-set!
+        tc-macro-module-env-cache-module-ids
+        tc-macro-module-env-cache-len
+        module-id)
+      (array-set!
+        tc-macro-module-env-cache-values
+        tc-macro-module-env-cache-len
+        env)
+      (set! tc-macro-module-env-cache-len (+ tc-macro-module-env-cache-len 1)))
+    unit))
+
 (define (tc-macro-module-local-env-id
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -79400,25 +79488,28 @@
   (let
     [store-handle : i64 (struct-get top-env store)]
     [head : i64 (struct-get top-env head)]
-    (if (and
-      tc-macro-module-env-cache-ready
-      (= tc-macro-module-env-cache-store store-handle)
-      (= tc-macro-module-env-cache-head head)
-      (= tc-macro-module-env-cache-module-id module-id))
-      (ResultTcEnv.Ok tc-macro-module-env-cache-value)
-      ;; The persistent environment store allocates appended nodes in the top
-      ;; environment's owner arena. Do not switch the ambient macro-generation
-      ;; arena here: doing so breaks the generation's allocator bookkeeping.
-      (match (tc-module-local-env-id ctx top-env module module-id)
-        [(ResultTcEnv.Ok env)
-          (begin
-            (set! tc-macro-module-env-cache-ready true)
-            (set! tc-macro-module-env-cache-store store-handle)
-            (set! tc-macro-module-env-cache-head head)
-            (set! tc-macro-module-env-cache-module-id module-id)
-            (set! tc-macro-module-env-cache-value env)
-            (ResultTcEnv.Ok tc-macro-module-env-cache-value))]
-        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))))
+    (begin
+      (if (and
+        (= tc-macro-module-env-cache-store store-handle)
+        (= tc-macro-module-env-cache-head head))
+        unit
+        (begin
+          (set! tc-macro-module-env-cache-store store-handle)
+          (set! tc-macro-module-env-cache-head head)
+          (set! tc-macro-module-env-cache-len 0)))
+      (match (tc-macro-module-env-cache-lookup module-id 0)
+        [(TcMaybeTypeEnv.Some env) (ResultTcEnv.Ok env)]
+        [(TcMaybeTypeEnv.No)
+          ;; The persistent environment store allocates appended nodes in the
+          ;; top environment's owner arena. Do not switch the ambient
+          ;; macro-generation arena here: doing so breaks the generation's
+          ;; allocator bookkeeping.
+          (match (tc-module-local-env-id ctx top-env module module-id)
+            [(ResultTcEnv.Ok env)
+              (begin
+                (tc-macro-module-env-cache-insert! module-id env)
+                (ResultTcEnv.Ok env))]
+            [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))))
 
 (define (macro-env-for-module
   [ctx : TcContext]

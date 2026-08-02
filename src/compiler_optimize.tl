@@ -18233,6 +18233,22 @@
 (define (opt-licm-mode-vector? [mode : i64]) : bool
   (= mode 2))
 
+;; `descriptor-header-hoist?` licenses the descriptor-header exception to the
+;; return-shaped side-exit suppression (see opt-licm-apply-loop): it is true
+;; exactly when this is a late (post-BCE) run AND the loop body's raw store
+;; summary is header-load-safe -- no call with an unknown or memory-writing
+;; effect and no header-or-unknown store anywhere in the body (element-only
+;; stores through a descriptor's loaded data pointer remain, but those write
+;; element storage, which the memory model keeps disjoint from descriptor
+;; header words). Under that condition a `Load` whose address is a descriptor
+;; header slot -- the data-pointer slot or the length slot of a loop-invariant
+;; array/string handle -- reads the same value on every iteration, so moving
+;; it to the preheader is sound: nothing in the body can write the slot, and
+;; reading the header of a live descriptor is always safe (a dangling handle
+;; is already UB; the bce guard hoist and the unsuppressed loops already
+;; speculate header loads the same way). The exception is late-only for the
+;; established reason: before BCE, moving a descriptor length can hide the
+;; shared bound identity bounds-check elimination still needs.
 (define (opt-licm-candidate?
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
@@ -18246,6 +18262,7 @@
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
   [licm-mode : i64]
+  [descriptor-header-hoist? : bool]
   [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.Mov _ src _)
@@ -18328,19 +18345,32 @@
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources src)
         (opt-licm-value-invariant? loop-defs hoisted src)
-        (opt-licm-memory-safe?
-          store-summary
-          legacy-store-summary
-          store-roots
-          any-call?
-          (opt-licm-root-of-value roots src)
+        (or
+          (opt-licm-memory-safe?
+            store-summary
+            legacy-store-summary
+            store-roots
+            any-call?
+            (opt-licm-root-of-value roots src)
+            (and
+              (opt-licm-store-summary-header-load-safe? legacy-store-summary)
+              (opt-licm-header-slot-source?
+                type-segment-bases
+                types
+                ptrs
+                (opt-licm-mode-late? licm-mode)
+                src)))
+          ;; Descriptor-header exception: when the body provably cannot write
+          ;; a descriptor header (see the define-site comment), a header-slot
+          ;; load of a loop-invariant descriptor handle moves out even though
+          ;; the return-shaped side-exit poison closed the general path.
           (and
-            (opt-licm-store-summary-header-load-safe? legacy-store-summary)
+            descriptor-header-hoist?
             (opt-licm-header-slot-source?
               type-segment-bases
               types
               ptrs
-              (opt-licm-mode-late? licm-mode)
+              true
               src))))]
     [_ false]))
 
@@ -18365,6 +18395,7 @@
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
   [licm-mode : i64]
+  [descriptor-header-hoist? : bool]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult.Result
@@ -18387,6 +18418,7 @@
         store-roots
         any-call?
         licm-mode
+        descriptor-header-hoist?
         instr)
         (match (opt-licm-filter-instr-seq-from
           type-segment-bases
@@ -18402,6 +18434,7 @@
           store-roots
           any-call?
           licm-mode
+          descriptor-header-hoist?
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult.Result kept moved next-hoisted _)
             (OptLicmInstrsResult.Result
@@ -18423,6 +18456,7 @@
           store-roots
           any-call?
           licm-mode
+          descriptor-header-hoist?
           hoisted)
           [(OptLicmInstrsResult.Result kept moved next-hoisted changed)
             (OptLicmInstrsResult.Result
@@ -18444,6 +18478,7 @@
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
   [licm-mode : i64]
+  [descriptor-header-hoist? : bool]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     type-segment-bases
@@ -18459,6 +18494,7 @@
     store-roots
     any-call?
     licm-mode
+    descriptor-header-hoist?
     hoisted))
 
 (define (opt-licm-filter-body-blocks
@@ -18474,6 +18510,7 @@
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
   [licm-mode : i64]
+  [descriptor-header-hoist? : bool]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmBlocksResult
   (match blocks
     [(CompilerIrBlockList.Nil)
@@ -18498,6 +18535,7 @@
             store-roots
             any-call?
             licm-mode
+            descriptor-header-hoist?
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
@@ -18513,6 +18551,7 @@
                 store-roots
                 any-call?
                 licm-mode
+                descriptor-header-hoist?
                 next-hoisted)
                 [(OptLicmBlocksResult.Result
                     rest-blocks
@@ -18540,6 +18579,7 @@
         store-roots
         any-call?
         licm-mode
+        descriptor-header-hoist?
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -19060,6 +19100,22 @@
         ;; return-shaped (reaches Return through staging-only blocks; an
         ;; aborting runtime call also qualifies), by folding a header-store
         ;; poison into the summary. Pure BinOp/UnOp hoisting is unaffected.
+        ;; The poison is a profitability gate, not a soundness one, so one
+        ;; load class is excepted from it: descriptor header loads (the
+        ;; data-pointer or length slot of a loop-invariant array/string
+        ;; handle) still move out of a suppressed loop when the RAW body
+        ;; summary is header-load-safe -- no call that may write and no
+        ;; header-or-unknown store, element stores excepted because they
+        ;; cannot touch header words (see opt-licm-candidate?). Their
+        ;; descriptor-address Geps already ride the late-mode exemption, so
+        ;; the loaded value replaces the address's loop-spanning live range
+        ;; instead of adding a new one. The flag stays false pre-BCE (late?
+        ;; is false there): moving a descriptor length that early can hide
+        ;; the shared bound identity bounds-check elimination needs.
+        [descriptor-header-hoist? : bool
+          (and
+            late?
+            (opt-licm-store-summary-header-load-safe? raw-legacy-summary))]
         [store-summary : OptLicmStoreSummary
           (if (= side-exit-kind 1)
             (opt-licm-store-summary-merge
@@ -19094,6 +19150,7 @@
               2
               1)
             0)
+          descriptor-header-hoist?
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             (if changed

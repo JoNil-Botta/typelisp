@@ -23190,6 +23190,389 @@
         7]
       [else 42])))
 
+;; --- descriptor-header hoist past the return-shaped suppression ---------------
+;;
+;; The probe-shaped side-exit suppression (opt-licm-apply-loop) is a
+;; profitability gate: descriptor header loads (data-pointer and length slots
+;; of a loop-invariant array handle) are excepted from it in the late licm
+;; when the loop body cannot write a descriptor header. This shape mirrors
+;; opt-licm-multi-exit-test-blocks but with an array-typed parameter: a
+;; guarded counted loop whose body bounds-checks against the descriptor
+;; length, reads an element through the descriptor data pointer, and exits
+;; early through a RETURN-shaped side exit. Poison variants: 0 = clean body,
+;; 1 = unknown call in the latch, 2 = store through an unknown pointer,
+;; 3 = store through the loaded element pointer (an element-only store, which
+;; must NOT block the header hoist).
+(define (opt-licm-dh-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "array" (AstType.DynArray 0) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "key" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "limit" (AstType.I64) 2)
+        (CompilerIrParamList.Nil)))))
+
+(define (opt-licm-dh-header-block [variant-base? : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "header")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        3
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.I64 0)
+          (compiler-ir-label "entry")
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 10)
+            (compiler-ir-label "next")
+            (CompilerIrPhiInputList.Nil)))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        ;; In the variant-base shape the descriptor handle is re-merged inside
+        ;; the loop, so the data-slot address is no longer loop-invariant.
+        (if variant-base?
+          (CompilerIrInstr.Phi
+            16
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "entry")
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 0)
+                (compiler-ir-label "next")
+                (CompilerIrPhiInputList.Nil)))
+            (AstType.DynArray 0))
+          (CompilerIrInstr.Mov 16 (CompilerIrValue.I64 0) (AstType.I64)))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            5
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 2)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 5)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-licm-dh-body-block [variant-base? : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "body")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        6
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 7 (CompilerIrValue.Var 6) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 7)
+            (compiler-ir-label "licm_dh_ok"))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              8
+              (CompilerIrValue.Var
+                (if variant-base?
+                  16
+                  0))
+              (CompilerIrValue.I64 0)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 9 (CompilerIrValue.Var 8) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Gep
+                  12
+                  (CompilerIrValue.Var 9)
+                  (CompilerIrValue.Var 3)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Load
+                    13
+                    (CompilerIrValue.Var 12)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      14
+                      (CompilerIrBinOp.Eq)
+                      (CompilerIrValue.Var 13)
+                      (CompilerIrValue.Var 1)
+                      (AstType.Bool))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Branch
+                        (CompilerIrValue.Var 14)
+                        (compiler-ir-label "found")
+                        (compiler-ir-label "next"))
+                      (CompilerIrInstrList.Nil))))))))))))
+
+(define (opt-licm-dh-next-block [poison : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "next")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        10
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 3)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (cond
+          [(= poison 1)
+            (CompilerIrInstr.Call
+              15
+              (opt-test-symbol "licm_dh_callee")
+              (CompilerIrCallArgs.Nil)
+              (AstType.I64))]
+          [(= poison 2)
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 13)
+              (AstType.I64))]
+          [(= poison 3)
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 12)
+              (CompilerIrValue.Var 13)
+              (AstType.I64))]
+          [else (CompilerIrInstr.Mov 15 (CompilerIrValue.I64 0) (AstType.I64))])
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump (compiler-ir-label "header"))
+          (CompilerIrInstrList.Nil))))))
+
+(define (opt-licm-dh-test-blocks [poison : i64] [variant-base? : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump (compiler-ir-label "header"))
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (opt-licm-dh-header-block variant-base?)
+      (compiler-ir-block-cons
+        (opt-licm-dh-body-block variant-base?)
+        (compiler-ir-block-cons
+          (opt-licm-dh-next-block poison)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (compiler-ir-label "found")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 13)))
+                (CompilerIrInstrList.Nil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                (compiler-ir-label "exit")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+                  (CompilerIrInstrList.Nil)))
+              (CompilerIrBlockList.Nil))))))))
+
+(define (opt-licm-dh-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "licm_dh")
+    (opt-licm-dh-test-params)
+    (AstType.I64)
+    17
+    blocks))
+
+(define (opt-licm-dh-late-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (let
+    [func : CompilerIrFunction (opt-licm-dh-test-function blocks)]
+    (match (opt-licm-function-with-context-result-and-direct-call-clean
+      (ast-node-pool-reader-type-segment-bases)
+      (opt-cfg-context-build blocks)
+      false
+      (opt_i64_i64_map.with-capacity 1)
+      true
+      func)
+      [(OptFunctionCtxResult.Result next _) next])))
+
+(define (compiler-optimize-licm-dh-self-test) : i64
+  (let
+    [early : CompilerIrFunction
+      (opt-licm-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-licm-dh-test-function (opt-licm-dh-test-blocks 0 false)))]
+    [early-blocks : CompilerIrBlockList (opt-function-blocks early)]
+    [clean : CompilerIrFunction
+      (opt-licm-dh-late-optimized-function (opt-licm-dh-test-blocks 0 false))]
+    [clean-blocks : CompilerIrBlockList (opt-function-blocks clean)]
+    [called : CompilerIrFunction
+      (opt-licm-dh-late-optimized-function (opt-licm-dh-test-blocks 1 false))]
+    [called-blocks : CompilerIrBlockList (opt-function-blocks called)]
+    [stored : CompilerIrFunction
+      (opt-licm-dh-late-optimized-function (opt-licm-dh-test-blocks 2 false))]
+    [stored-blocks : CompilerIrBlockList (opt-function-blocks stored)]
+    [elem : CompilerIrFunction
+      (opt-licm-dh-late-optimized-function (opt-licm-dh-test-blocks 3 false))]
+    [elem-blocks : CompilerIrBlockList (opt-function-blocks elem)]
+    [varbase : CompilerIrFunction
+      (opt-licm-dh-late-optimized-function (opt-licm-dh-test-blocks 0 true))]
+    [varbase-blocks : CompilerIrBlockList (opt-function-blocks varbase)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function clean))) 1]
+      [(not (opt-verify-ok? (opt-verify-function elem))) 2]
+      [(not (opt-verify-ok? (opt-verify-function varbase))) 3]
+      ;; late licm, clean body: both descriptor header loads (length AND
+      ;; data-pointer) leave the return-shaped-exit loop; only the varying
+      ;; element load stays.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              clean-blocks
+              (compiler-ir-label "body"))
+            1))
+        4]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              clean-blocks
+              (compiler-ir-label "entry"))
+            2))
+        5]
+      ;; the PRE-BCE licm keeps the suppression: moving descriptor facts that
+      ;; early can hide the bound identity bce still needs.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              early-blocks
+              (compiler-ir-label "body"))
+            3))
+        6]
+      ;; an unknown call in the body blocks the exception.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              called-blocks
+              (compiler-ir-label "body"))
+            3))
+        7]
+      ;; a store through an unknown pointer (a header-or-unknown store) blocks
+      ;; the exception.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              stored-blocks
+              (compiler-ir-label "body"))
+            3))
+        8]
+      ;; an element-only store through the loaded data pointer does NOT block
+      ;; it: element storage is disjoint from descriptor header words.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              elem-blocks
+              (compiler-ir-label "body"))
+            1))
+        9]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              elem-blocks
+              (compiler-ir-label "entry"))
+            2))
+        10]
+      ;; a loop-variant descriptor base keeps its data-pointer load in the
+      ;; body (the invariant length load still hoists).
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              varbase-blocks
+              (compiler-ir-label "body"))
+            2))
+        11]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              varbase-blocks
+              (compiler-ir-label "entry"))
+            1))
+        12]
+      [else 42])))
+
+(test
+  licm-descriptor-header-hoist
+  (test.assert-i64-eq
+    (compiler-optimize-licm-dh-self-test)
+    42
+    "late licm hoists descriptor header loads from a header-write-free loop past the return-shaped suppression"))
+
+;; Runtime witnesses for the hoisted data-pointer semantics: reads through the
+;; descriptor must return the right values, and an element store in the loop
+;; must be observed by the element reads (only the header load moves; element
+;; loads stay in the body -- the IR-level poison-3 case stores through the
+;; loaded element pointer, an alias of the hoisted header's data pointer).
+(define (opt-licm-dh-runtime-sum [arr : (Array i64)] [n : i64] [stop : i64]) : i64
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    [acc : i64 0]
+    (begin
+      (while (and (< i n) ok)
+        (begin
+          (set! acc (+ acc (array-ref arr i)))
+          (if (= (array-ref arr i) stop)
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      acc)))
+
+;; Store at i, accumulate the mirror slot n-1-i: the middle iteration reads a
+;; slot stored by an earlier iteration, so the stores must be observed through
+;; whatever pointer the loads use.
+(define (opt-licm-dh-runtime-alias-store [arr : (Array i64)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    [acc : i64 0]
+    (begin
+      (while (and (< i n) ok)
+        (begin
+          (array-set! arr i (+ (array-ref arr i) 1))
+          (set! acc (+ acc (array-ref arr (- (- n 1) i))))
+          (if (< (array-ref arr (- (- n 1) i)) 0)
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      acc)))
+
+(test
+  licm-descriptor-header-runtime
+  (let
+    [arr : (Array i64) (array.make-array i64 8)]
+    [work : (Array i64) (array.make-array i64 5)]
+    (begin
+      (array-set! arr 0 3)
+      (array-set! arr 1 1)
+      (array-set! arr 2 4)
+      (array-set! arr 3 1)
+      (array-set! arr 4 5)
+      (array-set! arr 5 9)
+      (array-set! arr 6 2)
+      (array-set! arr 7 6)
+      (test.assert-i64-eq
+        (opt-licm-dh-runtime-sum arr 8 100)
+        31
+        "flag-exit loop over the descriptor data pointer sums every element")
+      (test.assert-i64-eq
+        (opt-licm-dh-runtime-sum arr 8 4)
+        8
+        "the early flag exit keeps the partial sum")
+      (array-set! work 1 1)
+      (array-set! work 2 2)
+      (array-set! work 3 3)
+      (array-set! work 4 4)
+      (test.assert-i64-eq
+        (opt-licm-dh-runtime-alias-store work 5)
+        13
+        "element reads observe the loop's earlier element stores")
+      (test.assert-i64-eq
+        (array-ref work 3)
+        4
+        "each element store landed exactly once"))))
+
 ;; --- affine chain folding self-test -------------------------------------------
 ;; Emulates the x4 unroller's output: an LCG chain `((x*5+3)*5+3)*5+3` must
 ;; collapse so the last pair reads `x*125` and `+93`, and a counter chain

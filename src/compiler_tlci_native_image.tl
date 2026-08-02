@@ -11,8 +11,8 @@
 ;; seal. Extern Call/TailCall sites are rejected: host access goes through
 ;; extern *values* (GOT loads), never direct extern calls.
 (import compiler_object as cobj)
-(import "compiler_object_elf.tl")
-(import "tlci_core.tl")
+(import compiler_object_elf)
+(import tlci_core)
 (import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.hashmap)
@@ -40,7 +40,7 @@
   1024)
 
 (define (compiler-tlci-native-align [offset : i64] [align : i64]) : i64
-  (compiler-object-elf-align-offset offset align))
+  (compiler_object_elf.compiler-object-elf-align-offset offset align))
 
 (define (compiler-tlci-native-section-instrs
   [image : cobj.CompilerObjectImage]
@@ -107,7 +107,9 @@
             [_ unit])
           (set!
             offset
-            (compiler-object-elf-data-record-end-offset record offset))
+            (compiler_object_elf.compiler-object-elf-data-record-end-offset
+              record
+              offset))
           (set! index (+ index 1)))))))
 
 (define (compiler-tlci-native-build-symbol-index
@@ -143,7 +145,11 @@
                     offset)
                   unit)]
               [_ unit])
-            (set! offset (+ offset (compiler-object-elf-instr-size instr)))
+            (set!
+              offset
+              (+
+                offset
+                (compiler_object_elf.compiler-object-elf-instr-size instr)))
             (set! instr-index (+ instr-index 1)))))
       (compiler-tlci-native-index-data-labels!
         (&mut offsets)
@@ -587,7 +593,11 @@
                     (+ offset 4)
                     target))]
               [_ unit])
-            (set! offset (+ offset (compiler-object-elf-instr-size instr)))
+            (set!
+              offset
+              (+
+                offset
+                (compiler_object_elf.compiler-object-elf-instr-size instr)))
             (set! index (+ index 1)))))
       ok)))
 
@@ -656,7 +666,9 @@
               [_ unit])
             (set!
               offset
-              (compiler-object-elf-data-record-end-offset record offset))
+              (compiler_object_elf.compiler-object-elf-data-record-end-offset
+                record
+                offset))
             (set! index (+ index 1)))))
       ok)))
 
@@ -670,21 +682,26 @@
       (compiler-tlci-native-section-instrs
         image
         (cobj.CompilerObjectSectionKind.Text))]
-    [text-size : i64 (compiler-object-elf-instrs-size text-instrs)]
+    [text-size : i64
+      (compiler_object_elf.compiler-object-elf-instrs-size text-instrs)]
     [rodata-records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data
         image
         (cobj.CompilerObjectSectionKind.Rodata))]
     [rodata-base : i64 (compiler-tlci-native-align text-size 16)]
     [rodata-size : i64
-      (compiler-object-elf-data-records-size-from rodata-records rodata-base)]
+      (compiler_object_elf.compiler-object-elf-data-records-size-from
+        rodata-records
+        rodata-base)]
     [data-records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data
         image
         (cobj.CompilerObjectSectionKind.Data))]
     [data-base : i64 (compiler-tlci-native-align rodata-size 16)]
     [data-size : i64
-      (compiler-object-elf-data-records-size-from data-records data-base)]
+      (compiler_object_elf.compiler-object-elf-data-records-size-from
+        data-records
+        data-base)]
     [got-base : i64 (compiler-tlci-native-align data-size 8)]
     [got-size : i64 (* compiler-tlci-native-import-cap 8)]
     [bss-records : cobj.CompilerObjectDataRecordList
@@ -694,7 +711,9 @@
     [bss-base : i64 (compiler-tlci-native-align (+ got-base got-size) 16)]
     [bss-size : i64
       (-
-        (compiler-object-elf-data-records-size-from bss-records bss-base)
+        (compiler_object_elf.compiler-object-elf-data-records-size-from
+          bss-records
+          bss-base)
         bss-base)]
     [bases : CompilerTlciNativeBases
       (CompilerTlciNativeBases 0 rodata-base data-base got-base bss-base)]
@@ -712,18 +731,26 @@
     [builder : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity bss-base)]
     (begin
-      (compiler-object-elf-render-instrs! (&mut builder) text-instrs)
-      (compiler-object-elf-render-padding-to! (&mut builder) rodata-base)
-      (compiler-object-elf-render-data-records!
+      (compiler_object_elf.compiler-object-elf-render-instrs!
+        (&mut builder)
+        text-instrs)
+      (compiler_object_elf.compiler-object-elf-render-padding-to!
+        (&mut builder)
+        rodata-base)
+      (compiler_object_elf.compiler-object-elf-render-data-records!
         (&mut builder)
         rodata-records
         rodata-base)
-      (compiler-object-elf-render-padding-to! (&mut builder) data-base)
-      (compiler-object-elf-render-data-records!
+      (compiler_object_elf.compiler-object-elf-render-padding-to!
+        (&mut builder)
+        data-base)
+      (compiler_object_elf.compiler-object-elf-render-data-records!
         (&mut builder)
         data-records
         data-base)
-      (compiler-object-elf-render-padding-to! (&mut builder) bss-base)
+      (compiler_object_elf.compiler-object-elf-render-padding-to!
+        (&mut builder)
+        bss-base)
       (let
         [bytes : (__tl_dyn-array u8)
           (byte_buf_core.byte-buf-builder-to-array (& builder))]
@@ -812,15 +839,15 @@
   [identities : (__tl_dyn-array String)]
   [entry-offsets : (__tl_dyn-array i64)]
   [macro-count : i64]) : ResultCompilerTlciNativeBytes
-  (match (tlci-metadata-parse metadata-text)
-    [(ResultTlciMetadata.Err message)
+  (match (tlci_core.tlci-metadata-parse metadata-text)
+    [(tlci_core.ResultTlciMetadata.Err message)
       (ResultCompilerTlciNativeBytes.Err
         (string.append "package metadata rejected: " message))]
-    [(ResultTlciMetadata.Ok metadata)
-      (match (tlci-emit-native-package-image
+    [(tlci_core.ResultTlciMetadata.Ok metadata)
+      (match (tlci_core.tlci-emit-native-package-image
         metadata
         build-hash
-        (TlciNativePackageInput
+        (tlci_core.TlciNativePackageInput
           rodata
           code
           imports
@@ -829,14 +856,15 @@
           identities
           entry-offsets
           macro-count))
-        [(ResultTlciBytes.Err message)
+        [(tlci_core.ResultTlciBytes.Err message)
           (ResultCompilerTlciNativeBytes.Err message)]
-        [(ResultTlciBytes.Ok bytes) (ResultCompilerTlciNativeBytes.Ok bytes)])]))
+        [(tlci_core.ResultTlciBytes.Ok bytes)
+          (ResultCompilerTlciNativeBytes.Ok bytes)])]))
 
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64
-  (compiler-object-elf-instr-label-offset-from
+  (compiler_object_elf.compiler-object-elf-instr-label-offset-from
     (compiler-tlci-native-section-instrs
       image
       (cobj.CompilerObjectSectionKind.Text))
@@ -850,14 +878,14 @@
   (let
     [count : i64 (struct-get layout fixup-count)]
     [out : (__tl_dyn-array u8)
-      (array.make-array u8 (* count tlci-section-fixup-record-size))]
+      (array.make-array u8 (* count tlci_core.tlci-section-fixup-record-size))]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (tlci-set-u64!
+          (tlci_core.tlci-set-u64!
             out
-            (* index tlci-section-fixup-record-size)
+            (* index tlci_core.tlci-section-fixup-record-size)
             (array-ref (struct-get layout fixup-offsets) index))
           (set! index (+ index 1))))
       out)))
@@ -948,30 +976,30 @@
           (let
             [records-end : i64
               (+
-                tlci-section-import-header-size
-                (* count tlci-section-import-record-size))]
+                tlci_core.tlci-section-import-header-size
+                (* count tlci_core.tlci-section-import-record-size))]
             [out : (__tl_dyn-array u8)
               (array.make-array u8 (+ records-end names-len))]
             [name-offset : i64 records-end]
             (begin
-              (tlci-set-u64! out 0 count)
+              (tlci_core.tlci-set-u64! out 0 count)
               (set! index 0)
               (while (< index count)
                 (let
                   [record : i64
                     (+
-                      tlci-section-import-header-size
-                      (* index tlci-section-import-record-size))]
+                      tlci_core.tlci-section-import-header-size
+                      (* index tlci_core.tlci-section-import-record-size))]
                   [name : String (array-ref names index)]
                   [name-len : i64 (string.string-length name)]
                   (begin
-                    (tlci-set-u64!
+                    (tlci_core.tlci-set-u64!
                       out
                       record
                       (array-ref (struct-get layout import-offsets) index))
-                    (tlci-set-u64! out (+ record 8) name-offset)
-                    (tlci-set-u64! out (+ record 16) name-len)
-                    (tlci-put-string! out name-offset name)
+                    (tlci_core.tlci-set-u64! out (+ record 8) name-offset)
+                    (tlci_core.tlci-set-u64! out (+ record 16) name-len)
+                    (tlci_core.tlci-put-string! out name-offset name)
                     (set! name-offset (+ name-offset name-len))
                     (set! index (+ index 1)))))
               (ResultCompilerTlciNativeImports.Ok out))))
@@ -1026,7 +1054,8 @@
       [text5 : cobj.CompilerObjectX64InstrBuilder
         (cobj.compiler-object-instr-builder-push
           text4
-          (cobj.CompilerObjectX64Instr.Raw (compiler-object-elf-ret-bytes)))]
+          (cobj.CompilerObjectX64Instr.Raw
+            (compiler_object_elf.compiler-object-elf-ret-bytes)))]
       [rodata0 : cobj.CompilerObjectDataRecordBuilder
         (cobj.compiler-object-data-record-builder-with-capacity 2)]
       [rodata1 : cobj.CompilerObjectDataRecordBuilder
@@ -1182,8 +1211,8 @@
             [fixups : (__tl_dyn-array u8)
               (compiler-tlci-native-emit-fixups (& layout))]
             (and
-              (= (array-length fixups) tlci-section-fixup-record-size)
-              (= (tlci-read-u64 fixups 0) 32)
+              (= (array-length fixups) tlci_core.tlci-section-fixup-record-size)
+              (= (tlci_core.tlci-read-u64 fixups 0) 32)
               (match (compiler-tlci-native-emit-imports (& layout))
                 [(ResultCompilerTlciNativeImports.Err _) false]
                 [(ResultCompilerTlciNativeImports.Ok imports)
@@ -1191,21 +1220,23 @@
                     (=
                       (array-length imports)
                       (+
-                        tlci-section-import-header-size
-                        (+ tlci-section-import-record-size 10)))
-                    (= (tlci-read-u64 imports 0) 1)
+                        tlci_core.tlci-section-import-header-size
+                        (+ tlci_core.tlci-section-import-record-size 10)))
+                    (= (tlci_core.tlci-read-u64 imports 0) 1)
                     (=
-                      (tlci-read-u64 imports tlci-section-import-header-size)
+                      (tlci_core.tlci-read-u64
+                        imports
+                        tlci_core.tlci-section-import-header-size)
                       40)
                     (string.eq
-                      (tlci-bytes->string
+                      (tlci_core.tlci-bytes->string
                         imports
-                        (tlci-read-u64
+                        (tlci_core.tlci-read-u64
                           imports
-                          (+ tlci-section-import-header-size 8))
-                        (tlci-read-u64
+                          (+ tlci_core.tlci-section-import-header-size 8))
+                        (tlci_core.tlci-read-u64
                           imports
-                          (+ tlci-section-import-header-size 16)))
+                          (+ tlci_core.tlci-section-import-header-size 16)))
                       "fuel-check"))])
               (match (compiler-tlci-native-layout-image
                 (compiler-tlci-native-test-image "host-a" false false))

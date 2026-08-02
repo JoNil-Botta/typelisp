@@ -4,58 +4,64 @@
 ;; optimizer, emits assembly, and requires exactly one OOB trap reference. The
 ;; backend no longer owns the `tl_oob_abort` body; executable driver paths link
 ;; it from the runtime prelude.
-(import "../compiler_backend.tl")
-(import "../compiler_optimize.tl")
+(import compiler_backend)
+(import compiler_optimize)
+(import compiler_ir_types as ir)
+(import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 
-(define (bounds-check-smoke-program) : CompilerIrProgram
-  (CompilerIrProgram.Program
-    CompilerIrGlobalList.Nil
-    (compiler-ir-function-cons
-      (CompilerIrFunction.Function
-        (compiler-ir-label "main")
-        (compiler-ir-param-cons
-          (CompilerIrParam.Param "index" (AstType.I64) 0)
-          (compiler-ir-param-cons
-            (CompilerIrParam.Param "length" (AstType.I64) 1)
-            CompilerIrParamList.Nil))
-        (AstType.I64)
+(define (bounds-check-smoke-program) : ir.CompilerIrProgram
+  (ir.CompilerIrProgram.Program
+    ir.CompilerIrGlobalList.Nil
+    (ir.compiler-ir-function-cons
+      (ir.CompilerIrFunction.Function
+        (ir.compiler-ir-label "main")
+        (ir.compiler-ir-param-cons
+          (ir.CompilerIrParam.Param "index" (ast.AstType.I64) 0)
+          (ir.compiler-ir-param-cons
+            (ir.CompilerIrParam.Param "length" (ast.AstType.I64) 1)
+            ir.CompilerIrParamList.Nil))
+        (ast.AstType.I64)
         4
-        (compiler-ir-block-cons
-          (compiler-ir-block
-            (compiler-ir-label "entry")
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.BoundsCheck
-                (CompilerIrValue.Var 0)
-                (CompilerIrValue.Var 1)
-                (compiler-ir-label "bounds_ok.0"))
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.BoundsCheck
-                  (CompilerIrValue.Var 0)
-                  (CompilerIrValue.Var 1)
-                  (compiler-ir-label "bounds_ok.1"))
-                (compiler-ir-instr-cons
-                  (CompilerIrInstr.Return
-                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
-                  (CompilerIrInstrList.Nil)))))
-          (CompilerIrBlockList.Nil)))
-      (CompilerIrFunctionList.Nil))
-    CompilerIrExternList.Nil))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "entry")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BoundsCheck
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.Var 1)
+                (ir.compiler-ir-label "bounds_ok.0"))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BoundsCheck
+                  (ir.CompilerIrValue.Var 0)
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.compiler-ir-label "bounds_ok.1"))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42)))
+                  (ir.CompilerIrInstrList.Nil)))))
+          (ir.CompilerIrBlockList.Nil)))
+      (ir.CompilerIrFunctionList.Nil))
+    ir.CompilerIrExternList.Nil))
 
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (match (compiler-backend-emit-program-linux
-      (optimize-program-with-level (bounds-check-smoke-program) 2))
-      [(ResultCompilerBackend.Ok asm)
+    (match (compiler_backend.compiler-backend-emit-program-linux
+      (compiler_optimize.optimize-program-with-level
+        (bounds-check-smoke-program)
+        2))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
         (let
           [symbol-count : i64
-            (compiler-backend-string-count asm "tl_oob_abort")]
+            (compiler_backend.compiler-backend-string-count asm "tl_oob_abort")]
           [defines-abort : bool
-            (compiler-backend-string-contains? asm "tl_oob_abort:\n")]
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "tl_oob_abort:\n")]
           (if (not (= symbol-count 1))
             1
             (if defines-abort
               2
               42)))]
-      [(ResultCompilerBackend.Err _) 2])))
+      [(compiler_backend.ResultCompilerBackend.Err _) 2])))

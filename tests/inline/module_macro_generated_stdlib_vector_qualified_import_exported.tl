@@ -3,9 +3,8 @@
 ;; provider-qualified generated body imports of `(vector.vector T)`.
 (import stdlib.test)
 
-;; Retained for #2454 path-import compatibility: the provider module name does
-;; not map to this same-directory helper path.
-(import "module_macro_stdlib_vector_qualified_provider.tl" module tests.module_macro_stdlib_vector_qualified_provider as provider)
+;; The explicit alias keeps the generated provider surface concise.
+(import module_macro_stdlib_vector_qualified_provider as provider)
 
 (defstruct Pair
   (value i64))

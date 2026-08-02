@@ -1,4 +1,4 @@
-(import "../src/compiler_surface_ast.tl")
+(import compiler_surface_ast)
 
 (define (main) : i64
-  (surface-ast-selftest-main))
+  (compiler_surface_ast.surface-ast-selftest-main))

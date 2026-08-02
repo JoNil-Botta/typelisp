@@ -1,7 +1,7 @@
 ;; compiler_spmd_call_lower_scalar_smoke.tl - Scalar private SPMD-call lowering.
-(import "../compiler_lower_tests.tl")
+(import compiler_lower_tests)
 
 (define (main) : i64
-  (if (compiler-lower-spmd-scalar-call-shape-ok?)
+  (if (compiler_lower_tests.compiler-lower-spmd-scalar-call-shape-ok?)
     42
     1))

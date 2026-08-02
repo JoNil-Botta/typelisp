@@ -285,8 +285,8 @@ EOF
     (math "vendor/math")))
 EOF
     cat > "$_pkg/src/main.tl" <<'EOF'
-(import "pkg:math/src/lib.tl")
-(define (main) : i64 (add 40 2))
+(import math.src.lib as math)
+(define (main) : i64 (math.add 40 2))
 EOF
     cat > "$_dep/typelisp.pkg" <<'EOF'
 (package
@@ -514,7 +514,7 @@ verify_compiler_driver_import() {
 (define shared : i64 2)
 EOF
     cat > "$_helper" <<'EOF'
-(import "shared.tl")
+(import shared)
 ;; Self-recursive, so no inliner admits it: the gate's snippet assertions
 ;; below prove the cross-file call materializes, which requires helper to
 ;; stay an out-of-line function at every opt level.
@@ -522,12 +522,12 @@ EOF
   (if (> rounds 1)
     (+ value (helper-opaque value (- rounds 1)))
     value))
-(define (helper) : i64 (helper-opaque (+ 38 shared) 1))
+(define (helper) : i64 (helper-opaque (+ 38 shared.shared) 1))
 EOF
     cat > "$_src" <<'EOF'
-(import "helper.tl")
-(import "shared.tl")
-(define (main) : i64 (+ (helper) shared))
+(import helper)
+(import shared)
+(define (main) : i64 (+ (helper.helper) shared.shared))
 EOF
 
     echo "[selfhost-native] compiler_driver deterministic multi-file import"
@@ -536,10 +536,10 @@ EOF
     assert_file_exact "$_again" "$_asm" compiler-driver-import-deterministic
     assert_file_exact "$_asm" "$ROOT/tests/golden/selfhost_compiler_driver_import.s" compiler-driver-import-golden
     for _snippet in \
-        "_tl_shared_shared:" \
-        "_tl_helper_helper:" \
-        "call _tl_helper_helper" \
-        "_tl_shared_shared(%rip)" \
+        "_tl_shared_shared_shared:" \
+        "_tl_helper_helper_helper:" \
+        "call _tl_helper_helper_helper" \
+        "_tl_shared_shared_shared(%rip)" \
         "_tl_start:"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-import
@@ -565,15 +565,18 @@ verify_compiler_driver_pkg_import() {
     (math "vendor/math")))
 EOF
     cat > "$_pkg/vendor/math/src/lib.tl" <<'EOF'
-(define (add-one [x : i64]) : i64 (+ x 1))
+(define (add-one-opaque [x : i64] [rounds : i64]) : i64
+  (if (> rounds 1)
+    (add-one-opaque (+ x 1) (- rounds 1))
+    (+ x 1)))
+(define (add-one [x : i64]) : i64 (add-one-opaque x 1))
 EOF
     cat > "$_pkg/vendor/math/src/dup.tl" <<'EOF'
 (define (dup) : i64 1)
 EOF
     cat > "$_pkg/src/main.tl" <<'EOF'
-(import "pkg:math/src/lib.tl")
-(import "../vendor/math/src/lib.tl")
-(define (main) : i64 (add-one 41))
+(import math.src.lib)
+(define (main) : i64 (lib.add-one 41))
 EOF
 
     echo "[selfhost-native] compiler_driver pkg import graph"
@@ -587,7 +590,7 @@ EOF
     assemble_link_run_asm compiler-driver-pkg-import "$_asm" 42 - - 1
 
     cat > "$_pkg/bad/missing-alias.tl" <<'EOF'
-(import "pkg:nope/src/lib.tl")
+(import nope.src.lib)
 (define (main) : i64 0)
 EOF
     run_compiler_driver_expect_error \
@@ -595,10 +598,14 @@ EOF
         compiler-driver-pkg-missing-alias \
         "$_pkg/bad/missing-alias.tl" \
         "$_dir/missing-alias.s" \
-        "compiler-load: unknown package alias 'nope': pkg:nope/src/lib.tl"
+        "compiler-load: cannot read import"
+    assert_contains \
+        "$WORKDIR/compiler-driver-pkg-missing-alias.driver.stderr" \
+        "bad/nope/src/lib.tl" \
+        compiler-driver-pkg-missing-alias
 
     cat > "$_pkg/bad/missing-dep.tl" <<'EOF'
-(import "pkg:math/src/missing.tl")
+(import math.src.missing)
 (define (main) : i64 0)
 EOF
     run_compiler_driver_expect_error \
@@ -612,19 +619,8 @@ EOF
         "vendor/math/src/missing.tl" \
         compiler-driver-pkg-missing-dep
 
-    cat > "$_pkg/bad/escape.tl" <<'EOF'
-(import "pkg:math/../escape.tl")
-(define (main) : i64 0)
-EOF
-    run_compiler_driver_expect_error \
-        "$_driver" \
-        compiler-driver-pkg-parent-escape \
-        "$_pkg/bad/escape.tl" \
-        "$_dir/escape.s" \
-        "compiler-load: pkg import escapes package root: pkg:math/../escape.tl"
-
     cat > "$_pkg/bad/duplicate.tl" <<'EOF'
-(import "pkg:math/src/dup.tl")
+(import math.src.dup)
 (define (dup) : i64 2)
 (define (dup) : i64 3)
 (define (main) : i64 (dup))

@@ -12,13 +12,13 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import stdlib.string)
-(import "compiler_diagnostic.tl")
-(import "compiler_load.tl")
+(import compiler_diagnostic)
+(import compiler_load)
 
 (defstruct PackageSourceSet
   (manifest-path String)
   (manifest-dir String)
-  (manifest CompilerPkgManifest)
+  (manifest compiler_load.CompilerPkgManifest)
   (sources svec.Vec))
 
 (defenum ResultPackageSourceSet
@@ -109,34 +109,36 @@
 
 (define (package-source-manifest-dir [manifest-path : String]) : String
   (let
-    [dir : String (compiler-load-dirname manifest-path)]
+    [dir : String (compiler_load.compiler-load-dirname manifest-path)]
     (if (= (string.string-length dir) 0)
       "."
       dir)))
 
-(define (package-source-discover-manifest-up [prefix : String] [fuel : i64]) : CompilerLoadMaybePath
+(define (package-source-discover-manifest-up [prefix : String] [fuel : i64]) : compiler_load.CompilerLoadMaybePath
   (if (<= fuel 0)
-    (CompilerLoadNoPath)
+    (compiler_load.CompilerLoadNoPath)
     (let
       [candidate : String (string.append prefix "typelisp.pkg")]
       (if (io.file-exists? candidate)
-        (CompilerLoadSomePath candidate)
+        (compiler_load.CompilerLoadSomePath candidate)
         (package-source-discover-manifest-up
           (string.append prefix "../")
           (- fuel 1))))))
 
 (define (package-source-load-manifest [path : String]) : ResultPackageSourceSet
   (if (io.file-exists? path)
-    (match (compiler-load-parse-manifest-diagnostic-infer-kind
+    (match (compiler_load.compiler-load-parse-manifest-diagnostic-infer-kind
       path
       (byte_buf.to-string (io.read-file path)))
-      [(ResultCompilerPkgManifestDiagnostic.Err diag)
+      [(compiler_load.ResultCompilerPkgManifestDiagnostic.Err diag)
         (ResultPackageSourceSet.Err
           (string.concat3
             "invalid package manifest '"
-            (compiler-diagnostic-path (box-get diag))
-            (string.append "': " (compiler-diagnostic-message (box-get diag)))))]
-      [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
+            (compiler_diagnostic.compiler-diagnostic-path (box-get diag))
+            (string.append
+              "': "
+              (compiler_diagnostic.compiler-diagnostic-message (box-get diag)))))]
+      [(compiler_load.ResultCompilerPkgManifestDiagnostic.Ok manifest)
         (ResultPackageSourceSet.Ok
           (PackageSourceSet
             path
@@ -151,27 +153,28 @@
   [manifest-path : String]
   [has-manifest : bool]) : ResultPackageSourceSet
   (let
-    [resolved : CompilerLoadMaybePath
+    [resolved : compiler_load.CompilerLoadMaybePath
       (if has-manifest
-        (CompilerLoadSomePath manifest-path)
+        (compiler_load.CompilerLoadSomePath manifest-path)
         (package-source-discover-manifest-up "" 256))]
     (match resolved
-      [(CompilerLoadNoPath)
+      [(compiler_load.CompilerLoadNoPath)
         (ResultPackageSourceSet.Err
           (string.append
             command
             ": could not find typelisp.pkg from '.' or any parent directory"))]
-      [(CompilerLoadSomePath path) (package-source-load-manifest path)])))
+      [(compiler_load.CompilerLoadSomePath path)
+        (package-source-load-manifest path)])))
 
 (define (package-source-relative-join [prefix : String] [name : String]) : String
   (if (= (string.string-length prefix) 0)
     name
-    (compiler-load-join-root-path prefix name)))
+    (compiler_load.compiler-load-join-root-path prefix name)))
 
 (define (package-source-root-join [root : String] [relative : String]) : String
   (if (= (string.string-length relative) 0)
     root
-    (compiler-load-join-root-path root relative)))
+    (compiler_load.compiler-load-join-root-path root relative)))
 
 (define (package-source-internal-dir? [name : String]) : bool
   (or
@@ -283,7 +286,8 @@
     (io.panic "package-source: entry sort self-test mismatch")))
 
 (define (package-source-dir-has-manifest? [dir : String]) : bool
-  (io.file-exists? (compiler-load-join-root-path dir "typelisp.pkg")))
+  (io.file-exists?
+    (compiler_load.compiler-load-join-root-path dir "typelisp.pkg")))
 
 (define (package-source-tl-file? [path : String]) : bool
   (string.eq (fs.extension (& path)) "tl"))
@@ -313,9 +317,10 @@
 
 (define (package-source-entry-list [source-set : PackageSourceSet]) : svec.Vec
   (let
-    [manifest : CompilerPkgManifest (struct-get source-set manifest)]
+    [manifest : compiler_load.CompilerPkgManifest
+      (struct-get source-set manifest)]
     [entry : String
-      (compiler-load-normalize-path
+      (compiler_load.compiler-load-normalize-path
         (package-source-root-join
           (struct-get source-set manifest-dir)
           (struct-get manifest entry)))]
@@ -406,7 +411,7 @@
               (ResultPackageSourceList.Ok
                 (package-source-vec-insert
                   acc
-                  (compiler-load-normalize-path child-path)))
+                  (compiler_load.compiler-load-normalize-path child-path)))
               (ResultPackageSourceList.Ok acc)))]))))
 
 (define (package-source-scan-entries-from
@@ -450,7 +455,7 @@
 ;; deterministic traversal, exclusion, regular-file, and nested-package rules.
 (define (package-source-discover-root-for [command : String] [root : String]) : ResultPackageSourceList
   (let
-    [normalized-root : String (compiler-load-normalize-path root)]
+    [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     (match (fs.try-read-dir (& normalized-root))
       [(fs.ErrIoStringVector error)
         (package-source-read-dir-error command normalized-root error)]
@@ -524,10 +529,12 @@
   [root : String]
   [path : String]) : bool
   (let
-    [normalized-root : String (compiler-load-normalize-path root)]
-    [normalized-path : String (compiler-load-normalize-path path)]
+    [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
+    [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     [relative : String
-      (compiler-load-root-relative-path normalized-root normalized-path)]
+      (compiler_load.compiler-load-root-relative-path
+        normalized-root
+        normalized-path)]
     (and
       (not (string.eq relative normalized-path))
       (fs.path-safe-relative? (& relative))
@@ -538,7 +545,7 @@
 ;; The path must additionally be a current regular file.
 (define (package-source-path-eligible-for-root? [root : String] [path : String]) : bool
   (let
-    [normalized-path : String (compiler-load-normalize-path path)]
+    [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     (and
       (package-source-path-location-eligible-for-root? root normalized-path)
       (match (fs.try-file-kind-no-follow (& normalized-path))

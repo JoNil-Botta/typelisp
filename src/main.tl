@@ -22,25 +22,19 @@
   (import compiler_startup_profile as startup_profile))
 (import stdlib.io)
 (import compiler_build_identity as build_identity)
-
-;; Keep legacy root aliases for reader enum variants while stage0 expands the
-;; build-version cfg declarations below. Dotted imports in the CLI cores share
-;; the same `read` module; importing it unqualified here preserves both views.
-;; lint-allow: unused-import -- the import's legacy alias side effect is required.
-(import read)
-(import "build_cli_core.tl")
-(import "run_cli_core.tl")
-(import "check_cli_core.tl")
-(import "format_cli_core.tl")
-(import "lint_driver_core.tl")
-(import "test_cli_core.tl")
-(import "doc_cli_core.tl")
-(import "compile_cli_core.tl")
-(import "clean_cli_core.tl")
-(import "inspect_cli_core.tl")
-(import "repl_cli_core.tl")
-(import "scaffold_cli_core.tl")
-(import "lsp_frame_core.tl")
+(import build_cli_core)
+(import run_cli_core)
+(import check_cli_core)
+(import format_cli_core)
+(import lint_driver_core)
+(import test_cli_core)
+(import doc_cli_core)
+(import compile_cli_core)
+(import clean_cli_core)
+(import inspect_cli_core)
+(import repl_cli_core)
+(import scaffold_cli_core)
+(import lsp_frame_core)
 (import stdlib.string)
 
 (cfg
@@ -53,7 +47,7 @@
     "unknown"))
 
 (define (cli-argc) : i64
-  (arg-count))
+  (io.arg-count))
 
 (define (cli-arg [index : i64]) : String
   (io.arg index))
@@ -208,7 +202,7 @@ Options:
 
 (define (cli-lint-help-text) : String
   "Usage:
-    typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--legacy-path-import] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
+    typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
     Lint source files or every source in a package.
@@ -220,7 +214,6 @@ Options:
     --redundant-function-name      Enable staged redundant module-prefix lint
     --prefer-dotted-field          Enable staged simple struct-get dotted field lint
     --name-case                    Enable staged declaration/binder casing lints
-    --legacy-path-import           Enable staged string-path import migration lint
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a compile-time cfg predicate name
@@ -299,7 +292,7 @@ Options:
 ")
 
 (define (cli-inspect-help-text) : String
-  (tlci-inspect-help-text))
+  (inspect_cli_core.tlci-inspect-help-text))
 
 (define (cli-repl-help-text) : String
   "Usage:
@@ -397,59 +390,65 @@ Options:
     [(cli-eq? command "build")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-build-help-text) 0)
-        (build-run-from 2 count build_identity.compiler-build-git-hash))]
+        (build_cli_core.build-run-from
+          2
+          count
+          build_identity.compiler-build-git-hash))]
     [(cli-eq? command "clean")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-clean-help-text) 0)
-        (clean-run-from 2 count))]
+        (clean_cli_core.clean-run-from 2 count))]
     [(cli-eq? command "run")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-run-help-text) 0)
-        (run-run-from 2 count build_identity.compiler-build-git-hash))]
+        (run_cli_core.run-run-from
+          2
+          count
+          build_identity.compiler-build-git-hash))]
     [(cli-eq? command "check")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-check-help-text) 0)
-        (selfhost-check-run-from 2 count))]
+        (check_cli_core.selfhost-check-run-from 2 count))]
     [(cli-eq? command "fmt")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-fmt-help-text) 0)
-        (fmt-run-from 2 count))]
+        (format_cli_core.fmt-run-from 2 count))]
     [(cli-eq? command "lint")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-lint-help-text) 0)
-        (selfhost-lint-run-from 2 count))]
+        (lint_driver_core.selfhost-lint-run-from 2 count))]
     [(cli-eq? command "test")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-test-help-text) 0)
-        (tltest-run-from 2 count))]
+        (test_cli_core.tltest-run-from 2 count))]
     [(cli-eq? command "doc")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-doc-help-text) 0)
-        (doc-run-from 2 count))]
+        (doc_cli_core.doc-run-from 2 count))]
     [(cli-eq? command "compile")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-compile-help-text) 0)
-        (compile-cli-run count))]
+        (compile_cli_core.compile-cli-run count))]
     [(cli-eq? command "inspect")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-inspect-help-text) 0)
-        (tlci-inspect-run-from 2 count))]
+        (inspect_cli_core.tlci-inspect-run-from 2 count))]
     [(cli-eq? command "lsp")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-lsp-help-text) 0)
-        (lsp-frame-run-from 2 count))]
+        (lsp_frame_core.lsp-frame-run-from 2 count))]
     [(cli-eq? command "repl")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-repl-help-text) 0)
-        (repl-run-from 2 count))]
+        (repl_cli_core.repl-run-from 2 count))]
     [(cli-eq? command "new")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-new-help-text) 0)
-        (scaffold-new-run-from 2 count))]
+        (scaffold_cli_core.scaffold-new-run-from 2 count))]
     [(cli-eq? command "init")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-init-help-text) 0)
-        (scaffold-init-run-from 2 count))]
+        (scaffold_cli_core.scaffold-init-run-from 2 count))]
     [else
       (begin
         (cli-err (cli-cat "typelisp: unknown subcommand " command))

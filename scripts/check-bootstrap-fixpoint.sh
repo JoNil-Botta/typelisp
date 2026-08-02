@@ -173,6 +173,10 @@ BUILD_IDENTITY=$(build_provenance_hash "$0")
 mkdir -p "$ROOT/target/build-stage0"
 printf '%s' "$BUILD_IDENTITY" > "$ROOT/target/build-stage0/git-hash.txt"
 
+SEED_DOTTED_IMPORT_BRIDGE_ROOT=$(
+    bootstrap_seed_dotted_import_bridge_root \
+        "$ROOT" "$COMPILER" "$WORKDIR"
+)
 SEED_COMPTIME_VARIANT_BRIDGE_ROOT=$(
     bootstrap_seed_comptime_short_variant_bridge_root \
         "$ROOT" "$COMPILER" "$WORKDIR"
@@ -344,8 +348,8 @@ check_stage2_embedded_stdlib() {
     NO_ROOT_DIR="$WORKDIR/stage2-no-root-stdlib"
     mkdir -p "$NO_ROOT_DIR"
     cat > "$NO_ROOT_DIR/main.tl" <<'EOF'
-(import "stdlib/string.tl")
-(define (main) : i64 (string-length "abc"))
+(import stdlib.string)
+(define (main) : i64 (string.string-length "abc"))
 EOF
     (
         cd "$NO_ROOT_DIR"
@@ -399,8 +403,8 @@ EOF
 (define (custom-root-sentinel) : i64 7)
 EOF
     cat > "$NO_ROOT_DIR/env-root.tl" <<'EOF'
-(import "stdlib/string.tl")
-(define (main) : i64 (custom-root-sentinel))
+(import stdlib.string)
+(define (main) : i64 (string.custom-root-sentinel))
 EOF
     (
         cd "$NO_ROOT_DIR"
@@ -416,8 +420,8 @@ EOF
 (define (cli-root-sentinel) : i64 11)
 EOF
     cat > "$NO_ROOT_DIR/cli-over-env.tl" <<'EOF'
-(import "stdlib/string.tl")
-(define (main) : i64 (cli-root-sentinel))
+(import stdlib.string)
+(define (main) : i64 (string.cli-root-sentinel))
 EOF
     (
         cd "$NO_ROOT_DIR"
@@ -435,8 +439,8 @@ EOF
 (define (local-root-sentinel) : i64 13)
 EOF
     cat > "$LOCAL_SHADOW_DIR/main.tl" <<'EOF'
-(import "stdlib/string.tl")
-(define (main) : i64 (local-root-sentinel))
+(import stdlib.string)
+(define (main) : i64 (string.local-root-sentinel))
 EOF
     (
         cd "$LOCAL_SHADOW_DIR"
@@ -454,6 +458,37 @@ EOF
 # the branch-built equivalent of a published stage0 and CI can run every
 # downstream gate on it.
 BOOTSTRAP_SRC=src/main.tl
+
+# The published seed immediately predating dotted imports cannot hold the
+# larger generated-name graph. Build its own source revision with the capacity
+# and nominal-owner fixes, then use that private compiler for the real stage1.
+# Current compiler sources continue to reject string-path imports.
+if [ -n "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" ]; then
+    echo "[bootstrap] published seed predates the dotted-import cutover; building a one-generation bridge"
+    DOTTED_BRIDGE_DIR="$WORKDIR/dotted-import-seed-bridge/build"
+    DOTTED_BRIDGE_ASM="$DOTTED_BRIDGE_DIR/bridge.s"
+    DOTTED_BRIDGE_OBJ="$DOTTED_BRIDGE_DIR/bridge.$OBJ_EXT"
+    DOTTED_BRIDGE_BIN="$DOTTED_BRIDGE_DIR/bridge$BIN_EXT"
+    mkdir -p "$DOTTED_BRIDGE_DIR"
+    run_with_heartbeat \
+        "published seed -> dotted-import bridge" \
+        "$COMPILER" compile \
+        "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/$BOOTSTRAP_SRC" \
+        -o "$DOTTED_BRIDGE_ASM" \
+        --target "$BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        $(bootstrap_extra_cfg_args) \
+        --cfg stage0-seed-bootstrap \
+        --stdlib-root "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/stdlib" \
+        --stdlib-root "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/src" \
+        --opt-level 2
+    bootstrap_seed_runtime_small_arena_compat "$DOTTED_BRIDGE_ASM"
+    assemble_and_link \
+        "dotted-import bridge" \
+        "$DOTTED_BRIDGE_ASM" "$DOTTED_BRIDGE_OBJ" "$DOTTED_BRIDGE_BIN"
+    COMPILER=$DOTTED_BRIDGE_BIN
+    echo "[bootstrap] dotted-import bridge ready; building stage1 from current sources"
+fi
 
 # The published seed immediately predating the short stdlib.comptime variant
 # ABI cannot typecheck the new declarations. Build one compiler from an

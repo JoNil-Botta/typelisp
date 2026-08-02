@@ -1629,7 +1629,7 @@
 ;; compiler-path benchmark: opt2 self-compile is sensitive to liveness set
 ;; iteration and copy costs.
 (import stdlib.io)
-(import "compiler_ir_types.tl")
+(import compiler_ir_types)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as live_label_map)
 
@@ -3976,8 +3976,8 @@
 (import stdlib.io)
 (import stdlib.arena)
 (import compiler_builtin_ids as cbi)
-(import "compiler_parse_core.tl")
-(import "compiler_diagnostic.tl")
+(import compiler_parse_core)
+(import compiler_diagnostic)
 (import sym_i64_env)
 (import stdlib.string)
 (import stdlib.option)
@@ -8813,7 +8813,7 @@
   "(module fresh)
 (define answer : i64 42)
 (module main)
-(import \"data.tl\" module data :as d)")
+(import data as d)")
 
 (define (compiler-symbols-append-external-macro-alias-ok?) : bool
   (match (parse-ast-source (compiler-symbols-append-macro-base-source))
@@ -9259,7 +9259,7 @@
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
 (module main)
-(import \"data.tl\" module data :as d)
+(import data as d)
 (define (main) : i64 (d.get))")
 
 (define (compiler-program-first-import-alias-id [program : AstProgram]) : i64
@@ -9798,13 +9798,13 @@
 (import stdlib.arena)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
-(import "compiler_typecheck_api.tl")
+(import compiler_typecheck_api)
 (import compiler_builtin_ids as cbi)
-(import "compiler_diagnostic.tl")
-(import "compiler_ir_types.tl")
-(import "compiler_clone.tl")
-(import "compiler_ctfe.tl")
-(import "compiler_float.tl")
+(import compiler_diagnostic)
+(import compiler_ir_types)
+(import compiler_clone)
+(import compiler_ctfe)
+(import compiler_float)
 (import stdlib.hashmap)
 (import stdlib.hash)
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)

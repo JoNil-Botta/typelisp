@@ -1,7 +1,9 @@
 ;; lint_smoke.tl - Runnable smoke for lint_core.tl.
 (import stdlib.string)
 (import compiler_builtin_ids as cbi)
-(import "../lint_core.tl")
+(import lint_core)
+(import compiler_ast_types as ast)
+(import stdlib.io)
 
 (define (lint-smoke-string-append-source) : String
   "(define (main) : i64 (string.string-length (string.append \"a\" \"b\")))")
@@ -32,128 +34,132 @@
 (define (lint-smoke-deprecated-string-concat-self-test) : i64
   (begin
     (if (=
-      (lint-findings-count
-        (lint-deprecated-string-concat-scan
+      (lint_core.lint-findings-count
+        (lint_core.lint-deprecated-string-concat-scan
           (lint-smoke-string-append-source)
-          (lint-findings-empty)))
+          (lint_core.lint-findings-empty)))
       1)
       unit
-      (panic "lint: string-append call should be flagged"))
-    (match (lint-findings-get
-      (lint-deprecated-string-concat-scan
+      (io.panic "lint: string-append call should be flagged"))
+    (match (lint_core.lint-findings-get
+      (lint_core.lint-deprecated-string-concat-scan
         (lint-smoke-string-concat-source)
-        (lint-findings-empty))
+        (lint_core.lint-findings-empty))
       0)
-      [(LintMaybeFinding.Some finding)
+      [(lint_core.LintMaybeFinding.Some finding)
         (if (and
           (= (struct-get finding depth) 0)
           (string.eq
             (struct-get finding rule-id)
-            (lint-rule-deprecated-string-concat-id)))
+            (lint_core.lint-rule-deprecated-string-concat-id)))
           unit
-          (panic "lint: string-concat finding should carry default metadata"))]
-      [(LintMaybeFinding.No)
-        (panic "lint: string-concat call should produce a finding")])
+          (io.panic "lint: string-concat finding should carry default metadata"))]
+      [(lint_core.LintMaybeFinding.No)
+        (io.panic "lint: string-concat call should produce a finding")])
     (if (=
-      (lint-findings-count
-        (lint-deprecated-string-concat-scan
+      (lint_core.lint-findings-count
+        (lint_core.lint-deprecated-string-concat-scan
           (lint-smoke-string-concat5-source)
-          (lint-findings-empty)))
+          (lint_core.lint-findings-empty)))
       1)
       unit
-      (panic "lint: string.concat5 call should be flagged"))
+      (io.panic "lint: string.concat5 call should be flagged"))
     (if (=
-      (lint-findings-count
-        (lint-deprecated-string-concat-scan
+      (lint_core.lint-findings-count
+        (lint_core.lint-deprecated-string-concat-scan
           (lint-smoke-nested-string-append-source)
-          (lint-findings-empty)))
+          (lint_core.lint-findings-empty)))
       2)
       unit
-      (panic "lint: nested string append should produce two findings"))
-    (match (lint-findings-get
-      (lint-deprecated-string-concat-scan
+      (io.panic "lint: nested string append should produce two findings"))
+    (match (lint_core.lint-findings-get
+      (lint_core.lint-deprecated-string-concat-scan
         (lint-smoke-nested-string-append-source)
-        (lint-findings-empty))
+        (lint_core.lint-findings-empty))
       1)
-      [(LintMaybeFinding.Some finding)
+      [(lint_core.LintMaybeFinding.Some finding)
         (if (= (struct-get finding depth) 1)
           unit
-          (panic "lint: nested string append should carry chain depth"))]
-      [(LintMaybeFinding.No)
-        (panic "lint: nested string append should produce a chain finding")])
-    (match (lint-findings-get
-      (lint-deprecated-string-concat-scan
+          (io.panic "lint: nested string append should carry chain depth"))]
+      [(lint_core.LintMaybeFinding.No)
+        (io.panic "lint: nested string append should produce a chain finding")])
+    (match (lint_core.lint-findings-get
+      (lint_core.lint-deprecated-string-concat-scan
         (lint-smoke-loop-string-append-source)
-        (lint-findings-empty))
+        (lint_core.lint-findings-empty))
       0)
-      [(LintMaybeFinding.Some finding)
+      [(lint_core.LintMaybeFinding.Some finding)
         (if (= (struct-get finding depth) 2)
           unit
-          (panic "lint: loop string append should carry loop depth"))]
-      [(LintMaybeFinding.No)
-        (panic "lint: loop string append should produce a finding")])
+          (io.panic "lint: loop string append should carry loop depth"))]
+      [(lint_core.LintMaybeFinding.No)
+        (io.panic "lint: loop string append should produce a finding")])
     42))
 
 (define (lint-smoke-nested-str-cat-self-test) : i64
   (let
-    [vx : i64 (lint-test-var "x")]
-    [vy : i64 (lint-test-var "y")]
-    [vz : i64 (lint-test-var "z")]
-    [str-cat-callee : i64 (lint-test-var "str-cat")]
+    [vx : i64 (lint_core.lint-test-var "x")]
+    [vy : i64 (lint_core.lint-test-var "y")]
+    [vz : i64 (lint_core.lint-test-var "z")]
+    [str-cat-callee : i64 (lint_core.lint-test-var "str-cat")]
     [str-cat-yz : i64
-      (ast-expr-call str-cat-callee (lint-test-expr-list2 vy vz))]
+      (ast.ast-expr-call str-cat-callee (lint_core.lint-test-expr-list2 vy vz))]
     [nested-str-cat : i64
-      (ast-expr-call str-cat-callee (lint-test-expr-list2 vx str-cat-yz))]
+      (ast.ast-expr-call
+        str-cat-callee
+        (lint_core.lint-test-expr-list2 vx str-cat-yz))]
     [flat-str-cat : i64
-      (ast-expr-call str-cat-callee (lint-test-expr-list3 vx vy vz))]
+      (ast.ast-expr-call
+        str-cat-callee
+        (lint_core.lint-test-expr-list3 vx vy vz))]
     [spanned-str-cat : i64
-      (ast-expr-spanned nested-str-cat (ast-source-span 23 4 23 36))]
+      (ast.ast-expr-spanned nested-str-cat (ast.ast-source-span 23 4 23 36))]
     (begin
       (if (=
-        (lint-findings-count
-          (lint-test-walk
+        (lint_core.lint-findings-count
+          (lint_core.lint-test-walk
             nested-str-cat
-            (lint-default-ladder-threshold)
-            (lint-findings-empty)))
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
         1)
         unit
-        (panic "lint: nested str-cat should be flagged once"))
-      (match (lint-findings-get
-        (lint-test-walk
+        (io.panic "lint: nested str-cat should be flagged once"))
+      (match (lint_core.lint-findings-get
+        (lint_core.lint-test-walk
           spanned-str-cat
-          (lint-default-ladder-threshold)
-          (lint-findings-empty))
+          (lint_core.lint-default-ladder-threshold)
+          (lint_core.lint-findings-empty))
         0)
-        [(LintMaybeFinding.Some finding)
+        [(lint_core.LintMaybeFinding.Some finding)
           (let
-            [span : AstSourceSpan (struct-get finding span)]
+            [span : ast.AstSourceSpan (struct-get finding span)]
             (if (and
               (string.eq
                 (struct-get finding rule-id)
-                (lint-rule-nested-str-cat-id))
+                (lint_core.lint-rule-nested-str-cat-id))
               (string.eq
                 (struct-get finding message)
                 "nested str-cat: prefer one flat str-cat call")
-              (= (ast-source-span-start-line span) 23))
+              (= (ast.ast-source-span-start-line span) 23))
               unit
-              (panic "lint: nested str-cat finding metadata mismatch")))]
-        [(LintMaybeFinding.No)
-          (panic "lint: spanned nested str-cat should produce a finding")])
+              (io.panic "lint: nested str-cat finding metadata mismatch")))]
+        [(lint_core.LintMaybeFinding.No)
+          (io.panic "lint: spanned nested str-cat should produce a finding")])
       (if (=
-        (lint-findings-count
-          (lint-test-walk
+        (lint_core.lint-findings-count
+          (lint_core.lint-test-walk
             flat-str-cat
-            (lint-default-ladder-threshold)
-            (lint-findings-empty)))
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
         0)
         42
-        (panic "lint: flat str-cat should not be flagged")))))
+        (io.panic "lint: flat str-cat should not be flagged")))))
 
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
-      [core-result : i64 (compiler-lint-self-test)]
+      [core-result : i64 (lint_core.compiler-lint-self-test)]
       (if (= core-result 42)
         (if (= (lint-smoke-deprecated-string-concat-self-test) 42)
           (lint-smoke-nested-str-cat-self-test)

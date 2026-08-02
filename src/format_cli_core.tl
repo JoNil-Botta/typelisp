@@ -11,8 +11,9 @@
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import format_tokens as tokens)
-(import "format_rules.tl")
-(import "package_source_core.tl")
+(import format_rules)
+(import format_render_buf as fmt_buf)
+(import package_source_core)
 
 (defenum FmtConfig
   (File bool fmt_svec.Vec)
@@ -76,9 +77,12 @@
 
 (test
   fmt-parse-diagnostic-includes-path-line-and-column
-  (match (format-rules-render-source-width-result "(define x\n  ]" 80)
-    [(ResultFormatString.Ok _) (io.panic "fmt parse unexpectedly succeeded")]
-    [(ResultFormatString.Err err)
+  (match (format_rules.format-rules-render-source-width-result
+    "(define x\n  ]"
+    80)
+    [(format_rules.ResultFormatString.Ok _)
+      (io.panic "fmt parse unexpectedly succeeded")]
+    [(format_rules.ResultFormatString.Err err)
       (let
         [message : String (fmt-source-error-message "bad.tl" err)]
         (if (string.eq
@@ -88,9 +92,9 @@
           (io.panic message)))]))
 
 (define (fmt-malformed-int-error? [source : String]) : bool
-  (match (format-rules-render-source-width-result source 80)
-    [(ResultFormatString.Ok _) false]
-    [(ResultFormatString.Err err)
+  (match (format_rules.format-rules-render-source-width-result source 80)
+    [(format_rules.ResultFormatString.Ok _) false]
+    [(format_rules.ResultFormatString.Err err)
       (string.eq
         (tokens.format-source-error-message err)
         "format lexer: malformed integer literal")]))
@@ -303,24 +307,20 @@
         (fmt-common-suffix-lines a b prefix (+ count 1))
         count))))
 
-(define (fmt-diff-emit-range
+(define (fmt-diff-emit-range-into!
   [lines : fmt_svec.Vec]
   [marker : String]
   [from : i64]
   [to : i64]
-  [acc : String]) : String
-  (if (>= from to)
-    acc
-    (fmt-diff-emit-range
-      lines
-      marker
-      (+ from 1)
-      to
-      (string.append
-        acc
-        (string.append
-          marker
-          (string.append (fmt_svec.get (& lines) from "") "\n"))))))
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : unit
+  (let
+    [index : i64 from]
+    (while (< index to)
+      (begin
+        (fmt_buf.fmt-render-buf-append buf marker)
+        (fmt_buf.fmt-render-buf-append buf (fmt_svec.get (& lines) index ""))
+        (fmt_buf.fmt-render-buf-append buf "\n")
+        (set! index (+ index 1))))))
 
 (define (fmt-diff-hunk-header
   [src-start : i64]
@@ -369,29 +369,31 @@
       (if (< (+ dst-end ctx) dlen)
         (+ dst-end ctx)
         dlen)]
-    (string.append
-      (string.append
-        (string.append "--- a/" (string.append path "\n"))
-        (string.append "+++ b/" (string.append path "\n")))
-      (string.append
+    [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
+    (begin
+      (fmt_buf.fmt-render-buf-append (&mut buf) "--- a/")
+      (fmt_buf.fmt-render-buf-append (&mut buf) path)
+      (fmt_buf.fmt-render-buf-append (&mut buf) "\n+++ b/")
+      (fmt_buf.fmt-render-buf-append (&mut buf) path)
+      (fmt_buf.fmt-render-buf-append (&mut buf) "\n")
+      (fmt_buf.fmt-render-buf-append
+        (&mut buf)
         (fmt-diff-hunk-header
           (+ start 1)
           (- src-ctx-end start)
           (+ start 1)
-          (- dst-ctx-end start))
-        (string.append
-          (fmt-diff-emit-range src " " start prefix "")
-          (string.append
-            (fmt-diff-emit-range src "-" prefix src-end "")
-            (string.append
-              (fmt-diff-emit-range dst "+" prefix dst-end "")
-              (fmt-diff-emit-range src " " src-end src-ctx-end ""))))))))
+          (- dst-ctx-end start)))
+      (fmt-diff-emit-range-into! src " " start prefix (&mut buf))
+      (fmt-diff-emit-range-into! src "-" prefix src-end (&mut buf))
+      (fmt-diff-emit-range-into! dst "+" prefix dst-end (&mut buf))
+      (fmt-diff-emit-range-into! src " " src-end src-ctx-end (&mut buf))
+      (fmt_buf.fmt-render-buf-string buf))))
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
     [source : String (byte_buf.to-string (io.read-file path))]
-    (match (format-rules-render-source-width-result source 80)
-      [(ResultFormatString.Ok formatted)
+    (match (format_rules.format-rules-render-source-width-result source 80)
+      [(format_rules.ResultFormatString.Ok formatted)
         (if check
           (if (string.eq source formatted)
             0
@@ -406,11 +408,17 @@
           (if (string.eq source formatted)
             0
             (fmt-write-formatted-file path formatted)))]
-      [(ResultFormatString.Err err)
+      [(format_rules.ResultFormatString.Err err)
         (begin
           (io.print-error
             (string.append (fmt-source-error-message path err) "\n"))
           1)])))
+
+;; Parsing and rendering retain a complete CST and document tree. Reclaim that
+;; scratch state after each file so multi-file formatter invocations do not grow
+;; the process-lifetime arena with the size of the whole corpus.
+(define (fmt-format-file-scoped [check : bool] [path : String]) : i64
+  (with-arena file-arena (fmt-format-file check path)))
 
 (define (fmt-files-from
   [check : bool]
@@ -421,7 +429,7 @@
     status
     (let
       [path : String (fmt_svec.get (& paths) index "")]
-      [file-status : i64 (fmt-format-file check path)]
+      [file-status : i64 (fmt-format-file-scoped check path)]
       (fmt-files-from
         check
         paths
@@ -442,7 +450,7 @@
     status
     (let
       [path : String (fmt_svec.get (& paths) index "")]
-      [file-status : i64 (fmt-format-file check path)]
+      [file-status : i64 (fmt-format-file-scoped check path)]
       (fmt-package-files-from
         check
         paths
@@ -458,12 +466,15 @@
   [check : bool]
   [manifest-path : String]
   [has-manifest : bool]) : i64
-  (match (package-source-discover-for "fmt" manifest-path has-manifest)
-    [(ResultPackageSourceSet.Err message)
+  (match (package_source_core.package-source-discover-for
+    "fmt"
+    manifest-path
+    has-manifest)
+    [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
         (io.print-error (string.append message "\n"))
         1)]
-    [(ResultPackageSourceSet.Ok source-set)
+    [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (fmt-package-files check (struct-get source-set sources) 0)]))
 
 ;; Run the `fmt` command over arguments starting at `start` (the index of the

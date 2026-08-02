@@ -3,8 +3,8 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
-(cfg embedded-stdlib-tlci (import "compiler_embedded_stdlib_tlci.tl"))
-(import "tlci_core.tl")
+(cfg embedded-stdlib-tlci (import compiler_embedded_stdlib_tlci))
+(import tlci_core)
 
 (define (tlci-inspect-help-text) : String
   "Usage:
@@ -15,7 +15,7 @@ Summary:
 ")
 
 (define (tlci-inspect-host-arch-name [arch : i64]) : String
-  (if (= arch tlci-host-arch-x86-64)
+  (if (= arch tlci_core.tlci-host-arch-x86-64)
     "x86_64"
     "unknown"))
 
@@ -55,16 +55,17 @@ Summary:
     (string.int->string bytes)
     "\n"))
 
-(define (tlci-inspect-spmd-specializations [items : TlciSpmdSpecializations]) : String
+(define (tlci-inspect-spmd-specializations
+  [items : tlci_core.TlciSpmdSpecializations]) : String
   (let
-    [count : i64 (tlci-spmd-specializations-len items)]
+    [count : i64 (tlci_core.tlci-spmd-specializations-len items)]
     [index : i64 0]
     [out : String ""]
     (begin
       (while (< index count)
         (let
-          [item : TlciSpmdSpecialization
-            (tlci-spmd-specializations-ref items index)]
+          [item : tlci_core.TlciSpmdSpecialization
+            (tlci_core.tlci-spmd-specializations-ref items index)]
           (begin
             (set!
               out
@@ -88,15 +89,16 @@ Summary:
             (set! index (+ index 1)))))
       out)))
 
-(define (tlci-inspect-spmd-callables [items : TlciSpmdCallables]) : String
+(define (tlci-inspect-spmd-callables [items : tlci_core.TlciSpmdCallables]) : String
   (let
-    [count : i64 (tlci-spmd-callables-len items)]
+    [count : i64 (tlci_core.tlci-spmd-callables-len items)]
     [index : i64 0]
     [out : String ""]
     (begin
       (while (< index count)
         (let
-          [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
+          [item : tlci_core.TlciSpmdCallable
+            (tlci_core.tlci-spmd-callables-ref items index)]
           (begin
             (set!
               out
@@ -112,22 +114,28 @@ Summary:
             (set! index (+ index 1)))))
       out)))
 
-(define (tlci-inspect-spmd-section [metadata : TlciMetadata]) : String
-  (if (string.eq (struct-get metadata version) tlci-metadata-version-v2)
+(define (tlci-inspect-spmd-section [metadata : tlci_core.TlciMetadata]) : String
+  (if (string.eq
+    (struct-get metadata version)
+    (tlci_core.tlci-metadata-version-v2-current))
     (str_cat.str-cat
       "spmd-callables:\n"
       (tlci-inspect-spmd-callables (struct-get metadata spmd-callables)))
     ""))
 
-(define (tlci-inspect-render [bytes : (__tl_dyn-array u8)] [image : TlciImage]) : String
+(define (tlci-inspect-render
+  [bytes : (__tl_dyn-array u8)]
+  [image : tlci_core.TlciImage]) : String
   (let
-    [metadata : TlciMetadata (struct-get image metadata)]
+    [metadata : tlci_core.TlciMetadata (struct-get image metadata)]
     [host-arch : i64 (struct-get image host-arch)]
     (str_cat.str-cat
       "tlci image\n"
       "format-version: "
       (string.int->string
-        (tlci-read-u64 bytes tlci-format-version-field-offset))
+        (tlci_core.tlci-read-u64
+          bytes
+          tlci_core.tlci-format-version-field-offset))
       "\n"
       "host-arch: "
       (tlci-inspect-host-arch-name host-arch)
@@ -141,10 +149,12 @@ Summary:
       (struct-get image compiler-build-hash)
       "\n"
       "content-hash: "
-      (string.int->string (tlci-read-u64 bytes tlci-hash-field-offset))
+      (string.int->string
+        (tlci_core.tlci-read-u64 bytes tlci_core.tlci-hash-field-offset))
       "\n"
       "file-size: "
-      (string.int->string (tlci-read-u64 bytes tlci-file-size-field-offset))
+      (string.int->string
+        (tlci_core.tlci-read-u64 bytes tlci_core.tlci-file-size-field-offset))
       "\n"
       "metadata-version: "
       (struct-get metadata version)
@@ -159,38 +169,40 @@ Summary:
       "sections:\n"
       (tlci-inspect-section-line
         "compiler-build-hash"
-        (tlci-read-u64 bytes 32)
-        (tlci-read-u64 bytes 40))
+        (tlci_core.tlci-read-u64 bytes 32)
+        (tlci_core.tlci-read-u64 bytes 40))
       (tlci-inspect-section-line
         "metadata"
-        (tlci-read-u64 bytes 56)
-        (tlci-read-u64 bytes 64))
+        (tlci_core.tlci-read-u64 bytes 56)
+        (tlci_core.tlci-read-u64 bytes 64))
       (tlci-inspect-section-line
         "rodata"
-        (tlci-read-u64 bytes 72)
-        (tlci-read-u64 bytes 80))
+        (tlci_core.tlci-read-u64 bytes 72)
+        (tlci_core.tlci-read-u64 bytes 80))
       (tlci-inspect-section-line
         "code"
-        (tlci-read-u64 bytes 88)
-        (tlci-read-u64 bytes 96))
+        (tlci_core.tlci-read-u64 bytes 88)
+        (tlci_core.tlci-read-u64 bytes 96))
       (tlci-inspect-table-line
         "fixups"
-        (tlci-read-u64 bytes 104)
-        (tlci-read-u64 bytes 112)
-        tlci-section-fixup-record-size)
+        (tlci_core.tlci-read-u64 bytes 104)
+        (tlci_core.tlci-read-u64 bytes 112)
+        tlci_core.tlci-section-fixup-record-size)
       (tlci-inspect-table-line
         "entries"
-        (tlci-read-u64 bytes 120)
-        (tlci-read-u64 bytes 128)
-        tlci-section-entry-record-size)
+        (tlci_core.tlci-read-u64 bytes 120)
+        (tlci_core.tlci-read-u64 bytes 128)
+        tlci_core.tlci-section-entry-record-size)
       (tlci-inspect-table-line
         "symbols"
-        (tlci-read-u64 bytes 136)
-        (tlci-read-u64 bytes 144)
-        tlci-section-symbol-record-size)
+        (tlci_core.tlci-read-u64 bytes 136)
+        (tlci_core.tlci-read-u64 bytes 144)
+        tlci_core.tlci-section-symbol-record-size)
       (tlci-inspect-import-line
-        (tlci-read-u64 bytes tlci-import-section-field-offset)
-        (tlci-read-u64 bytes tlci-import-count-field-offset)
+        (tlci_core.tlci-read-u64
+          bytes
+          tlci_core.tlci-import-section-field-offset)
+        (tlci_core.tlci-read-u64 bytes tlci_core.tlci-import-count-field-offset)
         (array-length (struct-get image imports))))))
 
 (define (tlci-inspect-error [path : String] [message : String]) : String
@@ -199,12 +211,12 @@ Summary:
 (define (tlci-inspect-render-bytes
   [path : String]
   [bytes : (__tl_dyn-array u8)]) : i64
-  (match (tlci-parse-image bytes)
-    [(ResultTlciImage.Err message)
+  (match (tlci_core.tlci-parse-image bytes)
+    [(tlci_core.ResultTlciImage.Err message)
       (begin
         (io.print-error (tlci-inspect-error path message))
         1)]
-    [(ResultTlciImage.Ok image)
+    [(tlci_core.ResultTlciImage.Ok image)
       (begin
         (io.print-string (tlci-inspect-render bytes image))
         0)]))
@@ -222,12 +234,14 @@ Summary:
 (cfg
   embedded-stdlib-tlci
   (define (tlci-inspect-embedded-stdlib) : i64
-    (match (compiler-embedded-stdlib-tlci-validate)
-      [(CompilerEmbeddedStdlibTlciValidation.Err message)
+    (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-validate)
+      [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Err
+          message)
         (begin
           (io.print-error (tlci-inspect-error "embedded:stdlib.tlci" message))
           1)]
-      [(CompilerEmbeddedStdlibTlciValidation.Ok count)
+      [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Ok
+          count)
         (begin
           (io.print-string
             (str_cat.str-cat
@@ -236,7 +250,7 @@ Summary:
               "\n"))
           (tlci-inspect-render-bytes
             "embedded:stdlib.tlci"
-            (compiler-embedded-stdlib-tlci-copy)))])))
+            (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)))])))
 
 (cfg
   test
@@ -254,12 +268,12 @@ Summary:
     tlci-inspect-imports-and-file-size
     (let
       [ok : bool
-        (match (tlci-emit-image (tlci-test-imports-image))
-          [(ResultTlciBytes.Err _) false]
-          [(ResultTlciBytes.Ok bytes)
-            (match (tlci-parse-image bytes)
-              [(ResultTlciImage.Err _) false]
-              [(ResultTlciImage.Ok parsed)
+        (match (tlci_core.tlci-emit-image (tlci_core.tlci-test-imports-image))
+          [(tlci_core.ResultTlciBytes.Err _) false]
+          [(tlci_core.ResultTlciBytes.Ok bytes)
+            (match (tlci_core.tlci-parse-image bytes)
+              [(tlci_core.ResultTlciImage.Err _) false]
+              [(tlci_core.ResultTlciImage.Ok parsed)
                 (let
                   [rendered : String (tlci-inspect-render bytes parsed)]
                   [expected-file-size : String "file-size: 314\n"]
@@ -275,25 +289,25 @@ Summary:
   (test
     tlci-inspect-v2-spmd-callables
     (let
-      [image : TlciImage
-        (tlci-make-image
-          tlci-host-arch-x86-64
-          tlci-callback-abi-version
+      [image : tlci_core.TlciImage
+        (tlci_core.tlci-make-image
+          tlci_core.tlci-host-arch-x86-64
+          tlci_core.tlci-callback-abi-version
           "inspect-v2-test"
-          (tlci-test-v2-metadata)
-          (tlci-empty-bytes)
-          (tlci-empty-bytes)
-          (tlci-empty-bytes)
-          (tlci-empty-bytes)
-          (tlci-empty-bytes)
-          (tlci-empty-bytes))]
+          (tlci_core.tlci-test-v2-metadata)
+          (tlci_core.tlci-empty-bytes)
+          (tlci_core.tlci-empty-bytes)
+          (tlci_core.tlci-empty-bytes)
+          (tlci_core.tlci-empty-bytes)
+          (tlci_core.tlci-empty-bytes)
+          (tlci_core.tlci-empty-bytes))]
       [ok : bool
-        (match (tlci-emit-image image)
-          [(ResultTlciBytes.Err _) false]
-          [(ResultTlciBytes.Ok bytes)
-            (match (tlci-parse-image bytes)
-              [(ResultTlciImage.Err _) false]
-              [(ResultTlciImage.Ok parsed)
+        (match (tlci_core.tlci-emit-image image)
+          [(tlci_core.ResultTlciBytes.Err _) false]
+          [(tlci_core.ResultTlciBytes.Ok bytes)
+            (match (tlci_core.tlci-parse-image bytes)
+              [(tlci_core.ResultTlciImage.Err _) false]
+              [(tlci_core.ResultTlciImage.Ok parsed)
                 (let
                   [rendered : String (tlci-inspect-render bytes parsed)]
                   [expected : String

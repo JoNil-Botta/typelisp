@@ -1,6 +1,7 @@
 ;; lsp_vector_families.tl - vector-backed LSP state collections.
 (import stdlib.array)
 (import stdlib.vector)
+(import compiler_semantic_index)
 
 (defstruct LspDeclEntry
   (kind String)
@@ -29,7 +30,7 @@
   (len i64))
 
 (defstruct LspSemanticSnapshot
-  (index CompilerSemanticSourceIndex)
+  (index compiler_semantic_index.CompilerSemanticSourceIndex)
   (version i64)
   (source-path String)
   (source-text String)

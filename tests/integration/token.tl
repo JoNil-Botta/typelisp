@@ -4,7 +4,7 @@
 ;; This is the multi-file-organization slice of the self-hosting milestone: the
 ;; `Token` type and the accessors that operate on it are lifted out of the
 ;; combined `calc.tl` into a module that defines NO `main` and NO lexer/parser
-;; logic. `calc.tl` `(import "token.tl")`s it and uses the shared type, so the
+;; logic. `calc.tl` imports it by dotted identity and uses the shared type, so the
 ;; lexer (which constructs `Token` values) and the parser (which classifies them
 ;; through `token-tag` / projects operands with `token-int`) agree on one
 ;; canonical definition rather than each carrying its own copy.

@@ -11,19 +11,22 @@
 ;; and resolves the compiled entries by the compact function-symbol contract.
 ;; Bodies outside the supported subset compile to ok-with-no-result shells so
 ;; the dispatch route keeps its counted interpreted fallback.
-(import "compiler_parse_core.tl")
+(import compiler_ast_types)
+(import compiler_diagnostic)
 (import compiler_object as cobj)
-(import "compiler_backend.tl")
-(import "compiler_tlci_native_image.tl")
-(import "tlci_core.tl")
+(import compiler_backend)
+(import compiler_tlci_native_image)
+(import tlci_core)
 (import compiler_builtin_ids as cbi)
+(import compiler_intern as ci)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.array)
 (import stdlib.string)
 
 (define (embedded-stdlib-tlci-identity [module : String] [name-id : i64]) : String
   (if (= (string.string-length module) 0)
-    (intern-str name-id)
-    (str-cat module "/" (intern-str name-id))))
+    (ci.intern-str name-id)
+    (str_cat.str-cat module "/" (ci.intern-str name-id))))
 
 ;; Every collected macro's parsed source is captured so the producer can
 ;; compile each eligible expression body to a native entry; identities whose
@@ -33,7 +36,7 @@
 ;; image in the same process. Refs #5212, #5213, #2754.
 (defstruct TlciNativeMacroCapture
   (identity String)
-  (params AstMacroParamList)
+  (params compiler_ast_types.AstMacroParamList)
   (body i64))
 
 ;; Compile-time let-local session slots for the body currently compiling
@@ -78,7 +81,7 @@
     [seq : i64 (array-ref embedded-native-temp-seq 0)]
     (begin
       (array-set! embedded-native-temp-seq 0 (+ seq 1))
-      (str-cat "k" (string.int->string seq)))))
+      (str_cat.str-cat "k" (string.int->string seq)))))
 
 ;; The generated i64 variable of a compile-time data local, or "" when unbound.
 (define (embedded-native-data-local-text [name : String]) : String
@@ -180,13 +183,14 @@
         (array-set! (struct-get captures slots) index capture)
         (set! (struct-get captures len) (+ index 1))))))
 
-(define (embedded-stdlib-tlci-unwrap-expr [node : i64]) : AstExpr
-  (match (ast-node-get node)
-    [(AstExpr.Spanned inner _) (embedded-stdlib-tlci-unwrap-expr inner)]
-    [_ (ast-node-get node)]))
+(define (embedded-stdlib-tlci-unwrap-expr [node : i64]) : compiler_ast_types.AstExpr
+  (match (compiler_ast_types.ast-node-get node)
+    [(compiler_ast_types.AstExpr.Spanned inner _)
+      (embedded-stdlib-tlci-unwrap-expr inner)]
+    [_ (compiler_ast_types.ast-node-get node)]))
 
 (define (embedded-stdlib-tlci-param-index
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [name-id : i64]) : i64
   (let
     [index : i64 0]
@@ -195,7 +199,7 @@
       (while (and (< found 0) (< index (struct-get params len)))
         (begin
           (match (array-ref (struct-get params slots) index)
-            [(AstMacroParam.Param pname _ _ _)
+            [(compiler_ast_types.AstMacroParam.Param pname _ _ _)
               (if (= pname name-id)
                 (set! found index)
                 unit)])
@@ -246,75 +250,77 @@
     (when empty (array-set! embedded-native-fallback-reason 0 reason))))
 
 ;; The source-level spelling of an expression node, for the reason string.
-(define (embedded-native-expr-kind-name [e : AstExpr]) : String
+(define (embedded-native-expr-kind-name [e : compiler_ast_types.AstExpr]) : String
   (match e
-    [(AstExpr.Ann _ _) "ann"]
-    [(AstExpr.Cast _ _) "cast"]
-    [(AstExpr.Try _) "try"]
-    [(AstExpr.Tuple _) "tuple"]
-    [(AstExpr.TupleRef _ _) "tuple-ref"]
-    [(AstExpr.Init _) "init"]
-    [(AstExpr.Lambda _) "lambda"]
-    [(AstExpr.DynArray _) "dyn-array"]
-    [(AstExpr.Array _) "array"]
-    [(AstExpr.ArrayTake _ _ _) "array-take"]
-    [(AstExpr.BoxTake _) "box-take"]
-    [(AstExpr.BoxSet _ _) "box-set"]
-    [(AstExpr.IntToPtr _ _) "int->ptr"]
-    [(AstExpr.PtrAddrOf _) "ptr-addr-of"]
-    [(AstExpr.PtrNull _) "ptr-null"]
-    [(AstExpr.PtrNullCheck _) "ptr-null?"]
-    [(AstExpr.PtrCast _ _) "ptr-cast"]
-    [(AstExpr.StringRef _ _) "string-ref"]
-    [(AstExpr.StringFromBytes _ _) "string-from-bytes"]
-    [(AstExpr.Comptime _) "comptime"]
-    [(AstExpr.Quote _) "quote"]
-    [(AstExpr.Quasiquote _) "quasiquote"]
-    [(AstExpr.UnquoteSplicing _) "unquote-splicing"]
-    [(AstExpr.Unquote _) "unquote"]
-    [(AstExpr.Break) "break"]
-    [(AstExpr.Continue) "continue"]
-    [(AstExpr.Return _) "return"]
-    [(AstExpr.WithRegion _ _) "with-arena"]
-    [(AstExpr.WithResource _) "with"]
-    [(AstExpr.WithScratch _) "with-scratch"]
-    [(AstExpr.WithEscape _ _) "with-escape"]
-    [(AstExpr.InArena _ _) "in-arena"]
-    [(AstExpr.Foreach _) "foreach"]
-    [(AstExpr.SpmdReduce _) "spmd-reduce"]
-    [(AstExpr.SpmdScan _) "spmd-scan"]
-    [(AstExpr.Unsafe _) "unsafe"]
-    [(AstExpr.Literal (AstLiteral.Float _)) "float-literal"]
-    [(AstExpr.Literal _) "literal"]
+    [(compiler_ast_types.AstExpr.Ann _ _) "ann"]
+    [(compiler_ast_types.AstExpr.Cast _ _) "cast"]
+    [(compiler_ast_types.AstExpr.Try _) "try"]
+    [(compiler_ast_types.AstExpr.Tuple _) "tuple"]
+    [(compiler_ast_types.AstExpr.TupleRef _ _) "tuple-ref"]
+    [(compiler_ast_types.AstExpr.Init _) "init"]
+    [(compiler_ast_types.AstExpr.Lambda _) "lambda"]
+    [(compiler_ast_types.AstExpr.DynArray _) "dyn-array"]
+    [(compiler_ast_types.AstExpr.Array _) "array"]
+    [(compiler_ast_types.AstExpr.ArrayTake _ _ _) "array-take"]
+    [(compiler_ast_types.AstExpr.BoxTake _) "box-take"]
+    [(compiler_ast_types.AstExpr.BoxSet _ _) "box-set"]
+    [(compiler_ast_types.AstExpr.IntToPtr _ _) "int->ptr"]
+    [(compiler_ast_types.AstExpr.PtrAddrOf _) "ptr-addr-of"]
+    [(compiler_ast_types.AstExpr.PtrNull _) "ptr-null"]
+    [(compiler_ast_types.AstExpr.PtrNullCheck _) "ptr-null?"]
+    [(compiler_ast_types.AstExpr.PtrCast _ _) "ptr-cast"]
+    [(compiler_ast_types.AstExpr.StringRef _ _) "string-ref"]
+    [(compiler_ast_types.AstExpr.StringFromBytes _ _) "string-from-bytes"]
+    [(compiler_ast_types.AstExpr.Comptime _) "comptime"]
+    [(compiler_ast_types.AstExpr.Quote _) "quote"]
+    [(compiler_ast_types.AstExpr.Quasiquote _) "quasiquote"]
+    [(compiler_ast_types.AstExpr.UnquoteSplicing _) "unquote-splicing"]
+    [(compiler_ast_types.AstExpr.Unquote _) "unquote"]
+    [(compiler_ast_types.AstExpr.Break) "break"]
+    [(compiler_ast_types.AstExpr.Continue) "continue"]
+    [(compiler_ast_types.AstExpr.Return _) "return"]
+    [(compiler_ast_types.AstExpr.WithRegion _ _) "with-arena"]
+    [(compiler_ast_types.AstExpr.WithResource _) "with"]
+    [(compiler_ast_types.AstExpr.WithScratch _) "with-scratch"]
+    [(compiler_ast_types.AstExpr.WithEscape _ _) "with-escape"]
+    [(compiler_ast_types.AstExpr.InArena _ _) "in-arena"]
+    [(compiler_ast_types.AstExpr.Foreach _) "foreach"]
+    [(compiler_ast_types.AstExpr.SpmdReduce _) "spmd-reduce"]
+    [(compiler_ast_types.AstExpr.SpmdScan _) "spmd-scan"]
+    [(compiler_ast_types.AstExpr.Unsafe _) "unsafe"]
+    [(compiler_ast_types.AstExpr.Literal
+        (compiler_ast_types.AstLiteral.Float _))
+      "float-literal"]
+    [(compiler_ast_types.AstExpr.Literal _) "literal"]
     ;; Kinds the walkers do support are named too: reaching a give-up point on
     ;; one of these means the construct is supported in some positions and not
     ;; in the one that failed, which is the more useful thing to report.
-    [(AstExpr.If _ _ _) "if"]
-    [(AstExpr.Match _) "match"]
-    [(AstExpr.Let _) "let"]
-    [(AstExpr.Begin _) "begin"]
-    [(AstExpr.Call _ _) "call"]
-    [(AstExpr.Var _) "var"]
-    [(AstExpr.Set _ _) "set!"]
-    [(AstExpr.While _ _) "while"]
-    [(AstExpr.Binary _ _ _) "binary"]
-    [(AstExpr.Unary _ _) "unary"]
-    [(AstExpr.Borrow _ _ _) "borrow"]
-    [(AstExpr.StructGet _ _) "struct-get"]
-    [(AstExpr.StructSet _ _ _) "struct-set!"]
-    [(AstExpr.BracketClause _) "bracket-clause"]
-    [(AstExpr.ArrayRef _ _) "array-ref"]
-    [(AstExpr.ArraySet _ _ _) "array-set!"]
-    [(AstExpr.ArrayPush _ _) "array-push!"]
-    [(AstExpr.ArrayData _) "array-data"]
-    [(AstExpr.StringData _) "string-data"]
-    [(AstExpr.Box _) "box"]
-    [(AstExpr.BoxGet _) "box-get"]
-    [(AstExpr.PtrRead _) "ptr-read"]
-    [(AstExpr.PtrWrite _ _) "ptr-write!"]
-    [(AstExpr.PtrOffset _ _) "ptr-offset"]
-    [(AstExpr.PtrToInt _) "ptr->int"]
-    [(AstExpr.MakeArray _ _) "make-array"]
+    [(compiler_ast_types.AstExpr.If _ _ _) "if"]
+    [(compiler_ast_types.AstExpr.Match _) "match"]
+    [(compiler_ast_types.AstExpr.Let _) "let"]
+    [(compiler_ast_types.AstExpr.Begin _) "begin"]
+    [(compiler_ast_types.AstExpr.Call _ _) "call"]
+    [(compiler_ast_types.AstExpr.Var _) "var"]
+    [(compiler_ast_types.AstExpr.Set _ _) "set!"]
+    [(compiler_ast_types.AstExpr.While _ _) "while"]
+    [(compiler_ast_types.AstExpr.Binary _ _ _) "binary"]
+    [(compiler_ast_types.AstExpr.Unary _ _) "unary"]
+    [(compiler_ast_types.AstExpr.Borrow _ _ _) "borrow"]
+    [(compiler_ast_types.AstExpr.StructGet _ _) "struct-get"]
+    [(compiler_ast_types.AstExpr.StructSet _ _ _) "struct-set!"]
+    [(compiler_ast_types.AstExpr.BracketClause _) "bracket-clause"]
+    [(compiler_ast_types.AstExpr.ArrayRef _ _) "array-ref"]
+    [(compiler_ast_types.AstExpr.ArraySet _ _ _) "array-set!"]
+    [(compiler_ast_types.AstExpr.ArrayPush _ _) "array-push!"]
+    [(compiler_ast_types.AstExpr.ArrayData _) "array-data"]
+    [(compiler_ast_types.AstExpr.StringData _) "string-data"]
+    [(compiler_ast_types.AstExpr.Box _) "box"]
+    [(compiler_ast_types.AstExpr.BoxGet _) "box-get"]
+    [(compiler_ast_types.AstExpr.PtrRead _) "ptr-read"]
+    [(compiler_ast_types.AstExpr.PtrWrite _ _) "ptr-write!"]
+    [(compiler_ast_types.AstExpr.PtrOffset _ _) "ptr-offset"]
+    [(compiler_ast_types.AstExpr.PtrToInt _) "ptr->int"]
+    [(compiler_ast_types.AstExpr.MakeArray _ _) "make-array"]
     [_ "unclassified"]))
 
 (define embedded-stdlib-tlci-native-report-partial-count : (__tl_dyn-array i64)
@@ -386,8 +392,8 @@
   [arg-b : String]
   [arg-c : String]) : String
   (let
-    [sname : String (str-cat "q" (string.int->string status-index))]
-    (str-cat
+    [sname : String (str_cat.str-cat "q" (string.int->string status-index))]
+    (str_cat.str-cat
       "  (let ["
       sname
       " : i64 (comptime-host-"
@@ -405,13 +411,16 @@
       "\n")))
 
 (define (embedded-native-name-arg [name : String]) : String
-  (str-cat "(cast (unsafe (ptr->int (string-data \"" name "\"))) : i64)"))
+  (str_cat.str-cat
+    "(cast (unsafe (ptr->int (string-data \""
+    name
+    "\"))) : i64)"))
 
 ;; Emit the push for an unquoted name in template/computed position: a macro
 ;; parameter pushes its operand, while a let-bound local pushes its session
 ;; slot. Returns 1, or -1 when the name is unbound. Refs #5603.
 (define (embedded-native-unquote-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [pname : i64]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
@@ -422,20 +431,20 @@
         (embedded-native-template-push!
           ops
           ops-count
-          tlci-host-callback-name-push-operand
+          tlci_core.tlci-host-callback-name-push-operand
           (string.int->string param)
           "0"
           "0")
         1)
       (let
-        [slot : i64 (embedded-native-local-index (intern-str pname))]
+        [slot : i64 (embedded-native-local-index (ci.intern-str pname))]
         (if (< slot 0)
           -1
           (begin
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-local-get
+              tlci_core.tlci-host-callback-name-local-get
               (string.int->string slot)
               "0"
               "0")
@@ -447,14 +456,14 @@
 ;; be a macro parameter (the identity transformer), a `(comptime.expr-var
 ;; "name")` builder call, or one of the expr-list fold intrinsics.
 (define (embedded-native-body-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(AstExpr.Quasiquote quoted)
+    [(compiler_ast_types.AstExpr.Quasiquote quoted)
       (embedded-native-template-ops params quoted ops ops-count)]
-    [(AstExpr.Var pname)
+    [(compiler_ast_types.AstExpr.Var pname)
       (let
         [param : i64 (embedded-stdlib-tlci-param-index params pname)]
         (if (< param 0)
@@ -463,35 +472,35 @@
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-push-operand
+              tlci_core.tlci-host-callback-name-push-operand
               (string.int->string param)
               "0"
               "0")
             1)))]
-    [(AstExpr.Call fold-func fold-args)
+    [(compiler_ast_types.AstExpr.Call fold-func fold-args)
       ;; Plain (not quasiquoted) call to the expr-list fold intrinsic: the
       ;; and/or shape. The host op mirrors the interpreted fold exactly, so
       ;; the whole expansion is one dispatch.
       (match (embedded-stdlib-tlci-unwrap-expr fold-func)
-        [(AstExpr.Var fold-head)
+        [(compiler_ast_types.AstExpr.Var fold-head)
           (if (and
             (or
               (string.eq
-                (intern-str fold-head)
+                (ci.intern-str fold-head)
                 "comptime.expr-clause-list-fold-if")
-              (string.eq (intern-str fold-head) "expr-clause-list-fold-if"))
-            (= (ast-expr-list-len (& fold-args)) 3))
+              (string.eq (ci.intern-str fold-head) "expr-clause-list-fold-if"))
+            (= (compiler_ast_types.ast-expr-list-len (& fold-args)) 3))
             (let
               [clauses-index : i64
                 (embedded-native-var-param-index
                   params
-                  (ast-expr-list-get (& fold-args) 0 0))]
+                  (compiler_ast_types.ast-expr-list-get (& fold-args) 0 0))]
               [missing-name : String
                 (embedded-native-expr-var-name
-                  (ast-expr-list-get (& fold-args) 1 0))]
+                  (compiler_ast_types.ast-expr-list-get (& fold-args) 1 0))]
               [else-not-final-name : String
                 (embedded-native-expr-var-name
-                  (ast-expr-list-get (& fold-args) 2 0))]
+                  (compiler_ast_types.ast-expr-list-get (& fold-args) 2 0))]
               (if (or
                 (< clauses-index 0)
                 (= (string.string-length missing-name) 0)
@@ -503,7 +512,7 @@
                     ops-count
                     (embedded-native-op-open
                       0
-                      tlci-host-callback-name-expr-var
+                      tlci_core.tlci-host-callback-name-expr-var
                       (embedded-native-name-arg missing-name)
                       (string.int->string (string.string-length missing-name))
                       "0"))
@@ -512,7 +521,7 @@
                     ops-count
                     (embedded-native-op-open
                       1
-                      tlci-host-callback-name-expr-var
+                      tlci_core.tlci-host-callback-name-expr-var
                       (embedded-native-name-arg else-not-final-name)
                       (string.int->string
                         (string.string-length else-not-final-name))
@@ -522,30 +531,32 @@
                     ops-count
                     (embedded-native-op-open
                       2
-                      tlci-host-callback-name-expr-clause-list-fold-if
+                      tlci_core.tlci-host-callback-name-expr-clause-list-fold-if
                       (string.int->string clauses-index)
                       "0"
                       "0"))
                   3)))
             (if (and
               (or
-                (string.eq (intern-str fold-head) "comptime.expr-list-fold-if")
-                (string.eq (intern-str fold-head) "expr-list-fold-if"))
-              (= (ast-expr-list-len (& fold-args)) 4))
+                (string.eq
+                  (ci.intern-str fold-head)
+                  "comptime.expr-list-fold-if")
+                (string.eq (ci.intern-str fold-head) "expr-list-fold-if"))
+              (= (compiler_ast_types.ast-expr-list-len (& fold-args)) 4))
               (let
                 [items-index : i64
                   (embedded-native-var-param-index
                     params
-                    (ast-expr-list-get (& fold-args) 0 0))]
+                    (compiler_ast_types.ast-expr-list-get (& fold-args) 0 0))]
                 [when-true : i64
                   (embedded-native-expr-bool-flag
-                    (ast-expr-list-get (& fold-args) 1 0))]
+                    (compiler_ast_types.ast-expr-list-get (& fold-args) 1 0))]
                 [when-false : i64
                   (embedded-native-expr-bool-flag
-                    (ast-expr-list-get (& fold-args) 2 0))]
+                    (compiler_ast_types.ast-expr-list-get (& fold-args) 2 0))]
                 [continue-flag : i64
                   (embedded-native-bool-literal-flag
-                    (ast-expr-list-get (& fold-args) 3 0))]
+                    (compiler_ast_types.ast-expr-list-get (& fold-args) 3 0))]
                 (if (or
                   (< items-index 0)
                   (< when-true 0)
@@ -558,7 +569,7 @@
                       ops-count
                       (embedded-native-op-open
                         0
-                        tlci-host-callback-name-expr-bool-literal
+                        tlci_core.tlci-host-callback-name-expr-bool-literal
                         (string.int->string when-true)
                         "0"
                         "0"))
@@ -567,7 +578,7 @@
                       ops-count
                       (embedded-native-op-open
                         1
-                        tlci-host-callback-name-expr-bool-literal
+                        tlci_core.tlci-host-callback-name-expr-bool-literal
                         (string.int->string when-false)
                         "0"
                         "0"))
@@ -576,7 +587,7 @@
                       ops-count
                       (embedded-native-op-open
                         2
-                        tlci-host-callback-name-expr-list-fold-if
+                        tlci_core.tlci-host-callback-name-expr-list-fold-if
                         (string.int->string items-index)
                         (string.int->string continue-flag)
                         "0"))
@@ -589,7 +600,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      tlci-host-callback-name-expr-var
+                      tlci_core.tlci-host-callback-name-expr-var
                       (embedded-native-name-arg var-name)
                       (string.int->string (string.string-length var-name))
                       "0")
@@ -600,19 +611,20 @@
 ;: The literal name of a (comptime.expr-var "name") argument; "" otherwise.
 (define (embedded-native-expr-var-name [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call var-func var-args)
+    [(compiler_ast_types.AstExpr.Call var-func var-args)
       (match (embedded-stdlib-tlci-unwrap-expr var-func)
-        [(AstExpr.Var var-head)
+        [(compiler_ast_types.AstExpr.Var var-head)
           (if (and
             (or
-              (string.eq (intern-str var-head) "comptime.expr-var")
-              (string.eq (intern-str var-head) "expr-var"))
-            (= (ast-expr-list-len (& var-args)) 1))
+              (string.eq (ci.intern-str var-head) "comptime.expr-var")
+              (string.eq (ci.intern-str var-head) "expr-var"))
+            (= (compiler_ast_types.ast-expr-list-len (& var-args)) 1))
             (match (embedded-stdlib-tlci-unwrap-expr
-              (ast-expr-list-get (& var-args) 0 0))
-              [(AstExpr.Literal lit)
+              (compiler_ast_types.ast-expr-list-get (& var-args) 0 0))
+              [(compiler_ast_types.AstExpr.Literal lit)
                 (match lit
-                  [(AstLiteral.String text) (intern-str text)]
+                  [(compiler_ast_types.AstLiteral.String text)
+                    (ci.intern-str text)]
                   [_ ""])]
               [_ ""])
             "")]
@@ -622,16 +634,16 @@
 ;: 1/0 for a (comptime.expr-bool <literal>) argument; -1 otherwise.
 (define (embedded-native-expr-bool-flag [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call bool-func bool-args)
+    [(compiler_ast_types.AstExpr.Call bool-func bool-args)
       (match (embedded-stdlib-tlci-unwrap-expr bool-func)
-        [(AstExpr.Var bool-head)
+        [(compiler_ast_types.AstExpr.Var bool-head)
           (if (and
             (or
-              (string.eq (intern-str bool-head) "comptime.expr-bool")
-              (string.eq (intern-str bool-head) "expr-bool"))
-            (= (ast-expr-list-len (& bool-args)) 1))
+              (string.eq (ci.intern-str bool-head) "comptime.expr-bool")
+              (string.eq (ci.intern-str bool-head) "expr-bool"))
+            (= (compiler_ast_types.ast-expr-list-len (& bool-args)) 1))
             (embedded-native-bool-literal-flag
-              (ast-expr-list-get (& bool-args) 0 0))
+              (compiler_ast_types.ast-expr-list-get (& bool-args) 0 0))
             -1)]
         [_ -1])]
     [_ -1]))
@@ -639,9 +651,9 @@
 ;: 1/0 for a literal bool node; -1 otherwise.
 (define (embedded-native-bool-literal-flag [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Literal lit)
+    [(compiler_ast_types.AstExpr.Literal lit)
       (match lit
-        [(AstLiteral.Bool flag)
+        [(compiler_ast_types.AstLiteral.Bool flag)
           (if flag
             1
             0)]
@@ -662,12 +674,13 @@
           [c : char (string.string-ref text index)]
           (begin
             (cond
-              [(= c '\\') (set! out (str-cat out "\\\\"))]
-              [(= c '"') (set! out (str-cat out "\\\""))]
-              [(= c '\n') (set! out (str-cat out "\\n"))]
-              [(= c '\t') (set! out (str-cat out "\\t"))]
-              [(= c '\r') (set! out (str-cat out "\\r"))]
-              [else (set! out (str-cat out (string.substring text index 1)))])
+              [(= c '\\') (set! out (str_cat.str-cat out "\\\\"))]
+              [(= c '"') (set! out (str_cat.str-cat out "\\\""))]
+              [(= c '\n') (set! out (str_cat.str-cat out "\\n"))]
+              [(= c '\t') (set! out (str_cat.str-cat out "\\t"))]
+              [(= c '\r') (set! out (str_cat.str-cat out "\\r"))]
+              [else
+                (set! out (str_cat.str-cat out (string.substring text index 1)))])
             (set! index (+ index 1)))))
       out)))
 
@@ -687,32 +700,32 @@
 
 ;; AstBinOp ordinal contract shared with the host callback consumer; the
 ;; embedded image and its consumer are always the same source-bound binary.
-(define (embedded-native-binop-ordinal [op : AstBinOp]) : i64
+(define (embedded-native-binop-ordinal [op : compiler_ast_types.AstBinOp]) : i64
   (match op
-    [(AstBinOp.Add) 0]
-    [(AstBinOp.Sub) 1]
-    [(AstBinOp.Mul) 2]
-    [(AstBinOp.Div) 3]
-    [(AstBinOp.Mod) 4]
-    [(AstBinOp.Eq) 5]
-    [(AstBinOp.Ne) 6]
-    [(AstBinOp.Lt) 7]
-    [(AstBinOp.Le) 8]
-    [(AstBinOp.Gt) 9]
-    [(AstBinOp.Ge) 10]
-    [(AstBinOp.And) 11]
-    [(AstBinOp.Or) 12]
-    [(AstBinOp.BitAnd) 13]
-    [(AstBinOp.BitOr) 14]
-    [(AstBinOp.BitXor) 15]
-    [(AstBinOp.Shl) 16]
-    [(AstBinOp.Shr) 17]))
+    [(compiler_ast_types.AstBinOp.Add) 0]
+    [(compiler_ast_types.AstBinOp.Sub) 1]
+    [(compiler_ast_types.AstBinOp.Mul) 2]
+    [(compiler_ast_types.AstBinOp.Div) 3]
+    [(compiler_ast_types.AstBinOp.Mod) 4]
+    [(compiler_ast_types.AstBinOp.Eq) 5]
+    [(compiler_ast_types.AstBinOp.Ne) 6]
+    [(compiler_ast_types.AstBinOp.Lt) 7]
+    [(compiler_ast_types.AstBinOp.Le) 8]
+    [(compiler_ast_types.AstBinOp.Gt) 9]
+    [(compiler_ast_types.AstBinOp.Ge) 10]
+    [(compiler_ast_types.AstBinOp.And) 11]
+    [(compiler_ast_types.AstBinOp.Or) 12]
+    [(compiler_ast_types.AstBinOp.BitAnd) 13]
+    [(compiler_ast_types.AstBinOp.BitOr) 14]
+    [(compiler_ast_types.AstBinOp.BitXor) 15]
+    [(compiler_ast_types.AstBinOp.Shl) 16]
+    [(compiler_ast_types.AstBinOp.Shr) 17]))
 
-(define (embedded-native-unop-ordinal [op : AstUnOp]) : i64
+(define (embedded-native-unop-ordinal [op : compiler_ast_types.AstUnOp]) : i64
   (match op
-    [(AstUnOp.Neg) 0]
-    [(AstUnOp.Not) 1]
-    [(AstUnOp.BitNot) 2]))
+    [(compiler_ast_types.AstUnOp.Neg) 0]
+    [(compiler_ast_types.AstUnOp.Not) 1]
+    [(compiler_ast_types.AstUnOp.BitNot) 2]))
 
 (define (embedded-native-comparison-spelling [ordinal : i64]) : String
   (cond
@@ -729,7 +742,7 @@
 ;; the opened op-let count or -1 when the operand is outside the supported
 ;; subset. Refs #5605.
 (define (embedded-native-template-binary-node-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [first-node : i64]
   [second-node : i64]
   [op : String]
@@ -750,7 +763,7 @@
             (+ first-opened second-opened 1)))))))
 
 (define (embedded-native-template-unary-node-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [inner-node : i64]
   [op : String]
   [ops : (__tl_dyn-array String)]
@@ -771,34 +784,34 @@
 ;; lets, or -1 when the node is outside the supported template subset (the
 ;; caller then keeps the counted fallback shell). Refs #5596.
 (define (embedded-native-template-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Unquote inner)
+    [(compiler_ast_types.AstExpr.Unquote inner)
       (match (embedded-stdlib-tlci-unwrap-expr inner)
-        [(AstExpr.Var pname)
+        [(compiler_ast_types.AstExpr.Var pname)
           (embedded-native-unquote-ops params pname ops ops-count)]
         ;; Any other unquoted operand is a computed comptime expression whose
         ;; value substitutes into the template, matching the interpreted
         ;; quote's unquote step. Refs #5617.
         [_ (embedded-native-computed-expr-ops params inner ops ops-count)])]
-    [(AstExpr.Literal lit)
+    [(compiler_ast_types.AstExpr.Literal lit)
       (match lit
-        [(AstLiteral.Bool flag)
+        [(compiler_ast_types.AstLiteral.Bool flag)
           (begin
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-expr-bool-literal
+              tlci_core.tlci-host-callback-name-expr-bool-literal
               (if flag
                 "1"
                 "0")
               "0"
               "0")
             1)]
-        [(AstLiteral.Int value text)
+        [(compiler_ast_types.AstLiteral.Int value text)
           (if (or
             (= (string.string-length text) 0)
             (string.eq text (string.int->string value)))
@@ -806,79 +819,79 @@
               (embedded-native-template-push!
                 ops
                 ops-count
-                tlci-host-callback-name-expr-int-literal
+                tlci_core.tlci-host-callback-name-expr-int-literal
                 (string.int->string value)
                 "0"
                 "0")
               1)
             -1)]
-        [(AstLiteral.String sid)
+        [(compiler_ast_types.AstLiteral.String sid)
           (let
-            [text : String (intern-str sid)]
+            [text : String (ci.intern-str sid)]
             (begin
               (embedded-native-template-push!
                 ops
                 ops-count
-                tlci-host-callback-name-expr-string
+                tlci_core.tlci-host-callback-name-expr-string
                 (embedded-native-name-arg (embedded-native-escape-string text))
                 (string.int->string (string.string-length text))
                 "0")
               1))]
-        [(AstLiteral.Char c)
+        [(compiler_ast_types.AstLiteral.Char c)
           (begin
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-expr-char-literal
+              tlci_core.tlci-host-callback-name-expr-char-literal
               (string.int->string (cast c : i64))
               "0"
               "0")
             1)]
-        [(AstLiteral.Unit)
+        [(compiler_ast_types.AstLiteral.Unit)
           (begin
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-expr-unit-literal
+              tlci_core.tlci-host-callback-name-expr-unit-literal
               "0"
               "0"
               "0")
             1)]
-        [(AstLiteral.Float text)
+        [(compiler_ast_types.AstLiteral.Float text)
           (begin
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-expr-float-literal
+              tlci_core.tlci-host-callback-name-expr-float-literal
               (embedded-native-name-arg (embedded-native-escape-string text))
               (string.int->string (string.string-length text))
               "0")
             1)]
         [_ -1])]
-    [(AstExpr.Var name-id)
+    [(compiler_ast_types.AstExpr.Var name-id)
       (let
-        [name : String (intern-str name-id)]
+        [name : String (ci.intern-str name-id)]
         (begin
           (embedded-native-template-push!
             ops
             ops-count
-            tlci-host-callback-name-expr-var
+            tlci_core.tlci-host-callback-name-expr-var
             (embedded-native-name-arg name)
             (string.int->string (string.string-length name))
             "0")
           1))]
-    [(AstExpr.Call func-id args)
+    [(compiler_ast_types.AstExpr.Call func-id args)
       (let
         [head-opened : i64
           (match (embedded-stdlib-tlci-unwrap-expr func-id)
-            [(AstExpr.Var head-id)
+            [(compiler_ast_types.AstExpr.Var head-id)
               (let
-                [head : String (intern-str head-id)]
+                [head : String (ci.intern-str head-id)]
                 (begin
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    tlci-host-callback-name-expr-var
+                    tlci_core.tlci-host-callback-name-expr-var
                     (embedded-native-name-arg head)
                     (string.int->string (string.string-length head))
                     "0")
@@ -897,12 +910,12 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  tlci-host-callback-name-expr-call
+                  tlci_core.tlci-host-callback-name-expr-call
                   "0"
                   "0"
                   "0")
                 (+ arg-opened 2))))))]
-    [(AstExpr.If cond-node then-node else-node)
+    [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
       (let
         [cond-opened : i64
           (embedded-native-template-ops params cond-node ops ops-count)]
@@ -922,12 +935,12 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      tlci-host-callback-name-expr-if
+                      tlci_core.tlci-host-callback-name-expr-if
                       "0"
                       "0"
                       "0")
                     (+ cond-opened then-opened else-opened 1))))))))]
-    [(AstExpr.Begin exprs)
+    [(compiler_ast_types.AstExpr.Begin exprs)
       (let
         [arg-opened : i64
           (embedded-native-template-args-ops params (& exprs) ops ops-count)]
@@ -937,12 +950,12 @@
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-expr-begin
+              tlci_core.tlci-host-callback-name-expr-begin
               "0"
               "0"
               "0")
             (+ arg-opened 1))))]
-    [(AstExpr.Tuple items)
+    [(compiler_ast_types.AstExpr.Tuple items)
       (let
         [item-opened : i64
           (embedded-native-template-args-ops params (& items) ops ops-count)]
@@ -952,12 +965,12 @@
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-expr-tuple
+              tlci_core.tlci-host-callback-name-expr-tuple
               "0"
               "0"
               "0")
             (+ item-opened 1))))]
-    [(AstExpr.BracketClause items)
+    [(compiler_ast_types.AstExpr.BracketClause items)
       (let
         [arg-opened : i64
           (embedded-native-template-args-ops params (& items) ops ops-count)]
@@ -967,39 +980,40 @@
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-expr-bracket-clause
+              tlci_core.tlci-host-callback-name-expr-bracket-clause
               "0"
               "0"
               "0")
             (+ arg-opened 1))))]
-    [(AstExpr.Borrow mutable lifetime-id place)
+    [(compiler_ast_types.AstExpr.Borrow mutable lifetime-id place)
       (let
-        [lifetime : AstBorrowLifetime (ast-borrow-lifetime-from-id lifetime-id)]
+        [lifetime : compiler_ast_types.AstBorrowLifetime
+          (compiler_ast_types.ast-borrow-lifetime-from-id lifetime-id)]
         [place-opened : i64
           (embedded-native-template-ops params place ops ops-count)]
         (if (< place-opened 0)
           -1
           (match lifetime
-            [(AstBorrowLifetime.Inferred)
+            [(compiler_ast_types.AstBorrowLifetime.Inferred)
               (begin
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  tlci-host-callback-name-expr-borrow
+                  tlci_core.tlci-host-callback-name-expr-borrow
                   (if mutable
                     "1"
                     "0")
                   "0"
                   "0")
                 (+ place-opened 1))]
-            [(AstBorrowLifetime.Named lifetime-id)
+            [(compiler_ast_types.AstBorrowLifetime.Named lifetime-id)
               (let
-                [lifetime-name : String (intern-str lifetime-id)]
+                [lifetime-name : String (ci.intern-str lifetime-id)]
                 (begin
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    tlci-host-callback-name-expr-borrow
+                    tlci_core.tlci-host-callback-name-expr-borrow
                     (if mutable
                       "1"
                       "0")
@@ -1007,9 +1021,9 @@
                     (string.int->string (string.string-length lifetime-name)))
                   (+ place-opened 1)))]
             [_ -1])))]
-    [(AstExpr.Match match-box)
+    [(compiler_ast_types.AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch.Match scrutinee arms)
+        [(compiler_ast_types.AstMatch.Match scrutinee arms)
           (let
             [scrut-opened : i64
               (embedded-native-template-ops params scrutinee ops ops-count)]
@@ -1028,29 +1042,29 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      tlci-host-callback-name-expr-match
+                      tlci_core.tlci-host-callback-name-expr-match
                       "0"
                       "0"
                       "0")
                     (+ scrut-opened arms-opened 1))))))])]
-    [(AstExpr.StructGet target field)
+    [(compiler_ast_types.AstExpr.StructGet target field)
       (let
         [target-opened : i64
           (embedded-native-template-ops params target ops ops-count)]
         (if (< target-opened 0)
           -1
           (let
-            [field-name : String (intern-str field)]
+            [field-name : String (ci.intern-str field)]
             (begin
               (embedded-native-template-push!
                 ops
                 ops-count
-                tlci-host-callback-name-expr-struct-get
+                tlci_core.tlci-host-callback-name-expr-struct-get
                 (embedded-native-name-arg field-name)
                 (string.int->string (string.string-length field-name))
                 "0")
               (+ target-opened 1)))))]
-    [(AstExpr.ArraySet target index value)
+    [(compiler_ast_types.AstExpr.ArraySet target index value)
       (let
         [target-opened : i64
           (embedded-native-template-ops params target ops ops-count)]
@@ -1070,19 +1084,19 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      tlci-host-callback-name-expr-array-set
+                      tlci_core.tlci-host-callback-name-expr-array-set
                       "0"
                       "0"
                       "0")
                     (+ target-opened index-opened value-opened 1))))))))]
-    [(AstExpr.Let let-box)
+    [(compiler_ast_types.AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet.Let bindings body)
+        [(compiler_ast_types.AstLet.Let bindings body)
           (begin
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-let-binding-list-empty
+              tlci_core.tlci-host-callback-name-let-binding-list-empty
               "0"
               "0"
               "0")
@@ -1105,12 +1119,12 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-expr-let
+                        tlci_core.tlci-host-callback-name-expr-let
                         "0"
                         "0"
                         "0")
                       (+ bindings-opened body-opened 2)))))))])]
-    [(AstExpr.Binary op left-node right-node)
+    [(compiler_ast_types.AstExpr.Binary op left-node right-node)
       (let
         [left-opened : i64
           (embedded-native-template-ops params left-node ops ops-count)]
@@ -1125,12 +1139,12 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  tlci-host-callback-name-expr-binary-op
+                  tlci_core.tlci-host-callback-name-expr-binary-op
                   (string.int->string (embedded-native-binop-ordinal op))
                   "0"
                   "0")
                 (+ left-opened right-opened 1))))))]
-    [(AstExpr.Unary op inner-node)
+    [(compiler_ast_types.AstExpr.Unary op inner-node)
       (let
         [inner-opened : i64
           (embedded-native-template-ops params inner-node ops ops-count)]
@@ -1140,74 +1154,74 @@
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-expr-unary-op
+              tlci_core.tlci-host-callback-name-expr-unary-op
               (string.int->string (embedded-native-unop-ordinal op))
               "0"
               "0")
             (+ inner-opened 1))))]
-    [(AstExpr.Return inner-node)
+    [(compiler_ast_types.AstExpr.Return inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        tlci-host-callback-name-expr-return
+        tlci_core.tlci-host-callback-name-expr-return
         ops
         ops-count)]
-    [(AstExpr.Box inner-node)
+    [(compiler_ast_types.AstExpr.Box inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        tlci-host-callback-name-expr-box
+        tlci_core.tlci-host-callback-name-expr-box
         ops
         ops-count)]
-    [(AstExpr.BoxGet inner-node)
+    [(compiler_ast_types.AstExpr.BoxGet inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        tlci-host-callback-name-expr-box-get
+        tlci_core.tlci-host-callback-name-expr-box-get
         ops
         ops-count)]
     ;; Raw-pointer and `unsafe` template nodes, the last shapes the
     ;; `stdlib.text_buf_family` generators need. Refs #5605.
-    [(AstExpr.PtrRead inner-node)
+    [(compiler_ast_types.AstExpr.PtrRead inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        tlci-host-callback-name-expr-ptr-read
+        tlci_core.tlci-host-callback-name-expr-ptr-read
         ops
         ops-count)]
-    [(AstExpr.PtrToInt inner-node)
+    [(compiler_ast_types.AstExpr.PtrToInt inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        tlci-host-callback-name-expr-ptr-to-int
+        tlci_core.tlci-host-callback-name-expr-ptr-to-int
         ops
         ops-count)]
-    [(AstExpr.StringData inner-node)
+    [(compiler_ast_types.AstExpr.StringData inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        tlci-host-callback-name-expr-string-data
+        tlci_core.tlci-host-callback-name-expr-string-data
         ops
         ops-count)]
-    [(AstExpr.PtrWrite ptr-node value-node)
+    [(compiler_ast_types.AstExpr.PtrWrite ptr-node value-node)
       (embedded-native-template-binary-node-ops
         params
         ptr-node
         value-node
-        tlci-host-callback-name-expr-ptr-write
+        tlci_core.tlci-host-callback-name-expr-ptr-write
         ops
         ops-count)]
-    [(AstExpr.PtrOffset ptr-node offset-node)
+    [(compiler_ast_types.AstExpr.PtrOffset ptr-node offset-node)
       (embedded-native-template-binary-node-ops
         params
         ptr-node
         offset-node
-        tlci-host-callback-name-expr-ptr-offset
+        tlci_core.tlci-host-callback-name-expr-ptr-offset
         ops
         ops-count)]
     ;; `(ptr-cast p : T)`: the pointer expression then the type template, the
     ;; same operand order expr-make-array uses. Refs #5605.
-    [(AstExpr.PtrCast ptr-node cast-type-id)
+    [(compiler_ast_types.AstExpr.PtrCast ptr-node cast-type-id)
       (let
         [ptr-opened : i64
           (embedded-native-template-ops params ptr-node ops ops-count)]
@@ -1217,7 +1231,7 @@
             [type-opened : i64
               (embedded-native-template-type-ops
                 params
-                (ty-node-get cast-type-id)
+                (compiler_ast_types.ty-node-get cast-type-id)
                 ops
                 ops-count)]
             (if (< type-opened 0)
@@ -1226,27 +1240,27 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  tlci-host-callback-name-expr-ptr-cast
+                  tlci_core.tlci-host-callback-name-expr-ptr-cast
                   "0"
                   "0"
                   "0")
                 (+ ptr-opened type-opened 1))))))]
-    [(AstExpr.ArrayData inner-node)
+    [(compiler_ast_types.AstExpr.ArrayData inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
-        tlci-host-callback-name-expr-array-data
+        tlci_core.tlci-host-callback-name-expr-array-data
         ops
         ops-count)]
-    [(AstExpr.StringFromBytes data-node length-node)
+    [(compiler_ast_types.AstExpr.StringFromBytes data-node length-node)
       (embedded-native-template-binary-node-ops
         params
         data-node
         length-node
-        tlci-host-callback-name-expr-string-from-bytes
+        tlci_core.tlci-host-callback-name-expr-string-from-bytes
         ops
         ops-count)]
-    [(AstExpr.Unsafe body-exprs)
+    [(compiler_ast_types.AstExpr.Unsafe body-exprs)
       (let
         [arg-opened : i64
           (embedded-native-template-args-ops
@@ -1260,7 +1274,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-expr-unsafe
+              tlci_core.tlci-host-callback-name-expr-unsafe
               "0"
               "0"
               "0")
@@ -1269,8 +1283,8 @@
     ;; the node, so the field name travels as an immediate like struct-get's.
     ;; The sentinel field id marks `(set! ,place value)`, whose place shape is
     ;; only known once the unquoted operand is evaluated; that stays a fallback.
-    [(AstExpr.StructSet target-node field value-node)
-      (if (= field (ast-expr-unquote-set-target-field-id))
+    [(compiler_ast_types.AstExpr.StructSet target-node field value-node)
+      (if (= field (compiler_ast_types.ast-expr-unquote-set-target-field-id))
         -1
         (let
           [target-opened : i64
@@ -1283,19 +1297,19 @@
               (if (< value-opened 0)
                 -1
                 (let
-                  [field-name : String (intern-str field)]
+                  [field-name : String (ci.intern-str field)]
                   (begin
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      tlci-host-callback-name-expr-struct-set
+                      tlci_core.tlci-host-callback-name-expr-struct-set
                       (embedded-native-name-arg field-name)
                       (string.int->string (string.string-length field-name))
                       "0")
                     (+ target-opened value-opened 1))))))))]
     ;; `(cast e : T)`: the operand template then the type template, matching
     ;; the interpreted quote's cast reconstruction. Refs #5604.
-    [(AstExpr.Cast value-node ty-id)
+    [(compiler_ast_types.AstExpr.Cast value-node ty-id)
       (let
         [value-opened : i64
           (embedded-native-template-ops params value-node ops ops-count)]
@@ -1305,7 +1319,7 @@
             [type-opened : i64
               (embedded-native-template-type-ops
                 params
-                (ty-node-get ty-id)
+                (compiler_ast_types.ty-node-get ty-id)
                 ops
                 ops-count)]
             (if (< type-opened 0)
@@ -1314,7 +1328,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  tlci-host-callback-name-expr-cast
+                  tlci_core.tlci-host-callback-name-expr-cast
                   "0"
                   "0"
                   "0")
@@ -1322,9 +1336,9 @@
     ;; Typed `(init : T)`: quote the annotation as a type value, then let the
     ;; host reconstruct the same Init node as interpreted quasiquote. Refs
     ;; #5606.
-    [(AstExpr.Init maybe-ty-id)
-      (match (ast-maybe-type-from-id maybe-ty-id)
-        [(AstMaybeType.Some ty)
+    [(compiler_ast_types.AstExpr.Init maybe-ty-id)
+      (match (compiler_ast_types.ast-maybe-type-from-id maybe-ty-id)
+        [(compiler_ast_types.AstMaybeType.Some ty)
           (let
             [type-opened : i64
               (embedded-native-template-type-ops params ty ops ops-count)]
@@ -1334,30 +1348,30 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  tlci-host-callback-name-expr-init
+                  tlci_core.tlci-host-callback-name-expr-init
                   "0"
                   "0"
                   "0")
                 (+ type-opened 1))))]
         [_ -1])]
-    [(AstExpr.Set name-id value-node)
+    [(compiler_ast_types.AstExpr.Set name-id value-node)
       (let
         [value-opened : i64
           (embedded-native-template-ops params value-node ops ops-count)]
         (if (< value-opened 0)
           -1
           (let
-            [name : String (intern-str name-id)]
+            [name : String (ci.intern-str name-id)]
             (begin
               (embedded-native-template-push!
                 ops
                 ops-count
-                tlci-host-callback-name-expr-set-var
+                tlci_core.tlci-host-callback-name-expr-set-var
                 (embedded-native-name-arg name)
                 (string.int->string (string.string-length name))
                 "0")
               (+ value-opened 1)))))]
-    [(AstExpr.While cond-node body-node)
+    [(compiler_ast_types.AstExpr.While cond-node body-node)
       (let
         [cond-opened : i64
           (embedded-native-template-ops params cond-node ops ops-count)]
@@ -1372,12 +1386,12 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  tlci-host-callback-name-expr-while
+                  tlci_core.tlci-host-callback-name-expr-while
                   "0"
                   "0"
                   "0")
                 (+ cond-opened body-opened 1))))))]
-    [(AstExpr.ArrayRef target-node index-node)
+    [(compiler_ast_types.AstExpr.ArrayRef target-node index-node)
       (let
         [target-opened : i64
           (embedded-native-template-ops params target-node ops ops-count)]
@@ -1392,12 +1406,12 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  tlci-host-callback-name-expr-array-ref
+                  tlci_core.tlci-host-callback-name-expr-array-ref
                   "0"
                   "0"
                   "0")
                 (+ target-opened index-opened 1))))))]
-    [(AstExpr.ArrayPush target-node value-node)
+    [(compiler_ast_types.AstExpr.ArrayPush target-node value-node)
       (let
         [target-opened : i64
           (embedded-native-template-ops params target-node ops ops-count)]
@@ -1412,17 +1426,17 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  tlci-host-callback-name-expr-array-push
+                  tlci_core.tlci-host-callback-name-expr-array-push
                   "0"
                   "0"
                   "0")
                 (+ target-opened value-opened 1))))))]
-    [(AstExpr.MakeArray elem-type-id size-node)
+    [(compiler_ast_types.AstExpr.MakeArray elem-type-id size-node)
       (let
         [type-opened : i64
           (embedded-native-template-type-ops
             params
-            (ty-node-get elem-type-id)
+            (compiler_ast_types.ty-node-get elem-type-id)
             ops
             ops-count)]
         (if (< type-opened 0)
@@ -1436,7 +1450,7 @@
                 (embedded-native-template-push!
                   ops
                   ops-count
-                  tlci-host-callback-name-expr-make-array
+                  tlci_core.tlci-host-callback-name-expr-make-array
                   "0"
                   "0"
                   "0")
@@ -1444,7 +1458,7 @@
     [_
       (begin
         (embedded-native-fallback-reason-note!
-          (str-cat
+          (str_cat.str-cat
             "template-node:"
             (embedded-native-expr-kind-name
               (embedded-stdlib-tlci-unwrap-expr node))))
@@ -1456,12 +1470,12 @@
 ;; unquote-splicing step. Returns the opened op-let count or -1 when an item
 ;; is outside the supported subset.
 (define (embedded-native-template-args-ops
-  [params : (& params AstMacroParamList)]
-  [args : (& args AstExprList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [args : (& args compiler_ast_types.AstExprList)]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
   (let
-    [count : i64 (ast-expr-list-len args)]
+    [count : i64 (compiler_ast_types.ast-expr-list-len args)]
     [index : i64 0]
     [opened : i64 1]
     [ok : bool true]
@@ -1469,23 +1483,23 @@
       (embedded-native-template-push!
         ops
         ops-count
-        tlci-host-callback-name-expr-list-empty
+        tlci_core.tlci-host-callback-name-expr-list-empty
         "0"
         "0"
         "0")
       (while (and ok (< index count))
         (let
-          [item : i64 (ast-expr-list-get args index 0)]
+          [item : i64 (compiler_ast_types.ast-expr-list-get args index 0)]
           (match (embedded-stdlib-tlci-unwrap-expr item)
-            [(AstExpr.UnquoteSplicing inner)
+            [(compiler_ast_types.AstExpr.UnquoteSplicing inner)
               (match (embedded-stdlib-tlci-unwrap-expr inner)
-                [(AstExpr.Var pname)
+                [(compiler_ast_types.AstExpr.Var pname)
                   (let
                     [param : i64
                       (embedded-stdlib-tlci-param-index params pname)]
                     [slot : i64
                       (if (< param 0)
-                        (embedded-native-local-index (intern-str pname))
+                        (embedded-native-local-index (ci.intern-str pname))
                         -1)]
                     (if (and (< param 0) (< slot 0))
                       (set! ok false)
@@ -1494,8 +1508,8 @@
                           ops
                           ops-count
                           (if (< param 0)
-                            tlci-host-callback-name-local-get
-                            tlci-host-callback-name-push-operand)
+                            tlci_core.tlci-host-callback-name-local-get
+                            tlci_core.tlci-host-callback-name-push-operand)
                           (string.int->string
                             (if (< param 0)
                               slot
@@ -1505,7 +1519,7 @@
                         (embedded-native-template-push!
                           ops
                           ops-count
-                          tlci-host-callback-name-expr-splice
+                          tlci_core.tlci-host-callback-name-expr-splice
                           "0"
                           "0"
                           "0")
@@ -1526,7 +1540,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      tlci-host-callback-name-expr-list-append
+                      tlci_core.tlci-host-callback-name-expr-list-append
                       "0"
                       "0"
                       "0")
@@ -1541,8 +1555,8 @@
 ;; Returns the opened op-let count or -1 when any piece is outside the
 ;; supported subset. Refs #5603.
 (define (embedded-native-template-match-arms-ops
-  [params : (& params AstMacroParamList)]
-  [arms : (& arms AstMatchArmList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
   (let
@@ -1554,58 +1568,61 @@
       (embedded-native-template-push!
         ops
         ops-count
-        tlci-host-callback-name-match-arm-list-empty
+        tlci_core.tlci-host-callback-name-match-arm-list-empty
         "0"
         "0"
         "0")
       (while (and ok (< index count))
         (match (array-ref (struct-get arms slots) index)
-          [(AstMatchArm.Arm pattern body-node)
+          [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
             (let
               [pat-opened : i64
                 (match pattern
-                  [(AstPattern.Wildcard)
+                  [(compiler_ast_types.AstPattern.Wildcard)
                     (begin
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-pattern-wildcard
+                        tlci_core.tlci-host-callback-name-pattern-wildcard
                         "0"
                         "0"
                         "0")
                       1)]
-                  [(AstPattern.Binding pat-name-id)
+                  [(compiler_ast_types.AstPattern.Binding pat-name-id)
                     (let
-                      [pat-name : String (intern-str pat-name-id)]
+                      [pat-name : String (ci.intern-str pat-name-id)]
                       (begin
                         (embedded-native-template-push!
                           ops
                           ops-count
-                          tlci-host-callback-name-pattern-binding
+                          tlci_core.tlci-host-callback-name-pattern-binding
                           (embedded-native-name-arg pat-name)
                           (string.int->string (string.string-length pat-name))
                           "0")
                         1))]
-                  [(AstPattern.Var pat-name-id pat-maybe-ty)
+                  [(compiler_ast_types.AstPattern.Var pat-name-id pat-maybe-ty)
                     (match pat-maybe-ty
-                      [(AstMaybeType.No)
+                      [(compiler_ast_types.AstMaybeType.No)
                         (let
-                          [pat-name : String (intern-str pat-name-id)]
+                          [pat-name : String (ci.intern-str pat-name-id)]
                           (begin
                             (embedded-native-template-push!
                               ops
                               ops-count
-                              tlci-host-callback-name-pattern-var
+                              tlci_core.tlci-host-callback-name-pattern-var
                               (embedded-native-name-arg pat-name)
                               (string.int->string
                                 (string.string-length pat-name))
                               "0")
                             1))]
                       [_ -1])]
-                  [(AstPattern.Variant pat-name-id pat-args-box)
+                  [(compiler_ast_types.AstPattern.Variant
+                      pat-name-id
+                      pat-args-box)
                     (let
-                      [pat-name : String (intern-str pat-name-id)]
-                      [pat-args : AstPatternList (box-get pat-args-box)]
+                      [pat-name : String (ci.intern-str pat-name-id)]
+                      [pat-args : compiler_ast_types.AstPatternList
+                        (box-get pat-args-box)]
                       [pat-arg-opened : i64
                         (embedded-native-pattern-list-ops
                           (& pat-args)
@@ -1619,7 +1636,7 @@
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            tlci-host-callback-name-pattern-variant
+                            tlci_core.tlci-host-callback-name-pattern-variant
                             (embedded-native-name-arg pat-name)
                             (string.int->string (string.string-length pat-name))
                             (string.int->string (struct-get (& pat-args) len)))
@@ -1644,14 +1661,14 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-match-arm
+                        tlci_core.tlci-host-callback-name-match-arm
                         "0"
                         "0"
                         "0")
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-match-arm-list-cons
+                        tlci_core.tlci-host-callback-name-match-arm-list-cons
                         "0"
                         "0"
                         "0")
@@ -1667,51 +1684,51 @@
 ;; mark, matching the interpreted quote. Returns the opened op-let count or
 ;; -1 outside the supported subset.
 (define (embedded-native-pattern-ops
-  [pattern : AstPattern]
+  [pattern : compiler_ast_types.AstPattern]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
   (match pattern
-    [(AstPattern.Wildcard)
+    [(compiler_ast_types.AstPattern.Wildcard)
       (begin
         (embedded-native-template-push!
           ops
           ops-count
-          tlci-host-callback-name-pattern-wildcard
+          tlci_core.tlci-host-callback-name-pattern-wildcard
           "0"
           "0"
           "0")
         1)]
-    [(AstPattern.Binding name-id)
+    [(compiler_ast_types.AstPattern.Binding name-id)
       (let
-        [name : String (intern-str name-id)]
+        [name : String (ci.intern-str name-id)]
         (begin
           (embedded-native-template-push!
             ops
             ops-count
-            tlci-host-callback-name-pattern-binding
+            tlci_core.tlci-host-callback-name-pattern-binding
             (embedded-native-name-arg name)
             (string.int->string (string.string-length name))
             "0")
           1))]
-    [(AstPattern.Var name-id maybe-ty)
+    [(compiler_ast_types.AstPattern.Var name-id maybe-ty)
       (match maybe-ty
-        [(AstMaybeType.No)
+        [(compiler_ast_types.AstMaybeType.No)
           (let
-            [name : String (intern-str name-id)]
+            [name : String (ci.intern-str name-id)]
             (begin
               (embedded-native-template-push!
                 ops
                 ops-count
-                tlci-host-callback-name-pattern-var
+                tlci_core.tlci-host-callback-name-pattern-var
                 (embedded-native-name-arg name)
                 (string.int->string (string.string-length name))
                 "0")
               1))]
         [_ -1])]
-    [(AstPattern.Variant name-id args-box)
+    [(compiler_ast_types.AstPattern.Variant name-id args-box)
       (let
-        [name : String (intern-str name-id)]
-        [args : AstPatternList (box-get args-box)]
+        [name : String (ci.intern-str name-id)]
+        [args : compiler_ast_types.AstPatternList (box-get args-box)]
         [arg-opened : i64
           (embedded-native-pattern-list-ops (& args) 0 ops ops-count 0)]
         (if (< arg-opened 0)
@@ -1720,7 +1737,7 @@
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-pattern-variant
+              tlci_core.tlci-host-callback-name-pattern-variant
               (embedded-native-name-arg name)
               (string.int->string (string.string-length name))
               (string.int->string (struct-get (& args) len)))
@@ -1731,7 +1748,7 @@
         -1)]))
 
 (define (embedded-native-pattern-list-ops
-  [args : (& args AstPatternList)]
+  [args : (& args compiler_ast_types.AstPatternList)]
   [index : i64]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]
@@ -1741,7 +1758,10 @@
     (let
       [item-opened : i64
         (embedded-native-pattern-ops
-          (ast-pattern-list-get args index (ast-pattern-fallback))
+          (compiler_ast_types.ast-pattern-list-get
+            args
+            index
+            (compiler_ast_types.ast-pattern-fallback))
           ops
           ops-count)]
       (if (< item-opened 0)
@@ -1756,27 +1776,27 @@
 ;; Scalar AstType ordinal contract shared with the host callback consumer;
 ;; the embedded image and its consumer are always the same source-bound
 ;; binary. Refs #5603.
-(define (embedded-native-scalar-type-ordinal [ty : AstType]) : i64
+(define (embedded-native-scalar-type-ordinal [ty : compiler_ast_types.AstType]) : i64
   (match ty
-    [(AstType.I64) 0]
-    [(AstType.I32) 1]
-    [(AstType.I16) 2]
-    [(AstType.I8) 3]
-    [(AstType.U64) 4]
-    [(AstType.U32) 5]
-    [(AstType.U16) 6]
-    [(AstType.U8) 7]
-    [(AstType.F64) 8]
-    [(AstType.F32) 9]
-    [(AstType.Bool) 10]
-    [(AstType.Char) 11]
-    [(AstType.String) 12]
-    [(AstType.Str) 13]
-    [(AstType.Bytes) 14]
-    [(AstType.Expr) 15]
-    [(AstType.ExprList) 16]
-    [(AstType.Unit) 17]
-    [(AstType.Never) 18]
+    [(compiler_ast_types.AstType.I64) 0]
+    [(compiler_ast_types.AstType.I32) 1]
+    [(compiler_ast_types.AstType.I16) 2]
+    [(compiler_ast_types.AstType.I8) 3]
+    [(compiler_ast_types.AstType.U64) 4]
+    [(compiler_ast_types.AstType.U32) 5]
+    [(compiler_ast_types.AstType.U16) 6]
+    [(compiler_ast_types.AstType.U8) 7]
+    [(compiler_ast_types.AstType.F64) 8]
+    [(compiler_ast_types.AstType.F32) 9]
+    [(compiler_ast_types.AstType.Bool) 10]
+    [(compiler_ast_types.AstType.Char) 11]
+    [(compiler_ast_types.AstType.String) 12]
+    [(compiler_ast_types.AstType.Str) 13]
+    [(compiler_ast_types.AstType.Bytes) 14]
+    [(compiler_ast_types.AstType.Expr) 15]
+    [(compiler_ast_types.AstType.ExprList) 16]
+    [(compiler_ast_types.AstType.Unit) 17]
+    [(compiler_ast_types.AstType.Never) 18]
     [_ -1]))
 
 ;; Emit ops building one template let-binding list: empty, then per binding
@@ -1789,7 +1809,7 @@
 ;; op-let count or -1 outside the subset.
 ;; The element/inner type template followed by a one-immediate wrapper op.
 (define (embedded-native-template-type-wrap-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [elem-id : i64]
   [op : String]
   [immediate : String]
@@ -1799,7 +1819,7 @@
     [elem-opened : i64
       (embedded-native-template-type-ops
         params
-        (ty-node-get elem-id)
+        (compiler_ast_types.ty-node-get elem-id)
         ops
         ops-count)]
     (if (< elem-opened 0)
@@ -1811,18 +1831,18 @@
 ;; `(& r T)` / `(&mut r T)`: the inner template, then the wrapper carrying the
 ;; mutability flag and the lifetime name.
 (define (embedded-native-template-type-ref-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [inner-id : i64]
   [region-id : i64]
   [mutable : i64]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
   (let
-    [region : String (intern-str region-id)]
+    [region : String (ci.intern-str region-id)]
     [inner-opened : i64
       (embedded-native-template-type-ops
         params
-        (ty-node-get inner-id)
+        (compiler_ast_types.ty-node-get inner-id)
         ops
         ops-count)]
     (if (< inner-opened 0)
@@ -1831,15 +1851,15 @@
         (embedded-native-template-push!
           ops
           ops-count
-          tlci-host-callback-name-type-ref
+          tlci_core.tlci-host-callback-name-type-ref
           (string.int->string mutable)
           (embedded-native-name-arg region)
           (string.int->string (string.string-length region)))
         (+ inner-opened 1)))))
 
 (define (embedded-native-template-type-ops
-  [params : (& params AstMacroParamList)]
-  [ty : AstType]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [ty : compiler_ast_types.AstType]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
   (match ty
@@ -1847,47 +1867,47 @@
     ;; read back through the global `ty-node-get` (the type-side twin of
     ;; `ast-node-get`), so no pool context has to be threaded here. Each arm
     ;; emits its element template then the wrapper op. Refs #5605.
-    [(AstType.Ptr elem-id)
+    [(compiler_ast_types.AstType.Ptr elem-id)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        tlci-host-callback-name-type-ptr
+        tlci_core.tlci-host-callback-name-type-ptr
         "0"
         ops
         ops-count)]
-    [(AstType.MutPtr elem-id)
+    [(compiler_ast_types.AstType.MutPtr elem-id)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        tlci-host-callback-name-type-ptr
+        tlci_core.tlci-host-callback-name-type-ptr
         "1"
         ops
         ops-count)]
-    [(AstType.Box elem-id)
+    [(compiler_ast_types.AstType.Box elem-id)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        tlci-host-callback-name-type-box
+        tlci_core.tlci-host-callback-name-type-box
         "0"
         ops
         ops-count)]
-    [(AstType.DynArray elem-id)
+    [(compiler_ast_types.AstType.DynArray elem-id)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        tlci-host-callback-name-type-dyn-array
+        tlci_core.tlci-host-callback-name-type-dyn-array
         "0"
         ops
         ops-count)]
-    [(AstType.Array elem-id count)
+    [(compiler_ast_types.AstType.Array elem-id count)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
-        tlci-host-callback-name-type-array
+        tlci_core.tlci-host-callback-name-type-array
         (string.int->string count)
         ops
         ops-count)]
-    [(AstType.Ref region-id inner-id)
+    [(compiler_ast_types.AstType.Ref region-id inner-id)
       (embedded-native-template-type-ref-ops
         params
         inner-id
@@ -1895,7 +1915,7 @@
         0
         ops
         ops-count)]
-    [(AstType.MutRef region-id inner-id)
+    [(compiler_ast_types.AstType.MutRef region-id inner-id)
       (embedded-native-template-type-ref-ops
         params
         inner-id
@@ -1907,16 +1927,19 @@
     ;; internal `(unquote T)` VarArgs sentinel. Mirror interpreted quote
     ;; evaluation by pushing either the direct type operand or a computed
     ;; let-bound type value. Refs #5606.
-    [(AstType.VarArgs name lifetimes-box)
+    [(compiler_ast_types.AstType.VarArgs name lifetimes-box)
       (let
-        [lifetimes : AstLifetimeList (box-get lifetimes-box)]
+        [lifetimes : compiler_ast_types.AstLifetimeList (box-get lifetimes-box)]
         [valid : bool
           (and
             (= name cbi.compiler-builtin-id-fix-unquote)
-            (= (ast-lifetime-list-len (& lifetimes)) 1))]
+            (= (compiler_ast_types.ast-lifetime-list-len (& lifetimes)) 1))]
         [operand-name : i64
           (if valid
-            (ast-lifetime-list-get (& lifetimes) 0 (ast-lifetime-fallback))
+            (compiler_ast_types.ast-lifetime-list-get
+              (& lifetimes)
+              0
+              (compiler_ast_types.ast-lifetime-fallback))
             -1)]
         [param : i64
           (if valid
@@ -1924,7 +1947,7 @@
             -1)]
         [slot : i64
           (if (and valid (< param 0))
-            (embedded-native-local-index (intern-str operand-name))
+            (embedded-native-local-index (ci.intern-str operand-name))
             -1)]
         (if (and (< param 0) (< slot 0))
           (begin
@@ -1935,8 +1958,8 @@
               ops
               ops-count
               (if (>= param 0)
-                tlci-host-callback-name-push-operand
-                tlci-host-callback-name-local-get)
+                tlci_core.tlci-host-callback-name-push-operand
+                tlci_core.tlci-host-callback-name-local-get)
               (string.int->string
                 (if (>= param 0)
                   param
@@ -1944,14 +1967,14 @@
               "0"
               "0")
             1)))]
-    [(AstType.Var type-name-id)
+    [(compiler_ast_types.AstType.Var type-name-id)
       (let
-        [type-name : String (intern-str type-name-id)]
+        [type-name : String (ci.intern-str type-name-id)]
         (begin
           (embedded-native-template-push!
             ops
             ops-count
-            tlci-host-callback-name-type-var
+            tlci_core.tlci-host-callback-name-type-var
             (embedded-native-name-arg type-name)
             (string.int->string (string.string-length type-name))
             "0")
@@ -1967,24 +1990,27 @@
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-type-scalar
+              tlci_core.tlci-host-callback-name-type-scalar
               (string.int->string ordinal)
               "0"
               "0")
             1)))]))
 
 (define (embedded-native-template-let-bindings-ops
-  [params : (& params AstMacroParamList)]
-  [bindings : (& bindings AstLetBindingList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [bindings : (& bindings compiler_ast_types.AstLetBindingList)]
   [index : i64]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
   (if (>= index (struct-get bindings len))
     0
-    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
-      [(AstLetBinding.Binding name-id maybe-ty init)
+    (match (compiler_ast_types.ast-let-binding-list-get
+      bindings
+      index
+      (compiler_ast_types.ast-let-binding-fallback))
+      [(compiler_ast_types.AstLetBinding.Binding name-id maybe-ty init)
         (let
-          [name : String (intern-str name-id)]
+          [name : String (ci.intern-str name-id)]
           [init-opened : i64
             (embedded-native-template-ops params init ops ops-count)]
           (if (< init-opened 0)
@@ -1992,17 +2018,17 @@
             (let
               [binding-opened : i64
                 (match maybe-ty
-                  [(AstMaybeType.No)
+                  [(compiler_ast_types.AstMaybeType.No)
                     (begin
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-let-binding
+                        tlci_core.tlci-host-callback-name-let-binding
                         (embedded-native-name-arg name)
                         (string.int->string (string.string-length name))
                         "0")
                       1)]
-                  [(AstMaybeType.Some ty)
+                  [(compiler_ast_types.AstMaybeType.Some ty)
                     (let
                       [type-opened : i64
                         (embedded-native-template-type-ops
@@ -2016,7 +2042,7 @@
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            tlci-host-callback-name-let-binding-typed
+                            tlci_core.tlci-host-callback-name-let-binding-typed
                             (embedded-native-name-arg name)
                             (string.int->string (string.string-length name))
                             "0")
@@ -2032,7 +2058,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    tlci-host-callback-name-let-binding-list-cons
+                    tlci_core.tlci-host-callback-name-let-binding-list-cons
                     "0"
                     "0"
                     "0")
@@ -2064,13 +2090,13 @@
     (begin
       (while (< index ops-count)
         (begin
-          (set! out (str-cat out (array-ref ops index)))
+          (set! out (str_cat.str-cat out (array-ref ops index)))
           (set! index (+ index 1))))
-      (set! out (str-cat out final))
+      (set! out (str_cat.str-cat out final))
       (set! index 0)
       (while (< index (* opened 2))
         (begin
-          (set! out (str-cat out ")"))
+          (set! out (str_cat.str-cat out ")"))
           (set! index (+ index 1))))
       out)))
 
@@ -2085,10 +2111,11 @@
     "  (comptime-host-commit-result host session 0 0 0)\n"))
 
 (define (embedded-native-var-param-index
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Var pname) (embedded-stdlib-tlci-param-index params pname)]
+    [(compiler_ast_types.AstExpr.Var pname)
+      (embedded-stdlib-tlci-param-index params pname)]
     [_ -1]))
 
 ;; Emit the op chain for one computed (non-template) expression, producing
@@ -2097,7 +2124,7 @@
 ;; type parameter, a parameter operand, or a let-bound local. Returns the
 ;; opened op-let count, or -1 outside the subset. Refs #5603.
 (define (embedded-native-computed-expr-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
@@ -2106,28 +2133,28 @@
     ;; a body-level template; reuse the template walker for its inner syntax.
     ;; This is needed for computed match-arm bodies in enum dispatch. Refs
     ;; #5626.
-    [(AstExpr.Quasiquote inner)
+    [(compiler_ast_types.AstExpr.Quasiquote inner)
       (embedded-native-template-ops params inner ops ops-count)]
-    [(AstExpr.Literal lit)
+    [(compiler_ast_types.AstExpr.Literal lit)
       (match lit
-        [(AstLiteral.String sid)
+        [(compiler_ast_types.AstLiteral.String sid)
           (let
-            [text : String (intern-str sid)]
+            [text : String (ci.intern-str sid)]
             (begin
               (embedded-native-template-push!
                 ops
                 ops-count
-                tlci-host-callback-name-string-value
+                tlci_core.tlci-host-callback-name-string-value
                 (embedded-native-name-arg (embedded-native-escape-string text))
                 (string.int->string (string.string-length text))
                 "0")
               1))]
-        [(AstLiteral.Unit)
+        [(compiler_ast_types.AstLiteral.Unit)
           (begin
             (embedded-native-template-push!
               ops
               ops-count
-              tlci-host-callback-name-value-unit
+              tlci_core.tlci-host-callback-name-value-unit
               "0"
               "0"
               "0")
@@ -2137,16 +2164,16 @@
     ;; linear op protocol by staging both Vars and selecting with the generated
     ;; i64 condition. Restricting both branches to Var keeps eager staging
     ;; observationally equivalent to interpreted `if`. Refs #5606.
-    [(AstExpr.If cond-node then-node else-node)
+    [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
       (let
         [condition : String (embedded-native-data-index-text cond-node)]
         [safe : bool
           (and
             (match (embedded-stdlib-tlci-unwrap-expr then-node)
-              [(AstExpr.Var _) true]
+              [(compiler_ast_types.AstExpr.Var _) true]
               [_ false])
             (match (embedded-stdlib-tlci-unwrap-expr else-node)
-              [(AstExpr.Var _) true]
+              [(compiler_ast_types.AstExpr.Var _) true]
               [_ false]))]
         (if (or (string.eq condition "") (not safe))
           -1
@@ -2168,19 +2195,19 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      tlci-host-callback-name-value-select
+                      tlci_core.tlci-host-callback-name-value-select
                       condition
                       "0"
                       "0")
                     (+ then-opened else-opened 1))))))))]
-    [(AstExpr.Var pname)
+    [(compiler_ast_types.AstExpr.Var pname)
       (embedded-native-unquote-ops params pname ops ops-count)]
-    [(AstExpr.Call func args)
+    [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(AstExpr.Var head-id)
+        [(compiler_ast_types.AstExpr.Var head-id)
           (let
-            [head : String (intern-str head-id)]
-            [argc : i64 (ast-expr-list-len (& args))]
+            [head : String (ci.intern-str head-id)]
+            [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
             (cond
               [(and
                   (or
@@ -2189,9 +2216,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-string-append
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-string-append
                   ops
                   ops-count)]
               [(and
@@ -2203,7 +2230,7 @@
                   [opened : i64
                     (embedded-native-computed-expr-ops
                       params
-                      (ast-expr-list-get (& args) 0 0)
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                       ops
                       ops-count)]
                   (if (< opened 0)
@@ -2212,7 +2239,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-syntax-name-fresh
+                        tlci_core.tlci-host-callback-name-syntax-name-fresh
                         "0"
                         "0"
                         "0")
@@ -2226,7 +2253,7 @@
                   [opened : i64
                     (embedded-native-computed-expr-ops
                       params
-                      (ast-expr-list-get (& args) 0 0)
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                       ops
                       ops-count)]
                   (if (< opened 0)
@@ -2235,7 +2262,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-expr-begin-unit
+                        tlci_core.tlci-host-callback-name-expr-begin-unit
                         "0"
                         "0"
                         "0")
@@ -2250,7 +2277,7 @@
                 (let
                   [data-text : String
                     (embedded-native-data-index-text
-                      (ast-expr-list-get (& args) 0 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
                   (if (not (string.eq data-text ""))
                     ;; A literal or compile-time data local: stage it as a
                     ;; comptime i64 first, since only stack values reach 113.
@@ -2258,14 +2285,14 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-value-i64
+                        tlci_core.tlci-host-callback-name-value-i64
                         data-text
                         "0"
                         "0")
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-int->string
+                        tlci_core.tlci-host-callback-name-int->string
                         "0"
                         "0"
                         "0")
@@ -2277,7 +2304,7 @@
                       [opened : i64
                         (embedded-native-computed-expr-ops
                           params
-                          (ast-expr-list-get (& args) 0 0)
+                          (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                           ops
                           ops-count)]
                       (if (< opened 0)
@@ -2286,7 +2313,7 @@
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            tlci-host-callback-name-int->string
+                            tlci_core.tlci-host-callback-name-int->string
                             "0"
                             "0"
                             "0")
@@ -2303,7 +2330,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-expr-var
+                        tlci_core.tlci-host-callback-name-expr-var
                         (embedded-native-name-arg lit-name)
                         (string.int->string (string.string-length lit-name))
                         "0")
@@ -2312,7 +2339,7 @@
                       [inner-opened : i64
                         (embedded-native-computed-expr-ops
                           params
-                          (ast-expr-list-get (& args) 0 0)
+                          (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                           ops
                           ops-count)]
                       (if (< inner-opened 0)
@@ -2321,7 +2348,7 @@
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            tlci-host-callback-name-expr-var-from-value
+                            tlci_core.tlci-host-callback-name-expr-var-from-value
                             "0"
                             "0"
                             "0")
@@ -2338,7 +2365,7 @@
                   [inner-opened : i64
                     (embedded-native-computed-expr-ops
                       params
-                      (ast-expr-list-get (& args) 0 0)
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                       ops
                       ops-count)]
                   (if (< inner-opened 0)
@@ -2347,7 +2374,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-module-name
+                        tlci_core.tlci-host-callback-name-module-name
                         "0"
                         "0"
                         "0")
@@ -2361,9 +2388,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-module-hook
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-module-hook
                   ops
                   ops-count)]
               ;; Resolve the public signature recorded for a module value. Both
@@ -2376,9 +2403,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-module-value-type
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-module-value-type
                   ops
                   ops-count)]
               ;; `(comptime.expr-type e)`: the checked type of an Expr operand
@@ -2392,7 +2419,7 @@
                   [opened : i64
                     (embedded-native-computed-expr-ops
                       params
-                      (ast-expr-list-get (& args) 0 0)
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                       ops
                       ops-count)]
                   (if (< opened 0)
@@ -2401,7 +2428,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-expr-type
+                        tlci_core.tlci-host-callback-name-expr-type
                         "0"
                         "0"
                         "0")
@@ -2418,14 +2445,14 @@
                   [param : i64
                     (embedded-native-var-param-index
                       params
-                      (ast-expr-list-get (& args) 0 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
                   (if (< param 0)
                     -1
                     (begin
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-operand-expr-string-value
+                        tlci_core.tlci-host-callback-name-operand-expr-string-value
                         (string.int->string param)
                         "0"
                         "0")
@@ -2442,7 +2469,7 @@
                   [inner-opened : i64
                     (embedded-native-computed-expr-ops
                       params
-                      (ast-expr-list-get (& args) 0 0)
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                       ops
                       ops-count)]
                   (if (< inner-opened 0)
@@ -2451,7 +2478,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-expr-string-from-value
+                        tlci_core.tlci-host-callback-name-expr-string-from-value
                         "0"
                         "0"
                         "0")
@@ -2468,13 +2495,13 @@
                   [slot : i64
                     (embedded-native-string-local-slot
                       params
-                      (ast-expr-list-get (& args) 0 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
                   [start-text : String
                     (embedded-native-data-index-text
-                      (ast-expr-list-get (& args) 1 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 1 0))]
                   [len-text : String
                     (embedded-native-data-index-text
-                      (ast-expr-list-get (& args) 2 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 2 0))]
                   (if (or
                     (< slot 0)
                     (string.eq start-text "")
@@ -2484,7 +2511,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-local-string-slice
+                        tlci_core.tlci-host-callback-name-local-string-slice
                         (string.int->string slot)
                         start-text
                         len-text)
@@ -2496,8 +2523,8 @@
                   (= argc 1))
                 (embedded-native-computed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  tlci-host-callback-name-type-key
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  tlci_core.tlci-host-callback-name-type-key
                   "0"
                   ops
                   ops-count)]
@@ -2508,8 +2535,8 @@
                   (= argc 1))
                 (embedded-native-computed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  tlci-host-callback-name-type-key
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  tlci_core.tlci-host-callback-name-type-key
                   "1"
                   ops
                   ops-count)]
@@ -2520,8 +2547,8 @@
                   (= argc 1))
                 (embedded-native-computed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  tlci-host-callback-name-type-key
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  tlci_core.tlci-host-callback-name-type-key
                   "2"
                   ops
                   ops-count)]
@@ -2532,8 +2559,8 @@
                   (= argc 1))
                 (embedded-native-computed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  tlci-host-callback-name-type-kind
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  tlci_core.tlci-host-callback-name-type-kind
                   "0"
                   ops
                   ops-count)]
@@ -2544,8 +2571,8 @@
                   (= argc 1))
                 (embedded-native-computed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  tlci-host-callback-name-array-element-type
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  tlci_core.tlci-host-callback-name-array-element-type
                   "0"
                   ops
                   ops-count)]
@@ -2556,8 +2583,8 @@
                   (= argc 1))
                 (embedded-native-computed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  tlci-host-callback-name-reference-element-type
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  tlci_core.tlci-host-callback-name-reference-element-type
                   "0"
                   ops
                   ops-count)]
@@ -2568,8 +2595,8 @@
                   (= argc 1))
                 (embedded-native-computed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  tlci-host-callback-name-function-return-type
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  tlci_core.tlci-host-callback-name-function-return-type
                   "0"
                   ops
                   ops-count)]
@@ -2580,8 +2607,8 @@
                   (= argc 1))
                 (embedded-native-computed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  tlci-host-callback-name-type-cleanup-function
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  tlci_core.tlci-host-callback-name-type-cleanup-function
                   "0"
                   ops
                   ops-count)]
@@ -2592,9 +2619,9 @@
                   (= argc 2))
                 (embedded-native-computed-indexed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-struct-field-name
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-struct-field-name
                   ops
                   ops-count)]
               [(and
@@ -2604,9 +2631,9 @@
                   (= argc 2))
                 (embedded-native-computed-indexed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-enum-variant-name
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-enum-variant-name
                   ops
                   ops-count)]
               [(and
@@ -2616,9 +2643,9 @@
                   (= argc 2))
                 (embedded-native-computed-indexed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-struct-field-type
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-struct-field-type
                   ops
                   ops-count)]
               [(and
@@ -2628,10 +2655,10 @@
                   (= argc 3))
                 (embedded-native-computed-double-indexed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  (ast-expr-list-get (& args) 2 0)
-                  tlci-host-callback-name-enum-variant-payload-type
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 2 0)
+                  tlci_core.tlci-host-callback-name-enum-variant-payload-type
                   ops
                   ops-count)]
               [(and
@@ -2641,9 +2668,9 @@
                   (= argc 2))
                 (embedded-native-computed-indexed-type-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-tuple-element-type
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-tuple-element-type
                   ops
                   ops-count)]
               [(and
@@ -2663,10 +2690,10 @@
                   (= argc 3))
                 (embedded-native-computed-ternary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  (ast-expr-list-get (& args) 2 0)
-                  tlci-host-callback-name-expr-let-scope
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 2 0)
+                  tlci_core.tlci-host-callback-name-expr-let-scope
                   ops
                   ops-count)]
               [(and
@@ -2676,9 +2703,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-expr-set-var
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-expr-set-var
                   ops
                   ops-count)]
               [(and
@@ -2690,7 +2717,7 @@
                   [opened : i64
                     (embedded-native-computed-expr-ops
                       params
-                      (ast-expr-list-get (& args) 0 0)
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                       ops
                       ops-count)]
                   (if (< opened 0)
@@ -2699,7 +2726,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-expr-not
+                        tlci_core.tlci-host-callback-name-expr-not
                         "0"
                         "0"
                         "0")
@@ -2711,9 +2738,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-expr-while
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-expr-while
                   ops
                   ops-count)]
               [(and
@@ -2724,14 +2751,14 @@
                 (let
                   [value : String
                     (embedded-native-data-index-text
-                      (ast-expr-list-get (& args) 0 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
                   (if (string.eq value "")
                     -1
                     (begin
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-expr-bool-literal
+                        tlci_core.tlci-host-callback-name-expr-bool-literal
                         value
                         "0"
                         "0")
@@ -2743,9 +2770,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-expr-call
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-expr-call
                   ops
                   ops-count)]
               [(and
@@ -2757,7 +2784,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    tlci-host-callback-name-expr-list-empty
+                    tlci_core.tlci-host-callback-name-expr-list-empty
                     "0"
                     "0"
                     "0")
@@ -2769,9 +2796,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-expr-list-cons
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-expr-list-cons
                   ops
                   ops-count)]
               [(and
@@ -2783,7 +2810,7 @@
                   [opened : i64
                     (embedded-native-computed-expr-ops
                       params
-                      (ast-expr-list-get (& args) 0 0)
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                       ops
                       ops-count)]
                   (if (< opened 0)
@@ -2792,7 +2819,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-expr-borrow
+                        tlci_core.tlci-host-callback-name-expr-borrow
                         "1"
                         "0"
                         "0")
@@ -2804,9 +2831,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-expr-struct-get-from-value
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-expr-struct-get-from-value
                   ops
                   ops-count)]
               [(and
@@ -2816,9 +2843,9 @@
                   (= argc 2))
                 (embedded-native-computed-indexed-expr-query-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-expr-tuple-ref
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-expr-tuple-ref
                   ops
                   ops-count)]
               [(and
@@ -2828,9 +2855,9 @@
                   (= argc 2))
                 (embedded-native-computed-data-arg-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-pattern-list-bindings
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-pattern-list-bindings
                   ops
                   ops-count)]
               [(and
@@ -2842,7 +2869,7 @@
                   [opened : i64
                     (embedded-native-computed-expr-ops
                       params
-                      (ast-expr-list-get (& args) 0 0)
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                       ops
                       ops-count)]
                   (if (< opened 0)
@@ -2851,7 +2878,7 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-pattern-binding
+                        tlci_core.tlci-host-callback-name-pattern-binding
                         "0"
                         "0"
                         "0")
@@ -2863,9 +2890,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-pattern-binding-typed
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-pattern-binding-typed
                   ops
                   ops-count)]
               [(and
@@ -2877,7 +2904,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    tlci-host-callback-name-pattern-list-empty
+                    tlci_core.tlci-host-callback-name-pattern-list-empty
                     "0"
                     "0"
                     "0")
@@ -2889,9 +2916,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-pattern-list-cons-from-values
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-pattern-list-cons-from-values
                   ops
                   ops-count)]
               [(and
@@ -2901,9 +2928,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-pattern-variant-from-value
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-pattern-variant-from-value
                   ops
                   ops-count)]
               [(and
@@ -2915,7 +2942,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    tlci-host-callback-name-pattern-wildcard
+                    tlci_core.tlci-host-callback-name-pattern-wildcard
                     "0"
                     "0"
                     "0")
@@ -2927,9 +2954,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-match-arm
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-match-arm
                   ops
                   ops-count)]
               [(and
@@ -2941,7 +2968,7 @@
                   (embedded-native-template-push!
                     ops
                     ops-count
-                    tlci-host-callback-name-match-arm-list-empty
+                    tlci_core.tlci-host-callback-name-match-arm-list-empty
                     "0"
                     "0"
                     "0")
@@ -2953,9 +2980,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-match-arm-list-cons-from-values
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-match-arm-list-cons-from-values
                   ops
                   ops-count)]
               [(and
@@ -2965,9 +2992,9 @@
                   (= argc 2))
                 (embedded-native-computed-binary-ops
                   params
-                  (ast-expr-list-get (& args) 0 0)
-                  (ast-expr-list-get (& args) 1 0)
-                  tlci-host-callback-name-expr-match
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  tlci_core.tlci-host-callback-name-expr-match
                   ops
                   ops-count)]
               [(and
@@ -2976,8 +3003,9 @@
                     (string.eq head "expr-int"))
                   (= argc 1))
                 (match (embedded-stdlib-tlci-unwrap-expr
-                  (ast-expr-list-get (& args) 0 0))
-                  [(AstExpr.Literal (AstLiteral.Int value text))
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0))
+                  [(compiler_ast_types.AstExpr.Literal
+                      (compiler_ast_types.AstLiteral.Int value text))
                     (if (or
                       (= (string.string-length text) 0)
                       (string.eq text (string.int->string value)))
@@ -2985,7 +3013,7 @@
                         (embedded-native-template-push!
                           ops
                           ops-count
-                          tlci-host-callback-name-expr-int-literal
+                          tlci_core.tlci-host-callback-name-expr-int-literal
                           (string.int->string value)
                           "0"
                           "0")
@@ -2998,14 +3026,14 @@
                     (let
                       [text : String
                         (embedded-native-data-index-text
-                          (ast-expr-list-get (& args) 0 0))]
+                          (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
                       (if (string.eq text "")
                         -1
                         (begin
                           (embedded-native-template-push!
                             ops
                             ops-count
-                            tlci-host-callback-name-expr-int-from-data
+                            tlci_core.tlci-host-callback-name-expr-int-from-data
                             text
                             "0"
                             "0")
@@ -3021,17 +3049,17 @@
                   [list-param : i64
                     (embedded-native-var-param-index
                       params
-                      (ast-expr-list-get (& args) 0 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
                   [index-text : String
                     (embedded-native-data-index-text
-                      (ast-expr-list-get (& args) 1 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 1 0))]
                   (if (or (< list-param 0) (string.eq index-text ""))
                     -1
                     (begin
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        tlci-host-callback-name-expr-binding-clause-list-nth
+                        tlci_core.tlci-host-callback-name-expr-binding-clause-list-nth
                         (string.int->string list-param)
                         index-text
                         "0")
@@ -3049,7 +3077,7 @@
                   [opened : i64
                     (embedded-native-computed-expr-ops
                       params
-                      (ast-expr-list-get (& args) 0 0)
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                       ops
                       ops-count)]
                   [op : String
@@ -3057,12 +3085,13 @@
                       [(or
                           (string.eq head "comptime.expr-binding-clause-name")
                           (string.eq head "expr-binding-clause-name"))
-                        tlci-host-callback-name-expr-binding-clause-name]
+                        tlci_core.tlci-host-callback-name-expr-binding-clause-name]
                       [(or
                           (string.eq head "comptime.expr-binding-clause-type")
                           (string.eq head "expr-binding-clause-type"))
-                        tlci-host-callback-name-expr-binding-clause-type]
-                      [else tlci-host-callback-name-expr-binding-clause-init])]
+                        tlci_core.tlci-host-callback-name-expr-binding-clause-type]
+                      [else
+                        tlci_core.tlci-host-callback-name-expr-binding-clause-init])]
                   (if (< opened 0)
                     -1
                     (begin
@@ -3086,20 +3115,21 @@
                   [list-param : i64
                     (embedded-native-var-param-index
                       params
-                      (ast-expr-list-get (& args) 0 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
                   ;; A destructured list payload lives in a session local, so
                   ;; the local-slot twin op indexes it. Refs #5602.
                   [list-slot : i64
                     (if (>= list-param 0)
                       -1
                       (match (embedded-stdlib-tlci-unwrap-expr
-                        (ast-expr-list-get (& args) 0 0))
-                        [(AstExpr.Var list-name)
-                          (embedded-native-local-index (intern-str list-name))]
+                        (compiler_ast_types.ast-expr-list-get (& args) 0 0))
+                        [(compiler_ast_types.AstExpr.Var list-name)
+                          (embedded-native-local-index
+                            (ci.intern-str list-name))]
                         [_ -1]))]
                   [index-text : String
                     (embedded-native-data-index-text
-                      (ast-expr-list-get (& args) 1 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 1 0))]
                   (if (or
                     (and (< list-param 0) (< list-slot 0))
                     (string.eq index-text ""))
@@ -3109,8 +3139,8 @@
                         ops
                         ops-count
                         (if (>= list-param 0)
-                          tlci-host-callback-name-expr-list-nth
-                          tlci-host-callback-name-local-expr-list-nth)
+                          tlci_core.tlci-host-callback-name-expr-list-nth
+                          tlci_core.tlci-host-callback-name-local-expr-list-nth)
                         (string.int->string
                           (if (>= list-param 0)
                             list-param
@@ -3121,13 +3151,13 @@
               [else
                 (begin
                   (embedded-native-fallback-reason-note!
-                    (str-cat "computed-call:" head))
+                    (str_cat.str-cat "computed-call:" head))
                   -1)]))]
         [_ -1])]
     [_
       (begin
         (embedded-native-fallback-reason-note!
-          (str-cat
+          (str_cat.str-cat
             "computed-node:"
             (embedded-native-expr-kind-name
               (embedded-stdlib-tlci-unwrap-expr node))))
@@ -3144,10 +3174,10 @@
 ;: representation is already exact for. Comptime `char` values travel as their
 ;: i64 code, so `(cast ch : i64)` is the identity on the generated text.
 ;: Refs #5701.
-(define (embedded-native-data-cast-type? [ty : AstType]) : bool
+(define (embedded-native-data-cast-type? [ty : compiler_ast_types.AstType]) : bool
   (match ty
-    [(AstType.I64) true]
-    [(AstType.Char) true]
+    [(compiler_ast_types.AstType.I64) true]
+    [(compiler_ast_types.AstType.Char) true]
     [_ false]))
 
 ;: The generated i64 text of a canonical int literal, a compile-time data
@@ -3155,24 +3185,28 @@
 ;: "" for anything else. Refs #5617, #5701.
 (define (embedded-native-data-index-text [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Literal (AstLiteral.Int value text))
+    [(compiler_ast_types.AstExpr.Literal
+        (compiler_ast_types.AstLiteral.Int value text))
       (if (or
         (= (string.string-length text) 0)
         (string.eq text (string.int->string value)))
         (string.int->string value)
         "")]
-    [(AstExpr.Literal (AstLiteral.Bool flag))
+    [(compiler_ast_types.AstExpr.Literal
+        (compiler_ast_types.AstLiteral.Bool flag))
       (if flag
         "1"
         "0")]
-    [(AstExpr.Var name) (embedded-native-data-local-text (intern-str name))]
-    [(AstExpr.Cast inner ty-id)
-      (if (embedded-native-data-cast-type? (ty-node-get ty-id))
+    [(compiler_ast_types.AstExpr.Var name)
+      (embedded-native-data-local-text (ci.intern-str name))]
+    [(compiler_ast_types.AstExpr.Cast inner ty-id)
+      (if (embedded-native-data-cast-type?
+        (compiler_ast_types.ty-node-get ty-id))
         (embedded-native-data-index-text inner)
         "")]
     ;; `(+ i 1)` in an index or literal-builder position stays plain generated
     ;; i64 arithmetic over the data locals. Refs #5602.
-    [(AstExpr.Binary op left-node right-node)
+    [(compiler_ast_types.AstExpr.Binary op left-node right-node)
       (let
         [ordinal : i64 (embedded-native-binop-ordinal op)]
         [spelling : String (embedded-native-arithmetic-spelling ordinal)]
@@ -3185,7 +3219,8 @@
         [negative-literal : String
           (if (and (= ordinal 1) (string.eq left "0"))
             (match (embedded-stdlib-tlci-unwrap-expr right-node)
-              [(AstExpr.Literal (AstLiteral.Int value _))
+              [(compiler_ast_types.AstExpr.Literal
+                  (compiler_ast_types.AstLiteral.Int value _))
                 (if (and (>= value 0) (not (string.eq right "")))
                   (string.int->string (- 0 value))
                   "")]
@@ -3198,7 +3233,7 @@
             (string.eq left "")
             (string.eq right ""))
             ""
-            (str-cat "(" spelling " " left " " right ")"))))]
+            (str_cat.str-cat "(" spelling " " left " " right ")"))))]
     [_ ""]))
 
 ;; One i64-valued comptime expression rendered for the generated entry: `open`
@@ -3220,7 +3255,7 @@
   [op : String]
   [arg : String]
   [arg-b : String]) : String
-  (str-cat
+  (str_cat.str-cat
     "  (let ["
     name
     " : i64 (comptime-host-"
@@ -3233,7 +3268,7 @@
     "  (if (< "
     name
     " 0)\n  "
-    (string.int->string tlci-host-callback-status-bad-request)
+    (string.int->string tlci_core.tlci-host-callback-status-bad-request)
     "\n"))
 
 ;; One probe bound to a fresh temporary, as a data value.
@@ -3258,7 +3293,7 @@
     (begin
       (while (< index count)
         (begin
-          (set! out (str-cat out (array-ref ops index)))
+          (set! out (str_cat.str-cat out (array-ref ops index)))
           (set! index (+ index 1))))
       out)))
 
@@ -3266,7 +3301,7 @@
 ;; then returns its count directly. Keep both open chains visible to the
 ;; surrounding data expression so its caller closes them together. Refs #5626.
 (define (embedded-native-stacked-data-probe-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [type-node : i64]
   [op : String]
   [arg : String]) : EmbeddedNativeDataValue
@@ -3284,7 +3319,7 @@
       (let
         [name : String (embedded-native-temp-name!)]
         (EmbeddedNativeDataValue
-          (str-cat
+          (str_cat.str-cat
             (embedded-native-ops-open-text ops (array-ref ops-count 0))
             (embedded-native-data-probe-open name op arg "0"))
           name
@@ -3295,7 +3330,7 @@
 ;; status chaining would mistake for an error. Open only the two operand chains,
 ;; then invoke the data callback once in probe position. Refs #5606.
 (define (embedded-native-stacked-binary-data-probe-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [left-node : i64]
   [right-node : i64]
   [op : String]) : EmbeddedNativeDataValue
@@ -3317,7 +3352,7 @@
           (let
             [name : String (embedded-native-temp-name!)]
             (EmbeddedNativeDataValue
-              (str-cat
+              (str_cat.str-cat
                 (embedded-native-ops-open-text ops (array-ref ops-count 0))
                 (embedded-native-data-probe-open name op "0" "0"))
               name
@@ -3329,22 +3364,23 @@
 ;; sub-value can appear inside a sum -- the scanner bodies write
 ;; `(- (cast (string.string-ref key i) : i64) 48)`. Refs #5602, #5701.
 (define (embedded-native-data-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (let
     [plain : String (embedded-native-data-index-text node)]
     (if (not (string.eq plain ""))
       (EmbeddedNativeDataValue "" plain 0)
       (match (embedded-stdlib-tlci-unwrap-expr node)
-        [(AstExpr.Cast inner ty-id)
-          (if (embedded-native-data-cast-type? (ty-node-get ty-id))
+        [(compiler_ast_types.AstExpr.Cast inner ty-id)
+          (if (embedded-native-data-cast-type?
+            (compiler_ast_types.ty-node-get ty-id))
             (embedded-native-data-value params inner)
             (embedded-native-data-value-none))]
-        [(AstExpr.If cond-node then-node else-node)
+        [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
           (embedded-native-data-if-value params cond-node then-node else-node)]
-        [(AstExpr.Match match-box)
+        [(compiler_ast_types.AstExpr.Match match-box)
           (embedded-native-data-var-match-value params match-box)]
-        [(AstExpr.Binary op left-node right-node)
+        [(compiler_ast_types.AstExpr.Binary op left-node right-node)
           (let
             [ordinal : i64 (embedded-native-binop-ordinal op)]
             [arithmetic : String (embedded-native-arithmetic-spelling ordinal)]
@@ -3361,7 +3397,7 @@
                   left-node
                   right-node)
                 (embedded-native-data-value-none))))]
-        [(AstExpr.Unary op inner-node)
+        [(compiler_ast_types.AstExpr.Unary op inner-node)
           (if (= (embedded-native-unop-ordinal op) 1)
             (let
               [inner : EmbeddedNativeDataValue
@@ -3370,13 +3406,13 @@
                 (embedded-native-data-value-none)
                 (EmbeddedNativeDataValue
                   (struct-get inner open)
-                  (str-cat "(if (= " (struct-get inner text) " 0) 1 0)")
+                  (str_cat.str-cat "(if (= " (struct-get inner text) " 0) 1 0)")
                   (struct-get inner opens))))
             (embedded-native-data-value-none))]
         [_ (embedded-native-data-call-value params node)]))))
 
 (define (embedded-native-data-binary-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [spelling : String]
   [left-node : i64]
   [right-node : i64]) : EmbeddedNativeDataValue
@@ -3392,8 +3428,8 @@
         (string.eq (struct-get right text) ""))
         (embedded-native-data-value-none)
         (EmbeddedNativeDataValue
-          (str-cat (struct-get left open) (struct-get right open))
-          (str-cat
+          (str_cat.str-cat (struct-get left open) (struct-get right open))
+          (str_cat.str-cat
             "("
             spelling
             " "
@@ -3404,7 +3440,7 @@
           (+ (struct-get left opens) (struct-get right opens)))))))
 
 (define (embedded-native-data-comparison-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [spelling : String]
   [left-node : i64]
   [right-node : i64]) : EmbeddedNativeDataValue
@@ -3418,8 +3454,8 @@
       (string.eq (struct-get right text) ""))
       (embedded-native-data-value-none)
       (EmbeddedNativeDataValue
-        (str-cat (struct-get left open) (struct-get right open))
-        (str-cat
+        (str_cat.str-cat (struct-get left open) (struct-get right open))
+        (str_cat.str-cat
           "(if ("
           spelling
           " "
@@ -3433,7 +3469,7 @@
 ;; The argument must be a plain macro parameter or a session-local Expr.
 ;; Refs #5656.
 (define (embedded-native-data-expr-probe-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [subject : i64]
   [operand-op : String]
   [local-op : String]) : EmbeddedNativeDataValue
@@ -3445,9 +3481,9 @@
         (string.int->string param)
         "0")
       (match (embedded-stdlib-tlci-unwrap-expr subject)
-        [(AstExpr.Var name)
+        [(compiler_ast_types.AstExpr.Var name)
           (let
-            [slot : i64 (embedded-native-local-index (intern-str name))]
+            [slot : i64 (embedded-native-local-index (ci.intern-str name))]
             (if (< slot 0)
               (embedded-native-data-value-none)
               (embedded-native-data-probe-value
@@ -3458,24 +3494,24 @@
 
 ;; Recognize a unary Expr-inspector call and return its 1/0 data probe.
 (define (embedded-native-data-expr-probe-call-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]
   [qualified-name : String]
   [short-name : String]
   [operand-op : String]
   [local-op : String]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call func args)
+    [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(AstExpr.Var head-id)
+        [(compiler_ast_types.AstExpr.Var head-id)
           (if (and
-            (= (ast-expr-list-len (& args)) 1)
+            (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
             (or
-              (string.eq (intern-str head-id) qualified-name)
-              (string.eq (intern-str head-id) short-name)))
+              (string.eq (ci.intern-str head-id) qualified-name)
+              (string.eq (ci.intern-str head-id) short-name)))
             (embedded-native-data-expr-probe-value
               params
-              (ast-expr-list-get (& args) 0 0)
+              (compiler_ast_types.ast-expr-list-get (& args) 0 0)
               operand-op
               local-op)
             (embedded-native-data-value-none))]
@@ -3488,7 +3524,7 @@
 (define (embedded-native-data-store-status-code
   [value : EmbeddedNativeDataValue]
   [target : String]) : String
-  (str-cat
+  (str_cat.str-cat
     (struct-get value open)
     "  (begin\n"
     "  (set! "
@@ -3503,7 +3539,7 @@
 ;; contain a host probe, so keep a separate status local and open a continuation
 ;; only after that status succeeds. Refs #5656.
 (define (embedded-native-data-if-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [cond-node : i64]
   [then-node : i64]
   [else-node : i64]) : EmbeddedNativeDataValue
@@ -3523,7 +3559,7 @@
         [result : String (embedded-native-temp-name!)]
         [status : String (embedded-native-temp-name!)]
         (EmbeddedNativeDataValue
-          (str-cat
+          (str_cat.str-cat
             (struct-get cond-value open)
             "  (let ["
             result
@@ -3550,41 +3586,42 @@
 ;; shape test. Lower it directly to the corresponding operand/local data probe
 ;; when it has exactly `[Var _ => true] [_ => false]`. Refs #5656.
 (define (embedded-native-data-var-match-value
-  [params : (& params AstMacroParamList)]
-  [match-box : (Box AstMatch)]) : EmbeddedNativeDataValue
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [match-box : (Box compiler_ast_types.AstMatch)]) : EmbeddedNativeDataValue
   (match (box-get match-box)
-    [(AstMatch.Match scrutinee arms)
+    [(compiler_ast_types.AstMatch.Match scrutinee arms)
       (if (not (= (struct-get arms len) 2))
         (embedded-native-data-value-none)
         (match (array-ref (struct-get arms slots) 0)
-          [(AstMatchArm.Arm first-pattern first-body)
+          [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
             (match (array-ref (struct-get arms slots) 1)
-              [(AstMatchArm.Arm second-pattern second-body)
+              [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
                 (match first-pattern
-                  [(AstPattern.Variant name-id args-box)
+                  [(compiler_ast_types.AstPattern.Variant name-id args-box)
                     (let
-                      [args : AstPatternList (box-get args-box)]
+                      [args : compiler_ast_types.AstPatternList
+                        (box-get args-box)]
                       (if (and
                         (string.eq
                           (embedded-native-expr-variant-name name-id)
                           "Var")
                         (= (struct-get args len) 1)
-                        (match (ast-pattern-list-get
+                        (match (compiler_ast_types.ast-pattern-list-get
                           (& args)
                           0
-                          (ast-pattern-fallback))
-                          [(AstPattern.Wildcard) true]
+                          (compiler_ast_types.ast-pattern-fallback))
+                          [(compiler_ast_types.AstPattern.Wildcard) true]
                           [_ false])
                         (match second-pattern
-                          [(AstPattern.Wildcard) true]
+                          [(compiler_ast_types.AstPattern.Wildcard) true]
                           [_ false])
                         (= (embedded-native-bool-literal-flag first-body) 1)
                         (= (embedded-native-bool-literal-flag second-body) 0))
                         (embedded-native-data-expr-probe-value
                           params
                           scrutinee
-                          tlci-host-callback-name-operand-expr-var?
-                          tlci-host-callback-name-local-expr-var?)
+                          tlci_core.tlci-host-callback-name-operand-expr-var?
+                          tlci_core.tlci-host-callback-name-local-expr-var?)
                         (embedded-native-data-value-none)))]
                   [_ (embedded-native-data-value-none)])])]
           [_ (embedded-native-data-value-none)]))]
@@ -3592,15 +3629,15 @@
 
 ;; One reflection count over a type operand/session local, or no value.
 (define (embedded-native-reflection-count-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call func args)
+    [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(AstExpr.Var head-id)
+        [(compiler_ast_types.AstExpr.Var head-id)
           (let
-            [head : String (intern-str head-id)]
-            [argc : i64 (ast-expr-list-len (& args))]
+            [head : String (ci.intern-str head-id)]
+            [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
             [op : String
               (cond
                 [(and
@@ -3608,43 +3645,43 @@
                     (or
                       (string.eq head "comptime.struct-field-count")
                       (string.eq head "struct-field-count")))
-                  tlci-host-callback-name-struct-field-count]
+                  tlci_core.tlci-host-callback-name-struct-field-count]
                 [(and
                     (= argc 1)
                     (or
                       (string.eq head "comptime.enum-variant-count")
                       (string.eq head "enum-variant-count")))
-                  tlci-host-callback-name-enum-variant-count]
+                  tlci_core.tlci-host-callback-name-enum-variant-count]
                 [(and
                     (= argc 2)
                     (or
                       (string.eq head "comptime.enum-variant-payload-count")
                       (string.eq head "enum-variant-payload-count")))
-                  tlci-host-callback-name-enum-variant-payload-count]
+                  tlci_core.tlci-host-callback-name-enum-variant-payload-count]
                 [(and
                     (= argc 1)
                     (or
                       (string.eq head "comptime.tuple-element-count")
                       (string.eq head "tuple-element-count")))
-                  tlci-host-callback-name-tuple-element-count]
+                  tlci_core.tlci-host-callback-name-tuple-element-count]
                 [(and
                     (= argc 1)
                     (or
                       (string.eq head "comptime.array-length")
                       (string.eq head "array-length")))
-                  tlci-host-callback-name-array-length]
+                  tlci_core.tlci-host-callback-name-array-length]
                 [(and
                     (= argc 1)
                     (or
                       (string.eq head "comptime.function-param-count")
                       (string.eq head "function-param-count")))
-                  tlci-host-callback-name-function-param-count]
+                  tlci_core.tlci-host-callback-name-function-param-count]
                 [(and
                     (= argc 1)
                     (or
                       (string.eq head "comptime.type-cleanup-owning?")
                       (string.eq head "type-cleanup-owning?")))
-                  tlci-host-callback-name-type-cleanup-owning?]
+                  tlci_core.tlci-host-callback-name-type-cleanup-owning?]
                 [else ""])]
             (if (= (string.string-length op) 0)
               (embedded-native-data-value-none)
@@ -3652,13 +3689,13 @@
                 [index-text : String
                   (if (= argc 2)
                     (embedded-native-data-index-text
-                      (ast-expr-list-get (& args) 1 0))
+                      (compiler_ast_types.ast-expr-list-get (& args) 1 0))
                     "0")]
                 (if (string.eq index-text "")
                   (embedded-native-data-value-none)
                   (embedded-native-stacked-data-probe-value
                     params
-                    (ast-expr-list-get (& args) 0 0)
+                    (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                     op
                     index-text)))))]
         [_ (embedded-native-data-value-none)])]
@@ -3667,50 +3704,54 @@
 ;; The probe-backed data calls: expression-list lengths, reflection counts, and
 ;; comptime string reads over a String session local. Refs #5602, #5626, #5701.
 (define (embedded-native-expr-binding-clause-list-length-param
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call func args)
+    [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(AstExpr.Var head-id)
+        [(compiler_ast_types.AstExpr.Var head-id)
           (if (and
-            (= (ast-expr-list-len (& args)) 1)
+            (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
             (or
               (string.eq
-                (intern-str head-id)
+                (ci.intern-str head-id)
                 "comptime.expr-binding-clause-list-length")
-              (string.eq (intern-str head-id) "expr-binding-clause-list-length")))
+              (string.eq
+                (ci.intern-str head-id)
+                "expr-binding-clause-list-length")))
             (embedded-native-var-param-index
               params
-              (ast-expr-list-get (& args) 0 0))
+              (compiler_ast_types.ast-expr-list-get (& args) 0 0))
             -1)]
         [_ -1])]
     [_ -1]))
 
 (define (embedded-native-binding-clause-has-type-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call func args)
+    [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(AstExpr.Var head-id)
+        [(compiler_ast_types.AstExpr.Var head-id)
           (if (and
-            (= (ast-expr-list-len (& args)) 1)
+            (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
             (or
               (string.eq
-                (intern-str head-id)
+                (ci.intern-str head-id)
                 "comptime.expr-binding-clause-has-type?")
-              (string.eq (intern-str head-id) "expr-binding-clause-has-type?")))
+              (string.eq
+                (ci.intern-str head-id)
+                "expr-binding-clause-has-type?")))
             (match (embedded-stdlib-tlci-unwrap-expr
-              (ast-expr-list-get (& args) 0 0))
-              [(AstExpr.Var name-id)
+              (compiler_ast_types.ast-expr-list-get (& args) 0 0))
+              [(compiler_ast_types.AstExpr.Var name-id)
                 (let
                   [slot : i64
-                    (embedded-native-local-index (intern-str name-id))]
+                    (embedded-native-local-index (ci.intern-str name-id))]
                   (if (< slot 0)
                     (embedded-native-data-value-none)
                     (embedded-native-data-probe-value
-                      tlci-host-callback-name-expr-binding-clause-has-type?
+                      tlci_core.tlci-host-callback-name-expr-binding-clause-has-type?
                       (string.int->string slot)
                       "0")))]
               [_ (embedded-native-data-value-none)])
@@ -3719,16 +3760,16 @@
     [_ (embedded-native-data-value-none)]))
 
 (define (embedded-native-data-string-eq-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call func args)
+    [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(AstExpr.Var head-id)
+        [(compiler_ast_types.AstExpr.Var head-id)
           (let
-            [head : String (intern-str head-id)]
+            [head : String (ci.intern-str head-id)]
             (if (and
-              (= (ast-expr-list-len (& args)) 2)
+              (= (compiler_ast_types.ast-expr-list-len (& args)) 2)
               (or
                 (string.eq head "comptime.string-eq")
                 (string.eq head "string-eq")
@@ -3736,38 +3777,38 @@
                 (string.eq head "string.eq")))
               (embedded-native-stacked-binary-data-probe-value
                 params
-                (ast-expr-list-get (& args) 0 0)
-                (ast-expr-list-get (& args) 1 0)
-                tlci-host-callback-name-string-eq)
+                (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                tlci_core.tlci-host-callback-name-string-eq)
               (embedded-native-data-value-none)))]
         [_ (embedded-native-data-value-none)])]
     [_ (embedded-native-data-value-none)]))
 
 (define (embedded-native-data-module-value-exists-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call func args)
+    [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(AstExpr.Var head-id)
+        [(compiler_ast_types.AstExpr.Var head-id)
           (let
-            [head : String (intern-str head-id)]
+            [head : String (ci.intern-str head-id)]
             (if (and
-              (= (ast-expr-list-len (& args)) 2)
+              (= (compiler_ast_types.ast-expr-list-len (& args)) 2)
               (or
                 (string.eq head "comptime.module-value?")
                 (string.eq head "module-value?")))
               (embedded-native-stacked-binary-data-probe-value
                 params
-                (ast-expr-list-get (& args) 0 0)
-                (ast-expr-list-get (& args) 1 0)
-                tlci-host-callback-name-module-value?)
+                (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                tlci_core.tlci-host-callback-name-module-value?)
               (embedded-native-data-value-none)))]
         [_ (embedded-native-data-value-none)])]
     [_ (embedded-native-data-value-none)]))
 
 (define (embedded-native-data-call-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (let
     [expr-string : EmbeddedNativeDataValue
@@ -3776,8 +3817,8 @@
         node
         "comptime.expr-string?"
         "expr-string?"
-        tlci-host-callback-name-operand-expr-string?
-        tlci-host-callback-name-local-expr-string?)]
+        tlci_core.tlci-host-callback-name-operand-expr-string?
+        tlci_core.tlci-host-callback-name-local-expr-string?)]
     (if (not (string.eq (struct-get expr-string text) ""))
       expr-string
       (let
@@ -3802,7 +3843,7 @@
                         node)]
                     (if (>= binding-operand 0)
                       (embedded-native-data-probe-value
-                        tlci-host-callback-name-expr-binding-clause-list-length
+                        tlci_core.tlci-host-callback-name-expr-binding-clause-list-length
                         (string.int->string binding-operand)
                         "0")
                       (let
@@ -3810,7 +3851,7 @@
                           (embedded-native-expr-list-length-param params node)]
                         (if (>= operand 0)
                           (embedded-native-data-probe-value
-                            tlci-host-callback-name-expr-list-length
+                            tlci_core.tlci-host-callback-name-expr-list-length
                             (string.int->string operand)
                             "0")
                           (let
@@ -3820,7 +3861,7 @@
                                 node)]
                             (if (>= slot 0)
                               (embedded-native-data-probe-value
-                                tlci-host-callback-name-local-expr-list-length
+                                tlci_core.tlci-host-callback-name-local-expr-list-length
                                 (string.int->string slot)
                                 "0")
                               (let
@@ -3840,28 +3881,28 @@
 ;; than emitted as runtime code. The index is itself a data value, so a probed
 ;; sub-expression can index the string. Refs #5701.
 (define (embedded-native-string-scan-value
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call func args)
+    [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(AstExpr.Var head-id)
+        [(compiler_ast_types.AstExpr.Var head-id)
           (let
-            [head : String (intern-str head-id)]
-            [argc : i64 (ast-expr-list-len (& args))]
+            [head : String (ci.intern-str head-id)]
+            [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
             [slot : i64
               (if (= argc 0)
                 -1
                 (embedded-native-string-local-slot
                   params
-                  (ast-expr-list-get (& args) 0 0)))]
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)))]
             (cond
               [(< slot 0) (embedded-native-data-value-none)]
               [(and
                   (embedded-native-stdlib-string-call? head "string-length")
                   (= argc 1))
                 (embedded-native-data-probe-value
-                  tlci-host-callback-name-local-string-length
+                  tlci_core.tlci-host-callback-name-local-string-length
                   (string.int->string slot)
                   "0")]
               [(and
@@ -3873,17 +3914,17 @@
                   [index : EmbeddedNativeDataValue
                     (embedded-native-data-value
                       params
-                      (ast-expr-list-get (& args) 1 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 1 0))]
                   (if (string.eq (struct-get index text) "")
                     (embedded-native-data-value-none)
                     (let
                       [probe : EmbeddedNativeDataValue
                         (embedded-native-data-probe-value
-                          tlci-host-callback-name-local-string-ref
+                          tlci_core.tlci-host-callback-name-local-string-ref
                           (string.int->string slot)
                           (struct-get index text))]
                       (EmbeddedNativeDataValue
-                        (str-cat
+                        (str_cat.str-cat
                           (struct-get index open)
                           (struct-get probe open))
                         (struct-get probe text)
@@ -3896,13 +3937,13 @@
 ;: node is not a plain name, names a macro parameter, or names nothing bound.
 ;: Refs #5701.
 (define (embedded-native-string-local-slot
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Var name)
+    [(compiler_ast_types.AstExpr.Var name)
       (if (>= (embedded-stdlib-tlci-param-index params name) 0)
         -1
-        (embedded-native-local-index (intern-str name)))]
+        (embedded-native-local-index (ci.intern-str name)))]
     [_ -1]))
 
 ;: A `stdlib.string` helper call spelled the way the module-qualified imports
@@ -3912,38 +3953,40 @@
 ;: the stdlib one. Refs #5701.
 (define (embedded-native-stdlib-string-call? [head : String] [base : String]) : bool
   (or
-    (string.eq head (str-cat "string." base))
-    (string.eq head (str-cat "string/" base))
-    (string.eq head (str-cat "stdlib.string." base))
-    (string.eq head (str-cat "stdlib.string/" base))
-    (string.eq head (str-cat "stdlib/string." base))
-    (string.eq head (str-cat "stdlib/string/" base))
-    (string.eq head (str-cat "stdlib/string.tl." base))
-    (string.eq head (str-cat "stdlib/string.tl/" base))))
+    (string.eq head (str_cat.str-cat "string." base))
+    (string.eq head (str_cat.str-cat "string/" base))
+    (string.eq head (str_cat.str-cat "stdlib.string." base))
+    (string.eq head (str_cat.str-cat "stdlib.string/" base))
+    (string.eq head (str_cat.str-cat "stdlib/string." base))
+    (string.eq head (str_cat.str-cat "stdlib/string/" base))
+    (string.eq head (str_cat.str-cat "stdlib/string.tl." base))
+    (string.eq head (str_cat.str-cat "stdlib/string.tl/" base))))
 
 ;: The session-local slot of a `(comptime.expr-list-length <local>)` call, or
 ;: -1 for anything else. Refs #5602.
 (define (embedded-native-expr-list-length-local
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call length-func length-args)
+    [(compiler_ast_types.AstExpr.Call length-func length-args)
       (match (embedded-stdlib-tlci-unwrap-expr length-func)
-        [(AstExpr.Var length-head)
+        [(compiler_ast_types.AstExpr.Var length-head)
           (if (and
             (or
-              (string.eq (intern-str length-head) "comptime.expr-list-length")
-              (string.eq (intern-str length-head) "expr-list-length"))
-            (= (ast-expr-list-len (& length-args)) 1)
+              (string.eq
+                (ci.intern-str length-head)
+                "comptime.expr-list-length")
+              (string.eq (ci.intern-str length-head) "expr-list-length"))
+            (= (compiler_ast_types.ast-expr-list-len (& length-args)) 1)
             (<
               (embedded-native-var-param-index
                 params
-                (ast-expr-list-get (& length-args) 0 0))
+                (compiler_ast_types.ast-expr-list-get (& length-args) 0 0))
               0))
             (match (embedded-stdlib-tlci-unwrap-expr
-              (ast-expr-list-get (& length-args) 0 0))
-              [(AstExpr.Var list-name)
-                (embedded-native-local-index (intern-str list-name))]
+              (compiler_ast_types.ast-expr-list-get (& length-args) 0 0))
+              [(compiler_ast_types.AstExpr.Var list-name)
+                (embedded-native-local-index (ci.intern-str list-name))]
               [_ -1])
             -1)]
         [_ -1])]
@@ -3953,12 +3996,12 @@
 ;; a compile-time data local, arithmetic over them, or an operand/local
 ;; expression-list length. Returns "" outside that shape. Refs #5602.
 (define (embedded-native-data-if-body
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(AstExpr.If cond-node then-node else-node)
+    [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
       (match (embedded-stdlib-tlci-unwrap-expr cond-node)
-        [(AstExpr.Binary op left-node right-node)
+        [(compiler_ast_types.AstExpr.Binary op left-node right-node)
           (let
             [ordinal : i64 (embedded-native-binop-ordinal op)]
             [left : EmbeddedNativeDataValue
@@ -3978,7 +4021,7 @@
                   (embedded-native-body-code params else-node)]
                 (if (or (string.eq then-code "") (string.eq else-code ""))
                   ""
-                  (str-cat
+                  (str_cat.str-cat
                     (struct-get left open)
                     (struct-get right open)
                     "  (if ("
@@ -3998,7 +4041,7 @@
 
 ;; Two computed expressions then one binary host op over their session values.
 (define (embedded-native-computed-binary-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [left-node : i64]
   [right-node : i64]
   [op : String]
@@ -4019,7 +4062,7 @@
             (+ left-opened right-opened 1)))))))
 
 (define (embedded-native-computed-ternary-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [first-node : i64]
   [second-node : i64]
   [third-node : i64]
@@ -4050,17 +4093,18 @@
                 (+ first-opened second-opened third-opened 1)))))))))
 
 (define (embedded-native-computed-resource-scope-ops
-  [params : (& params AstMacroParamList)]
-  [args : (& args AstExprList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [args : (& args compiler_ast_types.AstExprList)]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [move-aware : String
-      (embedded-native-data-index-text (ast-expr-list-get args 4 0))]
+      (embedded-native-data-index-text
+        (compiler_ast_types.ast-expr-list-get args 4 0))]
     [name-opened : i64
       (embedded-native-computed-expr-ops
         params
-        (ast-expr-list-get args 0 0)
+        (compiler_ast_types.ast-expr-list-get args 0 0)
         ops
         ops-count)]
     (if (or (string.eq move-aware "") (< name-opened 0))
@@ -4069,7 +4113,7 @@
         [init-opened : i64
           (embedded-native-computed-expr-ops
             params
-            (ast-expr-list-get args 1 0)
+            (compiler_ast_types.ast-expr-list-get args 1 0)
             ops
             ops-count)]
         (if (< init-opened 0)
@@ -4078,7 +4122,7 @@
             [cleanup-opened : i64
               (embedded-native-computed-expr-ops
                 params
-                (ast-expr-list-get args 2 0)
+                (compiler_ast_types.ast-expr-list-get args 2 0)
                 ops
                 ops-count)]
             (if (< cleanup-opened 0)
@@ -4087,7 +4131,7 @@
                 [body-opened : i64
                   (embedded-native-computed-expr-ops
                     params
-                    (ast-expr-list-get args 3 0)
+                    (compiler_ast_types.ast-expr-list-get args 3 0)
                     ops
                     ops-count)]
                 (if (< body-opened 0)
@@ -4096,7 +4140,7 @@
                     (embedded-native-template-push!
                       ops
                       ops-count
-                      tlci-host-callback-name-expr-resource-scope
+                      tlci_core.tlci-host-callback-name-expr-resource-scope
                       move-aware
                       "0"
                       "0")
@@ -4105,7 +4149,7 @@
 ;; Compile one stack-valued argument followed by an i64 literal/data-local
 ;; immediate. Used by dense computed pattern binding construction. Refs #5626.
 (define (embedded-native-computed-data-arg-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [value-node : i64]
   [data-node : i64]
   [op : String]
@@ -4129,7 +4173,7 @@
 ;; the same stack-value protocol; the query replaces that value with its
 ;; reflected String result. Refs #5606.
 (define (embedded-native-computed-type-query-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [arg-node : i64]
   [op : String]
   [arg-a : String]
@@ -4149,7 +4193,7 @@
 ;; local. The host operation replaces the pushed type with its reflected
 ;; result. Refs #5626.
 (define (embedded-native-computed-indexed-type-query-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [type-node : i64]
   [index-node : i64]
   [op : String]
@@ -4172,7 +4216,7 @@
 ;; value stays on the session stack while both indexes travel in the callback
 ;; operation's immediate arguments. Refs #5626.
 (define (embedded-native-computed-double-indexed-type-query-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [type-node : i64]
   [first-index-node : i64]
   [second-index-node : i64]
@@ -4205,7 +4249,7 @@
 ;; expression value is pushed first and the host operation replaces it with
 ;; the projected expression. Refs #5626.
 (define (embedded-native-computed-indexed-expr-query-ops
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [expr-node : i64]
   [index-node : i64]
   [op : String]
@@ -4227,7 +4271,7 @@
 ;; The `(comptime-host-local-set host session N 0 0)` local-set final text
 ;; for one binding slot.
 (define (embedded-native-local-set-final [slot : i64]) : String
-  (str-cat
+  (str_cat.str-cat
     "  (comptime-host-local-set host session "
     (string.int->string slot)
     " 0 0)\n"))
@@ -4237,30 +4281,31 @@
 ;; value. Quasiquoted fragments reuse the general template walker.
 ;; Returns "" outside the supported subset.
 (define (embedded-native-computed-expr-code
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]
   [final : String]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.If cond-node then-node else-node)
+    [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
       (embedded-native-computed-if-code
         params
         cond-node
         then-node
         else-node
         final)]
-    [(AstExpr.Begin exprs)
+    [(compiler_ast_types.AstExpr.Begin exprs)
       (embedded-native-computed-begin-code params (& exprs) final)]
-    [(AstExpr.Match match-box)
+    [(compiler_ast_types.AstExpr.Match match-box)
       (embedded-native-computed-match-code params match-box final)]
     ;; A let nested in a computed position (an if/match branch at body
     ;; level): the body commits like a top-level body. Refs #5603.
-    [(AstExpr.Let _) (embedded-native-let-body-code params node)]
-    [(AstExpr.Call func args)
+    [(compiler_ast_types.AstExpr.Let _)
+      (embedded-native-let-body-code params node)]
+    [(compiler_ast_types.AstExpr.Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(AstExpr.Var head-id)
+        [(compiler_ast_types.AstExpr.Var head-id)
           (let
-            [head : String (intern-str head-id)]
-            [argc : i64 (ast-expr-list-len (& args))]
+            [head : String (ci.intern-str head-id)]
+            [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
             (cond
               ;; `(comptime.expr-int data)`: reflection counts, local data, and
               ;; arithmetic over either flow into the literal builder without
@@ -4275,13 +4320,13 @@
                   [data : EmbeddedNativeDataValue
                     (embedded-native-data-value
                       params
-                      (ast-expr-list-get (& args) 0 0))]
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
                   (if (string.eq (struct-get data text) "")
                     (embedded-native-computed-expr-code-linear
                       params
                       node
                       final)
-                    (str-cat
+                    (str_cat.str-cat
                       (struct-get data open)
                       "  (let [q0 : i64 (comptime-host-expr-int-from-data host session "
                       (struct-get data text)
@@ -4306,7 +4351,7 @@
                   [opened : i64
                     (embedded-native-computed-expr-ops
                       params
-                      (ast-expr-list-get (& args) 0 0)
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
                       ops
                       ops-count)]
                   (if (or
@@ -4325,7 +4370,7 @@
 
 ;; The linear chain fallback for computed-expr-code.
 (define (embedded-native-computed-expr-code-linear
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]
   [final : String]) : String
   (let
@@ -4334,7 +4379,7 @@
     [ops-count : (__tl_dyn-array i64) (make-array 0)]
     [opened : i64
       (if (match (embedded-stdlib-tlci-unwrap-expr node)
-        [(AstExpr.Quasiquote _) true]
+        [(compiler_ast_types.AstExpr.Quasiquote _) true]
         [_ false])
         (embedded-native-body-ops params node ops ops-count)
         (embedded-native-computed-expr-ops params node ops ops-count))]
@@ -4351,7 +4396,7 @@
 (define (embedded-native-status-sequence-code [head : String] [rest : String]) : String
   (let
     [status : String (embedded-native-temp-name!)]
-    (str-cat
+    (str_cat.str-cat
       "  (let ["
       status
       " : i64\n"
@@ -4368,8 +4413,8 @@
 ;; is an i64 status expression, and the final item is compiled separately with
 ;; the caller's result operation.
 (define (embedded-native-computed-begin-statements-code
-  [params : (& params AstMacroParamList)]
-  [exprs : (& exprs AstExprList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [exprs : (& exprs compiler_ast_types.AstExprList)]
   [index : i64]
   [last : i64]) : String
   (if (>= index last)
@@ -4378,7 +4423,7 @@
       [head : String
         (embedded-native-computed-statement-code
           params
-          (ast-expr-list-get exprs index 0))]
+          (compiler_ast_types.ast-expr-list-get exprs index 0))]
       (if (string.eq head "")
         "\x01"
         (let
@@ -4393,11 +4438,11 @@
             (embedded-native-status-sequence-code head rest)))))))
 
 (define (embedded-native-computed-begin-code
-  [params : (& params AstMacroParamList)]
-  [exprs : (& exprs AstExprList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [exprs : (& exprs compiler_ast_types.AstExprList)]
   [final : String]) : String
   (let
-    [count : i64 (ast-expr-list-len exprs)]
+    [count : i64 (compiler_ast_types.ast-expr-list-len exprs)]
     (if (= count 0)
       ""
       (let
@@ -4410,7 +4455,7 @@
         [tail : String
           (embedded-native-computed-expr-code
             params
-            (ast-expr-list-get exprs (- count 1) 0)
+            (compiler_ast_types.ast-expr-list-get exprs (- count 1) 0)
             final)]
         (if (or (string.eq prefix "\x01") (string.eq tail ""))
           ""
@@ -4420,14 +4465,16 @@
 ;; concatenator needs unit, mutation of an i64-backed bool local, and if over a
 ;; scalar/probe condition. Refs #5656.
 (define (embedded-native-computed-statement-code
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Literal (AstLiteral.Unit)) "  0\n"]
-    [(AstExpr.Begin exprs)
+    [(compiler_ast_types.AstExpr.Literal (compiler_ast_types.AstLiteral.Unit))
+      "  0\n"]
+    [(compiler_ast_types.AstExpr.Begin exprs)
       (embedded-native-computed-statement-list-code params (& exprs) 0)]
-    [(AstExpr.Let _) (embedded-native-let-statement-code params node)]
-    [(AstExpr.While cond-node body-node)
+    [(compiler_ast_types.AstExpr.Let _)
+      (embedded-native-let-statement-code params node)]
+    [(compiler_ast_types.AstExpr.While cond-node body-node)
       (let
         [condition : EmbeddedNativeDataValue
           (embedded-native-data-value params cond-node)]
@@ -4443,7 +4490,7 @@
               "")
             (let
               [status : String (embedded-native-temp-name!)]
-              (str-cat
+              (str_cat.str-cat
                 (struct-get condition open)
                 "  (let ["
                 status
@@ -4463,16 +4510,17 @@
                 "))\n"
                 (embedded-native-closing-parens
                   (* 2 (struct-get condition opens))))))))]
-    [(AstExpr.Set name-id value-node)
+    [(compiler_ast_types.AstExpr.Set name-id value-node)
       (let
-        [target : String (embedded-native-data-local-text (intern-str name-id))]
+        [target : String
+          (embedded-native-data-local-text (ci.intern-str name-id))]
         (if (not (string.eq target ""))
           (let
             [value : EmbeddedNativeDataValue
               (embedded-native-data-value params value-node)]
             (if (string.eq (struct-get value text) "")
               ""
-              (str-cat
+              (str_cat.str-cat
                 (struct-get value open)
                 "  (begin\n  (set! "
                 target
@@ -4481,14 +4529,14 @@
                 ")\n  0)\n"
                 (embedded-native-closing-parens (* 2 (struct-get value opens))))))
           (let
-            [slot : i64 (embedded-native-local-index (intern-str name-id))]
+            [slot : i64 (embedded-native-local-index (ci.intern-str name-id))]
             (if (< slot 0)
               ""
               (embedded-native-computed-expr-code
                 params
                 value-node
                 (embedded-native-local-set-final slot))))))]
-    [(AstExpr.If cond-node then-node else-node)
+    [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
       (let
         [condition : EmbeddedNativeDataValue
           (embedded-native-data-value params cond-node)]
@@ -4501,7 +4549,7 @@
           (string.eq then-code "")
           (string.eq else-code ""))
           ""
-          (str-cat
+          (str_cat.str-cat
             (struct-get condition open)
             "  (if (= "
             (struct-get condition text)
@@ -4511,28 +4559,28 @@
             ")\n"
             (embedded-native-closing-parens (* 2 (struct-get condition opens))))))]
     ;; Diagnostic calls ignore this final and retain their interpreted status.
-    [(AstExpr.Call _ _)
+    [(compiler_ast_types.AstExpr.Call _ _)
       (embedded-native-computed-expr-code params node "  0\n")]
     [_
       (begin
         (embedded-native-fallback-reason-note!
-          (str-cat
+          (str_cat.str-cat
             "statement-node:"
             (embedded-native-expr-kind-name
               (embedded-stdlib-tlci-unwrap-expr node))))
         "")]))
 
 (define (embedded-native-computed-statement-list-code
-  [params : (& params AstMacroParamList)]
-  [exprs : (& exprs AstExprList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [exprs : (& exprs compiler_ast_types.AstExprList)]
   [index : i64]) : String
-  (if (>= index (ast-expr-list-len exprs))
+  (if (>= index (compiler_ast_types.ast-expr-list-len exprs))
     "  0\n"
     (let
       [head : String
         (embedded-native-computed-statement-code
           params
-          (ast-expr-list-get exprs index 0))]
+          (compiler_ast_types.ast-expr-list-get exprs index 0))]
       (if (string.eq head "")
         ""
         (let
@@ -4546,12 +4594,12 @@
             (embedded-native-status-sequence-code head rest)))))))
 
 (define (embedded-native-let-statement-code
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Let let-box)
+    [(compiler_ast_types.AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet.Let bindings body)
+        [(compiler_ast_types.AstLet.Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
             [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
@@ -4575,7 +4623,7 @@
                       (embedded-native-fallback-reason-note!
                         "statement-let:body")
                       "")
-                    (str-cat
+                    (str_cat.str-cat
                       open-code
                       body-code
                       (embedded-native-closing-parens (array-ref opens 0))))))))])]
@@ -4584,7 +4632,7 @@
 ;; Scalar conditions (including mutable data locals and local Expr probes) use
 ;; the same continuation shape as specialized length/string guards.
 (define (embedded-native-computed-data-if-code
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [cond-node : i64]
   [then-code : String]
   [else-code : String]) : String
@@ -4593,7 +4641,7 @@
       (embedded-native-data-value params cond-node)]
     (if (string.eq (struct-get condition text) "")
       ""
-      (str-cat
+      (str_cat.str-cat
         (struct-get condition open)
         "  (if (= "
         (struct-get condition text)
@@ -4623,7 +4671,7 @@
 ;; `(if (string.eq A B) then else)` or `(if (cmp (expr-list-length p) lit)
 ;; then else)` with computed branches sharing one `final` operation.
 (define (embedded-native-computed-if-code
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [cond-node : i64]
   [then-node : i64]
   [else-node : i64]
@@ -4640,12 +4688,13 @@
           ""
           (match (embedded-native-length-probe params cond-node)
             [(EmbeddedNativeLengthProbe.LengthProbe param ordinal literal)
-              (str-cat
+              (str_cat.str-cat
                 "  (let [t0 : i64 (comptime-host-expr-list-length host session "
                 (string.int->string param)
                 " 0 0)]\n"
                 "  (if (< t0 0)\n  "
-                (string.int->string tlci-host-callback-status-bad-request)
+                (string.int->string
+                  tlci_core.tlci-host-callback-status-bad-request)
                 "\n  (if ("
                 (embedded-native-comparison-spelling ordinal)
                 " t0 "
@@ -4656,17 +4705,20 @@
                 ")))\n")]
             [(EmbeddedNativeLengthProbe.NoLengthProbe)
               (match (embedded-stdlib-tlci-unwrap-expr cond-node)
-                [(AstExpr.Call cond-func cond-args)
+                [(compiler_ast_types.AstExpr.Call cond-func cond-args)
                   (match (embedded-stdlib-tlci-unwrap-expr cond-func)
-                    [(AstExpr.Var cond-head)
+                    [(compiler_ast_types.AstExpr.Var cond-head)
                       (let
-                        [cond-name : String (intern-str cond-head)]
+                        [cond-name : String (ci.intern-str cond-head)]
                         (cond
                           [(and
                               (or
                                 (string.eq cond-name "comptime.array-dynamic?")
                                 (string.eq cond-name "array-dynamic?"))
-                              (= (ast-expr-list-len (& cond-args)) 1))
+                              (=
+                                (compiler_ast_types.ast-expr-list-len
+                                  (& cond-args))
+                                1))
                             (let
                               [ops : (__tl_dyn-array String)
                                 (array.make-array
@@ -4676,7 +4728,10 @@
                               [opened : i64
                                 (embedded-native-computed-expr-ops
                                   params
-                                  (ast-expr-list-get (& cond-args) 0 0)
+                                  (compiler_ast_types.ast-expr-list-get
+                                    (& cond-args)
+                                    0
+                                    0)
                                   ops
                                   ops-count)]
                               (if (or
@@ -4689,10 +4744,10 @@
                                   ops
                                   (array-ref ops-count 0)
                                   opened
-                                  (str-cat
+                                  (str_cat.str-cat
                                     "  (let [t0 : i64 (comptime-host-array-dynamic? host session 0 0 0)] (if (< t0 0)\n  "
                                     (string.int->string
-                                      tlci-host-callback-status-bad-request)
+                                      tlci_core.tlci-host-callback-status-bad-request)
                                     "\n  (if (= t0 1)\n"
                                     then-code
                                     else-code
@@ -4704,20 +4759,26 @@
                               (or
                                 (string.eq cond-name "comptime.expr-string?")
                                 (string.eq cond-name "expr-string?"))
-                              (= (ast-expr-list-len (& cond-args)) 1))
+                              (=
+                                (compiler_ast_types.ast-expr-list-len
+                                  (& cond-args))
+                                1))
                             (let
                               [str-param : i64
                                 (embedded-native-var-param-index
                                   params
-                                  (ast-expr-list-get (& cond-args) 0 0))]
+                                  (compiler_ast_types.ast-expr-list-get
+                                    (& cond-args)
+                                    0
+                                    0))]
                               (if (< str-param 0)
                                 ""
-                                (str-cat
+                                (str_cat.str-cat
                                   "  (let [t0 : i64 (comptime-host-operand-expr-string? host session "
                                   (string.int->string str-param)
                                   " 0 0)] (if (< t0 0)\n  "
                                   (string.int->string
-                                    tlci-host-callback-status-bad-request)
+                                    tlci_core.tlci-host-callback-status-bad-request)
                                   "\n  (if (= t0 1)\n"
                                   then-code
                                   else-code
@@ -4747,20 +4808,23 @@
 ;; `final`; the wildcard arm retains the interpreted diagnostic path. Refs
 ;; #5606.
 (define (embedded-native-computed-var-match-arm-code
-  [params : (& params AstMacroParamList)]
-  [arms : (& arms AstMatchArmList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [index : i64]
   [param : i64]
-  [pat-args : (& pat-args AstPatternList)]
+  [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
   [body-node : i64]
   [final : String]) : String
   (let
     [saved : i64 (array-ref embedded-native-local-len 0)]
     [slot : i64
-      (match (ast-pattern-list-get pat-args 0 (ast-pattern-fallback))
-        [(AstPattern.Binding bind-id)
-          (embedded-native-local-push! (intern-str bind-id))]
-        [(AstPattern.Wildcard) -2]
+      (match (compiler_ast_types.ast-pattern-list-get
+        pat-args
+        0
+        (compiler_ast_types.ast-pattern-fallback))
+        [(compiler_ast_types.AstPattern.Binding bind-id)
+          (embedded-native-local-push! (ci.intern-str bind-id))]
+        [(compiler_ast_types.AstPattern.Wildcard) -2]
         [_ -1])]
     [arm-code : String
       (if (= slot -1)
@@ -4780,7 +4844,7 @@
           ""
           (let
             [probe : String (embedded-native-temp-name!)]
-            (str-cat
+            (str_cat.str-cat
               "  (let ["
               probe
               " : i64 (comptime-host-operand-expr-var? host session "
@@ -4789,18 +4853,19 @@
               "  (if (< "
               probe
               " 0)\n  "
-              (string.int->string tlci-host-callback-status-bad-request)
+              (string.int->string
+                tlci_core.tlci-host-callback-status-bad-request)
               "\n  (if (= "
               probe
               " 1)\n"
               (if (>= slot 0)
-                (str-cat
+                (str_cat.str-cat
                   "  (let [s"
                   (string.int->string slot)
                   " : i64\n"
                   (embedded-native-arm-block-with-final
                     (embedded-native-single-op-ops
-                      tlci-host-callback-name-operand-expr-var-name
+                      tlci_core.tlci-host-callback-name-operand-expr-var-name
                       (string.int->string param)
                       "0"
                       "0")
@@ -4821,19 +4886,19 @@
               ")))\n")))))))
 
 (define (embedded-native-computed-var-match-arms-code
-  [params : (& params AstMacroParamList)]
-  [arms : (& arms AstMatchArmList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [index : i64]
   [param : i64]
   [final : String]) : String
   (if (>= index (struct-get arms len))
     "  0\n"
     (match (array-ref (struct-get arms slots) index)
-      [(AstMatchArm.Arm pattern body-node)
+      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
-          [(AstPattern.Variant name-id args-box)
+          [(compiler_ast_types.AstPattern.Variant name-id args-box)
             (let
-              [pat-args : AstPatternList (box-get args-box)]
+              [pat-args : compiler_ast_types.AstPatternList (box-get args-box)]
               (if (and
                 (string.eq (embedded-native-expr-variant-name name-id) "Var")
                 (= (struct-get pat-args len) 1))
@@ -4846,7 +4911,7 @@
                   body-node
                   final)
                 ""))]
-          [(AstPattern.Wildcard)
+          [(compiler_ast_types.AstPattern.Wildcard)
             (embedded-native-computed-expr-code params body-node final)]
           [_ ""])])))
 
@@ -4854,11 +4919,11 @@
 ;; scrutinee: the scrutinee is computed into a fresh session slot, then each
 ;; literal arm compares with raw local-get/string-value/string-eq chains.
 (define (embedded-native-computed-match-code
-  [params : (& params AstMacroParamList)]
-  [match-box : (Box AstMatch)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [match-box : (Box compiler_ast_types.AstMatch)]
   [final : String]) : String
   (match (box-get match-box)
-    [(AstMatch.Match scrutinee arms)
+    [(compiler_ast_types.AstMatch.Match scrutinee arms)
       (let
         [param : i64 (embedded-native-var-param-index params scrutinee)]
         [value-text : String
@@ -4879,9 +4944,9 @@
             final)))]))
 
 (define (embedded-native-computed-string-match-code
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [scrutinee : i64]
-  [arms : (& arms AstMatchArmList)]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [final : String]) : String
   (let
     [slot : i64 (embedded-native-local-push! "__tlci_match")]
@@ -4905,7 +4970,7 @@
                 final)]
             (if (string.eq arms-code "")
               ""
-              (str-cat
+              (str_cat.str-cat
                 "  (let [m"
                 (string.int->string slot)
                 " : i64\n"
@@ -4919,19 +4984,20 @@
                 "))\n"))))))))
 
 (define (embedded-native-computed-match-arms-code
-  [params : (& params AstMacroParamList)]
-  [arms : (& arms AstMatchArmList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [index : i64]
   [slot : i64]
   [final : String]) : String
   (if (>= index (struct-get arms len))
     "  0\n"
     (match (array-ref (struct-get arms slots) index)
-      [(AstMatchArm.Arm pattern body-node)
+      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
-          [(AstPattern.Literal (AstLiteral.String sid))
+          [(compiler_ast_types.AstPattern.Literal
+              (compiler_ast_types.AstLiteral.String sid))
             (let
-              [lit : String (intern-str sid)]
+              [lit : String (ci.intern-str sid)]
               [arm-code : String
                 (embedded-native-computed-expr-code params body-node final)]
               [rest-code : String
@@ -4951,7 +5017,7 @@
                       (array-set!
                         embedded-native-fallback-reason
                         0
-                        (str-cat
+                        (str_cat.str-cat
                           "computed-match-arm:"
                           (string.int->string index)
                           ":body-shape:"
@@ -4960,7 +5026,7 @@
                     ""))
                 (if (string.eq rest-code "")
                   ""
-                  (str-cat
+                  (str_cat.str-cat
                     "  (let [t"
                     (string.int->string index)
                     " : i64 (comptime-host-local-get host session "
@@ -4985,14 +5051,15 @@
                     " : i64 (comptime-host-string-eq host session 0 0 0)] (if (< c"
                     (string.int->string index)
                     " 0)\n  "
-                    (string.int->string tlci-host-callback-status-bad-request)
+                    (string.int->string
+                      tlci_core.tlci-host-callback-status-bad-request)
                     "\n  (if (= c"
                     (string.int->string index)
                     " 1)\n"
                     arm-code
                     rest-code
                     ")))))))\n"))))]
-          [(AstPattern.Wildcard)
+          [(compiler_ast_types.AstPattern.Wildcard)
             (let
               [arm-code : String
                 (embedded-native-computed-expr-code params body-node final)]
@@ -5006,7 +5073,7 @@
                       (array-set!
                         embedded-native-fallback-reason
                         0
-                        (str-cat
+                        (str_cat.str-cat
                           "computed-match-arm:"
                           (string.int->string index)
                           ":body-shape:"
@@ -5022,12 +5089,12 @@
 ;; scoping: binding inits see only earlier locals, and both local tables are
 ;; restored afterwards. Refs #5603, #5701.
 (define (embedded-native-let-body-code
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(AstExpr.Let let-box)
+    [(compiler_ast_types.AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet.Let bindings body)
+        [(compiler_ast_types.AstLet.Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
             [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
@@ -5046,7 +5113,7 @@
                   (array-set! embedded-native-data-local-len 0 data-saved)
                   (if (string.eq body-code "")
                     ""
-                    (str-cat
+                    (str_cat.str-cat
                       open-code
                       body-code
                       (embedded-native-closing-parens (array-ref opens 0))))))))]
@@ -5061,14 +5128,17 @@
 ;; binding that folds to plain arithmetic over names already in scope opens
 ;; nothing at all.
 (define (embedded-native-let-bindings-open
-  [params : (& params AstMacroParamList)]
-  [bindings : (& bindings AstLetBindingList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [bindings : (& bindings compiler_ast_types.AstLetBindingList)]
   [index : i64]
   [opens : (__tl_dyn-array i64)]) : String
   (if (>= index (struct-get bindings len))
     ""
-    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
-      [(AstLetBinding.Binding name _ init)
+    (match (compiler_ast_types.ast-let-binding-list-get
+      bindings
+      index
+      (compiler_ast_types.ast-let-binding-fallback))
+      [(compiler_ast_types.AstLetBinding.Binding name _ init)
         (let
           [binding-code : String
             (embedded-native-let-binding-open params name init opens)]
@@ -5081,9 +5151,9 @@
                   (array-set!
                     embedded-native-fallback-reason
                     0
-                    (str-cat
+                    (str_cat.str-cat
                       "let-binding:"
-                      (intern-str name)
+                      (ci.intern-str name)
                       ":unsupported-init")))
                 "\x01"))
             (let
@@ -5095,7 +5165,7 @@
                   opens)]
               (if (string.eq rest "\x01")
                 "\x01"
-                (str-cat binding-code rest)))))])))
+                (str_cat.str-cat binding-code rest)))))])))
 
 ;; One binding: an i64-valued init joins the compile-time data table. Materialize
 ;; every such binding as a generated local: interpreted let evaluates the init
@@ -5107,7 +5177,7 @@
 ;; local in index position and to the stale session slot in template position.
 ;; Refs #5603, #5701, #5656.
 (define (embedded-native-let-binding-open
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [name : i64]
   [init : i64]
   [opens : (__tl_dyn-array i64)]) : String
@@ -5117,14 +5187,14 @@
       (let
         [generated : String (embedded-native-temp-name!)]
         (if (and
-          (< (embedded-native-local-index (intern-str name)) 0)
-          (embedded-native-data-local-push! (intern-str name) generated))
+          (< (embedded-native-local-index (ci.intern-str name)) 0)
+          (embedded-native-data-local-push! (ci.intern-str name) generated))
           (begin
             (array-set!
               opens
               0
               (+ (array-ref opens 0) (* 2 (struct-get data opens)) 1))
-            (str-cat
+            (str_cat.str-cat
               (struct-get data open)
               "  (let ["
               generated
@@ -5133,17 +5203,17 @@
               "]\n"))
           "\x01"))
       (if (not
-        (string.eq (embedded-native-data-local-text (intern-str name)) ""))
+        (string.eq (embedded-native-data-local-text (ci.intern-str name)) ""))
         "\x01"
         (embedded-native-let-session-binding-open params name init opens)))))
 
 (define (embedded-native-let-session-binding-open
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [name : i64]
   [init : i64]
   [opens : (__tl_dyn-array i64)]) : String
   (let
-    [slot : i64 (embedded-native-local-push! (intern-str name))]
+    [slot : i64 (embedded-native-local-push! (ci.intern-str name))]
     (if (< slot 0)
       "\x01"
       (let
@@ -5156,7 +5226,7 @@
           "\x01"
           (begin
             (array-set! opens 0 (+ (array-ref opens 0) 2))
-            (str-cat
+            (str_cat.str-cat
               "  (let [s"
               (string.int->string slot)
               " : i64\n"
@@ -5170,17 +5240,17 @@
 (define (embedded-native-closing-parens [count : i64]) : String
   (if (<= count 0)
     ""
-    (str-cat ")" (embedded-native-closing-parens (- count 1)))))
+    (str_cat.str-cat ")" (embedded-native-closing-parens (- count 1)))))
 
 ;; Desugar `(match (type-kind T) ["kind" template] ...)` into nested
 ;; type-kind-eq queries with a complete arm block per match; an unmatched
 ;; scrutinee falls back to the interpreter by returning ok with no result.
 ;; Returns "" when the body is outside the supported shape.
 (define (embedded-native-match-arms
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [probe-op : String]
   [type-index : i64]
-  [arms : (& arms AstMatchArmList)]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [index : i64]) : String
   ;; Falling off the end of the arm chain is itself an interpreted-arm site: it
   ;; is reached at run time whenever no arm's probe matched, which only happens
@@ -5189,11 +5259,12 @@
   (if (>= index (struct-get arms len))
     embedded-native-interpreted-arm-code
     (match (array-ref (struct-get arms slots) index)
-      [(AstMatchArm.Arm pattern body-node)
+      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
-          [(AstPattern.Literal (AstLiteral.String sid))
+          [(compiler_ast_types.AstPattern.Literal
+              (compiler_ast_types.AstLiteral.String sid))
             (let
-              [kind : String (intern-str sid)]
+              [kind : String (ci.intern-str sid)]
               [arm-code : String (embedded-native-body-code params body-node)]
               [rest : String
                 (embedded-native-match-arms
@@ -5204,7 +5275,7 @@
                   (+ index 1))]
               (if (string.eq rest "")
                 ""
-                (str-cat
+                (str_cat.str-cat
                   "  (let [t"
                   (string.int->string index)
                   " : i64 (comptime-host-"
@@ -5220,7 +5291,8 @@
                   (string.int->string index)
                   " 0)\n"
                   "  "
-                  (string.int->string tlci-host-callback-status-bad-request)
+                  (string.int->string
+                    tlci_core.tlci-host-callback-status-bad-request)
                   "\n"
                   "  (if (= t"
                   (string.int->string index)
@@ -5237,7 +5309,7 @@
           ;; `partial-entries` gap -- `stdlib.eq/inline-eq` raises a
           ;; comptime-error here and `stdlib.hash/hash` generates its module for
           ;; every type except `unit`. Refs #5658.
-          [(AstPattern.Wildcard)
+          [(compiler_ast_types.AstPattern.Wildcard)
             (let
               [arm-code : String (embedded-native-body-code params body-node)]
               (if (string.eq arm-code "")
@@ -5256,14 +5328,14 @@
 ;; e))` over an Expr operand's produced type, and `(type-key T)`. Each maps to
 ;; a probe with the same 1/0-as-data contract, so the arm chain is identical.
 (define (embedded-native-scrutinee-probe
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [scrutinee : i64]) : EmbeddedNativeScrutineeProbe
   (match (embedded-stdlib-tlci-unwrap-expr scrutinee)
-    [(AstExpr.Call head-id args)
+    [(compiler_ast_types.AstExpr.Call head-id args)
       (match (embedded-stdlib-tlci-unwrap-expr head-id)
-        [(AstExpr.Var head-name)
+        [(compiler_ast_types.AstExpr.Var head-name)
           (let
-            [head : String (intern-str head-name)]
+            [head : String (ci.intern-str head-name)]
             [kind? : bool
               (or
                 (string.eq head "type-kind")
@@ -5274,16 +5346,17 @@
                 (string.eq head "comptime.type-key"))]
             (if (or
               (not (or kind? key?))
-              (not (= (ast-expr-list-len (& args)) 1)))
+              (not (= (compiler_ast_types.ast-expr-list-len (& args)) 1)))
               (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)
               (let
-                [arg-node : i64 (ast-expr-list-get (& args) 0 0)]
+                [arg-node : i64
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)]
                 [direct : i64 (embedded-native-var-param-index params arg-node)]
                 (if (>= direct 0)
                   (EmbeddedNativeScrutineeProbe.ScrutineeProbe
                     (if kind?
-                      tlci-host-callback-name-operand-type-kind-eq
-                      tlci-host-callback-name-operand-type-key-eq)
+                      tlci_core.tlci-host-callback-name-operand-type-kind-eq
+                      tlci_core.tlci-host-callback-name-operand-type-key-eq)
                     direct)
                   ;; `(type-kind (comptime.expr-type e))` is the only nested
                   ;; operand form in the dispatch set; `type-key` never wraps
@@ -5296,38 +5369,38 @@
                       (if (< expr-index 0)
                         (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)
                         (EmbeddedNativeScrutineeProbe.ScrutineeProbe
-                          tlci-host-callback-name-operand-expr-type-kind-eq
+                          tlci_core.tlci-host-callback-name-operand-expr-type-kind-eq
                           expr-index))))))))]
         [_ (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)])]
     [_ (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)]))
 
 ;; The operand index behind `(comptime.expr-type <param>)`, or -1.
 (define (embedded-native-expr-type-param-index
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call head-id args)
+    [(compiler_ast_types.AstExpr.Call head-id args)
       (match (embedded-stdlib-tlci-unwrap-expr head-id)
-        [(AstExpr.Var head-name)
+        [(compiler_ast_types.AstExpr.Var head-name)
           (if (and
             (or
-              (string.eq (intern-str head-name) "comptime.expr-type")
-              (string.eq (intern-str head-name) "expr-type"))
-            (= (ast-expr-list-len (& args)) 1))
+              (string.eq (ci.intern-str head-name) "comptime.expr-type")
+              (string.eq (ci.intern-str head-name) "expr-type"))
+            (= (compiler_ast_types.ast-expr-list-len (& args)) 1))
             (embedded-native-var-param-index
               params
-              (ast-expr-list-get (& args) 0 0))
+              (compiler_ast_types.ast-expr-list-get (& args) 0 0))
             -1)]
         [_ -1])]
     [_ -1]))
 
 (define (embedded-native-match-body
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(AstExpr.Match match-box)
+    [(compiler_ast_types.AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch.Match scrutinee arms)
+        [(compiler_ast_types.AstMatch.Match scrutinee arms)
           (match (embedded-native-scrutinee-probe params scrutinee)
             [(EmbeddedNativeScrutineeProbe.ScrutineeProbe
                 probe-op
@@ -5351,20 +5424,22 @@
 ;: The variadic-operand index of a `(comptime.expr-list-length p)` call; -1 for
 ;: any other expression. Refs #5617.
 (define (embedded-native-expr-list-length-param
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Call length-func length-args)
+    [(compiler_ast_types.AstExpr.Call length-func length-args)
       (match (embedded-stdlib-tlci-unwrap-expr length-func)
-        [(AstExpr.Var length-head)
+        [(compiler_ast_types.AstExpr.Var length-head)
           (if (and
             (or
-              (string.eq (intern-str length-head) "comptime.expr-list-length")
-              (string.eq (intern-str length-head) "expr-list-length"))
-            (= (ast-expr-list-len (& length-args)) 1))
+              (string.eq
+                (ci.intern-str length-head)
+                "comptime.expr-list-length")
+              (string.eq (ci.intern-str length-head) "expr-list-length"))
+            (= (compiler_ast_types.ast-expr-list-len (& length-args)) 1))
             (embedded-native-var-param-index
               params
-              (ast-expr-list-get (& length-args) 0 0))
+              (compiler_ast_types.ast-expr-list-get (& length-args) 0 0))
             -1)]
         [_ -1])]
     [_ -1]))
@@ -5373,17 +5448,18 @@
 ;; the left and a canonical int literal on the right. Anything else is not a
 ;; length probe.
 (define (embedded-native-length-probe
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [cond-node : i64]) : EmbeddedNativeLengthProbe
   (match (embedded-stdlib-tlci-unwrap-expr cond-node)
-    [(AstExpr.Binary op left-node right-node)
+    [(compiler_ast_types.AstExpr.Binary op left-node right-node)
       (let
         [ordinal : i64 (embedded-native-binop-ordinal op)]
         [param : i64 (embedded-native-expr-list-length-param params left-node)]
         (if (or (< ordinal 5) (> ordinal 10) (< param 0))
           (EmbeddedNativeLengthProbe.NoLengthProbe)
           (match (embedded-stdlib-tlci-unwrap-expr right-node)
-            [(AstExpr.Literal (AstLiteral.Int value text))
+            [(compiler_ast_types.AstExpr.Literal
+                (compiler_ast_types.AstLiteral.Int value text))
               (if (or
                 (= (string.string-length text) 0)
                 (string.eq text (string.int->string value)))
@@ -5399,12 +5475,12 @@
 ;; arm can rebuild it with `(comptime.expr-int n)`. Returns "" outside that
 ;; shape. Refs #5617.
 (define (embedded-native-int-match-body
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(AstExpr.Match match-box)
+    [(compiler_ast_types.AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch.Match scrutinee arms)
+        [(compiler_ast_types.AstMatch.Match scrutinee arms)
           (let
             [param : i64
               (embedded-native-expr-list-length-param params scrutinee)]
@@ -5416,7 +5492,7 @@
                   (embedded-native-int-match-arms params (& arms) 0 name)]
                 (if (string.eq arms-code "")
                   ""
-                  (str-cat
+                  (str_cat.str-cat
                     "  (let ["
                     name
                     " : i64 (comptime-host-expr-list-length host session "
@@ -5425,7 +5501,8 @@
                     "  (if (< "
                     name
                     " 0)\n  "
-                    (string.int->string tlci-host-callback-status-bad-request)
+                    (string.int->string
+                      tlci_core.tlci-host-callback-status-bad-request)
                     "\n"
                     arms-code
                     "))\n")))))])]
@@ -5437,12 +5514,12 @@
 ;; same two values the interpreted `comptime.Expr.Call` pattern binds. Returns
 ;; "" outside that shape. Refs #5602.
 (define (embedded-native-value-match-body
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(AstExpr.Match match-box)
+    [(compiler_ast_types.AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch.Match scrutinee arms)
+        [(compiler_ast_types.AstMatch.Match scrutinee arms)
           (let
             [param : i64 (embedded-native-var-param-index params scrutinee)]
             (if (< param 0)
@@ -5453,7 +5530,7 @@
 ;: The `comptime.Expr.<name>` variant a pattern names, or "" for anything else.
 (define (embedded-native-expr-variant-name [name-id : i64]) : String
   (let
-    [name : String (intern-str name-id)]
+    [name : String (ci.intern-str name-id)]
     (cond
       [(string.eq name "comptime.Expr.Call") "Call"]
       [(string.eq name "Expr.Call") "Call"]
@@ -5467,8 +5544,8 @@
 ;; the matching arm reads the literal's value into a fresh i64 temporary bound
 ;; as a compile-time data local for the arm body. Refs #5602.
 (define (embedded-native-int-value-arm-code
-  [params : (& params AstMacroParamList)]
-  [pat-args : (& pat-args AstPatternList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
   [body-node : i64]
   [param : i64]
   [rest : String]) : String
@@ -5477,10 +5554,13 @@
     [value : String (embedded-native-temp-name!)]
     [saved : i64 (array-ref embedded-native-data-local-len 0)]
     [bound : bool
-      (match (ast-pattern-list-get pat-args 0 (ast-pattern-fallback))
-        [(AstPattern.Wildcard) true]
-        [(AstPattern.Binding bind-id)
-          (embedded-native-data-local-push! (intern-str bind-id) value)]
+      (match (compiler_ast_types.ast-pattern-list-get
+        pat-args
+        0
+        (compiler_ast_types.ast-pattern-fallback))
+        [(compiler_ast_types.AstPattern.Wildcard) true]
+        [(compiler_ast_types.AstPattern.Binding bind-id)
+          (embedded-native-data-local-push! (ci.intern-str bind-id) value)]
         [_ false])]
     [arm-code : String
       (if bound
@@ -5490,7 +5570,7 @@
       (array-set! embedded-native-data-local-len 0 saved)
       (if (or (string.eq arm-code "") (string.eq rest ""))
         ""
-        (str-cat
+        (str_cat.str-cat
           "  (let ["
           probe
           " : i64 (comptime-host-operand-expr-int? host session "
@@ -5499,7 +5579,7 @@
           "  (if (< "
           probe
           " 0)\n  "
-          (string.int->string tlci-host-callback-status-bad-request)
+          (string.int->string tlci_core.tlci-host-callback-status-bad-request)
           "\n  (if (= "
           probe
           " 1)\n"
@@ -5520,8 +5600,8 @@
 ;; variable, because the payload is a String value the existing string-append
 ;; and expr-var op chains already consume. Refs #5700.
 (define (embedded-native-var-value-arm-code
-  [params : (& params AstMacroParamList)]
-  [pat-args : (& pat-args AstPatternList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
   [body-node : i64]
   [param : i64]
   [rest : String]) : String
@@ -5529,10 +5609,13 @@
     [probe : String (embedded-native-temp-name!)]
     [saved : i64 (array-ref embedded-native-local-len 0)]
     [slot : i64
-      (match (ast-pattern-list-get pat-args 0 (ast-pattern-fallback))
-        [(AstPattern.Binding bind-id)
-          (embedded-native-local-push! (intern-str bind-id))]
-        [(AstPattern.Wildcard) -2]
+      (match (compiler_ast_types.ast-pattern-list-get
+        pat-args
+        0
+        (compiler_ast_types.ast-pattern-fallback))
+        [(compiler_ast_types.AstPattern.Binding bind-id)
+          (embedded-native-local-push! (ci.intern-str bind-id))]
+        [(compiler_ast_types.AstPattern.Wildcard) -2]
         [_ -1])]
     [arm-code : String
       (if (= slot -1)
@@ -5542,7 +5625,7 @@
       (array-set! embedded-native-local-len 0 saved)
       (if (or (string.eq arm-code "") (string.eq rest ""))
         ""
-        (str-cat
+        (str_cat.str-cat
           "  (let ["
           probe
           " : i64 (comptime-host-operand-expr-var? host session "
@@ -5553,21 +5636,21 @@
           probe
           " 0)
   "
-          (string.int->string tlci-host-callback-status-bad-request)
+          (string.int->string tlci_core.tlci-host-callback-status-bad-request)
           "
   (if (= "
           probe
           " 1)
 "
           (if (>= slot 0)
-            (str-cat
+            (str_cat.str-cat
               "  (let [s"
               (string.int->string slot)
               " : i64
 "
               (embedded-native-arm-block-with-final
                 (embedded-native-single-op-ops
-                  tlci-host-callback-name-operand-expr-var-name
+                  tlci_core.tlci-host-callback-name-operand-expr-var-name
                   (string.int->string param)
                   "0"
                   "0")
@@ -5592,19 +5675,19 @@
 ")))))
 
 (define (embedded-native-value-match-arms
-  [params : (& params AstMacroParamList)]
-  [arms : (& arms AstMatchArmList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [index : i64]
   [param : i64]) : String
   (if (>= index (struct-get arms len))
     "  0
 "
     (match (array-ref (struct-get arms slots) index)
-      [(AstMatchArm.Arm pattern body-node)
+      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
-          [(AstPattern.Variant name-id args-box)
+          [(compiler_ast_types.AstPattern.Variant name-id args-box)
             (let
-              [pat-args : AstPatternList (box-get args-box)]
+              [pat-args : compiler_ast_types.AstPatternList (box-get args-box)]
               (embedded-native-value-match-variant-arm
                 params
                 arms
@@ -5613,19 +5696,20 @@
                 (embedded-native-expr-variant-name name-id)
                 (& pat-args)
                 body-node))]
-          [(AstPattern.Wildcard) (embedded-native-body-code params body-node)]
+          [(compiler_ast_types.AstPattern.Wildcard)
+            (embedded-native-body-code params body-node)]
           [_ ""])])))
 
 ;; One variant-pattern arm of an operand value match. Split out of
 ;; `embedded-native-value-match-arms` so the three destructuring shapes form a
 ;; flat guard ladder rather than a nested if chain.
 (define (embedded-native-value-match-variant-arm
-  [params : (& params AstMacroParamList)]
-  [arms : (& arms AstMatchArmList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [index : i64]
   [param : i64]
   [variant : String]
-  [pat-args : (& pat-args AstPatternList)]
+  [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
   [body-node : i64]) : String
   (cond
     [(and (string.eq variant "Var") (= (struct-get pat-args len) 1))
@@ -5655,11 +5739,11 @@
 ;; The `(comptime.Expr.Call callee args)` arm: probe the operand's shape, bind
 ;; both payloads into session slots, then chain the remaining arms.
 (define (embedded-native-call-value-arm-code
-  [params : (& params AstMacroParamList)]
-  [arms : (& arms AstMatchArmList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [index : i64]
   [param : i64]
-  [pat-args : (& pat-args AstPatternList)]
+  [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
   [body-node : i64]) : String
   (let
     [name : String (embedded-native-temp-name!)]
@@ -5677,7 +5761,7 @@
           (embedded-native-value-match-arms params arms (+ index 1) param)]
         (if (or (string.eq arm-code "") (string.eq rest ""))
           ""
-          (str-cat
+          (str_cat.str-cat
             "  (let ["
             name
             " : i64 (comptime-host-operand-expr-call? host session "
@@ -5688,7 +5772,7 @@
             name
             " 0)
   "
-            (string.int->string tlci-host-callback-status-bad-request)
+            (string.int->string tlci_core.tlci-host-callback-status-bad-request)
             "
   (if (= "
             name
@@ -5704,13 +5788,16 @@
 "))))))
 
 (define (embedded-native-pattern-binder-count
-  [pat-args : (& pat-args AstPatternList)]
+  [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
   [index : i64]) : i64
   (if (>= index (struct-get pat-args len))
     0
     (+
-      (match (ast-pattern-list-get pat-args index (ast-pattern-fallback))
-        [(AstPattern.Binding _) 1]
+      (match (compiler_ast_types.ast-pattern-list-get
+        pat-args
+        index
+        (compiler_ast_types.ast-pattern-fallback))
+        [(compiler_ast_types.AstPattern.Binding _) 1]
         [_ 0])
       (embedded-native-pattern-binder-count pat-args (+ index 1)))))
 
@@ -5718,7 +5805,7 @@
 ;; one arm's payload patterns to session local slots: a binder takes the value,
 ;; a wildcard consumes nothing. Returns "\x01" on any unsupported piece.
 (define (embedded-native-value-match-bind
-  [pat-args : (& pat-args AstPatternList)]
+  [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
   [index : i64]
   [param : i64]) : String
   (if (>= index (struct-get pat-args len))
@@ -5726,17 +5813,20 @@
     (let
       [op : String
         (if (= index 0)
-          tlci-host-callback-name-operand-expr-call-callee
-          tlci-host-callback-name-operand-expr-call-args)]
+          tlci_core.tlci-host-callback-name-operand-expr-call-callee
+          tlci_core.tlci-host-callback-name-operand-expr-call-args)]
       [head : String
-        (match (ast-pattern-list-get pat-args index (ast-pattern-fallback))
-          [(AstPattern.Wildcard) ""]
-          [(AstPattern.Binding bind-id)
+        (match (compiler_ast_types.ast-pattern-list-get
+          pat-args
+          index
+          (compiler_ast_types.ast-pattern-fallback))
+          [(compiler_ast_types.AstPattern.Wildcard) ""]
+          [(compiler_ast_types.AstPattern.Binding bind-id)
             (let
-              [slot : i64 (embedded-native-local-push! (intern-str bind-id))]
+              [slot : i64 (embedded-native-local-push! (ci.intern-str bind-id))]
               (if (< slot 0)
                 "\x01"
-                (str-cat
+                (str_cat.str-cat
                   "  (let [s"
                   (string.int->string slot)
                   " : i64\n"
@@ -5762,19 +5852,20 @@
             (embedded-native-value-match-bind pat-args (+ index 1) param)]
           (if (string.eq rest "\x01")
             "\x01"
-            (str-cat head rest)))))))
+            (str_cat.str-cat head rest)))))))
 
 (define (embedded-native-int-match-arms
-  [params : (& params AstMacroParamList)]
-  [arms : (& arms AstMatchArmList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [index : i64]
   [name : String]) : String
   (if (>= index (struct-get arms len))
     "  0\n"
     (match (array-ref (struct-get arms slots) index)
-      [(AstMatchArm.Arm pattern body-node)
+      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
-          [(AstPattern.Literal (AstLiteral.Int value text))
+          [(compiler_ast_types.AstPattern.Literal
+              (compiler_ast_types.AstLiteral.Int value text))
             (if (and
               (> (string.string-length text) 0)
               (not (string.eq text (string.int->string value))))
@@ -5785,7 +5876,7 @@
                   (embedded-native-int-match-arms params arms (+ index 1) name)]
                 (if (or (string.eq arm-code "") (string.eq rest ""))
                   ""
-                  (str-cat
+                  (str_cat.str-cat
                     "  (if (= "
                     name
                     " "
@@ -5794,23 +5885,27 @@
                     arm-code
                     rest
                     ")\n"))))]
-          [(AstPattern.Wildcard) (embedded-native-body-code params body-node)]
-          [(AstPattern.Binding binder)
+          [(compiler_ast_types.AstPattern.Wildcard)
+            (embedded-native-body-code params body-node)]
+          [(compiler_ast_types.AstPattern.Binding binder)
             (embedded-native-int-match-default params body-node binder name)]
-          [(AstPattern.Var binder (AstMaybeType.No))
+          [(compiler_ast_types.AstPattern.Var
+              binder
+              (compiler_ast_types.AstMaybeType.No))
             (embedded-native-int-match-default params body-node binder name)]
           [_ ""])])))
 
 ;; The default arm of a computed integer match: the binder names the probed
 ;; count for the arm body, and the binding is dropped again afterwards.
 (define (embedded-native-int-match-default
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]
   [binder : i64]
   [name : String]) : String
   (let
     [saved : i64 (array-ref embedded-native-data-local-len 0)]
-    [bound : bool (embedded-native-data-local-push! (intern-str binder) name)]
+    [bound : bool
+      (embedded-native-data-local-push! (ci.intern-str binder) name)]
     [code : String
       (if bound
         (embedded-native-body-code params body-node)
@@ -5824,7 +5919,7 @@
 ;; subset or would overflow the per-entry op budget (a dropped op can never
 ;; be emitted silently).
 (define (embedded-native-linear-body-code
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (let
     [ops : (__tl_dyn-array String)
@@ -5843,7 +5938,7 @@
 ;; useful than "unreported". The body-level compilers (let/match/if) each have
 ;; several give-up points; this catches all of them at one place. Refs #5596.
 (define (embedded-native-body-code
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (let
     [text : String (embedded-native-body-code-inner params body-node)]
@@ -5851,14 +5946,14 @@
       (when
         (= (string.string-length text) 0)
         (embedded-native-fallback-reason-note!
-          (str-cat
+          (str_cat.str-cat
             "body-shape:"
             (embedded-native-expr-kind-name
               (embedded-stdlib-tlci-unwrap-expr body-node)))))
       text)))
 
 (define (embedded-native-body-code-inner
-  [params : (& params AstMacroParamList)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (let
     [let-text : String (embedded-native-let-body-code params body-node)]
@@ -5897,7 +5992,7 @@
                             "  (comptime-host-commit-result host session 0 0 0)\n"))))))))))))))
 
 (define (embedded-native-host-externs) : String
-  (str-cat
+  (str_cat.str-cat
     "(extern comptime-host-fuel-check (:symbol \"_tl_comptime_host_fuel-check\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-diagnostic (:symbol \"_tl_comptime_host_diagnostic\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-scratch-alloc (:symbol \"_tl_comptime_host_scratch-alloc\") : (-> i64 i64 i64 i64 i64 i64))\n"
@@ -6051,7 +6146,7 @@
   [captures : (& captures TlciNativeMacroCaptures)]) : String
   (let
     [out : String
-      (str-cat "(module tlci-entries)\n" (embedded-native-host-externs))]
+      (str_cat.str-cat "(module tlci-entries)\n" (embedded-native-host-externs))]
     [count : i64 (array-length names)]
     [index : i64 0]
     [native-count : i64 0]
@@ -6079,7 +6174,7 @@
           (begin
             (set!
               out
-              (str-cat
+              (str_cat.str-cat
                 out
                 "(define (macro-entry-"
                 (string.int->string index)
@@ -6093,7 +6188,7 @@
                   (array-set!
                     embedded-stdlib-tlci-native-report-reasons
                     0
-                    (str-cat
+                    (str_cat.str-cat
                       (array-ref embedded-stdlib-tlci-native-report-reasons 0)
                       (array-ref names index)
                       "\t"
@@ -6103,7 +6198,7 @@
                       "\n")))
                 (set!
                   out
-                  (str-cat
+                  (str_cat.str-cat
                     out
                     "  (if (= count -"
                     (string.int->string (+ index 2))
@@ -6121,11 +6216,11 @@
                     (set! partial-count (+ partial-count 1)))
                   (set!
                     out
-                    (str-cat
+                    (str_cat.str-cat
                       out
                       (embedded-native-op-open
                         99
-                        tlci-host-callback-name-fuel-check
+                        tlci_core.tlci-host-callback-name-fuel-check
                         "0"
                         "0"
                         "0")
@@ -6154,9 +6249,9 @@
       (while (and ok (< index count))
         (let
           [offset : i64
-            (compiler-tlci-native-entry-offset
+            (compiler_tlci_native_image.compiler-tlci-native-entry-offset
               image
-              (str-cat "_tl_f" (string.int->string index)))]
+              (str_cat.str-cat "_tl_f" (string.int->string index)))]
           (if (< offset 0)
             (set! ok false)
             (begin
@@ -6178,34 +6273,39 @@
   [captures : (& captures TlciNativeMacroCaptures)]) : ResultProducerBytes
   (let
     [source : String (embedded-native-source names captures)]
-    [target : CompilerBackendTarget
+    [target : compiler_backend.CompilerBackendTarget
       (if windows-target
-        (CompilerBackendTarget.Windows)
-        (CompilerBackendTarget.Linux))]
-    (match (compiler-backend-lower-source-for-target-in-session source target)
+        (compiler_backend.CompilerBackendTarget.Windows)
+        (compiler_backend.CompilerBackendTarget.Linux))]
+    (match (compiler_backend.compiler-backend-lower-source-for-target-in-session
+      source
+      target)
       [(ResultCompilerLower.Err diag)
         (ResultProducerBytes.Err
-          (str-cat
+          (str_cat.str-cat
             "generated source rejected: "
-            (compiler-diagnostic-render (box-get diag))))]
+            (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]
       [(ResultCompilerLower.Ok program spans)
-        (match (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+        (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
           program
           target
-          (CompilerBackendMode.Scalar)
+          (compiler_backend.CompilerBackendMode.Scalar)
           spans
           false
           false)
-          [(ResultCompilerBackendObject.Err diag)
+          [(compiler_backend.ResultCompilerBackendObject.Err diag)
             (ResultProducerBytes.Err
-              (str-cat
+              (str_cat.str-cat
                 "object emission failed: "
-                (compiler-diagnostic-render (box-get diag))))]
-          [(ResultCompilerBackendObject.Ok image)
-            (match (compiler-tlci-native-layout-image image)
-              [(ResultCompilerTlciNativeLayout.Err message)
+                (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]
+          [(compiler_backend.ResultCompilerBackendObject.Ok image)
+            (match (compiler_tlci_native_image.compiler-tlci-native-layout-image
+              image)
+              [(compiler_tlci_native_image.ResultCompilerTlciNativeLayout.Err
+                  message)
                 (ResultProducerBytes.Err message)]
-              [(ResultCompilerTlciNativeLayout.Ok layout)
+              [(compiler_tlci_native_image.ResultCompilerTlciNativeLayout.Ok
+                  layout)
                 (let
                   [entry-offsets : (__tl_dyn-array i64)
                     (embedded-native-entry-offsets image (array-length names))]
@@ -6213,11 +6313,14 @@
                     (= (array-length entry-offsets) (array-length names)))
                     (ResultProducerBytes.Err
                       "entry count does not match catalog")
-                    (match (compiler-tlci-native-emit-imports (& layout))
-                      [(ResultCompilerTlciNativeImports.Err message)
+                    (match (compiler_tlci_native_image.compiler-tlci-native-emit-imports
+                      (& layout))
+                      [(compiler_tlci_native_image.ResultCompilerTlciNativeImports.Err
+                          message)
                         (ResultProducerBytes.Err message)]
-                      [(ResultCompilerTlciNativeImports.Ok imports)
-                        (match (compiler-tlci-native-package
+                      [(compiler_tlci_native_image.ResultCompilerTlciNativeImports.Ok
+                          imports)
+                        (match (compiler_tlci_native_image.compiler-tlci-native-package
                           metadata-text
                           build-hash
                           rodata
@@ -6228,7 +6331,9 @@
                           names
                           entry-offsets
                           (array-length names))
-                          [(ResultCompilerTlciNativeBytes.Err message)
+                          [(compiler_tlci_native_image.ResultCompilerTlciNativeBytes.Err
+                              message)
                             (ResultProducerBytes.Err message)]
-                          [(ResultCompilerTlciNativeBytes.Ok bytes)
+                          [(compiler_tlci_native_image.ResultCompilerTlciNativeBytes.Ok
+                              bytes)
                             (ResultProducerBytes.Ok bytes)])])))])])])))

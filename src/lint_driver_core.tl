@@ -11,12 +11,16 @@
 (import stdlib.arena)
 (import stdlib.vector)
 (import (vector.vector String) as lint_svec)
-(import "compiler_check_core.tl")
+(import compiler_check_core)
+(import compiler_ast_types as ast)
 (import compiler_target_cfg_core as target_cfg)
-(import "compiler_load.tl")
+(import compiler_load)
+(import compiler_diagnostic as cdiag)
+(import compiler_typecheck_core as tc)
 (import compiler_intern as ci)
-(import "lint_core.tl")
-(import "package_source_core.tl")
+(import compiler_parse_core as parser)
+(import lint_core)
+(import package_source_core)
 (import stdlib.string)
 (import sym_i64_env)
 
@@ -40,10 +44,13 @@
   (lint_svec.new))
 (define selfhost-lint-cli-has-target : bool
   false)
-(define selfhost-lint-legacy-path-import : bool
-  false)
 (define selfhost-lint-flat-output : bool
   false)
+
+;; Test/driver hook: module globals are private, so smokes flip the renderer
+;; through this setter instead of assigning the global directly.
+(define (selfhost-lint-set-flat-output! [enabled : bool]) : unit
+  (set! selfhost-lint-flat-output enabled))
 
 (define (selfhost-lint-language-config-reset!) : unit
   (begin
@@ -52,7 +59,6 @@
       (target_cfg.compiler-target-cfg-default))
     (set! selfhost-lint-language-cfg-names (lint_svec.new))
     (set! selfhost-lint-cli-has-target false)
-    (set! selfhost-lint-legacy-path-import false)
     (set! selfhost-lint-flat-output false)))
 
 (define (selfhost-lint-language-cfgs) : sym_i64_env.SymI64Env
@@ -188,21 +194,6 @@
             redundant-function-name
             prefer-dotted-field
             true)]
-        [(string.eq current "--legacy-path-import")
-          (begin
-            (set! selfhost-lint-legacy-path-import true)
-            (selfhost-lint-parse-options
-              (+ idx 1)
-              count
-              input-paths
-              manifest-path
-              has-manifest
-              stdlib-roots
-              enforcing
-              deprecated-string-concat
-              redundant-function-name
-              prefer-dotted-field
-              name-case))]
         [(string.eq current "--format")
           (if (>= (+ idx 1) count)
             (ResultSelfhostLintConfig.Err
@@ -373,19 +364,20 @@
 ;; deliberately the lint suppression key printed by `lint-allow`.
 (define (selfhost-lint-finding-diagnostic
   [path : String]
-  [finding : LintFinding]) : CompilerDiagnostic
+  [finding : lint_core.LintFinding]) : cdiag.CompilerDiagnostic
   (let
-    [fspan : AstSourceSpan (struct-get finding span)]
+    [fspan : ast.AstSourceSpan (struct-get finding span)]
     [rule-id : String (struct-get finding rule-id)]
-    [suggestion : String (lint-rule-suggestion (string.copy (& rule-id)))]
-    (compiler-diagnostic-with-help
-      (compiler-diagnostic-with-code
-        (compiler-diagnostic-with-level
-          (compiler-diagnostic-from-ast-span
+    [suggestion : String
+      (lint_core.lint-rule-suggestion (string.copy (& rule-id)))]
+    (cdiag.compiler-diagnostic-with-help
+      (cdiag.compiler-diagnostic-with-code
+        (cdiag.compiler-diagnostic-with-level
+          (cdiag.compiler-diagnostic-from-ast-span
             path
             fspan
             (struct-get finding message))
-          CompilerDiagnosticWarning)
+          cdiag.CompilerDiagnosticWarning)
         rule-id)
       suggestion)))
 
@@ -394,17 +386,18 @@
 (define (selfhost-lint-render-finding
   [path : String]
   [source : String]
-  [finding : LintFinding]) : String
+  [finding : lint_core.LintFinding]) : String
   (let
-    [diag : CompilerDiagnostic (selfhost-lint-finding-diagnostic path finding)]
+    [diag : cdiag.CompilerDiagnostic
+      (selfhost-lint-finding-diagnostic path finding)]
     (if selfhost-lint-flat-output
-      (compiler-diagnostic-render diag)
-      (compiler-diagnostic-render-source diag source))))
+      (cdiag.compiler-diagnostic-render diag)
+      (cdiag.compiler-diagnostic-render-source diag source))))
 
 (define (selfhost-lint-render-finding-line
   [path : String]
   [source : String]
-  [finding : LintFinding]) : String
+  [finding : lint_core.LintFinding]) : String
   (let
     [rendered : String (selfhost-lint-render-finding path source finding)]
     (if selfhost-lint-flat-output
@@ -417,7 +410,7 @@
 (define (selfhost-lint-print-findings-from
   [path : String]
   [source : String]
-  [items : LintFindings]
+  [items : lint_core.LintFindings]
   [index : i64]
   [printed : i64]) : i64
   (if (< index 0)
@@ -427,7 +420,7 @@
         (selfhost-lint-render-finding-line
           path
           source
-          (lint-findings-ref items index)))
+          (lint_core.lint-findings-ref items index)))
       (selfhost-lint-print-findings-from
         path
         source
@@ -438,12 +431,12 @@
 (define (selfhost-lint-print-findings
   [path : String]
   [source : String]
-  [items : LintFindings]) : i64
+  [items : lint_core.LintFindings]) : i64
   (selfhost-lint-print-findings-from
     path
     source
     items
-    (- (lint-findings-count items) 1)
+    (- (lint_core.lint-findings-count items) 1)
     0))
 
 (define (selfhost-lint-space? [c : char]) : bool
@@ -501,10 +494,12 @@
 
 (define (selfhost-lint-span-start-index
   [source : String]
-  [span : AstSourceSpan]) : i64
+  [span : ast.AstSourceSpan]) : i64
   (+
-    (selfhost-lint-line-start-index source (ast-source-span-start-line span))
-    (- (ast-source-span-start-col span) 1)))
+    (selfhost-lint-line-start-index
+      source
+      (ast.ast-source-span-start-line span))
+    (- (ast.ast-source-span-start-col span) 1)))
 
 (define (selfhost-lint-skip-line [source : String] [idx : i64] [n : i64]) : i64
   (let
@@ -641,7 +636,7 @@
 
 (define (selfhost-lint-begin-source-form-count
   [source : String]
-  [span : AstSourceSpan]) : i64
+  [span : ast.AstSourceSpan]) : i64
   (let
     [start : i64 (selfhost-lint-span-start-index source span)]
     [n : i64 (string.string-length source)]
@@ -699,10 +694,12 @@
 ;; A finding is suppressed when the line immediately above its flagged form
 ;; carries `;; lint-allow: <its-rule-id>`. Findings on line 1 have no line above
 ;; and cannot be suppressed this way.
-(define (selfhost-lint-suppressed? [source : String] [finding : LintFinding]) : bool
+(define (selfhost-lint-suppressed?
+  [source : String]
+  [finding : lint_core.LintFinding]) : bool
   (let
-    [span : AstSourceSpan (struct-get finding span)]
-    [line : i64 (ast-source-span-start-line span)]
+    [span : ast.AstSourceSpan (struct-get finding span)]
+    [line : i64 (ast.ast-source-span-start-line span)]
     [rule-id : String (struct-get finding rule-id)]
     (if (<= line 1)
       false
@@ -710,11 +707,11 @@
 
 (define (selfhost-lint-form-origin?
   [source : String]
-  [span : AstSourceSpan]
+  [span : ast.AstSourceSpan]
   [form-name : String]) : bool
   (let
-    [line : i64 (ast-source-span-start-line span)]
-    [col : i64 (ast-source-span-start-col span)]
+    [line : i64 (ast.ast-source-span-start-line span)]
+    [col : i64 (ast.ast-source-span-start-col span)]
     (if (or (<= line 0) (<= col 0))
       false
       (let
@@ -729,7 +726,7 @@
 
 (define (selfhost-lint-derived-form-origin?
   [source : String]
-  [span : AstSourceSpan]) : bool
+  [span : ast.AstSourceSpan]) : bool
   (or
     (selfhost-lint-form-origin? source span "cond")
     (selfhost-lint-form-origin? source span "when")
@@ -737,93 +734,90 @@
 
 (define (selfhost-lint-source-multiform-single-begin?
   [source : String]
-  [finding : LintFinding]) : bool
+  [finding : lint_core.LintFinding]) : bool
   (and
-    (string.eq (struct-get finding rule-id) (lint-rule-single-begin-id))
+    (string.eq
+      (struct-get finding rule-id)
+      (lint_core.lint-rule-single-begin-id))
     (>
       (selfhost-lint-begin-source-form-count source (struct-get finding span))
       1)))
 
 (define (selfhost-lint-filter-derived-origins-from
   [source : String]
-  [items : LintFindings]
+  [items : lint_core.LintFindings]
   [index : i64]
-  [out : LintFindings]) : LintFindings
-  (if (>= index (lint-findings-count items))
+  [out : lint_core.LintFindings]) : lint_core.LintFindings
+  (if (>= index (lint_core.lint-findings-count items))
     out
     (let
-      [finding : LintFinding (lint-findings-ref items index)]
-      [next : LintFindings
+      [finding : lint_core.LintFinding
+        (lint_core.lint-findings-ref items index)]
+      [next : lint_core.LintFindings
         (if (or
           (selfhost-lint-derived-form-origin? source (struct-get finding span))
           (selfhost-lint-source-multiform-single-begin? source finding)
           (selfhost-lint-suppressed? source finding))
           out
-          (lint-findings-add finding out))]
+          (lint_core.lint-findings-add finding out))]
       (selfhost-lint-filter-derived-origins-from source items (+ index 1) next))))
 
 (define (selfhost-lint-filter-derived-origins
   [source : String]
-  [items : LintFindings]) : LintFindings
+  [items : lint_core.LintFindings]) : lint_core.LintFindings
   (selfhost-lint-filter-derived-origins-from
     source
     items
     0
-    (lint-findings-empty)))
+    (lint_core.lint-findings-empty)))
 
 (define (selfhost-lint-program-findings-with-all-options
   [source : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
-  [name-case : bool]) : LintFindings
+  [name-case : bool]) : lint_core.LintFindings
   (match program
-    [(AstProgram.Program decls-box)
+    [(ast.AstProgram.Program decls-box)
       (let
-        [decls : AstDeclList (box-get decls-box)]
-        [base : LintFindings
-          (lint-program-with-source-options
+        [decls : ast.AstDeclList (box-get decls-box)]
+        [base : lint_core.LintFindings
+          (lint_core.lint-program-with-source-options
             source
-            (ast-program decls)
-            (lint-default-ladder-threshold)
+            (ast.ast-program decls)
+            (lint_core.lint-default-ladder-threshold)
             deprecated-string-concat
             name-case)]
-        [with-redundant : LintFindings
+        [with-redundant : lint_core.LintFindings
           (if redundant-function-name
-            (lint-redundant-function-names-in-program
+            (lint_core.lint-redundant-function-names-in-program
               source
-              (ast-program decls)
+              (ast.ast-program decls)
               base)
             base)]
-        [with-prefer : LintFindings
+        [with-prefer : lint_core.LintFindings
           (if prefer-dotted-field
-            (lint-prefer-dotted-fields-in-program
-              (ast-program decls)
+            (lint_core.lint-prefer-dotted-fields-in-program
+              (ast.ast-program decls)
               with-redundant)
             with-redundant)]
-        [with-legacy-path-imports : LintFindings
-          (if selfhost-lint-legacy-path-import
-            (lint-legacy-path-imports-in-program
-              (ast-program decls)
-              with-prefer)
-            with-prefer)]
-        (selfhost-lint-filter-derived-origins source with-legacy-path-imports))]))
+        (selfhost-lint-filter-derived-origins source with-prefer))]))
 
 (define (selfhost-lint-findings-append-from
-  [src : LintFindings]
+  [src : lint_core.LintFindings]
   [index : i64]
-  [out : LintFindings]) : LintFindings
-  (if (>= index (lint-findings-count src))
+  [out : lint_core.LintFindings]) : lint_core.LintFindings
+  (if (>= index (lint_core.lint-findings-count src))
     out
     (selfhost-lint-findings-append-from
       src
       (+ index 1)
-      (lint-findings-add (lint-findings-ref src index) out))))
+      (lint_core.lint-findings-add (lint_core.lint-findings-ref src index) out))))
 
 (define (selfhost-lint-findings-append
-  [left : LintFindings]
-  [right : LintFindings]) : LintFindings
+  [left : lint_core.LintFindings]
+  [right : lint_core.LintFindings]) : lint_core.LintFindings
   (selfhost-lint-findings-append-from right 0 left))
 
 (defstruct SelfhostLintUnsafeSurfaceName
@@ -976,7 +970,7 @@
         (SelfhostLintUnsafeSurfaceLookup.Miss)))))
 
 (define (selfhost-lint-unsafe-surface-value-kind?
-  [kind : CompilerLoadSurfaceDeclKind]) : bool
+  [kind : compiler_load.CompilerLoadSurfaceDeclKind]) : bool
   (match kind
     [(CompilerLoadSurfaceFunction) true]
     [(CompilerLoadSurfaceExtern) true]
@@ -986,17 +980,19 @@
     [_ false]))
 
 (define (selfhost-lint-unsafe-surface-copy-decls
-  [decls : CompilerLoadSurfaceDeclList]
+  [decls : compiler_load.CompilerLoadSurfaceDeclList]
   [root-module : i64]
   [out : SelfhostLintUnsafeSurfaceNames]) : SelfhostLintUnsafeSurfaceNames
   (let
     [index : i64 0]
     [result : SelfhostLintUnsafeSurfaceNames out]
     (begin
-      (while (< index (compiler-load-surface-decl-list-count decls))
+      (while (<
+        index
+        (compiler_load.compiler-load-surface-decl-list-count decls))
         (let
-          [decl : CompilerLoadSurfaceDecl
-            (compiler-load-surface-decl-list-at decls index)]
+          [decl : compiler_load.CompilerLoadSurfaceDecl
+            (compiler_load.compiler-load-surface-decl-list-at decls index)]
           (begin
             (if (and
               (= (struct-get decl module) root-module)
@@ -1006,7 +1002,7 @@
                 result
                 (selfhost-lint-unsafe-surface-names-add
                   (SelfhostLintUnsafeSurfaceName
-                    (string.copy (intern-str (struct-get decl name)))
+                    (string.copy (ci.intern-str (struct-get decl name)))
                     (struct-get decl was-unsafe))
                   result))
               unit)
@@ -1040,7 +1036,7 @@
 
 (define (selfhost-lint-unsafe-surface-cache-store-summary!
   [path : String]
-  [summary : CompilerLoadSurfaceSummary]) : unit
+  [summary : compiler_load.CompilerLoadSurfaceSummary]) : unit
   (let
     [home : i64 (arena.tl_arena_current)]
     (begin
@@ -1075,7 +1071,7 @@
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]) : SelfhostLintUnsafeSurfaceLookup
   (let
-    [normalized : String (compiler-load-normalize-path path)]
+    [normalized : String (compiler_load.compiler-load-normalize-path path)]
     (match (selfhost-lint-unsafe-surface-cache-lookup normalized)
       [(SelfhostLintUnsafeSurfaceLookup.Hit valid names)
         (begin
@@ -1092,35 +1088,35 @@
           ;; can safely own a second parse. Pure source helpers use the legacy
           ;; active pool, so leave their imports Unknown and use typed fallback.
           (if (and
-            (ast-node-pool-compat-context-active?)
+            (ast.ast-node-pool-compat-context-active?)
             (io.file-exists? normalized))
-            (match (parse-ast-source-diagnostic-with-cfg-and-pools
+            (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
               normalized
               (byte_buf.to-string (io.read-file normalized))
               cfgs
-              (ast-node-pool-compat-context-current))
-              [(ResultAstProgramDiagnostic.Ok program)
-                (match (compiler-load-surface-summary-build
+              (ast.ast-node-pool-compat-context-current))
+              [(parser.ResultAstProgramDiagnostic.Ok program)
+                (match (compiler_load.compiler-load-surface-summary-build
                   normalized
                   0
                   ""
                   program
                   0
                   true)
-                  [(ResultCompilerLoadSurfaceSummary.Ok summary)
+                  [(compiler_load.ResultCompilerLoadSurfaceSummary.Ok summary)
                     (selfhost-lint-unsafe-surface-cache-store-summary!
                       normalized
                       summary)]
-                  [(ResultCompilerLoadSurfaceSummary.Err _)
+                  [(compiler_load.ResultCompilerLoadSurfaceSummary.Err _)
                     (selfhost-lint-unsafe-surface-cache-store-invalid!
                       normalized)])]
-              [(ResultAstProgramDiagnostic.Err _)
+              [(parser.ResultAstProgramDiagnostic.Err _)
                 (selfhost-lint-unsafe-surface-cache-store-invalid! normalized)])
             (selfhost-lint-unsafe-surface-cache-store-invalid! normalized))
           (selfhost-lint-unsafe-surface-cache-lookup normalized))])))
 
 (define (selfhost-lint-unsafe-surface-import-alias
-  [import-edge : CompilerLoadSurfaceImport]) : String
+  [import-edge : compiler_load.CompilerLoadSurfaceImport]) : String
   (match (struct-get import-edge alias)
     [(CompilerLoadSurfaceSomeString alias) alias]
     [(CompilerLoadSurfaceNoString)
@@ -1139,70 +1135,69 @@
         [fact : SelfhostLintUnsafeSurfaceName
           (array-ref (struct-get names slots) index)]
         (begin
-          (lint-unused-unsafe-classifier-add-exact-name!
+          (lint_core.lint-unused-unsafe-classifier-add-exact-name!
             (string.append alias (string.append "." (struct-get fact name)))
             (struct-get fact requires-unsafe))
-          (lint-unused-unsafe-classifier-add-exact-name!
+          (lint_core.lint-unused-unsafe-classifier-add-exact-name!
             (string.append alias (string.append "/" (struct-get fact name)))
             (struct-get fact requires-unsafe))
           (set! index (+ index 1)))))))
 
 (define (selfhost-lint-unsafe-surface-add-local-decls!
-  [decls : CompilerLoadSurfaceDeclList]
+  [decls : compiler_load.CompilerLoadSurfaceDeclList]
   [root-module : i64]) : unit
   (let
     [index : i64 0]
-    (while (< index (compiler-load-surface-decl-list-count decls))
+    (while (< index (compiler_load.compiler-load-surface-decl-list-count decls))
       (let
-        [decl : CompilerLoadSurfaceDecl
-          (compiler-load-surface-decl-list-at decls index)]
+        [decl : compiler_load.CompilerLoadSurfaceDecl
+          (compiler_load.compiler-load-surface-decl-list-at decls index)]
         (begin
           (if (and
             (= (struct-get decl module) root-module)
             (not (struct-get decl has-generated-meta))
             (selfhost-lint-unsafe-surface-value-kind? (struct-get decl kind)))
-            (lint-unused-unsafe-classifier-add-exact-name!
-              (string.copy (intern-str (struct-get decl name)))
+            (lint_core.lint-unused-unsafe-classifier-add-exact-name!
+              (string.copy (ci.intern-str (struct-get decl name)))
               (struct-get decl was-unsafe))
             unit)
           ;; A top-level declaration can shadow an import alias. Only qualified
           ;; references consult this root blocker, so unqualified local facts
           ;; remain usable.
           (if (not (struct-get decl has-generated-meta))
-            (lint-unused-unsafe-classifier-add-unknown-root!
-              (string.copy (intern-str (struct-get decl name))))
+            (lint_core.lint-unused-unsafe-classifier-add-unknown-root!
+              (string.copy (ci.intern-str (struct-get decl name))))
             unit)
           (set! index (+ index 1)))))))
 
 (define (selfhost-lint-unsafe-surface-resolve-import
   [path : String]
   [stdlib-roots : lint_svec.Vec]
-  [import-edge : CompilerLoadSurfaceImport]) : ResultPkgResolve
+  [import-edge : compiler_load.CompilerLoadSurfaceImport]) : compiler_load.ResultPkgResolve
   (match (struct-get import-edge kind)
-    [(CompilerLoadSurfaceImportPath)
-      (compiler-load-resolve-import-result-with-roots
-        path
-        (struct-get import-edge import-path)
-        stdlib-roots)]
     [(CompilerLoadSurfaceImportModule)
-      (compiler-load-resolve-module-import-with-roots
+      (compiler_load.compiler-load-resolve-module-import-with-roots
         path
-        ""
+        (compiler_load.compiler-load-dirname path)
         (struct-get import-edge import-path)
         stdlib-roots)]
-    [_ (ResultPkgResolve.Err "lint: macro import surface is not static")]))
+    [_
+      (compiler_load.ResultPkgResolve.Err
+        "lint: macro import surface is not static")]))
 
 (define (selfhost-lint-unsafe-surface-prepare-imports!
   [path : String]
   [stdlib-roots : lint_svec.Vec (:consume)]
   [cfgs : sym_i64_env.SymI64Env]
-  [imports : CompilerLoadSurfaceImportList]) : unit
+  [imports : compiler_load.CompilerLoadSurfaceImportList]) : unit
   (let
     [index : i64 0]
-    (while (< index (compiler-load-surface-import-list-count imports))
+    (while (<
+      index
+      (compiler_load.compiler-load-surface-import-list-count imports))
       (let
-        [import-edge : CompilerLoadSurfaceImport
-          (compiler-load-surface-import-list-at imports index)]
+        [import-edge : compiler_load.CompilerLoadSurfaceImport
+          (compiler_load.compiler-load-surface-import-list-at imports index)]
         [alias : String (selfhost-lint-unsafe-surface-import-alias import-edge)]
         (begin
           (if (string.eq alias "")
@@ -1211,8 +1206,8 @@
               path
               stdlib-roots
               import-edge)
-              [(ResultPkgResolve.Err _) unit]
-              [(ResultPkgResolve.Ok resolved)
+              [(compiler_load.ResultPkgResolve.Err _) unit]
+              [(compiler_load.ResultPkgResolve.Ok resolved)
                 (match (selfhost-lint-unsafe-surface-cache-load! resolved cfgs)
                   [(SelfhostLintUnsafeSurfaceLookup.Miss) unit]
                   [(SelfhostLintUnsafeSurfaceLookup.Hit valid names)
@@ -1223,15 +1218,21 @@
 
 (define (selfhost-lint-unsafe-surface-prepare!
   [path : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [stdlib-roots : lint_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : unit
   (begin
     (selfhost-lint-unsafe-surface-cache-ensure!)
-    (lint-unused-unsafe-classifier-reset!)
-    (match (compiler-load-surface-summary-build path 0 "" program 0 false)
-      [(ResultCompilerLoadSurfaceSummary.Err _) unit]
-      [(ResultCompilerLoadSurfaceSummary.Ok summary)
+    (lint_core.lint-unused-unsafe-classifier-reset!)
+    (match (compiler_load.compiler-load-surface-summary-build
+      path
+      0
+      ""
+      program
+      0
+      false)
+      [(compiler_load.ResultCompilerLoadSurfaceSummary.Err _) unit]
+      [(compiler_load.ResultCompilerLoadSurfaceSummary.Ok summary)
         (begin
           (selfhost-lint-unsafe-surface-add-local-decls!
             (struct-get summary decls)
@@ -1241,21 +1242,22 @@
             stdlib-roots
             cfgs
             (struct-get summary imports)))])
-    (lint-unused-unsafe-classifier-enable!)))
+    (lint_core.lint-unused-unsafe-classifier-enable!)))
 
 (define (selfhost-lint-unused-unsafe-findings-from
   [path : String]
   [index : i64]
-  [out : LintFindings]) : LintFindings
-  (if (>= index (tc-unused-unsafe-block-count))
+  [out : lint_core.LintFindings]) : lint_core.LintFindings
+  (if (>= index (tc.tc-unused-unsafe-block-count))
     out
     (let
-      [next : LintFindings
+      [next : lint_core.LintFindings
         (if (and
-          (not (tc-unused-unsafe-block-used? index))
-          (string.eq (tc-unused-unsafe-block-path index) path))
-          (lint-findings-add
-            (lint-unused-unsafe-finding (tc-unused-unsafe-block-span index))
+          (not (tc.tc-unused-unsafe-block-used? index))
+          (string.eq (tc.tc-unused-unsafe-block-path index) path))
+          (lint_core.lint-findings-add
+            (lint_core.lint-unused-unsafe-finding
+              (tc.tc-unused-unsafe-block-span index))
             out)
           out)]
       (selfhost-lint-unused-unsafe-findings-from path (+ index 1) next))))
@@ -1264,101 +1266,108 @@
   [path : String]
   [source : String]
   [stdlib-roots : lint_svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : LintFindings
+  [cfgs : sym_i64_env.SymI64Env]) : lint_core.LintFindings
   (begin
     (set! selfhost-lint-typed-unused-unsafe-error "")
-    (tc-unused-unsafe-tracking-reset! path)
+    (tc.tc-unused-unsafe-tracking-reset! path)
     ;; File/package lint parses into a destroyable, explicitly installed pool.
     ;; Run the nested check on process pools and reinstall the lint pool before
     ;; its caller resumes the AST walk.
-    (match (if (ast-node-pool-compat-context-active?)
+    (match (if (ast.ast-node-pool-compat-context-active?)
       (let
-        [lint-pools : AstNodePoolContext (ast-node-pool-compat-context-current)]
+        [lint-pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-compat-context-current)]
         (begin
-          (ast-node-pool-compat-context-clear!)
+          (ast.ast-node-pool-compat-context-clear!)
           (let
-            [checked : ResultCompilerCheck
-              (compiler-check-source-with-roots-and-cfg
+            [checked : compiler_check_core.ResultCompilerCheck
+              (compiler_check_core.compiler-check-source-with-roots-and-cfg
                 path
                 source
                 stdlib-roots
                 cfgs)]
             (begin
-              (ast-node-pool-compat-context-use! lint-pools)
+              (ast.ast-node-pool-compat-context-use! lint-pools)
               checked))))
-      (compiler-check-source-with-roots-and-cfg path source stdlib-roots cfgs))
-      [(ResultCompilerCheck.Ok _)
+      (compiler_check_core.compiler-check-source-with-roots-and-cfg
+        path
+        source
+        stdlib-roots
+        cfgs))
+      [(compiler_check_core.ResultCompilerCheck.Ok _)
         (let
-          [findings : LintFindings
+          [findings : lint_core.LintFindings
             (selfhost-lint-filter-derived-origins
               source
               (selfhost-lint-unused-unsafe-findings-from
                 path
                 0
-                (lint-findings-empty)))]
+                (lint_core.lint-findings-empty)))]
           (begin
-            (tc-unused-unsafe-tracking-disable!)
+            (tc.tc-unused-unsafe-tracking-disable!)
             findings))]
-      [(ResultCompilerCheck.Err diag)
+      [(compiler_check_core.ResultCompilerCheck.Err diag)
         (begin
           (set!
             selfhost-lint-typed-unused-unsafe-error
-            (compiler-diagnostic-render
-              (compiler-diagnostic-list-first (box-get diag))))
-          (tc-unused-unsafe-tracking-disable!)
-          (lint-findings-empty))])))
+            (cdiag.compiler-diagnostic-render
+              (cdiag.compiler-diagnostic-list-first (box-get diag))))
+          (tc.tc-unused-unsafe-tracking-disable!)
+          (lint_core.lint-findings-empty))])))
 
 (define (selfhost-lint-source-unused-unsafe-findings
   [path : String]
   [source : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [stdlib-roots : lint_svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : LintFindings
-  (if (lint-program-has-unused-unsafe-candidate? program)
+  [cfgs : sym_i64_env.SymI64Env]) : lint_core.LintFindings
+  (if (lint_core.lint-program-has-unused-unsafe-candidate? program)
     (begin
       (set!
         selfhost-lint-unused-unsafe-fallback-file-count
         (+ selfhost-lint-unused-unsafe-fallback-file-count 1))
       (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots cfgs))
-    (lint-findings-empty)))
+    (lint_core.lint-findings-empty)))
 
 (define (selfhost-lint-findings-without-unused-unsafe-from
-  [items : LintFindings]
+  [items : lint_core.LintFindings]
   [index : i64]
-  [out : LintFindings]) : LintFindings
-  (if (>= index (lint-findings-count items))
+  [out : lint_core.LintFindings]) : lint_core.LintFindings
+  (if (>= index (lint_core.lint-findings-count items))
     out
     (let
-      [finding : LintFinding (lint-findings-ref items index)]
-      [next : LintFindings
+      [finding : lint_core.LintFinding
+        (lint_core.lint-findings-ref items index)]
+      [next : lint_core.LintFindings
         (if (string.eq
           (struct-get finding rule-id)
-          (lint-rule-unused-unsafe-id))
+          (lint_core.lint-rule-unused-unsafe-id))
           out
-          (lint-findings-add finding out))]
+          (lint_core.lint-findings-add finding out))]
       (selfhost-lint-findings-without-unused-unsafe-from items (+ index 1) next))))
 
-(define (selfhost-lint-findings-without-unused-unsafe [items : LintFindings]) : LintFindings
+(define (selfhost-lint-findings-without-unused-unsafe
+  [items : lint_core.LintFindings]) : lint_core.LintFindings
   (selfhost-lint-findings-without-unused-unsafe-from
     items
     0
-    (lint-findings-empty)))
+    (lint_core.lint-findings-empty)))
 
 (define (selfhost-lint-program-and-typed-findings
   [path : String]
   [source : String]
-  [program : AstProgram]
+  [program : ast.AstProgram]
   [stdlib-roots : lint_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
-  [name-case : bool]) : LintFindings
+  [name-case : bool]) : lint_core.LintFindings
   (begin
     (set! selfhost-lint-typed-unused-unsafe-error "")
     (selfhost-lint-unsafe-surface-prepare! path program stdlib-roots cfgs)
     (let
-      [ordinary : LintFindings
+      [ordinary : lint_core.LintFindings
         (selfhost-lint-program-findings-with-all-options
           source
           program
@@ -1366,18 +1375,21 @@
           redundant-function-name
           prefer-dotted-field
           name-case)]
-      [unknown-count : i64 (lint-unused-unsafe-classifier-unknown-count)]
-      [required-count : i64 (lint-unused-unsafe-classifier-required-count)]
-      [unused-count : i64 (lint-unused-unsafe-classifier-unused-count)]
-      [typed : LintFindings
+      [unknown-count : i64
+        (lint_core.lint-unused-unsafe-classifier-unknown-count)]
+      [required-count : i64
+        (lint_core.lint-unused-unsafe-classifier-required-count)]
+      [unused-count : i64
+        (lint_core.lint-unused-unsafe-classifier-unused-count)]
+      [typed : lint_core.LintFindings
         (if (> unknown-count 0)
           (selfhost-lint-typed-unused-unsafe-findings
             path
             source
             stdlib-roots
             cfgs)
-          (lint-findings-empty))]
-      [base : LintFindings
+          (lint_core.lint-findings-empty))]
+      [base : lint_core.LintFindings
         (if (> unknown-count 0)
           (selfhost-lint-findings-without-unused-unsafe ordinary)
           ordinary)]
@@ -1396,7 +1408,7 @@
             selfhost-lint-unused-unsafe-fallback-file-count
             (+ selfhost-lint-unused-unsafe-fallback-file-count 1))
           unit)
-        (lint-unused-unsafe-classifier-disable!)
+        (lint_core.lint-unused-unsafe-classifier-disable!)
         (selfhost-lint-findings-append base typed)))))
 
 (define (selfhost-lint-source-with-roots-and-all-options-with-cfg
@@ -1407,20 +1419,20 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
-  [name-case : bool]) : LintFindings
+  [name-case : bool]) : lint_core.LintFindings
   (begin
     ;; LSP/source-mode callers commonly run in a destroyable request arena.
     ;; Never let a prior request's compact cache survive into the next one;
     ;; explicit file/package batches reset once in their outer batch arena.
     (set! selfhost-lint-typed-unused-unsafe-error "")
     (selfhost-lint-unsafe-surface-cache-reset!)
-    (lint-unused-unsafe-classifier-reset!)
+    (lint_core.lint-unused-unsafe-classifier-reset!)
     (let
-      [findings : LintFindings
-        (match (parse-ast-source-diagnostic-with-cfg path source cfgs)
-          [(ResultAstProgramDiagnostic.Ok program)
+      [findings : lint_core.LintFindings
+        (match (parser.parse-ast-source-diagnostic-with-cfg path source cfgs)
+          [(parser.ResultAstProgramDiagnostic.Ok program)
             (let
-              [ordinary : LintFindings
+              [ordinary : lint_core.LintFindings
                 (selfhost-lint-program-findings-with-all-options
                   source
                   program
@@ -1436,7 +1448,8 @@
                   program
                   stdlib-roots
                   cfgs)))]
-          [(ResultAstProgramDiagnostic.Err _) (lint-findings-empty)])]
+          [(parser.ResultAstProgramDiagnostic.Err _)
+            (lint_core.lint-findings-empty)])]
       (begin
         ;; Preserve diagnostic counters, but leave no cache pointer into the
         ;; caller's request arena after returning its findings.
@@ -1450,7 +1463,7 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
-  [name-case : bool]) : LintFindings
+  [name-case : bool]) : lint_core.LintFindings
   (selfhost-lint-source-with-roots-and-all-options-with-cfg
     path
     source
@@ -1467,7 +1480,7 @@
   [stdlib-roots : lint_svec.Vec]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : LintFindings
+  [prefer-dotted-field : bool]) : lint_core.LintFindings
   (selfhost-lint-source-with-roots-and-all-options
     path
     source
@@ -1481,7 +1494,7 @@
   [path : String]
   [source : String]
   [stdlib-roots : lint_svec.Vec]
-  [deprecated-string-concat : bool]) : LintFindings
+  [deprecated-string-concat : bool]) : lint_core.LintFindings
   (selfhost-lint-source-with-roots-and-staged-options
     path
     source
@@ -1496,14 +1509,14 @@
 (define (selfhost-lint-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : lint_svec.Vec]) : LintFindings
+  [stdlib-roots : lint_svec.Vec]) : lint_core.LintFindings
   (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
 
 (define (selfhost-lint-source-with-roots-and-cfg
   [path : String]
   [source : String]
   [stdlib-roots : lint_svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : LintFindings
+  [cfgs : sym_i64_env.SymI64Env]) : lint_core.LintFindings
   (selfhost-lint-source-with-roots-and-all-options-with-cfg
     path
     source
@@ -1521,7 +1534,7 @@
   (path String)
   (name String)
   (key String)
-  (span AstSourceSpan)
+  (span ast.AstSourceSpan)
   (refs lint_svec.Vec)
   (root bool)
   (reportable bool))
@@ -1538,15 +1551,15 @@
 
 (defenum ResultSelfhostLintDeadSourceList
   (Ok lint_svec.Vec)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultSelfhostLintDeadImportList
   (Ok lint_svec.Vec)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultSelfhostLintDeadSources
   (Ok SelfhostLintDeadSourceSet)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (defstruct SelfhostLintDeadScan
   (decls SelfhostLintDeadDecls)
@@ -1560,13 +1573,13 @@
   ;; bootstrap and the repository's compiler instrumentation gates. Keep this
   ;; list explicit: arbitrary caller cfgs must stay inactive rather than
   ;; turning conditional implementation details into API.
-  (compiler-cfg-enable
-    (compiler-cfg-enable
-      (compiler-cfg-union
-        (compiler-cfg-enable
-          (compiler-cfg-enable
-            (compiler-cfg-enable
-              (compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
+  (parser.compiler-cfg-enable
+    (parser.compiler-cfg-enable
+      (parser.compiler-cfg-union
+        (parser.compiler-cfg-enable
+          (parser.compiler-cfg-enable
+            (parser.compiler-cfg-enable
+              (parser.compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
               "scratch-vreg")
             "embedded-stdlib-tlci")
           "compiler-build-identity")
@@ -1575,8 +1588,8 @@
     "scavenge-census"))
 
 (define (selfhost-lint-package-dead-cfgs) : sym_i64_env.SymI64Env
-  (compiler-cfg-union
-    (compiler-cfg-enable
+  (parser.compiler-cfg-union
+    (parser.compiler-cfg-enable
       (selfhost-lint-package-dead-cfgs-base)
       "scavenge-self-check")
     "compile-profile-summary"))
@@ -1710,8 +1723,8 @@
     (string.append module (string.append "/" name))))
 
 (define (selfhost-lint-dead-default-module-from-path [path : String]) : String
-  (parse-ast-dotted-import-default-alias
-    (compiler-load-canonical-module-id-from-path path)))
+  (parser.parse-ast-dotted-import-default-alias
+    (compiler_load.compiler-load-canonical-module-id-from-path path)))
 
 (define (selfhost-lint-dead-qualified-ref-prefix) : String
   "\nselfhost-lint-dead-qualified-ref\n")
@@ -1754,7 +1767,7 @@
   (string.append
     (selfhost-lint-dead-source-root-prefix)
     (string.append
-      (compiler-load-normalize-path path)
+      (compiler_load.compiler-load-normalize-path path)
       (string.append "\n" name))))
 
 (define (selfhost-lint-dead-source-root? [root : String]) : bool
@@ -1859,7 +1872,7 @@
         [module : String
           (if (< target 0)
             (string.substring name 0 last-dot)
-            (intern-str target))]
+            (ci.intern-str target))]
         (selfhost-lint-dead-ref-add-raw
           refs
           (selfhost-lint-dead-qualified-ref
@@ -1870,126 +1883,130 @@
 (define (selfhost-lint-dead-ref-add-id
   [refs : lint_svec.Vec (:consume)]
   [name : i64]) : lint_svec.Vec
-  (selfhost-lint-dead-ref-add refs (intern-str name)))
+  (selfhost-lint-dead-ref-add refs (ci.intern-str name)))
 
 (define (selfhost-lint-dead-maybe-type-refs
-  [maybe-ty : AstMaybeType]
+  [maybe-ty : ast.AstMaybeType]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match maybe-ty
-    [(AstMaybeType.No) refs]
-    [(AstMaybeType.Some ty) (selfhost-lint-dead-type-refs ty refs)]))
+    [(ast.AstMaybeType.No) refs]
+    [(ast.AstMaybeType.Some ty) (selfhost-lint-dead-type-refs ty refs)]))
 
 (define (selfhost-lint-dead-type-list-refs
-  [types : AstTypeList]
+  [types : ast.AstTypeList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-type-list-refs-at (& types) refs 0))
 
 (define (selfhost-lint-dead-type-list-refs-at
-  [types : (& types AstTypeList)]
+  [types : (& types ast.AstTypeList)]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
-  (if (>= index (ast-type-list-len types))
+  (if (>= index (ast.ast-type-list-len types))
     refs
     (selfhost-lint-dead-type-list-refs-at
       types
       (selfhost-lint-dead-type-refs
-        (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
         refs)
       (+ index 1))))
 
 (define (selfhost-lint-dead-type-id-refs
   [ty : i64]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
-  (selfhost-lint-dead-type-refs (ty-node-get ty) refs))
+  (selfhost-lint-dead-type-refs (ast.ty-node-get ty) refs))
 
 (define (selfhost-lint-dead-type-refs
-  [ty : AstType]
+  [ty : ast.AstType]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match ty
-    [(AstType.I64) refs]
-    [(AstType.I32) refs]
-    [(AstType.I16) refs]
-    [(AstType.I8) refs]
-    [(AstType.U64) refs]
-    [(AstType.U32) refs]
-    [(AstType.U16) refs]
-    [(AstType.U8) refs]
-    [(AstType.F64) refs]
-    [(AstType.F32) refs]
-    [(AstType.Bool) refs]
-    [(AstType.Char) refs]
-    [(AstType.String) refs]
-    [(AstType.Str) refs]
-    [(AstType.Bytes) refs]
-    [(AstType.Unit) refs]
-    [(AstType.Never) refs]
-    [(AstType.Expr) refs]
-    [(AstType.ExprList) refs]
-    [(AstType.Func args ret)
+    [(ast.AstType.I64) refs]
+    [(ast.AstType.I32) refs]
+    [(ast.AstType.I16) refs]
+    [(ast.AstType.I8) refs]
+    [(ast.AstType.U64) refs]
+    [(ast.AstType.U32) refs]
+    [(ast.AstType.U16) refs]
+    [(ast.AstType.U8) refs]
+    [(ast.AstType.F64) refs]
+    [(ast.AstType.F32) refs]
+    [(ast.AstType.Bool) refs]
+    [(ast.AstType.Char) refs]
+    [(ast.AstType.String) refs]
+    [(ast.AstType.Str) refs]
+    [(ast.AstType.Bytes) refs]
+    [(ast.AstType.Unit) refs]
+    [(ast.AstType.Never) refs]
+    [(ast.AstType.Expr) refs]
+    [(ast.AstType.ExprList) refs]
+    [(ast.AstType.Func args ret)
       (selfhost-lint-dead-type-id-refs
         ret
         (selfhost-lint-dead-type-list-refs (box-get args) refs))]
-    [(AstType.Tuple items)
+    [(ast.AstType.Tuple items)
       (selfhost-lint-dead-type-list-refs (box-get items) refs)]
-    [(AstType.Array elem _) (selfhost-lint-dead-type-id-refs elem refs)]
-    [(AstType.DynArray elem) (selfhost-lint-dead-type-id-refs elem refs)]
-    [(AstType.Box elem) (selfhost-lint-dead-type-id-refs elem refs)]
-    [(AstType.Region _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(AstType.Ref _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(AstType.MutRef _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(AstType.Enum name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstType.EnumArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstType.Struct name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstType.StructArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstType.Var name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstType.VarArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstType.Ptr inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(AstType.MutPtr inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(AstType.Consume inner) (selfhost-lint-dead-type-id-refs inner refs)]))
+    [(ast.AstType.Array elem _) (selfhost-lint-dead-type-id-refs elem refs)]
+    [(ast.AstType.DynArray elem) (selfhost-lint-dead-type-id-refs elem refs)]
+    [(ast.AstType.Box elem) (selfhost-lint-dead-type-id-refs elem refs)]
+    [(ast.AstType.Region _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
+    [(ast.AstType.Ref _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
+    [(ast.AstType.MutRef _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
+    [(ast.AstType.Enum name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(ast.AstType.EnumArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
+    [(ast.AstType.Struct name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(ast.AstType.StructArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
+    [(ast.AstType.Var name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(ast.AstType.VarArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
+    [(ast.AstType.Ptr inner) (selfhost-lint-dead-type-id-refs inner refs)]
+    [(ast.AstType.MutPtr inner) (selfhost-lint-dead-type-id-refs inner refs)]
+    [(ast.AstType.Consume inner) (selfhost-lint-dead-type-id-refs inner refs)]))
 
 (define (selfhost-lint-dead-param-list-refs
-  [params : AstParamList]
+  [params : ast.AstParamList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-param-list-refs-at (& params) refs 0))
 
 (define (selfhost-lint-dead-param-list-refs-at
-  [params : (& params AstParamList)]
+  [params : (& params ast.AstParamList)]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
-  (if (>= index (ast-param-list-len params))
+  (if (>= index (ast.ast-param-list-len params))
     refs
-    (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _ _)
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param _ ty _ _)
         (selfhost-lint-dead-param-list-refs-at
           params
           (selfhost-lint-dead-type-refs ty refs)
           (+ index 1))])))
 
 (define (selfhost-lint-dead-macro-param-list-refs
-  [params : AstMacroParamList]
+  [params : ast.AstMacroParamList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-macro-param-list-refs-at (& params) refs 0))
 
 (define (selfhost-lint-dead-macro-param-list-refs-at
-  [params : (& params AstMacroParamList)]
+  [params : (& params ast.AstMacroParamList)]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
-  (if (>= index (ast-macro-param-list-len params))
+  (if (>= index (ast.ast-macro-param-list-len params))
     refs
-    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty _ _)
+    (match (ast.ast-macro-param-list-get
+      params
+      index
+      (ast.ast-macro-param-fallback))
+      [(ast.AstMacroParam.Param _ ty _ _)
         (selfhost-lint-dead-macro-param-list-refs-at
           params
           (selfhost-lint-dead-type-refs ty refs)
           (+ index 1))])))
 
 (define (selfhost-lint-dead-pattern-list-refs
-  [patterns : AstPatternList]
+  [patterns : ast.AstPatternList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-pattern-list-refs-at (& patterns) refs 0))
 
 (define (selfhost-lint-dead-pattern-list-refs-at
-  [patterns : (& patterns AstPatternList)]
+  [patterns : (& patterns ast.AstPatternList)]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
   (if (>= index (struct-get patterns len))
@@ -1997,33 +2014,33 @@
     (selfhost-lint-dead-pattern-list-refs-at
       patterns
       (selfhost-lint-dead-pattern-refs
-        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
         refs)
       (+ index 1))))
 
 (define (selfhost-lint-dead-pattern-refs
-  [pattern : AstPattern]
+  [pattern : ast.AstPattern]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match pattern
-    [(AstPattern.Var _ maybe-ty)
+    [(ast.AstPattern.Var _ maybe-ty)
       (selfhost-lint-dead-maybe-type-refs maybe-ty refs)]
-    [(AstPattern.Tuple items)
+    [(ast.AstPattern.Tuple items)
       (selfhost-lint-dead-pattern-list-refs (box-get items) refs)]
-    [(AstPattern.Wildcard) refs]
-    [(AstPattern.Binding _) refs]
-    [(AstPattern.Variant name items)
+    [(ast.AstPattern.Wildcard) refs]
+    [(ast.AstPattern.Binding _) refs]
+    [(ast.AstPattern.Variant name items)
       (selfhost-lint-dead-pattern-list-refs
         (box-get items)
         (selfhost-lint-dead-ref-add-id refs name))]
-    [(AstPattern.Literal _) refs]))
+    [(ast.AstPattern.Literal _) refs]))
 
 (define (selfhost-lint-dead-expr-list-refs
-  [exprs : AstExprList]
+  [exprs : ast.AstExprList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-expr-list-refs-from exprs refs 0))
 
 (define (selfhost-lint-dead-expr-list-refs-from
-  [exprs : AstExprList]
+  [exprs : ast.AstExprList]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
   (if (>= index (struct-get (& exprs) len))
@@ -2031,340 +2048,356 @@
     (selfhost-lint-dead-expr-list-refs-from
       exprs
       (selfhost-lint-dead-expr-refs
-        (ast-node-get (ast-expr-list-get (& exprs) index 0))
+        (ast.ast-node-get (ast.ast-expr-list-get (& exprs) index 0))
         refs)
       (+ index 1))))
 
 (define (selfhost-lint-dead-let-binding-refs
-  [bindings : AstLetBindingList]
+  [bindings : ast.AstLetBindingList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-let-binding-refs-at (& bindings) refs 0))
 
 (define (selfhost-lint-dead-let-binding-refs-at
-  [bindings : (& bindings AstLetBindingList)]
+  [bindings : (& bindings ast.AstLetBindingList)]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
-  (if (>= index (ast-let-binding-list-len bindings))
+  (if (>= index (ast.ast-let-binding-list-len bindings))
     refs
-    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
-      [(AstLetBinding.Binding _ maybe-ty init)
+    (match (ast.ast-let-binding-list-get
+      bindings
+      index
+      (ast.ast-let-binding-fallback))
+      [(ast.AstLetBinding.Binding _ maybe-ty init)
         (selfhost-lint-dead-let-binding-refs-at
           bindings
           (selfhost-lint-dead-expr-refs
-            (ast-node-get init)
+            (ast.ast-node-get init)
             (selfhost-lint-dead-maybe-type-refs maybe-ty refs))
           (+ index 1))])))
 
 (define (selfhost-lint-dead-match-arm-refs
-  [arms : AstMatchArmList]
+  [arms : ast.AstMatchArmList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-match-arm-refs-at (& arms) refs 0))
 
 (define (selfhost-lint-dead-match-arm-refs-at
-  [arms : (& arms AstMatchArmList)]
+  [arms : (& arms ast.AstMatchArmList)]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
   (if (>= index (struct-get arms len))
     refs
-    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
-      [(AstMatchArm.Arm pattern body)
+    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
+      [(ast.AstMatchArm.Arm pattern body)
         (selfhost-lint-dead-match-arm-refs-at
           arms
           (selfhost-lint-dead-expr-refs
-            (ast-node-get body)
+            (ast.ast-node-get body)
             (selfhost-lint-dead-pattern-refs pattern refs))
           (+ index 1))])))
 
 (define (selfhost-lint-dead-resource-binding-refs
-  [bindings : AstResourceBindingList]
+  [bindings : ast.AstResourceBindingList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-resource-binding-refs-at (& bindings) refs 0))
 
 (define (selfhost-lint-dead-resource-binding-refs-at
-  [bindings : (& bindings AstResourceBindingList)]
+  [bindings : (& bindings ast.AstResourceBindingList)]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
-  (if (>= index (ast-resource-binding-list-len bindings))
+  (if (>= index (ast.ast-resource-binding-list-len bindings))
     refs
-    (match (ast-resource-binding-list-get
+    (match (ast.ast-resource-binding-list-get
       bindings
       index
-      (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init cleanup _)
+      (ast.ast-resource-binding-fallback))
+      [(ast.AstResourceBinding.Binding _ init cleanup _)
         (selfhost-lint-dead-resource-binding-refs-at
           bindings
           (selfhost-lint-dead-expr-refs
-            (ast-node-get cleanup)
-            (selfhost-lint-dead-expr-refs (ast-node-get init) refs))
+            (ast.ast-node-get cleanup)
+            (selfhost-lint-dead-expr-refs (ast.ast-node-get init) refs))
           (+ index 1))])))
 
 (define (selfhost-lint-dead-expr-refs
-  [expr : AstExpr]
+  [expr : ast.AstExpr]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match expr
-    [(AstExpr.Spanned inner-box _)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner-box) refs)]
-    [(AstExpr.Literal _) refs]
-    [(AstExpr.Var name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstExpr.Binary _ left right)
+    [(ast.AstExpr.Spanned inner-box _)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner-box) refs)]
+    [(ast.AstExpr.Literal _) refs]
+    [(ast.AstExpr.Var name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(ast.AstExpr.Binary _ left right)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get right)
-        (selfhost-lint-dead-expr-refs (ast-node-get left) refs))]
-    [(AstExpr.Unary _ inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.Call func args)
+        (ast.ast-node-get right)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get left) refs))]
+    [(ast.AstExpr.Unary _ inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.Call func args)
       (selfhost-lint-dead-expr-list-refs
         args
-        (selfhost-lint-dead-expr-refs (ast-node-get func) refs))]
-    [(AstExpr.If cond then-branch else-branch)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get func) refs))]
+    [(ast.AstExpr.If cond then-branch else-branch)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get else-branch)
+        (ast.ast-node-get else-branch)
         (selfhost-lint-dead-expr-refs
-          (ast-node-get then-branch)
-          (selfhost-lint-dead-expr-refs (ast-node-get cond) refs)))]
-    [(AstExpr.Let let-box)
+          (ast.ast-node-get then-branch)
+          (selfhost-lint-dead-expr-refs (ast.ast-node-get cond) refs)))]
+    [(ast.AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet.Let bindings body)
+        [(ast.AstLet.Let bindings body)
           (selfhost-lint-dead-expr-refs
-            (ast-node-get body)
+            (ast.ast-node-get body)
             (selfhost-lint-dead-let-binding-refs bindings refs))])]
-    [(AstExpr.Lambda lambda-box)
+    [(ast.AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda.Lambda params ret body)
+        [(ast.AstLambda.Lambda params ret body)
           (selfhost-lint-dead-expr-refs
-            (ast-node-get body)
+            (ast.ast-node-get body)
             (selfhost-lint-dead-maybe-type-refs
               ret
               (selfhost-lint-dead-param-list-refs params refs)))])]
-    [(AstExpr.Tuple exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
-    [(AstExpr.TupleRef tuple _)
-      (selfhost-lint-dead-expr-refs (ast-node-get tuple) refs)]
-    [(AstExpr.Array exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
-    [(AstExpr.DynArray exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
-    [(AstExpr.MakeArray elem-id len)
+    [(ast.AstExpr.Tuple exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
+    [(ast.AstExpr.TupleRef tuple _)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get tuple) refs)]
+    [(ast.AstExpr.Array exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
+    [(ast.AstExpr.DynArray exprs)
+      (selfhost-lint-dead-expr-list-refs exprs refs)]
+    [(ast.AstExpr.MakeArray elem-id len)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get len)
-        (selfhost-lint-dead-type-refs (ty-node-get elem-id) refs))]
-    [(AstExpr.ArrayRef array index)
+        (ast.ast-node-get len)
+        (selfhost-lint-dead-type-refs (ast.ty-node-get elem-id) refs))]
+    [(ast.AstExpr.ArrayRef array index)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get index)
-        (selfhost-lint-dead-expr-refs (ast-node-get array) refs))]
-    [(AstExpr.ArraySet array index value)
+        (ast.ast-node-get index)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get array) refs))]
+    [(ast.AstExpr.ArraySet array index value)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get value)
+        (ast.ast-node-get value)
         (selfhost-lint-dead-expr-refs
-          (ast-node-get index)
-          (selfhost-lint-dead-expr-refs (ast-node-get array) refs)))]
-    [(AstExpr.ArrayTake array live index)
+          (ast.ast-node-get index)
+          (selfhost-lint-dead-expr-refs (ast.ast-node-get array) refs)))]
+    [(ast.AstExpr.ArrayTake array live index)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get index)
+        (ast.ast-node-get index)
         (selfhost-lint-dead-expr-refs
-          (ast-node-get live)
-          (selfhost-lint-dead-expr-refs (ast-node-get array) refs)))]
-    [(AstExpr.ArrayPush array value)
+          (ast.ast-node-get live)
+          (selfhost-lint-dead-expr-refs (ast.ast-node-get array) refs)))]
+    [(ast.AstExpr.ArrayPush array value)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get value)
-        (selfhost-lint-dead-expr-refs (ast-node-get array) refs))]
-    [(AstExpr.StringRef text index)
+        (ast.ast-node-get value)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get array) refs))]
+    [(ast.AstExpr.StringRef text index)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get index)
-        (selfhost-lint-dead-expr-refs (ast-node-get text) refs))]
-    [(AstExpr.While cond body)
+        (ast.ast-node-get index)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get text) refs))]
+    [(ast.AstExpr.While cond body)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get body)
-        (selfhost-lint-dead-expr-refs (ast-node-get cond) refs))]
-    [(AstExpr.Begin exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
-    [(AstExpr.Unsafe exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
-    [(AstExpr.Set target value)
+        (ast.ast-node-get body)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get cond) refs))]
+    [(ast.AstExpr.Begin exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
+    [(ast.AstExpr.Unsafe exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
+    [(ast.AstExpr.Set target value)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get value)
+        (ast.ast-node-get value)
         (selfhost-lint-dead-ref-add-id refs target))]
-    [(AstExpr.Ann inner ty-id)
+    [(ast.AstExpr.Ann inner ty-id)
       (selfhost-lint-dead-type-refs
-        (ty-node-get ty-id)
-        (selfhost-lint-dead-expr-refs (ast-node-get inner) refs))]
-    [(AstExpr.Cast inner ty-id)
+        (ast.ty-node-get ty-id)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs))]
+    [(ast.AstExpr.Cast inner ty-id)
       (selfhost-lint-dead-type-refs
-        (ty-node-get ty-id)
-        (selfhost-lint-dead-expr-refs (ast-node-get inner) refs))]
-    [(AstExpr.Borrow _ _ place)
-      (selfhost-lint-dead-expr-refs (ast-node-get place) refs)]
-    [(AstExpr.Match match-box)
+        (ast.ty-node-get ty-id)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs))]
+    [(ast.AstExpr.Borrow _ _ place)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get place) refs)]
+    [(ast.AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch.Match scrutinee arms)
+        [(ast.AstMatch.Match scrutinee arms)
           (selfhost-lint-dead-match-arm-refs
             arms
-            (selfhost-lint-dead-expr-refs (ast-node-get scrutinee) refs))])]
-    [(AstExpr.Foreach fe-box)
+            (selfhost-lint-dead-expr-refs (ast.ast-node-get scrutinee) refs))])]
+    [(ast.AstExpr.Foreach fe-box)
       (match (box-get fe-box)
-        [(AstForeach.Foreach _ index-ty start end body)
+        [(ast.AstForeach.Foreach _ index-ty start end body)
           (selfhost-lint-dead-expr-refs
-            (ast-node-get body)
+            (ast.ast-node-get body)
             (selfhost-lint-dead-expr-refs
-              (ast-node-get end)
+              (ast.ast-node-get end)
               (selfhost-lint-dead-expr-refs
-                (ast-node-get start)
+                (ast.ast-node-get start)
                 (selfhost-lint-dead-type-refs index-ty refs))))])]
-    [(AstExpr.SpmdReduce reduce-box)
+    [(ast.AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
-        [(AstSpmdReduce.Reduce _ _ index-ty start end init value)
+        [(ast.AstSpmdReduce.Reduce _ _ index-ty start end init value)
           (selfhost-lint-dead-expr-refs
-            (ast-node-get value)
+            (ast.ast-node-get value)
             (selfhost-lint-dead-expr-refs
-              (ast-node-get init)
+              (ast.ast-node-get init)
               (selfhost-lint-dead-expr-refs
-                (ast-node-get end)
+                (ast.ast-node-get end)
                 (selfhost-lint-dead-expr-refs
-                  (ast-node-get start)
+                  (ast.ast-node-get start)
                   (selfhost-lint-dead-type-refs index-ty refs)))))])]
-    [(AstExpr.SpmdScan scan-box)
+    [(ast.AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
-        [(AstSpmdScan.Scan _ _ index-ty start end _ prefix-ty init value body)
+        [(ast.AstSpmdScan.Scan
+            _
+            _
+            index-ty
+            start
+            end
+            _
+            prefix-ty
+            init
+            value
+            body)
           (selfhost-lint-dead-expr-refs
-            (ast-node-get body)
+            (ast.ast-node-get body)
             (selfhost-lint-dead-expr-refs
-              (ast-node-get value)
+              (ast.ast-node-get value)
               (selfhost-lint-dead-expr-refs
-                (ast-node-get init)
+                (ast.ast-node-get init)
                 (selfhost-lint-dead-expr-refs
-                  (ast-node-get end)
+                  (ast.ast-node-get end)
                   (selfhost-lint-dead-expr-refs
-                    (ast-node-get start)
+                    (ast.ast-node-get start)
                     (selfhost-lint-dead-type-refs
                       prefix-ty
                       (selfhost-lint-dead-type-refs index-ty refs)))))))])]
-    [(AstExpr.SpmdBroadcast value lane)
+    [(ast.AstExpr.SpmdBroadcast value lane)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get lane)
-        (selfhost-lint-dead-expr-refs (ast-node-get value) refs))]
-    [(AstExpr.SpmdShuffle value lane)
+        (ast.ast-node-get lane)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get value) refs))]
+    [(ast.AstExpr.SpmdShuffle value lane)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get lane)
-        (selfhost-lint-dead-expr-refs (ast-node-get value) refs))]
-    [(AstExpr.StructGet receiver field)
+        (ast.ast-node-get lane)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get value) refs))]
+    [(ast.AstExpr.StructGet receiver field)
       (selfhost-lint-dead-ref-add-id
-        (selfhost-lint-dead-expr-refs (ast-node-get receiver) refs)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get receiver) refs)
         field)]
-    [(AstExpr.StructSet receiver field value)
+    [(ast.AstExpr.StructSet receiver field value)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get value)
+        (ast.ast-node-get value)
         (selfhost-lint-dead-ref-add-id
-          (selfhost-lint-dead-expr-refs (ast-node-get receiver) refs)
+          (selfhost-lint-dead-expr-refs (ast.ast-node-get receiver) refs)
           field))]
-    [(AstExpr.WithRegion _ body) (selfhost-lint-dead-expr-list-refs body refs)]
-    [(AstExpr.WithEscape scratch body)
+    [(ast.AstExpr.WithRegion _ body)
+      (selfhost-lint-dead-expr-list-refs body refs)]
+    [(ast.AstExpr.WithEscape scratch body)
       (selfhost-lint-dead-expr-list-refs
         body
-        (selfhost-lint-dead-expr-refs (ast-node-get scratch) refs))]
-    [(AstExpr.WithScratch body) (selfhost-lint-dead-expr-list-refs body refs)]
-    [(AstExpr.InArena arena body)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get scratch) refs))]
+    [(ast.AstExpr.WithScratch body)
+      (selfhost-lint-dead-expr-list-refs body refs)]
+    [(ast.AstExpr.InArena arena body)
       (selfhost-lint-dead-expr-list-refs
         body
-        (selfhost-lint-dead-expr-refs (ast-node-get arena) refs))]
-    [(AstExpr.WithResource wr-box)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get arena) refs))]
+    [(ast.AstExpr.WithResource wr-box)
       (match (box-get wr-box)
-        [(AstWithResource.WithResource bindings body)
+        [(ast.AstWithResource.WithResource bindings body)
           (selfhost-lint-dead-expr-list-refs
             body
             (selfhost-lint-dead-resource-binding-refs bindings refs))])]
-    [(AstExpr.Box inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.BoxGet inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.BoxTake inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.BoxSet inner value)
+    [(ast.AstExpr.Box inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.BoxGet inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.BoxTake inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.BoxSet inner value)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get value)
-        (selfhost-lint-dead-expr-refs (ast-node-get inner) refs))]
-    [(AstExpr.TypeLiteral ty-id)
-      (selfhost-lint-dead-type-refs (ty-node-get ty-id) refs)]
-    [(AstExpr.Init maybe-ty-id)
+        (ast.ast-node-get value)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs))]
+    [(ast.AstExpr.TypeLiteral ty-id)
+      (selfhost-lint-dead-type-refs (ast.ty-node-get ty-id) refs)]
+    [(ast.AstExpr.Init maybe-ty-id)
       (selfhost-lint-dead-maybe-type-refs
-        (ast-maybe-type-from-id maybe-ty-id)
+        (ast.ast-maybe-type-from-id maybe-ty-id)
         refs)]
-    [(AstExpr.Comptime inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.Quote inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.Quasiquote inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.Unquote inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.UnquoteSplicing inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.BracketClause items)
+    [(ast.AstExpr.Comptime inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.Quote inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.Quasiquote inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.Unquote inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.UnquoteSplicing inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.BracketClause items)
       (selfhost-lint-dead-expr-list-refs items refs)]
-    [(AstExpr.Try inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.Return inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.Break) refs]
-    [(AstExpr.Continue) refs]
-    [(AstExpr.PtrNull ty-id)
-      (selfhost-lint-dead-type-refs (ty-node-get ty-id) refs)]
-    [(AstExpr.PtrNullCheck inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.PtrAddrOf place)
-      (selfhost-lint-dead-expr-refs (ast-node-get place) refs)]
-    [(AstExpr.PtrRead ptr)
-      (selfhost-lint-dead-expr-refs (ast-node-get ptr) refs)]
-    [(AstExpr.PtrWrite ptr value)
+    [(ast.AstExpr.Try inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.Return inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.Break) refs]
+    [(ast.AstExpr.Continue) refs]
+    [(ast.AstExpr.PtrNull ty-id)
+      (selfhost-lint-dead-type-refs (ast.ty-node-get ty-id) refs)]
+    [(ast.AstExpr.PtrNullCheck inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.PtrAddrOf place)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get place) refs)]
+    [(ast.AstExpr.PtrRead ptr)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs)]
+    [(ast.AstExpr.PtrWrite ptr value)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get value)
-        (selfhost-lint-dead-expr-refs (ast-node-get ptr) refs))]
-    [(AstExpr.PtrOffset ptr offset)
+        (ast.ast-node-get value)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs))]
+    [(ast.AstExpr.PtrOffset ptr offset)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get offset)
-        (selfhost-lint-dead-expr-refs (ast-node-get ptr) refs))]
-    [(AstExpr.PtrCast ptr ty-id)
+        (ast.ast-node-get offset)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs))]
+    [(ast.AstExpr.PtrCast ptr ty-id)
       (selfhost-lint-dead-type-refs
-        (ty-node-get ty-id)
-        (selfhost-lint-dead-expr-refs (ast-node-get ptr) refs))]
-    [(AstExpr.PtrToInt ptr)
-      (selfhost-lint-dead-expr-refs (ast-node-get ptr) refs)]
-    [(AstExpr.IntToPtr value ty-id)
+        (ast.ty-node-get ty-id)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs))]
+    [(ast.AstExpr.PtrToInt ptr)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs)]
+    [(ast.AstExpr.IntToPtr value ty-id)
       (selfhost-lint-dead-type-refs
-        (ty-node-get ty-id)
-        (selfhost-lint-dead-expr-refs (ast-node-get value) refs))]
-    [(AstExpr.StringData inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.StringFromBytes ptr len)
+        (ast.ty-node-get ty-id)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get value) refs))]
+    [(ast.AstExpr.StringData inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.StringFromBytes ptr len)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get len)
-        (selfhost-lint-dead-expr-refs (ast-node-get ptr) refs))]
-    [(AstExpr.ArrayData inner)
-      (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
-    [(AstExpr.BinaryData _) refs]
-    [(AstExpr.SpmdProgramIndex) refs]
-    [(AstExpr.SpmdProgramCount) refs]
-    [(AstExpr.ProgramArgc) refs]
-    [(AstExpr.ProgramArgv) refs]
-    [(AstExpr.ProgramEnvp) refs]
-    [(AstExpr.CpuIdEax leaf subleaf)
+        (ast.ast-node-get len)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get ptr) refs))]
+    [(ast.AstExpr.ArrayData inner)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner) refs)]
+    [(ast.AstExpr.BinaryData _) refs]
+    [(ast.AstExpr.SpmdProgramIndex) refs]
+    [(ast.AstExpr.SpmdProgramCount) refs]
+    [(ast.AstExpr.ProgramArgc) refs]
+    [(ast.AstExpr.ProgramArgv) refs]
+    [(ast.AstExpr.ProgramEnvp) refs]
+    [(ast.AstExpr.CpuIdEax leaf subleaf)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get subleaf)
-        (selfhost-lint-dead-expr-refs (ast-node-get leaf) refs))]
-    [(AstExpr.CpuIdEbx leaf subleaf)
+        (ast.ast-node-get subleaf)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get leaf) refs))]
+    [(ast.AstExpr.CpuIdEbx leaf subleaf)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get subleaf)
-        (selfhost-lint-dead-expr-refs (ast-node-get leaf) refs))]
-    [(AstExpr.CpuIdEcx leaf subleaf)
+        (ast.ast-node-get subleaf)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get leaf) refs))]
+    [(ast.AstExpr.CpuIdEcx leaf subleaf)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get subleaf)
-        (selfhost-lint-dead-expr-refs (ast-node-get leaf) refs))]
-    [(AstExpr.CpuIdEdx leaf subleaf)
+        (ast.ast-node-get subleaf)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get leaf) refs))]
+    [(ast.AstExpr.CpuIdEdx leaf subleaf)
       (selfhost-lint-dead-expr-refs
-        (ast-node-get subleaf)
-        (selfhost-lint-dead-expr-refs (ast-node-get leaf) refs))]
-    [(AstExpr.Xgetbv index)
-      (selfhost-lint-dead-expr-refs (ast-node-get index) refs)]
-    [(AstExpr.Syscall args) (selfhost-lint-dead-expr-list-refs args refs)]))
+        (ast.ast-node-get subleaf)
+        (selfhost-lint-dead-expr-refs (ast.ast-node-get leaf) refs))]
+    [(ast.AstExpr.Xgetbv index)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get index) refs)]
+    [(ast.AstExpr.Syscall args) (selfhost-lint-dead-expr-list-refs args refs)]))
 
-(define (selfhost-lint-dead-expr-span [expr-id : i64]) : AstSourceSpan
-  (match (ast-node-get expr-id)
-    [(AstExpr.Spanned _ span) span]
-    [_ (lint-no-span)]))
+(define (selfhost-lint-dead-expr-span [expr-id : i64]) : ast.AstSourceSpan
+  (match (ast.ast-node-get expr-id)
+    [(ast.AstExpr.Spanned _ span) span]
+    [_ (lint_core.lint-no-span)]))
 
 (define (selfhost-lint-dead-find-prefix-from
   [source : String]
@@ -2424,18 +2457,18 @@
 (define (selfhost-lint-dead-index-span
   [source : String]
   [idx : i64]
-  [fallback : AstSourceSpan]) : AstSourceSpan
+  [fallback : ast.AstSourceSpan]) : ast.AstSourceSpan
   (if (< idx 0)
     fallback
     (let
       [line : i64 (selfhost-lint-dead-index-line source idx)]
       [col : i64 (selfhost-lint-dead-index-col source idx)]
-      (ast-source-span line col line (+ col 1)))))
+      (ast.ast-source-span line col line (+ col 1)))))
 
 (define (selfhost-lint-dead-decl-span
   [source : String]
   [name : String]
-  [body-span : AstSourceSpan]) : AstSourceSpan
+  [body-span : ast.AstSourceSpan]) : ast.AstSourceSpan
   (let
     [fn-needle : String (string.append "(define (" name)]
     [fn-idx : i64 (selfhost-lint-dead-find-name-prefix-from source fn-needle 0)]
@@ -2466,26 +2499,29 @@
   (selfhost-lint-dead-refs-to-roots-from scan refs 0))
 
 (define (selfhost-lint-dead-field-cleanup-refs
-  [cleanup : AstFieldCleanup]
+  [cleanup : ast.AstFieldCleanup]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match cleanup
-    [(AstFieldCleanup.No) refs]
-    [(AstFieldCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstFieldCleanup.Owned) refs]))
+    [(ast.AstFieldCleanup.No) refs]
+    [(ast.AstFieldCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(ast.AstFieldCleanup.Owned) refs]))
 
 (define (selfhost-lint-dead-field-def-list-refs
-  [fields : AstFieldDefList]
+  [fields : ast.AstFieldDefList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-field-def-list-refs-at (& fields) refs 0))
 
 (define (selfhost-lint-dead-field-def-list-refs-at
-  [fields : (& fields AstFieldDefList)]
+  [fields : (& fields ast.AstFieldDefList)]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
   (if (>= index (struct-get fields len))
     refs
-    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
-      [(AstFieldDef.Def _ ty cleanup)
+    (match (ast.ast-field-def-list-get
+      fields
+      index
+      (ast.ast-field-def-fallback))
+      [(ast.AstFieldDef.Def _ ty cleanup)
         (selfhost-lint-dead-field-def-list-refs-at
           fields
           (selfhost-lint-dead-field-cleanup-refs
@@ -2494,35 +2530,35 @@
           (+ index 1))])))
 
 (define (selfhost-lint-dead-struct-cleanup-refs
-  [cleanup : AstStructCleanup]
+  [cleanup : ast.AstStructCleanup]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match cleanup
-    [(AstStructCleanup.No) refs]
-    [(AstStructCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
+    [(ast.AstStructCleanup.No) refs]
+    [(ast.AstStructCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
 
 (define (selfhost-lint-dead-enum-cleanup-refs
-  [cleanup : AstEnumCleanup]
+  [cleanup : ast.AstEnumCleanup]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match cleanup
-    [(AstEnumCleanup.No) refs]
-    [(AstEnumCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
+    [(ast.AstEnumCleanup.No) refs]
+    [(ast.AstEnumCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
 
 (define (selfhost-lint-dead-variant-cleanup-refs
-  [cleanup : AstVariantPayloadCleanup]
+  [cleanup : ast.AstVariantPayloadCleanup]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match cleanup
-    [(AstVariantPayloadCleanup.No) refs]
-    [(AstVariantPayloadCleanup.Fn name)
+    [(ast.AstVariantPayloadCleanup.No) refs]
+    [(ast.AstVariantPayloadCleanup.Fn name)
       (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstVariantPayloadCleanup.Owned) refs]))
+    [(ast.AstVariantPayloadCleanup.Owned) refs]))
 
 (define (selfhost-lint-dead-variant-cleanup-list-refs
-  [items : AstVariantPayloadCleanupList]
+  [items : ast.AstVariantPayloadCleanupList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-variant-cleanup-list-refs-at (& items) refs 0))
 
 (define (selfhost-lint-dead-variant-cleanup-list-refs-at
-  [items : (& items AstVariantPayloadCleanupList)]
+  [items : (& items ast.AstVariantPayloadCleanupList)]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
   (if (>= index (struct-get items len))
@@ -2530,26 +2566,29 @@
     (selfhost-lint-dead-variant-cleanup-list-refs-at
       items
       (selfhost-lint-dead-variant-cleanup-refs
-        (ast-variant-payload-cleanup-list-get
+        (ast.ast-variant-payload-cleanup-list-get
           items
           index
-          (ast-variant-payload-cleanup-fallback))
+          (ast.ast-variant-payload-cleanup-fallback))
         refs)
       (+ index 1))))
 
 (define (selfhost-lint-dead-variant-def-list-refs
-  [variants : AstVariantDefList]
+  [variants : ast.AstVariantDefList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-variant-def-list-refs-at (& variants) refs 0))
 
 (define (selfhost-lint-dead-variant-def-list-refs-at
-  [variants : (& variants AstVariantDefList)]
+  [variants : (& variants ast.AstVariantDefList)]
   [refs : lint_svec.Vec (:consume)]
   [index : i64]) : lint_svec.Vec
   (if (>= index (struct-get variants len))
     refs
-    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
-      [(AstVariantDef.Def name payloads cleanups)
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def name payloads cleanups)
         (selfhost-lint-dead-variant-def-list-refs-at
           variants
           (selfhost-lint-dead-variant-cleanup-list-refs
@@ -2560,48 +2599,48 @@
           (+ index 1))])))
 
 (define (selfhost-lint-dead-dispatch-variant-list-refs-from
-  [variants : (& variants AstDispatchVariantList)]
+  [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (if (>= index (struct-get variants len))
     refs
-    (match (ast-dispatch-variant-list-get
+    (match (ast.ast-dispatch-variant-list-get
       variants
       index
-      (ast-dispatch-variant-fallback))
-      [(AstDispatchVariant.Variant _ name)
+      (ast.ast-dispatch-variant-fallback))
+      [(ast.AstDispatchVariant.Variant _ name)
         (selfhost-lint-dead-dispatch-variant-list-refs-from
           variants
           (+ index 1)
           (selfhost-lint-dead-ref-add-id refs name))])))
 
 (define (selfhost-lint-dead-dispatch-variant-list-refs
-  [variants : AstDispatchVariantList]
+  [variants : ast.AstDispatchVariantList]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (selfhost-lint-dead-dispatch-variant-list-refs-from (& variants) 0 refs))
 
 (define (selfhost-lint-dead-extern-abi-refs
-  [abi : AstExternAbi]
+  [abi : ast.AstExternAbi]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match abi
-    [(AstExternAbi.C) refs]
-    [(AstExternAbi.CVarargsOpen) refs]
-    [(AstExternAbi.CVarargsTyped tail-ty)
+    [(ast.AstExternAbi.C) refs]
+    [(ast.AstExternAbi.CVarargsOpen) refs]
+    [(ast.AstExternAbi.CVarargsTyped tail-ty)
       (selfhost-lint-dead-type-refs tail-ty refs)]))
 
 (define (selfhost-lint-dead-extern-metadata-refs
-  [meta : AstExternMetadata]
+  [meta : ast.AstExternMetadata]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match meta
-    [(AstExternMetadata.Metadata abi _ _ _ _)
+    [(ast.AstExternMetadata.Metadata abi _ _ _ _)
       (selfhost-lint-dead-extern-abi-refs abi refs)]))
 
 (define (selfhost-lint-dead-generated-meta-refs
-  [meta : AstGeneratedDeclMeta]
+  [meta : ast.AstGeneratedDeclMeta]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match meta
-    [(AstGeneratedDeclMeta.No) refs]
-    [(AstGeneratedDeclMeta.Some _ _ args _)
+    [(ast.AstGeneratedDeclMeta.No) refs]
+    [(ast.AstGeneratedDeclMeta.Some _ _ args _)
       (selfhost-lint-dead-expr-list-refs args refs)]))
 
 (define (selfhost-lint-dead-add-node
@@ -2609,7 +2648,7 @@
   [path : String]
   [module : String]
   [name : String]
-  [span : AstSourceSpan]
+  [span : ast.AstSourceSpan]
   [refs : lint_svec.Vec]
   [reportable : bool]) : SelfhostLintDeadScan
   (let
@@ -2625,7 +2664,7 @@
   [module : String]
   [source : String]
   [name : String]
-  [span : AstSourceSpan]
+  [span : ast.AstSourceSpan]
   [refs : lint_svec.Vec]
   [root : bool]
   [reportable : bool]) : SelfhostLintDeadScan
@@ -2633,7 +2672,9 @@
     [with-node : SelfhostLintDeadScan
       (selfhost-lint-dead-add-node scan path module name span refs reportable)]
     [explicit-root : bool
-      (selfhost-lint-suppressed? source (lint-dead-code-finding name span))]
+      (selfhost-lint-suppressed?
+        source
+        (lint_core.lint-dead-code-finding name span))]
     (if root
       (selfhost-lint-dead-scan-add-root with-node name)
       (if explicit-root
@@ -2647,32 +2688,32 @@
   [path : String]
   [module : String]
   [source : String]
-  [decl : AstDecl]
+  [decl : ast.AstDecl]
   [visible-root : bool]
   [requested-report : bool]) : SelfhostLintDeadScan
   (let
     [allow-report : bool
-      (and requested-report (not (ast-decl-comptime-only? decl)))]
+      (and requested-report (not (ast.ast-decl-comptime-only? decl)))]
     [result : SelfhostLintDeadScan
       (match decl
-        [(AstDecl.ModuleBody name body-box)
+        [(ast.AstDecl.ModuleBody name body-box)
           (selfhost-lint-dead-scan-decls
             scan
             path
-            (intern-str name)
+            (ci.intern-str name)
             source
             visible-root
             allow-report
             (box-get body-box))]
-        [(AstDecl.Module _) scan]
-        [(AstDecl.Def decl-meta name maybe-ty body)
+        [(ast.AstDecl.Module _) scan]
+        [(ast.AstDecl.Def decl-meta name maybe-ty body)
           (let
-            [text : String (intern-str name)]
+            [text : String (ci.intern-str name)]
             [refs : lint_svec.Vec
               (selfhost-lint-dead-expr-refs
-                (ast-node-get body)
+                (ast.ast-node-get body)
                 (selfhost-lint-dead-maybe-type-refs maybe-ty (lint_svec.new)))]
-            [span : AstSourceSpan
+            [span : ast.AstSourceSpan
               (selfhost-lint-dead-decl-span
                 source
                 text
@@ -2687,16 +2728,16 @@
               refs
               visible-root
               allow-report))]
-        [(AstDecl.DefFn decl-meta name params ret body _)
+        [(ast.AstDecl.DefFn decl-meta name params ret body _)
           (let
-            [text : String (intern-str name)]
+            [text : String (ci.intern-str name)]
             [refs : lint_svec.Vec
               (selfhost-lint-dead-expr-refs
-                (ast-node-get body)
+                (ast.ast-node-get body)
                 (selfhost-lint-dead-type-refs
                   ret
                   (selfhost-lint-dead-param-list-refs params (lint_svec.new))))]
-            [span : AstSourceSpan
+            [span : ast.AstSourceSpan
               (selfhost-lint-dead-decl-span
                 source
                 text
@@ -2711,16 +2752,16 @@
               refs
               visible-root
               allow-report))]
-        [(AstDecl.DefMacro decl-meta name params ret body)
+        [(ast.AstDecl.DefMacro decl-meta name params ret body)
           (selfhost-lint-dead-add-visible-node
             scan
             path
             module
             source
-            (intern-str name)
+            (ci.intern-str name)
             (selfhost-lint-dead-expr-span body)
             (selfhost-lint-dead-expr-refs
-              (ast-node-get body)
+              (ast.ast-node-get body)
               (selfhost-lint-dead-type-refs
                 ret
                 (selfhost-lint-dead-macro-param-list-refs
@@ -2728,14 +2769,14 @@
                   (lint_svec.new))))
             visible-root
             allow-report)]
-        [(AstDecl.Extern decl-meta name _ meta ty)
+        [(ast.AstDecl.Extern decl-meta name _ meta ty)
           (selfhost-lint-dead-add-visible-node
             scan
             path
             module
             source
-            (intern-str name)
-            (lint-no-span)
+            (ci.intern-str name)
+            (lint_core.lint-no-span)
             (selfhost-lint-dead-type-refs
               ty
               (selfhost-lint-dead-extern-metadata-refs
@@ -2743,97 +2784,109 @@
                 (lint_svec.new)))
             visible-root
             allow-report)]
-        [(AstDecl.DefEnum decl-meta name cleanup variants)
+        [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
           (selfhost-lint-dead-add-visible-node
             scan
             path
             module
             source
-            (intern-str name)
-            (lint-no-span)
+            (ci.intern-str name)
+            (lint_core.lint-no-span)
             (selfhost-lint-dead-variant-def-list-refs
               variants
               (selfhost-lint-dead-enum-cleanup-refs cleanup (lint_svec.new)))
             visible-root
             allow-report)]
-        [(AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
+        [(ast.AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
           (selfhost-lint-dead-add-visible-node
             scan
             path
             module
             source
-            (intern-str name)
-            (lint-no-span)
+            (ci.intern-str name)
+            (lint_core.lint-no-span)
             (selfhost-lint-dead-variant-def-list-refs
               variants
               (selfhost-lint-dead-enum-cleanup-refs cleanup (lint_svec.new)))
             visible-root
             allow-report)]
-        [(AstDecl.DefStruct decl-meta name _ cleanup fields)
+        [(ast.AstDecl.DefStruct decl-meta name _ cleanup fields)
           (selfhost-lint-dead-add-visible-node
             scan
             path
             module
             source
-            (intern-str name)
-            (lint-no-span)
+            (ci.intern-str name)
+            (lint_core.lint-no-span)
             (selfhost-lint-dead-field-def-list-refs
               fields
               (selfhost-lint-dead-struct-cleanup-refs cleanup (lint_svec.new)))
             visible-root
             allow-report)]
-        [(AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
+        [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
           (selfhost-lint-dead-add-visible-node
             scan
             path
             module
             source
-            (intern-str name)
-            (lint-no-span)
+            (ci.intern-str name)
+            (lint_core.lint-no-span)
             (selfhost-lint-dead-field-def-list-refs
               fields
               (selfhost-lint-dead-struct-cleanup-refs cleanup (lint_svec.new)))
             visible-root
             allow-report)]
-        [(AstDecl.Import
+        [(ast.AstDecl.Import
             decl-meta
-            (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
+            (ast.AstImportSpec.Spec
+              (ast.AstImportKind.Macro call-expr _)
+              _
+              _
+              _
+              _))
           (selfhost-lint-dead-refs-to-roots
             scan
             (selfhost-lint-dead-expr-refs
-              (ast-node-get call-expr)
+              (ast.ast-node-get call-expr)
               (lint_svec.new)))]
-        [(AstDecl.Import
+        [(ast.AstDecl.Import
             decl-meta
-            (AstImportSpec.Spec (AstImportKind.MacroDecls call-expr _) _ _ _ _))
+            (ast.AstImportSpec.Spec
+              (ast.AstImportKind.MacroDecls call-expr _)
+              _
+              _
+              _
+              _))
           (selfhost-lint-dead-refs-to-roots
             scan
             (selfhost-lint-dead-expr-refs
-              (ast-node-get call-expr)
+              (ast.ast-node-get call-expr)
               (lint_svec.new)))]
-        [(AstDecl.Import decl-meta _) scan]
-        [(AstDecl.IncludeStr _ _) scan]
-        [(AstDecl.IncludeStrComptime _ _) scan]
-        [(AstDecl.IncludeStrLzss _ _) scan]
-        [(AstDecl.IncludeBin _ _) scan]
-        [(AstDecl.DefDispatch decl-meta name variants)
+        [(ast.AstDecl.Import decl-meta _) scan]
+        [(ast.AstDecl.IncludeStr _ _) scan]
+        [(ast.AstDecl.IncludeStrComptime _ _) scan]
+        [(ast.AstDecl.IncludeStrLzss _ _) scan]
+        [(ast.AstDecl.IncludeBin _ _) scan]
+        [(ast.AstDecl.DefDispatch decl-meta name variants)
           (selfhost-lint-dead-add-visible-node
             scan
             path
             module
             source
-            (intern-str name)
-            (lint-no-span)
+            (ci.intern-str name)
+            (lint_core.lint-no-span)
             (selfhost-lint-dead-dispatch-variant-list-refs
               variants
               (lint_svec.new))
             visible-root
             allow-report)]
-        [(AstDecl.Test _ body _)
+        [(ast.AstDecl.Test _ body _)
           (selfhost-lint-dead-refs-to-roots
             scan
-            (selfhost-lint-dead-expr-refs (ast-node-get body) (lint_svec.new)))]
-        [(AstDecl.Unsafe inner)
+            (selfhost-lint-dead-expr-refs
+              (ast.ast-node-get body)
+              (lint_svec.new)))]
+        [(ast.AstDecl.Unsafe inner)
           (selfhost-lint-dead-scan-decl
             scan
             path
@@ -2845,7 +2898,7 @@
     (selfhost-lint-dead-refs-to-roots
       result
       (selfhost-lint-dead-generated-meta-refs
-        (ast-decl-generated-meta decl)
+        (ast.ast-decl-generated-meta decl)
         (lint_svec.new)))))
 
 (define (selfhost-lint-dead-scan-decls
@@ -2855,26 +2908,26 @@
   [source : String]
   [visible-root : bool]
   [reportable : bool]
-  [decls : AstDeclList]) : SelfhostLintDeadScan
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) scan]
-    [(AstDeclListStep.Cons decl rest)
+  [decls : ast.AstDeclList]) : SelfhostLintDeadScan
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) scan]
+    [(ast.AstDeclListStep.Cons decl rest)
       (match decl
-        [(AstDecl.Module name)
+        [(ast.AstDecl.Module name)
           (selfhost-lint-dead-scan-decls
             scan
             path
-            (intern-str name)
+            (ci.intern-str name)
             source
             visible-root
             reportable
             rest)]
-        [(AstDecl.ModuleBody name body-box)
+        [(ast.AstDecl.ModuleBody name body-box)
           (selfhost-lint-dead-scan-decls
             (selfhost-lint-dead-scan-decls
               scan
               path
-              (intern-str name)
+              (ci.intern-str name)
               source
               visible-root
               reportable
@@ -2903,27 +2956,27 @@
             rest)])]))
 
 (define (selfhost-lint-dead-import-aliases-from-decls
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [aliases : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) aliases]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) aliases]
+    [(ast.AstDeclListStep.Cons decl rest)
       (match decl
-        [(AstDecl.Import
+        [(ast.AstDecl.Import
             _
-            (AstImportSpec.Spec
-              (AstImportKind.Module)
+            (ast.AstImportSpec.Spec
+              (ast.AstImportKind.Module)
               _
-              (AstMaybeModuleName.Some target)
-              (AstMaybeImportAlias.Some alias)
+              (ast.AstMaybeModuleName.Some target)
+              (ast.AstMaybeImportAlias.Some alias)
               _))
           (selfhost-lint-dead-import-aliases-from-decls
             rest
             (sym_i64_env.sym-i64-bind-id
               aliases
               alias
-              (parse-ast-dotted-import-default-alias-id target)))]
-        [(AstDecl.ModuleBody _ body-box)
+              (parser.parse-ast-dotted-import-default-alias-id target)))]
+        [(ast.AstDecl.ModuleBody _ body-box)
           (selfhost-lint-dead-import-aliases-from-decls
             rest
             (selfhost-lint-dead-import-aliases-from-decls
@@ -2938,12 +2991,12 @@
   [visible-root : bool]
   [reportable : bool]
   [cfgs : sym_i64_env.SymI64Env]) : SelfhostLintDeadScan
-  (match (parse-ast-source-diagnostic-with-cfg path source cfgs)
-    [(ResultAstProgramDiagnostic.Ok program)
+  (match (parser.parse-ast-source-diagnostic-with-cfg path source cfgs)
+    [(parser.ResultAstProgramDiagnostic.Ok program)
       (match program
-        [(AstProgram.Program decls-box)
+        [(ast.AstProgram.Program decls-box)
           (let
-            [decls : AstDeclList (box-get decls-box)]
+            [decls : ast.AstDeclList (box-get decls-box)]
             (begin
               (set!
                 selfhost-lint-dead-import-aliases
@@ -2958,7 +3011,7 @@
                 visible-root
                 reportable
                 decls)))])]
-    [(ResultAstProgramDiagnostic.Err _) scan]))
+    [(parser.ResultAstProgramDiagnostic.Err _) scan]))
 
 (define (selfhost-lint-dead-scan-source
   [scan : SelfhostLintDeadScan]
@@ -2999,12 +3052,12 @@
     [path : String (struct-get decl path)]
     [name : String (struct-get decl name)]
     [key : String (struct-get decl key)]
-    [span : AstSourceSpan (struct-get decl span)]
+    [span : ast.AstSourceSpan (struct-get decl span)]
     (SelfhostLintDeadDecl
       (clone path)
       (clone name)
       (clone key)
-      (AstSourceSpan
+      (ast.AstSourceSpan
         (struct-get span start-line)
         (struct-get span start-col)
         (struct-get span end-line)
@@ -3061,12 +3114,12 @@
     ;; file. Clone that metadata home, then release the file's complete AST.
     [home : arena.Arena (arena.current)]
     [pool-arena : i64 (arena.tl_arena_make)]
-    [pools : AstNodePoolContext
-      (ast-node-pool-context-new-with-capacities-in-arena
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit (ast-node-pool-compat-context-use! pools)]
+    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
     [scratch : arena.Arena (arena.make)]
     [source-scan : SelfhostLintDeadScan
       (begin
@@ -3087,14 +3140,14 @@
       (selfhost-lint-dead-scan-clone-into scan source-scan)]
     (begin
       (selfhost-lint-reset-file-state!)
-      (ast-node-pool-context-reset-to! pools 0 0)
-      (ast-node-pool-compat-context-clear!)
-      (ast-node-pool-context-destroy-storage! pools)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
+      (ast.ast-node-pool-compat-context-clear!)
+      (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
           (arena.destroy scratch)
-          (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools))))
+          (arena.tl_arena_destroy (ast.ast-node-pool-context-base-arena pools))))
       next)))
 
 (define (selfhost-lint-package-dead-scan-files
@@ -3278,48 +3331,54 @@
       roots
       (+ index 1))))
 
-(define (selfhost-lint-package-dead-visible-root? [kind : CompilerPkgKind]) : bool
+(define (selfhost-lint-package-dead-visible-root?
+  [kind : compiler_load.CompilerPkgKind]) : bool
   (match kind
     [(CompilerPkgKindBin) false]
     [(CompilerPkgKindLib) true]))
 
-(define (selfhost-lint-package-dead-reportable? [kind : CompilerPkgKind]) : bool
+(define (selfhost-lint-package-dead-reportable?
+  [kind : compiler_load.CompilerPkgKind]) : bool
   (match kind
     [(CompilerPkgKindBin) true]
     [(CompilerPkgKindLib) false]))
 
 (define (selfhost-lint-package-dead-add-kind-roots
   [scan : SelfhostLintDeadScan (:consume)]
-  [kind : CompilerPkgKind]) : SelfhostLintDeadScan
+  [kind : compiler_load.CompilerPkgKind]) : SelfhostLintDeadScan
   (match kind
     [(CompilerPkgKindBin) (selfhost-lint-dead-scan-add-root scan "main")]
     [(CompilerPkgKindLib) scan]))
 
-(define (selfhost-lint-package-kind-entry? [kind : CompilerPkgKind]) : bool
+(define (selfhost-lint-package-kind-entry?
+  [kind : compiler_load.CompilerPkgKind]) : bool
   (match kind
     [(CompilerPkgKindBin) true]
     [(CompilerPkgKindLib) false]))
 
 (define (selfhost-lint-package-entry-path
   [manifest-dir : String]
-  [manifest : CompilerPkgManifest]) : String
-  (compiler-load-normalize-path
-    (compiler-load-join-root-path manifest-dir (struct-get manifest entry))))
+  [manifest : compiler_load.CompilerPkgManifest]) : String
+  (compiler_load.compiler-load-normalize-path
+    (compiler_load.compiler-load-join-root-path
+      manifest-dir
+      (struct-get manifest entry))))
 
 ;; Package sources commonly live below `src/`, while package test roots under
 ;; `src/tests/` import them by module name. Make the entry directory available
 ;; to the per-file lint loader without classifying it as stdlib-owned source.
 (define (selfhost-lint-package-import-roots
-  [source-set : PackageSourceSet]
+  [source-set : package_source_core.PackageSourceSet]
   [stdlib-roots : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (let
-    [manifest : CompilerPkgManifest (struct-get source-set manifest)]
+    [manifest : compiler_load.CompilerPkgManifest
+      (struct-get source-set manifest)]
     [manifest-dir : String (struct-get source-set manifest-dir)]
     [entry-path : String
       (selfhost-lint-package-entry-path manifest-dir manifest)]
-    [entry-dir : String (compiler-load-dirname entry-path)]
+    [entry-dir : String (compiler_load.compiler-load-dirname entry-path)]
     [source-root : String
-      (compiler-load-normalize-path
+      (compiler_load.compiler-load-normalize-path
         (if (= (string.string-length entry-dir) 0)
           manifest-dir
           entry-dir))]
@@ -3340,8 +3399,9 @@
   (if (>= index (lint_svec.len (& sources)))
     false
     (if (string.eq
-      (compiler-load-normalize-path (lint_svec.get (& sources) index ""))
-      (compiler-load-normalize-path path))
+      (compiler_load.compiler-load-normalize-path
+        (lint_svec.get (& sources) index ""))
+      (compiler_load.compiler-load-normalize-path path))
       true
       (selfhost-lint-package-source-list-contains-from sources path (+ index 1)))))
 
@@ -3357,12 +3417,14 @@
   [path : String]
   [stdlib-roots : lint_svec.Vec (:consume)]) : bool
   (let
-    [normalized : String (compiler-load-normalize-path path)]
+    [normalized : String (compiler_load.compiler-load-normalize-path path)]
     [stdlib-path : String
-      (if (compiler-load-stdlib-import? normalized)
+      (if (compiler_load.compiler-load-stdlib-import? normalized)
         normalized
-        (compiler-load-stdlib-owned-path-from-roots normalized stdlib-roots))]
-    (compiler-load-stdlib-import? stdlib-path)))
+        (compiler_load.compiler-load-stdlib-owned-path-from-roots
+          normalized
+          stdlib-roots))]
+    (compiler_load.compiler-load-stdlib-import? stdlib-path)))
 
 (define (selfhost-lint-package-dead-source-path?
   [path : String]
@@ -3396,7 +3458,9 @@
     sources
     root-sources
     stdlib-roots)
-    (package-source-vec-insert items (compiler-load-normalize-path path))
+    (package_source_core.package-source-vec-insert
+      items
+      (compiler_load.compiler-load-normalize-path path))
     items))
 
 (define (selfhost-lint-dead-manifest-trim-cr [value : String]) : String
@@ -3477,8 +3541,10 @@
               [next-path : String
                 (if (= (string.string-length relative) 0)
                   ""
-                  (compiler-load-normalize-path
-                    (compiler-load-join-root-path manifest-dir relative)))]
+                  (compiler_load.compiler-load-normalize-path
+                    (compiler_load.compiler-load-join-root-path
+                      manifest-dir
+                      relative)))]
               (selfhost-lint-dead-manifest-roots-from
                 source
                 manifest-dir
@@ -3528,11 +3594,13 @@
     (lint_svec.new)))
 
 (define (selfhost-lint-package-dead-compile-manifest-roots
-  [source-set : PackageSourceSet]) : lint_svec.Vec
+  [source-set : package_source_core.PackageSourceSet]) : lint_svec.Vec
   (let
     [manifest-dir : String (struct-get source-set manifest-dir)]
     [path : String
-      (compiler-load-join-root-path manifest-dir "src/compile_manifest.txt")]
+      (compiler_load.compiler-load-join-root-path
+        manifest-dir
+        "src/compile_manifest.txt")]
     (if (io.file-exists? path)
       (selfhost-lint-dead-manifest-roots
         (byte_buf.to-string (io.read-file path))
@@ -3540,33 +3608,34 @@
       (lint_svec.new))))
 
 (define (selfhost-lint-package-dead-repository-test-roots
-  [source-set : PackageSourceSet]) : lint_svec.Vec
-  (match (package-source-scan-optional-dir
+  [source-set : package_source_core.PackageSourceSet]) : lint_svec.Vec
+  (match (package_source_core.package-source-scan-optional-dir
     "lint"
     (struct-get source-set manifest-dir)
     "src/tests"
     (lint_svec.new))
-    [(ResultPackageSourceList.Ok sources) sources]
-    [(ResultPackageSourceList.Err _) (selfhost-lint-package-empty-source-list)]))
+    [(package_source_core.ResultPackageSourceList.Ok sources) sources]
+    [(package_source_core.ResultPackageSourceList.Err _)
+      (selfhost-lint-package-empty-source-list)]))
 
 (define (selfhost-lint-package-dead-import-paths-from-decls
-  [decls : AstDeclList]
+  [decls : ast.AstDeclList]
   [importer-path : String]
   [import-root : String]
-  [source-set : PackageSourceSet]
+  [source-set : package_source_core.PackageSourceSet]
   [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
-  [pools : AstNodePoolContext]
+  [pools : ast.AstNodePoolContext]
   [package-imports : bool]
   [items : lint_svec.Vec]) : ResultSelfhostLintDeadImportList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (ResultSelfhostLintDeadImportList.Ok items)]
-    [(AstDeclListStep.Cons decl rest)
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) (ResultSelfhostLintDeadImportList.Ok items)]
+    [(ast.AstDeclListStep.Cons decl rest)
       (match decl
-        [(AstDecl.Import
+        [(ast.AstDecl.Import
             decl-meta
-            (AstImportSpec.Spec kind import-path expected-module alias _))
-          (if (compiler-load-macro-import-kind? kind)
+            (ast.AstImportSpec.Spec kind import-path expected-module alias _))
+          (if (compiler_load.compiler-load-macro-import-kind? kind)
             (selfhost-lint-package-dead-import-paths-from-decls
               rest
               importer-path
@@ -3578,10 +3647,11 @@
               package-imports
               items)
             (let
-              [manifest : CompilerPkgManifest (struct-get source-set manifest)]
+              [manifest : compiler_load.CompilerPkgManifest
+                (struct-get source-set manifest)]
               [manifest-dir : String (struct-get source-set manifest-dir)]
               (match (if package-imports
-                (compiler-load-resolve-package-import-spec
+                (compiler_load.compiler-load-resolve-package-import-spec
                   importer-path
                   kind
                   import-path
@@ -3589,23 +3659,25 @@
                   stdlib-roots
                   manifest-dir
                   (struct-get manifest deps))
-                (compiler-load-resolve-import-spec-with-roots
+                (compiler_load.compiler-load-resolve-import-spec-with-roots
                   importer-path
                   import-root
                   kind
                   import-path
                   expected-module
                   stdlib-roots))
-                [(ResultPkgResolve.Err message)
+                [(compiler_load.ResultPkgResolve.Err message)
                   (ResultSelfhostLintDeadImportList.Err
-                    (box (compiler-diagnostic-at-start importer-path message)))]
-                [(ResultPkgResolve.Ok resolved)
+                    (box
+                      (cdiag.compiler-diagnostic-at-start importer-path message)))]
+                [(compiler_load.ResultPkgResolve.Ok resolved)
                   (let
-                    [resolved-id : i64 (compiler-load-source-path-id resolved)]
+                    [resolved-id : i64
+                      (compiler_load.compiler-load-source-path-id resolved)]
                     [package-externs : bool
                       (and
                         package-imports
-                        (compiler-load-package-import-externs?
+                        (compiler_load.compiler-load-package-import-externs?
                           kind
                           import-path
                           expected-module
@@ -3613,12 +3685,12 @@
                     [preload-candidate : bool
                       (and
                         (not package-externs)
-                        (compiler-load-lazy-import-preload-candidate?
+                        (compiler_load.compiler-load-lazy-import-preload-candidate?
                           importer-path
                           kind
                           alias))]
-                    [preload-demand : CompilerLoadLazyAliasDemand
-                      (compiler-load-lazy-import-preload-demand
+                    [preload-demand : compiler_load.CompilerLoadLazyAliasDemand
+                      (compiler_load.compiler-load-lazy-import-preload-demand
                         preload-candidate
                         alias
                         rest
@@ -3632,7 +3704,7 @@
                             (struct-get preload-demand unknown))))]
                     [_preload-summary : unit
                       (if preload-summary-needed
-                        (compiler-load-lazy-import-preload-summary-with-pools
+                        (compiler_load.compiler-load-lazy-import-preload-summary-with-pools
                           resolved
                           resolved-id
                           stdlib-roots
@@ -3644,15 +3716,17 @@
                     [preload-skip : bool
                       (and
                         preload-summary-needed
-                        (compiler-load-lazy-import-skip?
+                        (compiler_load.compiler-load-lazy-import-skip?
                           importer-path
                           kind
+                          resolved
                           resolved-id
                           expected-module
                           alias
                           rest
                           pools
-                          preload-demand))]
+                          preload-demand
+                          stdlib-roots))]
                     [next : lint_svec.Vec
                       (if (or
                         preload-skip
@@ -3665,7 +3739,7 @@
                         items
                         (selfhost-lint-dead-root-add
                           items
-                          (compiler-load-normalize-path resolved)))]
+                          (compiler_load.compiler-load-normalize-path resolved)))]
                     (selfhost-lint-package-dead-import-paths-from-decls
                       rest
                       importer-path
@@ -3676,7 +3750,7 @@
                       pools
                       package-imports
                       next))])))]
-        [(AstDecl.ModuleBody _ body-box)
+        [(ast.AstDecl.ModuleBody _ body-box)
           (match (selfhost-lint-package-dead-import-paths-from-decls
             (box-get body-box)
             importer-path
@@ -3715,7 +3789,7 @@
 (define (selfhost-lint-package-dead-file-imports-in-scratch
   [path : String]
   [import-root : String]
-  [source-set : PackageSourceSet]
+  [source-set : package_source_core.PackageSourceSet]
   [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
   [package-imports : bool]) : ResultSelfhostLintDeadImportList
@@ -3725,26 +3799,26 @@
     [_reset-file-state : unit (selfhost-lint-reset-file-state!)]
     [home : arena.Arena (arena.current)]
     [pool-arena : i64 (arena.tl_arena_make)]
-    [pools : AstNodePoolContext
-      (ast-node-pool-context-new-with-capacities-in-arena
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit (ast-node-pool-compat-context-use! pools)]
+    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
     [scratch : arena.Arena (arena.make)]
     [scratch-result : ResultSelfhostLintDeadImportList
       (begin
         (unsafe
           (arena.set! scratch))
-        (match (parse-ast-source-diagnostic-with-cfg
+        (match (parser.parse-ast-source-diagnostic-with-cfg
           path
           (byte_buf.to-string (io.read-file path))
           (selfhost-lint-package-dead-cfgs))
-          [(ResultAstProgramDiagnostic.Err diag)
+          [(parser.ResultAstProgramDiagnostic.Err diag)
             (ResultSelfhostLintDeadImportList.Err diag)]
-          [(ResultAstProgramDiagnostic.Ok program)
+          [(parser.ResultAstProgramDiagnostic.Ok program)
             (match program
-              [(AstProgram.Program decls-box)
+              [(ast.AstProgram.Program decls-box)
                 (selfhost-lint-package-dead-import-paths-from-decls
                   (box-get decls-box)
                   path
@@ -3767,21 +3841,21 @@
           (ResultSelfhostLintDeadImportList.Err (clone diag))])]
     (begin
       (selfhost-lint-reset-file-state!)
-      (ast-node-pool-context-reset-to! pools 0 0)
-      (ast-node-pool-compat-context-clear!)
-      (ast-node-pool-context-destroy-storage! pools)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
+      (ast.ast-node-pool-compat-context-clear!)
+      (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
           (arena.destroy scratch)
-          (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools))))
+          (arena.tl_arena_destroy (ast.ast-node-pool-context-base-arena pools))))
       result)))
 
 (define (selfhost-lint-package-dead-path-closure-from
   [queue : lint_svec.Vec (:consume)]
   [index : i64]
   [import-root : String]
-  [source-set : PackageSourceSet]
+  [source-set : package_source_core.PackageSourceSet]
   [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
   [package-imports : bool]) : ResultSelfhostLintDeadSourceList
@@ -3826,13 +3900,15 @@
   (if (>= index (lint_svec.len (& paths)))
     items
     (selfhost-lint-package-dead-merge-paths-from
-      (package-source-vec-insert items (lint_svec.get (& paths) index ""))
+      (package_source_core.package-source-vec-insert
+        items
+        (lint_svec.get (& paths) index ""))
       paths
       (+ index 1))))
 
 (define (selfhost-lint-package-dead-closure-sources-mode
   [entry-path : String]
-  [source-set : PackageSourceSet]
+  [source-set : package_source_core.PackageSourceSet]
   [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
   [items : lint_svec.Vec]
@@ -3845,7 +3921,7 @@
         (struct-get source-set sources)
         root-sources
         stdlib-roots)]
-    [import-root : String (compiler-load-dirname entry-path)]
+    [import-root : String (compiler_load.compiler-load-dirname entry-path)]
     (match (selfhost-lint-package-dead-path-closure-from
       start
       0
@@ -3862,7 +3938,7 @@
 
 (define (selfhost-lint-package-dead-closure-sources
   [entry-path : String]
-  [source-set : PackageSourceSet]
+  [source-set : package_source_core.PackageSourceSet]
   [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
   [items : lint_svec.Vec]) : ResultSelfhostLintDeadSourceList
@@ -3876,7 +3952,7 @@
 
 (define (selfhost-lint-package-dead-root-file-closure-sources
   [entry-path : String]
-  [source-set : PackageSourceSet]
+  [source-set : package_source_core.PackageSourceSet]
   [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
   [items : lint_svec.Vec]) : ResultSelfhostLintDeadSourceList
@@ -3890,7 +3966,7 @@
 
 (define (selfhost-lint-package-dead-root-closure-sources-from
   [root-sources : lint_svec.Vec]
-  [source-set : PackageSourceSet]
+  [source-set : package_source_core.PackageSourceSet]
   [stdlib-roots : lint_svec.Vec]
   [items : lint_svec.Vec]
   [index : i64]) : ResultSelfhostLintDeadSourceList
@@ -3914,7 +3990,7 @@
 
 (define (selfhost-lint-package-dead-root-closure-sources
   [root-sources : lint_svec.Vec]
-  [source-set : PackageSourceSet]
+  [source-set : package_source_core.PackageSourceSet]
   [stdlib-roots : lint_svec.Vec]
   [items : lint_svec.Vec]) : ResultSelfhostLintDeadSourceList
   (selfhost-lint-package-dead-root-closure-sources-from
@@ -3925,15 +4001,16 @@
     0))
 
 (define (selfhost-lint-package-dead-sources
-  [source-set : PackageSourceSet]
+  [source-set : package_source_core.PackageSourceSet]
   [stdlib-roots : lint_svec.Vec]) : ResultSelfhostLintDeadSources
   (let
-    [manifest : CompilerPkgManifest (struct-get source-set manifest)]
+    [manifest : compiler_load.CompilerPkgManifest
+      (struct-get source-set manifest)]
     [package-roots : lint_svec.Vec
       (selfhost-lint-package-import-roots source-set stdlib-roots)]
     [explicit-roots : lint_svec.Vec
       (selfhost-lint-package-dead-compile-manifest-roots source-set)]
-    [kind : CompilerPkgKind (struct-get manifest kind)]
+    [kind : compiler_load.CompilerPkgKind (struct-get manifest kind)]
     (if (selfhost-lint-package-kind-entry? kind)
       (let
         [manifest-dir : String (struct-get source-set manifest-dir)]
@@ -3974,7 +4051,7 @@
 (define (selfhost-lint-package-dead-code
   [source-set : SelfhostLintDeadSourceSet]
   [stdlib-roots : lint_svec.Vec]
-  [kind : CompilerPkgKind]) : SelfhostLintDeadDecls
+  [kind : compiler_load.CompilerPkgKind]) : SelfhostLintDeadDecls
   (let
     [visible-root : bool (selfhost-lint-package-dead-visible-root? kind)]
     [reportable : bool (selfhost-lint-package-dead-reportable? kind)]
@@ -4008,7 +4085,9 @@
       (not
         (selfhost-lint-suppressed?
           source
-          (lint-dead-code-finding (struct-get decl name) (struct-get decl span)))))))
+          (lint_core.lint-dead-code-finding
+            (struct-get decl name)
+            (struct-get decl span)))))))
 
 (define (selfhost-lint-package-dead-count-for-source-from
   [path : String]
@@ -4058,7 +4137,7 @@
               (selfhost-lint-render-finding-line
                 path
                 source
-                (lint-dead-code-finding
+                (lint_core.lint-dead-code-finding
                   (struct-get decl name)
                   (struct-get decl span))))
             (+ printed 1))
@@ -4089,12 +4168,12 @@
 (define (selfhost-lint-reset-file-state!) : unit
   (begin
     (set! selfhost-lint-typed-unused-unsafe-error "")
-    (lint-unused-unsafe-classifier-reset!)
-    (tc-unused-unsafe-tracking-clear!)
-    (tc-prefix-snapshot-cache-clear!)
-    (compiler-check-reset-pools!)
-    (compiler-check-reset-interns!)
-    (compiler-typecheck-reset-file-state!)))
+    (lint_core.lint-unused-unsafe-classifier-reset!)
+    (tc.tc-unused-unsafe-tracking-clear!)
+    (tc.tc-prefix-snapshot-cache-clear!)
+    (compiler_check_core.compiler-check-reset-pools!)
+    (compiler_check_core.compiler-check-reset-interns!)
+    (tc.compiler-typecheck-reset-file-state!)))
 
 (define selfhost-lint-expr-pool-initial-capacity : i64
   1)
@@ -4114,12 +4193,12 @@
     ;; long lint batch does not retain earlier files until process exit.
     [home : arena.Arena (arena.current)]
     [pool-arena : i64 (arena.tl_arena_make)]
-    [pools : AstNodePoolContext
-      (ast-node-pool-context-new-with-capacities-in-arena
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit (ast-node-pool-compat-context-use! pools)]
+    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
     [scratch : arena.Arena (arena.make)]
     [status : i64
       (begin
@@ -4134,19 +4213,26 @@
           prefer-dotted-field
           name-case))]
     (begin
+      ;; Without an explicit batch reset, the unsafe-surface cache was ensured
+      ;; into this file's scratch arena; release it so the scratch teardown
+      ;; cannot leave the global cache pointing into freed memory. A batch
+      ;; installs the cache in its own outer arena, which outlives each file.
+      (if (= selfhost-lint-unsafe-surface-cache-arena (arena.tl_arena_current))
+        (selfhost-lint-unsafe-surface-cache-release!)
+        unit)
       (unsafe
         (arena.set! home))
       ;; Reset compiler-check state while the file scratch arena is still mapped;
       ;; typed lint rules can leave scratch-backed nodes in check/typecheck caches.
       (selfhost-lint-reset-file-state!)
-      (ast-node-pool-context-reset-to! pools 0 0)
-      (ast-node-pool-compat-context-clear!)
-      (ast-node-pool-context-destroy-storage! pools)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
+      (ast.ast-node-pool-compat-context-clear!)
+      (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
           (arena.destroy scratch)
-          (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools))))
+          (arena.tl_arena_destroy (ast.ast-node-pool-context-base-arena pools))))
       status)))
 
 (define (selfhost-lint-run-file-with-package-dead-in-scratch
@@ -4161,12 +4247,12 @@
   (let
     [home : arena.Arena (arena.current)]
     [pool-arena : i64 (arena.tl_arena_make)]
-    [pools : AstNodePoolContext
-      (ast-node-pool-context-new-with-capacities-in-arena
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
         selfhost-lint-expr-pool-initial-capacity
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
-    [_install-pools : unit (ast-node-pool-compat-context-use! pools)]
+    [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
     [scratch : arena.Arena (arena.make)]
     [status : i64
       (begin
@@ -4182,17 +4268,24 @@
           name-case
           dead-decls))]
     (begin
+      ;; Without an explicit batch reset, the unsafe-surface cache was ensured
+      ;; into this file's scratch arena; release it so the scratch teardown
+      ;; cannot leave the global cache pointing into freed memory. A batch
+      ;; installs the cache in its own outer arena, which outlives each file.
+      (if (= selfhost-lint-unsafe-surface-cache-arena (arena.tl_arena_current))
+        (selfhost-lint-unsafe-surface-cache-release!)
+        unit)
       (unsafe
         (arena.set! home))
       (selfhost-lint-reset-file-state!)
-      (ast-node-pool-context-reset-to! pools 0 0)
-      (ast-node-pool-compat-context-clear!)
-      (ast-node-pool-context-destroy-storage! pools)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
+      (ast.ast-node-pool-compat-context-clear!)
+      (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
           (arena.destroy scratch)
-          (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools))))
+          (arena.tl_arena_destroy (ast.ast-node-pool-context-base-arena pools))))
       status)))
 
 (define (selfhost-lint-file
@@ -4213,14 +4306,14 @@
     ;; mis-reports live params/imports as unused on large sources (the
     ;; compiler_backend.tl phi-copy/tail false positives). Threading the live
     ;; context keeps ast-node-get pointed at the grown pool.
-    (match (parse-ast-source-diagnostic-with-cfg-and-pools
+    (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
       input-path
       source
       (selfhost-lint-language-cfgs)
-      (ast-node-pool-compat-context-current))
-      [(ResultAstProgramDiagnostic.Ok program)
+      (ast.ast-node-pool-compat-context-current))
+      [(parser.ResultAstProgramDiagnostic.Ok program)
         (let
-          [findings : LintFindings
+          [findings : lint_core.LintFindings
             (selfhost-lint-program-and-typed-findings
               input-path
               source
@@ -4238,18 +4331,19 @@
                 (string.append
                   "lint: "
                   (string.append
-                    (string.int->string (lint-findings-count findings))
+                    (string.int->string
+                      (lint_core.lint-findings-count findings))
                     " finding(s)\n")))
               (selfhost-lint-enforce-exit
                 enforcing
-                (lint-findings-count findings)))
+                (lint_core.lint-findings-count findings)))
             (begin
               (io.print-error
                 (string.append selfhost-lint-typed-unused-unsafe-error "\n"))
               1)))]
-      [(ResultAstProgramDiagnostic.Err diag)
+      [(parser.ResultAstProgramDiagnostic.Err diag)
         (begin
-          (io.print-error (compiler-diagnostic-render (box-get diag)))
+          (io.print-error (cdiag.compiler-diagnostic-render (box-get diag)))
           1)])))
 
 (define (selfhost-lint-file-with-package-dead
@@ -4271,14 +4365,14 @@
     ;; mis-reports live params/imports as unused on large sources (the
     ;; compiler_backend.tl phi-copy/tail false positives). Threading the live
     ;; context keeps ast-node-get pointed at the grown pool.
-    (match (parse-ast-source-diagnostic-with-cfg-and-pools
+    (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
       input-path
       source
       (selfhost-lint-language-cfgs)
-      (ast-node-pool-compat-context-current))
-      [(ResultAstProgramDiagnostic.Ok program)
+      (ast.ast-node-pool-compat-context-current))
+      [(parser.ResultAstProgramDiagnostic.Ok program)
         (let
-          [findings : LintFindings
+          [findings : lint_core.LintFindings
             (selfhost-lint-program-and-typed-findings
               input-path
               source
@@ -4311,9 +4405,9 @@
               (io.print-error
                 (string.append selfhost-lint-typed-unused-unsafe-error "\n"))
               1)))]
-      [(ResultAstProgramDiagnostic.Err diag)
+      [(parser.ResultAstProgramDiagnostic.Err diag)
         (begin
-          (io.print-error (compiler-diagnostic-render (box-get diag)))
+          (io.print-error (cdiag.compiler-diagnostic-render (box-get diag)))
           1)])))
 
 (define (selfhost-lint-files-from
@@ -4464,15 +4558,19 @@
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : i64
-  (match (package-source-discover-for "lint" manifest-path has-manifest)
-    [(ResultPackageSourceSet.Err message)
+  (match (package_source_core.package-source-discover-for
+    "lint"
+    manifest-path
+    has-manifest)
+    [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
         (io.print-error (string.append message "\n"))
         1)]
-    [(ResultPackageSourceSet.Ok source-set)
+    [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (let
         [sources : lint_svec.Vec (struct-get source-set sources)]
-        [manifest : CompilerPkgManifest (struct-get source-set manifest)]
+        [manifest : compiler_load.CompilerPkgManifest
+          (struct-get source-set manifest)]
         [dead-sources-result : ResultSelfhostLintDeadSources
           (selfhost-lint-package-dead-sources source-set stdlib-roots)]
         [package-roots : lint_svec.Vec
@@ -4498,7 +4596,7 @@
                 0))]
           [(ResultSelfhostLintDeadSources.Err diag)
             (begin
-              (io.print-error (compiler-diagnostic-render (box-get diag)))
+              (io.print-error (cdiag.compiler-diagnostic-render (box-get diag)))
               1)]))]))
 
 ;; Run the `lint` command over arguments starting at `start`.
@@ -4719,20 +4817,16 @@
   "(import pkg.data)
 (define (main) : i64 (pkg.data.value))")
 
-(define (selfhost-lint-unused-explicit-path-alias-source) : String
-  "(import \"data.tl\" module data :as d)
+(define (selfhost-lint-unused-explicit-import-alias-source) : String
+  "(import pkg.data as d)
 (define (main) : i64 42)")
 
-(define (selfhost-lint-used-explicit-path-alias-source) : String
-  "(import \"data.tl\" module data :as d)
+(define (selfhost-lint-used-explicit-import-alias-source) : String
+  "(import pkg.data as d)
 (define (main) : i64 (d.value))")
 
 (define (selfhost-lint-unused-underscore-import-source) : String
   "(import pkg.data as _data)
-(define (main) : i64 42)")
-
-(define (selfhost-lint-legacy-path-import-source) : String
-  "(import \"data.tl\")
 (define (main) : i64 42)")
 
 (define (selfhost-lint-used-import-type-source) : String
@@ -4750,8 +4844,8 @@
   "(import pkg.macros)
 (pkg.macros.emit i64)")
 
-(define (selfhost-lint-used-import-legacy-macro-call-source) : String
-  "(import \"stdlib/core_macros.tl\" module stdlib.core_macros as core)
+(define (selfhost-lint-used-import-macro-alias-source) : String
+  "(import stdlib.core_macros as core)
 (define (check [flag : bool]) : bool (core/and flag true))")
 
 (define (selfhost-lint-suppressed-unused-import-source) : String
@@ -5214,21 +5308,21 @@ end
 ;; Number of findings reported for `source` (after derived-form-origin +
 ;; suppression filtering), via the public source-lint path.
 (define (selfhost-lint-source-finding-count [source : String]) : i64
-  (lint-findings-count
+  (lint_core.lint-findings-count
     (selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
       source
       (lint_svec.new))))
 
 (define (selfhost-lint-findings-rule-count-from
-  [findings : LintFindings]
+  [findings : lint_core.LintFindings]
   [rule-id : String]
   [index : i64]
   [count : i64]) : i64
-  (if (>= index (lint-findings-count findings))
+  (if (>= index (lint_core.lint-findings-count findings))
     count
-    (match (lint-findings-get findings index)
-      [(LintMaybeFinding.Some finding)
+    (match (lint_core.lint-findings-get findings index)
+      [(lint_core.LintMaybeFinding.Some finding)
         (selfhost-lint-findings-rule-count-from
           findings
           rule-id
@@ -5236,7 +5330,7 @@ end
           (if (string.eq (struct-get finding rule-id) rule-id)
             (+ count 1)
             count))]
-      [(LintMaybeFinding.No)
+      [(lint_core.LintMaybeFinding.No)
         (selfhost-lint-findings-rule-count-from
           findings
           rule-id
@@ -5244,7 +5338,7 @@ end
           count)])))
 
 (define (selfhost-lint-findings-rule-count
-  [findings : LintFindings]
+  [findings : lint_core.LintFindings]
   [rule-id : String]) : i64
   (selfhost-lint-findings-rule-count-from findings rule-id 0 0))
 
@@ -5256,32 +5350,35 @@ end
       (lint_svec.new))
     rule-id))
 
-(define (selfhost-lint-unused-import-finding-ok? [findings : LintFindings]) : bool
-  (match (lint-findings-get findings 0)
-    [(LintMaybeFinding.Some finding)
+(define (selfhost-lint-unused-import-finding-ok?
+  [findings : lint_core.LintFindings]) : bool
+  (match (lint_core.lint-findings-get findings 0)
+    [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan (struct-get finding span)]
         (and
-          (= (lint-findings-count findings) 1)
-          (> (ast-source-span-start-line fspan) 0)
-          (string.eq (struct-get finding rule-id) (lint-rule-unused-import-id))))]
-    [(LintMaybeFinding.No) false]))
+          (= (lint_core.lint-findings-count findings) 1)
+          (> (ast.ast-source-span-start-line fspan) 0)
+          (string.eq
+            (struct-get finding rule-id)
+            (lint_core.lint-rule-unused-import-id))))]
+    [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-unused-imports-self-test) : i64
   (let
-    [unused : LintFindings
+    [unused : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unused-dotted-import-source)
         (lint_svec.new))]
-    [unused-path-alias : LintFindings
+    [unused-explicit-alias : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-unused-explicit-path-alias-source)
+        (selfhost-lint-unused-explicit-import-alias-source)
         (lint_svec.new))]
     (cond
       [(not (selfhost-lint-unused-import-finding-ok? unused)) 30]
-      [(not (selfhost-lint-unused-import-finding-ok? unused-path-alias)) 31]
+      [(not (selfhost-lint-unused-import-finding-ok? unused-explicit-alias)) 31]
       [(not
           (=
             (selfhost-lint-source-finding-count
@@ -5297,7 +5394,7 @@ end
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-explicit-path-alias-source))
+              (selfhost-lint-used-explicit-import-alias-source))
             0))
         34]
       [(not
@@ -5306,12 +5403,6 @@ end
               (selfhost-lint-unused-underscore-import-source))
             0))
         35]
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
-              (selfhost-lint-legacy-path-import-source))
-            0))
-        36]
       [(not
           (=
             (selfhost-lint-source-finding-count
@@ -5339,7 +5430,7 @@ end
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-import-legacy-macro-call-source))
+              (selfhost-lint-used-import-macro-alias-source))
             0))
         43]
       [else 42])))
@@ -5347,7 +5438,7 @@ end
 (define (selfhost-lint-package-dead-code-fixture-decls
   [source-a : String]
   [source-b : String]
-  [kind : CompilerPkgKind]) : SelfhostLintDeadDecls
+  [kind : compiler_load.CompilerPkgKind]) : SelfhostLintDeadDecls
   (let
     [visible-root : bool (selfhost-lint-package-dead-visible-root? kind)]
     [reportable : bool (selfhost-lint-package-dead-reportable? kind)]
@@ -5401,8 +5492,10 @@ end
   (let
     [manifest-dir : String "pkg"]
     [path : String
-      (compiler-load-normalize-path
-        (compiler-load-join-root-path manifest-dir "src/manifest_api.tl"))]
+      (compiler_load.compiler-load-normalize-path
+        (compiler_load.compiler-load-join-root-path
+          manifest-dir
+          "src/manifest_api.tl"))]
     [source : String (selfhost-lint-package-dead-manifest-root-source)]
     [roots : lint_svec.Vec
       (selfhost-lint-dead-manifest-roots
@@ -5525,19 +5618,25 @@ end
 (define (selfhost-lint-package-dead-import-closure-fixture-ok?) : bool
   (let
     [root : String "target/lint_dead_root_import_closure"]
-    [src-dir : String (compiler-load-join-root-path root "src")]
-    [test-dir : String (compiler-load-join-root-path src-dir "tests")]
-    [manifest-path : String (compiler-load-join-root-path root "typelisp.pkg")]
-    [main-path : String (compiler-load-join-root-path src-dir "main.tl")]
-    [core-path : String (compiler-load-join-root-path src-dir "core.tl")]
+    [src-dir : String (compiler_load.compiler-load-join-root-path root "src")]
+    [test-dir : String
+      (compiler_load.compiler-load-join-root-path src-dir "tests")]
+    [manifest-path : String
+      (compiler_load.compiler-load-join-root-path root "typelisp.pkg")]
+    [main-path : String
+      (compiler_load.compiler-load-join-root-path src-dir "main.tl")]
+    [core-path : String
+      (compiler_load.compiler-load-join-root-path src-dir "core.tl")]
     [test-path : String
-      (compiler-load-join-root-path test-dir "imported_smoke.tl")]
+      (compiler_load.compiler-load-join-root-path test-dir "imported_smoke.tl")]
     [second-test-path : String
-      (compiler-load-join-root-path test-dir "second_imported_smoke.tl")]
+      (compiler_load.compiler-load-join-root-path
+        test-dir
+        "second_imported_smoke.tl")]
     (begin
-      (compiler-load-test-mkdir root)
-      (compiler-load-test-mkdir src-dir)
-      (compiler-load-test-mkdir test-dir)
+      (compiler_load.compiler-load-test-mkdir root)
+      (compiler_load.compiler-load-test-mkdir src-dir)
+      (compiler_load.compiler-load-test-mkdir test-dir)
       (selfhost-lint-write-text
         manifest-path
         "(package
@@ -5546,9 +5645,9 @@ end
   (kind \"bin\"))")
       (selfhost-lint-write-text
         main-path
-        "(import \"core.tl\")
+        "(import core)
 (define (main) : i64
-  (core-entry))")
+  (core.core-entry))")
       (selfhost-lint-write-text
         core-path
         "(define (core-entry) : i64 7)
@@ -5559,15 +5658,18 @@ end
         test-path
         "(import core)
 (define (main) : i64
-  (core-test-helper))")
+  (core.core-test-helper))")
       (selfhost-lint-write-text
         second-test-path
         "(import core)
 (define (main) : i64
-  (core-second-test-helper))")
-      (match (package-source-discover-for "lint" manifest-path true)
-        [(ResultPackageSourceSet.Err _) false]
-        [(ResultPackageSourceSet.Ok source-set)
+  (core.core-second-test-helper))")
+      (match (package_source_core.package-source-discover-for
+        "lint"
+        manifest-path
+        true)
+        [(package_source_core.ResultPackageSourceSet.Err _) false]
+        [(package_source_core.ResultPackageSourceSet.Ok source-set)
           (match (selfhost-lint-package-dead-sources source-set (lint_svec.new))
             [(ResultSelfhostLintDeadSources.Err _) false]
             [(ResultSelfhostLintDeadSources.Ok dead-source-set)
@@ -5583,13 +5685,13 @@ end
                     (struct-get (struct-get source-set manifest) kind))]
                 [core-count : i64
                   (selfhost-lint-package-dead-count-for-source
-                    (compiler-load-normalize-path core-path)
+                    (compiler_load.compiler-load-normalize-path core-path)
                     (byte_buf.to-string (io.read-file core-path))
                     dead-decls)]
                 (and
                   (lint_svec.contains?
                     (& roots)
-                    (compiler-load-normalize-path src-dir))
+                    (compiler_load.compiler-load-normalize-path src-dir))
                   (= core-count 1)))])]))))
 
 (define (selfhost-lint-package-dead-code-self-test) : i64
@@ -5640,8 +5742,10 @@ end
       (selfhost-lint-package-dead-code-manifest-root-fixture-decls)]
     [manifest-root-count : i64
       (selfhost-lint-package-dead-count-for-source
-        (compiler-load-normalize-path
-          (compiler-load-join-root-path "pkg" "src/manifest_api.tl"))
+        (compiler_load.compiler-load-normalize-path
+          (compiler_load.compiler-load-join-root-path
+            "pkg"
+            "src/manifest_api.tl"))
         manifest-root-source
         manifest-root-decls)]
     [explicit-root-source : String
@@ -5686,9 +5790,10 @@ end
         "pkg/right.tl"
         (selfhost-lint-package-dead-moduleless-right-source)
         moduleless-import-decls)]
-    [finding : LintFinding (lint-dead-code-finding "unused" (lint-no-span))]
+    [finding : lint_core.LintFinding
+      (lint_core.lint-dead-code-finding "unused" (lint_core.lint-no-span))]
     [finding-message : String (struct-get finding message)]
-    [dead-suggestion : String (lint-rule-dead-code-suggestion)]
+    [dead-suggestion : String (lint_core.lint-rule-dead-code-suggestion)]
     [private-needle : String "private"]
     [export-needle : String "export"]
     (cond
@@ -5724,8 +5829,8 @@ end
       [(not (= moduleless-right-count 1)) 65]
       [(not
           (string.eq
-            (lint-rule-message (lint-rule-dead-code-id))
-            (lint-rule-dead-code-message)))
+            (lint_core.lint-rule-message (lint_core.lint-rule-dead-code-id))
+            (lint_core.lint-rule-dead-code-message)))
         54]
       [(string.contains (& finding-message) (& private-needle)) 55]
       [(string.contains (& dead-suggestion) (& export-needle)) 56]
@@ -5733,7 +5838,7 @@ end
 
 (define (selfhost-lint-unused-assignment-self-test) : i64
   (let
-    [rule : String (lint-rule-unused-assignment-id)]
+    [rule : String (lint_core.lint-rule-unused-assignment-id)]
     (cond
       [(not
           (=
@@ -5779,14 +5884,14 @@ end
         55]
       [(not
           (string.eq
-            (lint-rule-message rule)
-            (lint-rule-unused-assignment-message)))
+            (lint_core.lint-rule-message rule)
+            (lint_core.lint-rule-unused-assignment-message)))
         56]
       [else 42])))
 
 (define (selfhost-lint-single-element-array-cell-self-test) : i64
   (let
-    [rule : String (lint-rule-single-element-array-cell-id)]
+    [rule : String (lint_core.lint-rule-single-element-array-cell-id)]
     (cond
       [(not
           (=
@@ -5853,14 +5958,14 @@ end
         68]
       [(not
           (string.eq
-            (lint-rule-message rule)
-            (lint-rule-single-element-array-cell-message)))
+            (lint_core.lint-rule-message rule)
+            (lint_core.lint-rule-single-element-array-cell-message)))
         69]
       [else 42])))
 
 (define (selfhost-lint-dynamic-array-literal-self-test) : i64
   (let
-    [rule : String (lint-rule-prefer-dynamic-array-literal-id)]
+    [rule : String (lint_core.lint-rule-prefer-dynamic-array-literal-id)]
     (cond
       [(not
           (=
@@ -5948,205 +6053,213 @@ end
         146]
       [(not
           (string.eq
-            (lint-rule-message rule)
-            (lint-rule-prefer-dynamic-array-literal-message)))
+            (lint_core.lint-rule-message rule)
+            (lint_core.lint-rule-prefer-dynamic-array-literal-message)))
         147]
       [(not
           (string.eq
-            (lint-rule-suggestion rule)
-            (lint-rule-prefer-dynamic-array-literal-suggestion)))
+            (lint_core.lint-rule-suggestion rule)
+            (lint_core.lint-rule-prefer-dynamic-array-literal-suggestion)))
         148]
       [else 42])))
 
 ;; Compatibility helper retained for the nested-if-ladder metadata shape.
 (define (selfhost-lint-reported-finding-ok?
-  [findings : LintFindings]
+  [findings : lint_core.LintFindings]
   [depth : i64]
   [message : String]) : bool
-  (match (lint-findings-get findings 0)
-    [(LintMaybeFinding.Some finding)
+  (match (lint_core.lint-findings-get findings 0)
+    [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) depth)
-          (> (ast-source-span-start-line fspan) 0)
+          (> (ast.ast-source-span-start-line fspan) 0)
           (string.eq
             (struct-get finding rule-id)
-            (lint-rule-nested-if-ladder-id))
+            (lint_core.lint-rule-nested-if-ladder-id))
           (string.eq (struct-get finding message) message)))]
-    [(LintMaybeFinding.No) false]))
+    [(lint_core.LintMaybeFinding.No) false]))
 
-(define (selfhost-lint-nested-let-finding-ok? [findings : LintFindings]) : bool
-  (match (lint-findings-get findings 0)
-    [(LintMaybeFinding.Some finding)
+(define (selfhost-lint-nested-let-finding-ok?
+  [findings : lint_core.LintFindings]) : bool
+  (match (lint_core.lint-findings-get findings 0)
+    [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan (struct-get finding span)]
         (and
-          (> (ast-source-span-start-line fspan) 0)
-          (string.eq (struct-get finding rule-id) (lint-rule-nested-let-id))))]
-    [(LintMaybeFinding.No) false]))
+          (> (ast.ast-source-span-start-line fspan) 0)
+          (string.eq
+            (struct-get finding rule-id)
+            (lint_core.lint-rule-nested-let-id))))]
+    [(lint_core.LintMaybeFinding.No) false]))
 
-(define (selfhost-lint-return-path-finding-ok? [findings : LintFindings]) : bool
-  (match (lint-findings-get findings 0)
-    [(LintMaybeFinding.Some finding)
+(define (selfhost-lint-return-path-finding-ok?
+  [findings : lint_core.LintFindings]) : bool
+  (match (lint_core.lint-findings-get findings 0)
+    [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) 3)
-          (> (ast-source-span-start-line fspan) 0)
+          (> (ast.ast-source-span-start-line fspan) 0)
           (string.eq
             (struct-get finding rule-id)
-            (lint-rule-return-path-chain-id))))]
-    [(LintMaybeFinding.No) false]))
+            (lint_core.lint-rule-return-path-chain-id))))]
+    [(lint_core.LintMaybeFinding.No) false]))
 
-(define (selfhost-lint-unit-if-finding-ok? [findings : LintFindings]) : bool
-  (match (lint-findings-get findings 0)
-    [(LintMaybeFinding.Some finding)
+(define (selfhost-lint-unit-if-finding-ok? [findings : lint_core.LintFindings]) : bool
+  (match (lint_core.lint-findings-get findings 0)
+    [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) 1)
-          (> (ast-source-span-start-line fspan) 0)
-          (string.eq (struct-get finding rule-id) (lint-rule-unit-if-guard-id))))]
-    [(LintMaybeFinding.No) false]))
-
-(define (selfhost-lint-cascading-and-or-finding-ok?
-  [findings : LintFindings]
-  [message : String]) : bool
-  (match (lint-findings-get findings 0)
-    [(LintMaybeFinding.Some finding)
-      (let
-        [fspan : AstSourceSpan (struct-get finding span)]
-        (and
-          (= (struct-get finding depth) 3)
-          (> (ast-source-span-start-line fspan) 0)
+          (> (ast.ast-source-span-start-line fspan) 0)
           (string.eq
             (struct-get finding rule-id)
-            (lint-rule-cascading-and-or-id))
+            (lint_core.lint-rule-unit-if-guard-id))))]
+    [(lint_core.LintMaybeFinding.No) false]))
+
+(define (selfhost-lint-cascading-and-or-finding-ok?
+  [findings : lint_core.LintFindings]
+  [message : String]) : bool
+  (match (lint_core.lint-findings-get findings 0)
+    [(lint_core.LintMaybeFinding.Some finding)
+      (let
+        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        (and
+          (= (struct-get finding depth) 3)
+          (> (ast.ast-source-span-start-line fspan) 0)
+          (string.eq
+            (struct-get finding rule-id)
+            (lint_core.lint-rule-cascading-and-or-id))
           (string.eq (struct-get finding message) message)))]
-    [(LintMaybeFinding.No) false]))
+    [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-transitional-core-macro-finding-ok?
-  [findings : LintFindings]) : bool
-  (match (lint-findings-get findings 0)
-    [(LintMaybeFinding.Some finding)
+  [findings : lint_core.LintFindings]) : bool
+  (match (lint_core.lint-findings-get findings 0)
+    [(lint_core.LintMaybeFinding.Some finding)
       (and
-        (= (lint-findings-count findings) 5)
+        (= (lint_core.lint-findings-count findings) 5)
         (string.eq
           (struct-get finding rule-id)
-          (lint-rule-transitional-core-macro-qualifier-id))
+          (lint_core.lint-rule-transitional-core-macro-qualifier-id))
         (string.eq
           (struct-get finding message)
           "transitional core macro qualifier: use when instead of core.when"))]
-    [(LintMaybeFinding.No) false]))
+    [(lint_core.LintMaybeFinding.No) false]))
 
 (define (compiler-lint-driver-self-test) : i64
   (let
-    [reported : LintFindings
+    [reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
         (lint_svec.new))]
-    [guard-reported : LintFindings
+    [guard-reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-guard-ladder-source)
         (lint_svec.new))]
-    [return-reported : LintFindings
+    [return-reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-return-path-chain-source)
         (lint_svec.new))]
-    [all-exit-ladder-reported : LintFindings
+    [all-exit-ladder-reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-all-exit-ladder-source)
         (lint_svec.new))]
-    [unit-reported : LintFindings
+    [unit-reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-if-source)
         (lint_svec.new))]
-    [unit-set-reported : LintFindings
+    [unit-set-reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-set-source)
         (lint_svec.new))]
-    [two-reported : LintFindings
+    [two-reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-two-findings-source)
         (lint_svec.new))]
-    [cascading-and-reported : LintFindings
+    [cascading-and-reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-and-source)
         (lint_svec.new))]
-    [cascading-or-reported : LintFindings
+    [cascading-or-reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-or-source)
         (lint_svec.new))]
-    [cascading-core-and-reported : LintFindings
+    [cascading-core-and-reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-core-and-source)
         (lint_svec.new))]
-    [transitional-core-reported : LintFindings
+    [transitional-core-reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-transitional-core-macro-source)
         (lint_svec.new))]
     (cond
       [(or
-          (not (= (lint-findings-count reported) 1))
+          (not (= (lint_core.lint-findings-count reported) 1))
           (not
             (selfhost-lint-reported-finding-ok?
               reported
               5
-              (lint-rule-nested-if-ladder-value-message))))
+              (lint_core.lint-rule-nested-if-ladder-value-message))))
         1]
       [(or
-          (not (= (lint-findings-count guard-reported) 1))
+          (not (= (lint_core.lint-findings-count guard-reported) 1))
           (not
             (selfhost-lint-reported-finding-ok?
               guard-reported
               3
-              (lint-rule-nested-if-ladder-guard-message))))
+              (lint_core.lint-rule-nested-if-ladder-guard-message))))
         70]
-      [(not (= (lint-findings-count return-reported) 1)) 9]
+      [(not (= (lint_core.lint-findings-count return-reported) 1)) 9]
       [(not (selfhost-lint-return-path-finding-ok? return-reported)) 10]
       [(not
           (=
             (selfhost-lint-findings-rule-count
               all-exit-ladder-reported
-              (lint-rule-nested-if-ladder-id))
+              (lint_core.lint-rule-nested-if-ladder-id))
             0))
         41]
-      [(not (= (lint-findings-count unit-reported) 1)) 12]
+      [(not (= (lint_core.lint-findings-count unit-reported) 1)) 12]
       [(not (selfhost-lint-unit-if-finding-ok? unit-reported)) 13]
-      [(not (= (lint-findings-count unit-set-reported) 1)) 16]
+      [(not (= (lint_core.lint-findings-count unit-set-reported) 1)) 16]
       [(not (selfhost-lint-unit-if-finding-ok? unit-set-reported)) 17]
-      [(not (= (lint-findings-count two-reported) 2)) 18]
-      [(not (= (lint-findings-count cascading-and-reported) 1)) 20]
+      [(not (= (lint_core.lint-findings-count two-reported) 2)) 18]
+      [(not (= (lint_core.lint-findings-count cascading-and-reported) 1)) 20]
       [(not
           (selfhost-lint-cascading-and-or-finding-ok?
             cascading-and-reported
             "cascading and: prefer flat n-ary form (and a b c)"))
         21]
-      [(not (= (lint-findings-count cascading-or-reported) 1)) 22]
+      [(not (= (lint_core.lint-findings-count cascading-or-reported) 1)) 22]
       [(not
           (selfhost-lint-cascading-and-or-finding-ok?
             cascading-or-reported
             "cascading or: prefer flat n-ary form (or a b c)"))
         23]
-      [(not (= (lint-findings-count cascading-core-and-reported) 1)) 24]
+      [(not (= (lint_core.lint-findings-count cascading-core-and-reported) 1))
+        24]
       [(not
           (selfhost-lint-cascading-and-or-finding-ok?
             cascading-core-and-reported
             "cascading and: prefer flat n-ary form (and a b c)"))
         25]
-      [(not (= (lint-findings-count transitional-core-reported) 5)) 37]
+      [(not (= (lint_core.lint-findings-count transitional-core-reported) 5))
+        37]
       [(not
           (selfhost-lint-transitional-core-macro-finding-ok?
             transitional-core-reported))
@@ -6155,14 +6268,14 @@ end
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-clean-core-macro-text-source)
-              (lint-rule-transitional-core-macro-qualifier-id))
+              (lint_core.lint-rule-transitional-core-macro-qualifier-id))
             0))
         39]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-suppressed-transitional-core-macro-source)
-              (lint-rule-transitional-core-macro-qualifier-id))
+              (lint_core.lint-rule-transitional-core-macro-qualifier-id))
             0))
         40]
       [(not
@@ -6204,7 +6317,7 @@ end
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-redundant-divergence-padding-source)
-              (lint-rule-redundant-divergence-padding-id))
+              (lint_core.lint-rule-redundant-divergence-padding-id))
             4))
         29]
       [(not
@@ -6223,7 +6336,7 @@ end
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-suppressed-divergence-padding-source)
-              (lint-rule-redundant-divergence-padding-id))
+              (lint_core.lint-rule-redundant-divergence-padding-id))
             0))
         32]
       [(not
@@ -6272,7 +6385,7 @@ end
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-single-begin-source)
-              (lint-rule-single-begin-id))
+              (lint_core.lint-rule-single-begin-id))
             1))
         33]
       [(not
@@ -6285,14 +6398,14 @@ end
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-cfg-begin-source)
-              (lint-rule-single-begin-id))
+              (lint_core.lint-rule-single-begin-id))
             0))
         36]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-suppressed-single-begin-source)
-              (lint-rule-single-begin-id))
+              (lint_core.lint-rule-single-begin-id))
             0))
         35]
       [(not (= (selfhost-lint-enforce-exit true 1) 1)) 6]

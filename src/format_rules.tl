@@ -2455,10 +2455,10 @@
       (io.panic (tokens.format-source-error-message err))]))
 
 (define (format-rules-decls-source) : String
-  "(import \"std.tl\") (import \"ffi.tl\") (extern (io.print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\")) (extern (print-int [arg0 : i64]) : unit) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64)) (define KEY_A : i64 1) (define KEY_B : i64 2)")
+  "(import std) (import ffi) (extern (io.print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\")) (extern (print-int [arg0 : i64]) : unit) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64)) (define KEY_A : i64 1) (define KEY_B : i64 2)")
 
 (define (format-rules-decls-expected) : String
-  "(import \"std.tl\")\n(import \"ffi.tl\")\n\n(extern (io.print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\"))\n(extern (print-int [arg0 : i64]) : unit)\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))\n\n(define KEY_A : i64\n  1)\n(define KEY_B : i64\n  2)")
+  "(import std)\n(import ffi)\n\n(extern (io.print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\"))\n(extern (print-int [arg0 : i64]) : unit)\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))\n\n(define KEY_A : i64\n  1)\n(define KEY_B : i64\n  2)")
 
 (define (format-rules-flow-source) : String
   "(define (main [x : i64]) : i64 (begin (let ([y : i64 1]) (if (< x y) (while (< x 10) (set! x (+ x 1))) x)) (match (Some x) [(Some v) v] [None 0])))")
@@ -2479,7 +2479,7 @@
 (define (format-rules-comments-source) : String
   ";; module header
 ;; keeps adjacent lines
-(import \"std.tl\")
+(import std)
 ;; item docs
 ;; stay attached
 (define answer : i64 42)
@@ -2489,7 +2489,7 @@
 (define (format-rules-comments-expected) : String
   ";; module header
 ;; keeps adjacent lines
-(import \"std.tl\")
+(import std)
 
 ;; item docs
 ;; stay attached

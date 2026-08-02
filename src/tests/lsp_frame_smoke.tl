@@ -8,9 +8,16 @@
 (import stdlib.text_buf)
 (import stdlib.vector)
 (import (vector.vector String) as lsp_svec)
-(import "../lsp_frame_core.tl")
-(import (vector.vector LspDeclEntry core) as lsp_decl_vec)
-(import (vector.vector LspDocument core) as lsp_document_vec)
+(import compiler_ast_types as ast)
+(import compiler_check_core as check_core)
+(import compiler_diagnostic as cdiag)
+(import compiler_typecheck_core as tc_core)
+(import format_rules)
+(import lint_core)
+(import lsp_frame_core)
+(import lsp_vector_families)
+(import (vector.vector lsp_vector_families.LspDeclEntry core) as lsp_decl_vec)
+(import (vector.vector lsp_vector_families.LspDocument core) as lsp_document_vec)
 
 (define (lsp-smoke-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
@@ -43,7 +50,7 @@
       (= status 0))))
 
 (define (lsp-smoke-folder-json [uri : String]) : json.Json
-  (lsp-json-object2
+  (lsp_frame_core.lsp-json-object2
     "uri"
     (json.JsonString uri)
     "name"
@@ -52,43 +59,44 @@
 (define (lsp-smoke-folder-list-from [roots : lsp_svec.Vec] [index : i64]) : json.JsonSeq
   (if (>= index (lsp_svec.len (& roots)))
     (json.list-empty)
-    (lsp-json-list-cons
+    (lsp_frame_core.lsp-json-list-cons
       (lsp-smoke-folder-json (lsp_svec.get (& roots) index ""))
       (lsp-smoke-folder-list-from roots (+ index 1)))))
 
 (define (lsp-smoke-initialize-message
   [roots : lsp_svec.Vec]
   [root-uri : String]) : json.Json
-  (lsp-json-object1
+  (lsp_frame_core.lsp-json-object1
     "params"
-    (lsp-json-object2
+    (lsp_frame_core.lsp-json-object2
       "workspaceFolders"
-      (lsp-json-array (lsp-smoke-folder-list-from roots 0))
+      (lsp_frame_core.lsp-json-array (lsp-smoke-folder-list-from roots 0))
       "rootUri"
       (if (> (string.string-length root-uri) 0)
         (json.JsonString root-uri)
         json.JsonNull))))
 
-(define (lsp-smoke-initialize-state [roots : lsp_svec.Vec] [root-uri : String]) : LspServerState
+(define (lsp-smoke-initialize-state [roots : lsp_svec.Vec] [root-uri : String]) : lsp_vector_families.LspServerState
   (let
-    [state : LspServerState (lsp-server-state-new)]
-    (lsp-server-state-initialize-workspaces
+    [state : lsp_vector_families.LspServerState
+      (lsp_frame_core.lsp-server-state-new)]
+    (lsp_frame_core.lsp-server-state-initialize-workspaces
       state
       (lsp-smoke-initialize-message roots root-uri))))
 
 (define (lsp-smoke-state-name-count
-  [state : (& state LspServerState)]
+  [state : (& state lsp_vector_families.LspServerState)]
   [name : String]) : i64
   (let
     [index : i64 0]
     [count : i64 0]
-    [total : i64 (lsp-server-state-declaration-count state)]
+    [total : i64 (lsp_frame_core.lsp-server-state-declaration-count state)]
     (begin
       (while (< index total)
         (begin
-          (match (lsp-server-state-declaration-at state index)
-            [(LspWorkspaceDeclLookup.Missing) unit]
-            [(LspWorkspaceDeclLookup.Found row)
+          (match (lsp_frame_core.lsp-server-state-declaration-at state index)
+            [(lsp_vector_families.LspWorkspaceDeclLookup.Missing) unit]
+            [(lsp_vector_families.LspWorkspaceDeclLookup.Found row)
               (if (string.eq (struct-get (struct-get row decl) name) name)
                 (set! count (+ count 1))
                 unit)])
@@ -96,14 +104,15 @@
       count)))
 
 (define (lsp-smoke-state-name-at
-  [state : (& state LspServerState)]
+  [state : (& state lsp_vector_families.LspServerState)]
   [index : i64]) : String
-  (match (lsp-server-state-declaration-at state index)
-    [(LspWorkspaceDeclLookup.Missing) ""]
-    [(LspWorkspaceDeclLookup.Found row) (struct-get (struct-get row decl) name)]))
+  (match (lsp_frame_core.lsp-server-state-declaration-at state index)
+    [(lsp_vector_families.LspWorkspaceDeclLookup.Missing) ""]
+    [(lsp_vector_families.LspWorkspaceDeclLookup.Found row)
+      (struct-get (struct-get row decl) name)]))
 
 (define (lsp-smoke-state-row-matches?
-  [state : (& state LspServerState)]
+  [state : (& state lsp_vector_families.LspServerState)]
   [name : String]
   [module : String]
   [root-uri : String]
@@ -112,13 +121,13 @@
   (let
     [index : i64 0]
     [found : bool false]
-    [total : i64 (lsp-server-state-declaration-count state)]
+    [total : i64 (lsp_frame_core.lsp-server-state-declaration-count state)]
     (begin
       (while (and (< index total) (not found))
         (begin
-          (match (lsp-server-state-declaration-at state index)
-            [(LspWorkspaceDeclLookup.Missing) unit]
-            [(LspWorkspaceDeclLookup.Found row)
+          (match (lsp_frame_core.lsp-server-state-declaration-at state index)
+            [(lsp_vector_families.LspWorkspaceDeclLookup.Missing) unit]
+            [(lsp_vector_families.LspWorkspaceDeclLookup.Found row)
               (if (and
                 (string.eq (struct-get (struct-get row decl) name) name)
                 (string.eq (struct-get row module) module)
@@ -131,95 +140,100 @@
       found)))
 
 (define (lsp-smoke-state-with-overlay
-  [state : LspServerState]
+  [state : lsp_vector_families.LspServerState]
   [path : String]
   [text : String]
-  [version : i64]) : LspServerState
+  [version : i64]) : lsp_vector_families.LspServerState
   (let
-    [normalized : String (lsp-normalized-absolute-path path)]
-    [uri : String (lsp-resolved-path-to-file-uri normalized)]
+    [normalized : String (lsp_frame_core.lsp-normalized-absolute-path path)]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri normalized)]
     [docs : lsp_document_vec.Vec
-      (lsp-documents-set-versioned
+      (lsp_frame_core.lsp-documents-set-versioned
         (struct-get state documents)
         uri
         normalized
         text
         version
-        (lsp-diagnostic-uris-empty))]
-    (match (lsp-server-state-refresh-document-result
+        (lsp_frame_core.lsp-diagnostic-uris-empty))]
+    (match (lsp_frame_core.lsp-server-state-refresh-document-result
       state
-      (LspDocumentHandleResult.Continue docs)
+      (lsp_frame_core.LspDocumentHandleResult.Continue docs)
       uri
       false)
-      [(LspHandleResult.Continue next) next]
-      [(LspHandleResult.Exit next) next])))
+      [(lsp_frame_core.LspHandleResult.Continue next) next]
+      [(lsp_frame_core.LspHandleResult.Exit next) next])))
 
-(define (lsp-smoke-state-close [state : LspServerState] [path : String]) : LspServerState
+(define (lsp-smoke-state-close
+  [state : lsp_vector_families.LspServerState]
+  [path : String]) : lsp_vector_families.LspServerState
   (let
-    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
     [docs : lsp_document_vec.Vec
-      (lsp-documents-remove (struct-get state documents) uri)]
-    (match (lsp-server-state-refresh-document-result
+      (lsp_frame_core.lsp-documents-remove (struct-get state documents) uri)]
+    (match (lsp_frame_core.lsp-server-state-refresh-document-result
       state
-      (LspDocumentHandleResult.Continue docs)
+      (lsp_frame_core.LspDocumentHandleResult.Continue docs)
       uri
       false)
-      [(LspHandleResult.Continue next) next]
-      [(LspHandleResult.Exit next) next])))
+      [(lsp_frame_core.LspHandleResult.Continue next) next]
+      [(lsp_frame_core.LspHandleResult.Exit next) next])))
 
 (define (lsp-smoke-watcher-params [uri : String] [kind : i64]) : json.Json
-  (lsp-json-object1
+  (lsp_frame_core.lsp-json-object1
     "changes"
-    (lsp-json-array
-      (lsp-json-list-cons
-        (lsp-json-object2
+    (lsp_frame_core.lsp-json-array
+      (lsp_frame_core.lsp-json-list-cons
+        (lsp_frame_core.lsp-json-object2
           "uri"
           (json.JsonString uri)
           "type"
-          (lsp-json-number kind))
+          (lsp_frame_core.lsp-json-number kind))
         (json.list-empty)))))
 
 (define (lsp-smoke-state-watch
-  [state : LspServerState]
+  [state : lsp_vector_families.LspServerState]
   [path : String]
-  [kind : i64]) : LspServerState
+  [kind : i64]) : lsp_vector_families.LspServerState
   (let
-    [uri : String (lsp-resolved-path-to-file-uri path)]
-    (lsp-server-state-did-change-watched-files
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
+    (lsp_frame_core.lsp-server-state-did-change-watched-files
       state
       (lsp-smoke-watcher-params uri kind))))
 
 (define (lsp-smoke-workspace-event-params
   [added : lsp_svec.Vec]
   [removed : lsp_svec.Vec]) : json.Json
-  (lsp-json-object1
+  (lsp_frame_core.lsp-json-object1
     "event"
-    (lsp-json-object2
+    (lsp_frame_core.lsp-json-object2
       "added"
-      (lsp-json-array (lsp-smoke-folder-list-from added 0))
+      (lsp_frame_core.lsp-json-array (lsp-smoke-folder-list-from added 0))
       "removed"
-      (lsp-json-array (lsp-smoke-folder-list-from removed 0)))))
+      (lsp_frame_core.lsp-json-array (lsp-smoke-folder-list-from removed 0)))))
 
 (define (lsp-smoke-state-workspace-event
-  [state : LspServerState]
+  [state : lsp_vector_families.LspServerState]
   [added : lsp_svec.Vec]
-  [removed : lsp_svec.Vec]) : LspServerState
-  (lsp-server-state-did-change-workspace-folders
+  [removed : lsp_svec.Vec]) : lsp_vector_families.LspServerState
+  (lsp_frame_core.lsp-server-state-did-change-workspace-folders
     state
     (lsp-smoke-workspace-event-params added removed)))
 
-(define (lsp-smoke-state-root-count [state : (& state LspServerState)]) : i64
-  (lsp-workspace-roots-len (& (struct-get (struct-get state workspace) roots))))
+(define (lsp-smoke-state-root-count
+  [state : (& state lsp_vector_families.LspServerState)]) : i64
+  (lsp_frame_core.lsp-workspace-roots-len
+    (& (struct-get (struct-get state workspace) roots))))
 
-(define (lsp-smoke-state-source-count [state : (& state LspServerState)]) : i64
-  (lsp-workspace-sources-len
+(define (lsp-smoke-state-source-count
+  [state : (& state lsp_vector_families.LspServerState)]) : i64
+  (lsp_frame_core.lsp-workspace-sources-len
     (& (struct-get (struct-get state workspace) sources))))
 
 (define (lsp-smoke-state-root-uri-at
-  [state : (& state LspServerState)]
+  [state : (& state lsp_vector_families.LspServerState)]
   [index : i64]) : String
   (struct-get
-    (lsp-workspace-roots-get
+    (lsp_frame_core.lsp-workspace-roots-get
       (& (struct-get (struct-get state workspace) roots))
       index)
     uri))
@@ -243,10 +257,14 @@
   (let
     [src : String
       "(define (square [x : i64]) : i64 (* x x)) (define answer : i64 42)"]
-    [names : lsp_svec.Vec (lsp-collect-def-names src (lsp_svec.new))]
-    [keywords : lsp_svec.Vec (lsp-split-spaces (lsp-completion-keywords))]
-    [builtins : lsp_svec.Vec (lsp-split-spaces (lsp-completion-builtins))]
-    [types : lsp_svec.Vec (lsp-split-spaces (lsp-completion-types))]
+    [names : lsp_svec.Vec
+      (lsp_frame_core.lsp-collect-def-names src (lsp_svec.new))]
+    [keywords : lsp_svec.Vec
+      (lsp_frame_core.lsp-split-spaces (lsp_frame_core.lsp-completion-keywords))]
+    [builtins : lsp_svec.Vec
+      (lsp_frame_core.lsp-split-spaces (lsp_frame_core.lsp-completion-builtins))]
+    [types : lsp_svec.Vec
+      (lsp_frame_core.lsp-split-spaces (lsp_frame_core.lsp-completion-types))]
     (and
       (lsp-smoke-string-vec-contains? names "square")
       (lsp-smoke-string-vec-contains? names "answer")
@@ -270,18 +288,18 @@
       found)))
 
 (define (lsp-transcript-frame [body : String]) : String
-  (lsp-str5
+  (lsp_frame_core.lsp-str5
     "Content-Length: "
     (string.int->string (string.string-length body))
     "\r\n\r\n"
     body
     ""))
 
-(define (lsp-transcript-run [input : String]) : LspTranscriptResult
-  (lsp-frame-run-transcript (& input) (lsp_svec.new) false))
+(define (lsp-transcript-run [input : String]) : lsp_frame_core.LspTranscriptResult
+  (lsp_frame_core.lsp-frame-run-transcript (& input) (lsp_svec.new) false))
 
 (define (lsp-transcript-result-contains?
-  [result : LspTranscriptResult]
+  [result : lsp_frame_core.LspTranscriptResult]
   [needle : String]) : bool
   (string.contains (& (struct-get result stdout)) (& needle)))
 
@@ -302,15 +320,15 @@
 
 (define (lsp-transcript-framing-smoke-ok?) : bool
   (let
-    [clean : LspTranscriptResult (lsp-transcript-run "")]
-    [unterminated : LspTranscriptResult
+    [clean : lsp_frame_core.LspTranscriptResult (lsp-transcript-run "")]
+    [unterminated : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run "Content-Length: 2")]
-    [missing : LspTranscriptResult (lsp-transcript-run "\r\n")]
-    [invalid : LspTranscriptResult
+    [missing : lsp_frame_core.LspTranscriptResult (lsp-transcript-run "\r\n")]
+    [invalid : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run "Content-Length: nope\r\n\r\n")]
-    [truncated : LspTranscriptResult
+    [truncated : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run "Content-Length: 5\r\n\r\n{}")]
-    [malformed : LspTranscriptResult
+    [malformed : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run (lsp-transcript-frame "{]"))]
     [parse-code : String "\"code\":-32700"]
     (and
@@ -348,7 +366,7 @@
         (string.append
           (lsp-transcript-frame shutdown)
           (lsp-transcript-frame exit)))]
-    [ordered : LspTranscriptResult (lsp-transcript-run input)]
+    [ordered : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [out : String (struct-get ordered stdout)]
     [first-id : String "\"id\":41"]
     [second-id : String "\"id\":42"]
@@ -360,7 +378,7 @@
       (string.append
         (lsp-transcript-frame next-initialize)
         (lsp-transcript-frame exit))]
-    [next : LspTranscriptResult (lsp-transcript-run next-input)]
+    [next : lsp_frame_core.LspTranscriptResult (lsp-transcript-run next-input)]
     [old-id : String "\"id\":41"]
     [new-id : String "\"id\":3"]
     (and
@@ -373,7 +391,7 @@
       (not (lsp-transcript-result-contains? next old-id)))))
 
 (define (lsp-transcript-did-open [uri : String] [text : String]) : String
-  (lsp-str7
+  (lsp_frame_core.lsp-str7
     "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\""
     uri
     "\",\"languageId\":\"typelisp\",\"version\":1,\"text\":\""
@@ -386,7 +404,7 @@
   [uri : String]
   [text : String]
   [version : i64]) : String
-  (lsp-str7
+  (lsp_frame_core.lsp-str7
     "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\""
     uri
     "\",\"version\":"
@@ -396,14 +414,14 @@
     "\"}]}}"))
 
 (define (lsp-transcript-check [uri : String] [id : i64]) : String
-  (lsp-str5
+  (lsp_frame_core.lsp-str5
     "{\"jsonrpc\":\"2.0\",\"id\":"
     (string.int->string id)
     ",\"method\":\"tl/check\",\"params\":{\"uri\":\""
     uri
     "\"}}"))
 
-(define (lsp-transcript-check-session [uri : String] [text : String] [id : i64]) : LspTranscriptResult
+(define (lsp-transcript-check-session [uri : String] [text : String] [id : i64]) : lsp_frame_core.LspTranscriptResult
   (let
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
@@ -417,19 +435,20 @@
 (define (lsp-transcript-reset-leakage-smoke-ok?) : bool
   (let
     [path : String "target/lsp_transcript_reset_missing.tl"]
-    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
     [valid-source : String "(define (same) : i64 1)"]
     [invalid-source : String "(define (same) : i64 true)"]
-    [first : LspTranscriptResult
+    [first : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-check-session uri valid-source 71)]
-    [second : LspTranscriptResult
+    [second : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-check-session uri invalid-source 72)]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [missing-input : String
       (string.append
         (lsp-transcript-frame (lsp-transcript-check uri 73))
         (lsp-transcript-frame exit))]
-    [missing : LspTranscriptResult (lsp-transcript-run missing-input)]
+    [missing : lsp_frame_core.LspTranscriptResult
+      (lsp-transcript-run missing-input)]
     [success : String "\"success\":true"]
     [failure : String "\"success\":false"]
     [unreadable : String "Could not read document"]
@@ -440,16 +459,17 @@
       (lsp-transcript-result-contains? second failure)
       (= (struct-get missing status) 0)
       (lsp-transcript-result-contains? missing unreadable)
-      (not lsp-frame-memory-active)
-      (= lsp-document-cache-arena 0))))
+      (not lsp_frame_core.lsp-frame-memory-active)
+      (= lsp_frame_core.lsp-document-cache-arena 0))))
 
 (define (lsp-multiple-diagnostics-smoke-ok?) : bool
   (let
     [path : String "target/lsp_multiple_diagnostics.tl"]
-    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
     [source : String
       "(define (a) : i64 missing-a) (define (b) : i64 missing-b) (define (main) : i64 0)"]
-    [result : LspTranscriptResult (lsp-transcript-check-session uri source 74)]
+    [result : lsp_frame_core.LspTranscriptResult
+      (lsp-transcript-check-session uri source 74)]
     [compiler-source : String "\"source\":\"typelisp\""]
     (and
       (= (struct-get result status) 0)
@@ -464,23 +484,21 @@
     [root-path : String "target/lsp_multi_root.tl"]
     [dep-a-path : String "target/lsp_multi_dep_a.tl"]
     [dep-b-path : String "target/lsp_multi_dep_b.tl"]
-    [root-uri : String (lsp-resolved-path-to-file-uri root-path)]
-    [dep-a-uri : String (lsp-resolved-path-to-file-uri dep-a-path)]
-    [dep-b-uri : String (lsp-resolved-path-to-file-uri dep-b-path)]
+    [root-uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri root-path)]
+    [dep-a-uri : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri dep-a-path)]
+    [dep-b-uri : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri dep-b-path)]
     [source : String
-      "(import \\\"lsp_multi_dep_a.tl\\\")\\n(import \\\"lsp_multi_dep_b.tl\\\")\\n(define (main) : i64 0)"]
+      "(import lsp_multi_dep_a)\\n(import lsp_multi_dep_b)\\n(define (main) : i64 0)"]
     [valid-source : String "(define (main) : i64 0)"]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
         [(io.ErrIoUnit _) unit])
-      (lsp-smoke-write-text
-        dep-a-path
-        "(module dep-a)\n(define broken-a : i64 true)")
-      (lsp-smoke-write-text
-        dep-b-path
-        "(module dep-b)\n(define broken-b : i64 \"bad\")")
+      (lsp-smoke-write-text dep-a-path "(define broken-a : i64 true)")
+      (lsp-smoke-write-text dep-b-path "(define broken-b : i64 \"bad\")")
       (let
         [input : String
           (string.append
@@ -489,7 +507,7 @@
               (lsp-transcript-frame
                 (lsp-transcript-did-change root-uri valid-source 2))
               (lsp-transcript-frame exit)))]
-        [result : LspTranscriptResult (lsp-transcript-run input)]
+        [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
         [out : String (struct-get result stdout)]
         [message-a : String
           "typecheck: value definition type mismatch: expected i64, found bool"]
@@ -507,14 +525,14 @@
   (let
     [home : i64 (arena.tl_arena_current)]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
-    [result : LspTranscriptResult
+    [result : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run (lsp-transcript-frame exit))]
     (and
       (= (arena.tl_arena_current) home)
       (= (struct-get result status) 0)
       (string.eq (struct-get result stdout) "")
       (string.eq (struct-get result stderr) "")
-      (not lsp-frame-memory-active))))
+      (not lsp_frame_core.lsp-frame-memory-active))))
 
 (define (lsp-inlay-smoke-ok?) : bool
   (let
@@ -526,18 +544,19 @@
     (if (or (< total-off 0) (< typed-off 0) (< next-off 0))
       false
       (begin
-        (tc-inlay-hints-enable!)
-        (tc-inlay-hint-record! 1 (+ total-off 1) "i64")
-        (tc-inlay-hint-record! 1 (+ typed-off 1) "i64")
-        (tc-inlay-hint-record! 1 (+ next-off 1) "i64")
+        (tc_core.tc-inlay-hints-enable!)
+        (tc_core.tc-inlay-hint-record! 1 (+ total-off 1) "i64")
+        (tc_core.tc-inlay-hint-record! 1 (+ typed-off 1) "i64")
+        (tc_core.tc-inlay-hint-record! 1 (+ next-off 1) "i64")
         (let
-          [hints : json.JsonSeq (lsp-inlay-build src 0 0)]
-          [rendered : String (json.stringify (lsp-json-array hints))]
+          [hints : json.JsonSeq (lsp_frame_core.lsp-inlay-build src 0 0)]
+          [rendered : String
+            (json.stringify (lsp_frame_core.lsp-json-array hints))]
           [type-label : String "\": i64\""]
           [total-pos : String "\"character\":33"]
           [next-pos : String "\"character\":59"]
           (begin
-            (tc-inlay-hints-disable!)
+            (tc_core.tc-inlay-hints-disable!)
             (and
               (= (json.list-count hints) 2)
               (string.contains (& rendered) (& type-label))
@@ -547,11 +566,12 @@
 (define (lsp-formatting-smoke-ok?) : bool
   (let
     [messy : String "(define   (f)  :  i64   (+ 1   2))"]
-    (match (format-rules-render-source-width-result messy 80)
+    (match (format_rules.format-rules-render-source-width-result messy 80)
       [(ResultFormatString.Ok formatted)
         (let
           [rendered : String
-            (json.stringify (lsp-formatting-edit messy formatted))]
+            (json.stringify
+              (lsp_frame_core.lsp-formatting-edit messy formatted))]
           [sig : String "(define (f) : i64"]
           [newtext-key : String "\"newText\""]
           [range-key : String "\"range\""]
@@ -565,8 +585,8 @@
   (let
     [messy : String "(define   (f)  :  i64   (+ 1   2))"]
     [invalid : String "(define (f) : i64"]
-    [formatted : String (lsp-format-edit-text messy)]
-    [fallback : String (lsp-format-edit-text invalid)]
+    [formatted : String (lsp_frame_core.lsp-format-edit-text messy)]
+    [fallback : String (lsp_frame_core.lsp-format-edit-text invalid)]
     [sig : String "(define (f) : i64"]
     (and
       (string.contains (& formatted) (& sig))
@@ -578,13 +598,13 @@
     [ok-src : String "(define (main) : i64 42)"]
     [bad-src : String "(define (main) : i64 (+ 1 \"two\"))"]
     [ok-result : bool
-      (match (compiler-check-source "ok.tl" ok-src)
-        [(ResultCompilerCheck.Ok _) true]
-        [(ResultCompilerCheck.Err _) false])]
+      (match (check_core.compiler-check-source "ok.tl" ok-src)
+        [(check_core.ResultCompilerCheck.Ok _) true]
+        [(check_core.ResultCompilerCheck.Err _) false])]
     [bad-result : bool
-      (match (compiler-check-source "bad.tl" bad-src)
-        [(ResultCompilerCheck.Ok _) false]
-        [(ResultCompilerCheck.Err _) true])]
+      (match (check_core.compiler-check-source "bad.tl" bad-src)
+        [(check_core.ResultCompilerCheck.Ok _) false]
+        [(check_core.ResultCompilerCheck.Err _) true])]
     (and ok-result bad-result)))
 
 (define (lsp-get-type-smoke-ok?) : bool
@@ -595,36 +615,41 @@
     (if (< total-off 0)
       false
       (begin
-        (tc-inlay-hints-enable!)
-        (match (compiler-check-source "test.tl" src)
-          [(ResultCompilerCheck.Ok _) unit]
-          [(ResultCompilerCheck.Err _) unit])
+        (tc_core.tc-inlay-hints-enable!)
+        (match (check_core.compiler-check-source "test.tl" src)
+          [(check_core.ResultCompilerCheck.Ok _) unit]
+          [(check_core.ResultCompilerCheck.Err _) unit])
         (let
-          [size : i64 (tc-inlay-hints-size)]
+          [size : i64 (tc_core.tc-inlay-hints-size)]
           [i : i64 0]
           [found-ok : bool false]
           [near-ok : bool false]
           (begin
             (while (and (< i size) (not found-ok))
               (let
-                [hint-line : i64 (tc-inlay-hint-line-at i)]
-                [hint-col : i64 (tc-inlay-hint-col-at i)]
+                [hint-line : i64 (tc_core.tc-inlay-hint-line-at i)]
+                [hint-col : i64 (tc_core.tc-inlay-hint-col-at i)]
                 [target-line : i64 1]
                 [target-col : i64 (+ total-off 1)]
                 (begin
                   (if (and (= hint-line target-line) (= hint-col target-col))
-                    (set! found-ok (string.eq (tc-inlay-hint-type-at i) "i32"))
+                    (set!
+                      found-ok
+                      (string.eq (tc_core.tc-inlay-hint-type-at i) "i32"))
                     unit)
                   (set! i (+ i 1)))))
             (let
               [near-idx : i64
-                (lsp-nearest-inlay-hint-index src 1 (+ total-off 3))]
+                (lsp_frame_core.lsp-nearest-inlay-hint-index
+                  src
+                  1
+                  (+ total-off 3))]
               (if (>= near-idx 0)
                 (set!
                   near-ok
-                  (string.eq (tc-inlay-hint-type-at near-idx) "i32"))
+                  (string.eq (tc_core.tc-inlay-hint-type-at near-idx) "i32"))
                 unit))
-            (tc-inlay-hints-disable!)
+            (tc_core.tc-inlay-hints-disable!)
             (and found-ok near-ok)))))))
 
 (define (lsp-find-references-smoke-ok?) : bool
@@ -632,13 +657,13 @@
     [src : String
       "(define (foo [x : i64]) : i64 x) (define (bar) : i64 (foo 1))"]
     [refs : json.JsonSeq
-      (lsp-find-references-in-text
+      (lsp_frame_core.lsp-find-references-in-text
         src
         "foo"
         0
         (string.string-length src)
         (json.list-empty))]
-    [rendered : String (json.stringify (lsp-json-array refs))]
+    [rendered : String (json.stringify (lsp_frame_core.lsp-json-array refs))]
     [count-ok : bool (= (json.list-count refs) 2)]
     [needle0 : String "\"line\":0"]
     [line0-ok : bool (string.contains (& rendered) (& needle0))]
@@ -650,28 +675,40 @@
     [path : String "/tmp/cache.tl"]
     [docs0 : lsp_document_vec.Vec (lsp_document_vec.new)]
     [docs1 : lsp_document_vec.Vec
-      (lsp-documents-set docs0 uri path "" (lsp-diagnostic-uris-single uri))]
-    [doc1 : LspDocument
-      (lsp_document_vec.get (& docs1) 0 (lsp-document-fallback))]
-    [empty-decls : lsp_decl_vec.Vec (lsp-document-decls doc1 docs1)]
-    [cached-empty-doc : LspDocument
-      (lsp_document_vec.get (& docs1) 0 (lsp-document-fallback))]
+      (lsp_frame_core.lsp-documents-set
+        docs0
+        uri
+        path
+        ""
+        (lsp_frame_core.lsp-diagnostic-uris-single uri))]
+    [doc1 : lsp_vector_families.LspDocument
+      (lsp_document_vec.get (& docs1) 0 (lsp_frame_core.lsp-document-fallback))]
+    [empty-decls : lsp_decl_vec.Vec
+      (lsp_frame_core.lsp-document-decls doc1 docs1)]
+    [cached-empty-doc : lsp_vector_families.LspDocument
+      (lsp_document_vec.get (& docs1) 0 (lsp_frame_core.lsp-document-fallback))]
     [docs2 : lsp_document_vec.Vec
-      (lsp-documents-set docs1 uri path "" (lsp-diagnostic-uris-single "diag"))]
-    [same-text-doc : LspDocument
-      (lsp_document_vec.get (& docs2) 0 (lsp-document-fallback))]
+      (lsp_frame_core.lsp-documents-set
+        docs1
+        uri
+        path
+        ""
+        (lsp_frame_core.lsp-diagnostic-uris-single "diag"))]
+    [same-text-doc : lsp_vector_families.LspDocument
+      (lsp_document_vec.get (& docs2) 0 (lsp_frame_core.lsp-document-fallback))]
     [docs3 : lsp_document_vec.Vec
-      (lsp-documents-set
+      (lsp_frame_core.lsp-documents-set
         docs2
         uri
         path
         "(define cached : i64 1)"
-        (lsp-diagnostic-uris-single "diag"))]
-    [changed-doc : LspDocument
-      (lsp_document_vec.get (& docs3) 0 (lsp-document-fallback))]
-    [changed-decls : lsp_decl_vec.Vec (lsp-document-decls changed-doc docs3)]
-    [cached-changed-doc : LspDocument
-      (lsp_document_vec.get (& docs3) 0 (lsp-document-fallback))]
+        (lsp_frame_core.lsp-diagnostic-uris-single "diag"))]
+    [changed-doc : lsp_vector_families.LspDocument
+      (lsp_document_vec.get (& docs3) 0 (lsp_frame_core.lsp-document-fallback))]
+    [changed-decls : lsp_decl_vec.Vec
+      (lsp_frame_core.lsp-document-decls changed-doc docs3)]
+    [cached-changed-doc : lsp_vector_families.LspDocument
+      (lsp_document_vec.get (& docs3) 0 (lsp_frame_core.lsp-document-fallback))]
     (and
       (= (lsp_decl_vec.len (& empty-decls)) 0)
       (struct-get cached-empty-doc decls-valid)
@@ -685,16 +722,16 @@
   (let
     [dir : String "target"]
     [path : String "target/lsp_disk_resync_smoke.tl"]
-    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
     [stale-text : String "(define stale : i64 0)"]
     [disk-text : String "(define fresh : i64 1)"]
     [overlay-text : String "(define overlay : i64 2)"]
     [fresh-name : String "fresh"]
     [overlay-name : String "overlay"]
     [params : json.Json
-      (lsp-json-object1
+      (lsp_frame_core.lsp-json-object1
         "textDocument"
-        (lsp-json-object1 "uri" (json.JsonString uri)))]
+        (lsp_frame_core.lsp-json-object1 "uri" (json.JsonString uri)))]
     [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
@@ -703,63 +740,78 @@
       (lsp-smoke-write-text path disk-text)
       (set!
         docs
-        (lsp-documents-set
+        (lsp_frame_core.lsp-documents-set
           docs
           uri
           path
           stale-text
-          (lsp-diagnostic-uris-single uri)))
+          (lsp_frame_core.lsp-diagnostic-uris-single uri)))
       (let
         [lookup-ok : bool
-          (match (lsp-get-document params docs)
-            [(LspDocumentLookup.Found _ text _)
+          (match (lsp_frame_core.lsp-get-document params docs)
+            [(lsp_frame_core.LspDocumentLookup.Found _ text _)
               (string.contains (& text) (& fresh-name))]
-            [(LspDocumentLookup.Missing) false])]
-        [cached-doc : LspDocument
-          (lsp_document_vec.get (& docs) 0 (lsp-document-fallback))]
+            [(lsp_frame_core.LspDocumentLookup.Missing) false])]
+        [cached-doc : lsp_vector_families.LspDocument
+          (lsp_document_vec.get
+            (& docs)
+            0
+            (lsp_frame_core.lsp-document-fallback))]
         [cache-ok : bool
           (and
             (string.contains (& (struct-get cached-doc text)) (& fresh-name))
             (not (struct-get cached-doc decls-valid)))]
         [decls-ok : bool
-          (match (lsp-get-document-decls params docs)
-            [(LspDocumentDeclsLookup.Found _ text _ decls)
+          (match (lsp_frame_core.lsp-get-document-decls params docs)
+            [(lsp_frame_core.LspDocumentDeclsLookup.Found _ text _ decls)
               (let
-                [entry : LspDeclEntry
-                  (lsp_decl_vec.get (& decls) 0 (lsp-decl-entry-fallback))]
+                [entry : lsp_vector_families.LspDeclEntry
+                  (lsp_decl_vec.get
+                    (& decls)
+                    0
+                    (lsp_frame_core.lsp-decl-entry-fallback))]
                 (and
                   (string.contains (& text) (& fresh-name))
                   (= (lsp_decl_vec.len (& decls)) 1)
                   (string.eq (struct-get entry name) fresh-name)))]
-            [(LspDocumentDeclsLookup.Missing) false])]
-        [cached-decls-doc : LspDocument
-          (lsp_document_vec.get (& docs) 0 (lsp-document-fallback))]
+            [(lsp_frame_core.LspDocumentDeclsLookup.Missing) false])]
+        [cached-decls-doc : lsp_vector_families.LspDocument
+          (lsp_document_vec.get
+            (& docs)
+            0
+            (lsp_frame_core.lsp-document-fallback))]
         [versioned-docs : lsp_document_vec.Vec
-          (lsp-documents-set-versioned
+          (lsp_frame_core.lsp-documents-set-versioned
             (lsp_document_vec.new)
             uri
             path
             overlay-text
             7
-            (lsp-diagnostic-uris-single uri))]
+            (lsp_frame_core.lsp-diagnostic-uris-single uri))]
         [versioned-lookup-ok : bool
-          (match (lsp-get-document params versioned-docs)
-            [(LspDocumentLookup.Found _ text _)
+          (match (lsp_frame_core.lsp-get-document params versioned-docs)
+            [(lsp_frame_core.LspDocumentLookup.Found _ text _)
               (string.contains (& text) (& overlay-name))]
-            [(LspDocumentLookup.Missing) false])]
+            [(lsp_frame_core.LspDocumentLookup.Missing) false])]
         [versioned-decls-ok : bool
-          (match (lsp-get-document-decls params versioned-docs)
-            [(LspDocumentDeclsLookup.Found _ text _ decls)
+          (match (lsp_frame_core.lsp-get-document-decls params versioned-docs)
+            [(lsp_frame_core.LspDocumentDeclsLookup.Found _ text _ decls)
               (let
-                [entry : LspDeclEntry
-                  (lsp_decl_vec.get (& decls) 0 (lsp-decl-entry-fallback))]
+                [entry : lsp_vector_families.LspDeclEntry
+                  (lsp_decl_vec.get
+                    (& decls)
+                    0
+                    (lsp_frame_core.lsp-decl-entry-fallback))]
                 (and
                   (string.contains (& text) (& overlay-name))
                   (= (lsp_decl_vec.len (& decls)) 1)
                   (string.eq (struct-get entry name) overlay-name)))]
-            [(LspDocumentDeclsLookup.Missing) false])]
-        [versioned-cached-doc : LspDocument
-          (lsp_document_vec.get (& versioned-docs) 0 (lsp-document-fallback))]
+            [(lsp_frame_core.LspDocumentDeclsLookup.Missing) false])]
+        [versioned-cached-doc : lsp_vector_families.LspDocument
+          (lsp_document_vec.get
+            (& versioned-docs)
+            0
+            (lsp_frame_core.lsp-document-fallback))]
         (and
           lookup-ok
           cache-ok
@@ -775,48 +827,57 @@
   (let
     [dir : String "target"]
     [path : String "target/lsp_edit_save_doc_smoke.tl"]
-    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
     [initial : String "(define (main) : i64 1)"]
     [updated : String "(define (main) : i64 42)"]
     [docs : lsp_document_vec.Vec
-      (lsp-documents-set
+      (lsp_frame_core.lsp-documents-set
         (lsp_document_vec.new)
         uri
         path
         initial
-        (lsp-diagnostic-uris-single uri))]
+        (lsp_frame_core.lsp-diagnostic-uris-single uri))]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
         [(io.ErrIoUnit _) unit])
-      (match (lsp-tl-save-doc
+      (match (lsp_frame_core.lsp-tl-save-doc
         docs
         uri
         path
-        (lsp-diagnostic-uris-single uri)
+        (lsp_frame_core.lsp-diagnostic-uris-single uri)
         updated)
-        [(LspSaveResult.Ok next-docs)
+        [(lsp_frame_core.LspSaveResult.Ok next-docs)
           (let
             [disk-text : String (byte_buf.to-string (io.read-file path))]
-            [cached-doc : LspDocument
-              (lsp_document_vec.get (& next-docs) 0 (lsp-document-fallback))]
+            [cached-doc : lsp_vector_families.LspDocument
+              (lsp_document_vec.get
+                (& next-docs)
+                0
+                (lsp_frame_core.lsp-document-fallback))]
             (and
               (string.eq disk-text updated)
               (string.eq (struct-get cached-doc text) updated)
               (not (struct-get cached-doc decls-valid))))]
-        [(LspSaveResult.Err _) false]))))
+        [(lsp_frame_core.LspSaveResult.Err _) false]))))
 
 (define (lsp-scan-decls-cache-local-smoke-ok?) : bool
   (let
     [first : String "(define (alpha) : i64 1)"]
     [second : String
       ";; one\n;; two\n;; three\n\n(define (wide) : i64 2)\n(define (next) : i64 3)"]
-    [first-decls : lsp_decl_vec.Vec (lsp-scan-decls first)]
-    [second-decls : lsp_decl_vec.Vec (lsp-scan-decls second)]
-    [wide : LspDeclEntry
-      (lsp_decl_vec.get (& second-decls) 0 (lsp-decl-entry-fallback))]
-    [next : LspDeclEntry
-      (lsp_decl_vec.get (& second-decls) 1 (lsp-decl-entry-fallback))]
+    [first-decls : lsp_decl_vec.Vec (lsp_frame_core.lsp-scan-decls first)]
+    [second-decls : lsp_decl_vec.Vec (lsp_frame_core.lsp-scan-decls second)]
+    [wide : lsp_vector_families.LspDeclEntry
+      (lsp_decl_vec.get
+        (& second-decls)
+        0
+        (lsp_frame_core.lsp-decl-entry-fallback))]
+    [next : lsp_vector_families.LspDeclEntry
+      (lsp_decl_vec.get
+        (& second-decls)
+        1
+        (lsp_frame_core.lsp-decl-entry-fallback))]
     (and
       (= (lsp_decl_vec.len (& first-decls)) 1)
       (= (lsp_decl_vec.len (& second-decls)) 2)
@@ -835,8 +896,10 @@
   (let
     [source : String
       "(define (fun) : i64 1)\n(define value : i64 2)\n(defstruct Pair (x i64))\n(defenum Choice (Yes))\n(defmacro make [] unit)\n(defdispatch choose [] fun)\n(extern (puts [s : ptr]) : i64)\n(extern errno : i64)\n;; (define hidden : i64 0)\n(define text : String \"(defstruct Hidden)\")"]
-    [rendered : String (json.stringify (lsp-document-symbols-for-text source))]
-    [capabilities : String (json.stringify (lsp-initialize-result))]
+    [rendered : String
+      (json.stringify (lsp_frame_core.lsp-document-symbols-for-text source))]
+    [capabilities : String
+      (json.stringify (lsp_frame_core.lsp-initialize-result))]
     [fun : String
       "{\"name\":\"fun\",\"kind\":12,\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":22}},\"selectionRange\":{\"start\":{\"line\":0,\"character\":9},\"end\":{\"line\":0,\"character\":12}}}"]
     [value : String
@@ -871,14 +934,18 @@
       "(define foo : i64 1)\n(define foo-bar : i64 foo)\n(define qualified : i64 mod.foo)\n(define another : i64 mod.foo)\n; foo mod.foo\n(define text : String \"foo mod.foo\")\n(define f : char 'f')\n(define punct : i64 foo?)"]
     [foo : String
       (json.stringify
-        (lsp-json-array (lsp-document-highlights-in-text source "foo")))]
+        (lsp_frame_core.lsp-json-array
+          (lsp_frame_core.lsp-document-highlights-in-text source "foo")))]
     [qualified : String
       (json.stringify
-        (lsp-json-array (lsp-document-highlights-in-text source "mod.foo")))]
+        (lsp_frame_core.lsp-json-array
+          (lsp_frame_core.lsp-document-highlights-in-text source "mod.foo")))]
     [letter : String
       (json.stringify
-        (lsp-json-array (lsp-document-highlights-in-text source "f")))]
-    [capabilities : String (json.stringify (lsp-initialize-result))]
+        (lsp_frame_core.lsp-json-array
+          (lsp_frame_core.lsp-document-highlights-in-text source "f")))]
+    [capabilities : String
+      (json.stringify (lsp_frame_core.lsp-initialize-result))]
     [foo-want : String
       "[{\"range\":{\"start\":{\"line\":0,\"character\":8},\"end\":{\"line\":0,\"character\":11}},\"kind\":1},{\"range\":{\"start\":{\"line\":1,\"character\":22},\"end\":{\"line\":1,\"character\":25}},\"kind\":1}]"]
     [qualified-want : String
@@ -892,17 +959,25 @@
       (string.eq qualified qualified-want)
       (string.eq letter letter-want)
       (string.eq
-        (lsp-code-symbol-at-offset source (lsp-offset-at-position source 2 25))
+        (lsp_frame_core.lsp-code-symbol-at-offset
+          source
+          (lsp_frame_core.lsp-offset-at-position source 2 25))
         "mod.foo")
       (string.eq
-        (lsp-code-symbol-at-offset source (lsp-offset-at-position source 4 3))
+        (lsp_frame_core.lsp-code-symbol-at-offset
+          source
+          (lsp_frame_core.lsp-offset-at-position source 4 3))
         "")
       (string.eq
-        (lsp-code-symbol-at-offset source (lsp-offset-at-position source 5 24))
+        (lsp_frame_core.lsp-code-symbol-at-offset
+          source
+          (lsp_frame_core.lsp-offset-at-position source 5 24))
         ""))))
 
 (define (lsp-fold-render [source : String]) : String
-  (json.stringify (lsp-json-array (lsp-folding-ranges-in-text source))))
+  (json.stringify
+    (lsp_frame_core.lsp-json-array
+      (lsp_frame_core.lsp-folding-ranges-in-text source))))
 
 ;; Multiline forms fold from just after the opener to just before the closer;
 ;; single-line forms produce nothing.
@@ -912,7 +987,8 @@
       "(define (fun) : i64\n  (+ 1\n     2))\n(define small : i64 1)"]
     [want : String
       "[{\"startLine\":0,\"startCharacter\":1,\"endLine\":2,\"endCharacter\":7},{\"startLine\":1,\"startCharacter\":3,\"endLine\":2,\"endCharacter\":6}]"]
-    [capabilities : String (json.stringify (lsp-initialize-result))]
+    [capabilities : String
+      (json.stringify (lsp_frame_core.lsp-initialize-result))]
     [capability : String "\"foldingRangeProvider\":true"]
     (and
       (string.contains (& capabilities) (& capability))
@@ -1003,9 +1079,9 @@
   (let
     [depth : i64 2000]
     [nested : json.JsonSeq
-      (lsp-folding-ranges-in-text (lsp-fold-nested-source depth))]
+      (lsp_frame_core.lsp-folding-ranges-in-text (lsp-fold-nested-source depth))]
     [wide : json.JsonSeq
-      (lsp-folding-ranges-in-text (lsp-fold-wide-source depth))]
+      (lsp_frame_core.lsp-folding-ranges-in-text (lsp-fold-wide-source depth))]
     [outermost : String
       "{\"startLine\":0,\"startCharacter\":1,\"endLine\":3999,\"endCharacter\":0}"]
     [first-sibling : String
@@ -1017,7 +1093,7 @@
       (string.eq (lsp-fold-first-json wide) first-sibling))))
 
 (define (lsp-transcript-folding-range [uri : String] [id : i64]) : String
-  (lsp-str5
+  (lsp_frame_core.lsp-str5
     "{\"jsonrpc\":\"2.0\",\"id\":"
     (string.int->string id)
     ",\"method\":\"textDocument/foldingRange\",\"params\":{\"textDocument\":{\"uri\":\""
@@ -1029,9 +1105,10 @@
 (define (lsp-folding-range-transcript-smoke-ok?) : bool
   (let
     [path : String "target/lsp_folding_range_doc.tl"]
-    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
     [missing-uri : String
-      (lsp-resolved-path-to-file-uri "target/lsp_folding_range_absent.tl")]
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        "target/lsp_folding_range_absent.tl")]
     [source : String "(define (fun) : i64\\n  1)\\n"]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
@@ -1042,7 +1119,7 @@
           (string.append
             (lsp-transcript-frame (lsp-transcript-folding-range missing-uri 82))
             (lsp-transcript-frame exit))))]
-    [result : LspTranscriptResult (lsp-transcript-run input)]
+    [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [found : String
       "\"id\":81,\"result\":[{\"startLine\":0,\"startCharacter\":1,\"endLine\":1,\"endCharacter\":3}]"]
     [empty : String "\"id\":82,\"result\":[]"]
@@ -1060,17 +1137,17 @@
     [unsupported : String
       "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"initialize\",\"params\":{\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-32\"]}}}}"]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
-    [default-result : LspTranscriptResult
+    [default-result : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run
         (string.append
           (lsp-transcript-frame missing)
           (lsp-transcript-frame exit)))]
-    [utf8-result : LspTranscriptResult
+    [utf8-result : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run
         (string.append
           (lsp-transcript-frame offered)
           (lsp-transcript-frame exit)))]
-    [fallback-result : LspTranscriptResult
+    [fallback-result : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run
         (string.append
           (lsp-transcript-frame unsupported)
@@ -1085,51 +1162,55 @@
 (define (lsp-position-encoding-conversion-smoke-ok?) : bool
   (let
     [source : String "aλ€𝄞z"]
-    [cache : LspLineColCache (LspLineColCache -1 1 1)]
+    [cache : lsp_frame_core.LspLineColCache
+      (lsp_frame_core.LspLineColCache -1 1 1)]
     [utf16-ok : bool false]
     [utf8-ok : bool false]
     (begin
-      (lsp-position-encoding-use-utf16!)
+      (lsp_frame_core.lsp-position-encoding-use-utf16!)
       (let
-        [after-two : LspLineCol (lsp-line-col-at-offset source 3)]
-        [after-three : LspLineCol
-          (lsp-line-col-cache-at-offset! (&mut cache) source 6)]
-        [after-four : LspLineCol
-          (lsp-line-col-cache-at-offset! (&mut cache) source 10)]
+        [after-two : lsp_frame_core.LspLineCol
+          (lsp_frame_core.lsp-line-col-at-offset source 3)]
+        [after-three : lsp_frame_core.LspLineCol
+          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 6)]
+        [after-four : lsp_frame_core.LspLineCol
+          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 10)]
         (set!
           utf16-ok
           (and
-            (= (lsp-offset-at-position source 0 2) 3)
-            (= (lsp-offset-at-position source 0 3) 6)
-            (= (lsp-offset-at-position source 0 4) 10)
-            (= (lsp-offset-at-position source 0 5) 10)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 2) 3)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 3) 6)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 4) 10)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 5) 10)
             (= (struct-get after-two col) 3)
             (= (struct-get after-three col) 4)
             (= (struct-get after-four col) 6))))
-      (lsp-position-encoding-use-utf8!)
-      (set! cache (LspLineColCache -1 1 1))
+      (lsp_frame_core.lsp-position-encoding-use-utf8!)
+      (set! cache (lsp_frame_core.LspLineColCache -1 1 1))
       (let
-        [after-two : LspLineCol (lsp-line-col-at-offset source 3)]
-        [after-three : LspLineCol
-          (lsp-line-col-cache-at-offset! (&mut cache) source 6)]
-        [after-four : LspLineCol
-          (lsp-line-col-cache-at-offset! (&mut cache) source 10)]
+        [after-two : lsp_frame_core.LspLineCol
+          (lsp_frame_core.lsp-line-col-at-offset source 3)]
+        [after-three : lsp_frame_core.LspLineCol
+          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 6)]
+        [after-four : lsp_frame_core.LspLineCol
+          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 10)]
         (set!
           utf8-ok
           (and
-            (= (lsp-offset-at-position source 0 3) 3)
-            (= (lsp-offset-at-position source 0 6) 6)
-            (= (lsp-offset-at-position source 0 10) 10)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 3) 3)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 6) 6)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 10) 10)
             (= (struct-get after-two col) 4)
             (= (struct-get after-three col) 7)
             (= (struct-get after-four col) 11))))
-      (lsp-position-encoding-use-utf16!)
+      (lsp_frame_core.lsp-position-encoding-use-utf16!)
       (and utf16-ok utf8-ok))))
 
 (define (lsp-position-encoding-diagnostic-smoke-ok?) : bool
   (let
     [source : String "λ€𝄞x"]
-    [span : CompilerDiagnosticSpan (CompilerDiagnosticSpan "" 1 10 1 11)]
+    [span : cdiag.CompilerDiagnosticSpan
+      (cdiag.CompilerDiagnosticSpan "" 1 10 1 11)]
     [utf16-want : String
       "\"start\":{\"line\":0,\"character\":4},\"end\":{\"line\":0,\"character\":5}"]
     [utf8-want : String
@@ -1137,31 +1218,33 @@
     [utf16-rendered : String ""]
     [utf8-rendered : String ""]
     (begin
-      (lsp-position-encoding-use-utf16!)
+      (lsp_frame_core.lsp-position-encoding-use-utf16!)
       (set!
         utf16-rendered
-        (json.stringify (lsp-range-from-compiler-span "" source span)))
-      (lsp-position-encoding-use-utf8!)
+        (json.stringify
+          (lsp_frame_core.lsp-range-from-compiler-span "" source span)))
+      (lsp_frame_core.lsp-position-encoding-use-utf8!)
       (set!
         utf8-rendered
-        (json.stringify (lsp-range-from-compiler-span "" source span)))
-      (lsp-position-encoding-use-utf16!)
+        (json.stringify
+          (lsp_frame_core.lsp-range-from-compiler-span "" source span)))
+      (lsp_frame_core.lsp-position-encoding-use-utf16!)
       (and
         (string.contains (& utf16-rendered) (& utf16-want))
         (string.contains (& utf8-rendered) (& utf8-want))))))
 
 (define (lsp-code-action-edit-seq
-  [first : CompilerDiagnosticTextEdit]
-  [second : CompilerDiagnosticTextEdit]
-  [third : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditSeq
+  [first : cdiag.CompilerDiagnosticTextEdit]
+  [second : cdiag.CompilerDiagnosticTextEdit]
+  [third : cdiag.CompilerDiagnosticTextEdit]) : cdiag.CompilerDiagnosticTextEditSeq
   (let
-    [slots : (__tl_dyn-array CompilerDiagnosticTextEdit)
-      (make-array CompilerDiagnosticTextEdit 3)]
+    [slots : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit)
+      (make-array cdiag.CompilerDiagnosticTextEdit 3)]
     (begin
       (array-set! slots 0 first)
       (array-set! slots 1 second)
       (array-set! slots 2 third)
-      (CompilerDiagnosticTextEditSeq slots 3))))
+      (cdiag.CompilerDiagnosticTextEditSeq slots 3))))
 
 ;; Compiler fixes preserve byte-accurate Unicode ranges, group multiple edits
 ;; per open document, and reject the whole fix when any target is missing or
@@ -1170,48 +1253,49 @@
   (let
     [path-a : String "target/code_action_a.tl"]
     [path-b : String "target/code_action_b.tl"]
-    [uri-a : String (lsp-resolved-path-to-file-uri path-a)]
-    [uri-b : String (lsp-resolved-path-to-file-uri path-b)]
+    [uri-a : String (lsp_frame_core.lsp-resolved-path-to-file-uri path-a)]
+    [uri-b : String (lsp_frame_core.lsp-resolved-path-to-file-uri path-b)]
     [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
-    [edits : CompilerDiagnosticTextEditSeq
+    [edits : cdiag.CompilerDiagnosticTextEditSeq
       (lsp-code-action-edit-seq
-        (compiler-diagnostic-text-edit-new
-          (CompilerDiagnosticSpan path-a 1 3 1 6)
+        (cdiag.compiler-diagnostic-text-edit-new
+          (cdiag.CompilerDiagnosticSpan path-a 1 3 1 6)
           "bar")
-        (compiler-diagnostic-text-edit-new
-          (CompilerDiagnosticSpan path-a 2 1 2 2)
+        (cdiag.compiler-diagnostic-text-edit-new
+          (cdiag.CompilerDiagnosticSpan path-a 2 1 2 2)
           "y")
-        (compiler-diagnostic-text-edit-new
-          (CompilerDiagnosticSpan path-b 1 1 1 2)
+        (cdiag.compiler-diagnostic-text-edit-new
+          (cdiag.CompilerDiagnosticSpan path-b 1 1 1 2)
           "z"))]
-    [missing-edits : CompilerDiagnosticTextEditSeq
-      (compiler-diagnostic-text-edit-single
-        (compiler-diagnostic-text-edit-new
-          (CompilerDiagnosticSpan "target/generated.tl" 1 1 1 2)
+    [missing-edits : cdiag.CompilerDiagnosticTextEditSeq
+      (cdiag.compiler-diagnostic-text-edit-single
+        (cdiag.compiler-diagnostic-text-edit-new
+          (cdiag.CompilerDiagnosticSpan "target/generated.tl" 1 1 1 2)
           "no"))]
     (begin
-      (lsp-position-encoding-use-utf16!)
+      (lsp_frame_core.lsp-position-encoding-use-utf16!)
       (set!
         docs
-        (lsp-documents-set-versioned
+        (lsp_frame_core.lsp-documents-set-versioned
           docs
           uri-a
           path-a
           "λfoo\nx"
           7
-          (lsp-diagnostic-uris-empty)))
+          (lsp_frame_core.lsp-diagnostic-uris-empty)))
       (set!
         docs
-        (lsp-documents-set-versioned
+        (lsp_frame_core.lsp-documents-set-versioned
           docs
           uri-b
           path-b
           "q"
           9
-          (lsp-diagnostic-uris-empty)))
+          (lsp_frame_core.lsp-diagnostic-uris-empty)))
       (let
         [rendered : String
-          (json.stringify (lsp-code-action-workspace-edit docs path-a edits))]
+          (json.stringify
+            (lsp_frame_core.lsp-code-action-workspace-edit docs path-a edits))]
         [utf-range : String
           "\"start\":{\"line\":0,\"character\":1},\"end\":{\"line\":0,\"character\":4}"]
         [first-version : String "\"version\":7"]
@@ -1219,22 +1303,26 @@
         [two-a-edits : String
           "\"edits\":[{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":1}},\"newText\":\"y\"},{\"range\":{\"start\":{\"line\":0,\"character\":1},\"end\":{\"line\":0,\"character\":4}},\"newText\":\"bar\"}]"]
         [unversioned : lsp_document_vec.Vec
-          (lsp-documents-set
+          (lsp_frame_core.lsp-documents-set
             (lsp_document_vec.new)
             uri-a
             path-a
             "λfoo\nx"
-            (lsp-diagnostic-uris-empty))]
+            (lsp_frame_core.lsp-diagnostic-uris-empty))]
         (and
-          (lsp-code-action-all-edits-open? docs path-a edits)
-          (not (lsp-code-action-all-edits-open? docs path-a missing-edits))
+          (lsp_frame_core.lsp-code-action-all-edits-open? docs path-a edits)
           (not
-            (lsp-code-action-all-edits-open?
+            (lsp_frame_core.lsp-code-action-all-edits-open?
+              docs
+              path-a
+              missing-edits))
+          (not
+            (lsp_frame_core.lsp-code-action-all-edits-open?
               unversioned
               path-a
-              (compiler-diagnostic-text-edit-single
-                (compiler-diagnostic-text-edit-new
-                  (CompilerDiagnosticSpan path-a 1 3 1 6)
+              (cdiag.compiler-diagnostic-text-edit-single
+                (cdiag.compiler-diagnostic-text-edit-new
+                  (cdiag.CompilerDiagnosticSpan path-a 1 3 1 6)
                   "bar"))))
           (string.contains (& rendered) (& uri-a))
           (string.contains (& rendered) (& uri-b))
@@ -1249,28 +1337,50 @@
 (define (lsp-code-action-lint-smoke-ok?) : bool
   (let
     [text : String "(define (main) : i64\n  (begin 42))"]
-    [span : AstSourceSpan (AstSourceSpan 2 3 2 13)]
-    [finding : LintFinding
-      (LintFinding
-        (lint-rule-single-begin-message)
-        (lint-rule-single-begin-id)
+    [span : ast.AstSourceSpan (ast.AstSourceSpan 2 3 2 13)]
+    [finding : lint_core.LintFinding
+      (lint_core.LintFinding
+        (lint_core.lint-rule-single-begin-message)
+        (lint_core.lint-rule-single-begin-id)
         0
         span)]
-    [slots : (__tl_dyn-array LintFinding) (make-array LintFinding 2)]
+    [slots : (__tl_dyn-array lint_core.LintFinding)
+      (make-array lint_core.LintFinding 2)]
     [request-range : json.Json
-      (lsp-json-object2 "start" (lsp-position 2 3) "end" (lsp-position 2 4))]
+      (lsp_frame_core.lsp-json-object2
+        "start"
+        (lsp_frame_core.lsp-position 2 3)
+        "end"
+        (lsp_frame_core.lsp-position 2 4))]
     [cursor-range : json.Json
-      (lsp-json-object2 "start" (lsp-position 2 3) "end" (lsp-position 2 3))]
+      (lsp_frame_core.lsp-json-object2
+        "start"
+        (lsp_frame_core.lsp-position 2 3)
+        "end"
+        (lsp_frame_core.lsp-position 2 3))]
     [adjacent-range : json.Json
-      (lsp-json-object2 "start" (lsp-position 2 2) "end" (lsp-position 2 3))]
+      (lsp_frame_core.lsp-json-object2
+        "start"
+        (lsp_frame_core.lsp-position 2 2)
+        "end"
+        (lsp_frame_core.lsp-position 2 3))]
     [far-range : json.Json
-      (lsp-json-object2 "start" (lsp-position 1 1) "end" (lsp-position 1 2))]
-    [diagnostic : json.Json (lsp-lint-finding-diagnostic text 3 0 finding)]
+      (lsp_frame_core.lsp-json-object2
+        "start"
+        (lsp_frame_core.lsp-position 1 1)
+        "end"
+        (lsp_frame_core.lsp-position 1 2))]
+    [diagnostic : json.Json
+      (lsp_frame_core.lsp-lint-finding-diagnostic text 3 0 finding)]
     [diagnostics : json.JsonSeq
-      (lsp-json-list-cons diagnostic (json.list-empty))]
+      (lsp_frame_core.lsp-json-list-cons diagnostic (json.list-empty))]
     [edit-rendered : String
       (json.stringify
-        (lsp-code-action-lint-edit "file:///lint.tl" 3 text finding))]
+        (lsp_frame_core.lsp-code-action-lint-edit
+          "file:///lint.tl"
+          3
+          text
+          finding))]
     [directive : String "\"newText\":\"  ;; lint-allow: single-begin\\n\""]
     [insertion : String
       "\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":0}"]
@@ -1278,55 +1388,58 @@
       (array-set! slots 0 finding)
       (array-set! slots 1 finding)
       (let
-        [findings : LintFindings (LintFindings slots 2)]
+        [findings : lint_core.LintFindings (lint_core.LintFindings slots 2)]
         (and
-          (match (lsp-code-action-find-diagnostic-from
+          (match (lsp_frame_core.lsp-code-action-find-diagnostic-from
             diagnostics
             request-range
             3
             "lint"
             0
             0)
-            [(LspJsonValue.Found _) true]
-            [(LspJsonValue.Missing) false])
-          (match (lsp-code-action-find-diagnostic-from
+            [(lsp_frame_core.LspJsonValue.Found _) true]
+            [(lsp_frame_core.LspJsonValue.Missing) false])
+          (match (lsp_frame_core.lsp-code-action-find-diagnostic-from
             diagnostics
             cursor-range
             3
             "lint"
             0
             0)
-            [(LspJsonValue.Found _) true]
-            [(LspJsonValue.Missing) false])
-          (match (lsp-code-action-find-diagnostic-from
+            [(lsp_frame_core.LspJsonValue.Found _) true]
+            [(lsp_frame_core.LspJsonValue.Missing) false])
+          (match (lsp_frame_core.lsp-code-action-find-diagnostic-from
             diagnostics
             adjacent-range
             3
             "lint"
             0
             0)
-            [(LspJsonValue.Found _) false]
-            [(LspJsonValue.Missing) true])
-          (match (lsp-code-action-find-diagnostic-from
+            [(lsp_frame_core.LspJsonValue.Found _) false]
+            [(lsp_frame_core.LspJsonValue.Missing) true])
+          (match (lsp_frame_core.lsp-code-action-find-diagnostic-from
             diagnostics
             request-range
             4
             "lint"
             0
             0)
-            [(LspJsonValue.Found _) false]
-            [(LspJsonValue.Missing) true])
-          (match (lsp-code-action-find-diagnostic-from
+            [(lsp_frame_core.LspJsonValue.Found _) false]
+            [(lsp_frame_core.LspJsonValue.Missing) true])
+          (match (lsp_frame_core.lsp-code-action-find-diagnostic-from
             diagnostics
             far-range
             3
             "lint"
             0
             0)
-            [(LspJsonValue.Found _) false]
-            [(LspJsonValue.Missing) true])
-          (lsp-code-action-lint-duplicate-before? findings finding 1)
-          (string.eq (lsp-code-action-newline "a\r\nb") "\r\n")
+            [(lsp_frame_core.LspJsonValue.Found _) false]
+            [(lsp_frame_core.LspJsonValue.Missing) true])
+          (lsp_frame_core.lsp-code-action-lint-duplicate-before?
+            findings
+            finding
+            1)
+          (string.eq (lsp_frame_core.lsp-code-action-newline "a\r\nb") "\r\n")
           (string.contains (& edit-rendered) (& directive))
           (string.contains (& edit-rendered) (& insertion)))))))
 
@@ -1340,27 +1453,27 @@
   (let
     [line-text : String (string.int->string line)]
     [range-prefix : String
-      (lsp-str5
+      (lsp_frame_core.lsp-str5
         "\"},\"range\":{\"start\":{\"line\":"
         line-text
         ",\"character\":3},\"end\":{\"line\":"
         line-text
         ",\"character\":4}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":")]
     [range-suffix : String
-      (lsp-str5
+      (lsp_frame_core.lsp-str5
         line-text
         ",\"character\":3},\"end\":{\"line\":"
         line-text
         ",\"character\":4}},\"severity\":1,\"source\":\"typelisp\",\"code\":\"E0201\",\"message\":\"opaque\",\"data\":{\"version\":"
         (string.int->string version))]
-    (lsp-str7
+    (lsp_frame_core.lsp-str7
       "{\"jsonrpc\":\"2.0\",\"id\":"
       (string.int->string id)
       ",\"method\":\"textDocument/codeAction\",\"params\":{\"textDocument\":{\"uri\":\""
       uri
       range-prefix
       range-suffix
-      (lsp-str5
+      (lsp_frame_core.lsp-str5
         ",\"kind\":\"compiler\",\"index\":"
         (string.int->string diagnostic-index)
         "}}],\"only\":[\""
@@ -1372,7 +1485,7 @@
 (define (lsp-code-action-transcript-smoke-ok?) : bool
   (let
     [path : String "target/lsp_code_action_doc.tl"]
-    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
     [source : String
       "(define (render-value [value : i64]) : i64\\n  value)\\n\\n(define (main) : i64\\n  (render-vaule 42))"]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
@@ -1389,7 +1502,7 @@
               (lsp-transcript-frame
                 (lsp-transcript-code-action uri 93 1 4 0 "refactor"))
               (lsp-transcript-frame exit)))))]
-    [result : LspTranscriptResult (lsp-transcript-run input)]
+    [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [action : String
       "\"id\":91,\"result\":[{\"title\":\"Replace misspelled name\",\"kind\":\"quickfix\""]
     [replacement : String "\"newText\":\"render-value\""]
@@ -1397,7 +1510,8 @@
     [stale : String "\"id\":92,\"result\":[]"]
     [filtered : String "\"id\":93,\"result\":[]"]
     [capability : String "\"codeActionKinds\":[\"quickfix\"]"]
-    [capabilities : String (json.stringify (lsp-initialize-result))]
+    [capabilities : String
+      (json.stringify (lsp_frame_core.lsp-initialize-result))]
     (and
       (= (struct-get result status) 0)
       (string.eq (struct-get result stderr) "")
@@ -1411,7 +1525,7 @@
 (define (lsp-second-diagnostic-code-action-smoke-ok?) : bool
   (let
     [path : String "target/lsp_second_code_action_doc.tl"]
-    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
     [source : String
       "(define (render-value [value : i64]) : i64\\n  value)\\n\\n(define (first) : i64\\n  (render-vaule 1))\\n\\n(define (second) : i64\\n  (render-vlaue 2))\\n\\n(define (main) : i64 0)"]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
@@ -1422,7 +1536,7 @@
           (lsp-transcript-frame
             (lsp-transcript-code-action uri 94 1 7 1 "quickfix"))
           (lsp-transcript-frame exit)))]
-    [result : LspTranscriptResult (lsp-transcript-run input)]
+    [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [out : String (struct-get result stdout)]
     [action : String
       "\"id\":94,\"result\":[{\"title\":\"Replace misspelled name\",\"kind\":\"quickfix\""]
@@ -1459,10 +1573,12 @@
     [create-path : String "target/lsp_workspace_index/b/create.tl"]
     [refresh-path : String "target/lsp_workspace_index/b/refresh.tl"]
     [single-path : String "target/lsp_workspace_index/single.tl"]
-    [root-a-uri : String (lsp-resolved-path-to-file-uri root-a)]
-    [root-a-src-uri : String (lsp-resolved-path-to-file-uri root-a-src)]
-    [root-b-uri : String (lsp-resolved-path-to-file-uri root-b)]
-    [workspace-capabilities : String (json.stringify (lsp-initialize-result))]
+    [root-a-uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri root-a)]
+    [root-a-src-uri : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri root-a-src)]
+    [root-b-uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri root-b)]
+    [workspace-capabilities : String
+      (json.stringify (lsp_frame_core.lsp-initialize-result))]
     [workspace-capability : String
       "\"workspaceFolders\":{\"supported\":true,\"changeNotifications\":true}"]
     [roots : lsp_svec.Vec (lsp_svec.new)]
@@ -1502,9 +1618,9 @@
         (lsp_svec.push (&mut roots) root-a-src-uri)
         (lsp_svec.push (&mut roots) root-b-uri)
         (lsp_svec.push (&mut roots) "https://example.invalid/workspace"))]
-    [single-state : LspServerState
+    [single-state : lsp_vector_families.LspServerState
       (lsp-smoke-state-with-overlay
-        (lsp-server-state-new)
+        (lsp_frame_core.lsp-server-state-new)
         single-path
         "(define single-value : i64 7)"
         1)]
@@ -1516,9 +1632,17 @@
             (let
               [suffix : String (string.int->string open-index)]
               [path : String
-                (lsp-str4 "target/lsp_workspace_index/single-" suffix "" ".tl")]
+                (lsp_frame_core.lsp-str4
+                  "target/lsp_workspace_index/single-"
+                  suffix
+                  ""
+                  ".tl")]
               [text : String
-                (lsp-str4 "(define single-value-" suffix " : i64 " "7)")]
+                (lsp_frame_core.lsp-str4
+                  "(define single-value-"
+                  suffix
+                  " : i64 "
+                  "7)")]
               (begin
                 (set!
                   single-state
@@ -1532,7 +1656,9 @@
           (= (lsp-smoke-state-root-count (& single-state)) 0)
           (= (lsp_document_vec.len (& (struct-get single-state documents))) 17)
           (= (lsp-smoke-state-source-count (& single-state)) 17)
-          (= (lsp-server-state-declaration-count (& single-state)) 17)
+          (=
+            (lsp_frame_core.lsp-server-state-declaration-count (& single-state))
+            17)
           (= (lsp-smoke-state-name-count (& single-state) "single-value-16") 1)
           (lsp-smoke-state-row-matches?
             (& single-state)
@@ -1545,13 +1671,14 @@
           (begin
             (io.print-error "workspace index smoke: single-file mode\n")
             (set! ok false)))
-        (lsp-server-state-destroy! single-state))]
-    [state : LspServerState (lsp-smoke-initialize-state roots "")]
+        (lsp_frame_core.lsp-server-state-destroy! single-state))]
+    [state : lsp_vector_families.LspServerState
+      (lsp-smoke-initialize-state roots "")]
     (begin
       (if (and
         (= (lsp-smoke-state-root-count (& state)) 3)
         (= (lsp-smoke-state-source-count (& state)) 3)
-        (= (lsp-server-state-declaration-count (& state)) 3)
+        (= (lsp_frame_core.lsp-server-state-declaration-count (& state)) 3)
         (string.eq (lsp-smoke-state-name-at (& state) 0) "disk-value")
         (string.eq (lsp-smoke-state-name-at (& state) 1) "explicit-value")
         (string.eq (lsp-smoke-state-name-at (& state) 2) "b-value")
@@ -1680,15 +1807,21 @@
           (let
             [owner : i64 (struct-get state owner-arena)]
             [name : String
-              (lsp-str3 "refresh-value-" (string.int->string iteration) "")]
-            [source : String (lsp-str3 "(define " name " : i64 13)")]
+              (lsp_frame_core.lsp-str3
+                "refresh-value-"
+                (string.int->string iteration)
+                "")]
+            [source : String
+              (lsp_frame_core.lsp-str3 "(define " name " : i64 13)")]
             (begin
               (lsp-smoke-write-text refresh-path source)
               (set! state (lsp-smoke-state-watch state refresh-path 2))
               (if (and
                 (not (= owner (struct-get state owner-arena)))
                 (= (lsp-smoke-state-source-count (& state)) 3)
-                (= (lsp-server-state-declaration-count (& state)) 3)
+                (=
+                  (lsp_frame_core.lsp-server-state-declaration-count (& state))
+                  3)
                 (= (lsp-smoke-state-name-count (& state) name) 1)
                 (string.eq (lsp-smoke-state-name-at (& state) 2) name))
                 unit
@@ -1748,7 +1881,7 @@
           (set! ok false)))
       (let
         [fallback-roots : lsp_svec.Vec (lsp_svec.new)]
-        [fallback-state : LspServerState
+        [fallback-state : lsp_vector_families.LspServerState
           (lsp-smoke-initialize-state fallback-roots root-b-uri)]
         (begin
           (if (and
@@ -1761,14 +1894,14 @@
             (begin
               (io.print-error "workspace index smoke: rootUri fallback\n")
               (set! ok false)))
-          (lsp-server-state-destroy! fallback-state)))
-      (lsp-server-state-destroy! state)
+          (lsp_frame_core.lsp-server-state-destroy! fallback-state)))
+      (lsp_frame_core.lsp-server-state-destroy! state)
       (lsp-smoke-remove-file root-a-cycle)
       ok)))
 
 (define (main) : i64
   (let
-    [base-result : i64 (lsp-diagnostic-metadata-smoke)]
+    [base-result : i64 (lsp_frame_core.lsp-diagnostic-metadata-smoke)]
     (if (not (= base-result 42))
       base-result
       (begin

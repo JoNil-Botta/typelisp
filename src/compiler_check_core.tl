@@ -4,19 +4,24 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (cfg compile-profile (import stdlib.profile))
-(import "compiler_load.tl")
-(import "compiler_typecheck_api.tl")
+(import compiler_load)
+(import compiler_ast_types as ast)
+(import compiler_cfg_core as cfg_core)
+(import compiler_diagnostic as cdiag)
+(import compiler_symbols as csym)
+(import compiler_typecheck_api)
+(import compiler_typecheck_core as tc)
 (import compiler_builtin_ids as cbi)
 (import compiler_target_cfg_core as target_cfg)
 (import sym_i64_env)
 
 (defenum ResultCompilerCheck
-  (Ok CompilerTypecheckSummary)
-  (Err (Box CompilerDiagnosticList)))
+  (Ok tc.CompilerTypecheckSummary)
+  (Err (Box cdiag.CompilerDiagnosticList)))
 
 (defenum ResultCompilerCheckWithPaths
-  (Ok CompilerTypecheckSummary AstDeclPathList)
-  (Err (Box CompilerDiagnosticList)))
+  (Ok tc.CompilerTypecheckSummary ast.AstDeclPathList)
+  (Err (Box cdiag.CompilerDiagnosticList)))
 
 (cfg
   compile-profile
@@ -46,52 +51,52 @@
 (define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs
     target_cfg.CompilerTargetCfg.Linux
-    (compiler-cfg-empty)))
+    (cfg_core.compiler-cfg-empty)))
 
 (define (compiler-check-diagnostic-with-fallback-path
-  [diag : CompilerDiagnostic]
-  [path : String]) : CompilerDiagnostic
-  (if (string.eq (compiler-diagnostic-path diag) "")
-    (compiler-diagnostic-with-path diag path)
+  [diag : cdiag.CompilerDiagnostic]
+  [path : String]) : cdiag.CompilerDiagnostic
+  (if (string.eq (cdiag.compiler-diagnostic-path diag) "")
+    (cdiag.compiler-diagnostic-with-path diag path)
     diag))
 
 (define (compiler-check-diagnostics-with-fallback-path
-  [diagnostics : CompilerDiagnosticList]
-  [path : String]) : CompilerDiagnosticList
+  [diagnostics : cdiag.CompilerDiagnosticList]
+  [path : String]) : cdiag.CompilerDiagnosticList
   (match diagnostics
-    [(CompilerDiagnosticList.Nil) CompilerDiagnosticList.Nil]
-    [(CompilerDiagnosticList.Cons diag rest)
-      (CompilerDiagnosticList.Cons
+    [(cdiag.CompilerDiagnosticList.Nil) cdiag.CompilerDiagnosticList.Nil]
+    [(cdiag.CompilerDiagnosticList.Cons diag rest)
+      (cdiag.CompilerDiagnosticList.Cons
         (compiler-check-diagnostic-with-fallback-path diag path)
         (box
           (compiler-check-diagnostics-with-fallback-path (box-get rest) path)))]))
 
 (define (compiler-check-reset-pools!) : unit
-  (compiler-load-session-reset-pools!))
+  (compiler_load.compiler-load-session-reset-pools!))
 
 (define (compiler-check-reset-interns!) : unit
   (begin
-    (compiler-load-session-reset-interns!)
-    (compiler-typecheck-reset-intern-owned-state!)))
+    (compiler_load.compiler-load-session-reset-interns!)
+    (tc.compiler-typecheck-reset-intern-owned-state!)))
 
 (define (compiler-check-program-with-paths-cache
   [path : String]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
-    (match (typecheck-compiler-program-with-paths-cache
-      (ast-program decls)
+    (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
+      (ast.ast-program decls)
       paths
       stdlib-roots
       cache-scope)
-      [(ResultCompilerTypecheck.Ok summary)
+      [(tc.ResultCompilerTypecheck.Ok summary)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
           (ResultCompilerCheck.Ok summary))]
-      [(ResultCompilerTypecheck.Err diag)
+      [(tc.ResultCompilerTypecheck.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
           (ResultCompilerCheck.Err
@@ -102,38 +107,45 @@
 
 (define (compiler-check-loaded-with-prelude-cache
   [path : String]
-  [prelude-decls : AstDeclList]
-  [prelude-paths : AstDeclPathList]
-  [loaded : ResultCompilerLoadWithPaths]
+  [prelude-decls : ast.AstDeclList]
+  [prelude-paths : ast.AstDeclPathList]
+  [loaded : compiler_load.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheck
   (match loaded
-    [(ResultCompilerLoadWithPaths.Ok entry-decls entry-paths entry-modules _)
+    [(compiler_load.ResultCompilerLoadWithPaths.Ok
+        entry-decls
+        entry-paths
+        entry-modules
+        _)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (compiler-check-program-with-paths-cache
           path
-          (compiler-load-decl-list-append prelude-decls entry-decls)
-          (compiler-load-decl-path-list-append
+          (compiler_load.compiler-load-decl-list-append
+            prelude-decls
+            entry-decls)
+          (compiler_load.compiler-load-decl-path-list-append
             prelude-paths
-            (ast-decl-path-list-with-modules entry-paths entry-modules))
+            (ast.ast-decl-path-list-with-modules entry-paths entry-modules))
           stdlib-roots
           cache-scope))]
-    [(ResultCompilerLoadWithPaths.Err diag)
+    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))]))
+        (ResultCompilerCheck.Err
+          (cdiag.compiler-diagnostic-list-box-single diag)))]))
 
 (define (compiler-check-loaded-cache-with-paths
   [path : String]
-  [loaded : ResultCompilerLoadWithPaths]
+  [loaded : compiler_load.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheckWithPaths
   (match loaded
-    [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
+    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
       (let
-        [owned-paths : AstDeclPathList
-          (ast-decl-path-list-with-modules paths modules)]
+        [owned-paths : ast.AstDeclPathList
+          (ast.ast-decl-path-list-with-modules paths modules)]
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (match (compiler-check-program-with-paths-cache
@@ -146,19 +158,19 @@
               (ResultCompilerCheckWithPaths.Ok summary owned-paths)]
             [(ResultCompilerCheck.Err diag)
               (ResultCompilerCheckWithPaths.Err diag)])))]
-    [(ResultCompilerLoadWithPaths.Err diag)
+    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ResultCompilerCheckWithPaths.Err
-          (compiler-diagnostic-list-box-single diag)))]))
+          (cdiag.compiler-diagnostic-list-box-single diag)))]))
 
 (define (compiler-check-file-loaded-with-prelude
   [path : String]
   [stdlib-roots : svec.Vec]
-  [prelude : ResultCompilerLoadWithPaths]
+  [prelude : compiler_load.ResultCompilerLoadWithPaths]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (match prelude
-    [(ResultCompilerLoadWithPaths.Ok
+    [(compiler_load.ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
         prelude-modules
@@ -166,21 +178,22 @@
       (compiler-check-loaded-with-prelude-cache
         path
         prelude-decls
-        (ast-decl-path-list-with-modules prelude-paths prelude-modules)
-        (compiler-load-file-with-paths-and-roots-cfg
+        (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
+        (compiler_load.compiler-load-file-with-paths-and-roots-cfg
           path
           prelude-seen
           stdlib-roots
           cfgs)
         stdlib-roots
-        (compiler-typecheck-prefix-cache-scope
+        (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
           "typecheck-prefix-check"
           stdlib-roots
           cfgs))]
-    [(ResultCompilerLoadWithPaths.Err diag)
+    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))]))
+        (ResultCompilerCheck.Err
+          (cdiag.compiler-diagnostic-list-box-single diag)))]))
 
 (define (compiler-check-file-with-roots
   [path : String]
@@ -200,7 +213,7 @@
     (compiler-check-file-loaded-with-prelude
       path
       stdlib-roots
-      (compiler-load-core-macro-prelude-with-roots-cfg
+      (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
         (sym_i64_env.sym-i64-empty)
         stdlib-roots
         cfgs)
@@ -211,29 +224,29 @@
   [source : String]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-package-core-macro-prelude-with-roots-cfg
+    (match (compiler_load.compiler-load-package-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       manifest-dir
       deps
       cfgs)
-      [(ResultCompilerLoadWithPaths.Ok
+      [(compiler_load.ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
           prelude-modules
           prelude-seen)
         (let
-          [parse-identity : CompilerLoadParseIdentity
-            (compiler-load-parse-identity
+          [parse-identity : compiler_load.CompilerLoadParseIdentity
+            (compiler_load.compiler-load-parse-identity
               path
-              (compiler-load-canonical-module-id-from-path path)
-              AstMaybeModuleName.No)]
-          (match (compiler-load-parse-source-diagnostic-escaping
+              (compiler_load.compiler-load-canonical-module-id-from-path path)
+              ast.AstMaybeModuleName.No)]
+          (match (compiler_load.compiler-load-parse-source-diagnostic-escaping
             path
             source
             cfgs)
@@ -241,19 +254,21 @@
               (compiler-check-loaded-with-prelude-cache
                 path
                 prelude-decls
-                (ast-decl-path-list-with-modules prelude-paths prelude-modules)
-                (compiler-load-package-program-with-paths-and-roots-expect
+                (ast.ast-decl-path-list-with-modules
+                  prelude-paths
+                  prelude-modules)
+                (compiler_load.compiler-load-package-program-with-paths-and-roots-expect
                   path
                   program
                   prelude-seen
                   stdlib-roots
-                  AstMaybeModuleName.No
+                  ast.AstMaybeModuleName.No
                   manifest-dir
                   deps
                   cfgs
                   parse-identity)
                 stdlib-roots
-                (compiler-typecheck-prefix-cache-scope
+                (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
                   "typecheck-prefix-check"
                   stdlib-roots
                   cfgs))]
@@ -261,17 +276,18 @@
               (begin
                 (cfg compile-profile (compiler-check-profile-finish "load"))
                 (ResultCompilerCheck.Err
-                  (compiler-diagnostic-list-box-single diag)))]))]
-      [(ResultCompilerLoadWithPaths.Err diag)
+                  (cdiag.compiler-diagnostic-list-box-single diag)))]))]
+      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))])))
+          (ResultCompilerCheck.Err
+            (cdiag.compiler-diagnostic-list-box-single diag)))])))
 
 (define (compiler-check-package-entry-file-with-roots-and-cfg
   [path : String]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : compiler_load.CompilerPkgDeps]
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheckWithPaths
   (begin
@@ -279,7 +295,7 @@
     (cfg compile-profile (compiler-check-profile-start))
     (compiler-check-loaded-cache-with-paths
       path
-      (compiler-load-package-file-with-runtime-cfg
+      (compiler_load.compiler-load-package-file-with-runtime-cfg
         path
         stdlib-roots
         manifest-dir
@@ -287,7 +303,7 @@
         emit-entry
         cfgs)
       stdlib-roots
-      (compiler-typecheck-prefix-cache-scope
+      (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-check"
         stdlib-roots
         cfgs))))
@@ -307,11 +323,11 @@
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-core-macro-prelude-with-roots-cfg
+    (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       cfgs)
-      [(ResultCompilerLoadWithPaths.Ok
+      [(compiler_load.ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
           prelude-modules
@@ -319,22 +335,23 @@
         (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
-          (ast-decl-path-list-with-modules prelude-paths prelude-modules)
-          (compiler-load-source-with-paths-and-roots-cfg
+          (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
+          (compiler_load.compiler-load-source-with-paths-and-roots-cfg
             path
             source
             prelude-seen
             stdlib-roots
             cfgs)
           stdlib-roots
-          (compiler-typecheck-prefix-cache-scope
+          (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
             stdlib-roots
             cfgs))]
-      [(ResultCompilerLoadWithPaths.Err diag)
+      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))])))
+          (ResultCompilerCheck.Err
+            (cdiag.compiler-diagnostic-list-box-single diag)))])))
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-source path source)
@@ -349,16 +366,16 @@
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
       (string.eq
-        (compiler-diagnostic-message
-          (compiler-diagnostic-list-first (box-get diag)))
+        (cdiag.compiler-diagnostic-message
+          (cdiag.compiler-diagnostic-list-first (box-get diag)))
         want)]))
 
 (define (compiler-check-virtual-import-source) : String
-  "(import \"compiler_ast_types.tl\")
-(import \"compiler_ast_types.tl\")
-(define selected : AstType (AstType.I64))
+  "(import compiler_ast_types as ast)
+(import compiler_ast_types as ast)
+(define selected : ast.AstType (ast.AstType.I64))
 (define (main) : i64
-  (match selected [(AstType.I64) 42] [_ 0]))")
+  (match selected [(ast.AstType.I64) 42] [_ 0]))")
 
 (define (compiler-check-export-source) : String
   "(defstruct Pair (left i64))
@@ -369,24 +386,25 @@
 (define (compiler-check-direct-source [path : String] [source : String]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
-    (match (compiler-load-parse-source-diagnostic-escaping
+    (match (compiler_load.compiler-load-parse-source-diagnostic-escaping
       path
       source
       (compiler-check-language-cfgs))
       [(ResultAstProgramDiagnostic.Ok program)
         (match program
-          [(AstProgram.Program decls-box)
+          [(ast.AstProgram.Program decls-box)
             (compiler-check-program-with-paths-cache
               path
               (box-get decls-box)
-              (ast-decl-path-list-new)
+              (ast.ast-decl-path-list-new)
               (svec.new)
-              (compiler-typecheck-prefix-cache-scope
+              (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
                 "typecheck-prefix-check"
                 (svec.new)
                 (compiler-check-language-cfgs)))])]
       [(ResultAstProgramDiagnostic.Err diag)
-        (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag))])))
+        (ResultCompilerCheck.Err
+          (cdiag.compiler-diagnostic-list-box-single diag))])))
 
 (define (compiler-check-direct-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-direct-source path source)
@@ -407,10 +425,10 @@
 (import a)
 (define (main) : i64 a.x)")
 
-;; This source intentionally keeps the legacy public `(Array T)` spelling and
-;; stdlib.array path as compatibility coverage until the final #3581 removal.
+;; This source intentionally keeps the legacy public `(Array T)` spelling as
+;; compatibility coverage until the final #3581 removal.
 (define (compiler-check-implicit-core-prelude-source) : String
-  "(import \"stdlib/array.tl\" module stdlib.array as arr)
+  "(import stdlib.array as arr)
 (define (main) : i64
   (let
     [value : i64 0]
@@ -485,70 +503,70 @@
     "src/virtual_entry.tl"
     (compiler-check-virtual-import-source))
     [(ResultCompilerCheck.Ok summary)
-      (> (compiler-typecheck-summary-score summary) 0)]
+      (> (compiler_typecheck_api.compiler-typecheck-summary-score summary) 0)]
     [(ResultCompilerCheck.Err _) false]))
 
 (define (compiler-check-inline-layout-name-ok?
-  [ctx : TcContext]
+  [ctx : tc.TcContext]
   [name : String]) : bool
-  (match (tc-context-program ctx)
-    [(AstProgram.Program decls-box)
+  (match (compiler_typecheck_api.compiler-typecheck-context-program ctx)
+    [(ast.AstProgram.Program decls-box)
       (let
-        [decls : AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (box-get decls-box)]
         [index : i64 0]
         [name-id : i64 -1]
         (begin
           (while (and (< name-id 0) (< index (struct-get (& decls) len)))
             (let
-              [decl : AstDecl
-                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              [decl : ast.AstDecl
+                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
               (begin
                 (match decl
-                  [(AstDecl.DefStruct decl-meta candidate _ _ _)
-                    (if (string.eq (tc-env-key-name-text candidate) name)
+                  [(ast.AstDecl.DefStruct decl-meta candidate _ _ _)
+                    (if (string.eq (tc.tc-env-key-name-text candidate) name)
                       (set! name-id candidate)
                       unit)]
-                  [(AstDecl.DefStructLifetimes decl-meta candidate _ _ _ _)
-                    (if (string.eq (tc-env-key-name-text candidate) name)
+                  [(ast.AstDecl.DefStructLifetimes decl-meta candidate _ _ _ _)
+                    (if (string.eq (tc.tc-env-key-name-text candidate) name)
                       (set! name-id candidate)
                       unit)]
-                  [(AstDecl.DefEnum decl-meta candidate _ _)
-                    (if (string.eq (tc-env-key-name-text candidate) name)
+                  [(ast.AstDecl.DefEnum decl-meta candidate _ _)
+                    (if (string.eq (tc.tc-env-key-name-text candidate) name)
                       (set! name-id candidate)
                       unit)]
-                  [(AstDecl.DefEnumLifetimes decl-meta candidate _ _ _)
-                    (if (string.eq (tc-env-key-name-text candidate) name)
+                  [(ast.AstDecl.DefEnumLifetimes decl-meta candidate _ _ _)
+                    (if (string.eq (tc.tc-env-key-name-text candidate) name)
                       (set! name-id candidate)
                       unit)]
                   [_ unit])
                 (set! index (+ index 1)))))
           (if (< name-id 0)
             false
-            (match (tc-inline-aggregate-layout-finite-ok ctx name name-id)
-              [(ResultTcUnit.Ok) true]
-              [(ResultTcUnit.Err _) false]))))]))
+            (match (tc.tc-inline-aggregate-layout-finite-ok ctx name name-id)
+              [(tc.ResultTcUnit.Ok) true]
+              [(tc.ResultTcUnit.Err _) false]))))]))
 
 (define (compiler-check-virtual-import-inline-layout-ok?) : bool
-  (match (compiler-load-source-with-paths
+  (match (compiler_load.compiler-load-source-with-paths
     "src/virtual_entry.tl"
     (compiler-check-virtual-import-source)
     (sym_i64_env.sym-i64-empty))
-    [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
+    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
       (let
-        [program : AstProgram (ast-program decls)]
-        (match (build-compiler-symbols program)
-          [(ResultCompilerSymbols.Ok symbols)
-            (match (build-compiler-registries program)
-              [(ResultCompilerRegistries.Ok registries)
+        [program : ast.AstProgram (ast.ast-program decls)]
+        (match (csym.build-compiler-symbols program)
+          [(csym.ResultCompilerSymbols.Ok symbols)
+            (match (csym.build-compiler-registries program)
+              [(csym.ResultCompilerRegistries.Ok registries)
                 (let
-                  [ctx : TcContext
-                    (tc-context-new
+                  [ctx : tc.TcContext
+                    (tc.tc-context-new
                       program
                       symbols
                       registries
                       ""
                       cbi.compiler-builtin-id-fix-empty
-                      (ast-node-pool-context-capture-active))]
+                      (ast.ast-node-pool-context-capture-active))]
                   (and
                     (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
                     (compiler-check-inline-layout-name-ok? ctx "AstExprList")
@@ -558,16 +576,16 @@
                     (compiler-check-inline-layout-name-ok?
                       ctx
                       "AstVariantDefList")))]
-              [(ResultCompilerRegistries.Err _) false])]
-          [(ResultCompilerSymbols.Err _) false]))]
-    [(ResultCompilerLoadWithPaths.Err _) false]))
+              [(csym.ResultCompilerRegistries.Err _) false])]
+          [(csym.ResultCompilerSymbols.Err _) false]))]
+    [(compiler_load.ResultCompilerLoadWithPaths.Err _) false]))
 
 (define (compiler-check-export-ok?) : bool
   (match (compiler-check-source
     "src/export_entry.tl"
     (compiler-check-export-source))
     [(ResultCompilerCheck.Ok summary)
-      (> (compiler-typecheck-summary-score summary) 0)]
+      (> (compiler_typecheck_api.compiler-typecheck-summary-score summary) 0)]
     [(ResultCompilerCheck.Err _) false]))
 
 (define (compiler-check-qualified-export-cache-reset-ok?) : bool
@@ -588,16 +606,16 @@
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
       (if (string.eq
-        (compiler-diagnostic-path
-          (compiler-diagnostic-list-first (box-get diag)))
+        (cdiag.compiler-diagnostic-path
+          (cdiag.compiler-diagnostic-list-first (box-get diag)))
         "docs/examples/bad_type.tl")
         (if (=
-          (compiler-diagnostic-line
-            (compiler-diagnostic-list-first (box-get diag)))
+          (cdiag.compiler-diagnostic-line
+            (cdiag.compiler-diagnostic-list-first (box-get diag)))
           1)
           (string.eq
-            (compiler-diagnostic-message
-              (compiler-diagnostic-list-first (box-get diag)))
+            (cdiag.compiler-diagnostic-message
+              (cdiag.compiler-diagnostic-list-first (box-get diag)))
             "typecheck: return type mismatch: expected i64, found bool")
           false)
         false)]))
@@ -688,29 +706,32 @@
   (let
     [path : String "src/already_loaded.tl"]
     [source : String "(define answer : i64 1)"]
-    (match (compiler-load-source path source (sym_i64_env.sym-i64-empty))
-      [(ResultCompilerLoad.Ok _ seen)
-        (match (compiler-load-source path source seen)
-          [(ResultCompilerLoad.Ok decls _)
-            (match (ast-decl-list-step decls)
-              [(AstDeclListStep.Nil) true]
+    (match (compiler_load.compiler-load-source
+      path
+      source
+      (sym_i64_env.sym-i64-empty))
+      [(compiler_load.ResultCompilerLoad.Ok _ seen)
+        (match (compiler_load.compiler-load-source path source seen)
+          [(compiler_load.ResultCompilerLoad.Ok decls _)
+            (match (ast.ast-decl-list-step decls)
+              [(ast.AstDeclListStep.Nil) true]
               [_ false])]
-          [(ResultCompilerLoad.Err _) false])]
-      [(ResultCompilerLoad.Err _) false])))
+          [(compiler_load.ResultCompilerLoad.Err _) false])]
+      [(compiler_load.ResultCompilerLoad.Err _) false])))
 
 (define (compiler-check-pool-reset-ok?) : bool
   (let
     [source : String "(define (main) : i64 0)"]
     (begin
-      (ty-node-pool-reset!)
+      (ast.ty-node-pool-reset!)
       (match (compiler-check-source "tests/pool_reset_a.tl" source)
         [(ResultCompilerCheck.Ok _)
           (let
-            [first-len : i64 (ty-node-pool-len)]
+            [first-len : i64 (ast.ty-node-pool-len)]
             (match (compiler-check-source "tests/pool_reset_b.tl" source)
               [(ResultCompilerCheck.Ok _)
                 (let
-                  [second-len : i64 (ty-node-pool-len)]
+                  [second-len : i64 (ast.ty-node-pool-len)]
                   (and (> first-len 0) (= first-len second-len)))]
               [(ResultCompilerCheck.Err _) false]))]
         [(ResultCompilerCheck.Err _) false]))))
@@ -748,7 +769,7 @@
 (define (compiler-check-self-test) : i64
   (begin
     (unless
-      (= (compiler-load-self-test) 42)
+      (= (compiler_load.compiler-load-self-test) 42)
       (return (io.panic "compiler-check: loader smoke mismatch")))
     (unless
       (compiler-check-virtual-import-ok?)

@@ -90,6 +90,47 @@ bootstrap_seed_comptime_short_variant_bridge_root() {
     printf '%s\n' "$bridge_root"
 }
 
+# Print a temporary source mirror when the currently published compiler
+# predates the dotted-import cutover and therefore cannot compile the current
+# import graph: its generated name map is too small, and its reference
+# classifier resolves generated nominal fields in the importer instead of the
+# nominal owner's module. The seed's producer revision decides this, not a
+# single pinned commit, so a moving stage0-latest built from any pre-cutover
+# main is bridged just like the original pinned producer 38fab957b. A seed
+# whose sources already carry the cutover fixes compiles current sources
+# natively and gets no bridge.
+bootstrap_seed_dotted_import_bridge_root() {
+    root=$1
+    compiler=$2
+    workdir=$3
+    producer_id=$("$compiler" --producer-identity 2>/dev/null || true)
+
+    # Only a seed whose producer revision resolves to a commit can be
+    # inspected; anything else is assumed to support current sources.
+    if ! printf '%s' "$producer_id" | grep -qE '^[0-9a-f]{40}$'; then
+        return 0
+    fi
+    if ! git -C "$root" cat-file -e "$producer_id^{commit}" 2>/dev/null; then
+        git -C "$root" fetch --no-tags --depth=1 origin "$producer_id" 2>/dev/null || return 0
+    fi
+
+    # A producer whose sources carry the nominal-owner classifier fix (which
+    # landed together with the generated-name capacity bump) compiles the
+    # dotted-import graph natively and needs no bridge.
+    if git -C "$root" grep -q "tc-context-with-nominal-owner-module-id" \
+        "$producer_id" -- src/compiler_lower.tl 2>/dev/null; then
+        return 0
+    fi
+
+    bridge_root="$workdir/dotted-import-seed-bridge/source"
+    if ! "$root/scripts/prepare-dotted-import-seed-bridge.sh" \
+        "$compiler" "$bridge_root" >&2; then
+        echo "[bootstrap] failed to prepare the dotted-import seed bridge" >&2
+        return 1
+    fi
+    printf '%s\n' "$bridge_root"
+}
+
 # A seed compiler's backend runtime is baked into the seed binary. When source
 # introduces a new runtime entry point, the first generated compiler therefore
 # needs a one-generation compatibility definition. Newer compilers emit the

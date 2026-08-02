@@ -152,9 +152,8 @@ and `(import stdlib.core_macros as core)` binds `core`. Imported values,
 types, constructors, variants, patterns, and macros are referenced with
 dotted member access — `(string.eq left right)`, `[p : geometry.Point]`.
 Macro imports use the same module identities, with expansion happening
-before ordinary typechecking. Legacy string path imports are retained only for
-named compatibility fixtures until final removal; new code should use dotted
-module identities.
+before ordinary typechecking. Legacy string-path imports are rejected; use a
+dotted module identity for every source import.
 
 The compile driver prepends the stdlib runtime and the core macro module as
 an implicit prelude, so bare `when`, `unless`, `and`, `or`, scalar `for`, and

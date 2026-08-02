@@ -4,11 +4,11 @@
 ;; The native check dispatches the one source-compiled entry with a real
 ;; operand through the compiler-owned host table and asserts the committed
 ;; result matches the interpreted builders' AST shape. Refs #5212.
-(import "../../src/compiler_embedded_stdlib_tlci.tl")
-(import "../../src/tlci_core.tl")
-(import "../../src/tlci_loader.tl")
-(import "../../src/compiler_ast_types.tl")
-(import "../../src/compiler_ctfe.tl")
+(import compiler_embedded_stdlib_tlci)
+(import tlci_core)
+(import tlci_loader)
+(import compiler_ast_types)
+(import compiler_ctfe)
 (import compiler_intern as ci)
 (import stdlib.array)
 (import stdlib.arena)
@@ -20,135 +20,152 @@
   0x5151)
 
 (define (embedded-verify-result-shape-ok?
-  [pools : AstNodePoolContext]
+  [pools : compiler_ast_types.AstNodePoolContext]
   [operand-node : i64]) : bool
-  (match (compiler-comptime-host-result-value)
-    [(CompilerCtfeValue.Expr node _)
-      (match (ast-node-pool-context-expr-get pools node)
-        [(AstExpr.Call callee-id args)
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr node _)
+      (match (compiler_ast_types.ast-node-pool-context-expr-get pools node)
+        [(compiler_ast_types.AstExpr.Call callee-id args)
           (and
-            (match (ast-node-pool-context-expr-get pools callee-id)
-              [(AstExpr.Var name-id)
+            (match (compiler_ast_types.ast-node-pool-context-expr-get
+              pools
+              callee-id)
+              [(compiler_ast_types.AstExpr.Var name-id)
                 (=
                   name-id
                   (ci.intern-template-source-id (ci.intern "__tl_array-length")))]
               [_ false])
-            (= (ast-expr-list-len (& args)) 1)
-            (= (ast-expr-list-get (& args) 0 -1) operand-node))]
+            (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
+            (=
+              (compiler_ast_types.ast-expr-list-get (& args) 0 -1)
+              operand-node))]
         [_ false])]
     [_ false]))
 
 (define (embedded-verify-native-array-length-ok?) : bool
-  (match (tlci-loader-load-from-bytes-with-host
+  (match (tlci_loader.tlci-loader-load-from-bytes-with-host
     (arena.tl_arena_current)
-    (compiler-embedded-stdlib-tlci-copy)
-    (compiler-comptime-host-table))
-    [(ResultTlciLoadedImage.Err _) false]
-    [(ResultTlciLoadedImage.Ok loaded)
+    (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)
+    (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+    [(tlci_loader.ResultTlciLoadedImage.Err _) false]
+    [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
       (let
-        [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+        [pools : compiler_ast_types.AstNodePoolContext
+          (compiler_ast_types.ast-node-pool-context-capture-active)]
         [operand-node : i64
-          (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "xs")))]
-        [operands : (Array CompilerCtfeValue)
-          (array.make-array CompilerCtfeValue 1)]
+          (compiler_ast_types.ast-node-pool-context-expr-push
+            pools
+            (compiler_ast_types.AstExpr.Var (ci.intern "xs")))]
+        [operands : (Array compiler_ctfe.CompilerCtfeValue)
+          (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
           (array-set!
             operands
             0
-            (CompilerCtfeValue.Expr operand-node (AstType.Expr)))
-          (compiler-comptime-host-session-open!
+            (compiler_ctfe.CompilerCtfeValue.Expr
+              operand-node
+              (compiler_ast_types.AstType.Expr)))
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
             pools
             operands
             1
             32
             embedded-verify-cookie
-            (ctfe-reflect-info-list-empty))
+            (compiler_ctfe.ctfe-reflect-info-list-empty))
           (let
             [ok : bool
-              (match (tlci-loader-dispatch-macro
+              (match (tlci_loader.tlci-loader-dispatch-macro
                 (& loaded)
                 "stdlib.array/length"
                 embedded-verify-cookie
                 (array.make-array i64 0)
                 0)
-                [(ResultTlciMacroDispatch.Err _) false]
-                [(ResultTlciMacroDispatch.Ok dispatch)
+                [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+                [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
                   (and
                     (= (struct-get dispatch status) 0)
-                    (compiler-comptime-host-result-ready?)
+                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
                     (embedded-verify-result-shape-ok? pools operand-node))])]
             (begin
-              (compiler-comptime-host-session-close!)
-              (match (tlci-loader-release loaded)
-                [(ResultTlciLoaderUnit.Ok) ok]
-                [(ResultTlciLoaderUnit.Err _) false])))))]))
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+              (match (tlci_loader.tlci-loader-release loaded)
+                [(tlci_loader.ResultTlciLoaderUnit.Ok) ok]
+                [(tlci_loader.ResultTlciLoaderUnit.Err _) false])))))]))
 
 (define (embedded-verify-native-array-length-error-ok?
   [fuel : i64]
   [operand-count : i64]
   [expected-status : i64]) : bool
-  (match (tlci-loader-load-from-bytes-with-host
+  (match (tlci_loader.tlci-loader-load-from-bytes-with-host
     (arena.tl_arena_current)
-    (compiler-embedded-stdlib-tlci-copy)
-    (compiler-comptime-host-table))
-    [(ResultTlciLoadedImage.Err _) false]
-    [(ResultTlciLoadedImage.Ok loaded)
+    (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)
+    (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+    [(tlci_loader.ResultTlciLoadedImage.Err _) false]
+    [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
       (let
-        [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+        [pools : compiler_ast_types.AstNodePoolContext
+          (compiler_ast_types.ast-node-pool-context-capture-active)]
         [operand-node : i64
-          (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "xs")))]
-        [operands : (Array CompilerCtfeValue)
-          (array.make-array CompilerCtfeValue 1)]
+          (compiler_ast_types.ast-node-pool-context-expr-push
+            pools
+            (compiler_ast_types.AstExpr.Var (ci.intern "xs")))]
+        [operands : (Array compiler_ctfe.CompilerCtfeValue)
+          (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
           (array-set!
             operands
             0
-            (CompilerCtfeValue.Expr operand-node (AstType.Expr)))
-          (compiler-comptime-host-session-open!
+            (compiler_ctfe.CompilerCtfeValue.Expr
+              operand-node
+              (compiler_ast_types.AstType.Expr)))
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
             pools
             operands
             operand-count
             fuel
             embedded-verify-cookie
-            (ctfe-reflect-info-list-empty))
+            (compiler_ctfe.ctfe-reflect-info-list-empty))
           (let
             [ok : bool
-              (match (tlci-loader-dispatch-macro
+              (match (tlci_loader.tlci-loader-dispatch-macro
                 (& loaded)
                 "stdlib.array/length"
                 embedded-verify-cookie
                 (array.make-array i64 0)
                 0)
-                [(ResultTlciMacroDispatch.Err _) false]
-                [(ResultTlciMacroDispatch.Ok dispatch)
+                [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+                [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
                   (and
                     (= (struct-get dispatch status) expected-status)
-                    (not (compiler-comptime-host-result-ready?)))])]
+                    (not
+                      (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)))])]
             (begin
-              (compiler-comptime-host-session-close!)
-              (match (tlci-loader-release loaded)
-                [(ResultTlciLoaderUnit.Ok) ok]
-                [(ResultTlciLoaderUnit.Err _) false])))))]))
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+              (match (tlci_loader.tlci-loader-release loaded)
+                [(tlci_loader.ResultTlciLoaderUnit.Ok) ok]
+                [(tlci_loader.ResultTlciLoaderUnit.Err _) false])))))]))
 
 (define (main) : i64
-  (match (compiler-embedded-stdlib-tlci-validate)
-    [(CompilerEmbeddedStdlibTlciValidation.Err message)
+  (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-validate)
+    [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Err
+        message)
       (begin
         (io.print-error
           (str_cat.str-cat "embedded stdlib tlci validation failed: " message))
         1)]
-    [(CompilerEmbeddedStdlibTlciValidation.Ok count)
+    [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Ok
+        count)
       (if (= count 101)
         (if (and
           (embedded-verify-native-array-length-ok?)
           (embedded-verify-native-array-length-error-ok?
             0
             1
-            tlci-host-callback-status-fuel-exhausted)
+            tlci_core.tlci-host-callback-status-fuel-exhausted)
           (embedded-verify-native-array-length-error-ok?
             32
             0
-            tlci-host-callback-status-bad-request))
+            tlci_core.tlci-host-callback-status-bad-request))
           42
           (begin
             (io.print-error

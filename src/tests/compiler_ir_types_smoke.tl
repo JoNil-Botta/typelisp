@@ -1,6 +1,7 @@
 ;; compiler_ir_types_smoke.tl - Runnable IR type/effect smoke.
 (import stdlib.string)
-(import "../compiler_ir_types.tl")
+(import compiler_ir_types)
+(import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
 
@@ -9,62 +10,64 @@
 
 (define (compiler-ir-smoke-call-effect-id-is?
   [name : i64]
-  [effect : CompilerIrEffect]) : bool
-  (compiler-ir-effect-eq? (compiler-ir-direct-call-effect-id name) effect))
+  [effect : compiler_ir_types.CompilerIrEffect]) : bool
+  (compiler_ir_types.compiler-ir-effect-eq?
+    (compiler_ir_types.compiler-ir-direct-call-effect-id name)
+    effect))
 
 (define (compiler-ir-smoke-runtime-effect-ids-ok?) : bool
   (and
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-region-mark
-      CompilerIrEffect.MemoryRead)
+      compiler_ir_types.CompilerIrEffect.MemoryRead)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-stdin-eof-label
-      CompilerIrEffect.MemoryRead)
+      compiler_ir_types.CompilerIrEffect.MemoryRead)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-alloc
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-int-to-string
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-substring
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-string-concat
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-string-concat3
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-string-concat4
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-string-concat5
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-region-reset
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-array-fill8
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-array-zero
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-flush-stdout-label
-      CompilerIrEffect.MemoryWrite)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-abort-label
-      CompilerIrEffect.ControlFlow)
+      compiler_ir_types.CompilerIrEffect.ControlFlow)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-oob-abort
-      CompilerIrEffect.ControlFlow)
+      compiler_ir_types.CompilerIrEffect.ControlFlow)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-div-abort
-      CompilerIrEffect.ControlFlow)
+      compiler_ir_types.CompilerIrEffect.ControlFlow)
     (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-shift-abort
-      CompilerIrEffect.ControlFlow)))
+      compiler_ir_types.CompilerIrEffect.ControlFlow)))
 
 (define (compiler-ir-smoke-runtime-effect-identity-ok?) : bool
   (let
@@ -74,24 +77,25 @@
     (and
       (not (= generated-alloc cbi.compiler-builtin-id-tl-alloc))
       (string.eq
-        (compiler-ir-symbol-text generated-alloc)
-        (compiler-ir-symbol-text cbi.compiler-builtin-id-tl-alloc))
-      (compiler-ir-symbol-eq?
+        (compiler_ir_types.compiler-ir-symbol-text generated-alloc)
+        (compiler_ir_types.compiler-ir-symbol-text
+          cbi.compiler-builtin-id-tl-alloc))
+      (compiler_ir_types.compiler-ir-symbol-eq?
         cbi.compiler-builtin-id-tl-alloc
         cbi.compiler-builtin-id-tl-alloc)
       (not
-        (compiler-ir-symbol-eq?
+        (compiler_ir_types.compiler-ir-symbol-eq?
           generated-alloc
           cbi.compiler-builtin-id-tl-alloc))
       (compiler-ir-smoke-call-effect-id-is?
         generated-alloc
-        CompilerIrEffect.Unknown)
+        compiler_ir_types.CompilerIrEffect.Unknown)
       (compiler-ir-smoke-call-effect-id-is?
         generated-abort
-        CompilerIrEffect.Unknown)
+        compiler_ir_types.CompilerIrEffect.Unknown)
       (compiler-ir-smoke-call-effect-id-is?
         unknown-extern
-        CompilerIrEffect.Unknown))))
+        compiler_ir_types.CompilerIrEffect.Unknown))))
 
 (define (compiler-ir-smoke-runtime-effect-reset-ok?) : bool
   (let
@@ -119,220 +123,237 @@
       (compiler-ir-smoke-runtime-effect-reset-ok?))))
 
 (define (compiler-ir-smoke-function-list-first-name?
-  [functions : CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionList]
   [want : String]) : bool
-  (match (compiler-ir-function-list-force-cons functions)
-    [(CompilerIrFunctionList.Cons func _)
+  (match (compiler_ir_types.compiler-ir-function-list-force-cons functions)
+    [(compiler_ir_types.CompilerIrFunctionList.Cons func _)
       (match func
-        [(CompilerIrFunction.Function name _ _ _ _)
+        [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
           (string.eq (ci.intern-str name) want)])]
-    [(CompilerIrFunctionList.Nil) false]
-    [(CompilerIrFunctionList.Array _) false]))
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) false]
+    [(compiler_ir_types.CompilerIrFunctionList.Array _) false]))
 
 (define (compiler-ir-smoke-function-list-name-at?
-  [functions : CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionList]
   [index : i64]
   [want : String]) : bool
-  (match (compiler-ir-function-list-force-cons functions)
-    [(CompilerIrFunctionList.Cons func rest)
+  (match (compiler_ir_types.compiler-ir-function-list-force-cons functions)
+    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
       (if (= index 0)
         (match func
-          [(CompilerIrFunction.Function name _ _ _ _)
+          [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
             (string.eq (ci.intern-str name) want)])
         (compiler-ir-smoke-function-list-name-at?
           (box-get rest)
           (- index 1)
           want))]
-    [(CompilerIrFunctionList.Nil) false]
-    [(CompilerIrFunctionList.Array _) false]))
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) false]
+    [(compiler_ir_types.CompilerIrFunctionList.Array _) false]))
 
 (define (compiler-ir-smoke-block-list-label-at?
-  [blocks : CompilerIrBlockList]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
   [index : i64]
   [want : i64]) : bool
-  (match (compiler-ir-block-list-force-cons blocks)
-    [(CompilerIrBlockList.Cons block rest)
+  (match (compiler_ir_types.compiler-ir-block-list-force-cons blocks)
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (if (= index 0)
         (match block
-          [(CompilerIrBlock.Block label _) (= label want)])
+          [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)])
         (compiler-ir-smoke-block-list-label-at? (box-get rest) (- index 1) want))]
-    [(CompilerIrBlockList.Nil) false]
-    [(CompilerIrBlockList.Array _) false]))
+    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+    [(compiler_ir_types.CompilerIrBlockList.Array _) false]))
 
 (define (compiler-ir-smoke-param-seq-entry-i64?
-  [seq : CompilerIrParamSeq]
+  [seq : compiler_ir_types.CompilerIrParamSeq]
   [index : i64]
   [want-name : String]
   [want-var : i64]) : bool
-  (if (or (< index 0) (>= index (compiler-ir-param-seq-count seq)))
+  (if (or
+    (< index 0)
+    (>= index (compiler_ir_types.compiler-ir-param-seq-count seq)))
     false
-    (match (compiler-ir-param-seq-ref seq index)
-      [(CompilerIrParam.Param name ty var)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref seq index)
+      [(compiler_ir_types.CompilerIrParam.Param name ty var)
         (and
           (string.eq name want-name)
           (= var want-var)
           (match ty
-            [(AstType.I64) true]
+            [(ast.AstType.I64) true]
             [_ false]))])))
 
 (define (compiler-ir-smoke-param-seq-entry-bool?
-  [seq : CompilerIrParamSeq]
+  [seq : compiler_ir_types.CompilerIrParamSeq]
   [index : i64]
   [want-name : String]
   [want-var : i64]) : bool
-  (if (or (< index 0) (>= index (compiler-ir-param-seq-count seq)))
+  (if (or
+    (< index 0)
+    (>= index (compiler_ir_types.compiler-ir-param-seq-count seq)))
     false
-    (match (compiler-ir-param-seq-ref seq index)
-      [(CompilerIrParam.Param name ty var)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref seq index)
+      [(compiler_ir_types.CompilerIrParam.Param name ty var)
         (and
           (string.eq name want-name)
           (= var want-var)
           (match ty
-            [(AstType.Bool) true]
+            [(ast.AstType.Bool) true]
             [_ false]))])))
 
 (define (compiler-ir-smoke-dense-function-params-ok?) : bool
   (let
-    [params : CompilerIrParamList
-      (compiler-ir-param-cons
-        (CompilerIrParam.Param "value" (AstType.I64) 2)
-        (compiler-ir-param-cons
-          (CompilerIrParam.Param "flag" (AstType.Bool) 5)
-          CompilerIrParamList.Nil))]
-    [func : CompilerIrFunction
-      (CompilerIrFunction.Function
+    [params : compiler_ir_types.CompilerIrParamList
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param "value" (ast.AstType.I64) 2)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param "flag" (ast.AstType.Bool) 5)
+          compiler_ir_types.CompilerIrParamList.Nil))]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "with_params")
         params
-        (AstType.Unit)
+        (ast.AstType.Unit)
         6
-        CompilerIrBlockList.Nil)]
-    [cloned : CompilerIrFunction
-      (compiler-ir-clone-function (ast-node-pool-reader-context-current) func)]
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    [cloned : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.compiler-ir-clone-function
+        (ast.ast-node-pool-reader-context-current)
+        func)]
     (and
       (match func
-        [(CompilerIrFunction.Function _ stored _ _ _)
+        [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _)
           (match stored
-            [(CompilerIrParamList.Array seq)
+            [(compiler_ir_types.CompilerIrParamList.Array seq)
               (and
-                (= (compiler-ir-param-seq-count seq) 2)
+                (= (compiler_ir_types.compiler-ir-param-seq-count seq) 2)
                 (compiler-ir-smoke-param-seq-entry-i64? seq 0 "value" 2)
                 (compiler-ir-smoke-param-seq-entry-bool? seq 1 "flag" 5))]
             [_ false])])
       (match cloned
-        [(CompilerIrFunction.Function _ stored _ _ _)
+        [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _)
           (match stored
-            [(CompilerIrParamList.Array seq)
+            [(compiler_ir_types.CompilerIrParamList.Array seq)
               (and
-                (= (compiler-ir-param-seq-count seq) 2)
+                (= (compiler_ir_types.compiler-ir-param-seq-count seq) 2)
                 (compiler-ir-smoke-param-seq-entry-i64? seq 0 "value" 2)
                 (compiler-ir-smoke-param-seq-entry-bool? seq 1 "flag" 5))]
             [_ false])]))))
 
 (define (compiler-ir-smoke-function-list-compact-kind?
-  [functions : CompilerIrFunctionList]) : bool
+  [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
   (match functions
-    [(CompilerIrFunctionList.Array seq)
-      (= (compiler-ir-function-seq-count seq) 2)]
+    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
+      (= (compiler_ir_types.compiler-ir-function-seq-count seq) 2)]
     [_ false]))
 
 (define (compiler-ir-smoke-global-list-array-count?
-  [globals : CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalList]
   [want : i64]) : bool
   (match globals
-    [(CompilerIrGlobalList.Array seq)
-      (= (compiler-ir-global-seq-count seq) want)]
+    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
+      (= (compiler_ir_types.compiler-ir-global-seq-count seq) want)]
     [_ false]))
 
 (define (compiler-ir-smoke-extern-list-array-count?
-  [externs : CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternList]
   [want : i64]) : bool
   (match externs
-    [(CompilerIrExternList.Array seq)
-      (= (compiler-ir-extern-seq-count seq) want)]
+    [(compiler_ir_types.CompilerIrExternList.Array seq)
+      (= (compiler_ir_types.compiler-ir-extern-seq-count seq) want)]
     [_ false]))
 
 (define (compiler-ir-smoke-global-list-name-at?
-  [globals : CompilerIrGlobalList]
+  [globals : compiler_ir_types.CompilerIrGlobalList]
   [index : i64]
   [want : String]) : bool
   (match (match globals
-    [(CompilerIrGlobalList.Array seq) (compiler-ir-global-seq-to-list seq)]
+    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
+      (compiler_ir_types.compiler-ir-global-seq-to-list seq)]
     [_ globals])
-    [(CompilerIrGlobalList.Cons global rest)
+    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
       (if (= index 0)
         (match global
-          [(CompilerIrGlobal.Global name _ _)
+          [(compiler_ir_types.CompilerIrGlobal.Global name _ _)
             (string.eq (ci.intern-str name) want)])
         (compiler-ir-smoke-global-list-name-at? (box-get rest) (- index 1) want))]
-    [(CompilerIrGlobalList.Nil) false]
-    [(CompilerIrGlobalList.Array _) false]))
+    [(compiler_ir_types.CompilerIrGlobalList.Nil) false]
+    [(compiler_ir_types.CompilerIrGlobalList.Array _) false]))
 
 (define (compiler-ir-smoke-extern-list-name-at?
-  [externs : CompilerIrExternList]
+  [externs : compiler_ir_types.CompilerIrExternList]
   [index : i64]
   [want : String]) : bool
   (match (match externs
-    [(CompilerIrExternList.Array seq) (compiler-ir-extern-seq-to-list seq)]
+    [(compiler_ir_types.CompilerIrExternList.Array seq)
+      (compiler_ir_types.compiler-ir-extern-seq-to-list seq)]
     [_ externs])
-    [(CompilerIrExternList.Cons extern rest)
+    [(compiler_ir_types.CompilerIrExternList.Cons extern rest)
       (if (= index 0)
         (match extern
-          [(CompilerIrExtern.Extern _ _ name _ _ _ _ _) (string.eq name want)])
+          [(compiler_ir_types.CompilerIrExtern.Extern _ _ name _ _ _ _ _)
+            (string.eq name want)])
         (compiler-ir-smoke-extern-list-name-at? (box-get rest) (- index 1) want))]
-    [(CompilerIrExternList.Nil) false]
-    [(CompilerIrExternList.Array _) false]))
+    [(compiler_ir_types.CompilerIrExternList.Nil) false]
+    [(compiler_ir_types.CompilerIrExternList.Array _) false]))
 
 (define (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) : bool
   (let
-    [first-global : CompilerIrGlobal
-      (CompilerIrGlobal.Global
+    [first-global : compiler_ir_types.CompilerIrGlobal
+      (compiler_ir_types.CompilerIrGlobal.Global
         (compiler-ir-smoke-symbol-id "first-global")
-        (AstType.I64)
-        (CompilerIrValue.I64 1))]
-    [second-global : CompilerIrGlobal
-      (CompilerIrGlobal.Global
+        (ast.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 1))]
+    [second-global : compiler_ir_types.CompilerIrGlobal
+      (compiler_ir_types.CompilerIrGlobal.Global
         (compiler-ir-smoke-symbol-id "second-global")
-        (AstType.Bool)
-        (CompilerIrValue.Bool true))]
-    [reversed-globals : CompilerIrGlobalList
-      (compiler-ir-global-cons
+        (ast.AstType.Bool)
+        (compiler_ir_types.CompilerIrValue.Bool true))]
+    [reversed-globals : compiler_ir_types.CompilerIrGlobalList
+      (compiler_ir_types.compiler-ir-global-cons
         second-global
-        (compiler-ir-global-cons first-global CompilerIrGlobalList.Nil))]
-    [compact-globals : CompilerIrGlobalList
-      (compiler-ir-global-list-compact-reversed reversed-globals)]
-    [array-reversed-globals : CompilerIrGlobalList
-      (compiler-ir-global-list-compact-reversed compact-globals)]
-    [cloned-globals : CompilerIrGlobalList
-      (compiler-ir-clone-global-list
-        (ast-node-pool-reader-context-current)
+        (compiler_ir_types.compiler-ir-global-cons
+          first-global
+          compiler_ir_types.CompilerIrGlobalList.Nil))]
+    [compact-globals : compiler_ir_types.CompilerIrGlobalList
+      (compiler_ir_types.compiler-ir-global-list-compact-reversed
+        reversed-globals)]
+    [array-reversed-globals : compiler_ir_types.CompilerIrGlobalList
+      (compiler_ir_types.compiler-ir-global-list-compact-reversed
         compact-globals)]
-    [first-extern : CompilerIrExtern
-      (compiler-ir-extern-default-id
+    [cloned-globals : compiler_ir_types.CompilerIrGlobalList
+      (compiler_ir_types.compiler-ir-clone-global-list
+        (ast.ast-node-pool-reader-context-current)
+        compact-globals)]
+    [first-extern : compiler_ir_types.CompilerIrExtern
+      (compiler_ir_types.compiler-ir-extern-default-id
         (compiler-ir-smoke-symbol-id "first-extern")
         "first-extern"
-        (AstType.I64))]
-    [second-extern : CompilerIrExtern
-      (compiler-ir-extern-default-id
+        (ast.AstType.I64))]
+    [second-extern : compiler_ir_types.CompilerIrExtern
+      (compiler_ir_types.compiler-ir-extern-default-id
         (compiler-ir-smoke-symbol-id "second-extern")
         "second-extern"
-        (AstType.Bool))]
-    [reversed-externs : CompilerIrExternList
-      (compiler-ir-extern-cons
+        (ast.AstType.Bool))]
+    [reversed-externs : compiler_ir_types.CompilerIrExternList
+      (compiler_ir_types.compiler-ir-extern-cons
         second-extern
-        (compiler-ir-extern-cons first-extern CompilerIrExternList.Nil))]
-    [compact-externs : CompilerIrExternList
-      (compiler-ir-extern-list-compact-reversed reversed-externs)]
-    [array-reversed-externs : CompilerIrExternList
-      (compiler-ir-extern-list-compact-reversed compact-externs)]
-    [cloned-externs : CompilerIrExternList
-      (compiler-ir-clone-extern-list
-        (ast-node-pool-reader-context-current)
+        (compiler_ir_types.compiler-ir-extern-cons
+          first-extern
+          compiler_ir_types.CompilerIrExternList.Nil))]
+    [compact-externs : compiler_ir_types.CompilerIrExternList
+      (compiler_ir_types.compiler-ir-extern-list-compact-reversed
+        reversed-externs)]
+    [array-reversed-externs : compiler_ir_types.CompilerIrExternList
+      (compiler_ir_types.compiler-ir-extern-list-compact-reversed
         compact-externs)]
-    [summary : CompilerIrSummary
-      (compiler-ir-program-summary
-        (CompilerIrProgram.Program
+    [cloned-externs : compiler_ir_types.CompilerIrExternList
+      (compiler_ir_types.compiler-ir-clone-extern-list
+        (ast.ast-node-pool-reader-context-current)
+        compact-externs)]
+    [summary : compiler_ir_types.CompilerIrSummary
+      (compiler_ir_types.compiler-ir-program-summary
+        (compiler_ir_types.CompilerIrProgram.Program
           compact-globals
-          CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrFunctionList.Nil
           compact-externs))]
     (and
       (compiler-ir-smoke-global-list-array-count? compact-globals 2)
@@ -351,137 +372,162 @@
         0
         "second-extern")
       (compiler-ir-smoke-extern-list-name-at? cloned-externs 0 "first-extern")
-      (= (compiler-ir-summary-globals summary) 2)
-      (= (compiler-ir-summary-functions summary) 0)
-      (= (compiler-ir-summary-externs summary) 2))))
+      (= (compiler_ir_types.compiler-ir-summary-globals summary) 2)
+      (= (compiler_ir_types.compiler-ir-summary-functions summary) 0)
+      (= (compiler_ir_types.compiler-ir-summary-externs summary) 2))))
 
 (define (compiler-ir-smoke-function-seq-roundtrip-ok?) : bool
   (let
-    [entry-instrs : CompilerIrInstrList
-      (compiler-ir-instr-cons
-        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.Return
-            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
-          CompilerIrInstrList.Nil))]
-    [blocks : CompilerIrBlockList
-      (compiler-ir-block-list-compact
-        (compiler-ir-block-cons
-          (compiler-ir-block (compiler-ir-label "entry") entry-instrs)
-          CompilerIrBlockList.Nil))]
-    [first : CompilerIrFunction
-      (CompilerIrFunction.Function
+    [entry-instrs : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          1
+          (compiler_ir_types.CompilerIrValue.I64 10)
+          (ast.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 1)))
+          compiler_ir_types.CompilerIrInstrList.Nil))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-list-compact
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "entry")
+            entry-instrs)
+          compiler_ir_types.CompilerIrBlockList.Nil))]
+    [first : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "first")
-        CompilerIrParamList.Nil
-        (AstType.I64)
+        compiler_ir_types.CompilerIrParamList.Nil
+        (ast.AstType.I64)
         2
         blocks)]
-    [second : CompilerIrFunction
-      (CompilerIrFunction.Function
+    [second : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "second")
-        CompilerIrParamList.Nil
-        (AstType.I64)
+        compiler_ir_types.CompilerIrParamList.Nil
+        (ast.AstType.I64)
         2
         blocks)]
-    [functions : CompilerIrFunctionList
-      (compiler-ir-function-cons
+    [functions : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-function-cons
         first
-        (compiler-ir-function-cons second CompilerIrFunctionList.Nil))]
-    [compact : CompilerIrFunctionList
-      (compiler-ir-function-list-compact functions)]
-    [cloned : CompilerIrFunctionList
-      (compiler-ir-clone-function-list
-        (ast-node-pool-reader-context-current)
+        (compiler_ir_types.compiler-ir-function-cons
+          second
+          compiler_ir_types.CompilerIrFunctionList.Nil))]
+    [compact : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-function-list-compact functions)]
+    [cloned : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-clone-function-list
+        (ast.ast-node-pool-reader-context-current)
         compact)]
-    [summary : CompilerIrSummary
-      (compiler-ir-program-summary
-        (CompilerIrProgram.Program
-          CompilerIrGlobalList.Nil
+    [summary : compiler_ir_types.CompilerIrSummary
+      (compiler_ir_types.compiler-ir-program-summary
+        (compiler_ir_types.CompilerIrProgram.Program
+          compiler_ir_types.CompilerIrGlobalList.Nil
           compact
-          CompilerIrExternList.Nil))]
+          compiler_ir_types.CompilerIrExternList.Nil))]
     (and
       (compiler-ir-smoke-function-list-compact-kind? compact)
       (compiler-ir-smoke-function-list-compact-kind? cloned)
-      (= (compiler-ir-function-list-count compact) 2)
+      (= (compiler_ir_types.compiler-ir-function-list-count compact) 2)
       (compiler-ir-smoke-function-list-first-name? compact "first")
-      (= (compiler-ir-function-list-block-count compact) 2)
-      (= (compiler-ir-function-list-instruction-count compact) 4)
-      (= (compiler-ir-summary-functions summary) 2)
-      (= (compiler-ir-summary-blocks summary) 2)
-      (= (compiler-ir-summary-instructions summary) 4))))
+      (= (compiler_ir_types.compiler-ir-function-list-block-count compact) 2)
+      (=
+        (compiler_ir_types.compiler-ir-function-list-instruction-count compact)
+        4)
+      (= (compiler_ir_types.compiler-ir-summary-functions summary) 2)
+      (= (compiler_ir_types.compiler-ir-summary-blocks summary) 2)
+      (= (compiler_ir_types.compiler-ir-summary-instructions summary) 4))))
 
 (define (compiler-ir-smoke-reversed-compaction-ok?) : bool
   (let
-    [first-block : CompilerIrBlock
-      (compiler-ir-block (compiler-ir-label "first") CompilerIrInstrList.Nil)]
-    [second-block : CompilerIrBlock
-      (compiler-ir-block (compiler-ir-label "second") CompilerIrInstrList.Nil)]
-    [third-block : CompilerIrBlock
-      (compiler-ir-block (compiler-ir-label "third") CompilerIrInstrList.Nil)]
-    [reversed-blocks : CompilerIrBlockList
-      (compiler-ir-block-cons
+    [first-block : compiler_ir_types.CompilerIrBlock
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "first")
+        compiler_ir_types.CompilerIrInstrList.Nil)]
+    [second-block : compiler_ir_types.CompilerIrBlock
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "second")
+        compiler_ir_types.CompilerIrInstrList.Nil)]
+    [third-block : compiler_ir_types.CompilerIrBlock
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "third")
+        compiler_ir_types.CompilerIrInstrList.Nil)]
+    [reversed-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
         third-block
-        (compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block-cons
           second-block
-          (compiler-ir-block-cons first-block CompilerIrBlockList.Nil)))]
-    [compact-blocks : CompilerIrBlockList
-      (compiler-ir-block-list-compact-reversed reversed-blocks)]
-    [array-reversed-blocks : CompilerIrBlockList
-      (compiler-ir-block-list-compact-reversed compact-blocks)]
-    [first-func : CompilerIrFunction
-      (CompilerIrFunction.Function
+          (compiler_ir_types.compiler-ir-block-cons
+            first-block
+            compiler_ir_types.CompilerIrBlockList.Nil)))]
+    [compact-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-list-compact-reversed
+        reversed-blocks)]
+    [array-reversed-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-list-compact-reversed compact-blocks)]
+    [first-func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "first-func")
-        CompilerIrParamList.Nil
-        (AstType.Unit)
+        compiler_ir_types.CompilerIrParamList.Nil
+        (ast.AstType.Unit)
         0
         compact-blocks)]
-    [second-func : CompilerIrFunction
-      (CompilerIrFunction.Function
+    [second-func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "second-func")
-        CompilerIrParamList.Nil
-        (AstType.Unit)
+        compiler_ir_types.CompilerIrParamList.Nil
+        (ast.AstType.Unit)
         0
         compact-blocks)]
-    [third-func : CompilerIrFunction
-      (CompilerIrFunction.Function
+    [third-func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "third-func")
-        CompilerIrParamList.Nil
-        (AstType.Unit)
+        compiler_ir_types.CompilerIrParamList.Nil
+        (ast.AstType.Unit)
         0
         compact-blocks)]
-    [reversed-functions : CompilerIrFunctionList
-      (compiler-ir-function-cons
+    [reversed-functions : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-function-cons
         third-func
-        (compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-cons
           second-func
-          (compiler-ir-function-cons first-func CompilerIrFunctionList.Nil)))]
-    [compact-functions : CompilerIrFunctionList
-      (compiler-ir-function-list-compact-reversed reversed-functions)]
-    [array-reversed-functions : CompilerIrFunctionList
-      (compiler-ir-function-list-compact-reversed compact-functions)]
+          (compiler_ir_types.compiler-ir-function-cons
+            first-func
+            compiler_ir_types.CompilerIrFunctionList.Nil)))]
+    [compact-functions : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-function-list-compact-reversed
+        reversed-functions)]
+    [array-reversed-functions : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-function-list-compact-reversed
+        compact-functions)]
     (and
-      (= (compiler-ir-block-list-count compact-blocks) 3)
+      (= (compiler_ir_types.compiler-ir-block-list-count compact-blocks) 3)
       (compiler-ir-smoke-block-list-label-at?
         compact-blocks
         0
-        (compiler-ir-label "first"))
+        (compiler_ir_types.compiler-ir-label "first"))
       (compiler-ir-smoke-block-list-label-at?
         compact-blocks
         1
-        (compiler-ir-label "second"))
+        (compiler_ir_types.compiler-ir-label "second"))
       (compiler-ir-smoke-block-list-label-at?
         compact-blocks
         2
-        (compiler-ir-label "third"))
+        (compiler_ir_types.compiler-ir-label "third"))
       (compiler-ir-smoke-block-list-label-at?
         array-reversed-blocks
         0
-        (compiler-ir-label "third"))
+        (compiler_ir_types.compiler-ir-label "third"))
       (compiler-ir-smoke-block-list-label-at?
         array-reversed-blocks
         2
-        (compiler-ir-label "first"))
-      (= (compiler-ir-function-list-count compact-functions) 3)
+        (compiler_ir_types.compiler-ir-label "first"))
+      (=
+        (compiler_ir_types.compiler-ir-function-list-count compact-functions)
+        3)
       (compiler-ir-smoke-function-list-name-at?
         compact-functions
         0
@@ -505,113 +551,139 @@
 
 (define (compiler-ir-smoke-spmd-call-shape-ok?) : bool
   (let
-    [args : CompilerIrSpmdCallArgList
-      (ir-spmd-call-arg-cons
-        (CompilerIrSpmdCallArg.Arg
-          (CompilerIrSpmdValueClass.Uniform)
-          (CompilerIrValue.Var 21)
-          (AstType.I64))
-        (ir-spmd-call-arg-cons
-          (CompilerIrSpmdCallArg.Arg
-            (CompilerIrSpmdValueClass.Varying)
-            (CompilerIrValue.Var 22)
-            (AstType.I64))
-          CompilerIrSpmdCallArgList.Nil))]
-    [instr : CompilerIrInstr
-      (ir-instr-spmd-call
+    [args : compiler_ir_types.CompilerIrSpmdCallArgList
+      (compiler_ir_types.ir-spmd-call-arg-cons
+        (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+          (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+          (compiler_ir_types.CompilerIrValue.Var 21)
+          (ast.AstType.I64))
+        (compiler_ir_types.ir-spmd-call-arg-cons
+          (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+            (compiler_ir_types.CompilerIrValue.Var 22)
+            (ast.AstType.I64))
+          compiler_ir_types.CompilerIrSpmdCallArgList.Nil))]
+    [instr : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.ir-instr-spmd-call
         (compiler-ir-smoke-symbol-id "helper")
-        (CompilerIrSpmdBackend.Avx2)
+        (compiler_ir_types.CompilerIrSpmdBackend.Avx2)
         8
-        (CompilerIrValue.Var 20)
+        (compiler_ir_types.CompilerIrValue.Var 20)
         args
-        (CompilerIrSpmdCallResult.Value
+        (compiler_ir_types.CompilerIrSpmdCallResult.Value
           6
-          (CompilerIrSpmdValueClass.Varying)
-          (AstType.I64)))]
-    [span : AstSourceSpan (ast-source-span 3 4 3 9)]
-    [spans : CompilerSourceSpans
-      (compiler-source-spans-insert-instr
-        (compiler-source-spans-empty)
+          (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+          (ast.AstType.I64)))]
+    [span : ast.AstSourceSpan (ast.ast-source-span 3 4 3 9)]
+    [spans : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert-instr
+        (compiler_ir_types.compiler-source-spans-empty)
         7
         instr
         span)]
     (and
       (string.eq
-        (compiler-ir-instr-render
-          (ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-instr-render
+          (ast.ast-node-pool-reader-type-segment-bases)
           instr)
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) : varying i64")
       (string.eq
-        (compiler-ir-instr-describe
-          (ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-instr-describe
+          (ast.ast-node-pool-reader-type-segment-bases)
           instr)
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) -> %6 : varying i64")
       (match instr
-        [(CompilerIrInstr.SpmdCall payload-box)
+        [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
           (let
             [stored-args (struct-get (box-get payload-box) args)]
             (match stored-args
-              [(CompilerIrSpmdCallArgList.Array seq) (= (struct-get seq len) 2)]
+              [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
+                (= (struct-get seq len) 2)]
               [_ false]))]
         [_ false])
-      (compiler-ir-effect-is? instr CompilerIrEffect.Unknown)
-      (= (compiler-ir-instr-call-arg-count instr) 2)
+      (compiler_ir_types.compiler-ir-effect-is?
+        instr
+        compiler_ir_types.CompilerIrEffect.Unknown)
+      (= (compiler_ir_types.compiler-ir-instr-call-arg-count instr) 2)
       (string.eq
-        (compiler-ir-instr-render
-          (ast-node-pool-reader-type-segment-bases)
-          (compiler-ir-clone-instr (ast-node-pool-reader-context-current) instr))
-        (compiler-ir-instr-render
-          (ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-instr-render
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler_ir_types.compiler-ir-clone-instr
+            (ast.ast-node-pool-reader-context-current)
+            instr))
+        (compiler_ir_types.compiler-ir-instr-render
+          (ast.ast-node-pool-reader-type-segment-bases)
           instr))
-      (match (compiler-source-spans-lookup-instr spans 7 instr)
-        [(CompilerMaybeSourceSpan.Some found)
+      (match (compiler_ir_types.compiler-source-spans-lookup-instr
+        spans
+        7
+        instr)
+        [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
           (and
-            (= (ast-source-span-start-line found) 3)
-            (= (ast-source-span-end-col found) 9))]
-        [(CompilerMaybeSourceSpan.No) false]))))
+            (= (ast.ast-source-span-start-line found) 3)
+            (= (ast.ast-source-span-end-col found) 9))]
+        [(compiler_ir_types.CompilerMaybeSourceSpan.No) false]))))
 
 (define (compiler-ir-smoke-access-helpers-ok?) : bool
   (let
-    [call-indirect : CompilerIrInstr
-      (CompilerIrInstr.CallIndirect
+    [call-indirect : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.CallIndirect
         9
-        (CompilerIrValue.Var 1)
-        CompilerIrCallArgs.Nil
-        (AstType.I64))]
-    [instrs : CompilerIrInstrList
-      (compiler-ir-instr-cons
-        (CompilerIrInstr.Mov 7 (CompilerIrValue.I64 10) (AstType.I64))
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.BoundsCheck
-            (CompilerIrValue.Var 7)
-            (CompilerIrValue.I64 10)
-            (compiler-ir-label "ok"))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.BinOp
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (ast.AstType.I64))]
+    [instrs : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          7
+          (compiler_ir_types.CompilerIrValue.I64 10)
+          (ast.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 10)
+            (compiler_ir_types.compiler-ir-label "ok"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
               8
-              (CompilerIrBinOp.Add)
-              (CompilerIrValue.Var 7)
-              (CompilerIrValue.I64 1)
-              (AstType.I64))
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Return
-                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 8)))
-              CompilerIrInstrList.Nil))))]
-    [seq : CompilerIrInstrSeq (compiler-ir-instr-seq-from-list instrs)]
-    [slots : (Array CompilerIrInstr) (struct-get seq slots)]
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (ast.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 8)))
+              compiler_ir_types.CompilerIrInstrList.Nil))))]
+    [seq : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs)]
+    [slots : (Array compiler_ir_types.CompilerIrInstr) (struct-get seq slots)]
     (and
-      (= (compiler-ir-instr-loop-dst-or call-indirect (- 0 1)) (- 0 1))
-      (= (compiler-ir-instr-array-loop-dst-or slots 0 (- 0 1)) 7)
-      (= (compiler-ir-instr-array-loop-dst-or slots 1 (- 0 1)) (- 0 1))
-      (= (compiler-ir-instr-seq-loop-dst-or seq 0 (- 0 1)) 7)
-      (= (compiler-ir-instr-seq-loop-dst-or seq 1 (- 0 1)) (- 0 1))
-      (not (compiler-ir-instr-seq-phi? seq 0))
-      (not (compiler-ir-instr-seq-return? seq 0))
-      (not (compiler-ir-instr-seq-bounds-check? seq 0))
-      (compiler-ir-instr-seq-bounds-check? seq 1)
-      (compiler-ir-instr-seq-return? seq 3)
-      (match (compiler-ir-instr-seq-ref seq 2)
-        [(CompilerIrInstr.BinOp dst _ (CompilerIrValue.Var lhs) _ _)
+      (=
+        (compiler_ir_types.compiler-ir-instr-loop-dst-or call-indirect (- 0 1))
+        (- 0 1))
+      (=
+        (compiler_ir_types.compiler-ir-instr-array-loop-dst-or slots 0 (- 0 1))
+        7)
+      (=
+        (compiler_ir_types.compiler-ir-instr-array-loop-dst-or slots 1 (- 0 1))
+        (- 0 1))
+      (= (compiler_ir_types.compiler-ir-instr-seq-loop-dst-or seq 0 (- 0 1)) 7)
+      (=
+        (compiler_ir_types.compiler-ir-instr-seq-loop-dst-or seq 1 (- 0 1))
+        (- 0 1))
+      (not (compiler_ir_types.compiler-ir-instr-seq-phi? seq 0))
+      (not (compiler_ir_types.compiler-ir-instr-seq-return? seq 0))
+      (not (compiler_ir_types.compiler-ir-instr-seq-bounds-check? seq 0))
+      (compiler_ir_types.compiler-ir-instr-seq-bounds-check? seq 1)
+      (compiler_ir_types.compiler-ir-instr-seq-return? seq 3)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref seq 2)
+        [(compiler_ir_types.CompilerIrInstr.BinOp
+            dst
+            _
+            (compiler_ir_types.CompilerIrValue.Var lhs)
+            _
+            _)
           (and (= dst 8) (= lhs 7))]
         [_ false]))))
 
@@ -624,4 +696,4 @@
     (unless (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) (return 5))
     (unless (compiler-ir-smoke-access-helpers-ok?) (return 6))
     (unless (compiler-ir-smoke-runtime-effect-self-test-ok?) (return 7))
-    (compiler-ir-effect-self-test)))
+    (compiler_ir_types.compiler-ir-effect-self-test)))

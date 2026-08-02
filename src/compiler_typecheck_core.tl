@@ -10417,9 +10417,22 @@
 (define (tc-unused-unsafe-tracking-clear!) : unit
   (begin
     (tc-unused-unsafe-tracking-disable!)
-    (set! tc-unused-unsafe-block-spans (array.make-array AstSourceSpan 128))
-    (set! tc-unused-unsafe-block-paths (array.make-array String 128))
-    (set! tc-unused-unsafe-block-used (array.make-array bool 128))
+    ;; Allocate the block arrays in the never-reset lazy global table arena.
+    ;; The lint pass runs its nested check in transient per-module arenas that
+    ;; are finished as the check progresses; allocating under the caller's
+    ;; transient arena would leave these globals dangling when the LSP runs
+    ;; lint and check back-to-back in one process (array index OOB).
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set! tc-unused-unsafe-block-spans (array.make-array AstSourceSpan 128))
+        (set! tc-unused-unsafe-block-paths (array.make-array String 128))
+        (set! tc-unused-unsafe-block-used (array.make-array bool 128))
+        (tc-lazy-global-table-arena-finish! previous owner)))
     (set! tc-unused-unsafe-block-len 0)))
 
 (define (tc-unused-unsafe-block-count) : i64
@@ -10498,6 +10511,11 @@
   (let
     [old-cap : i64 (array.length tc-unused-unsafe-block-spans)]
     [new-cap : i64 (* old-cap 2)]
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+    [_set-owner : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
     [new-spans : (__tl_dyn-array AstSourceSpan)
       (array.make-array AstSourceSpan new-cap)]
     [new-paths : (__tl_dyn-array String) (array.make-array String new-cap)]
@@ -10506,7 +10524,8 @@
       (tc-unused-unsafe-grow-copy new-spans new-paths new-used 0)
       (set! tc-unused-unsafe-block-spans new-spans)
       (set! tc-unused-unsafe-block-paths new-paths)
-      (set! tc-unused-unsafe-block-used new-used))))
+      (set! tc-unused-unsafe-block-used new-used)
+      (tc-lazy-global-table-arena-finish! previous owner))))
 
 (define (tc-unused-unsafe-push [span : AstSourceSpan]) : i64
   (let
@@ -34012,12 +34031,22 @@
   (array-ref tc-inlay-hint-types i))
 
 (define (tc-inlay-hint-record! [line : i64] [col : i64] [ty : String]) : unit
+  ;; The hint arrays live in the never-reset lazy global table arena, but the
+  ;; rendered type string was allocated in the typecheck's transient arena and
+  ;; dangles once the check tears down (tl/getType JSON-encodes it afterwards).
+  ;; Copy it into the stable arena so it outlives the check.
   (let
     [slot : i64 (% tc-inlay-hint-count tc-inlay-hint-capacity)]
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+    [_set-owner : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
     (begin
       (array-set! tc-inlay-hint-lines slot line)
       (array-set! tc-inlay-hint-cols slot col)
-      (array-set! tc-inlay-hint-types slot ty)
+      (array-set! tc-inlay-hint-types slot (string.copy (& ty)))
+      (tc-lazy-global-table-arena-finish! previous owner)
       (set! tc-inlay-hint-count (+ tc-inlay-hint-count 1)))))
 
 ;; Record the inferred type of an un-annotated let binding value, if collection

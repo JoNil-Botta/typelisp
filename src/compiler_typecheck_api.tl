@@ -1,34 +1,42 @@
 ;; compiler_typecheck_api.tl - Public typechecker API used by compiler tools.
 (import stdlib.vector)
 (import (vector.vector String) as svec)
-(import "compiler_typecheck_core.tl")
-(import "compiler_load.tl")
-(import "compiler_specialize.tl")
+(import compiler_typecheck_core as tc_core)
+(import compiler_load as load)
+(import compiler_specialize as spec)
+(import compiler_ast_types as ast)
+(import compiler_symbols as csym)
+(import compiler_cfg_core as cfg_core)
+(import compiler_parse_core as parser)
+(import compiler_diagnostic as cdiag)
 (import sym_i64_env)
 (import compiler_builtin_ids as cbi)
+
+(define (compiler-typecheck-context-program [ctx : tc_core.TcContext]) : ast.AstProgram
+  (tc_core.tc-context-program ctx))
 
 (define (compiler-typecheck-prefix-cache-scope
   [kind : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : String
-  (compiler-load-prelude-cache-key kind stdlib-roots cfgs))
+  (load.compiler-load-prelude-cache-key kind stdlib-roots cfgs))
 
 (define (compiler-typecheck-reset-load-session!) : unit
   (begin
-    (compiler-load-session-reset-pools!)
-    (compiler-load-session-reset-interns!)
+    (load.compiler-load-session-reset-pools!)
+    (load.compiler-load-session-reset-interns!)
     (cbi.compiler-builtin-initialize-for-parse!)
-    (compiler-typecheck-reset-intern-owned-state!)))
+    (tc_core.compiler-typecheck-reset-intern-owned-state!)))
 
 (define (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
-  [load-state : CompilerLoadSessionState]
-  [prefix-cache : TcPrefixSnapshotCacheState]
-  [job-state : TcJobState]
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [load-state : load.CompilerLoadSessionState]
+  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
+  [job-state : tc_core.TcJobState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
+  [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheck
   ;; Generate declaration families (e.g. hashmap) before macro expansion. Macro
   ;; expansion type-directs some sub-expressions (let-init / match-scrutinee
   ;; typing), which must be able to see generated functions; the later template
@@ -36,16 +44,20 @@
   ;; that both defines a macro and uses a generated function would fail to
   ;; typecheck. The downstream specialize call re-normalizes harmlessly.
   (begin
-    (tc-spmd-inline-helper-stack-reset!)
-    (tc-typecheck-result-with-pool-check
+    (tc_core.tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-typecheck-result-with-pool-check
       (let
-        [generated-result : ResultGenProgramWithPaths
-          (gen-normalize-program-with-paths-and-pools program paths "" pools)]
+        [generated-result : spec.ResultGenProgramWithPaths
+          (spec.gen-normalize-program-with-paths-and-pools
+            program
+            paths
+            ""
+            pools)]
         (begin
-          (ast-node-pool-context-install! pools)
+          (ast.ast-node-pool-context-install! pools)
           (match generated-result
-            [(ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (macro-expand-then-build-envs-with-load-state-and-job-state
+            [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
+              (match (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state
                 load-state
                 job-state
                 generated
@@ -53,39 +65,39 @@
                 pools
                 stdlib-roots
                 (typecheck-compiler-source-language-cfgs))
-                [(ResultMacroExpand.Ok expanded expanded-paths)
+                [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
                   (begin
-                    (ast-node-pool-context-capture-active! pools)
-                    (if (compiler-specialize-needed? expanded)
-                      (match (gen-normalize-program-with-paths-and-pools
+                    (ast.ast-node-pool-context-capture-active! pools)
+                    (if (spec.compiler-specialize-needed? expanded)
+                      (match (spec.gen-normalize-program-with-paths-and-pools
                         expanded
                         expanded-paths
-                        (tc-decl-path-list-last expanded-paths "")
+                        (tc_core.tc-decl-path-list-last expanded-paths "")
                         pools)
-                        [(ResultGenProgramWithPaths.Ok
+                        [(spec.ResultGenProgramWithPaths.Ok
                             normalized
                             normalized-paths)
                           (begin
-                            (ast-node-pool-context-install! pools)
-                            (if (compiler-specialize-needed? normalized)
-                              (match (build-compiler-symbols-diagnostic-with-paths
+                            (ast.ast-node-pool-context-install! pools)
+                            (if (spec.compiler-specialize-needed? normalized)
+                              (match (csym.build-compiler-symbols-diagnostic-with-paths
                                 normalized
                                 normalized-paths)
-                                [(ResultCompilerSymbolsDiagnostic.Ok _)
+                                [(csym.ResultCompilerSymbolsDiagnostic.Ok _)
                                   (begin
-                                    (ast-node-pool-context-capture-active!
+                                    (ast.ast-node-pool-context-capture-active!
                                       pools)
-                                    (match (compiler-specialize-program-with-paths-and-pools
+                                    (match (spec.compiler-specialize-program-with-paths-and-pools
                                       normalized
                                       normalized-paths
-                                      (tc-decl-path-list-last
+                                      (tc_core.tc-decl-path-list-last
                                         normalized-paths
                                         "")
                                       pools)
-                                      [(ResultSpecProgramWithPaths.Ok
+                                      [(spec.ResultSpecProgramWithPaths.Ok
                                           specialized
                                           specialized-paths)
-                                        (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
+                                        (tc_core.typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
                                           load-state
                                           prefix-cache
                                           job-state
@@ -94,14 +106,16 @@
                                           stdlib-roots
                                           cache-scope
                                           pools)]
-                                      [(ResultSpecProgramWithPaths.Err diag)
-                                        (ResultCompilerTypecheck.Err
-                                          (compiler-diagnostic-list-box-single
+                                      [(spec.ResultSpecProgramWithPaths.Err
+                                          diag)
+                                        (tc_core.ResultCompilerTypecheck.Err
+                                          (cdiag.compiler-diagnostic-list-box-single
                                             diag))]))]
-                                [(ResultCompilerSymbolsDiagnostic.Err diag)
-                                  (ResultCompilerTypecheck.Err
-                                    (compiler-diagnostic-list-box-single diag))])
-                              (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
+                                [(csym.ResultCompilerSymbolsDiagnostic.Err diag)
+                                  (tc_core.ResultCompilerTypecheck.Err
+                                    (cdiag.compiler-diagnostic-list-box-single
+                                      diag))])
+                              (tc_core.typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
                                 load-state
                                 prefix-cache
                                 job-state
@@ -110,10 +124,10 @@
                                 stdlib-roots
                                 cache-scope
                                 pools)))]
-                        [(ResultGenProgramWithPaths.Err diag)
-                          (ResultCompilerTypecheck.Err
-                            (compiler-diagnostic-list-box-single diag))])
-                      (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
+                        [(spec.ResultGenProgramWithPaths.Err diag)
+                          (tc_core.ResultCompilerTypecheck.Err
+                            (cdiag.compiler-diagnostic-list-box-single diag))])
+                      (tc_core.typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
                         load-state
                         prefix-cache
                         job-state
@@ -122,26 +136,26 @@
                         stdlib-roots
                         cache-scope
                         pools)))]
-                [(ResultMacroExpand.Err diag)
-                  (ResultCompilerTypecheck.Err
-                    (compiler-diagnostic-list-box-single diag))])]
-            [(ResultGenProgramWithPaths.Err diag)
-              (ResultCompilerTypecheck.Err
-                (compiler-diagnostic-list-box-single diag))]))))))
+                [(tc_core.ResultMacroExpand.Err diag)
+                  (tc_core.ResultCompilerTypecheck.Err
+                    (cdiag.compiler-diagnostic-list-box-single diag))])]
+            [(spec.ResultGenProgramWithPaths.Err diag)
+              (tc_core.ResultCompilerTypecheck.Err
+                (cdiag.compiler-diagnostic-list-box-single diag))]))))))
 
 ;; Serial/test adapter for callers migrated to explicit loader state before the
 ;; prefix-cache and typecheck-job state seams existed.
 (define (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
-  [load-state : CompilerLoadSessionState]
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [load-state : load.CompilerLoadSessionState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
+  [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
     load-state
-    tc-prefix-snapshot-serial-test-cache-state
-    (tc-serial-job-state)
+    tc_core.tc-prefix-snapshot-serial-test-cache-state
+    (tc_core.tc-serial-job-state)
     program
     paths
     stdlib-roots
@@ -151,13 +165,13 @@
 ;; Serial/test compatibility adapter. Production callers with a job context use
 ;; the explicit load-state, prefix-cache-state, and job-state entry above.
 (define (typecheck-compiler-program-with-paths-cache-and-pools
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
+  [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
-    (compiler-load-serial-test-session-state)
+    (load.compiler-load-serial-test-session-state)
     program
     paths
     stdlib-roots
@@ -165,47 +179,47 @@
     pools))
 
 (define (typecheck-compiler-program-with-paths-cache
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
-  [cache-scope : String]) : ResultCompilerTypecheck
+  [cache-scope : String]) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-pools
     program
     paths
     stdlib-roots
     cache-scope
-    (ast-node-pool-context-capture-active)))
+    (ast.ast-node-pool-context-capture-active)))
 
 (define (typecheck-compiler-program-with-paths
-  [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultCompilerTypecheck
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache
     program
     paths
     (svec.new)
-    (tc-prefix-default-cache-scope)))
+    (tc_core.tc-prefix-default-cache-scope)))
 
 (defenum ResultCompilerDocExpand
-  (Ok AstProgram AstDeclPathList)
-  (Err (Box CompilerDiagnostic)))
+  (Ok ast.AstProgram ast.AstDeclPathList)
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools
-  [load-state : CompilerLoadSessionState]
-  [job-state : TcJobState]
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [load-state : load.CompilerLoadSessionState]
+  [job-state : tc_core.TcJobState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
-  [pools : AstNodePoolContext]) : ResultCompilerDocExpand
+  [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
   (begin
-    (tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-spmd-inline-helper-stack-reset!)
     (let
-      [generated-result : ResultGenProgramWithPaths
-        (gen-normalize-program-with-paths-and-pools program paths "" pools)]
+      [generated-result : spec.ResultGenProgramWithPaths
+        (spec.gen-normalize-program-with-paths-and-pools program paths "" pools)]
       (begin
-        (ast-node-pool-context-install! pools)
+        (ast.ast-node-pool-context-install! pools)
         (match generated-result
-          [(ResultGenProgramWithPaths.Ok generated generated-paths)
-            (match (macro-expand-then-build-envs-with-load-state-and-job-state
+          [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
+            (match (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state
               load-state
               job-state
               generated
@@ -213,23 +227,24 @@
               pools
               stdlib-roots
               (typecheck-compiler-source-language-cfgs))
-              [(ResultMacroExpand.Ok expanded expanded-paths)
+              [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
                 (begin
-                  (ast-node-pool-context-capture-active! pools)
+                  (ast.ast-node-pool-context-capture-active! pools)
                   (ResultCompilerDocExpand.Ok expanded expanded-paths))]
-              [(ResultMacroExpand.Err diag) (ResultCompilerDocExpand.Err diag)])]
-          [(ResultGenProgramWithPaths.Err diag)
+              [(tc_core.ResultMacroExpand.Err diag)
+                (ResultCompilerDocExpand.Err diag)])]
+          [(spec.ResultGenProgramWithPaths.Err diag)
             (ResultCompilerDocExpand.Err diag)])))))
 
 (define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-pools
-  [load-state : CompilerLoadSessionState]
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [load-state : load.CompilerLoadSessionState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
-  [pools : AstNodePoolContext]) : ResultCompilerDocExpand
+  [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
   (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools
     load-state
-    (tc-serial-job-state)
+    (tc_core.tc-serial-job-state)
     program
     paths
     stdlib-roots
@@ -237,37 +252,41 @@
 
 ;; Serial/test compatibility adapter.
 (define (typecheck-compiler-doc-expand-program-with-paths-and-pools
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
-  [pools : AstNodePoolContext]) : ResultCompilerDocExpand
+  [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
   (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-pools
-    (compiler-load-serial-test-session-state)
+    (load.compiler-load-serial-test-session-state)
     program
     paths
     stdlib-roots
     pools))
 
 (define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools
-  [load-state : CompilerLoadSessionState]
-  [prefix-cache : TcPrefixSnapshotCacheState]
-  [job-state : TcJobState]
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [load-state : load.CompilerLoadSessionState]
+  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
+  [job-state : tc_core.TcJobState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheckChecked
   (begin
-    (tc-spmd-inline-helper-stack-reset!)
-    (tc-typecheck-checked-result-with-pool-check
+    (tc_core.tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-typecheck-checked-result-with-pool-check
       (let
-        [generated-result : ResultGenProgramWithPaths
-          (gen-normalize-program-with-paths-and-pools program paths "" pools)]
+        [generated-result : spec.ResultGenProgramWithPaths
+          (spec.gen-normalize-program-with-paths-and-pools
+            program
+            paths
+            ""
+            pools)]
         (begin
-          (ast-node-pool-context-install! pools)
+          (ast.ast-node-pool-context-install! pools)
           (match generated-result
-            [(ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (macro-expand-then-build-envs-with-load-state-and-job-state
+            [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
+              (match (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state
                 load-state
                 job-state
                 generated
@@ -275,39 +294,39 @@
                 pools
                 stdlib-roots
                 (typecheck-compiler-source-language-cfgs))
-                [(ResultMacroExpand.Ok expanded expanded-paths)
+                [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
                   (begin
-                    (ast-node-pool-context-capture-active! pools)
-                    (if (compiler-specialize-needed? expanded)
-                      (match (gen-normalize-program-with-paths-and-pools
+                    (ast.ast-node-pool-context-capture-active! pools)
+                    (if (spec.compiler-specialize-needed? expanded)
+                      (match (spec.gen-normalize-program-with-paths-and-pools
                         expanded
                         expanded-paths
-                        (tc-decl-path-list-last expanded-paths "")
+                        (tc_core.tc-decl-path-list-last expanded-paths "")
                         pools)
-                        [(ResultGenProgramWithPaths.Ok
+                        [(spec.ResultGenProgramWithPaths.Ok
                             normalized
                             normalized-paths)
                           (begin
-                            (ast-node-pool-context-install! pools)
-                            (if (compiler-specialize-needed? normalized)
-                              (match (build-compiler-symbols-diagnostic-with-paths
+                            (ast.ast-node-pool-context-install! pools)
+                            (if (spec.compiler-specialize-needed? normalized)
+                              (match (csym.build-compiler-symbols-diagnostic-with-paths
                                 normalized
                                 normalized-paths)
-                                [(ResultCompilerSymbolsDiagnostic.Ok _)
+                                [(csym.ResultCompilerSymbolsDiagnostic.Ok _)
                                   (begin
-                                    (ast-node-pool-context-capture-active!
+                                    (ast.ast-node-pool-context-capture-active!
                                       pools)
-                                    (match (compiler-specialize-program-with-paths-and-pools
+                                    (match (spec.compiler-specialize-program-with-paths-and-pools
                                       normalized
                                       normalized-paths
-                                      (tc-decl-path-list-last
+                                      (tc_core.tc-decl-path-list-last
                                         normalized-paths
                                         "")
                                       pools)
-                                      [(ResultSpecProgramWithPaths.Ok
+                                      [(spec.ResultSpecProgramWithPaths.Ok
                                           specialized
                                           specialized-paths)
-                                        (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
+                                        (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
                                           load-state
                                           prefix-cache
                                           job-state
@@ -316,14 +335,16 @@
                                           stdlib-roots
                                           cache-scope
                                           pools)]
-                                      [(ResultSpecProgramWithPaths.Err diag)
-                                        (ResultCompilerTypecheckChecked.Err
-                                          (compiler-diagnostic-list-box-single
+                                      [(spec.ResultSpecProgramWithPaths.Err
+                                          diag)
+                                        (tc_core.ResultCompilerTypecheckChecked.Err
+                                          (cdiag.compiler-diagnostic-list-box-single
                                             diag))]))]
-                                [(ResultCompilerSymbolsDiagnostic.Err diag)
-                                  (ResultCompilerTypecheckChecked.Err
-                                    (compiler-diagnostic-list-box-single diag))])
-                              (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
+                                [(csym.ResultCompilerSymbolsDiagnostic.Err diag)
+                                  (tc_core.ResultCompilerTypecheckChecked.Err
+                                    (cdiag.compiler-diagnostic-list-box-single
+                                      diag))])
+                              (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
                                 load-state
                                 prefix-cache
                                 job-state
@@ -332,10 +353,10 @@
                                 stdlib-roots
                                 cache-scope
                                 pools)))]
-                        [(ResultGenProgramWithPaths.Err diag)
-                          (ResultCompilerTypecheckChecked.Err
-                            (compiler-diagnostic-list-box-single diag))])
-                      (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
+                        [(spec.ResultGenProgramWithPaths.Err diag)
+                          (tc_core.ResultCompilerTypecheckChecked.Err
+                            (cdiag.compiler-diagnostic-list-box-single diag))])
+                      (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
                         load-state
                         prefix-cache
                         job-state
@@ -344,25 +365,25 @@
                         stdlib-roots
                         cache-scope
                         pools)))]
-                [(ResultMacroExpand.Err diag)
-                  (ResultCompilerTypecheckChecked.Err
-                    (compiler-diagnostic-list-box-single diag))])]
-            [(ResultGenProgramWithPaths.Err diag)
-              (ResultCompilerTypecheckChecked.Err
-                (compiler-diagnostic-list-box-single diag))]))))))
+                [(tc_core.ResultMacroExpand.Err diag)
+                  (tc_core.ResultCompilerTypecheckChecked.Err
+                    (cdiag.compiler-diagnostic-list-box-single diag))])]
+            [(spec.ResultGenProgramWithPaths.Err diag)
+              (tc_core.ResultCompilerTypecheckChecked.Err
+                (cdiag.compiler-diagnostic-list-box-single diag))]))))))
 
 ;; Serial/test adapter for the load-state-only surface.
 (define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-pools
-  [load-state : CompilerLoadSessionState]
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [load-state : load.CompilerLoadSessionState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools
     load-state
-    tc-prefix-snapshot-serial-test-cache-state
-    (tc-serial-job-state)
+    tc_core.tc-prefix-snapshot-serial-test-cache-state
+    (tc_core.tc-serial-job-state)
     program
     paths
     stdlib-roots
@@ -371,13 +392,13 @@
 
 ;; Serial/test compatibility adapter.
 (define (typecheck-compiler-program-with-paths-checked-cache-and-pools
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-pools
-    (compiler-load-serial-test-session-state)
+    (load.compiler-load-serial-test-session-state)
     program
     paths
     stdlib-roots
@@ -385,182 +406,191 @@
     pools))
 
 (define (typecheck-compiler-program-with-paths-checked-cache
-  [program : AstProgram]
-  [paths : AstDeclPathList]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
-  [cache-scope : String]) : ResultCompilerTypecheckChecked
+  [cache-scope : String]) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-pools
     program
     paths
     stdlib-roots
     cache-scope
-    (ast-node-pool-context-capture-active)))
+    (ast.ast-node-pool-context-capture-active)))
 
 (define (typecheck-compiler-program-with-paths-checked
-  [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache
     program
     paths
     (svec.new)
-    (tc-prefix-default-cache-scope)))
+    (tc_core.tc-prefix-default-cache-scope)))
 
-(define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
-  (typecheck-compiler-program-with-paths program (ast-decl-path-list-new)))
+(define (typecheck-compiler-program [program : ast.AstProgram]) : tc_core.ResultCompilerTypecheck
+  (typecheck-compiler-program-with-paths program (ast.ast-decl-path-list-new)))
 
 (define (typecheck-compiler-source-language-cfgs) : sym_i64_env.SymI64Env
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (compiler-cfg-empty)))
+    (cfg_core.compiler-cfg-empty)))
 
-(define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
+(define (typecheck-compiler-source-load [src : String]) : load.ResultCompilerLoadWithPaths
   (let
     [stdlib-roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (typecheck-compiler-source-language-cfgs)]
-    (match (compiler-load-core-macro-prelude-with-roots-cfg
+    (match (load.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       cfgs)
-      [(ResultCompilerLoadWithPaths.Ok
+      [(load.ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
           prelude-modules
           prelude-seen)
-        (match (compiler-load-source-with-paths-and-roots-cfg
+        (match (load.compiler-load-source-with-paths-and-roots-cfg
           ""
           src
           prelude-seen
           stdlib-roots
           cfgs)
-          [(ResultCompilerLoadWithPaths.Ok
+          [(load.ResultCompilerLoadWithPaths.Ok
               entry-decls
               entry-paths
               entry-modules
               seen)
-            (ResultCompilerLoadWithPaths.Ok
-              (compiler-load-decl-list-append prelude-decls entry-decls)
-              (compiler-load-decl-path-list-append prelude-paths entry-paths)
-              (compiler-load-decl-module-list-append
+            (load.ResultCompilerLoadWithPaths.Ok
+              (load.compiler-load-decl-list-append prelude-decls entry-decls)
+              (load.compiler-load-decl-path-list-append
+                prelude-paths
+                entry-paths)
+              (load.compiler-load-decl-module-list-append
                 prelude-modules
                 entry-modules)
               seen)]
-          [(ResultCompilerLoadWithPaths.Err diag)
-            (ResultCompilerLoadWithPaths.Err diag)])]
-      [(ResultCompilerLoadWithPaths.Err diag)
-        (ResultCompilerLoadWithPaths.Err diag)])))
+          [(load.ResultCompilerLoadWithPaths.Err diag)
+            (load.ResultCompilerLoadWithPaths.Err diag)])]
+      [(load.ResultCompilerLoadWithPaths.Err diag)
+        (load.ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (typecheck-compiler-source-stdlib-import-kind?
-  [kind : AstImportKind]
+  [kind : ast.AstImportKind]
   [path : String]) : bool
   (match kind
-    [(AstImportKind.Path) (compiler-load-stdlib-import? path)]
-    [(AstImportKind.Module)
-      (compiler-load-stdlib-import? (compiler-load-dotted-module-path path))]
+    [(ast.AstImportKind.Module)
+      (load.compiler-load-stdlib-import?
+        (load.compiler-load-dotted-module-path path))]
     [_ false]))
 
-(define (typecheck-compiler-source-decl-has-stdlib-import? [decl : AstDecl]) : bool
+(define (typecheck-compiler-source-decl-has-stdlib-import? [decl : ast.AstDecl]) : bool
   (match decl
-    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind path _ _ _))
+    [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind path _ _ _))
       (typecheck-compiler-source-stdlib-import-kind? kind path)]
-    [(AstDecl.Unsafe inner-box)
+    [(ast.AstDecl.Unsafe inner-box)
       (typecheck-compiler-source-decl-has-stdlib-import? (box-get inner-box))]
     [_ false]))
 
 (define (typecheck-compiler-source-decls-have-stdlib-import?
-  [decls : AstDeclList]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest)
+  [decls : ast.AstDeclList]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
       (or
         (typecheck-compiler-source-decl-has-stdlib-import? decl)
         (typecheck-compiler-source-decls-have-stdlib-import? rest))]))
 
 (define (typecheck-compiler-source-program-has-stdlib-import?
-  [program : AstProgram]) : bool
+  [program : ast.AstProgram]) : bool
   (match program
-    [(AstProgram.Program decls-box)
+    [(ast.AstProgram.Program decls-box)
       (typecheck-compiler-source-decls-have-stdlib-import? (box-get decls-box))]))
 
-(define (typecheck-compiler-repl-expr [decls : AstDeclList] [expr : AstExpr]) : ResultTcType
+(define (typecheck-compiler-repl-expr
+  [decls : ast.AstDeclList]
+  [expr : ast.AstExpr]) : tc_core.ResultTcType
   (let
-    [program : AstProgram (ast-program decls)]
+    [program : ast.AstProgram (ast.ast-program decls)]
     (begin
-      (tc-clone-able-cache-reset!)
-      (macro-alias-cache-reset!)
-      (match (build-compiler-symbols program)
-        [(ResultCompilerSymbols.Ok symbols)
-          (match (build-compiler-registries program)
-            [(ResultCompilerRegistries.Ok registries)
+      (tc_core.tc-clone-able-cache-reset!)
+      (tc_core.macro-alias-cache-reset!)
+      (match (csym.build-compiler-symbols program)
+        [(csym.ResultCompilerSymbols.Ok symbols)
+          (match (csym.build-compiler-registries program)
+            [(csym.ResultCompilerRegistries.Ok registries)
               (let
-                [ctx : TcContext
-                  (tc-context-new
+                [ctx : tc_core.TcContext
+                  (tc_core.tc-context-new
                     program
                     symbols
                     registries
                     ""
                     cbi.compiler-builtin-id-fix-empty
-                    (ast-node-pool-context-capture-active))]
-                (match (tc-program-source-types-policy-ok
+                    (ast.ast-node-pool-context-capture-active))]
+                (match (tc_core.tc-program-source-types-policy-ok
                   ctx
                   program
-                  (ast-decl-path-list-new))
-                  [(ResultTcSourcePolicyDiagnostic.Ok)
-                    (match (tc-source-expr-policy-ok
+                  (ast.ast-decl-path-list-new))
+                  [(tc_core.ResultTcSourcePolicyDiagnostic.Ok)
+                    (match (tc_core.tc-source-expr-policy-ok
                       ctx
-                      (tc-context-expr-bases ctx)
+                      (tc_core.tc-context-expr-bases ctx)
                       expr)
-                      [(ResultTcUnit.Ok)
-                        (match (tc-build-top-env ctx program)
-                          [(ResultTcEnv.Ok top-env)
-                            (match (tc-check-decls
+                      [(tc_core.ResultTcUnit.Ok)
+                        (match (tc_core.tc-build-top-env ctx program)
+                          [(tc_core.ResultTcEnv.Ok top-env)
+                            (match (tc_core.tc-check-decls
                               ctx
                               top-env
                               decls
-                              (CompilerTypecheckSummary 0 0 0))
-                              [(ResultCompilerTypecheck.Ok _)
-                                (tc-expr ctx top-env expr)]
-                              [(ResultCompilerTypecheck.Err diag)
-                                (ResultTcType.Err
-                                  (compiler-diagnostic-message
-                                    (compiler-diagnostic-list-first
+                              (tc_core.CompilerTypecheckSummary 0 0 0))
+                              [(tc_core.ResultCompilerTypecheck.Ok _)
+                                (tc_core.tc-expr ctx top-env expr)]
+                              [(tc_core.ResultCompilerTypecheck.Err diag)
+                                (tc_core.ResultTcType.Err
+                                  (cdiag.compiler-diagnostic-message
+                                    (cdiag.compiler-diagnostic-list-first
                                       (box-get diag))))])]
-                          [(ResultTcEnv.Err message) (ResultTcType.Err message)])]
-                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                  [(ResultTcSourcePolicyDiagnostic.Err diag)
-                    (ResultTcType.Err
-                      (compiler-diagnostic-message (box-get diag)))]))]
-            [(ResultCompilerRegistries.Err message) (ResultTcType.Err message)])]
-        [(ResultCompilerSymbols.Err message) (ResultTcType.Err message)]))))
+                          [(tc_core.ResultTcEnv.Err message)
+                            (tc_core.ResultTcType.Err message)])]
+                      [(tc_core.ResultTcUnit.Err message)
+                        (tc_core.ResultTcType.Err message)])]
+                  [(tc_core.ResultTcSourcePolicyDiagnostic.Err diag)
+                    (tc_core.ResultTcType.Err
+                      (cdiag.compiler-diagnostic-message (box-get diag)))]))]
+            [(csym.ResultCompilerRegistries.Err message)
+              (tc_core.ResultTcType.Err message)])]
+        [(csym.ResultCompilerSymbols.Err message)
+          (tc_core.ResultTcType.Err message)]))))
 
-(define (typecheck-compiler-source [src : String]) : ResultCompilerTypecheck
+(define (typecheck-compiler-source [src : String]) : tc_core.ResultCompilerTypecheck
   (let
-    [_cache-reset : unit (tc-prefix-snapshot-cache-clear!)]
-    [_dedup-reset : unit (ty-node-dedup-clear!)]
-    [_reset-before : unit (compiler-typecheck-reset-file-state!)]
-    [result : ResultCompilerTypecheck
-      (match (parse-ast-source-diagnostic "" src)
-        [(ResultAstProgramDiagnostic.Ok program)
+    [_cache-reset : unit (tc_core.tc-prefix-snapshot-cache-clear!)]
+    [_dedup-reset : unit (ast.ty-node-dedup-clear!)]
+    [_reset-before : unit (tc_core.compiler-typecheck-reset-file-state!)]
+    [result : tc_core.ResultCompilerTypecheck
+      (match (parser.parse-ast-source-diagnostic "" src)
+        [(parser.ResultAstProgramDiagnostic.Ok program)
           ;; Keep synthetic in-memory fixtures on the historical direct path,
           ;; but route real stdlib imports through the loader so macro imports
           ;; see loaded stdlib macro definitions and alias markers.
           (if (typecheck-compiler-source-program-has-stdlib-import? program)
             (match (typecheck-compiler-source-load src)
-              [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+              [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
                 (typecheck-compiler-program-with-paths
-                  (ast-program decls)
+                  (ast.ast-program decls)
                   paths)]
-              [(ResultCompilerLoadWithPaths.Err diag)
-                (ResultCompilerTypecheck.Err
-                  (compiler-diagnostic-list-box-single diag))])
+              [(load.ResultCompilerLoadWithPaths.Err diag)
+                (tc_core.ResultCompilerTypecheck.Err
+                  (cdiag.compiler-diagnostic-list-box-single diag))])
             (typecheck-compiler-program program))]
-        [(ResultAstProgramDiagnostic.Err diag)
-          (ResultCompilerTypecheck.Err
-            (compiler-diagnostic-list-box-single diag))])]
+        [(parser.ResultAstProgramDiagnostic.Err diag)
+          (tc_core.ResultCompilerTypecheck.Err
+            (cdiag.compiler-diagnostic-list-box-single diag))])]
     (begin
-      (compiler-typecheck-reset-file-state!)
+      (tc_core.compiler-typecheck-reset-file-state!)
       result)))
 
-(define (compiler-typecheck-summary-score [summary : CompilerTypecheckSummary]) : i64
+(define (compiler-typecheck-summary-score
+  [summary : tc_core.CompilerTypecheckSummary]) : i64
   (match summary
-    [(CompilerTypecheckSummary values functions externs)
+    [(tc_core.CompilerTypecheckSummary values functions externs)
       (+ values (+ (* functions 10) (* externs 100)))]))

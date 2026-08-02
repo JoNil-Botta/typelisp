@@ -159,7 +159,8 @@ INDEX_MD="$WORKDIR/stdlib_index.md"
     printf ';# Stdlib module index.\n\n'
     while IFS= read -r module; do
         [ -n "$module" ] || continue
-        printf '(import "stdlib/%s")\n' "$(basename "$module")"
+        module_name=$(basename "$module" .tl)
+        printf '(import stdlib.%s)\n' "$module_name"
     done < "$MODULES"
 } > "$INDEX_SRC"
 

@@ -28,13 +28,17 @@ benchmarks/
 ```
 
 Each `<name>/` is one benchmark. `scripts/bench.sh` discovers every directory
-that contains both `bench.tl` and `baseline.c`.
+that contains both `bench.tl` and `baseline.c`. Linux CI passes explicit suite
+membership from `perf/benchmark-ci-cases.tsv`; instruction suites check exact
+output parity and cachegrind counts in one run. Local `--cases` and `--filter`
+selections remain independent of CI suite membership.
 
 The older synthetic optimizer cases use an `opt_` prefix, for example
 `opt_array_sum`, so they do not collide with the generic `array_sum` and
 `string_scan` benchmarks. Any benchmark with an `optimization.tsv` file also
-joins the stricter stdout-comparison and instruction-count harnesses; the file
-stores its category and space-separated command-line arguments.
+joins the stricter optimizer-corpus stdout comparison; the file stores its
+category and space-separated command-line arguments for every harness. The
+Linux opt2 pass uses its positive case list from the CI suite manifest.
 
 ### Available benchmarks
 

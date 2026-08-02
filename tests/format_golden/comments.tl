@@ -1,6 +1,6 @@
 ;; module header
 ;; keeps adjacent lines
-(import "std.tl")
+(import std)
 
 ;; item docs
 ;; stay attached

@@ -17,9 +17,17 @@
 (import stdlib.process)
 (import stdlib.vector)
 (import (vector.vector String) as doc_svec)
-(import "compiler_check_core.tl")
-(import "compiler_load.tl")
-(import "build_run_core.tl")
+(import compiler_check_core)
+(import compiler_backend as backend)
+(import compiler_ast_types as ast)
+(import compiler_diagnostic as cdiag)
+(import compiler_driver_core as driver)
+(import compiler_cfg_core as cfg_core)
+(import compiler_lower as lower)
+(import compiler_optimize as opt)
+(import compiler_typecheck_core as tc)
+(import compiler_load)
+(import build_run_core)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.option)
@@ -1176,29 +1184,33 @@
       (string.int->string index)
       " was expected to fail but passed")))
 
-(define (doc-test-public-diagnostic-render [diag : CompilerDiagnostic]) : String
-  (match (compiler-diagnostic-code diag)
+(define (doc-test-public-diagnostic-render [diag : cdiag.CompilerDiagnostic]) : String
+  (match (cdiag.compiler-diagnostic-code diag)
     [(CompilerDiagnosticSomeString code)
       (string.append
         "error["
         (string.append
           code
-          (string.append "]: " (compiler-diagnostic-render diag))))]
+          (string.append "]: " (cdiag.compiler-diagnostic-render diag))))]
     [CompilerDiagnosticNoString
-      (string.append "error: " (compiler-diagnostic-render diag))]))
+      (string.append "error: " (cdiag.compiler-diagnostic-render diag))]))
 
 (define (doc-test-public-diagnostic-render-smoke-ok?) : bool
   (let
-    [parse-diag : CompilerDiagnostic
-      (compiler-diagnostic-with-code
-        (compiler-diagnostic-simple "docs/parse.tl" 1 2 "missing closing paren")
-        (compiler-diagnostic-code-parse))]
-    [typecheck-diag : CompilerDiagnostic
-      (compiler-diagnostic-with-code
-        (compiler-diagnostic-simple "docs/type.tl" 3 4 "return mismatch")
-        (compiler-diagnostic-code-typecheck))]
-    [uncoded : CompilerDiagnostic
-      (compiler-diagnostic-simple
+    [parse-diag : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-with-code
+        (cdiag.compiler-diagnostic-simple
+          "docs/parse.tl"
+          1
+          2
+          "missing closing paren")
+        (cdiag.compiler-diagnostic-code-parse))]
+    [typecheck-diag : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-with-code
+        (cdiag.compiler-diagnostic-simple "docs/type.tl" 3 4 "return mismatch")
+        (cdiag.compiler-diagnostic-code-typecheck))]
+    [uncoded : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-simple
         "docs/plain.tl"
         5
         6
@@ -1215,7 +1227,7 @@
 
 (define (doc-test-unexpected-error-message
   [index : i64]
-  [diag : CompilerDiagnostic]) : String
+  [diag : cdiag.CompilerDiagnostic]) : String
   (string.append
     "doctest example "
     (string.append
@@ -1227,24 +1239,26 @@
 ;; Runnable doctests spawn nested build/run commands from a generated test
 ;; binary. This is a required gate on both Linux and Windows because skipped
 ;; runnable doctests can hide target-specific compiler/runtime bugs.
-(define (doc-test-runnable-target-supported? [target : CompilerBackendTarget]) : bool
+(define (doc-test-runnable-target-supported?
+  [target : backend.CompilerBackendTarget]) : bool
   (match target
-    [(CompilerBackendTarget.Linux) true]
-    [(CompilerBackendTarget.Windows) true]))
+    [(backend.CompilerBackendTarget.Linux) true]
+    [(backend.CompilerBackendTarget.Windows) true]))
 
 (define (doc-test-runnable-supported?) : bool
-  (doc-test-runnable-target-supported? (source-tool-default-target)))
+  (doc-test-runnable-target-supported?
+    (build_run_core.source-tool-default-target)))
 
 (define (doc-test-runnable-unsupported-message
   [index : i64]
-  [target : CompilerBackendTarget]) : String
+  [target : backend.CompilerBackendTarget]) : String
   (string.append
     "doctest example "
     (string.append
       (string.int->string index)
       (string.append
         " is a runnable doctest, but runnable doctests are unsupported on target "
-        (source-tool-target-name target)))))
+        (build_run_core.source-tool-target-name target)))))
 
 (define (doc-test-runnable-compile-message [index : i64] [message : String]) : String
   (string.append
@@ -1303,16 +1317,17 @@
       out)))
 
 (define (doc-test-normalize-output-for-target
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [text : String]) : String
   (match target
-    [(CompilerBackendTarget.Linux) text]
-    [(CompilerBackendTarget.Windows) (doc-test-normalize-windows-crlf text)]))
+    [(backend.CompilerBackendTarget.Linux) text]
+    [(backend.CompilerBackendTarget.Windows)
+      (doc-test-normalize-windows-crlf text)]))
 
 (define (doc-test-runnable-mismatch-message
   [index : i64]
   [expectation : DocTestExpectation]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [output : process.ProcessOutput]) : String
   (let
     [expected-exit : i64 (doc-test-expectation-run-exit expectation)]
@@ -1355,7 +1370,7 @@
 
 (define (doc-test-runnable-output-matches?
   [expectation : DocTestExpectation]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [output : process.ProcessOutput]) : bool
   (if (=
     (doc-test-expectation-run-exit expectation)
@@ -1374,71 +1389,76 @@
     false))
 
 (define (doc-test-assemble-and-link-captured
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
-  [bin-path : String]) : SourceToolCommandStatus
-  (source-tool-assemble-and-link
+  [bin-path : String]) : build_run_core.SourceToolCommandStatus
+  (build_run_core.source-tool-assemble-and-link
     target
     asm-path
     obj-path
     bin-path
-    (source-tool-link-inputs-empty)))
+    (build_run_core.source-tool-link-inputs-empty)))
 
 (define (doc-test-emit-runnable-assembly
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : doc_svec.Vec]
-  [target : CompilerBackendTarget]) : ResultSourceToolString
+  [target : backend.CompilerBackendTarget]) : build_run_core.ResultSourceToolString
   (begin
-    (compiler-driver-reset-file-state!)
-    (compiler-driver-state-clear-pool-backed-caches!)
+    (driver.compiler-driver-reset-file-state!)
+    (driver.compiler-driver-state-clear-pool-backed-caches!)
     (let
       [index : i64 (doc-test-example-index example)]
       [virtual-path : String (doc-test-example-virtual-path path index)]
       [code : String (doc-test-example-code example)]
       [cfgs : sym_i64_env.SymI64Env
-        (compiler-driver-target-cfgs target (compiler-cfg-empty))]
-      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-      [result : ResultSourceToolString
-        (match (compiler-driver-load-source-with-runtime-with-pools
+        (driver.compiler-driver-target-cfgs
+          target
+          (cfg_core.compiler-cfg-empty))]
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [result : build_run_core.ResultSourceToolString
+        (match (driver.compiler-driver-load-source-with-runtime-with-pools
           virtual-path
           code
           stdlib-roots
           cfgs
           pools)
-          [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
-            (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+          [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools
               virtual-path
-              (ast-program decls)
+              (ast.ast-program decls)
               paths
-              (CompilerLowerMode.Scalar)
+              (lower.CompilerLowerMode.Scalar)
               stdlib-roots
-              (tc-prefix-default-cache-scope)
+              (tc.tc-prefix-default-cache-scope)
               pools)
-              [(ResultCompilerLower.Ok program spans)
-                (match (compiler-driver-emit-lowered-with-level
+              [(lower.ResultCompilerLower.Ok program spans)
+                (match (driver.compiler-driver-emit-lowered-with-level
                   virtual-path
                   program
                   spans
                   target
                   true
-                  (compiler-optimize-default-level))
-                  [(ResultCompilerDriver.Ok asm)
-                    (ResultSourceToolString.Ok
-                      (source-tool-augment-assembly-for-target asm target))]
-                  [(ResultCompilerDriver.Err diag)
-                    (ResultSourceToolString.Err
-                      (compiler-diagnostic-render (box-get diag)))])]
-              [(ResultCompilerLower.Err diag)
-                (ResultSourceToolString.Err
-                  (compiler-diagnostic-render (box-get diag)))])]
-          [(ResultCompilerLoadWithPaths.Err diag)
-            (ResultSourceToolString.Err
-              (compiler-diagnostic-render (box-get diag)))])]
+                  (opt.compiler-optimize-default-level))
+                  [(driver.ResultCompilerDriver.Ok asm)
+                    (build_run_core.ResultSourceToolString.Ok
+                      (build_run_core.source-tool-augment-assembly-for-target
+                        asm
+                        target))]
+                  [(driver.ResultCompilerDriver.Err diag)
+                    (build_run_core.ResultSourceToolString.Err
+                      (cdiag.compiler-diagnostic-render (box-get diag)))])]
+              [(lower.ResultCompilerLower.Err diag)
+                (build_run_core.ResultSourceToolString.Err
+                  (cdiag.compiler-diagnostic-render (box-get diag)))])]
+          [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+            (build_run_core.ResultSourceToolString.Err
+              (cdiag.compiler-diagnostic-render (box-get diag)))])]
       (begin
-        (compiler-driver-state-clear-pool-backed-caches!)
-        (compiler-driver-reset-file-state!)
+        (driver.compiler-driver-state-clear-pool-backed-caches!)
+        (driver.compiler-driver-reset-file-state!)
         result))))
 
 (define (doc-test-runnable-failure
@@ -1454,15 +1474,23 @@
   [source-line : i64]
   [index : i64]
   [expectation : DocTestExpectation]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [temp-dir : String]
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]) : DocTestMaybeFailure
-  (match (source-tool-run-executable bin-path target (process.args-empty))
+  (match (build_run_core.source-tool-run-executable
+    bin-path
+    target
+    (process.args-empty))
     [(process.OkProcessOutput output)
       (begin
-        (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+        (build_run_core.source-tool-clean-temp
+          temp-dir
+          asm-path
+          obj-path
+          bin-path
+          true)
         (if (doc-test-runnable-output-matches? expectation target output)
           (DocTestMaybeFailure.No)
           (doc-test-runnable-failure
@@ -1472,7 +1500,12 @@
             (doc-test-runnable-mismatch-message index expectation target output))))]
     [(process.ErrProcessOutput error)
       (begin
-        (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+        (build_run_core.source-tool-clean-temp
+          temp-dir
+          asm-path
+          obj-path
+          bin-path
+          true)
         (doc-test-runnable-failure
           path
           source-line
@@ -1484,21 +1517,26 @@
   [source-line : i64]
   [index : i64]
   [expectation : DocTestExpectation]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [temp-dir : String]
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]) : DocTestMaybeFailure
   (match (doc-test-assemble-and-link-captured target asm-path obj-path bin-path)
-    [(SourceToolCommandStatus.Err message)
+    [(build_run_core.SourceToolCommandStatus.Err message)
       (begin
-        (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+        (build_run_core.source-tool-clean-temp
+          temp-dir
+          asm-path
+          obj-path
+          bin-path
+          true)
         (doc-test-runnable-failure
           path
           source-line
           index
           (doc-test-runnable-build-message index message)))]
-    [(SourceToolCommandStatus.Ok)
+    [(build_run_core.SourceToolCommandStatus.Ok)
       (doc-test-run-runnable-process-output
         path
         source-line
@@ -1515,25 +1553,30 @@
   [source-line : i64]
   [index : i64]
   [expectation : DocTestExpectation]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [temp-dir : String]
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]
   [asm : String]) : DocTestMaybeFailure
-  (match (source-tool-write-file
+  (match (build_run_core.source-tool-write-file
     asm-path
     asm
     "doctest: failed to write assembly artifact")
-    [(SourceToolCommandStatus.Err message)
+    [(build_run_core.SourceToolCommandStatus.Err message)
       (begin
-        (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+        (build_run_core.source-tool-clean-temp
+          temp-dir
+          asm-path
+          obj-path
+          bin-path
+          true)
         (doc-test-runnable-failure
           path
           source-line
           index
           (doc-test-runnable-build-message index message)))]
-    [(SourceToolCommandStatus.Ok)
+    [(build_run_core.SourceToolCommandStatus.Ok)
       (doc-test-link-and-run-runnable
         path
         source-line
@@ -1549,26 +1592,34 @@
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : doc_svec.Vec]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [temp-dir : String]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
     [expectation : DocTestExpectation (doc-test-example-expectation example)]
     [virtual-path : String (doc-test-example-virtual-path path index)]
-    [asm-path : String (source-tool-asm-path temp-dir virtual-path)]
-    [obj-path : String (source-tool-obj-path temp-dir virtual-path target)]
-    [bin-path : String (source-tool-temp-bin-path temp-dir virtual-path target)]
+    [asm-path : String
+      (build_run_core.source-tool-asm-path temp-dir virtual-path)]
+    [obj-path : String
+      (build_run_core.source-tool-obj-path temp-dir virtual-path target)]
+    [bin-path : String
+      (build_run_core.source-tool-temp-bin-path temp-dir virtual-path target)]
     (match (doc-test-emit-runnable-assembly path example stdlib-roots target)
-      [(ResultSourceToolString.Err message)
+      [(build_run_core.ResultSourceToolString.Err message)
         (begin
-          (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+          (build_run_core.source-tool-clean-temp
+            temp-dir
+            asm-path
+            obj-path
+            bin-path
+            true)
           (doc-test-runnable-failure
             path
             source-line
             index
             (doc-test-runnable-compile-message index message)))]
-      [(ResultSourceToolString.Ok asm)
+      [(build_run_core.ResultSourceToolString.Ok asm)
         (doc-test-write-link-and-run-runnable
           path
           source-line
@@ -1588,17 +1639,18 @@
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
-    [target : CompilerBackendTarget (source-tool-default-target)]
+    [target : backend.CompilerBackendTarget
+      (build_run_core.source-tool-default-target)]
     (if (doc-test-runnable-target-supported? target)
-      (match (source-tool-create-temp-dir "typelisp-doctest")
-        [(ResultSourceToolString.Ok temp-dir)
+      (match (build_run_core.source-tool-create-temp-dir "typelisp-doctest")
+        [(build_run_core.ResultSourceToolString.Ok temp-dir)
           (doc-test-run-runnable-output
             path
             example
             stdlib-roots
             target
             temp-dir)]
-        [(ResultSourceToolString.Err message)
+        [(build_run_core.ResultSourceToolString.Err message)
           (DocTestMaybeFailure.Some
             (DocTestRunFailure.Failure
               path
@@ -1632,12 +1684,12 @@
     [expectation : DocTestExpectation (doc-test-example-expectation example)]
     [expect-error : bool (doc-test-expectation-error? expectation)]
     [code : String (doc-test-example-code example)]
-    (match (compiler-check-source-with-roots-and-cfg
+    (match (compiler_check_core.compiler-check-source-with-roots-and-cfg
       (doc-test-example-virtual-path path index)
       code
       stdlib-roots
       cfgs)
-      [(ResultCompilerCheck.Ok _)
+      [(compiler_check_core.ResultCompilerCheck.Ok _)
         (if expect-error
           (DocTestMaybeFailure.Some
             (DocTestRunFailure.Failure
@@ -1646,7 +1698,7 @@
               index
               (doc-test-unexpected-pass-message index)))
           (DocTestMaybeFailure.No))]
-      [(ResultCompilerCheck.Err diag)
+      [(compiler_check_core.ResultCompilerCheck.Err diag)
         (if expect-error
           (DocTestMaybeFailure.No)
           (DocTestMaybeFailure.Some
@@ -1656,7 +1708,7 @@
               index
               (doc-test-unexpected-error-message
                 index
-                (compiler-diagnostic-list-first (box-get diag))))))])))
+                (cdiag.compiler-diagnostic-list-first (box-get diag))))))])))
 
 (define (doc-test-typecheck-example-with-roots
   [path : String]
@@ -1666,14 +1718,14 @@
     path
     example
     stdlib-roots
-    (compiler-check-language-cfgs)))
+    (compiler_check_core.compiler-check-language-cfgs)))
 
 (define (doc-test-typecheck-package-example-with-roots-and-cfg
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
@@ -1681,14 +1733,14 @@
     [expectation : DocTestExpectation (doc-test-example-expectation example)]
     [expect-error : bool (doc-test-expectation-error? expectation)]
     [code : String (doc-test-example-code example)]
-    (match (compiler-check-package-source-with-roots-and-cfg
+    (match (compiler_check_core.compiler-check-package-source-with-roots-and-cfg
       (doc-test-example-virtual-path path index)
       code
       stdlib-roots
       manifest-dir
       deps
       cfgs)
-      [(ResultCompilerCheck.Ok _)
+      [(compiler_check_core.ResultCompilerCheck.Ok _)
         (if expect-error
           (DocTestMaybeFailure.Some
             (DocTestRunFailure.Failure
@@ -1697,7 +1749,7 @@
               index
               (doc-test-unexpected-pass-message index)))
           (DocTestMaybeFailure.No))]
-      [(ResultCompilerCheck.Err diag)
+      [(compiler_check_core.ResultCompilerCheck.Err diag)
         (if expect-error
           (DocTestMaybeFailure.No)
           (DocTestMaybeFailure.Some
@@ -1707,7 +1759,7 @@
               index
               (doc-test-unexpected-error-message
                 index
-                (compiler-diagnostic-list-first (box-get diag))))))])))
+                (cdiag.compiler-diagnostic-list-first (box-get diag))))))])))
 
 (define (doc-test-check-example-with-roots
   [path : String]
@@ -1804,7 +1856,7 @@
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
   (if (>= index (doc-test-example-list-count examples))
     failures
@@ -1844,7 +1896,7 @@
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
   (doc-test-typecheck-package-examples-with-roots-from
     path
@@ -1927,7 +1979,7 @@
     path
     source
     stdlib-roots
-    (compiler-check-language-cfgs)))
+    (compiler_check_core.compiler-check-language-cfgs)))
 
 (define (doc-test-typecheck-source-with-roots-and-cfg
   [path : String]
@@ -1953,7 +2005,7 @@
   [source : String]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
@@ -1983,81 +2035,89 @@
 
 (define (doc-test-path-under-root? [path : String] [root : String]) : bool
   (let
-    [normalized-path : String (compiler-load-normalize-path path)]
-    [normalized-root : String (compiler-load-normalize-path root)]
+    [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
+    [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     (and
       (> (string.string-length normalized-root) 0)
       (if (string.eq normalized-root ".")
-        (not (compiler-load-path-escapes? normalized-path))
-        (compiler-load-path-under-root? normalized-path normalized-root)))))
+        (not (compiler_load.compiler-load-path-escapes? normalized-path))
+        (compiler_load.compiler-load-path-under-root?
+          normalized-path
+          normalized-root)))))
 
 (define (doc-test-dep-list-path?
   [path : String]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : compiler_load.CompilerPkgDepList]
   [index : i64]) : bool
-  (if (>= index (compiler-pkg-dep-list-count deps))
+  (if (>= index (compiler_load.compiler-pkg-dep-list-count deps))
     false
     (let
-      [dep : CompilerPkgDep (compiler-pkg-dep-list-at deps index)]
+      [dep : compiler_load.CompilerPkgDep
+        (compiler_load.compiler-pkg-dep-list-at deps index)]
       [dep-path : String (struct-get dep path)]
       [dep-root : String
-        (compiler-load-normalize-path
-          (if (compiler-load-absolute-path? dep-path)
+        (compiler_load.compiler-load-normalize-path
+          (if (compiler_load.compiler-load-absolute-path? dep-path)
             dep-path
-            (compiler-load-join-root-path manifest-dir dep-path)))]
+            (compiler_load.compiler-load-join-root-path manifest-dir dep-path)))]
       (if (and
-        (not (compiler-load-github-dependency-path? dep-path))
+        (not (compiler_load.compiler-load-github-dependency-path? dep-path))
         (doc-test-path-under-root? path dep-root))
         true
         (doc-test-dep-list-path? path manifest-dir deps (+ index 1))))))
 
 (define (doc-test-typecheck-package-path-list-with-roots-from
-  [paths : AstDeclPathList]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
   [last-path : String]
   [count : i64]) : DocTestRunReport
-  (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Nil)
+  (match (ast.ast-decl-path-list-step paths)
+    [(ast.AstDeclPathListStep.Nil)
       (DocTestRunReport.Report count (doc-test-run-failure-list-empty))]
-    [(AstDeclPathListStep.Cons path rest)
+    [(ast.AstDeclPathListStep.Cons path rest)
       (let
-        [rest : AstDeclPathList rest]
-        [normalized : String (compiler-load-normalize-path path)]
+        [rest : ast.AstDeclPathList rest]
+        [normalized : String (compiler_load.compiler-load-normalize-path path)]
         [rooted : String
           (if (or
-            (compiler-load-absolute-path? path)
+            (compiler_load.compiler-load-absolute-path? path)
             (doc-test-path-under-root? normalized manifest-dir))
             normalized
-            (compiler-load-normalize-path
-              (compiler-load-join-root-path manifest-dir normalized)))]
+            (compiler_load.compiler-load-normalize-path
+              (compiler_load.compiler-load-join-root-path
+                manifest-dir
+                normalized)))]
         [stdlib-path : String
-          (if (compiler-load-stdlib-import? normalized)
+          (if (compiler_load.compiler-load-stdlib-import? normalized)
             normalized
-            (compiler-load-stdlib-owned-path-from-roots rooted stdlib-roots))]
+            (compiler_load.compiler-load-stdlib-owned-path-from-roots
+              rooted
+              stdlib-roots))]
         [manifest-stdlib-root : String
-          (compiler-load-normalize-path
-            (compiler-load-join-root-path manifest-dir "stdlib"))]
-        [manifest-root : String (compiler-load-normalize-path manifest-dir)]
+          (compiler_load.compiler-load-normalize-path
+            (compiler_load.compiler-load-join-root-path manifest-dir "stdlib"))]
+        [manifest-root : String
+          (compiler_load.compiler-load-normalize-path manifest-dir)]
         [manifest-local : bool
           (if (string.eq manifest-root ".")
             (and
-              (not (compiler-load-absolute-path? rooted))
+              (not (compiler_load.compiler-load-absolute-path? rooted))
               (doc-test-path-under-root? rooted manifest-dir))
             (doc-test-path-under-root? rooted manifest-dir))]
         [package-local : bool
           (and
             (> (string.string-length path) 0)
-            (not (compiler-load-stdlib-import? stdlib-path))
+            (not (compiler_load.compiler-load-stdlib-import? stdlib-path))
             (not (doc-test-path-under-root? rooted manifest-stdlib-root))
             (not
               (doc-test-dep-list-path?
                 rooted
                 manifest-dir
-                (compiler-pkg-deps-list deps)
+                (compiler_load.compiler-pkg-deps-list deps)
                 0))
             manifest-local)]
         (if (and package-local (not (string.eq rooted last-path)))
@@ -2092,7 +2152,7 @@
   [path : String]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (match (io.try-read-file (& path))
     [(io.ErrIoBytes _)
@@ -2107,22 +2167,22 @@
         cfgs)]))
 
 (define (doc-test-typecheck-package-paths-with-roots
-  [paths : AstDeclPathList]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : DocTestRunReport
+  [deps : compiler_load.CompilerPkgDeps]) : DocTestRunReport
   (doc-test-typecheck-package-paths-with-roots-and-cfg
     paths
     stdlib-roots
     manifest-dir
     deps
-    (compiler-check-language-cfgs)))
+    (compiler_check_core.compiler-check-language-cfgs)))
 
 (define (doc-test-typecheck-package-paths-with-roots-and-cfg
-  [paths : AstDeclPathList]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (doc-test-typecheck-package-path-list-with-roots-from
     paths
@@ -2822,12 +2882,12 @@ typecheck: return type mismatch"))]
 
 (define (doc-test-session-cache-source) : String
   ";# ```typelisp
-;# (import \"stdlib/dep.tl\")
-;# (define (main) : i64 shared-value)
+;# (import stdlib.dep)
+;# (define (main) : i64 dep.shared-value)
 ;# ```
 ;# ```typelisp
-;# (import \"stdlib/dep.tl\")
-;# (define (main) : i64 shared-value)
+;# (import stdlib.dep)
+;# (define (main) : i64 dep.shared-value)
 ;# ```
 ")
 
@@ -2843,22 +2903,22 @@ typecheck: return type mismatch"))]
           (doc_svec.push (&mut items) "target/doc_test_session_cache")
           items))]
     (begin
-      (compiler-load-test-mkdir "target")
-      (compiler-load-test-mkdir root)
+      (compiler_load.compiler-load-test-mkdir "target")
+      (compiler_load.compiler-load-test-mkdir root)
       (let
         [contents : String "(define shared-value : i64 7)"]
         (io.write-file dep-file (byte_buf.str-as-bytes (& contents))))
-      (compiler-load-session-cache-enable!)
-      (compiler-load-program-cache-clear!)
+      (compiler_load.compiler-load-session-cache-enable!)
+      (compiler_load.compiler-load-program-cache-clear!)
       (let
         [report : DocTestRunReport
           (doc-test-typecheck-source-with-roots
             doc-file
             (doc-test-session-cache-source)
             roots)]
-        [hits : i64 (compiler-load-program-cache-hit-count-value)]
+        [hits : i64 (compiler_load.compiler-load-program-cache-hit-count-value)]
         (begin
-          (compiler-load-session-cache-disable-for-test!)
+          (compiler_load.compiler-load-session-cache-disable-for-test!)
           (and (doc-test-run-report-ok? report) (> hits 0)))))))
 
 (define (doc-test-package-walk-example-source [value : i64]) : String
@@ -2882,10 +2942,10 @@ typecheck: return type mismatch"))]
 (define (doc-test-package-walk-write-empty-paths
   [root : String]
   [count : i64]
-  [paths : AstDeclPathList]) : AstDeclPathList
+  [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
     [i : i64 0]
-    [out : AstDeclPathList paths]
+    [out : ast.AstDeclPathList paths]
     (begin
       (while (< i count)
         (let
@@ -2897,7 +2957,7 @@ typecheck: return type mismatch"))]
               (io.write-file path (byte_buf.str-as-bytes (& contents))))
             (set!
               out
-              (ast-decl-path-list-prepend-builder-with-owner-id
+              (ast.ast-decl-path-list-prepend-builder-with-owner-id
                 path
                 cbi.compiler-builtin-id-fix-empty
                 out))
@@ -2911,8 +2971,8 @@ typecheck: return type mismatch"))]
     [example-b : String (doc-test-package-walk-numbered-path root "example_" 2)]
     [example-c : String (doc-test-package-walk-numbered-path root "example_" 3)]
     (begin
-      (compiler-load-test-mkdir "target")
-      (compiler-load-test-mkdir root)
+      (compiler_load.compiler-load-test-mkdir "target")
+      (compiler_load.compiler-load-test-mkdir root)
       (let
         [contents-a : String (doc-test-package-walk-example-source 1)]
         [contents-b : String (doc-test-package-walk-example-source 2)]
@@ -2922,23 +2982,25 @@ typecheck: return type mismatch"))]
           (io.write-file example-b (byte_buf.str-as-bytes (& contents-b)))
           (io.write-file example-c (byte_buf.str-as-bytes (& contents-c)))))
       (let
-        [paths : AstDeclPathList
+        [paths : ast.AstDeclPathList
           (doc-test-package-walk-write-empty-paths
             root
             128
-            (ast-decl-root-path-cons
+            (ast.ast-decl-root-path-cons
               example-a
-              (ast-decl-root-path-cons
+              (ast.ast-decl-root-path-cons
                 example-a
-                (ast-decl-root-path-cons
+                (ast.ast-decl-root-path-cons
                   example-b
-                  (ast-decl-root-path-cons example-c (ast-decl-path-list-new))))))]
+                  (ast.ast-decl-root-path-cons
+                    example-c
+                    (ast.ast-decl-path-list-new))))))]
         [report : DocTestRunReport
           (doc-test-typecheck-package-paths-with-roots
             paths
             (doc-test-run-smoke-stdlib-roots)
             root
-            (compiler-pkg-deps-empty))]
+            (compiler_load.compiler-pkg-deps-empty))]
         (and
           (doc-test-run-report-ok? report)
           (= (doc-test-run-report-count report) 3))))))
@@ -3011,26 +3073,26 @@ typecheck: return type mismatch"))]
       (= (doc-test-smoke) 42)
       (return (io.panic "doc-test: extraction smoke regressed")))
     (unless
-      (source-tool-link-inputs-dedupe-smoke-ok?)
+      (build_run_core.source-tool-link-inputs-dedupe-smoke-ok?)
       (return (io.panic "source-tool: link input dedupe smoke regressed")))
     (unless
-      (source-tool-windows-stack-reserve-smoke-ok?)
+      (build_run_core.source-tool-windows-stack-reserve-smoke-ok?)
       (return (io.panic "source-tool: windows stack reserve smoke regressed")))
     (unless
-      (source-tool-windows-debug-linker-smoke-ok?)
+      (build_run_core.source-tool-windows-debug-linker-smoke-ok?)
       (return (io.panic "source-tool: windows debug linker smoke regressed")))
     (unless
-      (source-tool-linux-direct-object-linkability-smoke-ok?)
+      (build_run_core.source-tool-linux-direct-object-linkability-smoke-ok?)
       (return (io.panic "source-tool: linux direct object smoke regressed")))
     (unless
-      (source-tool-windows-direct-object-linkability-smoke-ok?)
+      (build_run_core.source-tool-windows-direct-object-linkability-smoke-ok?)
       (return (io.panic "source-tool: windows direct object smoke regressed")))
     (unless
-      (source-tool-windows-direct-object-runtime-fallback-smoke-ok?)
+      (build_run_core.source-tool-windows-direct-object-runtime-fallback-smoke-ok?)
       (return
         (io.panic "source-tool: windows direct object fallback smoke regressed")))
     (unless
-      (source-tool-windows-direct-object-relocation-gate-smoke-ok?)
+      (build_run_core.source-tool-windows-direct-object-relocation-gate-smoke-ok?)
       (return
         (io.panic
           "source-tool: windows direct object relocation gate smoke regressed")))

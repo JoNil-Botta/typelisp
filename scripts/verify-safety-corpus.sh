@@ -226,6 +226,7 @@ build_case_program() {
             --target "$BUILD_TARGET" \
             $TARGET_CFG_ARGS \
             --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/src" \
             --stdlib-root "$ROOT/tests/integration" \
             -o "$asm"
         if [ "$code" -ne 0 ]; then
@@ -243,6 +244,7 @@ build_case_program() {
             --target "$BUILD_TARGET" \
             $TARGET_CFG_ARGS \
             --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/src" \
             --stdlib-root "$ROOT/tests/integration" \
             -o "$asm"
         if [ "$code" -ne 0 ]; then
@@ -301,6 +303,7 @@ run_manifest_case() {
             run_case "$out" "$err" 0 \
                 "$CHECK_BIN" check "$source" \
                 --stdlib-root "$ROOT/stdlib" \
+                --stdlib-root "$ROOT/src" \
                 --stdlib-root "$ROOT/tests/integration"
             [ "$code" -eq 0 ] || fail "$case_id expected check success, got $code"
             assert_empty "$err" || fail "$case_id expected empty check stderr"
@@ -310,6 +313,7 @@ run_manifest_case() {
             run_case "$out" "$err" - \
                 "$CHECK_BIN" check "$source" \
                 --stdlib-root "$ROOT/stdlib" \
+                --stdlib-root "$ROOT/src" \
                 --stdlib-root "$ROOT/tests/integration"
             [ "$code" -ne 0 ] || fail "$case_id expected check failure"
             [ "$stderr_contains" != "-" ] || fail "$case_id check-fail missing stderr expectation"

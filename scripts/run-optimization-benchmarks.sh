@@ -6,7 +6,8 @@ set -eu
 # The harness compares paired TypeLisp and C programs from top-level
 # benchmarks/opt_*/ directories that carry optimization.tsv metadata. The
 # default timing report is a local Linux tool. `--correctness` is the
-# required-CI gate and performs no timing work.
+# required-CI gate and performs no timing work. Linux CI passes positive suite
+# membership from perf/benchmark-ci-cases.tsv.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -17,6 +18,7 @@ RUNS=${TYPELISP_BENCH_RUNS:-3}
 CLANG_OPT=${TYPELISP_BENCH_CLANG_OPT:--O3}
 USE_SELFHOST=${TYPELISP_BENCH_SELFHOST:-1}
 FILTER=
+CASES=
 CORRECTNESS=0
 TL_CORRECTNESS_OPT_LEVEL=${TYPELISP_BENCH_TL_OPT_LEVEL:-}
 
@@ -29,6 +31,7 @@ Options:
   --check          Alias for --correctness
   --runs N          Runtime repetitions per case (default: TYPELISP_BENCH_RUNS or 3)
   --filter NAME    Run cases whose current or legacy names match/start with NAME
+  --cases A,B,...  Run an exact comma-separated case list
   --clang-opt OPT  clang optimization flag (default: TYPELISP_BENCH_CLANG_OPT or -O3)
   --tl-opt-level N  In correctness mode, compile TypeLisp cases with --opt-level N
   --selfhost       In timing mode, compile through src/main.tl `compile` (default)
@@ -57,6 +60,14 @@ while [ "$#" -gt 0 ]; do
                 exit 1
             }
             FILTER=$2
+            shift 2
+            ;;
+        --cases)
+            [ "$#" -ge 2 ] || {
+                echo "missing value for --cases" >&2
+                exit 1
+            }
+            CASES=$2
             shift 2
             ;;
         --clang-opt)
@@ -137,6 +148,11 @@ case "$(uname -s)" in
         ;;
 esac
 
+[ -z "$FILTER" ] || [ -z "$CASES" ] || {
+    echo "--filter and --cases are mutually exclusive" >&2
+    exit 1
+}
+
 if [ "$CORRECTNESS" -eq 0 ]; then
     case "$HOST_OS" in
         linux) ;;
@@ -213,6 +229,33 @@ WORKDIR="$ROOT/target/optimization-bench"
 CR=$(printf '\r')
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+
+REQUESTED_CASES="$WORKDIR/requested-cases.txt"
+MATCHED_CASES="$WORKDIR/matched-cases.txt"
+: > "$REQUESTED_CASES"
+: > "$MATCHED_CASES"
+if [ -n "$CASES" ]; then
+    case "$CASES" in
+        ,*|*,|*,,*)
+            echo "--cases contains an empty case: $CASES" >&2
+            exit 1
+            ;;
+    esac
+    printf '%s\n' "$CASES" | tr ',' '\n' > "$REQUESTED_CASES"
+    _duplicate=$(awk 'seen[$0]++ { print; exit }' "$REQUESTED_CASES")
+    [ -z "$_duplicate" ] || {
+        echo "duplicate case in --cases: $_duplicate" >&2
+        exit 1
+    }
+    while IFS= read -r _requested; do
+        case "$_requested" in
+            "" | *[!A-Za-z0-9_.-]*)
+                echo "invalid case in --cases: $_requested" >&2
+                exit 1
+                ;;
+        esac
+    done < "$REQUESTED_CASES"
+fi
 
 fail() {
     echo "FAIL: $*" >&2
@@ -542,7 +585,12 @@ for _metadata in "$ROOT"/benchmarks/*/optimization.tsv; do
             fail "invalid case name: $_name"
             ;;
     esac
-    case_matches_filter "$_name" "$_legacy_name" "$FILTER" || continue
+    if [ -n "$CASES" ]; then
+        grep -Fqx "$_name" "$REQUESTED_CASES" || continue
+    else
+        case_matches_filter "$_name" "$_legacy_name" "$FILTER" || continue
+    fi
+    printf '%s\n' "$_name" >> "$MATCHED_CASES"
     read_optimization_metadata "$_metadata" "$_name"
     _category=$CASE_CATEGORY
     _args=$CASE_ARGS
@@ -676,5 +724,12 @@ for _metadata in "$ROOT"/benchmarks/*/optimization.tsv; do
 done
 
 if [ "$matched" -eq 0 ]; then
-    fail "no benchmark cases matched filter: $FILTER"
+    fail "no benchmark cases matched (filter='$FILTER', cases='$CASES')"
+fi
+
+if [ -n "$CASES" ]; then
+    while IFS= read -r _requested; do
+        grep -Fqx "$_requested" "$MATCHED_CASES" ||
+            fail "unknown optimization benchmark case: $_requested"
+    done < "$REQUESTED_CASES"
 fi

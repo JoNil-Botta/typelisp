@@ -1515,7 +1515,7 @@ build_linux_fixture_driver() {
     _build_stdout="$_bin.build.stdout"
     _build_stderr="$_bin.build.stderr"
 
-    run_build "$COMPILER" compile "$_source" -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
+    run_build "$COMPILER" compile "$_source" --stdlib-root src -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
     if [ "$build_rc" -ne 0 ]; then
         echo "FAIL: $_label compile failed" >&2
         show_build_streams "$_build_stdout" "$_build_stderr"
@@ -1941,6 +1941,7 @@ run_windows_backend_fixtures() {
     _driver_obj="$_runtime_dir/fixture_driver.obj"
     _driver_bin="$_runtime_dir/fixture_driver.exe"
     "$COMPILER" compile src/tests/compiler_backend_runtime_fixture.tl \
+        --stdlib-root src \
         --target windows-x86_64 --cfg windows -o "$_driver_asm" || {
         echo "FAIL: windows-backend-runtime driver compile failed" >&2
         exit 1

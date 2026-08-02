@@ -34,12 +34,12 @@ mkdir -p "$WORKDIR"
 
 FIXTURE="$WORKDIR/pic_probe.tl"
 cat > "$FIXTURE" <<'EOF'
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define greeting : String "hi")
 (define answer : i64 42)
 (define (len-fn) : i64
-  (string-length greeting))
+  (string.string-length greeting))
 (define fn-value : (-> i64) len-fn)
 (define (main) : i64
   (+ answer (len-fn)))

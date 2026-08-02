@@ -4,10 +4,10 @@
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.string)
-(import "../compiler_lower_tests.tl")
-(import "../compiler_lower_package_tests.tl")
-(import "../compiler_backend_tests.tl")
-(import "../compiler_driver_smoke_tests.tl")
+(import compiler_lower_tests)
+(import compiler_lower_package_tests)
+(import compiler_backend_tests)
+(import compiler_driver_smoke_tests)
 (import compiler_builtin_ids as cbi)
 
 (define (compiler-smoke-suite-child-ok? [name : String]) : bool
@@ -23,52 +23,55 @@
 (define (compiler-smoke-suite-child [name : String]) : i64
   (cond
     [(string.eq name "spmd-scalar")
-      (if (compiler-lower-spmd-scalar-call-shape-ok?)
+      (if (compiler_lower_tests.compiler-lower-spmd-scalar-call-shape-ok?)
         42
         1)]
     [(string.eq name "spmd-avx512")
-      (if (compiler-lower-spmd-out-of-line-call-shape-ok?)
+      (if (compiler_lower_tests.compiler-lower-spmd-out-of-line-call-shape-ok?)
         42
         1)]
     [(string.eq name "spmd-imported-selection")
-      (if (compiler-lower-imported-spmd-selection-smoke-ok?)
+      (if (compiler_lower_tests.compiler-lower-imported-spmd-selection-smoke-ok?)
         42
         1)]
     [(string.eq name "spmd-package-callable")
-      (if (compiler-lower-spmd-package-callable-tests-ok?)
+      (if (compiler_lower_package_tests.compiler-lower-spmd-package-callable-tests-ok?)
         42
         1)]
     [(string.eq name "spmd-package-validation")
-      (if (compiler-lower-spmd-package-callable-validation-errors-ok?)
+      (if (compiler_lower_package_tests.compiler-lower-spmd-package-callable-validation-errors-ok?)
         42
         1)]
     [(string.eq name "spmd-package-recursion")
-      (if (compiler-lower-spmd-package-callable-recursion-errors-ok?)
+      (if (compiler_lower_package_tests.compiler-lower-spmd-package-callable-recursion-errors-ok?)
         42
         1)]
     [(string.eq name "spmd-package-mutual-recursion")
-      (if (compiler-lower-spmd-package-callable-mutual-recursion-error-ok?)
+      (if (compiler_lower_package_tests.compiler-lower-spmd-package-callable-mutual-recursion-error-ok?)
         42
         1)]
     [(string.eq name "spmd-package-abi")
-      (if (compiler-lower-spmd-package-callable-abi-errors-ok?)
+      (if (compiler_lower_package_tests.compiler-lower-spmd-package-callable-abi-errors-ok?)
         42
         1)]
     [(string.eq name "backend")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
-        (compiler-backend-self-test))]
+        (compiler_backend_tests.compiler-backend-self-test))]
     [(string.eq name "lower-symbol-identity")
-      (compiler-lower-symbol-identity-smoke-main)]
-    [(string.eq name "driver-pic") (compiler-driver-pic-smoke-main)]
+      (compiler_driver_smoke_tests.compiler-lower-symbol-identity-smoke-main)]
+    [(string.eq name "driver-pic")
+      (compiler_driver_smoke_tests.compiler-driver-pic-smoke-main)]
     [(string.eq name "driver-reader-context")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
-        (compiler-driver-reader-context-smoke-main))]
+        (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main))]
     [(string.eq name "driver-typecheck-cache-owner")
-      (if (compiler-driver-typecheck-cache-owner-smoke-ok?)
+      (if (compiler_driver_smoke_tests.compiler-driver-typecheck-cache-owner-smoke-ok?)
         42
         1)]
+    [(string.eq name "driver-base-transients")
+      (compiler_driver_smoke_tests.compiler-driver-base-transients-smoke-main)]
     [else 1]))
 
 (define (main) : i64
@@ -114,4 +117,7 @@
       (compiler-smoke-suite-require-child
         "driver-typecheck-cache-owner"
         "compiler smoke suite: typecheck cache owner isolation failed")
+      (compiler-smoke-suite-require-child
+        "driver-base-transients"
+        "compiler smoke suite: compiler_driver_base_transients_smoke failed")
       42)))

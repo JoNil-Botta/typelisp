@@ -526,8 +526,8 @@ cat > "$CHECK_ROOT/repo-stdlib/helper.tl" <<'EOF'
 (define (helper) : i64 42)
 EOF
 cat > "$CHECK_ROOT/app/main.tl" <<'EOF'
-(import "stdlib/helper.tl")
-(define (main) : i64 (helper))
+(import stdlib.helper)
+(define (main) : i64 (helper.helper))
 EOF
 # cli-gate-case check-stdlib-root wrapper run_cmd
 run_cmd check-stdlib-root "$COMPILER" check "$CHECK_ROOT/app/main.tl" --stdlib-root "$CHECK_ROOT/repo-stdlib"
@@ -671,8 +671,8 @@ cat > "$DOCTEST_PKG_REACH/typelisp.pkg" <<'EOF'
 EOF
 maybe_strip_manifest_kind "$DOCTEST_PKG_REACH/typelisp.pkg"
 cat > "$DOCTEST_PKG_REACH/src/main.tl" <<'EOF'
-(import "lib.tl")
-(define (main) : i64 (helper))
+(import lib)
+(define (main) : i64 (lib.helper))
 EOF
 cat > "$DOCTEST_PKG_REACH/src/lib.tl" <<'EOF'
 ;# ```typelisp
@@ -923,8 +923,8 @@ cat > "$UNSAFE_REACH/lib.tl" <<'EOF'
   (define (unsafe-entry [x : i64]) : i64 (unsafe-helper x)))
 EOF
 cat > "$UNSAFE_REACH/main.tl" <<'EOF'
-(import "lib.tl")
-(define (main) : i64 (unsafe (unsafe-entry 41)))
+(import lib)
+(define (main) : i64 (unsafe (lib.unsafe-entry 41)))
 EOF
 UNSAFE_REACH_TARGET=windows-x86_64
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
@@ -1025,11 +1025,11 @@ for target_alias in windows-x86_64 windows_x86_64; do
     target_dir="$CLI_MATRIX/target-$target_alias"
     mkdir -p "$target_dir"
     cat > "$target_dir/main.tl" <<'EOF'
-(import "stdlib/io.tl")
+(import stdlib.io)
 
 (define (main) : i64
   (begin
-    (print 3)
+    (io.print 3)
     42))
 EOF
     # cli-gate-expand compile-target-{target} wrapper run_cmd target=windows-x86-64,windows-underscore-x86-64
@@ -1138,10 +1138,10 @@ assert_contains "$err" "type value i64 is compile-time only"
 assert_not_contains "$err" "backend:"
 
 cat > "$CLI_MATRIX/region-builtin-escape.tl" <<'EOF'
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : String
-  (with-arena r (int->string 41)))
+  (with-arena r (string.int->string 41)))
 EOF
 # cli-gate-case check-region-builtin-escape wrapper run_cmd
 run_cmd check-region-builtin-escape "$COMPILER" check "$CLI_MATRIX/region-builtin-escape.tl" --stdlib-root "$ROOT/stdlib"
@@ -1153,7 +1153,7 @@ if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
     assert_contains "$err" "error[E0205]"
 else
     assert_contains "$err" "error[E0205]"
-    assert_contains "$err" "4 |   (with-arena r (int->string 41)))"
+    assert_contains "$err" "4 |   (with-arena r (string.int->string 41)))"
     assert_contains "$err" "|                 ^^^^^^^^^^^^^^^"
     assert_contains "$err" "= help: use with-escape to clone one supported result out of \`r\`"
 fi
@@ -1269,11 +1269,11 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 RUN_MATRIX="$WORKDIR/run-matrix"
 mkdir -p "$RUN_MATRIX"
 cat > "$RUN_MATRIX/output_status.tl" <<'EOF'
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.byte_buf)
 
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (byte_buf.str-as-bytes (& text))))
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
 (define (main) : i64
   (begin
     (fixture-stdout-write "hello")
@@ -1286,15 +1286,15 @@ assert_stderr_empty
 assert_contains "$out" "hello"
 
 cat > "$RUN_MATRIX/stdin.tl" <<'EOF'
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.byte_buf)
 
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (byte_buf.str-as-bytes (& text))))
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
 (define (fixture-read-stdin) : String
   (let
-    [read : StdinRead (stdin-read-bytes 256)]
-    (byte_buf.to-string (stdin-read-buffer read))))
+    [read : io.StdinRead (io.stdin-read-bytes 256)]
+    (byte_buf.to-string (io.stdin-read-buffer read))))
 (define (main) : unit
   (fixture-stdout-write (fixture-read-stdin)))
 EOF
@@ -1677,11 +1677,11 @@ EOF
     PLANNER_RUN_SOURCE="$SELFHOST_PLANNER_DIR/with space/run file.tl"
     if [ "$HOST_OS" = windows ]; then
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.byte_buf)
 
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (byte_buf.str-as-bytes (& text))))
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
 (define (main) : i64
   (begin
     (fixture-stdout-write "hello")
@@ -1689,7 +1689,7 @@ EOF
 EOF
     else
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'
-(import "stdlib/io.tl")
+(import stdlib.io)
 (import stdlib.byte_buf)
 (import stdlib.string)
 
@@ -1701,7 +1701,7 @@ EOF
         (set! n (+ n 1)))
       n)))
 (define (fixture-stdout-write [text : String]) : unit
-  (stdout-write (byte_buf.str-as-bytes (& text))))
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
@@ -1770,8 +1770,8 @@ EOF
 EOF
     maybe_strip_manifest_kind "$SELFHOST_PKG/typelisp.pkg"
     cat > "$SELFHOST_PKG/src/main.tl" <<'EOF'
-(import "pkg:math/src/lib.tl")
-(define (main) : i64 (add-one 41))
+(import math.src.lib as math)
+(define (main) : i64 (math.add-one 41))
 EOF
     cat > "$SELFHOST_PKG/vendor/math/src/lib.tl" <<'EOF'
 (define (add-one [x : i64]) : i64 (+ x 1))
@@ -1859,7 +1859,7 @@ EOF
 EOF
     maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
     cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
-(import "pkg:math/src/lib.tl")
+(import math.src.lib)
 (define (main) : i64 0)
 EOF
     # cli-gate-case selfhost-build-package-missing-alias wrapper run_cmd
@@ -1891,7 +1891,7 @@ EOF
 (define (add-one [x : i64]) : i64 (+ x 1))
 EOF
     cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
-(import "pkg:math/src/missing.tl")
+(import math.src.missing)
 (define (main) : i64 0)
 EOF
     # cli-gate-case selfhost-build-package-missing-dep wrapper run_cmd
@@ -2537,8 +2537,8 @@ EOF
 cat > "$WORKDIR/docs_stdlib_root.tl" <<'EOF'
 ;# Stdlib import example.
 ;# ```typelisp
-;# (import "stdlib/docfixture.tl")
-;# (define (main) : i64 stdlib-answer)
+;# (import stdlib.docfixture)
+;# (define (main) : i64 docfixture.stdlib-answer)
 ;# ```
 EOF
 # cli-gate-case doc-test-stdlib-root wrapper run_cmd
@@ -2646,6 +2646,7 @@ EOF
     DOC_GRAPH_DIR="$WORKDIR/doc-module-graph"
     DOC_GRAPH_STDLIB="$DOC_GRAPH_DIR/repo-stdlib"
     DOC_GRAPH_LOCAL="$DOC_GRAPH_DIR/local.tl"
+    DOC_GRAPH_UNUSED="$DOC_GRAPH_DIR/unused.tl"
     DOC_GRAPH_STDLIB_SOURCE="$DOC_GRAPH_STDLIB/docfixture.tl"
     DOC_GRAPH_ENTRY="$DOC_GRAPH_DIR/entry.tl"
     DOC_GRAPH_OUT="$DOC_GRAPH_DIR/graph.md"
@@ -2662,15 +2663,22 @@ EOF
 ;: Stdlib answer docs.
 (define stdlib-answer : i64 35)
 EOF
+    cat > "$DOC_GRAPH_UNUSED" <<'EOF'
+;# Unused imported module docs.
+
+;: Unused answer docs.
+(define unused-answer : i64 99)
+EOF
     cat > "$DOC_GRAPH_ENTRY" <<'EOF'
 ;# Entry module docs.
 
-(import "local.tl")
-(import "local.tl")
-(import "stdlib/docfixture.tl")
+(import local)
+(import local)
+(import stdlib.docfixture)
+(import unused)
 
 ;: Entry docs.
-(define (main) : i64 (+ local-answer stdlib-answer))
+(define (main) : i64 (+ local.local-answer docfixture.stdlib-answer))
 EOF
     # cli-gate-case doc-generate-module-graph wrapper run_cmd
     run_cmd doc-generate-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" -o "$DOC_GRAPH_OUT" --stdlib-root "$DOC_GRAPH_STDLIB"
@@ -2680,17 +2688,21 @@ EOF
 
     DOC_GRAPH_ENTRY_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_ENTRY")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_ENTRY")")
     DOC_GRAPH_LOCAL_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_LOCAL")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_LOCAL")")
+    DOC_GRAPH_UNUSED_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_UNUSED")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_UNUSED")")
     DOC_GRAPH_STDLIB_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_STDLIB_SOURCE")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_STDLIB_SOURCE")")
     DOC_GRAPH_ENTRY_DISPLAY=$(native_arg_path "$DOC_GRAPH_ENTRY_PATH")
     DOC_GRAPH_LOCAL_DISPLAY=$(native_arg_path "$DOC_GRAPH_LOCAL_PATH")
+    DOC_GRAPH_UNUSED_DISPLAY=$(native_arg_path "$DOC_GRAPH_UNUSED_PATH")
     DOC_GRAPH_STDLIB_DISPLAY=$(native_arg_path "$DOC_GRAPH_STDLIB_PATH")
     assert_contains "$DOC_GRAPH_OUT" "## Modules"
     assert_contains "$DOC_GRAPH_OUT" "- [$DOC_GRAPH_ENTRY_DISPLAY](#"
     assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_LOCAL_DISPLAY\`"
     assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_STDLIB_DISPLAY\`"
+    assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_UNUSED_DISPLAY\`"
     assert_contains "$DOC_GRAPH_OUT" "Entry module docs."
     assert_contains "$DOC_GRAPH_OUT" "Local module docs."
     assert_contains "$DOC_GRAPH_OUT" "Stdlib module docs."
+    assert_contains "$DOC_GRAPH_OUT" "Unused imported module docs."
     DOC_GRAPH_LOCAL_DOCS=$(grep -F "Local module docs." "$DOC_GRAPH_OUT" | wc -l | tr -d ' ')
     [ "$DOC_GRAPH_LOCAL_DOCS" -eq 1 ] || fail "doc module graph duplicated local docs"
     DOC_GRAPH_ENTRY_LINE=$(grep -nF "## $DOC_GRAPH_ENTRY_DISPLAY" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
@@ -2742,14 +2754,14 @@ fi
 
 echo "[public-tools] inline test command"
 cat > "$WORKDIR/inline_test_pass.tl" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (inc [x : i64]) : i64 (+ x 1))
 
 (define (main) : i64 0)
 
 (test inc-basic
-  (assert-i64-eq (inc 41) 42 "inc result"))
+  (test.assert-i64-eq (inc 41) 42 "inc result"))
 EOF
 
 # cli-gate-case inline-test-check wrapper run_cmd
@@ -2777,17 +2789,17 @@ fi
 assert_not_contains "$WORKDIR/inline_test_pass.s" "__tl_inline_test"
 
 cat > "$WORKDIR/inline_test_fail.tl" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (test passes-before
-  (assert-true true "before"))
+  (test.assert-true true "before"))
 
 (test failing-case
-  (assert-i64-eq 1 2 "first inline failure")
-  (assert-true false "second inline failure"))
+  (test.assert-i64-eq 1 2 "first inline failure")
+  (test.assert-true false "second inline failure"))
 
 (test passes-after
-  (assert-true true "after"))
+  (test.assert-true true "after"))
 EOF
 
 # cli-gate-case inline-test-fail wrapper run_cmd
@@ -2882,19 +2894,19 @@ cat > "$TEST_PKG/src/lib.tl" <<'EOF'
     (let [_ : i64 (/ 1 0)] unit)))
 EOF
 cat > "$TEST_PKG/tests/basic.tl" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (main) : i64
   (begin
-    (assert-i64-eq (+ 20 22) 42 "package tests dir basic")
+    (test.assert-i64-eq (+ 20 22) 42 "package tests dir basic")
     0))
 EOF
 cat > "$TEST_PKG/tests/nested/more.tl" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (define (main) : i64
   (begin
-    (assert-i64-eq (* 6 7) 42 "package nested tests dir")
+    (test.assert-i64-eq (* 6 7) 42 "package nested tests dir")
     0))
 EOF
 cat > "$TEST_PKG/tests/format_golden/fixture.tl" <<'EOF'
@@ -2937,13 +2949,13 @@ cat > "$TEST_INLINE_FAIL_PKG/typelisp.pkg" <<'EOF'
 EOF
 maybe_strip_manifest_kind "$TEST_INLINE_FAIL_PKG/typelisp.pkg"
 cat > "$TEST_INLINE_FAIL_PKG/src/lib.tl" <<'EOF'
-(import "stdlib/test.tl")
+(import stdlib.test)
 
 (test package-fails
-  (assert-true false "package inline failure"))
+  (test.assert-true false "package inline failure"))
 
 (test package-passes-after
-  (assert-true true "package inline sentinel"))
+  (test.assert-true true "package inline sentinel"))
 EOF
 cat > "$TEST_INLINE_FAIL_PKG/tests/pass.tl" <<'EOF'
 (define (main) : i64 0)
@@ -3017,9 +3029,9 @@ cat > "$PKG/typelisp.pkg" <<'EOF'
 EOF
 maybe_strip_manifest_kind "$PKG/typelisp.pkg"
 cat > "$PKG/src/main.tl" <<'EOF'
-(import "math.tl")
-(import "pkg:math/src/lib.tl")
-(define (main) : i64 (add-one (inc 40)))
+(import math)
+(import math.src.lib)
+(define (main) : i64 (lib.add-one (math.inc 40)))
 EOF
 cat > "$PKG/src/math.tl" <<'EOF'
 (define public-tool-value : i64 42)
@@ -3112,11 +3124,11 @@ cat > "$SPLIT_PKG/typelisp.pkg" <<'EOF'
 EOF
 maybe_strip_manifest_kind "$SPLIT_PKG/typelisp.pkg"
 cat > "$SPLIT_PKG/src/lib.tl" <<'EOF'
-(import "pkg:math/src/lib.tl")
-(import "pkg:util/src/lib.tl")
+(import math.src.lib as math)
+(import util.src.lib as util)
 (import stdlib.comptime)
 (define (split-root [x : i64]) : i64
-  (+ (split-math x) (split-util x)))
+  (+ (math.split-math x) (util.split-util x)))
 (defmacro (split-wrap [value : Expr]) : Expr
   `(split-root ,value))
 (defmacro (split-all [items : Expr ...]) : bool
@@ -3350,7 +3362,7 @@ cat > "$BADPKG/typelisp.pkg" <<'EOF'
 EOF
 maybe_strip_manifest_kind "$BADPKG/typelisp.pkg"
 cat > "$BADPKG/src/main.tl" <<'EOF'
-(import "pkg:math/src/lib.tl")
+(import math.src.lib)
 (define (main) : i64 0)
 EOF
 # cli-gate-case package-missing-alias wrapper run_cmd
@@ -3371,8 +3383,8 @@ cat > "$WALK_PKG/typelisp.pkg" <<'EOF'
 EOF
 maybe_strip_manifest_kind "$WALK_PKG/typelisp.pkg"
 cat > "$WALK_PKG/src/main.tl" <<'EOF'
-(import "math.tl")
-(define (main) : i64 (inc 41))
+(import math)
+(define (main) : i64 (math.inc 41))
 EOF
 cat > "$WALK_PKG/src/math.tl" <<'EOF'
 (define (inc [x : i64]) : i64 (+ x 1))
@@ -3391,8 +3403,11 @@ else
     assert_contains_any "$WALK_ASM" \
         "_tl_inc:" \
         "_tl_math_inc:" \
-        "_tl_walk_pkg_src_math_inc"
-    assert_contains "$WALK_ASM" "_tl_walk_pkg_src_math_inc"
+        "_tl_walk_pkg_src_math_inc" \
+        "_tl_walk_pkg_src_math_math_inc"
+    assert_contains_any "$WALK_ASM" \
+        "_tl_walk_pkg_src_math_inc" \
+        "_tl_walk_pkg_src_math_math_inc"
 fi
 
 MISSING_DEP="$WORKDIR/missing_dep"
@@ -3419,7 +3434,7 @@ cat > "$MISSING_DEP/vendor/math/src/lib.tl" <<'EOF'
 (define (add-one [x : i64]) : i64 (+ x 1))
 EOF
 cat > "$MISSING_DEP/src/main.tl" <<'EOF'
-(import "pkg:math/src/missing.tl")
+(import math.src.missing)
 (define (main) : i64 0)
 EOF
 # cli-gate-case package-missing-dep-file wrapper run_cmd

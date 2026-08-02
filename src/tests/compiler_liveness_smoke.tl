@@ -1,78 +1,78 @@
 ;; compiler_liveness_smoke.tl - Runnable smoke for compiler_liveness.tl.
-(import "../compiler_ir_types.tl")
-(import "../compiler_liveness.tl")
+(import compiler_ir_types as ir)
+(import compiler_liveness as live)
 (import compiler_intern as ci)
 
 (define (compiler-live-smoke-spmd-call-use-def-ok?) : bool
   (let
-    [args : CompilerIrSpmdCallArgList
-      (ir-spmd-call-arg-cons
-        (CompilerIrSpmdCallArg.Arg
-          (CompilerIrSpmdValueClass.Uniform)
-          (CompilerIrValue.Var 21)
-          (compiler-live-i64-ty))
-        (ir-spmd-call-arg-cons
-          (CompilerIrSpmdCallArg.Arg
-            (CompilerIrSpmdValueClass.Varying)
-            (CompilerIrValue.Var 22)
-            (compiler-live-i64-ty))
-          CompilerIrSpmdCallArgList.Nil))]
-    [instr : CompilerIrInstr
-      (ir-instr-spmd-call
+    [args : ir.CompilerIrSpmdCallArgList
+      (ir.ir-spmd-call-arg-cons
+        (ir.CompilerIrSpmdCallArg.Arg
+          (ir.CompilerIrSpmdValueClass.Uniform)
+          (ir.CompilerIrValue.Var 21)
+          (live.compiler-live-i64-ty))
+        (ir.ir-spmd-call-arg-cons
+          (ir.CompilerIrSpmdCallArg.Arg
+            (ir.CompilerIrSpmdValueClass.Varying)
+            (ir.CompilerIrValue.Var 22)
+            (live.compiler-live-i64-ty))
+          ir.CompilerIrSpmdCallArgList.Nil))]
+    [instr : ir.CompilerIrInstr
+      (ir.ir-instr-spmd-call
         (ci.intern-generated-canonical-name "helper")
-        (CompilerIrSpmdBackend.Avx512)
+        (ir.CompilerIrSpmdBackend.Avx512)
         8
-        (CompilerIrValue.Var 20)
+        (ir.CompilerIrValue.Var 20)
         args
-        (CompilerIrSpmdCallResult.Value
+        (ir.CompilerIrSpmdCallResult.Value
           6
-          (CompilerIrSpmdValueClass.Varying)
-          (compiler-live-i64-ty)))]
+          (ir.CompilerIrSpmdValueClass.Varying)
+          (live.compiler-live-i64-ty)))]
     (and
-      (compiler-live-set-eq?
-        (compiler-live-instr-uses instr)
-        (compiler-live-set3 20 21 22))
-      (compiler-live-set-eq?
-        (compiler-live-instr-defs instr)
-        (compiler-live-set1 6)))))
+      (live.compiler-live-set-eq?
+        (live.compiler-live-instr-uses instr)
+        (live.compiler-live-set3 20 21 22))
+      (live.compiler-live-set-eq?
+        (live.compiler-live-instr-defs instr)
+        (live.compiler-live-set1 6)))))
 
 (define (compiler-live-smoke-descriptor-pair-use-def-ok?) : bool
   (let
-    [kind : CompilerIrDescriptorPairKind
-      (CompilerIrDescriptorPairKind.OwnedString)]
-    [pack : CompilerIrInstr
-      (ir-instr-descriptor-pair-pack
+    [kind : ir.CompilerIrDescriptorPairKind
+      (ir.CompilerIrDescriptorPairKind.OwnedString)]
+    [pack : ir.CompilerIrInstr
+      (ir.ir-instr-descriptor-pair-pack
         3
-        (CompilerIrValue.Var 1)
-        (CompilerIrValue.Var 2)
+        (ir.CompilerIrValue.Var 1)
+        (ir.CompilerIrValue.Var 2)
         kind)]
-    [data : CompilerIrInstr
-      (ir-instr-descriptor-pair-data 4 (CompilerIrValue.Var 3))]
-    [length : CompilerIrInstr
-      (ir-instr-descriptor-pair-length 5 (CompilerIrValue.Var 3))]
+    [data : ir.CompilerIrInstr
+      (ir.ir-instr-descriptor-pair-data 4 (ir.CompilerIrValue.Var 3))]
+    [length : ir.CompilerIrInstr
+      (ir.ir-instr-descriptor-pair-length 5 (ir.CompilerIrValue.Var 3))]
     (and
-      (compiler-live-set-eq?
-        (compiler-live-instr-uses pack)
-        (compiler-live-set2 1 2))
-      (compiler-live-set-eq?
-        (compiler-live-instr-defs pack)
-        (compiler-live-set1 3))
-      (compiler-live-set-eq?
-        (compiler-live-instr-uses data)
-        (compiler-live-set1 3))
-      (compiler-live-set-eq?
-        (compiler-live-instr-defs data)
-        (compiler-live-set1 4))
-      (compiler-live-set-eq?
-        (compiler-live-instr-uses length)
-        (compiler-live-set1 3))
-      (compiler-live-set-eq?
-        (compiler-live-instr-defs length)
-        (compiler-live-set1 5)))))
+      (live.compiler-live-set-eq?
+        (live.compiler-live-instr-uses pack)
+        (live.compiler-live-set2 1 2))
+      (live.compiler-live-set-eq?
+        (live.compiler-live-instr-defs pack)
+        (live.compiler-live-set1 3))
+      (live.compiler-live-set-eq?
+        (live.compiler-live-instr-uses data)
+        (live.compiler-live-set1 3))
+      (live.compiler-live-set-eq?
+        (live.compiler-live-instr-defs data)
+        (live.compiler-live-set1 4))
+      (live.compiler-live-set-eq?
+        (live.compiler-live-instr-uses length)
+        (live.compiler-live-set1 3))
+      (live.compiler-live-set-eq?
+        (live.compiler-live-instr-defs length)
+        (live.compiler-live-set1 5)))))
 
 (define (main) : i64
   (let
-    [base : i64 (compiler-live-self-test)]
+    [base : i64 (live.compiler-live-self-test)]
     (if (and
       (= base 42)
       (compiler-live-smoke-spmd-call-use-def-ok?)

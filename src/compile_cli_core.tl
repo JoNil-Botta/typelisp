@@ -29,11 +29,18 @@
 (import cli_option_core as cli_option)
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_cfg_core as cfg_core)
-(import "compiler_check_core.tl")
-(import "compiler_driver_core.tl")
-(import "compiler_windows_coff_core.tl")
-(import "doc_test.tl")
-(import "test_cli_core.tl")
+(import compiler_check_core)
+(import compiler_backend as backend)
+(import compiler_diagnostic as cdiag)
+(import compiler_load as load)
+(import compiler_intern as ci)
+(import compiler_ir_types as ir)
+(import compiler_optimize as opt)
+(import compiler_driver_core)
+(import compiler_typecheck_core as tc_core)
+(import compiler_windows_coff_core)
+(import doc_test)
+(import test_cli_core)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.text_buf)
@@ -154,10 +161,10 @@
     (compile-cli-cfg-names-to-env-from
       names
       (+ index 1)
-      (compiler-cfg-enable env (compile-cli-cfg-names-get names index)))))
+      (cfg_core.compiler-cfg-enable env (compile-cli-cfg-names-get names index)))))
 
 (define (compile-cli-cfg-names-to-env [names : CompileCliCfgNames]) : sym_i64_env.SymI64Env
-  (compile-cli-cfg-names-to-env-from (& names) 0 (compiler-cfg-empty)))
+  (compile-cli-cfg-names-to-env-from (& names) 0 (cfg_core.compiler-cfg-empty)))
 
 (define (compile-cli-cfg-names-to-env-with-intern-state-from
   [names : (& names CompileCliCfgNames)]
@@ -181,7 +188,7 @@
   (compile-cli-cfg-names-to-env-with-intern-state-from
     (& names)
     0
-    (compiler-cfg-empty)
+    (cfg_core.compiler-cfg-empty)
     intern-state))
 
 (defenum CompileCliConfig
@@ -191,20 +198,20 @@
     bool
     bool
     bool
-    CompilerBackendTarget
+    backend.CompilerBackendTarget
     cli_svec.Vec
     CompileCliCfgNames
-    CompilerBackendMode
+    backend.CompilerBackendMode
     i64))
 
 (defenum CompileCliBatchConfig
   (Config
     String
     bool
-    CompilerBackendTarget
+    backend.CompilerBackendTarget
     cli_svec.Vec
     CompileCliCfgNames
-    CompilerBackendMode
+    backend.CompilerBackendMode
     i64
     bool
     bool
@@ -230,7 +237,7 @@
   (Err String))
 
 (defenum ResultCompileCliTarget
-  (Ok CompilerBackendTarget)
+  (Ok backend.CompilerBackendTarget)
   (Err String))
 
 (define (compile-cli-path-separator? [c : char]) : bool
@@ -288,11 +295,11 @@
 
 (define (compile-cli-target [value : String]) : ResultCompileCliTarget
   (if (or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
-    (ResultCompileCliTarget.Ok (CompilerBackendTarget.Linux))
+    (ResultCompileCliTarget.Ok (backend.CompilerBackendTarget.Linux))
     (if (or
       (string.eq value "windows-x86_64")
       (string.eq value "windows_x86_64"))
-      (ResultCompileCliTarget.Ok (CompilerBackendTarget.Windows))
+      (ResultCompileCliTarget.Ok (backend.CompilerBackendTarget.Windows))
       (ResultCompileCliTarget.Err (compile-cli-unknown-target value)))))
 
 (define (compile-cli-invalid-opt-level [value : String]) : String
@@ -303,17 +310,17 @@
 
 ;; `--backend-mode` parity with Rust (which accepts scalar/avx2/avx512).
 (defenum ResultCompileCliBackendMode
-  (Ok CompilerBackendMode)
+  (Ok backend.CompilerBackendMode)
   (Err String))
 
 (define (compile-cli-backend-mode [value : String]) : ResultCompileCliBackendMode
   (cond
     [(string.eq value "scalar")
-      (ResultCompileCliBackendMode.Ok (CompilerBackendMode.Scalar))]
+      (ResultCompileCliBackendMode.Ok (backend.CompilerBackendMode.Scalar))]
     [(string.eq value "avx2")
-      (ResultCompileCliBackendMode.Ok (CompilerBackendMode.Avx2))]
+      (ResultCompileCliBackendMode.Ok (backend.CompilerBackendMode.Avx2))]
     [(string.eq value "avx512")
-      (ResultCompileCliBackendMode.Ok (CompilerBackendMode.Avx512))]
+      (ResultCompileCliBackendMode.Ok (backend.CompilerBackendMode.Avx512))]
     [else
       (ResultCompileCliBackendMode.Err
         (str_cat.str-cat
@@ -330,14 +337,14 @@
   [output-path : String]
   [has-output : bool]
   [has-target : bool]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec (:consume)]
   [cfgs : CompileCliCfgNames]
   [emit-ir : bool]
   [pic : bool]
   [has-opt-level : bool]
   [opt-level : i64]
-  [backend-mode : CompilerBackendMode]) : ResultCompileCliConfig
+  [backend-mode : backend.CompilerBackendMode]) : ResultCompileCliConfig
   (match kind
     [(cli_option.CliCommonOptionKind.StdlibRoot)
       (compile-cli-parse-options
@@ -402,8 +409,8 @@
       (if has-opt-level
         (ResultCompileCliConfig.Err
           "compile: --opt-level was provided more than once")
-        (match (compiler-optimize-parse-level value)
-          [(ResultCompilerOptimizeLevel.Ok parsed-level)
+        (match (opt.compiler-optimize-parse-level value)
+          [(opt.ResultCompilerOptimizeLevel.Ok parsed-level)
             (compile-cli-parse-options
               next-idx
               count
@@ -419,7 +426,7 @@
               true
               parsed-level
               backend-mode)]
-          [(ResultCompilerOptimizeLevel.Err)
+          [(opt.ResultCompilerOptimizeLevel.Err)
             (ResultCompileCliConfig.Err (compile-cli-invalid-opt-level value))]))]))
 
 (define (compile-cli-parse-options
@@ -429,14 +436,14 @@
   [output-path : String]
   [has-output : bool]
   [has-target : bool]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
   [emit-ir : bool]
   [pic : bool]
   [has-opt-level : bool]
   [opt-level : i64]
-  [backend-mode : CompilerBackendMode]) : ResultCompileCliConfig
+  [backend-mode : backend.CompilerBackendMode]) : ResultCompileCliConfig
   (if (>= idx count)
     (if (and emit-ir pic)
       (ResultCompileCliConfig.Err
@@ -487,7 +494,7 @@
           (cond
             [(or (string.eq current "--debug") (string.eq current "-g"))
               (begin
-                (compiler-debug-info-set-enabled! true)
+                (ir.compiler-debug-info-set-enabled! true)
                 (compile-cli-parse-options
                   (+ idx 1)
                   count
@@ -699,12 +706,12 @@
   [count : i64]
   [batch-path : String]
   [has-target : bool]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec (:consume)]
   [cfgs : CompileCliCfgNames]
   [has-opt-level : bool]
   [opt-level : i64]
-  [backend-mode : CompilerBackendMode]
+  [backend-mode : backend.CompilerBackendMode]
   [prefix-cache-stats : bool]
   [has-windows-coff-plan : bool]
   [windows-coff-plan-path : String]) : ResultCompileCliBatchConfig
@@ -769,8 +776,8 @@
       (if has-opt-level
         (ResultCompileCliBatchConfig.Err
           "compile: --opt-level was provided more than once")
-        (match (compiler-optimize-parse-level value)
-          [(ResultCompilerOptimizeLevel.Ok parsed-level)
+        (match (opt.compiler-optimize-parse-level value)
+          [(opt.ResultCompilerOptimizeLevel.Ok parsed-level)
             (compile-cli-batch-parse-options
               next-idx
               count
@@ -785,7 +792,7 @@
               prefix-cache-stats
               has-windows-coff-plan
               windows-coff-plan-path)]
-          [(ResultCompilerOptimizeLevel.Err)
+          [(opt.ResultCompilerOptimizeLevel.Err)
             (ResultCompileCliBatchConfig.Err
               (compile-cli-invalid-opt-level value))]))]))
 
@@ -794,19 +801,21 @@
   [count : i64]
   [batch-path : String]
   [has-target : bool]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
   [has-opt-level : bool]
   [opt-level : i64]
-  [backend-mode : CompilerBackendMode]
+  [backend-mode : backend.CompilerBackendMode]
   [prefix-cache-stats : bool]
   [has-windows-coff-plan : bool]
   [windows-coff-plan-path : String]) : ResultCompileCliBatchConfig
   (if (>= idx count)
     (if (and
       has-windows-coff-plan
-      (or (not has-target) (not (compiler-backend-target-windows? target))))
+      (or
+        (not has-target)
+        (not (backend.compiler-backend-target-windows? target))))
       (ResultCompileCliBatchConfig.Err
         "compile: --windows-coff-plan requires --target windows-x86_64")
       (if (and
@@ -857,7 +866,7 @@
           (cond
             [(or (string.eq current "--debug") (string.eq current "-g"))
               (begin
-                (compiler-debug-info-set-enabled! true)
+                (ir.compiler-debug-info-set-enabled! true)
                 (compile-cli-batch-parse-options
                   (+ idx 1)
                   count
@@ -986,14 +995,14 @@
           (compile-cli-default-output input-path)
           false
           false
-          (CompilerBackendTarget.Linux)
+          (backend.CompilerBackendTarget.Linux)
           (cli_svec.new)
           (compile-cli-cfg-names-empty)
           false
           false
           false
-          (compiler-optimize-default-level)
-          (CompilerBackendMode.Scalar))))))
+          (opt.compiler-optimize-default-level)
+          (backend.CompilerBackendMode.Scalar))))))
 
 (define (compile-cli-command-config [count : i64]) : ResultCompileCliConfig
   (compile-cli-config-from 2 count))
@@ -1011,12 +1020,12 @@
           count
           batch-path
           false
-          (CompilerBackendTarget.Linux)
+          (backend.CompilerBackendTarget.Linux)
           (cli_svec.new)
           (compile-cli-cfg-names-empty)
           false
-          (compiler-optimize-default-level)
-          (CompilerBackendMode.Scalar)
+          (opt.compiler-optimize-default-level)
+          (backend.CompilerBackendMode.Scalar)
           false
           false
           "")))))
@@ -1117,17 +1126,20 @@
     [(io.OkIoBytes contents)
       (let
         [source : String (byte_buf.to-string contents)]
-        [report : DocTestRunReport
-          (doc-test-typecheck-source-with-roots input-path source stdlib-roots)]
-        (if (doc-test-run-report-ok? report)
+        [report : doc_test.DocTestRunReport
+          (doc_test.doc-test-typecheck-source-with-roots
+            input-path
+            source
+            stdlib-roots)]
+        (if (doc_test.doc-test-run-report-ok? report)
           0
           (begin
-            (io.print-error (doc-test-run-report-render report))
+            (io.print-error (doc_test.doc-test-run-report-render report))
             1)))]))
 
 (define (compile-cli-ir-verification-failed?) : bool
   (let
-    [message : String (compiler-opt-debug-verification-error)]
+    [message : String (opt.compiler-opt-debug-verification-error)]
     (if (= (string.string-length message) 0)
       false
       (begin
@@ -1136,50 +1148,50 @@
         true))))
 
 (define (compile-cli-write-result-with-ir-verification
-  [state : CompilerDriverState]
-  [result : ResultCompilerDriver]
+  [state : compiler_driver_core.CompilerDriverState]
+  [result : compiler_driver_core.ResultCompilerDriver]
   [output-path : String]) : i64
   (if (compile-cli-ir-verification-failed?)
     1
-    (compiler-driver-write-result
-      (compiler-driver-state-profile state)
+    (compiler_driver_core.compiler-driver-write-result
+      (compiler_driver_core.compiler-driver-state-profile state)
       result
       output-path)))
 
 (define (compile-cli-write-buffer-result-with-ir-verification
-  [state : CompilerDriverState]
-  [result : ResultCompilerDriverBuffer]
+  [state : compiler_driver_core.CompilerDriverState]
+  [result : compiler_driver_core.ResultCompilerDriverBuffer]
   [output-path : String]) : i64
   (if (compile-cli-ir-verification-failed?)
     1
-    (compiler-driver-write-buffer-result
-      (compiler-driver-state-profile state)
+    (compiler_driver_core.compiler-driver-write-buffer-result
+      (compiler_driver_core.compiler-driver-state-profile state)
       result
       output-path)))
 
 (define (compile-cli-write-pic-result-with-ir-verification
-  [state : CompilerDriverState]
-  [result : ResultCompilerDriverPic]
+  [state : compiler_driver_core.CompilerDriverState]
+  [result : compiler_driver_core.ResultCompilerDriverPic]
   [output-path : String]) : i64
   (if (compile-cli-ir-verification-failed?)
     1
-    (compiler-driver-write-pic-result
-      (compiler-driver-state-profile state)
+    (compiler_driver_core.compiler-driver-write-pic-result
+      (compiler_driver_core.compiler-driver-state-profile state)
       result
       output-path)))
 
 (define (compile-cli-run-compile-file
-  [state : CompilerDriverState]
+  [state : compiler_driver_core.CompilerDriverState]
   [input-path : String]
   [output-path : String]
   [emit-ir : bool]
   [pic : bool]
   ;; lint-allow: unused-variable
   [has-target : bool]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
-  [backend-mode : CompilerBackendMode]
+  [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [inline-preflight : bool]) : i64
   (begin
@@ -1190,12 +1202,14 @@
     ;; A fresh state must advance its generation before installation: otherwise
     ;; process-level parser caches from CLI startup can mistake generation zero
     ;; for their owner and reuse ids from the bootstrap compatibility table.
-    (if (= (compiler-driver-state-intern-generation state) 0)
+    (if (=
+      (compiler_driver_core.compiler-driver-state-intern-generation state)
+      0)
       (ci.intern-compat-state-reset!
-        (compiler-driver-state-owned-interns state))
+        (compiler_driver_core.compiler-driver-state-owned-interns state))
       unit)
-    (compiler-driver-state-install-pools! state)
-    (compiler-driver-state-install-interns! state)
+    (compiler_driver_core.compiler-driver-state-install-pools! state)
+    (compiler_driver_core.compiler-driver-state-install-interns! state)
     (cfg
       compile-startup-profile
       (startup_profile.compiler-startup-profile-mark-preflight-begin!)
@@ -1207,10 +1221,10 @@
         (let
           [inline-test-status : i64
             (if inline-preflight
-              (tltest-inline-typecheck-file-with-cfg
+              (test_cli_core.tltest-inline-typecheck-file-with-cfg
                 input-path
                 stdlib-roots
-                (compiler-driver-target-cfgs
+                (compiler_driver_core.compiler-driver-target-cfgs
                   target
                   (compile-cli-cfg-names-to-env cfgs))
                 "typecheck-prefix-inline-compile")
@@ -1222,8 +1236,9 @@
               unit)]
           (if (= inline-test-status 0)
             (begin
-              (compiler-driver-state-reset-file-state! state)
-              (compiler-opt-debug-configure!
+              (compiler_driver_core.compiler-driver-state-reset-file-state!
+                state)
+              (opt.compiler-opt-debug-configure!
                 compile-cli-trace-passes-requested
                 compile-cli-dump-ir-pass
                 compile-cli-verify-ir-requested)
@@ -1231,7 +1246,8 @@
                 [emit-cfgs : sym_i64_env.SymI64Env
                   (compile-cli-cfg-names-to-env-with-intern-state
                     cfgs
-                    (compiler-driver-state-owned-interns state))]
+                    (compiler_driver_core.compiler-driver-state-owned-interns
+                      state))]
                 [_file-state-reset-end : unit
                   (cfg
                     compile-startup-profile
@@ -1247,7 +1263,7 @@
                       (compile-cli-write-result-with-ir-verification
                         state
                         (if compile-cli-dump-ir-requested
-                          (compiler-driver-state-emit-ir-text-file-with-target-roots-level-mode-and-cfg
+                          (compiler_driver_core.compiler-driver-state-emit-ir-text-file-with-target-roots-level-mode-and-cfg
                             state
                             input-path
                             target
@@ -1256,7 +1272,7 @@
                             backend-mode
                             emit-cfgs
                             compile-cli-dump-ir-pass)
-                          (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+                          (compiler_driver_core.compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
                             state
                             input-path
                             target
@@ -1268,7 +1284,7 @@
                       (if pic
                         (compile-cli-write-pic-result-with-ir-verification
                           state
-                          (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
+                          (compiler_driver_core.compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
                             state
                             input-path
                             target
@@ -1280,7 +1296,7 @@
                           output-path)
                         (compile-cli-write-buffer-result-with-ir-verification
                           state
-                          (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+                          (compiler_driver_core.compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
                             state
                             input-path
                             target
@@ -1291,7 +1307,8 @@
                             emit-cfgs)
                           output-path))))]
                 (begin
-                  (compiler-driver-state-capture-session-floors! state)
+                  (compiler_driver_core.compiler-driver-state-capture-session-floors!
+                    state)
                   status)))
             inline-test-status))
         (begin
@@ -1302,21 +1319,22 @@
           doctest-status)))))
 
 (define (compile-cli-write-windows-batch-artifact
-  [_state : CompilerDriverState]
-  [result : ResultCompilerWindowsBatchArtifact]
+  [_state : compiler_driver_core.CompilerDriverState]
+  [result : compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact]
   [object-path : String]
   [assembly-path : String]) : ResultCompileCliWindowsBatchEntry
   (if (compile-cli-ir-verification-failed?)
     (ResultCompileCliWindowsBatchEntry.Err 1)
     (match result
-      [(ResultCompilerWindowsBatchArtifact.CoffObject object)
+      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
+          object)
         (let
           [write-status : i64
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-start-phase
-                  (compiler-driver-state-profile _state)))
+                (compiler_driver_core.compiler-driver-profile-start-phase
+                  (compiler_driver_core.compiler-driver-state-profile _state)))
               (match (io.try-write-file
                 (& object-path)
                 (byte_buf.str-as-bytes (& object)))
@@ -1334,14 +1352,15 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase
-                (compiler-driver-state-profile _state)
+              (compiler_driver_core.compiler-driver-profile-finish-phase
+                (compiler_driver_core.compiler-driver-state-profile _state)
                 "write"))
-            (compiler-driver-allocation-profile-snapshot! "write")
+            (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+              "write")
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-total
-                (compiler-driver-state-profile _state)))
+              (compiler_driver_core.compiler-driver-profile-finish-total
+                (compiler_driver_core.compiler-driver-state-profile _state)))
             (if (= write-status 0)
               (begin
                 (io.print-string
@@ -1351,26 +1370,31 @@
                   object-path
                   "none"))
               (ResultCompileCliWindowsBatchEntry.Err write-status))))]
-      [(ResultCompilerWindowsBatchArtifact.Assembly asm category)
+      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
+          asm
+          category)
         (let
           [write-status : i64
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-start-phase
-                  (compiler-driver-state-profile _state)))
-              (compiler-driver-write-text-buf assembly-path asm))]
+                (compiler_driver_core.compiler-driver-profile-start-phase
+                  (compiler_driver_core.compiler-driver-state-profile _state)))
+              (compiler_driver_core.compiler-driver-write-text-buf
+                assembly-path
+                asm))]
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase
-                (compiler-driver-state-profile _state)
+              (compiler_driver_core.compiler-driver-profile-finish-phase
+                (compiler_driver_core.compiler-driver-state-profile _state)
                 "write"))
-            (compiler-driver-allocation-profile-snapshot! "write")
+            (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+              "write")
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-total
-                (compiler-driver-state-profile _state)))
+              (compiler_driver_core.compiler-driver-profile-finish-total
+                (compiler_driver_core.compiler-driver-state-profile _state)))
             (if (= write-status 0)
               (begin
                 (io.print-string
@@ -1380,37 +1404,41 @@
                   assembly-path
                   category))
               (ResultCompileCliWindowsBatchEntry.Err write-status))))]
-      [(ResultCompilerWindowsBatchArtifact.Err diag)
+      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err diag)
         (begin
-          (compiler-driver-allocation-profile-snapshot! "write-error")
+          (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+            "write-error")
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-total
-              (compiler-driver-state-profile _state)))
+            (compiler_driver_core.compiler-driver-profile-finish-total
+              (compiler_driver_core.compiler-driver-state-profile _state)))
           (io.print-error
-            (compiler-driver-render-source-diagnostic (box-get diag)))
+            (compiler_driver_core.compiler-driver-render-source-diagnostic
+              (box-get diag)))
           (ResultCompileCliWindowsBatchEntry.Err 1))])))
 
 (define (compile-cli-run-windows-batch-file
-  [state : CompilerDriverState]
+  [state : compiler_driver_core.CompilerDriverState]
   [input-path : String]
   [object-path : String]
   [assembly-path : String]
   [force-assembly : bool]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
-  [backend-mode : CompilerBackendMode]
+  [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : ResultCompileCliWindowsBatchEntry
   (begin
     ;; Match the legacy batch entry lifecycle exactly through the one-lowering
     ;; driver boundary. The selected bytes are written before the caller tears
     ;; down this entry's scratch arena.
-    (if (= (compiler-driver-state-intern-generation state) 0)
+    (if (=
+      (compiler_driver_core.compiler-driver-state-intern-generation state)
+      0)
       (ci.intern-compat-state-reset!
-        (compiler-driver-state-owned-interns state))
+        (compiler_driver_core.compiler-driver-state-owned-interns state))
       unit)
-    (compiler-driver-state-install-pools! state)
-    (compiler-driver-state-install-interns! state)
+    (compiler_driver_core.compiler-driver-state-install-pools! state)
+    (compiler_driver_core.compiler-driver-state-install-interns! state)
     (cfg
       compile-startup-profile
       (startup_profile.compiler-startup-profile-mark-preflight-begin!)
@@ -1424,8 +1452,8 @@
             compile-startup-profile
             (startup_profile.compiler-startup-profile-mark-preflight-end!)
             unit)
-          (compiler-driver-state-reset-file-state! state)
-          (compiler-opt-debug-configure!
+          (compiler_driver_core.compiler-driver-state-reset-file-state! state)
+          (opt.compiler-opt-debug-configure!
             compile-cli-trace-passes-requested
             compile-cli-dump-ir-pass
             compile-cli-verify-ir-requested)
@@ -1433,7 +1461,7 @@
             [emit-cfgs : sym_i64_env.SymI64Env
               (compile-cli-cfg-names-to-env-with-intern-state
                 cfgs
-                (compiler-driver-state-owned-interns state))]
+                (compiler_driver_core.compiler-driver-state-owned-interns state))]
             [_file-state-reset-end : unit
               (cfg
                 compile-startup-profile
@@ -1447,7 +1475,7 @@
                   unit)
                 (compile-cli-write-windows-batch-artifact
                   state
-                  (compiler-windows-batch-state-emit-file
+                  (compiler_windows_coff_core.compiler-windows-batch-state-emit-file
                     state
                     input-path
                     stdlib-roots
@@ -1458,7 +1486,8 @@
                   object-path
                   assembly-path))]
             (begin
-              (compiler-driver-state-capture-session-floors! state)
+              (compiler_driver_core.compiler-driver-state-capture-session-floors!
+                state)
               result)))
         (begin
           (cfg
@@ -1471,7 +1500,7 @@
   [entries : (& entries cli_svec.Vec)]
   [index : i64]
   [stride : i64]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
   [ran-preflight : bool]) : i64
@@ -1480,8 +1509,8 @@
       (begin
         ;; Detach the final preflight's loaded AST before its scratch owner is
         ;; gone and before the separate batch driver state is installed.
-        (tltest-inline-clear-load-only-caches!)
-        (compiler-driver-reset-file-state!)
+        (test_cli_core.tltest-inline-clear-load-only-caches!)
+        (compiler_driver_core.compiler-driver-reset-file-state!)
         0)
       0)
     (let
@@ -1491,7 +1520,8 @@
         ;; The predicate reads the whole source. Keep that transient buffer in
         ;; the same per-source lifetime as the optional inline typecheck instead
         ;; of retaining every manifest source in the batch caller arena.
-        (with-scratch (tltest-source-has-inline-tests? input-path))]
+        (with-scratch
+          (test_cli_core.tltest-source-has-inline-tests? input-path))]
       [status
         : i64
         ;; Match package inline preflight isolation: each source owns a
@@ -1500,12 +1530,12 @@
         (if has-inline-tests
           (with-scratch
             (begin
-              (tltest-inline-clear-load-only-caches!)
-              (compiler-driver-reset-file-state!)
-              (tltest-inline-typecheck-file-with-cfg
+              (test_cli_core.tltest-inline-clear-load-only-caches!)
+              (compiler_driver_core.compiler-driver-reset-file-state!)
+              (test_cli_core.tltest-inline-typecheck-file-with-cfg
                 input-path
                 stdlib-roots
-                (compiler-driver-target-cfgs
+                (compiler_driver_core.compiler-driver-target-cfgs
                   target
                   (compile-cli-cfg-names-to-env cfgs))
                 "typecheck-prefix-inline-compile-batch")))
@@ -1516,11 +1546,11 @@
       ;; Reinstall it after `with-scratch` has restored the enclosing arena.
       [_restore-default-session : unit
         (if has-inline-tests
-          (compiler-load-default-session-use!)
+          (load.compiler-load-default-session-use!)
           unit)]
       [_clear-entry : unit
         (if has-inline-tests
-          (tltest-inline-clear-load-caches!)
+          (test_cli_core.tltest-inline-clear-load-caches!)
           unit)]
       (if (= status 0)
         (compile-cli-run-batch-inline-tests-from
@@ -1538,7 +1568,7 @@
 
 (define (compile-cli-run-batch-inline-tests
   [entries : cli_svec.Vec]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]) : i64
   (compile-cli-run-batch-inline-tests-from
@@ -1552,7 +1582,7 @@
 
 (define (compile-cli-run-windows-batch-inline-tests
   [entries : cli_svec.Vec]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]) : i64
   (compile-cli-run-batch-inline-tests-from
@@ -1797,14 +1827,14 @@
       (ResultCompileCliWindowsBatchEntryList.Err status))))
 
 (define (compile-cli-run-batch-entries-from
-  [state : CompilerDriverState]
+  [state : compiler_driver_core.CompilerDriverState]
   [entries : (& entries cli_svec.Vec)]
   [index : i64]
   [has-target : bool]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
-  [backend-mode : CompilerBackendMode]
+  [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]) : i64
   (if (>= index (cli_svec.len entries))
@@ -1815,8 +1845,8 @@
       [_profile-start : unit
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-start-entry!
-            (compiler-driver-state-profile state)
+          (compiler_driver_core.compiler-driver-batch-profile-start-entry!
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
@@ -1851,8 +1881,8 @@
       [_profile-emit : unit
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-mark!
-            (compiler-driver-state-profile state)
+          (compiler_driver_core.compiler-driver-batch-profile-mark!
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "emit-complete")
           unit)]
@@ -1877,30 +1907,34 @@
         ;; loader/typecheck caches may hold scratch-backed nodes until reset.
         (cfg
           compile-profile
-          (compiler-driver-state-release-file-state-profiled! state ordinal)
-          (compiler-driver-state-release-file-state! state))
+          (compiler_driver_core.compiler-driver-state-release-file-state-profiled!
+            state
+            ordinal)
+          (compiler_driver_core.compiler-driver-state-release-file-state! state))
         (allocation_profile.compiler-allocation-profile-control!
           2
           "batch-post-release"
           "entry-scratch-saved"
           scratch-end)
         (begin
-          (compiler-driver-restore-arena-owner-current! (arena.raw-handle home))
+          (compiler_driver_core.compiler-driver-restore-arena-owner-current!
+            (arena.raw-handle home))
           (unsafe
             (arena.tl_arena_destroy scratch-end)))
         ;; The next standalone preflight and the opt-in allocation profiler
         ;; still observe compatibility globals between batch entries. Install
         ;; the already-reset job context at that explicit boundary, after the
         ;; entry scratch owner has been destroyed.
-        (compiler-driver-state-install-pools! state)
-        (compiler-driver-state-install-interns! state)
+        (compiler_driver_core.compiler-driver-state-install-pools! state)
+        (compiler_driver_core.compiler-driver-state-install-interns! state)
         ;; The reset above has republished every compatibility aggregate into
         ;; `compat`; only now is the preceding entry's owner unreachable.
         (if (= previous-compat-arena 0)
           unit
           (unsafe
             (arena.tl_arena_destroy previous-compat-arena)))
-        (compiler-driver-allocation-profile-snapshot! "batch-steady")
+        (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+          "batch-steady")
         (allocation_profile.compiler-allocation-profile-control!
           2
           "batch-steady"
@@ -1908,8 +1942,8 @@
           (arena.raw-handle compat))
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-mark!
-            (compiler-driver-state-profile state)
+          (compiler_driver_core.compiler-driver-batch-profile-mark!
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "scratch-destroy-steady")
           unit)
@@ -1941,25 +1975,25 @@
 ;; baseline instead of being misattributed as leaked entry state.
 (define (compile-cli-batch-persistent-table-storage-ensure!) : unit
   (begin
-    (compiler-backend-peephole-carry-safe-reset!)
-    (compiler-backend-peephole-owner-global-reset!)
-    (compiler-backend-slot-cache-reset!)
-    (tc-type-needs-resolution-storage-ensure!)
-    (tc-agg-size-cache-storage-ensure!)
-    (tc-agg-align-cache-storage-ensure!)
-    (tc-agg-regwords-cache-storage-ensure!)
-    (tc-lazy-import-stub-storage-ensure!)
-    (tc-agg-layout-cache-table-storage-ensure!)
-    (macro-unqualified-import-cache-storage-ensure!)))
+    (backend.compiler-backend-peephole-carry-safe-reset!)
+    (backend.compiler-backend-peephole-owner-global-reset!)
+    (backend.compiler-backend-slot-cache-reset!)
+    (tc_core.tc-type-needs-resolution-storage-ensure!)
+    (tc_core.tc-agg-size-cache-storage-ensure!)
+    (tc_core.tc-agg-align-cache-storage-ensure!)
+    (tc_core.tc-agg-regwords-cache-storage-ensure!)
+    (tc_core.tc-lazy-import-stub-storage-ensure!)
+    (tc_core.tc-agg-layout-cache-table-storage-ensure!)
+    (tc_core.macro-unqualified-import-cache-storage-ensure!)))
 
 (define (compile-cli-run-batch-entries
-  [state : CompilerDriverState]
+  [state : compiler_driver_core.CompilerDriverState]
   [entries : cli_svec.Vec]
   [has-target : bool]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
-  [backend-mode : CompilerBackendMode]
+  [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (begin
     (compile-cli-batch-persistent-table-storage-ensure!)
@@ -1976,12 +2010,12 @@
       0)))
 
 (define (compile-cli-run-windows-batch-entries-from
-  [state : CompilerDriverState]
+  [state : compiler_driver_core.CompilerDriverState]
   [entries : (& entries cli_svec.Vec)]
   [index : i64]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
-  [backend-mode : CompilerBackendMode]
+  [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]
   [results : (&mut results cli_svec.Vec)]) : i64
@@ -1993,8 +2027,8 @@
       [_profile-start : unit
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-start-entry!
-            (compiler-driver-state-profile state)
+          (compiler_driver_core.compiler-driver-batch-profile-start-entry!
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
@@ -2022,8 +2056,8 @@
       [_profile-emit : unit
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-mark!
-            (compiler-driver-state-profile state)
+          (compiler_driver_core.compiler-driver-batch-profile-mark!
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "emit-complete")
           unit)]
@@ -2034,7 +2068,8 @@
       ;; leaves no scratch-owned payload in the result vector.
       [status : i64
         (begin
-          (compiler-driver-restore-arena-owner-current! (arena.raw-handle home))
+          (compiler_driver_core.compiler-driver-restore-arena-owner-current!
+            (arena.raw-handle home))
           (match entry-result
             [(ResultCompileCliWindowsBatchEntry.Ok kind path category)
               (begin
@@ -2059,24 +2094,28 @@
           (arena.set! compat))
         (cfg
           compile-profile
-          (compiler-driver-state-release-file-state-profiled! state ordinal)
-          (compiler-driver-state-release-file-state! state))
+          (compiler_driver_core.compiler-driver-state-release-file-state-profiled!
+            state
+            ordinal)
+          (compiler_driver_core.compiler-driver-state-release-file-state! state))
         (allocation_profile.compiler-allocation-profile-control!
           2
           "batch-post-release"
           "entry-scratch-saved"
           scratch-end)
         (begin
-          (compiler-driver-restore-arena-owner-current! (arena.raw-handle home))
+          (compiler_driver_core.compiler-driver-restore-arena-owner-current!
+            (arena.raw-handle home))
           (unsafe
             (arena.tl_arena_destroy scratch-end)))
-        (compiler-driver-state-install-pools! state)
-        (compiler-driver-state-install-interns! state)
+        (compiler_driver_core.compiler-driver-state-install-pools! state)
+        (compiler_driver_core.compiler-driver-state-install-interns! state)
         (if (= previous-compat-arena 0)
           unit
           (unsafe
             (arena.tl_arena_destroy previous-compat-arena)))
-        (compiler-driver-allocation-profile-snapshot! "batch-steady")
+        (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+          "batch-steady")
         (allocation_profile.compiler-allocation-profile-control!
           2
           "batch-steady"
@@ -2084,8 +2123,8 @@
           (arena.raw-handle compat))
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-mark!
-            (compiler-driver-state-profile state)
+          (compiler_driver_core.compiler-driver-batch-profile-mark!
+            (compiler_driver_core.compiler-driver-state-profile state)
             ordinal
             "scratch-destroy-steady")
           unit)
@@ -2153,12 +2192,12 @@
           1)])))
 
 (define (compile-cli-run-windows-batch-entries
-  [state : CompilerDriverState]
+  [state : compiler_driver_core.CompilerDriverState]
   [entries : cli_svec.Vec]
   [result-plan-path : String]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
-  [backend-mode : CompilerBackendMode]
+  [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (let
     [results : cli_svec.Vec (cli_svec.new)]
@@ -2179,15 +2218,15 @@
       status)))
 
 (define (compile-cli-run-batch-from
-  [state : CompilerDriverState]
+  [state : compiler_driver_core.CompilerDriverState]
   [text : String]
   [start : i64]
   [line : i64]
   [has-target : bool]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
-  [backend-mode : CompilerBackendMode]
+  [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-batch-parse-entries-from
     text
@@ -2204,8 +2243,8 @@
             ;; first entry reset can destroy that residency. Leaving the
             ;; process-default owners installed retains the largest later
             ;; preflight source beside every subsequent compile.
-            (compiler-driver-state-install-pools! state)
-            (compiler-driver-state-install-interns! state))]
+            (compiler_driver_core.compiler-driver-state-install-pools! state)
+            (compiler_driver_core.compiler-driver-state-install-interns! state))]
         [inline-test-status : i64
           (compile-cli-run-batch-inline-tests entries target stdlib-roots cfgs)]
         (if (= inline-test-status 0)
@@ -2222,15 +2261,15 @@
     [(ResultCompileCliBatchEntryList.Err status) status]))
 
 (define (compile-cli-run-windows-batch-from
-  [state : CompilerDriverState]
+  [state : compiler_driver_core.CompilerDriverState]
   [text : String]
   [start : i64]
   [line : i64]
   [result-plan-path : String]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
-  [backend-mode : CompilerBackendMode]
+  [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-windows-batch-parse-entries-from
     text
@@ -2241,8 +2280,8 @@
       (let
         [_install-preflight-state : unit
           (begin
-            (compiler-driver-state-install-pools! state)
-            (compiler-driver-state-install-interns! state))]
+            (compiler_driver_core.compiler-driver-state-install-pools! state)
+            (compiler_driver_core.compiler-driver-state-install-interns! state))]
         [inline-test-status : i64
           (compile-cli-run-windows-batch-inline-tests
             entries
@@ -2277,9 +2316,9 @@
 
 (define (compile-cli-run-batch [config : CompileCliBatchConfig]) : i64
   (let
-    [state : CompilerDriverState
-      (compiler-driver-state-session-program-cache-disable
-        (compiler-driver-state-new-for-compile))]
+    [state : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-session-program-cache-disable
+        (compiler_driver_core.compiler-driver-state-new-for-compile))]
     (match config
       [(CompileCliBatchConfig.Config
           batch-path
@@ -2295,8 +2334,10 @@
         (let
           [status : i64
             (begin
-              (compiler-driver-state-prefix-cache-enable! state)
-              (compiler-driver-state-prefix-cache-clear! state)
+              (compiler_driver_core.compiler-driver-state-prefix-cache-enable!
+                state)
+              (compiler_driver_core.compiler-driver-state-prefix-cache-clear!
+                state)
               (if has-windows-coff-plan
                 (let
                   [remove-status : i64
@@ -2328,12 +2369,14 @@
                   opt-level)))]
           (begin
             (if prefix-cache-stats
-              (compiler-driver-state-prefix-cache-print-stats
+              (compiler_driver_core.compiler-driver-state-prefix-cache-print-stats
                 state
                 "compile-batch")
               unit)
-            (compiler-driver-state-prefix-cache-clear! state)
-            (compiler-driver-state-prefix-cache-disable! state)
+            (compiler_driver_core.compiler-driver-state-prefix-cache-clear!
+              state)
+            (compiler_driver_core.compiler-driver-state-prefix-cache-disable!
+              state)
             status))])))
 
 (define (compile-cli-run-action [action : CompileCliAction]) : i64
@@ -2362,8 +2405,8 @@
                   compile-startup-profile
                   (startup_profile.compiler-startup-profile-mark-driver-state-begin!)
                   unit)]
-              [state : CompilerDriverState
-                (compiler-driver-state-new-for-compile)]
+              [state : compiler_driver_core.CompilerDriverState
+                (compiler_driver_core.compiler-driver-state-new-for-compile)]
               [_state-end : unit
                 (cfg
                   compile-startup-profile
@@ -2391,14 +2434,16 @@
                 status))]))]
     [(CompileCliAction.Batch config) (compile-cli-run-batch config)]
     [(CompileCliAction.Check input-path stdlib-roots)
-      (match (compiler-check-file-with-roots input-path stdlib-roots)
-        [(ResultCompilerCheck.Ok _)
+      (match (compiler_check_core.compiler-check-file-with-roots
+        input-path
+        stdlib-roots)
+        [(compiler_check_core.ResultCompilerCheck.Ok _)
           (let
             [inline-test-status : i64
-              (tltest-inline-typecheck-file-with-cfg
+              (test_cli_core.tltest-inline-typecheck-file-with-cfg
                 input-path
                 stdlib-roots
-                (compiler-check-language-cfgs)
+                (compiler_check_core.compiler-check-language-cfgs)
                 "typecheck-prefix-inline-compile-check")]
             (if (= inline-test-status 0)
               (let
@@ -2410,11 +2455,11 @@
                     0)
                   doctest-status))
               inline-test-status))]
-        [(ResultCompilerCheck.Err diag)
+        [(compiler_check_core.ResultCompilerCheck.Err diag)
           (begin
             (io.print-error
-              (compiler-driver-render-source-diagnostic
-                (compiler-diagnostic-list-first (box-get diag))))
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (cdiag.compiler-diagnostic-list-first (box-get diag))))
             1)])]
     [(CompileCliAction.Help)
       (begin
@@ -2434,14 +2479,15 @@
         (set! compile-cli-dump-ir-pass "")
         (set! compile-cli-verify-ir-requested false)
         (set! compile-cli-trace-passes-requested false)
-        (compiler-debug-info-set-enabled! false)
+        (ir.compiler-debug-info-set-enabled! false)
         (compile-cli-dispatch count))]
     [profile? : bool compile-cli-allocation-profile-requested]
     (begin
       (if profile?
         (begin
           (allocation_profile.compiler-allocation-profile-control! 1 "" "" 0)
-          (compiler-driver-allocation-profile-snapshot! "start"))
+          (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+            "start"))
         unit)
       (let
         [status : i64 (compile-cli-run-action action)]
@@ -2453,7 +2499,8 @@
               (if (= status 0)
                 unit
                 (io.print-error "\n"))
-              (compiler-driver-allocation-profile-snapshot! "complete")
+              (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+                "complete")
               (allocation_profile.compiler-allocation-profile-control!
                 3
                 ""

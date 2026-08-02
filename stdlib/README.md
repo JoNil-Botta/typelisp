@@ -405,8 +405,7 @@ Vec bang place macros as available yet.
   single-allocation copy regardless of arity. Kept separate from
   `core_macros.tl` so importing it does not shadow core guard/boolean macro
   forms. Import it with `(import stdlib.str_cat)` and call `str_cat.str-cat`;
-  compatibility fixtures may still exercise old flat import behavior until the
-  final legacy-import removal.
+  imported definitions are not added to the caller's unqualified namespace.
 - `string_caller_result.tl`: lifetime-preserving string replacement
   caller-result surface. It exposes `string-replace-result`, which selects
   between no-match borrowed results and replacement-owned results. Import it

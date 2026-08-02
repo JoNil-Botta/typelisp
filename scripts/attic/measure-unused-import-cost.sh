@@ -6,7 +6,7 @@ set -eu
 # This is a diagnostic harness, not a CI gate. It measures one compiler binary
 # compiling two scratch copies of the selfhost CLI source:
 #   base:        src/main.tl unchanged
-#   with-import: src/main.tl plus `(import "format_doc.tl")`
+#   with-import: src/main.tl plus `(import format_doc)`
 #
 # Use this before and after compiler-throughput work for #3803/#3857:
 #
@@ -174,13 +174,13 @@ inject_unused_import() {
     awk '
         BEGIN { inserted = 0 }
         inserted == 0 && /^\(import / {
-            print "(import \"format_doc.tl\")"
+            print "(import format_doc)"
             inserted = 1
         }
         { print }
         END {
             if (inserted == 0) {
-                print "(import \"format_doc.tl\")"
+                print "(import format_doc)"
             }
         }
     ' "$main_file" > "$tmp_file"

@@ -1,5 +1,3 @@
-(module consume.parameters.helper)
-
 ;; lint-allow: unused-import
 (import stdlib.string)
 

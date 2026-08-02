@@ -1,5 +1,3 @@
-(module reflection.signature.provider)
-
 (define answer : i64
   42)
 

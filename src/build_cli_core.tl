@@ -17,20 +17,28 @@
 (import (hashmap.hashmap String i64) as build_string_i64_map)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
-(import "host_plan.tl")
-(import "build_run_core.tl")
-(import "doc_test.tl")
-(import "test_cli_core.tl")
-(import "package_source_core.tl")
-(import "package_cache_core.tl")
-(import "package_lock_core.tl")
-(import (vector.vector PackageLockEntry core) as package_lock_entry_vec)
-(import "compiler_diagnostic.tl")
-(import "compiler_parse_core.tl")
-(import "compiler_driver_core.tl")
-(import "compiler_typecheck_api.tl")
-(import "tlci_core.tl")
-(import "compiler_tlci_native_producer.tl")
+(import host_plan)
+(import build_run_core)
+(import compiler_backend as backend)
+(import compiler_ast_types as ast)
+(import compiler_load as load)
+(import compiler_symbols as csym)
+(import compiler_intern as ci)
+(import compiler_ir_types as ir)
+(import compiler_lower as lower)
+(import compiler_optimize as opt)
+(import compiler_object as cobj)
+(import doc_test)
+(import test_cli_core)
+(import package_source_core)
+(import package_cache_core)
+(import package_lock_core)
+(import (vector.vector package_lock_core.PackageLockEntry core) as package_lock_entry_vec)
+(import compiler_diagnostic)
+(import compiler_parse_core)
+(import compiler_driver_core)
+(import tlci_core as tlci)
+(import compiler_tlci_native_producer)
 (import sym_i64_env)
 
 (defenum BuildConfig
@@ -57,22 +65,22 @@
     bool
     String
     bool
-    CompilerBackendTarget
-    CompilerBackendMode
+    backend.CompilerBackendTarget
+    backend.CompilerBackendMode
     cli_svec.Vec
     i64
-    SourceToolLinkInputs))
+    build_run_core.SourceToolLinkInputs))
 
 (defenum ResultBuildCliConfig
   (Ok BuildCliConfig)
   (Err String))
 
 (defenum ResultBuildTarget
-  (Ok CompilerBackendTarget)
+  (Ok backend.CompilerBackendTarget)
   (Err String))
 
 (defenum ResultBuildManifest
-  (Ok CompilerPkgManifest)
+  (Ok load.CompilerPkgManifest)
   (Err String))
 
 (defstruct BuildPackageCompileContext
@@ -81,7 +89,7 @@
 
 (defstruct BuildPackageGraphNode
   (manifest-path String)
-  (manifest CompilerPkgManifest))
+  (manifest load.CompilerPkgManifest))
 
 (defstruct BuildPackageArtifactPaths
   (runtime String)
@@ -116,7 +124,7 @@
   (Err String))
 
 (defenum ResultBuildPkgDep
-  (Ok CompilerPkgDep)
+  (Ok load.CompilerPkgDep)
   (Err String))
 
 (defstruct BuildGitDependency
@@ -126,7 +134,7 @@
 
 (defstruct BuildResolvedGitDependency
   (dep-root String)
-  (lock-entry PackageLockEntry))
+  (lock-entry package_lock_core.PackageLockEntry))
 
 (defenum ResultBuildGitDependency
   (Ok BuildGitDependency)
@@ -142,7 +150,7 @@
 
 (defenum BuildMaybeLockEntry
   (No)
-  (Some PackageLockEntry))
+  (Some package_lock_core.PackageLockEntry))
 
 (defstruct BuildPackageLockState
   (path String)
@@ -154,7 +162,7 @@
   (Err String))
 
 (defstruct BuildResolvedPkgDep
-  (dep CompilerPkgDep)
+  (dep load.CompilerPkgDep)
   (lock-entry BuildMaybeLockEntry))
 
 (defenum ResultBuildResolvedPkgDep
@@ -162,7 +170,7 @@
   (Err String))
 
 (defstruct BuildResolvedPkgDeps
-  (deps CompilerPkgDepList)
+  (deps load.CompilerPkgDepList)
   (lock-entries package_lock_entry_vec.Vec)
   (has-remote bool))
 
@@ -180,13 +188,13 @@
 (defstruct BuildPackageWorkerConfig
   (manifest-path String)
   (has-manifest bool)
-  (target CompilerBackendTarget)
-  (mode CompilerBackendMode)
+  (target backend.CompilerBackendTarget)
+  (mode backend.CompilerBackendMode)
   (profile BuildProfile)
   (opt-level i64)
   (lock-policy BuildPackageLockPolicy)
   (stdlib-roots cli_svec.Vec)
-  (resolved-deps CompilerPkgDepList))
+  (resolved-deps load.CompilerPkgDepList))
 
 (defenum ResultBuildPackageWorkerConfig
   (Ok BuildPackageWorkerConfig)
@@ -227,7 +235,7 @@
   (Update))
 
 (defenum BuildPackageLockEntryStatus
-  (Matched PackageLockEntry)
+  (Matched package_lock_core.PackageLockEntry)
   (Missing)
   (Stale))
 
@@ -262,12 +270,13 @@
   [value : i64]) : unit
   (build_string_i64_map.insert-ref! map key value))
 
-(define (build-invalid-manifest-message [diag : CompilerDiagnostic]) : String
+(define (build-invalid-manifest-message
+  [diag : compiler_diagnostic.CompilerDiagnostic]) : String
   (str_cat.str-cat
     "invalid package manifest '"
-    (compiler-diagnostic-path diag)
+    (compiler_diagnostic.compiler-diagnostic-path diag)
     "': "
-    (compiler-diagnostic-message diag)))
+    (compiler_diagnostic.compiler-diagnostic-message diag)))
 
 (define (build-unknown-target [value : String]) : String
   (str_cat.str-cat "build: unknown target " value ""))
@@ -292,11 +301,11 @@
     [(BuildProfile.Dev) "dev"]
     [(BuildProfile.Release) "release"]))
 
-(define (build-backend-mode-name [mode : CompilerBackendMode]) : String
+(define (build-backend-mode-name [mode : backend.CompilerBackendMode]) : String
   (match mode
-    [(CompilerBackendMode.Scalar) "scalar"]
-    [(CompilerBackendMode.Avx2) "avx2"]
-    [(CompilerBackendMode.Avx512) "avx512"]))
+    [(backend.CompilerBackendMode.Scalar) "scalar"]
+    [(backend.CompilerBackendMode.Avx2) "avx2"]
+    [(backend.CompilerBackendMode.Avx512) "avx512"]))
 
 (define (build-profile-default-opt-level [profile : BuildProfile]) : i64
   (match profile
@@ -347,21 +356,24 @@
   [args : process.ProcessStringList]
   [policy : BuildPackageLockPolicy]) : process.ProcessStringList
   (match policy
-    [(BuildPackageLockPolicy.Locked) (source-tool-args-append args "--locked")]
+    [(BuildPackageLockPolicy.Locked)
+      (build_run_core.source-tool-args-append args "--locked")]
     [(BuildPackageLockPolicy.Update)
-      (source-tool-args-append args "--update-lock")]
+      (build_run_core.source-tool-args-append args "--update-lock")]
     [(BuildPackageLockPolicy.Default) args]))
 
 (define (build-append-stdlib [stdlib-lines : String] [root : String]) : String
-  (str_cat.str-cat stdlib-lines (host-plan-netline "stdlib-root" root)))
+  (str_cat.str-cat
+    stdlib-lines
+    (host_plan.host-plan-netline "stdlib-root" root)))
 
 (define (build-parse-target [value : String]) : ResultBuildTarget
   (if (or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
-    (ResultBuildTarget.Ok (CompilerBackendTarget.Linux))
+    (ResultBuildTarget.Ok (backend.CompilerBackendTarget.Linux))
     (if (or
       (string.eq value "windows-x86_64")
       (string.eq value "windows_x86_64"))
-      (ResultBuildTarget.Ok (CompilerBackendTarget.Windows))
+      (ResultBuildTarget.Ok (backend.CompilerBackendTarget.Windows))
       (ResultBuildTarget.Err (build-unknown-target value)))))
 
 (define (build-parse-opt-level [value : String]) : i64
@@ -418,7 +430,7 @@
             (cli_svec.push (&mut next-roots) value)
             next-roots)))]
     [(cli_option.CliCommonOptionKind.Target)
-      (if (host-plan-target-valid? value)
+      (if (host_plan.host-plan-target-valid? value)
         (build-parse-options
           next-idx
           count
@@ -562,7 +574,7 @@
           (cond
             [(or (string.eq current "--debug") (string.eq current "-g"))
               (begin
-                (compiler-debug-info-set-enabled! true)
+                (ir.compiler-debug-info-set-enabled! true)
                 (build-parse-options
                   (+ idx 1)
                   count
@@ -638,7 +650,7 @@
                 (ResultBuildConfig.Err "build: --backend-mode requires a value")
                 (let
                   [value : String (io.arg (+ idx 1))]
-                  (if (host-plan-backend-mode-valid? value)
+                  (if (host_plan.host-plan-backend-mode-valid? value)
                     (build-parse-options
                       (+ idx 2)
                       count
@@ -755,7 +767,7 @@
                   (BuildPackageLockPolicy.Update)
                   stdlib-lines
                   stdlib-roots))]
-            [(host-plan-flag? current)
+            [(host_plan.host-plan-flag? current)
               (ResultBuildConfig.Err
                 (str_cat.str-cat "build: unknown flag " current))]
             [else
@@ -791,7 +803,7 @@
     false
     ""
     false
-    (host-plan-default-target)
+    (host_plan.host-plan-default-target)
     false
     "scalar"
     (build-default-profile)
@@ -809,14 +821,14 @@
   [count : i64]
   [manifest-path : String]
   [has-manifest : bool]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]
   [profile : BuildProfile]
   [opt-level : i64]
   [has-opt-level : bool]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec (:consume)]
-  [resolved-deps : CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
+  [resolved-deps : load.CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
   (match kind
     [(cli_option.CliCommonOptionKind.StdlibRoot)
       (build-package-worker-parse-options
@@ -837,8 +849,8 @@
             next-roots))
         resolved-deps)]
     [(cli_option.CliCommonOptionKind.Target)
-      (match (source-tool-target value)
-        [(ResultSourceToolTarget.Ok parsed-target)
+      (match (build_run_core.source-tool-target value)
+        [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
           (build-package-worker-parse-options
             next-idx
             count
@@ -852,10 +864,10 @@
             lock-policy
             stdlib-roots
             resolved-deps)]
-        [(ResultSourceToolTarget.Err _)
+        [(build_run_core.ResultSourceToolTarget.Err _)
           (ResultBuildPackageWorkerConfig.Err (build-cli-unknown-target value))])]
     [(cli_option.CliCommonOptionKind.OptLevel)
-      (if (source-tool-opt-level-valid? value)
+      (if (build_run_core.source-tool-opt-level-valid? value)
         (build-package-worker-parse-options
           next-idx
           count
@@ -879,14 +891,14 @@
   [count : i64]
   [manifest-path : String]
   [has-manifest : bool]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]
   [profile : BuildProfile]
   [opt-level : i64]
   [has-opt-level : bool]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
-  [resolved-deps : CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
+  [resolved-deps : load.CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
   (if (>= idx count)
     (if has-manifest
       (ResultBuildPackageWorkerConfig.Ok
@@ -932,7 +944,7 @@
           (cond
             [(or (string.eq current "--debug") (string.eq current "-g"))
               (begin
-                (compiler-debug-info-set-enabled! true)
+                (ir.compiler-debug-info-set-enabled! true)
                 (build-package-worker-parse-options
                   (+ idx 1)
                   count
@@ -969,8 +981,8 @@
                   "build: --backend-mode requires a value")
                 (let
                   [value : String (io.arg (+ idx 1))]
-                  (match (source-tool-backend-mode "build" value)
-                    [(ResultSourceToolBackendMode.Ok parsed-mode)
+                  (match (build_run_core.source-tool-backend-mode "build" value)
+                    [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
                       (build-package-worker-parse-options
                         (+ idx 2)
                         count
@@ -984,7 +996,7 @@
                         lock-policy
                         stdlib-roots
                         resolved-deps)]
-                    [(ResultSourceToolBackendMode.Err message)
+                    [(build_run_core.ResultSourceToolBackendMode.Err message)
                       (ResultBuildPackageWorkerConfig.Err message)])))]
             [(string.eq current "--profile")
               (if (>= (+ idx 1) count)
@@ -1078,10 +1090,10 @@
                   has-opt-level
                   lock-policy
                   stdlib-roots
-                  (compiler-pkg-dep-list-push
+                  (load.compiler-pkg-dep-list-push
                     resolved-deps
-                    (CompilerPkgDep (io.arg (+ idx 1)) (io.arg (+ idx 2))))))]
-            [(host-plan-flag? current)
+                    (load.CompilerPkgDep (io.arg (+ idx 1)) (io.arg (+ idx 2))))))]
+            [(host_plan.host-plan-flag? current)
               (ResultBuildPackageWorkerConfig.Err
                 (str_cat.str-cat "build: unknown package worker flag " current))]
             [else
@@ -1096,14 +1108,14 @@
     count
     ""
     false
-    (source-tool-default-target)
-    (CompilerBackendMode.Scalar)
+    (build_run_core.source-tool-default-target)
+    (backend.CompilerBackendMode.Scalar)
     (build-default-profile)
     (build-package-default-opt-level)
     false
     (BuildPackageLockPolicy.Default)
     (cli_svec.new)
-    (compiler-pkg-dep-list-empty)))
+    (load.compiler-pkg-dep-list-empty)))
 
 (define (build-source-plan-render [config : BuildConfig]) : String
   (match config
@@ -1117,22 +1129,22 @@
         opt-level
         stdlib-lines)
       (str_cat.str-cat
-        (host-plan-header)
-        (host-plan-word-line "action" "build-source")
-        (host-plan-netline "source" source)
+        (host_plan.host-plan-header)
+        (host_plan.host-plan-word-line "action" "build-source")
+        (host_plan.host-plan-netline "source" source)
         (if has-output
-          (host-plan-netline "output" output)
+          (host_plan.host-plan-netline "output" output)
           "")
-        (host-plan-word-line "target" target)
-        (host-plan-word-line "backend-mode" mode)
+        (host_plan.host-plan-word-line "target" target)
+        (host_plan.host-plan-word-line "backend-mode" mode)
         (if (string.eq opt-level "")
           ""
-          (host-plan-word-line "opt-level" opt-level))
+          (host_plan.host-plan-word-line "opt-level" opt-level))
         stdlib-lines
         "end\n")]
     [_ ""]))
 
-(define (build-discover-manifest-up [prefix : String] [fuel : i64]) : CompilerLoadMaybePath
+(define (build-discover-manifest-up [prefix : String] [fuel : i64]) : load.CompilerLoadMaybePath
   (if (<= fuel 0)
     (CompilerLoadNoPath)
     (let
@@ -1143,12 +1155,12 @@
 
 (define (build-load-manifest [manifest-path : String]) : ResultBuildManifest
   (if (io.file-exists? manifest-path)
-    (match (compiler-load-parse-manifest-diagnostic-infer-kind
+    (match (load.compiler-load-parse-manifest-diagnostic-infer-kind
       manifest-path
       (byte_buf.to-string (io.read-file manifest-path)))
-      [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
+      [(load.ResultCompilerPkgManifestDiagnostic.Ok manifest)
         (ResultBuildManifest.Ok manifest)]
-      [(ResultCompilerPkgManifestDiagnostic.Err diag)
+      [(load.ResultCompilerPkgManifestDiagnostic.Err diag)
         (ResultBuildManifest.Err
           (build-invalid-manifest-message (box-get diag)))])
     (ResultBuildManifest.Err
@@ -1161,8 +1173,8 @@
   [manifest-dir : String]
   [_name : (& name str)]
   [profile : BuildProfile]) : String
-  (compiler-load-join-root-path
-    (compiler-load-join-root-path manifest-dir "target")
+  (load.compiler-load-join-root-path
+    (load.compiler-load-join-root-path manifest-dir "target")
     (build-profile-name profile)))
 
 (define (build-package-asm-path [manifest-dir : String] [name : String]) : String
@@ -1172,14 +1184,14 @@
   [manifest-dir : String]
   [name : String]
   [profile : BuildProfile]) : String
-  (compiler-load-join-root-path
+  (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat name ".s")))
 
 (define (build-package-obj-path
   [manifest-dir : String]
   [name : String]
-  [target : CompilerBackendTarget]) : String
+  [target : backend.CompilerBackendTarget]) : String
   (build-package-obj-path-profile
     manifest-dir
     name
@@ -1190,15 +1202,18 @@
   [manifest-dir : String]
   [name : String]
   [profile : BuildProfile]
-  [target : CompilerBackendTarget]) : String
-  (compiler-load-join-root-path
+  [target : backend.CompilerBackendTarget]) : String
+  (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
-    (str_cat.str-cat name "." (source-tool-object-extension target))))
+    (str_cat.str-cat
+      name
+      "."
+      (build_run_core.source-tool-object-extension target))))
 
 (define (build-package-bin-path
   [manifest-dir : String]
   [name : String]
-  [target : CompilerBackendTarget]) : String
+  [target : backend.CompilerBackendTarget]) : String
   (build-package-bin-path-profile
     manifest-dir
     name
@@ -1209,15 +1224,17 @@
   [manifest-dir : String]
   [name : String]
   [profile : BuildProfile]
-  [target : CompilerBackendTarget]) : String
-  (compiler-load-join-root-path
+  [target : backend.CompilerBackendTarget]) : String
+  (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
-    (str_cat.str-cat name (source-tool-executable-extension target))))
+    (str_cat.str-cat
+      name
+      (build_run_core.source-tool-executable-extension target))))
 
 (define (build-package-lib-path
   [manifest-dir : String]
   [name : String]
-  [target : CompilerBackendTarget]) : String
+  [target : backend.CompilerBackendTarget]) : String
   (build-package-lib-path-profile
     manifest-dir
     name
@@ -1228,10 +1245,10 @@
   [manifest-dir : String]
   [name : String]
   [profile : BuildProfile]
-  [target : CompilerBackendTarget]) : String
-  (compiler-load-join-root-path
+  [target : backend.CompilerBackendTarget]) : String
+  (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
-    (source-tool-static-library-filename name target)))
+    (build_run_core.source-tool-static-library-filename name target)))
 
 (define (build-package-tlci-path [manifest-dir : String] [name : String]) : String
   (build-package-tlci-path-profile manifest-dir name (build-default-profile)))
@@ -1240,31 +1257,32 @@
   [manifest-dir : String]
   [name : String]
   [profile : BuildProfile]) : String
-  (compiler-load-join-root-path
+  (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat name ".tlci")))
 
 (define (build-package-artifact-path-profile
   [manifest-dir : String]
   [name : String]
-  [kind : CompilerPkgKind]
+  [kind : load.CompilerPkgKind]
   [profile : BuildProfile]
-  [target : CompilerBackendTarget]) : String
+  [target : backend.CompilerBackendTarget]) : String
   (match kind
     [(CompilerPkgKindBin)
       (build-package-bin-path-profile manifest-dir name profile target)]
     [(CompilerPkgKindLib)
       (build-package-lib-path-profile manifest-dir name profile target)]))
 
-;; The v1 tlci path is target-independent because package images are
-;; metadata-only host compile-time interfaces. Runtime artifacts still
-;; carry the selected target through their filename/extension.
+;; The v2 tlci image follows the build host: it is the host comptime
+;; interface (metadata-only or code-bearing), separate from the
+;; runtime-target artifact, which still carries the selected target through
+;; its filename/extension.
 (define (build-package-artifact-paths
   [manifest-dir : String]
   [name : String]
-  [kind : CompilerPkgKind]
+  [kind : load.CompilerPkgKind]
   [profile : BuildProfile]
-  [target : CompilerBackendTarget]) : BuildPackageArtifactPaths
+  [target : backend.CompilerBackendTarget]) : BuildPackageArtifactPaths
   (BuildPackageArtifactPaths
     (build-package-artifact-path-profile manifest-dir name kind profile target)
     (build-package-tlci-path-profile manifest-dir name profile)))
@@ -1290,14 +1308,14 @@
         "root/app"
         "pkg"
         (BuildProfile.Release)
-        (CompilerBackendTarget.Windows))
+        (backend.CompilerBackendTarget.Windows))
       "root/app/target/release/pkg.exe")
     (string.eq
       (build-package-lib-path-profile
         "root/app"
         "pkg"
         (BuildProfile.Release)
-        (CompilerBackendTarget.Linux))
+        (backend.CompilerBackendTarget.Linux))
       "root/app/target/release/libpkg.a")
     (string.eq
       (build-package-tlci-path-profile "root/app" "pkg" (BuildProfile.Dev))
@@ -1309,7 +1327,7 @@
           "pkg"
           (CompilerPkgKindBin)
           (BuildProfile.Dev)
-          (CompilerBackendTarget.Windows)))
+          (backend.CompilerBackendTarget.Windows)))
       "root/app/target/dev/pkg.tlci")))
 
 (test
@@ -1378,25 +1396,27 @@
       (build-package-artifact-status-smoke-ok?)
       (io.panic "build package artifact status smoke failed"))))
 
-(define (build-package-kind-lib? [kind : CompilerPkgKind]) : bool
+(define (build-package-kind-lib? [kind : load.CompilerPkgKind]) : bool
   (match kind
     [(CompilerPkgKindLib) true]
     [_ false]))
 
-(define (build-package-kind-entry? [kind : CompilerPkgKind]) : bool
+(define (build-package-kind-entry? [kind : load.CompilerPkgKind]) : bool
   (match kind
     [(CompilerPkgKindBin) true]
     [(CompilerPkgKindLib) false]))
 
-(define (build-package-dep-root [manifest-dir : String] [dep : CompilerPkgDep]) : String
-  (compiler-load-normalize-path
-    (compiler-load-join-root-path manifest-dir (struct-get dep path))))
+(define (build-package-dep-root
+  [manifest-dir : String]
+  [dep : load.CompilerPkgDep]) : String
+  (load.compiler-load-normalize-path
+    (load.compiler-load-join-root-path manifest-dir (struct-get dep path))))
 
 (define (build-package-dep-manifest-path
   [manifest-dir : String]
-  [dep : CompilerPkgDep]) : String
-  (compiler-load-normalize-path
-    (compiler-load-join-root-path
+  [dep : load.CompilerPkgDep]) : String
+  (load.compiler-load-normalize-path
+    (load.compiler-load-join-root-path
       (build-package-dep-root manifest-dir dep)
       "typelisp.pkg")))
 
@@ -1415,16 +1435,16 @@
   (str_cat.str-cat "target/typelisp/git-deps/" alias))
 
 (define (build-github-dep-cache-root [manifest-dir : String] [alias : String]) : String
-  (compiler-load-normalize-path
-    (compiler-load-join-root-path
+  (load.compiler-load-normalize-path
+    (load.compiler-load-join-root-path
       manifest-dir
       (build-github-dep-relative-root alias))))
 
 (define (build-github-dep-cache-manifest-path
   [manifest-dir : String]
   [alias : String]) : String
-  (compiler-load-normalize-path
-    (compiler-load-join-root-path
+  (load.compiler-load-normalize-path
+    (load.compiler-load-join-root-path
       (build-github-dep-cache-root manifest-dir alias)
       "typelisp.pkg")))
 
@@ -1458,7 +1478,7 @@
             (if (= (string.string-length value) 0)
               (ResultBuildGitDependency.Err
                 (build-git-dep-error alias "has empty pin"))
-              (if (compiler-load-github-pin-kind-valid? kind-for-check)
+              (if (load.compiler-load-github-pin-kind-valid? kind-for-check)
                 (ResultBuildGitDependency.Ok
                   (BuildGitDependency remote kind value))
                 (ResultBuildGitDependency.Err
@@ -1466,22 +1486,25 @@
 
 (define (build-git-dep-pin-kind
   [alias : String]
-  [dep : (& dep BuildGitDependency)]) : ResultPackageCachePinKind
+  [dep : (& dep BuildGitDependency)]) : package_cache_core.ResultPackageCachePinKind
   (let
     [kind : String (string.copy (& (struct-get dep pin-kind)))]
     (cond
       [(string.eq kind "rev")
-        (ResultPackageCachePinKind.Ok (PackageCachePinKind.Rev))]
+        (package_cache_core.ResultPackageCachePinKind.Ok
+          (package_cache_core.PackageCachePinKind.Rev))]
       [(string.eq kind "tag")
-        (ResultPackageCachePinKind.Ok (PackageCachePinKind.Tag))]
+        (package_cache_core.ResultPackageCachePinKind.Ok
+          (package_cache_core.PackageCachePinKind.Tag))]
       [(string.eq kind "branch")
-        (ResultPackageCachePinKind.Ok (PackageCachePinKind.Branch))]
+        (package_cache_core.ResultPackageCachePinKind.Ok
+          (package_cache_core.PackageCachePinKind.Branch))]
       [else
-        (ResultPackageCachePinKind.Err
+        (package_cache_core.ResultPackageCachePinKind.Err
           (build-git-dep-error alias "has invalid pin kind"))])))
 
 (define (build-package-lock-path [manifest-dir : String]) : String
-  (compiler-load-join-root-path manifest-dir "typelisp.lock"))
+  (load.compiler-load-join-root-path manifest-dir "typelisp.lock"))
 
 (define (build-load-package-lock [manifest-dir : String]) : ResultBuildPackageLockState
   (let
@@ -1496,15 +1519,16 @@
               "': "
               (io.error-message error)))]
         [(io.OkIoBytes source)
-          (match (package-lock-parse (byte_buf.to-string source))
-            [(ResultPackageLockFile.Err message)
+          (match (package_lock_core.package-lock-parse
+            (byte_buf.to-string source))
+            [(package_lock_core.ResultPackageLockFile.Err message)
               (ResultBuildPackageLockState.Err
                 (str_cat.str-cat
                   "build: invalid package lock '"
                   path
                   "': "
                   message))]
-            [(ResultPackageLockFile.Ok lock)
+            [(package_lock_core.ResultPackageLockFile.Ok lock)
               (ResultBuildPackageLockState.Ok
                 (BuildPackageLockState path (struct-get lock entries) true))])])
       (ResultBuildPackageLockState.Ok
@@ -1514,8 +1538,11 @@
   [state : BuildPackageLockState]
   [entries : package_lock_entry_vec.Vec]) : ResultBuildString
   (let
-    [lock : PackageLockFile (PackageLockFile package-lock-version entries)]
-    [text : String (package-lock-emit lock)]
+    [lock : package_lock_core.PackageLockFile
+      (package_lock_core.PackageLockFile
+        package_lock_core.package-lock-version
+        entries)]
+    [text : String (package_lock_core.package-lock-emit lock)]
     [path : String (struct-get state path)]
     (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& text)))
       [(io.OkIoUnit) (ResultBuildString.Ok path)]
@@ -1528,16 +1555,18 @@
             (io.error-message error)))])))
 
 (define (build-package-lock-entry-matches?
-  [entry : PackageLockEntry]
+  [entry : package_lock_core.PackageLockEntry]
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : bool
   (match (build-git-dep-pin-kind alias dep)
-    [(ResultPackageCachePinKind.Err _) false]
-    [(ResultPackageCachePinKind.Ok kind)
+    [(package_cache_core.ResultPackageCachePinKind.Err _) false]
+    [(package_cache_core.ResultPackageCachePinKind.Ok kind)
       (and
         (string.eq (& (struct-get entry alias)) alias)
         (string.eq (& (struct-get entry url)) (& (struct-get dep remote)))
-        (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
+        (package_cache_core.package-cache-pin-kind-eq?
+          (struct-get entry pin-kind)
+          kind)
         (string.eq
           (& (struct-get entry pin-value))
           (& (struct-get dep pin-value))))]))
@@ -1546,9 +1575,9 @@
   [entries : package_lock_entry_vec.Vec]
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : BuildMaybeLockEntry
-  (match (package-lock-entry-list-lookup entries alias)
-    [(PackageLockMaybeEntry.No) (BuildMaybeLockEntry.No)]
-    [(PackageLockMaybeEntry.Some entry)
+  (match (package_lock_core.package-lock-entry-list-lookup entries alias)
+    [(package_lock_core.PackageLockMaybeEntry.No) (BuildMaybeLockEntry.No)]
+    [(package_lock_core.PackageLockMaybeEntry.Some entry)
       (if (build-package-lock-entry-matches? entry alias dep)
         (BuildMaybeLockEntry.Some entry)
         (BuildMaybeLockEntry.No))]))
@@ -1557,9 +1586,10 @@
   [entries : package_lock_entry_vec.Vec]
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : BuildPackageLockEntryStatus
-  (match (package-lock-entry-list-lookup entries alias)
-    [(PackageLockMaybeEntry.No) (BuildPackageLockEntryStatus.Missing)]
-    [(PackageLockMaybeEntry.Some entry)
+  (match (package_lock_core.package-lock-entry-list-lookup entries alias)
+    [(package_lock_core.PackageLockMaybeEntry.No)
+      (BuildPackageLockEntryStatus.Missing)]
+    [(package_lock_core.PackageLockMaybeEntry.Some entry)
       (if (build-package-lock-entry-matches? entry alias dep)
         (BuildPackageLockEntryStatus.Matched entry)
         (BuildPackageLockEntryStatus.Stale))]))
@@ -1579,13 +1609,13 @@
 (define (build-package-lock-entry
   [alias : String]
   [dep : (& dep BuildGitDependency)]
-  [commit : String]) : ResultPackageLockEntry
+  [commit : String]) : package_lock_core.ResultPackageLockEntry
   (match (build-git-dep-pin-kind alias dep)
-    [(ResultPackageCachePinKind.Err message)
-      (ResultPackageLockEntry.Err message)]
-    [(ResultPackageCachePinKind.Ok kind)
-      (ResultPackageLockEntry.Ok
-        (PackageLockEntry
+    [(package_cache_core.ResultPackageCachePinKind.Err message)
+      (package_lock_core.ResultPackageLockEntry.Err message)]
+    [(package_cache_core.ResultPackageCachePinKind.Ok kind)
+      (package_lock_core.ResultPackageLockEntry.Ok
+        (package_lock_core.PackageLockEntry
           alias
           (string.copy (& (struct-get dep remote)))
           kind
@@ -1632,13 +1662,13 @@
         (str_cat.str-cat context ": " (process.error-message error)))]))
 
 (define (build-git-clone-command [remote : String] [root : String]) : process.ProcessCommand
-  (source-tool-git-clone-command remote root))
+  (build_run_core.source-tool-git-clone-command remote root))
 
 (define (build-git-checkout-command [root : String] [checkout-ref : String]) : process.ProcessCommand
-  (source-tool-git-checkout-command root checkout-ref))
+  (build_run_core.source-tool-git-checkout-command root checkout-ref))
 
 (define (build-git-rev-parse-command [root : String]) : process.ProcessCommand
-  (source-tool-git-rev-parse-command root))
+  (build_run_core.source-tool-git-rev-parse-command root))
 
 (define (build-trim-command-output [output : String]) : String
   (string.trim (& output)))
@@ -1657,19 +1687,19 @@
           (ResultBuildString.Ok commit)))]))
 
 (define (build-absolute-dep-root [manifest-dir : String] [dep-root : String]) : String
-  (compiler-load-normalize-path
-    (compiler-load-join-root-path manifest-dir dep-root)))
+  (load.compiler-load-normalize-path
+    (load.compiler-load-join-root-path manifest-dir dep-root)))
 
 (define (build-ensure-github-cache-parent
   [manifest-dir : String]
   [alias : String]) : ResultBuildString
   (let
     [target-dir : String
-      (compiler-load-join-root-path (string.copy manifest-dir) "target")]
+      (load.compiler-load-join-root-path (string.copy manifest-dir) "target")]
     [typelisp-dir : String
-      (compiler-load-join-root-path (string.copy target-dir) "typelisp")]
+      (load.compiler-load-join-root-path (string.copy target-dir) "typelisp")]
     [deps-dir : String
-      (compiler-load-join-root-path (string.copy typelisp-dir) "git-deps")]
+      (load.compiler-load-join-root-path (string.copy typelisp-dir) "git-deps")]
     (cond
       [(not (build-mkdir-ok-owned? (string.copy target-dir)))
         (ResultBuildString.Err
@@ -1687,8 +1717,8 @@
       [else (ResultBuildString.Ok deps-dir)])))
 
 (define (build-github-cache-git-dir [manifest-dir : String] [alias : String]) : String
-  (compiler-load-normalize-path
-    (compiler-load-join-root-path
+  (load.compiler-load-normalize-path
+    (load.compiler-load-join-root-path
       (build-github-dep-cache-root manifest-dir alias)
       ".git")))
 
@@ -1715,14 +1745,14 @@
   [alias : String]) : ResultBuildString
   (let
     [target-dir : String
-      (compiler-load-join-root-path (string.copy manifest-dir) "target")]
+      (load.compiler-load-join-root-path (string.copy manifest-dir) "target")]
     [typelisp-dir : String
-      (compiler-load-join-root-path (string.copy target-dir) "typelisp")]
+      (load.compiler-load-join-root-path (string.copy target-dir) "typelisp")]
     [cache-dir : String
-      (compiler-load-join-root-path (string.copy typelisp-dir) "cache")]
+      (load.compiler-load-join-root-path (string.copy typelisp-dir) "cache")]
     [packages-dir : String
-      (compiler-load-join-root-path (string.copy cache-dir) "packages")]
-    [root : String (package-cache-default-root manifest-dir)]
+      (load.compiler-load-join-root-path (string.copy cache-dir) "packages")]
+    [root : String (package_cache_core.package-cache-default-root manifest-dir)]
     (cond
       [(not (build-mkdir-ok-owned? (string.copy target-dir)))
         (ResultBuildString.Err
@@ -1760,13 +1790,14 @@
 (define (build-package-cache-staging-path
   [alias : String]
   [root : String]
-  [key : (& key PackageCacheKey)]
+  [key : (& key package_cache_core.PackageCacheKey)]
   [attempt : i64]) : ResultBuildString
   (if (> attempt 16)
     (ResultBuildString.Err
       (build-git-dep-error alias "package cache has no free staging path"))
     (let
-      [staged : String (package-cache-staging-path root key attempt)]
+      [staged : String
+        (package_cache_core.package-cache-staging-path root key attempt)]
       (if (io.file-exists? staged)
         (build-package-cache-staging-path alias root key (+ attempt 1))
         (ResultBuildString.Ok staged)))))
@@ -1823,12 +1854,14 @@
   [staged-path : String]
   [entry-path : String]
   [relative-entry-root : String]
-  [key : (& key PackageCacheKey)]) : ResultBuildString
-  (match (package-cache-finalize-staged staged-path entry-path)
+  [key : (& key package_cache_core.PackageCacheKey)]) : ResultBuildString
+  (match (package_cache_core.package-cache-finalize-staged
+    staged-path
+    entry-path)
     [(io.OkIoUnit) (ResultBuildString.Ok relative-entry-root)]
     [(io.ErrIoUnit error)
-      (match (package-cache-entry-state entry-path key)
-        [(PackageCacheEntryState.CompleteHit _)
+      (match (package_cache_core.package-cache-entry-state entry-path key)
+        [(package_cache_core.PackageCacheEntryState.CompleteHit _)
           (build-package-cache-hit-result alias entry-path relative-entry-root)]
         [_
           (ResultBuildString.Err
@@ -1837,8 +1870,10 @@
 (define (build-package-cache-write-marker
   [alias : String]
   [staged-path : String]
-  [key : (& key PackageCacheKey)]) : ResultBuildString
-  (match (package-cache-write-complete-marker staged-path key)
+  [key : (& key package_cache_core.PackageCacheKey)]) : ResultBuildString
+  (match (package_cache_core.package-cache-write-complete-marker
+    staged-path
+    key)
     [(io.OkIoUnit) (ResultBuildString.Ok staged-path)]
     [(io.ErrIoUnit error)
       (ResultBuildString.Err
@@ -1847,8 +1882,8 @@
 (define (build-package-cache-prepare-entry-parents-result
   [alias : String]
   [root : String]
-  [key : (& key PackageCacheKey)]) : ResultBuildString
-  (match (package-cache-prepare-entry-parents root key)
+  [key : (& key package_cache_core.PackageCacheKey)]) : ResultBuildString
+  (match (package_cache_core.package-cache-prepare-entry-parents root key)
     [(io.OkIoUnit) (ResultBuildString.Ok root)]
     [(io.ErrIoUnit error)
       (ResultBuildString.Err
@@ -1858,11 +1893,11 @@
   [alias : String]
   [dep : (& dep BuildGitDependency)]
   [root : String]
-  [key : (& key PackageCacheKey)]
+  [key : (& key package_cache_core.PackageCacheKey)]
   [entry-path : String]
   [relative-entry-root : String]
   [replace-existing : bool]) : ResultBuildString
-  (match (package-cache-prepare-staging-parents root key)
+  (match (package_cache_core.package-cache-prepare-staging-parents root key)
     [(io.ErrIoUnit error)
       (ResultBuildString.Err
         (build-package-cache-io-error
@@ -1937,17 +1972,19 @@
   (let
     [remote : String (string.copy (& (struct-get dep remote)))]
     [pin-value : String (string.copy (& (struct-get dep pin-value)))]
-    [key : PackageCacheKey (PackageCacheKey remote pin-value)]
-    [root : String (package-cache-default-root manifest-dir)]
-    [entry-path : String (package-cache-entry-path root (& key))]
+    [key : package_cache_core.PackageCacheKey
+      (package_cache_core.PackageCacheKey remote pin-value)]
+    [root : String (package_cache_core.package-cache-default-root manifest-dir)]
+    [entry-path : String
+      (package_cache_core.package-cache-entry-path root (& key))]
     [relative-root : String (build-package-cache-relative-root)]
     [relative-entry-root : String
-      (compiler-load-normalize-path
-        (package-cache-entry-path (& relative-root) (& key)))]
-    [state : PackageCacheEntryState
-      (package-cache-entry-state entry-path (& key))]
+      (load.compiler-load-normalize-path
+        (package_cache_core.package-cache-entry-path (& relative-root) (& key)))]
+    [state : package_cache_core.PackageCacheEntryState
+      (package_cache_core.package-cache-entry-state entry-path (& key))]
     (match state
-      [(PackageCacheEntryState.CompleteHit _)
+      [(package_cache_core.PackageCacheEntryState.CompleteHit _)
         (if (io.file-exists? (build-package-cache-manifest-path (& entry-path)))
           (ResultBuildString.Ok relative-entry-root)
           (match (build-ensure-package-cache-root manifest-dir alias)
@@ -1961,7 +1998,7 @@
                 entry-path
                 relative-entry-root
                 true)]))]
-      [(PackageCacheEntryState.Miss _)
+      [(package_cache_core.PackageCacheEntryState.Miss _)
         (match (build-ensure-package-cache-root manifest-dir alias)
           [(ResultBuildString.Err message) (ResultBuildString.Err message)]
           [(ResultBuildString.Ok _)
@@ -1973,7 +2010,7 @@
               entry-path
               relative-entry-root
               false)])]
-      [(PackageCacheEntryState.PartialOrCorrupt _ _)
+      [(package_cache_core.PackageCacheEntryState.PartialOrCorrupt _ _)
         (match (build-ensure-package-cache-root manifest-dir alias)
           [(ResultBuildString.Err message) (ResultBuildString.Err message)]
           [(ResultBuildString.Ok _)
@@ -2047,7 +2084,7 @@
   [manifest-dir : String]
   [alias : String]
   [dep : BuildGitDependency]
-  [entry : PackageLockEntry]) : ResultBuildResolvedGitDependency
+  [entry : package_lock_core.PackageLockEntry]) : ResultBuildResolvedGitDependency
   (let
     [locked-commit : String (struct-get entry commit)]
     [locked-dep : BuildGitDependency
@@ -2082,9 +2119,9 @@
             (ResultBuildResolvedGitDependency.Err message)]
           [(ResultBuildString.Ok commit)
             (match (build-package-lock-entry alias (& dep) commit)
-              [(ResultPackageLockEntry.Err message)
+              [(package_lock_core.ResultPackageLockEntry.Err message)
                 (ResultBuildResolvedGitDependency.Err message)]
-              [(ResultPackageLockEntry.Ok entry)
+              [(package_lock_core.ResultPackageLockEntry.Ok entry)
                 (ResultBuildResolvedGitDependency.Ok
                   (BuildResolvedGitDependency dep-root entry))])]))]))
 
@@ -2124,12 +2161,12 @@
   [manifest-dir : String]
   [lock-entries : package_lock_entry_vec.Vec]
   [lock-policy : BuildPackageLockPolicy]
-  [dep : CompilerPkgDep]) : ResultBuildResolvedPkgDep
+  [dep : load.CompilerPkgDep]) : ResultBuildResolvedPkgDep
   (let
     [path : String (struct-get dep path)]
     [alias : String (struct-get dep alias)]
     [path-for-kind : String (string.copy (& path))]
-    (if (compiler-load-github-dependency-path? path-for-kind)
+    (if (load.compiler-load-github-dependency-path? path-for-kind)
       (let
         [parse-alias : String
           (string.substring alias 0 (string.string-length alias))]
@@ -2149,16 +2186,16 @@
               [(ResultBuildResolvedGitDependency.Ok resolved)
                 (ResultBuildResolvedPkgDep.Ok
                   (BuildResolvedPkgDep
-                    (CompilerPkgDep alias (struct-get resolved dep-root))
+                    (load.CompilerPkgDep alias (struct-get resolved dep-root))
                     (BuildMaybeLockEntry.Some (struct-get resolved lock-entry))))])]))
       (ResultBuildResolvedPkgDep.Ok
         (BuildResolvedPkgDep
-          (CompilerPkgDep alias path)
+          (load.CompilerPkgDep alias path)
           (BuildMaybeLockEntry.No))))))
 
 (define (build-package-resolve-dep
   [manifest-dir : String]
-  [dep : CompilerPkgDep]) : ResultBuildPkgDep
+  [dep : load.CompilerPkgDep]) : ResultBuildPkgDep
   (match (build-package-resolve-dep-with-lock
     manifest-dir
     (package_lock_entry_vec.new)
@@ -2170,16 +2207,17 @@
 
 (define (build-package-lock-entry-list-add
   [entries : package_lock_entry_vec.Vec]
-  [maybe-entry : BuildMaybeLockEntry]) : ResultPackageLockEntryList
+  [maybe-entry : BuildMaybeLockEntry]) : package_lock_core.ResultPackageLockEntryList
   (match maybe-entry
-    [(BuildMaybeLockEntry.No) (ResultPackageLockEntryList.Ok entries)]
+    [(BuildMaybeLockEntry.No)
+      (package_lock_core.ResultPackageLockEntryList.Ok entries)]
     [(BuildMaybeLockEntry.Some entry)
-      (package-lock-entry-list-insert entries entry)]))
+      (package_lock_core.package-lock-entry-list-insert entries entry)]))
 
 (define (build-package-lock-list-has-exact-entry?
   [entries : package_lock_entry_vec.Vec]
-  [entry : PackageLockEntry]) : bool
-  (package-lock-list-has-entry?
+  [entry : package_lock_core.PackageLockEntry]) : bool
+  (package_lock_core.package-lock-list-has-entry?
     entries
     (struct-get entry alias)
     (struct-get entry url)
@@ -2204,7 +2242,7 @@
         (package_lock_entry_vec.get
           needles
           index
-          (package-lock-entry-list-fallback)))
+          (package_lock_core.package-lock-entry-list-fallback)))
       (build-package-lock-list-contains-all-from haystack needles (+ index 1)))))
 
 (define (build-package-lock-list-eq?
@@ -2251,19 +2289,19 @@
   [manifest-dir : String]
   [lock-entries : package_lock_entry_vec.Vec]
   [lock-policy : BuildPackageLockPolicy]
-  [deps : CompilerPkgDepList]
+  [deps : load.CompilerPkgDepList]
   [index : i64]) : ResultBuildResolvedPkgDeps
-  (if (>= index (compiler-pkg-dep-list-count deps))
+  (if (>= index (load.compiler-pkg-dep-list-count deps))
     (ResultBuildResolvedPkgDeps.Ok
       (BuildResolvedPkgDeps
-        (compiler-pkg-dep-list-empty)
+        (load.compiler-pkg-dep-list-empty)
         (package_lock_entry_vec.new)
         false))
     (match (build-package-resolve-dep-with-lock
       manifest-dir
       lock-entries
       lock-policy
-      (compiler-pkg-dep-list-at deps index))
+      (load.compiler-pkg-dep-list-at deps index))
       [(ResultBuildResolvedPkgDep.Err message)
         (ResultBuildResolvedPkgDeps.Err message)]
       [(ResultBuildResolvedPkgDep.Ok resolved-dep)
@@ -2279,12 +2317,13 @@
             (match (build-package-lock-entry-list-add
               (struct-get resolved-rest lock-entries)
               (struct-get resolved-dep lock-entry))
-              [(ResultPackageLockEntryList.Err message)
+              [(package_lock_core.ResultPackageLockEntryList.Err message)
                 (ResultBuildResolvedPkgDeps.Err message)]
-              [(ResultPackageLockEntryList.Ok next-lock-entries)
+              [(package_lock_core.ResultPackageLockEntryList.Ok
+                  next-lock-entries)
                 (ResultBuildResolvedPkgDeps.Ok
                   (BuildResolvedPkgDeps
-                    (compiler-pkg-dep-list-cons
+                    (load.compiler-pkg-dep-list-cons
                       (struct-get resolved-dep dep)
                       (struct-get resolved-rest deps))
                     next-lock-entries
@@ -2296,10 +2335,10 @@
 
 (define (build-package-resolve-manifest-deps
   [manifest-path : String]
-  [manifest : CompilerPkgManifest]
+  [manifest : load.CompilerPkgManifest]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildManifest
   (let
-    [manifest-dir : String (compiler-load-dirname manifest-path)]
+    [manifest-dir : String (load.compiler-load-dirname manifest-path)]
     (match (build-load-package-lock manifest-dir)
       [(ResultBuildPackageLockState.Err message)
         (ResultBuildManifest.Err message)]
@@ -2308,7 +2347,7 @@
           manifest-dir
           (struct-get lock-state entries)
           lock-policy
-          (compiler-pkg-deps-list (struct-get manifest deps))
+          (load.compiler-pkg-deps-list (struct-get manifest deps))
           0)
           [(ResultBuildResolvedPkgDeps.Err message)
             (ResultBuildManifest.Err message)]
@@ -2328,16 +2367,17 @@
                     (ResultBuildManifest.Err message)]
                   [(ResultBuildString.Ok _)
                     (ResultBuildManifest.Ok
-                      (CompilerPkgManifest
+                      (load.CompilerPkgManifest
                         (struct-get manifest name)
                         (struct-get manifest version)
                         (struct-get manifest kind)
                         (struct-get manifest entry)
-                        (compiler-pkg-deps-from-list (struct-get resolved deps))
+                        (load.compiler-pkg-deps-from-list
+                          (struct-get resolved deps))
                         (struct-get manifest link)))])])])])))
 
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
-  (compiler-load-normalize-path manifest-path))
+  (load.compiler-load-normalize-path manifest-path))
 
 (define (build-package-path-seq-push
   [paths : BuildPackagePathSeq]
@@ -2461,7 +2501,7 @@
 
 (define (build-package-load-dep-node
   [manifest-dir : String]
-  [dep : CompilerPkgDep]
+  [dep : load.CompilerPkgDep]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphNode
   (match (build-package-resolve-dep manifest-dir dep)
     [(ResultBuildPkgDep.Err message) (ResultBuildPackageGraphNode.Err message)]
@@ -2517,13 +2557,13 @@
               state
               manifest-path
               build-package-visit-visiting)]
-          [manifest : CompilerPkgManifest (struct-get node manifest)]
-          [manifest-dir : String (compiler-load-dirname manifest-path)]
+          [manifest : load.CompilerPkgManifest (struct-get node manifest)]
+          [manifest-dir : String (load.compiler-load-dirname manifest-path)]
           [next-stack : BuildPackagePathSeq
             (build-package-path-seq-push stack manifest-path)]
           (match (build-package-graph-add-deps
             manifest-dir
-            (compiler-pkg-deps-list (struct-get manifest deps))
+            (load.compiler-pkg-deps-list (struct-get manifest deps))
             0
             visiting
             next-stack
@@ -2541,16 +2581,16 @@
 
 (define (build-package-graph-add-deps
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : load.CompilerPkgDepList]
   [index : i64]
   [state : BuildPackageGraphState]
   [stack : BuildPackagePathSeq]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
-  (if (>= index (compiler-pkg-dep-list-count deps))
+  (if (>= index (load.compiler-pkg-dep-list-count deps))
     (ResultBuildPackageGraphState.Ok state)
     (match (build-package-load-dep-node
       manifest-dir
-      (compiler-pkg-dep-list-at deps index)
+      (load.compiler-pkg-dep-list-at deps index)
       lock-policy)
       [(ResultBuildPackageGraphNode.Err message)
         (ResultBuildPackageGraphState.Err message)]
@@ -2569,11 +2609,11 @@
 
 (define (build-package-dependency-graph
   [manifest-path : String]
-  [manifest : CompilerPkgManifest]
+  [manifest : load.CompilerPkgManifest]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraph
   (let
     [root-path : String (build-package-normalize-manifest-path manifest-path)]
-    [root-dir : String (compiler-load-dirname root-path)]
+    [root-dir : String (load.compiler-load-dirname root-path)]
     [initial : BuildPackageGraphState
       (BuildPackageGraphState
         (build-string-index-map-put
@@ -2587,7 +2627,7 @@
         root-path)]
     (match (build-package-graph-add-deps
       root-dir
-      (compiler-pkg-deps-list (struct-get manifest deps))
+      (load.compiler-pkg-deps-list (struct-get manifest deps))
       0
       initial
       stack
@@ -2610,14 +2650,14 @@
 
 (define (build-package-root-compiler?
   [manifest-dir : String]
-  [manifest : CompilerPkgManifest]) : bool
+  [manifest : load.CompilerPkgManifest]) : bool
   ;; Keep the compiler-only cfg out of ordinary packages. The source marker
   ;; also prevents an unrelated package named `typelisp` from opting in.
   (and
     (string.eq (struct-get manifest name) "typelisp")
     (string.eq (struct-get manifest entry) "src/main.tl")
     (io.file-exists?
-      (compiler-load-join-root-path
+      (load.compiler-load-join-root-path
         manifest-dir
         "src/compiler_build_identity.tl"))))
 
@@ -2630,20 +2670,25 @@
       (if (= (string.string-length manifest-dir) 0)
         "."
         manifest-dir)]
-    [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
+    [target-dir : String
+      (load.compiler-load-join-root-path manifest-dir "target")]
     [identity-dir : String
-      (compiler-load-join-root-path (string.copy target-dir) "build-stage0")]
+      (load.compiler-load-join-root-path
+        (string.copy target-dir)
+        "build-stage0")]
     [identity-path : String
-      (compiler-load-join-root-path (string.copy identity-dir) "git-hash.txt")]
+      (load.compiler-load-join-root-path
+        (string.copy identity-dir)
+        "git-hash.txt")]
     (match (build-run-captured
       "build: cannot resolve root compiler source identity"
-      (source-tool-git-rev-parse-command repo-root))
+      (build_run_core.source-tool-git-rev-parse-command repo-root))
       [(ResultBuildString.Err message) (ResultBuildString.Err message)]
       [(ResultBuildString.Ok output)
         (let
           [identity : String (build-trim-command-output output)]
           (cond
-            [(not (tlci-producer-identity-valid? identity))
+            [(not (tlci.tlci-producer-identity-valid? identity))
               (ResultBuildString.Err
                 "build: root compiler source identity is not a full Git object name")]
             [(not (build-mkdir-ok-owned? (string.copy target-dir)))
@@ -2657,17 +2702,18 @@
                   "build: failed to create root compiler identity directory "
                   identity-dir))]
             [else
-              (match (source-tool-write-file
+              (match (build_run_core.source-tool-write-file
                 identity-path
                 identity
                 "build: failed to write root compiler identity")
-                [(SourceToolCommandStatus.Err message)
+                [(build_run_core.SourceToolCommandStatus.Err message)
                   (ResultBuildString.Err message)]
-                [(SourceToolCommandStatus.Ok) (ResultBuildString.Ok identity)])]))])))
+                [(build_run_core.SourceToolCommandStatus.Ok)
+                  (ResultBuildString.Ok identity)])]))])))
 
 (define (build-package-compile-context
   [manifest-dir : String]
-  [manifest : CompilerPkgManifest]) : BuildPackageCompileContext
+  [manifest : load.CompilerPkgManifest]) : BuildPackageCompileContext
   (if (build-package-root-compiler? manifest-dir manifest)
     (match (build-package-refresh-root-compiler-identity manifest-dir)
       [(ResultBuildString.Err message)
@@ -2676,13 +2722,15 @@
     (BuildPackageCompileContext false "")))
 
 (define (build-package-compile-cfgs
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [root-compiler : bool]) : sym_i64_env.SymI64Env
   (let
     [cfgs : sym_i64_env.SymI64Env
-      (compiler-driver-target-cfgs target (compiler-cfg-empty))]
+      (compiler_driver_core.compiler-driver-target-cfgs
+        target
+        (compiler_parse_core.compiler-cfg-empty))]
     (if root-compiler
-      (compiler-cfg-enable cfgs "compiler-build-identity")
+      (compiler_parse_core.compiler-cfg-enable cfgs "compiler-build-identity")
       cfgs)))
 
 (define (build-ensure-package-output-dirs
@@ -2690,9 +2738,10 @@
   [_name : String]
   [profile : BuildProfile]) : bool
   (let
-    [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
+    [target-dir : String
+      (load.compiler-load-join-root-path manifest-dir "target")]
     [profile-dir : String
-      (compiler-load-join-root-path
+      (load.compiler-load-join-root-path
         (string.copy target-dir)
         (build-profile-name profile))]
     (and (build-mkdir-ok? target-dir) (build-mkdir-ok? profile-dir))))
@@ -2703,35 +2752,35 @@
 (define (build-package-link-resolve-search-path
   [manifest-dir : String]
   [value : String]) : String
-  (if (compiler-load-absolute-path? value)
+  (if (load.compiler-load-absolute-path? value)
     value
-    (compiler-load-normalize-path
-      (compiler-load-join-root-path manifest-dir value))))
+    (load.compiler-load-normalize-path
+      (load.compiler-load-join-root-path manifest-dir value))))
 
 (define (build-package-link-add-libs
-  [inputs : SourceToolLinkInputs]
+  [inputs : build_run_core.SourceToolLinkInputs]
   [vec : (& vec fs.FsStringVector)]
-  [idx : i64]) : SourceToolLinkInputs
+  [idx : i64]) : build_run_core.SourceToolLinkInputs
   (if (>= idx (fs.string-vector-len vec))
     inputs
     (build-package-link-add-libs
-      (source-tool-link-inputs-add-ast
+      (build_run_core.source-tool-link-inputs-add-ast
         inputs
-        (AstExternLinkInput.Lib (fs.string-vector-get vec idx "")))
+        (ast.AstExternLinkInput.Lib (fs.string-vector-get vec idx "")))
       vec
       (+ idx 1))))
 
 (define (build-package-link-add-search-paths
-  [inputs : SourceToolLinkInputs]
+  [inputs : build_run_core.SourceToolLinkInputs]
   [manifest-dir : String]
   [vec : (& vec fs.FsStringVector)]
-  [idx : i64]) : SourceToolLinkInputs
+  [idx : i64]) : build_run_core.SourceToolLinkInputs
   (if (>= idx (fs.string-vector-len vec))
     inputs
     (build-package-link-add-search-paths
-      (source-tool-link-inputs-add-ast
+      (build_run_core.source-tool-link-inputs-add-ast
         inputs
-        (AstExternLinkInput.Search
+        (ast.AstExternLinkInput.Search
           (build-package-link-resolve-search-path
             manifest-dir
             (fs.string-vector-get vec idx ""))))
@@ -2740,15 +2789,15 @@
       (+ idx 1))))
 
 (define (build-package-link-add-args
-  [inputs : SourceToolLinkInputs]
+  [inputs : build_run_core.SourceToolLinkInputs]
   [vec : (& vec fs.FsStringVector)]
-  [idx : i64]) : SourceToolLinkInputs
+  [idx : i64]) : build_run_core.SourceToolLinkInputs
   (if (>= idx (fs.string-vector-len vec))
     inputs
     (build-package-link-add-args
-      (source-tool-link-inputs-add-ast
+      (build_run_core.source-tool-link-inputs-add-ast
         inputs
-        (AstExternLinkInput.Arg (fs.string-vector-get vec idx "")))
+        (ast.AstExternLinkInput.Arg (fs.string-vector-get vec idx "")))
       vec
       (+ idx 1))))
 
@@ -2756,9 +2805,9 @@
 ;: `inputs`. The three classes are stored separately, so intra-set ordering
 ;: across classes does not affect the emitted command.
 (define (build-package-link-add-set
-  [inputs : SourceToolLinkInputs]
+  [inputs : build_run_core.SourceToolLinkInputs]
   [manifest-dir : String]
-  [set : CompilerPkgLinkSet]) : SourceToolLinkInputs
+  [set : load.CompilerPkgLinkSet]) : build_run_core.SourceToolLinkInputs
   (build-package-link-add-args
     (build-package-link-add-search-paths
       (build-package-link-add-libs inputs (& (struct-get set libraries)) 0)
@@ -2772,65 +2821,67 @@
 ;: all-target inputs first, then the per-target (linux / windows) inputs,
 ;: preserving first-seen order and dropping exact duplicates within each class.
 (define (build-package-manifest-link-inputs
-  [link : CompilerPkgLink]
+  [link : load.CompilerPkgLink]
   [manifest-dir : String]
-  [target : CompilerBackendTarget]) : SourceToolLinkInputs
+  [target : backend.CompilerBackendTarget]) : build_run_core.SourceToolLinkInputs
   (build-package-link-add-set
     (build-package-link-add-set
-      (source-tool-link-inputs-empty)
+      (build_run_core.source-tool-link-inputs-empty)
       manifest-dir
       (struct-get link all))
     manifest-dir
     (match target
-      [(CompilerBackendTarget.Linux) (struct-get link linux)]
-      [(CompilerBackendTarget.Windows) (struct-get link windows)])))
+      [(backend.CompilerBackendTarget.Linux) (struct-get link linux)]
+      [(backend.CompilerBackendTarget.Windows) (struct-get link windows)])))
 
 (define (build-package-artifact-status
-  [kind : CompilerPkgKind]
-  [target : CompilerBackendTarget]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
   [artifact-path : String]
-  [link-inputs : SourceToolLinkInputs]
-  [direct-status : SourceToolDirectObjectStatus]) : SourceToolCommandStatus
+  [link-inputs : build_run_core.SourceToolLinkInputs]
+  [direct-status : build_run_core.SourceToolDirectObjectStatus]) : build_run_core.SourceToolCommandStatus
   (match direct-status
-    [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
-    [(SourceToolDirectObjectStatus.Err message)
-      (SourceToolCommandStatus.Err message)]
-    [(SourceToolDirectObjectStatus.Unavailable _)
+    [(build_run_core.SourceToolDirectObjectStatus.Ok)
+      build_run_core.SourceToolCommandStatus.Ok]
+    [(build_run_core.SourceToolDirectObjectStatus.Err message)
+      (build_run_core.SourceToolCommandStatus.Err message)]
+    [(build_run_core.SourceToolDirectObjectStatus.Unavailable _)
       (match kind
         [(CompilerPkgKindBin)
-          (source-tool-assemble-and-link
+          (build_run_core.source-tool-assemble-and-link
             target
             asm-path
             obj-path
             artifact-path
             link-inputs)]
         [(CompilerPkgKindLib)
-          (source-tool-assemble-and-archive
+          (build_run_core.source-tool-assemble-and-archive
             target
             asm-path
             obj-path
             artifact-path)])]))
 
 (define (build-package-render-linux-direct-object
-  [kind : CompilerPkgKind]
-  [image : CompilerObjectImage]) : ResultSourceToolString
-  (match kind
-    [(CompilerPkgKindBin) (source-tool-render-linkable-linux-elf-object image)]
-    [(CompilerPkgKindLib)
-      (source-tool-render-archivable-linux-elf-object image)]))
-
-(define (build-package-write-linux-direct-object-artifact
-  [kind : CompilerPkgKind]
-  [target : CompilerBackendTarget]
-  [obj-path : String]
-  [artifact-path : String]
-  [link-inputs : SourceToolLinkInputs]
-  [obj : String]) : SourceToolDirectObjectStatus
+  [kind : load.CompilerPkgKind]
+  [image : cobj.CompilerObjectImage]) : build_run_core.ResultSourceToolString
   (match kind
     [(CompilerPkgKindBin)
-      (source-tool-write-direct-object-and-link
+      (build_run_core.source-tool-render-linkable-linux-elf-object image)]
+    [(CompilerPkgKindLib)
+      (build_run_core.source-tool-render-archivable-linux-elf-object image)]))
+
+(define (build-package-write-linux-direct-object-artifact
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : build_run_core.SourceToolLinkInputs]
+  [obj : String]) : build_run_core.SourceToolDirectObjectStatus
+  (match kind
+    [(CompilerPkgKindBin)
+      (build_run_core.source-tool-write-direct-object-and-link
         obj-path
         artifact-path
         target
@@ -2838,7 +2889,7 @@
         obj
         "build: failed to write package direct object artifact")]
     [(CompilerPkgKindLib)
-      (source-tool-write-direct-object-and-archive
+      (build_run_core.source-tool-write-direct-object-and-archive
         obj-path
         artifact-path
         target
@@ -2846,17 +2897,17 @@
         "build: failed to write package direct object artifact")]))
 
 (define (build-package-try-linux-direct-object
-  [kind : CompilerPkgKind]
-  [target : CompilerBackendTarget]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [emit-entry : bool]
   [crt-entry : bool]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
   [obj-path : String]
   [artifact-path : String]
-  [link-inputs : SourceToolLinkInputs]) : SourceToolDirectObjectStatus
+  [link-inputs : build_run_core.SourceToolLinkInputs]) : build_run_core.SourceToolDirectObjectStatus
   (match (build-package-try-render-linux-direct-object
     kind
     target
@@ -2866,7 +2917,7 @@
     crt-entry
     decls
     paths)
-    [(ResultSourceToolString.Ok obj)
+    [(build_run_core.ResultSourceToolString.Ok obj)
       (build-package-write-linux-direct-object-artifact
         kind
         target
@@ -2874,28 +2925,28 @@
         artifact-path
         link-inputs
         obj)]
-    [(ResultSourceToolString.Err message)
-      (SourceToolDirectObjectStatus.Unavailable message)]))
+    [(build_run_core.ResultSourceToolString.Err message)
+      (build_run_core.SourceToolDirectObjectStatus.Unavailable message)]))
 
-(define (build-package-direct-object-mode? [mode : CompilerBackendMode]) : bool
+(define (build-package-direct-object-mode? [mode : backend.CompilerBackendMode]) : bool
   (match mode
-    [(CompilerBackendMode.Scalar) true]
+    [(backend.CompilerBackendMode.Scalar) true]
     [_ false]))
 
-(define (build-package-decl-has-spmd-callable? [decl : AstDecl]) : bool
+(define (build-package-decl-has-spmd-callable? [decl : ast.AstDecl]) : bool
   (match decl
-    [(AstDecl.DefFn _ _ _ _ _ metadata)
-      (match (ast-fn-metadata-spmd-callable metadata)
-        [(AstSpmdCallable.No) false]
-        [(AstSpmdCallable.Callable _) true])]
-    [(AstDecl.Unsafe inner)
+    [(ast.AstDecl.DefFn _ _ _ _ _ metadata)
+      (match (ast.ast-fn-metadata-spmd-callable metadata)
+        [(ast.AstSpmdCallable.No) false]
+        [(ast.AstSpmdCallable.Callable _) true])]
+    [(ast.AstDecl.Unsafe inner)
       (build-package-decl-has-spmd-callable? (box-get inner))]
     [_ false]))
 
-(define (build-package-decls-have-spmd-callable? [decls : AstDeclList]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest)
+(define (build-package-decls-have-spmd-callable? [decls : ast.AstDeclList]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
       (or
         (build-package-decl-has-spmd-callable? decl)
         (build-package-decls-have-spmd-callable? rest))]))
@@ -2905,26 +2956,28 @@
   ;; exceed CI memory; keep it for small no-assembler package smokes.
   512)
 
-(define (build-package-direct-object-owned-path-count [paths : AstDeclPathList]) : i64
-  (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Nil) 0]
-    [(AstDeclPathListStep.Cons path rest)
+(define (build-package-direct-object-owned-path-count
+  [paths : ast.AstDeclPathList]) : i64
+  (match (ast.ast-decl-path-list-step paths)
+    [(ast.AstDeclPathListStep.Nil) 0]
+    [(ast.AstDeclPathListStep.Cons path rest)
       (let
-        [tail : AstDeclPathList rest]
+        [tail : ast.AstDeclPathList rest]
         (+
           (if (> (string.string-length path) 0)
             1
             0)
           (build-package-direct-object-owned-path-count tail)))]))
 
-(define (build-package-direct-object-within-budget? [paths : AstDeclPathList]) : bool
+(define (build-package-direct-object-within-budget?
+  [paths : ast.AstDeclPathList]) : bool
   (<=
     (build-package-direct-object-owned-path-count paths)
     (build-package-direct-object-owned-path-budget)))
 
-(define (build-package-direct-object-size-ok? [paths : AstDeclPathList]) : bool
+(define (build-package-direct-object-size-ok? [paths : ast.AstDeclPathList]) : bool
   (or
-    (source-tool-linux-direct-object-enabled?)
+    (build_run_core.source-tool-linux-direct-object-enabled?)
     (build-package-direct-object-within-budget? paths)))
 
 (cfg
@@ -2932,13 +2985,13 @@
   (define (build-package-direct-object-test-paths
     [count : i64]
     [path : String]
-    [out : AstDeclPathList]) : AstDeclPathList
+    [out : ast.AstDeclPathList]) : ast.AstDeclPathList
     (if (<= count 0)
       out
       (build-package-direct-object-test-paths
         (- count 1)
         path
-        (ast-decl-path-list-prepend-builder-with-owner-id
+        (ast.ast-decl-path-list-prepend-builder-with-owner-id
           path
           cbi.compiler-builtin-id-fix-empty
           out)))))
@@ -2948,40 +3001,41 @@
   (define (build-package-direct-object-size-smoke-ok?) : bool
     (let
       [budget : i64 (build-package-direct-object-owned-path-budget)]
-      [ordinary-decl : AstDecl
-        (ast-decl-def-fn-id
-          (intern "direct-object-ordinary")
-          (ast-param-list-new)
-          (AstType.I64)
+      [ordinary-decl : ast.AstDecl
+        (ast.ast-decl-def-fn-id
+          (ci.intern "direct-object-ordinary")
+          (ast.ast-param-list-new)
+          (ast.AstType.I64)
           cbi.compiler-builtin-id-fix-empty)]
-      [spmd-decl : AstDecl
-        (ast-decl-def-fn-metadata-id
-          (intern "direct-object-spmd")
-          (ast-param-list-new)
-          (AstType.I64)
+      [spmd-decl : ast.AstDecl
+        (ast.ast-decl-def-fn-metadata-id
+          (ci.intern "direct-object-spmd")
+          (ast.ast-param-list-new)
+          (ast.AstType.I64)
           cbi.compiler-builtin-id-fix-empty
-          (ast-fn-metadata-full
-            AstFnExport.No
-            (AstSpmdCallable.Callable (ast-spmd-specialization-list-new))))]
-      [within : AstDeclPathList
+          (ast.ast-fn-metadata-full
+            ast.AstFnExport.No
+            (ast.AstSpmdCallable.Callable
+              (ast.ast-spmd-specialization-list-new))))]
+      [within : ast.AstDeclPathList
         (build-package-direct-object-test-paths
           budget
           "pkg.tl"
-          (ast-decl-path-list-new))]
-      [over : AstDeclPathList
+          (ast.ast-decl-path-list-new))]
+      [over : ast.AstDeclPathList
         (build-package-direct-object-test-paths
           (+ budget 1)
           "pkg.tl"
-          (ast-decl-path-list-new))]
-      [mixed : AstDeclPathList
-        (ast-decl-root-path-cons
+          (ast.ast-decl-path-list-new))]
+      [mixed : ast.AstDeclPathList
+        (ast.ast-decl-root-path-cons
           ""
-          (ast-decl-root-path-cons "pkg.tl" (ast-decl-path-list-new)))]
+          (ast.ast-decl-root-path-cons "pkg.tl" (ast.ast-decl-path-list-new)))]
       (and
         (not (build-package-decl-has-spmd-callable? ordinary-decl))
         (build-package-decl-has-spmd-callable? spmd-decl)
         (build-package-decls-have-spmd-callable?
-          (ast-decl-cons spmd-decl (ast-decl-list-new)))
+          (ast.ast-decl-cons spmd-decl (ast.ast-decl-list-new)))
         (= (build-package-direct-object-owned-path-count mixed) 1)
         (build-package-direct-object-within-budget? within)
         (not (build-package-direct-object-within-budget? over))))))
@@ -2995,23 +3049,23 @@
       (io.panic "build package direct object size smoke failed"))))
 
 (define (build-package-try-render-linux-direct-object
-  [kind : CompilerPkgKind]
-  [target : CompilerBackendTarget]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [emit-entry : bool]
   [crt-entry : bool]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]) : ResultSourceToolString
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : build_run_core.ResultSourceToolString
   (if (and
-    (compiler-backend-target-linux? target)
+    (backend.compiler-backend-target-linux? target)
     (build-package-direct-object-mode? mode)
     ;; Direct object emission does not yet preserve scalar f32/f64 parameter
     ;; and return registers for generated private SPMD helpers. Use the
     ;; assembler path so package archives carry the same ABI as side assembly.
     (not (build-package-decls-have-spmd-callable? decls))
     (build-package-direct-object-size-ok? paths))
-    (match (compiler-driver-emit-package-loaded-object-image
+    (match (compiler_driver_core.compiler-driver-emit-package-loaded-object-image
       ""
       target
       true
@@ -3021,21 +3075,22 @@
       crt-entry
       decls
       paths)
-      [(ResultCompilerDriverObject.Ok image)
+      [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
         (build-package-render-linux-direct-object kind image)]
-      [(ResultCompilerDriverObject.Err diag)
-        (ResultSourceToolString.Err
-          (compiler-driver-render-source-diagnostic (box-get diag)))])
-    (ResultSourceToolString.Err "linux direct object disabled")))
+      [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
+        (build_run_core.ResultSourceToolString.Err
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (box-get diag)))])
+    (build_run_core.ResultSourceToolString.Err "linux direct object disabled")))
 
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
   [profile : BuildProfile]
-  [target : CompilerBackendTarget]) : BuildPackageArtifactPaths
+  [target : backend.CompilerBackendTarget]) : BuildPackageArtifactPaths
   (let
     [manifest-path : String (struct-get node manifest-path)]
-    [manifest : CompilerPkgManifest (struct-get node manifest)]
-    [manifest-dir : String (compiler-load-dirname manifest-path)]
+    [manifest : load.CompilerPkgManifest (struct-get node manifest)]
+    [manifest-dir : String (load.compiler-load-dirname manifest-path)]
     (build-package-artifact-paths
       manifest-dir
       (struct-get manifest name)
@@ -3046,7 +3101,7 @@
 (define (build-package-graph-node-artifact-path
   [node : BuildPackageGraphNode]
   [profile : BuildProfile]
-  [target : CompilerBackendTarget]) : String
+  [target : backend.CompilerBackendTarget]) : String
   (build-package-runtime-artifact-path
     (build-package-graph-node-artifact-paths node profile target)))
 
@@ -3055,8 +3110,8 @@
   [profile : BuildProfile]) : String
   (let
     [manifest-path : String (struct-get node manifest-path)]
-    [manifest : CompilerPkgManifest (struct-get node manifest)]
-    [manifest-dir : String (compiler-load-dirname manifest-path)]
+    [manifest : load.CompilerPkgManifest (struct-get node manifest)]
+    [manifest-dir : String (load.compiler-load-dirname manifest-path)]
     (build-package-tlci-path-profile
       manifest-dir
       (struct-get manifest name)
@@ -3065,7 +3120,7 @@
 (define (build-package-graph-link-libs
   [nodes : BuildPackageGraphNodeVec]
   [profile : BuildProfile]
-  [target : CompilerBackendTarget]) : process.ProcessStringList
+  [target : backend.CompilerBackendTarget]) : process.ProcessStringList
   (let
     [index : i64 (- (build-package-graph-node-vec-len nodes) 1)]
     [libs : process.ProcessStringList (process.args-empty)]
@@ -3105,37 +3160,39 @@
           (set! index (+ index 1))))
       paths)))
 
-(define (build-package-graph-test-manifest [name : String]) : CompilerPkgManifest
-  (CompilerPkgManifest
+(define (build-package-graph-test-manifest [name : String]) : load.CompilerPkgManifest
+  (load.CompilerPkgManifest
     name
     "0.1.0"
     (CompilerPkgKindLib)
     "src/lib.tl"
-    (compiler-pkg-deps-empty)
-    (compiler-pkg-link-empty)))
+    (load.compiler-pkg-deps-empty)
+    (load.compiler-pkg-link-empty)))
 
 (define (build-package-graph-test-manifest-with-deps
   [name : String]
-  [deps : CompilerPkgDepList]) : CompilerPkgManifest
-  (CompilerPkgManifest
+  [deps : load.CompilerPkgDepList]) : load.CompilerPkgManifest
+  (load.CompilerPkgManifest
     name
     "0.1.0"
     (CompilerPkgKindLib)
     "src/lib.tl"
-    (compiler-pkg-deps-from-list deps)
-    (compiler-pkg-link-empty)))
+    (load.compiler-pkg-deps-from-list deps)
+    (load.compiler-pkg-link-empty)))
 
 (define (build-package-graph-test-node [manifest-path : String] [name : String]) : BuildPackageGraphNode
   (BuildPackageGraphNode manifest-path (build-package-graph-test-manifest name)))
 
 (define (build-package-graph-test-link-arg-target
   [node : BuildPackageGraphNode]
-  [target : CompilerBackendTarget]) : process.ProcessStringList
+  [target : backend.CompilerBackendTarget]) : process.ProcessStringList
   (process.args-single
     (build-package-graph-node-artifact-path node (BuildProfile.Release) target)))
 
 (define (build-package-graph-test-link-arg [node : BuildPackageGraphNode]) : process.ProcessStringList
-  (build-package-graph-test-link-arg-target node (CompilerBackendTarget.Linux)))
+  (build-package-graph-test-link-arg-target
+    node
+    (backend.CompilerBackendTarget.Linux)))
 
 (define (build-package-graph-test-tlci-arg [node : BuildPackageGraphNode]) : process.ProcessStringList
   (process.args-single
@@ -3161,12 +3218,12 @@
       (build-package-graph-link-libs
         nodes
         (BuildProfile.Release)
-        (CompilerBackendTarget.Linux))]
+        (backend.CompilerBackendTarget.Linux))]
     [windows-libs : process.ProcessStringList
       (build-package-graph-link-libs
         nodes
         (BuildProfile.Release)
-        (CompilerBackendTarget.Windows))]
+        (backend.CompilerBackendTarget.Windows))]
     [tlcis : process.ProcessStringList
       (build-package-graph-tlci-paths nodes (BuildProfile.Release))]
     [expected : process.ProcessStringList
@@ -3186,34 +3243,34 @@
         (process.args-append
           (build-package-graph-test-link-arg-target
             third
-            (CompilerBackendTarget.Windows))
+            (backend.CompilerBackendTarget.Windows))
           (build-package-graph-test-link-arg-target
             second
-            (CompilerBackendTarget.Windows)))
+            (backend.CompilerBackendTarget.Windows)))
         (build-package-graph-test-link-arg-target
           first
-          (CompilerBackendTarget.Windows)))]
+          (backend.CompilerBackendTarget.Windows)))]
     (and
       (= (build-package-graph-node-vec-len nodes) 3)
       (string.eq
         (struct-get (build-package-graph-node-vec-at nodes 0) manifest-path)
         "root/first/typelisp.pkg")
-      (source-tool-string-list-eq? libs expected)
-      (source-tool-string-list-eq? windows-libs expected-windows)
-      (source-tool-string-list-eq? tlcis expected-tlcis))))
+      (build_run_core.source-tool-string-list-eq? libs expected)
+      (build_run_core.source-tool-string-list-eq? windows-libs expected-windows)
+      (build_run_core.source-tool-string-list-eq? tlcis expected-tlcis))))
 
 (cfg
   test
   (define (build-package-graph-artifact-paths-smoke-ok?) : bool
     (let
-      [bin-manifest : CompilerPkgManifest
-        (CompilerPkgManifest
+      [bin-manifest : load.CompilerPkgManifest
+        (load.CompilerPkgManifest
           "app"
           "0.1.0"
           (CompilerPkgKindBin)
           "src/main.tl"
-          (compiler-pkg-deps-empty)
-          (compiler-pkg-link-empty))]
+          (load.compiler-pkg-deps-empty)
+          (load.compiler-pkg-link-empty))]
       [bin-node : BuildPackageGraphNode
         (BuildPackageGraphNode "root/app/typelisp.pkg" bin-manifest)]
       [dep-node : BuildPackageGraphNode
@@ -3222,12 +3279,12 @@
         (build-package-graph-node-artifact-paths
           bin-node
           (BuildProfile.Dev)
-          (CompilerBackendTarget.Windows))]
+          (backend.CompilerBackendTarget.Windows))]
       [dep-artifacts : BuildPackageArtifactPaths
         (build-package-graph-node-artifact-paths
           dep-node
           (BuildProfile.Release)
-          (CompilerBackendTarget.Linux))]
+          (backend.CompilerBackendTarget.Linux))]
       (and
         (string.eq
           (build-package-runtime-artifact-path bin-artifacts)
@@ -3244,9 +3301,9 @@
 
 (define (build-package-graph-scheduler-no-progress-smoke-ok?) : bool
   (let
-    [dep : CompilerPkgDep (CompilerPkgDep "dep" "../dep")]
-    [deps : CompilerPkgDepList
-      (compiler-pkg-dep-list-push (compiler-pkg-dep-list-empty) dep)]
+    [dep : load.CompilerPkgDep (load.CompilerPkgDep "dep" "../dep")]
+    [deps : load.CompilerPkgDepList
+      (load.compiler-pkg-dep-list-push (load.compiler-pkg-dep-list-empty) dep)]
     [node : BuildPackageGraphNode
       (BuildPackageGraphNode
         "root/app/typelisp.pkg"
@@ -3259,10 +3316,10 @@
       nodes
       (build_string_i64_map.with-capacity 4)
       (build_string_i64_map.with-capacity 4)
-      (CompilerBackendTarget.Linux)
+      (backend.CompilerBackendTarget.Linux)
       0
       (BuildProfile.Release)
-      (CompilerBackendMode.Scalar)
+      (backend.CompilerBackendMode.Scalar)
       (BuildPackageLockPolicy.Default)
       (cli_svec.new)
       (build-package-graph-worker-vec-new))
@@ -3303,33 +3360,33 @@
 
 (define (build-package-tlci-stdlib-path? [owner : String] [path : String]) : bool
   (or
-    (compiler-load-stdlib-import? path)
+    (load.compiler-load-stdlib-import? path)
     (build-package-tlci-owner-stdlib-path? owner path)))
 
 (define (build-package-tlci-metadata
-  [manifest : CompilerPkgManifest]
-  [callables : TlciSpmdCallables]) : TlciMetadata
-  (if (= (tlci-spmd-callables-len callables) 0)
-    (tlci-make-metadata
+  [manifest : load.CompilerPkgManifest]
+  [callables : tlci.TlciSpmdCallables]) : tlci.TlciMetadata
+  (if (= (tlci.tlci-spmd-callables-len callables) 0)
+    (tlci.tlci-make-metadata
       "v1"
       (struct-get manifest name)
       (struct-get manifest version))
-    (tlci-make-metadata-v2
+    (tlci.tlci-make-metadata-v2
       (struct-get manifest name)
       (struct-get manifest version)
       callables)))
 
 (defstruct BuildPackageTlciCallableCollector
-  (items TlciSpmdCallables)
+  (items tlci.TlciSpmdCallables)
   (error String))
 
 ;; Ordered insert that drops an exact duplicate. Rebuild the consumed input
 ;; into one right-sized dense sequence at the located slot.
 (define (build-package-tlci-specialization-insert
-  [item : TlciSpmdSpecialization]
-  [items : TlciSpmdSpecializations]) : TlciSpmdSpecializations
+  [item : tlci.TlciSpmdSpecialization]
+  [items : tlci.TlciSpmdSpecializations]) : tlci.TlciSpmdSpecializations
   (let
-    [count : i64 (tlci-spmd-specializations-len items)]
+    [count : i64 (tlci.tlci-spmd-specializations-len items)]
     [position : i64 count]
     [scan : i64 0]
     [duplicate : bool false]
@@ -3337,9 +3394,9 @@
       (while (< scan count)
         (let
           [order : i64
-            (tlci-spmd-specialization-compare
+            (tlci.tlci-spmd-specialization-compare
               item
-              (tlci-spmd-specializations-ref items scan))]
+              (tlci.tlci-spmd-specializations-ref items scan))]
           (cond
             [(= order 0)
               (begin
@@ -3353,38 +3410,41 @@
       (if duplicate
         items
         (let
-          [dst : TlciSpmdSpecializations
-            (tlci-spmd-specializations-with-capacity (+ count 1))]
+          [dst : tlci.TlciSpmdSpecializations
+            (tlci.tlci-spmd-specializations-with-capacity (+ count 1))]
           [cursor : i64 0]
           (begin
             (while (< cursor position)
               (begin
-                (tlci-spmd-specializations-push!
+                (tlci.tlci-spmd-specializations-push!
                   (&mut dst)
-                  (tlci-spmd-specializations-ref items cursor))
+                  (tlci.tlci-spmd-specializations-ref items cursor))
                 (set! cursor (+ cursor 1))))
-            (tlci-spmd-specializations-push! (&mut dst) item)
+            (tlci.tlci-spmd-specializations-push! (&mut dst) item)
             (while (< cursor count)
               (begin
-                (tlci-spmd-specializations-push!
+                (tlci.tlci-spmd-specializations-push!
                   (&mut dst)
-                  (tlci-spmd-specializations-ref items cursor))
+                  (tlci.tlci-spmd-specializations-ref items cursor))
                 (set! cursor (+ cursor 1))))
             dst))))))
 
 (define (build-package-tlci-callable-insert
-  [item : TlciSpmdCallable]
-  [items : TlciSpmdCallables]) : TlciSpmdCallables
+  [item : tlci.TlciSpmdCallable]
+  [items : tlci.TlciSpmdCallables]) : tlci.TlciSpmdCallables
   (let
-    [count : i64 (tlci-spmd-callables-len items)]
+    [count : i64 (tlci.tlci-spmd-callables-len items)]
     [position : i64 count]
     [scan : i64 0]
-    [dst : TlciSpmdCallables (tlci-spmd-callables-with-capacity (+ count 1))]
+    [dst : tlci.TlciSpmdCallables
+      (tlci.tlci-spmd-callables-with-capacity (+ count 1))]
     [cursor : i64 0]
     (begin
       (while (< scan count)
         (if (<
-          (tlci-spmd-callable-compare item (tlci-spmd-callables-ref items scan))
+          (tlci.tlci-spmd-callable-compare
+            item
+            (tlci.tlci-spmd-callables-ref items scan))
           0)
           (begin
             (set! position scan)
@@ -3392,78 +3452,81 @@
           (set! scan (+ scan 1))))
       (while (< cursor position)
         (begin
-          (tlci-spmd-callables-push!
+          (tlci.tlci-spmd-callables-push!
             (&mut dst)
-            (tlci-spmd-callables-ref items cursor))
+            (tlci.tlci-spmd-callables-ref items cursor))
           (set! cursor (+ cursor 1))))
-      (tlci-spmd-callables-push! (&mut dst) item)
+      (tlci.tlci-spmd-callables-push! (&mut dst) item)
       (while (< cursor count)
         (begin
-          (tlci-spmd-callables-push!
+          (tlci.tlci-spmd-callables-push!
             (&mut dst)
-            (tlci-spmd-callables-ref items cursor))
+            (tlci.tlci-spmd-callables-ref items cursor))
           (set! cursor (+ cursor 1))))
       dst)))
 
-(define (build-package-tlci-backend [mode : CompilerBackendMode]) : CompilerIrSpmdBackend
+(define (build-package-tlci-backend [mode : backend.CompilerBackendMode]) : ir.CompilerIrSpmdBackend
   (match mode
-    [(CompilerBackendMode.Scalar) CompilerIrSpmdBackend.Scalar]
-    [(CompilerBackendMode.Avx2) CompilerIrSpmdBackend.Avx2]
-    [(CompilerBackendMode.Avx512) CompilerIrSpmdBackend.Avx512]))
+    [(backend.CompilerBackendMode.Scalar) ir.CompilerIrSpmdBackend.Scalar]
+    [(backend.CompilerBackendMode.Avx2) ir.CompilerIrSpmdBackend.Avx2]
+    [(backend.CompilerBackendMode.Avx512) ir.CompilerIrSpmdBackend.Avx512]))
 
 (define (build-package-tlci-specializations-at
   [package-name : String]
   [canonical-name : String]
   [signature : String]
-  [ret : AstType]
-  [items : (& items AstSpmdSpecializationList)]
+  [ret : ast.AstType]
+  [items : (& items ast.AstSpmdSpecializationList)]
   [index : i64]
   [limit : i64]
-  [backend : CompilerIrSpmdBackend]
-  [out : TlciSpmdSpecializations]) : TlciSpmdSpecializations
-  (if (or (>= index limit) (>= index (ast-spmd-specialization-list-len items)))
+  [spmd-backend : ir.CompilerIrSpmdBackend]
+  [out : tlci.TlciSpmdSpecializations]) : tlci.TlciSpmdSpecializations
+  (if (or
+    (>= index limit)
+    (>= index (ast.ast-spmd-specialization-list-len items)))
     out
     (let
-      [fallback : AstSpmdSpecialization
-        (AstSpmdSpecialization
+      [fallback : ast.AstSpmdSpecialization
+        (ast.AstSpmdSpecialization
           2
-          (box (ast-spmd-param-class-list-new))
-          AstSpmdResultClass.Unit
+          (box (ast.ast-spmd-param-class-list-new))
+          ast.AstSpmdResultClass.Unit
           -1)]
-      [specialization : AstSpmdSpecialization
-        (ast-spmd-specialization-list-get items index fallback)]
-      [classes : AstSpmdParamClassList
+      [specialization : ast.AstSpmdSpecialization
+        (ast.ast-spmd-specialization-list-get items index fallback)]
+      [classes : ast.AstSpmdParamClassList
         (box-get (struct-get specialization args))]
-      [args : String (lower-spmd-ast-param-classes-code classes)]
+      [args : String (lower.lower-spmd-ast-param-classes-code classes)]
       [result : String
-        (lower-spmd-ast-result-class-code (struct-get specialization result))]
+        (lower.lower-spmd-ast-result-class-code
+          (struct-get specialization result))]
       [lanes : i64
-        (match backend
-          [(CompilerIrSpmdBackend.Scalar) 1]
+        (match spmd-backend
+          [(ir.CompilerIrSpmdBackend.Scalar) 1]
           [_ (struct-get specialization lanes)])]
       [index-param : i64 (struct-get specialization index-param)]
       [logical-symbol : String
-        (lower-spmd-package-symbol
+        (lower.lower-spmd-package-symbol
           package-name
           canonical-name
           signature
           ret
-          backend
+          spmd-backend
           lanes
           args
           result
           index-param)]
       [logical-symbol-id : i64
         (ci.intern-generated-canonical-name logical-symbol)]
-      [item : TlciSpmdSpecialization
-        (tlci-make-spmd-specialization
+      [item : tlci.TlciSpmdSpecialization
+        (tlci.tlci-make-spmd-specialization
           "spmd-call-v1"
-          (lower-spmd-package-backend-name backend)
+          (lower.lower-spmd-package-backend-name spmd-backend)
           lanes
           args
           result
           index-param
-          (compiler-backend-user-symbol-id logical-symbol-id))]
+          (backend.compiler-backend-user-symbol-id logical-symbol-id))]
       (build-package-tlci-specializations-at
         package-name
         canonical-name
@@ -3472,28 +3535,28 @@
         items
         (+ index 1)
         limit
-        backend
+        spmd-backend
         (build-package-tlci-specialization-insert item out)))))
 
 (define (build-package-tlci-callable
   [package-name : String]
   [module : String]
   [name : i64]
-  [params : AstParamList]
-  [ret : AstType]
-  [specializations : AstSpmdSpecializationList]
-  [mode : CompilerBackendMode]) : TlciSpmdCallable
+  [params : ast.AstParamList]
+  [ret : ast.AstType]
+  [specializations : ast.AstSpmdSpecializationList]
+  [mode : backend.CompilerBackendMode]) : tlci.TlciSpmdCallable
   (let
     [canonical-name : String
-      (compiler-symbol-module-key
+      (csym.compiler-symbol-module-key
         (if (= (string.string-length module) 0)
           package-name
           module)
-        (intern-str name))]
-    [signature : String (lower-spmd-source-signature params ret)]
-    [backend : CompilerIrSpmdBackend (build-package-tlci-backend mode)]
-    [count : i64 (ast-spmd-specialization-list-len (& specializations))]
-    (tlci-make-spmd-callable
+        (ci.intern-str name))]
+    [signature : String (lower.lower-spmd-source-signature params ret)]
+    [spmd-backend : ir.CompilerIrSpmdBackend (build-package-tlci-backend mode)]
+    [count : i64 (ast.ast-spmd-specialization-list-len (& specializations))]
+    (tlci.tlci-make-spmd-callable
       canonical-name
       signature
       (build-package-tlci-specializations-at
@@ -3504,81 +3567,83 @@
         (& specializations)
         0
         count
-        backend
-        (tlci-spmd-specializations-empty)))))
+        spmd-backend
+        (tlci.tlci-spmd-specializations-empty)))))
 
 (cfg
   test
   (define (build-package-tlci-callable-smoke-ok?) : bool
     (let
-      [first-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
-      [second-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
-      [specializations : AstSpmdSpecializationList
-        (ast-spmd-specialization-list-new)]
+      [first-classes : ast.AstSpmdParamClassList
+        (ast.ast-spmd-param-class-list-new)]
+      [second-classes : ast.AstSpmdParamClassList
+        (ast.ast-spmd-param-class-list-new)]
+      [specializations : ast.AstSpmdSpecializationList
+        (ast.ast-spmd-specialization-list-new)]
       [helper-id : i64 (ci.intern-generated-canonical-name "helper")]
       [x-id : i64 (ci.intern-generated-canonical-name "x")]
       [scale-id : i64 (ci.intern-generated-canonical-name "scale")]
       (begin
-        (ast-spmd-param-class-list-push
+        (ast.ast-spmd-param-class-list-push
           (&mut first-classes)
-          AstSpmdParamClass.Varying)
-        (ast-spmd-param-class-list-push
+          ast.AstSpmdParamClass.Varying)
+        (ast.ast-spmd-param-class-list-push
           (&mut first-classes)
-          AstSpmdParamClass.Uniform)
-        (ast-spmd-param-class-list-push
+          ast.AstSpmdParamClass.Uniform)
+        (ast.ast-spmd-param-class-list-push
           (&mut second-classes)
-          AstSpmdParamClass.Uniform)
-        (ast-spmd-param-class-list-push
+          ast.AstSpmdParamClass.Uniform)
+        (ast.ast-spmd-param-class-list-push
           (&mut second-classes)
-          AstSpmdParamClass.Varying)
-        (ast-spmd-specialization-list-push
+          ast.AstSpmdParamClass.Varying)
+        (ast.ast-spmd-specialization-list-push
           (&mut specializations)
-          (AstSpmdSpecialization
+          (ast.AstSpmdSpecialization
             8
             (box first-classes)
-            AstSpmdResultClass.Varying
+            ast.AstSpmdResultClass.Varying
             0))
-        (ast-spmd-specialization-list-push
+        (ast.ast-spmd-specialization-list-push
           (&mut specializations)
-          (AstSpmdSpecialization
+          (ast.AstSpmdSpecialization
             8
             (box second-classes)
-            AstSpmdResultClass.Varying
+            ast.AstSpmdResultClass.Varying
             1))
         (let
-          [callable : TlciSpmdCallable
+          [callable : tlci.TlciSpmdCallable
             (build-package-tlci-callable
               "pkg"
               "pkg"
               helper-id
-              (ast-param-cons
-                (ast-param-id x-id (AstType.I64) false)
-                (ast-param-cons
-                  (ast-param-id scale-id (AstType.I64) false)
-                  (ast-param-list-new)))
-              (AstType.I64)
+              (ast.ast-param-cons
+                (ast.ast-param-id x-id (ast.AstType.I64) false)
+                (ast.ast-param-cons
+                  (ast.ast-param-id scale-id (ast.AstType.I64) false)
+                  (ast.ast-param-list-new)))
+              (ast.AstType.I64)
               specializations
-              (CompilerBackendMode.Scalar))]
-          [ordinary-metadata : TlciMetadata
+              (backend.CompilerBackendMode.Scalar))]
+          [ordinary-metadata : tlci.TlciMetadata
             (build-package-tlci-metadata
               (build-package-graph-test-manifest "pkg")
-              (tlci-spmd-callables-empty))]
-          [emitted : TlciSpmdSpecializations
+              (tlci.tlci-spmd-callables-empty))]
+          [emitted : tlci.TlciSpmdSpecializations
             (struct-get callable specializations)]
           (and
             (string.eq (struct-get ordinary-metadata version) "v1")
             (=
-              (tlci-spmd-callables-len
+              (tlci.tlci-spmd-callables-len
                 (struct-get ordinary-metadata spmd-callables))
               0)
             (string.eq (struct-get callable name) "pkg/helper")
             (string.eq (struct-get callable signature) "(-> i64 i64 i64)")
-            (= (tlci-spmd-specializations-len emitted) 2)
+            (= (tlci.tlci-spmd-specializations-len emitted) 2)
             (let
-              [item : TlciSpmdSpecialization
-                (tlci-spmd-specializations-ref emitted 0)]
-              [next : TlciSpmdSpecialization
-                (tlci-spmd-specializations-ref emitted 1)]
+              [item : tlci.TlciSpmdSpecialization
+                (tlci.tlci-spmd-specializations-ref emitted 0)]
+              [next : tlci.TlciSpmdSpecialization
+                (tlci.tlci-spmd-specializations-ref emitted 1)]
               (and
                 (string.eq (struct-get item abi) "spmd-call-v1")
                 (string.eq (struct-get item backend) "scalar")
@@ -3588,18 +3653,19 @@
                 (= (struct-get item index-param) 1)
                 (string.eq
                   (struct-get item symbol)
-                  (compiler-backend-user-symbol-id
-                    (ci.intern-generated-canonical-name
-                      (lower-spmd-package-symbol
-                        "pkg"
-                        "pkg/helper"
-                        "(-> i64 i64 i64)"
-                        (AstType.I64)
-                        CompilerIrSpmdBackend.Scalar
-                        1
-                        "uv"
-                        "v"
-                        1))))
+                  (backend.compiler-backend-user-symbol-uncached
+                    (ci.intern-str
+                      (ci.intern-generated-canonical-name
+                        (lower.lower-spmd-package-symbol
+                          "pkg"
+                          "pkg/helper"
+                          "(-> i64 i64 i64)"
+                          (ast.AstType.I64)
+                          ir.CompilerIrSpmdBackend.Scalar
+                          1
+                          "uv"
+                          "v"
+                          1)))))
                 (string.eq (struct-get next args) "vu")
                 (= (struct-get next index-param) 0)))))))))
 
@@ -3607,52 +3673,54 @@
   test
   (define (build-package-tlci-scalar-collapse-smoke-ok?) : bool
     (let
-      [first-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
-      [second-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
-      [specializations : AstSpmdSpecializationList
-        (ast-spmd-specialization-list-new)]
+      [first-classes : ast.AstSpmdParamClassList
+        (ast.ast-spmd-param-class-list-new)]
+      [second-classes : ast.AstSpmdParamClassList
+        (ast.ast-spmd-param-class-list-new)]
+      [specializations : ast.AstSpmdSpecializationList
+        (ast.ast-spmd-specialization-list-new)]
       [helper-id : i64 (ci.intern-generated-canonical-name "helper")]
       [x-id : i64 (ci.intern-generated-canonical-name "x")]
       (begin
-        (ast-spmd-param-class-list-push
+        (ast.ast-spmd-param-class-list-push
           (&mut first-classes)
-          AstSpmdParamClass.Uniform)
-        (ast-spmd-param-class-list-push
+          ast.AstSpmdParamClass.Uniform)
+        (ast.ast-spmd-param-class-list-push
           (&mut second-classes)
-          AstSpmdParamClass.Uniform)
-        (ast-spmd-specialization-list-push
+          ast.AstSpmdParamClass.Uniform)
+        (ast.ast-spmd-specialization-list-push
           (&mut specializations)
-          (AstSpmdSpecialization
+          (ast.AstSpmdSpecialization
             8
             (box first-classes)
-            AstSpmdResultClass.Uniform
+            ast.AstSpmdResultClass.Uniform
             -1))
-        (ast-spmd-specialization-list-push
+        (ast.ast-spmd-specialization-list-push
           (&mut specializations)
-          (AstSpmdSpecialization
+          (ast.AstSpmdSpecialization
             16
             (box second-classes)
-            AstSpmdResultClass.Uniform
+            ast.AstSpmdResultClass.Uniform
             -1))
         (let
-          [emitted : TlciSpmdSpecializations
+          [emitted : tlci.TlciSpmdSpecializations
             (struct-get
               (build-package-tlci-callable
                 "pkg"
                 "pkg"
                 helper-id
-                (ast-param-cons
-                  (ast-param-id x-id (AstType.I64) false)
-                  (ast-param-list-new))
-                (AstType.I64)
+                (ast.ast-param-cons
+                  (ast.ast-param-id x-id (ast.AstType.I64) false)
+                  (ast.ast-param-list-new))
+                (ast.AstType.I64)
                 specializations
-                (CompilerBackendMode.Scalar))
+                (backend.CompilerBackendMode.Scalar))
               specializations)]
           (and
-            (= (tlci-spmd-specializations-len emitted) 1)
+            (= (tlci.tlci-spmd-specializations-len emitted) 1)
             (let
-              [item : TlciSpmdSpecialization
-                (tlci-spmd-specializations-ref emitted 0)]
+              [item : tlci.TlciSpmdSpecialization
+                (tlci.tlci-spmd-specializations-ref emitted 0)]
               (and
                 (= (struct-get item lanes) 1)
                 (string.eq (struct-get item args) "u")
@@ -3670,21 +3738,21 @@
       (io.panic "build package TLCI callable smoke failed"))))
 
 (define (build-package-tlci-collect-decl-callable
-  [decl : AstDecl]
+  [decl : ast.AstDecl]
   [owned-path : String]
   [module : String]
   [package-name : String]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
   (match decl
-    [(AstDecl.DefFn decl-meta name params ret _ metadata)
+    [(ast.AstDecl.DefFn decl-meta name params ret _ metadata)
       (if (= (string.string-length owned-path) 0)
         collector
-        (match (ast-fn-metadata-spmd-callable metadata)
-          [(AstSpmdCallable.No) collector]
-          [(AstSpmdCallable.Callable specializations)
+        (match (ast.ast-fn-metadata-spmd-callable metadata)
+          [(ast.AstSpmdCallable.No) collector]
+          [(ast.AstSpmdCallable.Callable specializations)
             (if (match mode
-              [(CompilerBackendMode.Avx2) true]
+              [(backend.CompilerBackendMode.Avx2) true]
               [_ false])
               (BuildPackageTlciCallableCollector
                 (struct-get collector items)
@@ -3701,7 +3769,7 @@
                     mode)
                   (struct-get collector items))
                 (struct-get collector error)))]))]
-    [(AstDecl.Unsafe inner-box)
+    [(ast.AstDecl.Unsafe inner-box)
       (build-package-tlci-collect-decl-callable
         (box-get inner-box)
         owned-path
@@ -3730,7 +3798,7 @@
 
 (defstruct BuildPackageTlciMacroCollector
   (names (__tl_dyn-array String))
-  (captures TlciNativeMacroCaptures))
+  (captures compiler_tlci_native_producer.TlciNativeMacroCaptures))
 
 (define (build-package-tlci-sort-macro-catalog!
   [catalog : (&mut catalog (__tl_dyn-array String))]) : unit
@@ -3743,7 +3811,7 @@
         [slot : i64 index]
         (begin
           (while (if (> slot 0)
-            (package-source-string-less?
+            (package_source_core.package-source-string-less?
               (clone value)
               (clone (array-ref catalog (- slot 1))))
             false)
@@ -3755,7 +3823,7 @@
 
 (define (build-package-tlci-finish-macro-collector
   [names : (&mut names cli_svec.Vec)]
-  [captures : TlciNativeMacroCaptures]) : BuildPackageTlciMacroCollector
+  [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures]) : BuildPackageTlciMacroCollector
   (let
     [count : i64 (cli_svec.len names)]
     [catalog (make-array String count)]
@@ -3769,30 +3837,34 @@
       (BuildPackageTlciMacroCollector catalog captures))))
 
 (define (build-package-tlci-collect-decl-macro!
-  [decl : AstDecl]
+  [decl : ast.AstDecl]
   [owned-path : String]
   [module : String]
   [package-name : String]
   [owned-sources : build_string_i64_map.Map]
   [out : (&mut out cli_svec.Vec)]
-  [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
+  [captures
+    : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
   (match decl
-    [(AstDecl.DefMacro decl-meta name params _ body)
+    [(ast.AstDecl.DefMacro decl-meta name params _ body)
       (if (= (string.string-length owned-path) 0)
         unit
         (let
           [identity : String
-            (compiler-symbol-module-key
+            (csym.compiler-symbol-module-key
               (if (= (string.string-length module) 0)
                 package-name
                 module)
-              (intern-str name))]
+              (ci.intern-str name))]
           (when
             (build-package-tlci-push-macro-name! out identity)
-            (tlci-native-macro-captures-push!
+            (compiler_tlci_native_producer.tlci-native-macro-captures-push!
               captures
-              (TlciNativeMacroCapture identity params body)))))]
-    [(AstDecl.Unsafe inner-box)
+              (compiler_tlci_native_producer.TlciNativeMacroCapture
+                identity
+                params
+                body)))))]
+    [(ast.AstDecl.Unsafe inner-box)
       (build-package-tlci-collect-decl-macro!
         (box-get inner-box)
         owned-path
@@ -3801,12 +3873,12 @@
         owned-sources
         out
         captures)]
-    [(AstDecl.ModuleBody nested-module body-box)
+    [(ast.AstDecl.ModuleBody nested-module body-box)
       (build-package-tlci-collect-macros-into!
         (box-get body-box)
-        (ast-decl-path-list-new)
+        (ast.ast-decl-path-list-new)
         owned-path
-        (intern-str nested-module)
+        (ci.intern-str nested-module)
         package-name
         owned-sources
         out
@@ -3824,7 +3896,8 @@
         (begin
           (build_string_i64_map.insert-ref!
             (&mut out)
-            (compiler-load-normalize-path (cli_svec.get (& sources) index ""))
+            (load.compiler-load-normalize-path
+              (cli_svec.get (& sources) index ""))
             1)
           (set! index (+ index 1))))
       out)))
@@ -3834,40 +3907,41 @@
   [path : String]) : bool
   (match (build_string_i64_map.get
     (& owned-sources)
-    (compiler-load-normalize-path path))
+    (load.compiler-load-normalize-path path))
     [(build_string_i64_map.LookupFound _) true]
     [(build_string_i64_map.LookupMissing) false]))
 
 (define (build-package-tlci-collect-macros-into!
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
   [fallback-path : String]
   [initial-module : String]
   [package-name : String]
   [owned-sources : build_string_i64_map.Map]
   [out : (&mut out cli_svec.Vec)]
-  [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
+  [captures
+    : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
   (let
-    [decl-cursor : AstDeclList decls]
-    [path-cursor : AstDeclPathList paths]
+    [decl-cursor : ast.AstDeclList decls]
+    [path-cursor : ast.AstDeclPathList paths]
     [module : String initial-module]
     [done : bool false]
     (while (not done)
-      (match (ast-decl-list-step decl-cursor)
-        [(AstDeclListStep.Nil) (set! done true)]
-        [(AstDeclListStep.Cons decl rest)
+      (match (ast.ast-decl-list-step decl-cursor)
+        [(ast.AstDeclListStep.Nil) (set! done true)]
+        [(ast.AstDeclListStep.Cons decl rest)
           (let
             [decl-path : String
-              (match (ast-decl-path-list-step path-cursor)
-                [(AstDeclPathListStep.Nil) fallback-path]
-                [(AstDeclPathListStep.Cons path _) path])]
+              (match (ast.ast-decl-path-list-step path-cursor)
+                [(ast.AstDeclPathListStep.Nil) fallback-path]
+                [(ast.AstDeclPathListStep.Cons path _) path])]
             [owned-path : String
               (if (build-package-tlci-source-owned? owned-sources decl-path)
                 decl-path
                 "")]
             (begin
               (match decl
-                [(AstDecl.Module name) (set! module (intern-str name))]
+                [(ast.AstDecl.Module name) (set! module (ci.intern-str name))]
                 [_
                   (build-package-tlci-collect-decl-macro!
                     decl
@@ -3878,23 +3952,27 @@
                     out
                     captures)])
               (set! decl-cursor rest)
-              (match (ast-decl-path-list-step path-cursor)
-                [(AstDeclPathListStep.Nil) unit]
-                [(AstDeclPathListStep.Cons _ path-rest)
+              (match (ast.ast-decl-path-list-step path-cursor)
+                [(ast.AstDeclPathListStep.Nil) unit]
+                [(ast.AstDeclPathListStep.Cons _ path-rest)
                   (set! path-cursor path-rest)])))]))))
 
 (define (build-package-tlci-macro-collector
   [manifest-path : String]
-  [manifest : CompilerPkgManifest]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]) : BuildPackageTlciMacroCollector
+  [manifest : load.CompilerPkgManifest]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : BuildPackageTlciMacroCollector
   (let
     [out : cli_svec.Vec (cli_svec.new)]
-    [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
+    [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
+      (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
     (begin
-      (match (package-source-discover-for "build" manifest-path true)
-        [(ResultPackageSourceSet.Err _) unit]
-        [(ResultPackageSourceSet.Ok source-set)
+      (match (package_source_core.package-source-discover-for
+        "build"
+        manifest-path
+        true)
+        [(package_source_core.ResultPackageSourceSet.Err _) unit]
+        [(package_source_core.ResultPackageSourceSet.Ok source-set)
           (let
             [owned-sources : build_string_i64_map.Map
               (build-package-tlci-source-map (struct-get source-set sources))]
@@ -3915,45 +3993,45 @@
     (let
       [source : String
         "(module z.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(module dep.macros)\n(defmacro (foreign [value : Expr]) : Expr `(foreign ,value))\n(module a.macros)\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n"]
-      (match (parse-ast-source source)
-        [(ResultAstProgram.Err _) false]
-        [(ResultAstProgram.Ok program)
+      (match (compiler_parse_core.parse-ast-source source)
+        [(compiler_parse_core.ResultAstProgram.Err _) false]
+        [(compiler_parse_core.ResultAstProgram.Ok program)
           (match program
-            [(AstProgram.Program decls-box)
+            [(ast.AstProgram.Program decls-box)
               (let
-                [decls : AstDeclList (box-get decls-box)]
-                [paths : AstDeclPathList (ast-decl-path-list-new)]
+                [decls : ast.AstDeclList (box-get decls-box)]
+                [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
                 [owned-sources : build_string_i64_map.Map
                   (build_string_i64_map.with-capacity 4)]
                 [names : cli_svec.Vec (cli_svec.new)]
-                [captures : TlciNativeMacroCaptures
-                  (tlci-native-macro-captures-new)]
+                [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
+                  (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
                 (begin
                   (build_string_i64_map.insert-ref!
                     (&mut owned-sources)
-                    (compiler-load-normalize-path "pkg/src/macros.tl")
+                    (load.compiler-load-normalize-path "pkg/src/macros.tl")
                     1)
-                  (ast-decl-path-list-push-with-owner-id
+                  (ast.ast-decl-path-list-push-with-owner-id
                     (&mut paths)
                     "pkg/src/macros.tl"
                     cbi.compiler-builtin-id-fix-empty)
-                  (ast-decl-path-list-push-with-owner-id
+                  (ast.ast-decl-path-list-push-with-owner-id
                     (&mut paths)
                     "pkg/src/macros.tl"
                     cbi.compiler-builtin-id-fix-empty)
-                  (ast-decl-path-list-push-with-owner-id
+                  (ast.ast-decl-path-list-push-with-owner-id
                     (&mut paths)
                     "dep/src/lib.tl"
                     cbi.compiler-builtin-id-fix-empty)
-                  (ast-decl-path-list-push-with-owner-id
+                  (ast.ast-decl-path-list-push-with-owner-id
                     (&mut paths)
                     "dep/src/lib.tl"
                     cbi.compiler-builtin-id-fix-empty)
-                  (ast-decl-path-list-push-with-owner-id
+                  (ast.ast-decl-path-list-push-with-owner-id
                     (&mut paths)
                     "pkg/src/macros.tl"
                     cbi.compiler-builtin-id-fix-empty)
-                  (ast-decl-path-list-push-with-owner-id
+                  (ast.ast-decl-path-list-push-with-owner-id
                     (&mut paths)
                     "pkg/src/macros.tl"
                     cbi.compiler-builtin-id-fix-empty)
@@ -3974,7 +4052,7 @@
                     [catalog : (__tl_dyn-array String)
                       (struct-get collector names)]
                     [_source : String
-                      (embedded-native-source
+                      (compiler_tlci_native_producer.embedded-native-source
                         catalog
                         (& (struct-get collector captures)))]
                     (and
@@ -3983,22 +4061,24 @@
                       (string.eq (array-ref catalog 1) "z.macros/wrap")
                       (= (struct-get (struct-get collector captures) len) 2)
                       (>=
-                        (tlci-native-macro-capture-slot
+                        (compiler_tlci_native_producer.tlci-native-macro-capture-slot
                           (& (struct-get collector captures))
                           "a.macros/fold")
                         0)
                       (>=
-                        (tlci-native-macro-capture-slot
+                        (compiler_tlci_native_producer.tlci-native-macro-capture-slot
                           (& (struct-get collector captures))
                           "z.macros/wrap")
                         0)
                       (<
-                        (tlci-native-macro-capture-slot
+                        (compiler_tlci_native_producer.tlci-native-macro-capture-slot
                           (& (struct-get collector captures))
                           "dep.macros/foreign")
                         0)
                       (=
-                        (array-ref embedded-stdlib-tlci-native-report-count 0)
+                        (array-ref
+                          compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
+                          0)
                         2)))))])]))))
 
 (cfg
@@ -4010,17 +4090,17 @@
       (io.panic "build package tlci macro capture smoke failed"))))
 
 (define (build-package-tlci-collect-callables-into!
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
   [fallback-path : String]
   [initial-module : String]
   [package-name : String]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [owned-sources : build_string_i64_map.Map]
   [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
   (let
-    [decl-cursor : AstDeclList decls]
-    [path-cursor : AstDeclPathList paths]
+    [decl-cursor : ast.AstDeclList decls]
+    [path-cursor : ast.AstDeclPathList paths]
     [module : String initial-module]
     [done : bool false]
     [current : BuildPackageTlciCallableCollector collector]
@@ -4028,29 +4108,29 @@
       (while (and
         (not done)
         (= (string.string-length (struct-get current error)) 0))
-        (match (ast-decl-list-step decl-cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest)
+        (match (ast.ast-decl-list-step decl-cursor)
+          [(ast.AstDeclListStep.Nil) (set! done true)]
+          [(ast.AstDeclListStep.Cons decl rest)
             (let
               [decl-path : String
-                (match (ast-decl-path-list-step path-cursor)
-                  [(AstDeclPathListStep.Nil) fallback-path]
-                  [(AstDeclPathListStep.Cons path _) path])]
+                (match (ast.ast-decl-path-list-step path-cursor)
+                  [(ast.AstDeclPathListStep.Nil) fallback-path]
+                  [(ast.AstDeclPathListStep.Cons path _) path])]
               [owned-path : String
                 (if (build-package-tlci-source-owned? owned-sources decl-path)
                   decl-path
                   "")]
               (begin
                 (match decl
-                  [(AstDecl.Module name) (set! module (intern-str name))]
-                  [(AstDecl.ModuleBody nested-module body-box)
+                  [(ast.AstDecl.Module name) (set! module (ci.intern-str name))]
+                  [(ast.AstDecl.ModuleBody nested-module body-box)
                     (set!
                       current
                       (build-package-tlci-collect-callables-into!
                         (box-get body-box)
-                        (ast-decl-path-list-new)
+                        (ast.ast-decl-path-list-new)
                         owned-path
-                        (intern-str nested-module)
+                        (ci.intern-str nested-module)
                         package-name
                         mode
                         owned-sources
@@ -4066,22 +4146,27 @@
                         mode
                         current))])
                 (set! decl-cursor rest)
-                (match (ast-decl-path-list-step path-cursor)
-                  [(AstDeclPathListStep.Nil) unit]
-                  [(AstDeclPathListStep.Cons _ path-rest)
+                (match (ast.ast-decl-path-list-step path-cursor)
+                  [(ast.AstDeclPathListStep.Nil) unit]
+                  [(ast.AstDeclPathListStep.Cons _ path-rest)
                     (set! path-cursor path-rest)])))]))
       current)))
 
 (define (build-package-tlci-callable-collector
   [manifest-path : String]
-  [manifest : CompilerPkgManifest]
-  [mode : CompilerBackendMode]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]) : BuildPackageTlciCallableCollector
-  (match (package-source-discover-for "build" manifest-path true)
-    [(ResultPackageSourceSet.Err message)
-      (BuildPackageTlciCallableCollector (tlci-spmd-callables-empty) message)]
-    [(ResultPackageSourceSet.Ok source-set)
+  [manifest : load.CompilerPkgManifest]
+  [mode : backend.CompilerBackendMode]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : BuildPackageTlciCallableCollector
+  (match (package_source_core.package-source-discover-for
+    "build"
+    manifest-path
+    true)
+    [(package_source_core.ResultPackageSourceSet.Err message)
+      (BuildPackageTlciCallableCollector
+        (tlci.tlci-spmd-callables-empty)
+        message)]
+    [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (let
         [owned-sources : build_string_i64_map.Map
           (build-package-tlci-source-map (struct-get source-set sources))]
@@ -4093,22 +4178,24 @@
           (struct-get manifest name)
           mode
           owned-sources
-          (BuildPackageTlciCallableCollector (tlci-spmd-callables-empty) "")))]))
+          (BuildPackageTlciCallableCollector
+            (tlci.tlci-spmd-callables-empty)
+            "")))]))
 
 (define (build-package-tlci-image
-  [metadata : TlciMetadata]
-  [producer-identity : String]) : TlciImage
-  (TlciImage
-    tlci-host-arch-x86-64
-    tlci-callback-abi-version
+  [metadata : tlci.TlciMetadata]
+  [producer-identity : String]) : tlci.TlciImage
+  (tlci.TlciImage
+    tlci.tlci-host-arch-x86-64
+    tlci.tlci-callback-abi-version
     producer-identity
     metadata
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)))
+    (tlci.tlci-empty-bytes)
+    (tlci.tlci-empty-bytes)
+    (tlci.tlci-empty-bytes)
+    (tlci.tlci-empty-bytes)
+    (tlci.tlci-empty-bytes)
+    (tlci.tlci-empty-bytes)))
 
 (defenum ResultBuildPackageTlciText
   (Ok String)
@@ -4116,12 +4203,12 @@
 
 (define (build-package-tlci-text
   [manifest-path : String]
-  [manifest : CompilerPkgManifest]
-  [mode : CompilerBackendMode]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [manifest : load.CompilerPkgManifest]
+  [mode : backend.CompilerBackendMode]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
   [producer-identity : String]) : ResultBuildPackageTlciText
-  (if (not (tlci-producer-identity-valid? producer-identity))
+  (if (not (tlci.tlci-producer-identity-valid? producer-identity))
     (ResultBuildPackageTlciText.Err
       "build: exact producer compiler identity is unavailable")
     (let
@@ -4138,37 +4225,40 @@
       (if (> (string.string-length (struct-get collector error)) 0)
         (ResultBuildPackageTlciText.Err (struct-get collector error))
         (let
-          [metadata : TlciMetadata
+          [metadata : tlci.TlciMetadata
             (build-package-tlci-metadata manifest (struct-get collector items))]
           (if (= (array-length macro-names) 0)
-            (match (tlci-emit-image
+            (match (tlci.tlci-emit-image
               (build-package-tlci-image metadata producer-identity))
-              [(ResultTlciBytes.Err message)
+              [(tlci.ResultTlciBytes.Err message)
                 (ResultBuildPackageTlciText.Err
                   (str_cat.str-cat
                     "build: failed to emit package tlci: "
                     message))]
-              [(ResultTlciBytes.Ok bytes)
+              [(tlci.ResultTlciBytes.Ok bytes)
                 (ResultBuildPackageTlciText.Ok
-                  (tlci-bytes->string bytes 0 (array-length bytes)))])
-            (match (embedded-native-emit-package
-              (tlci-metadata-emit metadata)
+                  (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])
+            (match (compiler_tlci_native_producer.embedded-native-emit-package
+              (tlci.tlci-metadata-emit metadata)
               producer-identity
               (cfg windows true false)
-              (tlci-empty-bytes)
+              (tlci.tlci-empty-bytes)
               macro-names
               (& (struct-get macro-collector captures)))
-              [(ResultProducerBytes.Err message)
+              [(compiler_tlci_native_producer.ResultProducerBytes.Err message)
                 (ResultBuildPackageTlciText.Err
                   (str_cat.str-cat
                     "build: failed to emit package tlci: "
                     message))]
-              [(ResultProducerBytes.Ok bytes)
+              [(compiler_tlci_native_producer.ResultProducerBytes.Ok bytes)
                 (ResultBuildPackageTlciText.Ok
-                  (tlci-bytes->string bytes 0 (array-length bytes)))])))))))
+                  (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])))))))
 
-(define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
-  (source-tool-write-file path text "build: failed to write package tlci"))
+(define (build-package-write-tlci [path : String] [text : String]) : build_run_core.SourceToolCommandStatus
+  (build_run_core.source-tool-write-file
+    path
+    text
+    "build: failed to write package tlci"))
 
 (define (build-package-finish-built-artifact
   [artifact-path : String]
@@ -4176,11 +4266,11 @@
   [tlci-text : String]
   [announce : bool]) : i64
   (match (build-package-write-tlci tlci-path tlci-text)
-    [(SourceToolCommandStatus.Err message)
+    [(build_run_core.SourceToolCommandStatus.Err message)
       (begin
         (io.print-error message)
         1)]
-    [(SourceToolCommandStatus.Ok)
+    [(build_run_core.SourceToolCommandStatus.Ok)
       (if announce
         (begin
           (io.print-string (str_cat.str-cat "Built " artifact-path "\n"))
@@ -4191,52 +4281,52 @@
 (define (build-package-write-assembly
   [path : String]
   [asm : String]
-  [target : CompilerBackendTarget]) : SourceToolCommandStatus
-  (match (source-tool-write-file
+  [target : backend.CompilerBackendTarget]) : build_run_core.SourceToolCommandStatus
+  (match (build_run_core.source-tool-write-file
     path
     asm
     "build: failed to write package assembly")
-    [(SourceToolCommandStatus.Err message)
-      (SourceToolCommandStatus.Err message)]
-    [(SourceToolCommandStatus.Ok)
+    [(build_run_core.SourceToolCommandStatus.Err message)
+      (build_run_core.SourceToolCommandStatus.Err message)]
+    [(build_run_core.SourceToolCommandStatus.Ok)
       (let
         [haystack : String asm]
         [needle : String ".note.GNU-stack"]
-        [note : String (source-tool-noexecstack-note)]
+        [note : String (build_run_core.source-tool-noexecstack-note)]
         (if (and
-          (compiler-backend-target-linux? target)
+          (backend.compiler-backend-target-linux? target)
           (not (string.contains (& haystack) (& needle))))
           (match (io.try-append-file (& path) (byte_buf.str-as-bytes (& note)))
-            [(io.OkIoUnit) SourceToolCommandStatus.Ok]
+            [(io.OkIoUnit) build_run_core.SourceToolCommandStatus.Ok]
             [(io.ErrIoUnit error)
-              (SourceToolCommandStatus.Err
+              (build_run_core.SourceToolCommandStatus.Err
                 (str_cat.str-cat
                   "build: failed to write package assembly: "
                   (io.error-message error)))])
-          SourceToolCommandStatus.Ok))]))
+          build_run_core.SourceToolCommandStatus.Ok))]))
 
 (define (build-package-finish-artifacts
-  [kind : CompilerPkgKind]
-  [target : CompilerBackendTarget]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
   [artifact-path : String]
-  [link-inputs : SourceToolLinkInputs]
+  [link-inputs : build_run_core.SourceToolLinkInputs]
   [tlci-path : String]
   [tlci-text : String]
   [asm : String]
-  [direct-object : ResultSourceToolString]
+  [direct-object : build_run_core.ResultSourceToolString]
   [announce : bool]) : i64
   (match (build-package-write-assembly asm-path asm target)
-    [(SourceToolCommandStatus.Err message)
+    [(build_run_core.SourceToolCommandStatus.Err message)
       (begin
         (io.print-error message)
         1)]
-    [(SourceToolCommandStatus.Ok)
+    [(build_run_core.SourceToolCommandStatus.Ok)
       (let
-        [direct-status : SourceToolDirectObjectStatus
+        [direct-status : build_run_core.SourceToolDirectObjectStatus
           (match direct-object
-            [(ResultSourceToolString.Ok obj)
+            [(build_run_core.ResultSourceToolString.Ok obj)
               (build-package-write-linux-direct-object-artifact
                 kind
                 target
@@ -4244,8 +4334,8 @@
                 artifact-path
                 link-inputs
                 obj)]
-            [(ResultSourceToolString.Err message)
-              (SourceToolDirectObjectStatus.Unavailable message)])]
+            [(build_run_core.ResultSourceToolString.Err message)
+              (build_run_core.SourceToolDirectObjectStatus.Unavailable message)])]
         (match (build-package-artifact-status
           kind
           target
@@ -4254,11 +4344,11 @@
           artifact-path
           link-inputs
           direct-status)
-          [(SourceToolCommandStatus.Err message)
+          [(build_run_core.SourceToolCommandStatus.Err message)
             (begin
               (io.print-error message)
               1)]
-          [(SourceToolCommandStatus.Ok)
+          [(build_run_core.SourceToolCommandStatus.Ok)
             (build-package-finish-built-artifact
               artifact-path
               tlci-path
@@ -4266,23 +4356,23 @@
               announce)]))]))
 
 (define (build-package-emit-assembly-fallback
-  [kind : CompilerPkgKind]
-  [target : CompilerBackendTarget]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [emit-entry : bool]
   [crt-entry : bool]
-  [decls : AstDeclList]
-  [owned-paths : AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [owned-paths : ast.AstDeclPathList]
   [asm-path : String]
   [obj-path : String]
   [artifact-path : String]
-  [effective-link-inputs : SourceToolLinkInputs]
+  [effective-link-inputs : build_run_core.SourceToolLinkInputs]
   [tlci-path : String]
   [tlci-text : String]
   [direct-message : String]
   [announce : bool]) : i64
-  (match (compiler-driver-emit-package-loaded
+  (match (compiler_driver_core.compiler-driver-emit-package-loaded
     ""
     target
     true
@@ -4292,15 +4382,16 @@
     crt-entry
     decls
     owned-paths)
-    [(ResultCompilerDriver.Err diag)
+    [(compiler_driver_core.ResultCompilerDriver.Err diag)
       (begin
         (io.print-error
-          (compiler-driver-render-source-diagnostic (box-get diag)))
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (box-get diag)))
         1)]
-    [(ResultCompilerDriver.Ok asm)
+    [(compiler_driver_core.ResultCompilerDriver.Ok asm)
       (begin
-        (compiler-driver-release-lower-arenas-after-emit!)
-        (compiler-driver-reset-file-state!)
+        (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)
+        (compiler_driver_core.compiler-driver-reset-file-state!)
         (build-package-finish-artifacts
           kind
           target
@@ -4311,19 +4402,19 @@
           tlci-path
           tlci-text
           asm
-          (ResultSourceToolString.Err direct-message)
+          (build_run_core.ResultSourceToolString.Err direct-message)
           announce))]))
 
 (define (build-package-write-side-assembly
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [emit-entry : bool]
   [crt-entry : bool]
-  [decls : AstDeclList]
-  [owned-paths : AstDeclPathList]
-  [asm-path : String]) : SourceToolCommandStatus
-  (match (compiler-driver-emit-package-loaded
+  [decls : ast.AstDeclList]
+  [owned-paths : ast.AstDeclPathList]
+  [asm-path : String]) : build_run_core.SourceToolCommandStatus
+  (match (compiler_driver_core.compiler-driver-emit-package-loaded
     ""
     target
     true
@@ -4333,29 +4424,32 @@
     crt-entry
     decls
     owned-paths)
-    [(ResultCompilerDriver.Err diag)
-      (SourceToolCommandStatus.Err
-        (compiler-driver-render-source-diagnostic (box-get diag)))]
-    [(ResultCompilerDriver.Ok asm)
+    [(compiler_driver_core.ResultCompilerDriver.Err diag)
+      (build_run_core.SourceToolCommandStatus.Err
+        (compiler_driver_core.compiler-driver-render-source-diagnostic
+          (box-get diag)))]
+    [(compiler_driver_core.ResultCompilerDriver.Ok asm)
       (begin
-        (compiler-driver-release-lower-arenas-after-emit!)
+        (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)
         (build-package-write-assembly asm-path asm target))]))
 
-(define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
+(define (build-package-doctest-paths
+  [owner : String]
+  [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
     [owner-id : i64
-      (ast-decl-path-list-owner-id
+      (ast.ast-decl-path-list-owner-id
         (& paths)
         0
         cbi.compiler-builtin-id-fix-empty)]
-    (match (ast-decl-path-list-step paths)
-      [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]
-      [(AstDeclPathListStep.Cons path rest)
+    (match (ast.ast-decl-path-list-step paths)
+      [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)]
+      [(ast.AstDeclPathListStep.Cons path rest)
         (let
-          [tail : AstDeclPathList (build-package-doctest-paths owner rest)]
+          [tail : ast.AstDeclPathList (build-package-doctest-paths owner rest)]
           (if (build-package-tlci-stdlib-path? owner path)
             tail
-            (ast-decl-path-list-prepend-builder-with-owner-id
+            (ast.ast-decl-path-list-prepend-builder-with-owner-id
               path
               owner-id
               tail)))])))
@@ -4363,24 +4457,25 @@
 (define (build-package-closure-doctest-status
   [owner : String]
   [entry-path : String]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]
+  [deps : load.CompilerPkgDeps]
   [emit-entry : bool]) : i64
-  (match (compiler-driver-load-package-file-with-runtime
+  (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime
     entry-path
     target
     stdlib-roots
     manifest-dir
     deps
     emit-entry)
-    [(ResultCompilerLoadWithPaths.Err diag)
+    [(load.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error
-          (compiler-driver-render-source-diagnostic (box-get diag)))
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (box-get diag)))
         1)]
-    [(ResultCompilerLoadWithPaths.Ok _ paths _ _)
+    [(load.ResultCompilerLoadWithPaths.Ok _ paths _ _)
       (build-doctest-typecheck-package-paths
         (build-package-doctest-paths owner paths)
         stdlib-roots
@@ -4392,15 +4487,18 @@
   [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
   [name : String]
-  [deps : CompilerPkgDeps]
+  [deps : load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : i64
-  (match (package-source-discover-for "build" manifest-path true)
-    [(ResultPackageSourceSet.Err message)
+  (match (package_source_core.package-source-discover-for
+    "build"
+    manifest-path
+    true)
+    [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
         (io.print-error message)
         1)]
-    [(ResultPackageSourceSet.Ok source-set)
-      (tltest-inline-typecheck-package-sources-with-cfg
+    [(package_source_core.ResultPackageSourceSet.Ok source-set)
+      (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
         (struct-get source-set sources)
         stdlib-roots
         manifest-dir
@@ -4411,11 +4509,11 @@
 
 (define (build-package-emit-one
   [manifest-path : String]
-  [manifest : CompilerPkgManifest]
-  [target : CompilerBackendTarget]
+  [manifest : load.CompilerPkgManifest]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [dep-libs : process.ProcessStringList]
@@ -4424,17 +4522,24 @@
   (let
     ;; Windows package DAG nodes are serial same-process compiles; keep only
     ;; persistent cache floors between dependency and root emits.
-    [_ : unit (cfg windows (compiler-driver-reset-file-state!) unit)]
-    [manifest-dir : String (compiler-load-dirname manifest-path)]
+    [_ : unit
+      (cfg
+        windows
+        (compiler_driver_core.compiler-driver-reset-file-state!)
+        unit)]
+    [manifest-dir : String (load.compiler-load-dirname manifest-path)]
     [compile-context : BuildPackageCompileContext
       (build-package-compile-context manifest-dir manifest)]
     [entry-path : String
-      (compiler-load-join-root-path manifest-dir (struct-get manifest entry))]
+      (load.compiler-load-join-root-path
+        manifest-dir
+        (struct-get manifest entry))]
     [name : String (struct-get manifest name)]
-    [_spmd-package-name : unit (lower-spmd-set-package-name! name)]
+    [_spmd-package-name : unit (lower.lower-spmd-set-package-name! name)]
     [_package-artifact-profile : unit
-      (compiler-load-set-package-artifact-profile! (build-profile-name profile))]
-    [kind : CompilerPkgKind (struct-get manifest kind)]
+      (load.compiler-load-set-package-artifact-profile!
+        (build-profile-name profile))]
+    [kind : load.CompilerPkgKind (struct-get manifest kind)]
     [asm-path : String
       (build-package-asm-path-profile manifest-dir name profile)]
     [obj-path : String
@@ -4444,7 +4549,8 @@
     [artifact-path : String
       (build-package-runtime-artifact-path artifact-paths)]
     [tlci-path : String (build-package-host-tlci-artifact-path artifact-paths)]
-    [_reset-file-state : unit (compiler-driver-reset-file-state!)]
+    [_reset-file-state : unit
+      (compiler_driver_core.compiler-driver-reset-file-state!)]
     (if (or
       (> (string.string-length (struct-get compile-context error)) 0)
       (not (build-ensure-package-output-dirs manifest-dir name profile)))
@@ -4457,13 +4563,13 @@
               (build-package-output-dir-profile manifest-dir name profile))))
         1)
       (let
-        [manifest-link-inputs : SourceToolLinkInputs
+        [manifest-link-inputs : build_run_core.SourceToolLinkInputs
           (build-package-manifest-link-inputs
             (struct-get manifest link)
             manifest-dir
             target)]
-        [dep-link-inputs : SourceToolLinkInputs
-          (source-tool-link-inputs-from-archives dep-libs)]
+        [dep-link-inputs : build_run_core.SourceToolLinkInputs
+          (build_run_core.source-tool-link-inputs-from-archives dep-libs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
         [inline-test-status : i64
           (build-inline-test-typecheck-package-sources
@@ -4478,8 +4584,8 @@
         [_reset-after-inline-tests : unit
           (if (= inline-test-status 0)
             (begin
-              (compiler-driver-reset-file-state!)
-              (intern-persistent-arena-reset!))
+              (compiler_driver_core.compiler-driver-reset-file-state!)
+              (ci.intern-persistent-arena-reset!))
             unit)]
         (if (= inline-test-status 0)
           (let
@@ -4494,16 +4600,16 @@
                 mode
                 lock-policy
                 (struct-get manifest deps)
-                (compiler-pkg-deps-list (struct-get manifest deps))
+                (load.compiler-pkg-deps-list (struct-get manifest deps))
                 stdlib-roots
                 manifest-dir
                 emit-entry)]
             [_reset-after-pre-emit-doctests : unit
               (begin
-                (compiler-driver-reset-file-state!)
-                (intern-persistent-arena-reset!))]
+                (compiler_driver_core.compiler-driver-reset-file-state!)
+                (ci.intern-persistent-arena-reset!))]
             (if (= pre-emit-doctest-status 0)
-              (match (compiler-driver-load-package-file-with-runtime-cfg
+              (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime-cfg
                 entry-path
                 stdlib-roots
                 manifest-dir
@@ -4512,38 +4618,39 @@
                 (build-package-compile-cfgs
                   target
                   (struct-get compile-context root-compiler)))
-                [(ResultCompilerLoadWithPaths.Err diag)
+                [(load.ResultCompilerLoadWithPaths.Err diag)
                   (begin
                     (io.print-error
-                      (compiler-driver-render-source-diagnostic (box-get diag)))
+                      (compiler_driver_core.compiler-driver-render-source-diagnostic
+                        (box-get diag)))
                     1)]
-                [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+                [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
                   (let
-                    [owned-paths : AstDeclPathList
-                      (compiler-load-package-owned-paths-for-decls
+                    [owned-paths : ast.AstDeclPathList
+                      (load.compiler-load-package-owned-paths-for-decls
                         name
                         manifest-dir
                         stdlib-roots
                         entry-path
                         decls
                         paths)]
-                    [metadata-link-inputs : SourceToolLinkInputs
-                      (source-tool-link-inputs-from-decls
+                    [metadata-link-inputs : build_run_core.SourceToolLinkInputs
+                      (build_run_core.source-tool-link-inputs-from-decls
                         decls
-                        (source-tool-link-inputs-empty))]
+                        (build_run_core.source-tool-link-inputs-empty))]
                     ;; Merge order: manifest all-target/target inputs, source extern
                     ;; metadata, then dependency archives (kept positional after the
                     ;; requested libraries/args).
-                    [effective-link-inputs : SourceToolLinkInputs
-                      (source-tool-link-inputs-merge
-                        (source-tool-link-inputs-merge
+                    [effective-link-inputs : build_run_core.SourceToolLinkInputs
+                      (build_run_core.source-tool-link-inputs-merge
+                        (build_run_core.source-tool-link-inputs-merge
                           manifest-link-inputs
                           metadata-link-inputs)
                         dep-link-inputs)]
                     [crt-entry : bool
                       (and
                         emit-entry
-                        (source-tool-linux-crt-entry?
+                        (build_run_core.source-tool-linux-crt-entry?
                           target
                           effective-link-inputs))]
                     (match (build-package-tlci-text
@@ -4562,7 +4669,7 @@
                           ;; Emit linkable ELF before assembly so memory-tight
                           ;; selfhost package builds do not fork `as` while
                           ;; holding the full package assembly string.
-                          [direct-status : SourceToolDirectObjectStatus
+                          [direct-status : build_run_core.SourceToolDirectObjectStatus
                             (build-package-try-linux-direct-object
                               kind
                               target
@@ -4576,7 +4683,7 @@
                               artifact-path
                               effective-link-inputs)]
                           (match direct-status
-                            [(SourceToolDirectObjectStatus.Ok)
+                            [(build_run_core.SourceToolDirectObjectStatus.Ok)
                               (match (build-package-write-side-assembly
                                 target
                                 opt-level
@@ -4586,23 +4693,26 @@
                                 decls
                                 owned-paths
                                 asm-path)
-                                [(SourceToolCommandStatus.Err message)
+                                [(build_run_core.SourceToolCommandStatus.Err
+                                    message)
                                   (begin
                                     (io.print-error message)
                                     1)]
-                                [(SourceToolCommandStatus.Ok)
+                                [(build_run_core.SourceToolCommandStatus.Ok)
                                   (begin
-                                    (compiler-driver-reset-file-state!)
+                                    (compiler_driver_core.compiler-driver-reset-file-state!)
                                     (build-package-finish-built-artifact
                                       artifact-path
                                       tlci-path
                                       tlci-text
                                       announce))])]
-                            [(SourceToolDirectObjectStatus.Err message)
+                            [(build_run_core.SourceToolDirectObjectStatus.Err
+                                message)
                               (begin
                                 (io.print-error message)
                                 1)]
-                            [(SourceToolDirectObjectStatus.Unavailable message)
+                            [(build_run_core.SourceToolDirectObjectStatus.Unavailable
+                                message)
                               (build-package-emit-assembly-fallback
                                 kind
                                 target
@@ -4625,19 +4735,21 @@
 
 (define (build-package-worker-unified-cli?) : bool
   (and
-    (> (arg-count) 1)
+    (> (io.arg-count) 1)
     (or (string.eq (io.arg 1) "build") (string.eq (io.arg 1) "run"))))
 
 (define (build-package-worker-command-prefix [args : process.ProcessStringList]) : process.ProcessStringList
   (if (build-package-worker-unified-cli?)
-    (source-tool-args-append args "build")
+    (build_run_core.source-tool-args-append args "build")
     args))
 
 (define (build-package-worker-append-option
   [args : process.ProcessStringList]
   [flag : String]
   [value : String]) : process.ProcessStringList
-  (source-tool-args-append (source-tool-args-append args flag) value))
+  (build_run_core.source-tool-args-append
+    (build_run_core.source-tool-args-append args flag)
+    value))
 
 (define (build-package-worker-append-stdlib-roots
   [args : process.ProcessStringList]
@@ -4660,16 +4772,16 @@
 
 (define (build-package-worker-append-resolved-deps
   [args : process.ProcessStringList]
-  [deps : CompilerPkgDepList]
+  [deps : load.CompilerPkgDepList]
   [index : i64]) : process.ProcessStringList
-  (if (>= index (compiler-pkg-dep-list-count deps))
+  (if (>= index (load.compiler-pkg-dep-list-count deps))
     args
     (let
-      [dep : CompilerPkgDep (compiler-pkg-dep-list-at deps index)]
+      [dep : load.CompilerPkgDep (load.compiler-pkg-dep-list-at deps index)]
       (build-package-worker-append-resolved-deps
-        (source-tool-args-append
-          (source-tool-args-append
-            (source-tool-args-append args "--resolved-dep")
+        (build_run_core.source-tool-args-append
+          (build_run_core.source-tool-args-append
+            (build_run_core.source-tool-args-append args "--resolved-dep")
             (struct-get dep alias))
           (struct-get dep path))
         deps
@@ -4677,28 +4789,34 @@
 
 (define (build-package-worker-resolved-deps-args-smoke-ok?) : bool
   (let
-    [remote : CompilerPkgDep
-      (CompilerPkgDep "remote" "target/typelisp/git-deps/remote")]
-    [local : CompilerPkgDep (CompilerPkgDep "local" "../local")]
-    [deps : CompilerPkgDepList
-      (compiler-pkg-dep-list-push
-        (compiler-pkg-dep-list-push (compiler-pkg-dep-list-empty) remote)
+    [remote : load.CompilerPkgDep
+      (load.CompilerPkgDep "remote" "target/typelisp/git-deps/remote")]
+    [local : load.CompilerPkgDep (load.CompilerPkgDep "local" "../local")]
+    [deps : load.CompilerPkgDepList
+      (load.compiler-pkg-dep-list-push
+        (load.compiler-pkg-dep-list-push
+          (load.compiler-pkg-dep-list-empty)
+          remote)
         local)]
     [actual : process.ProcessStringList
       (build-package-worker-append-resolved-deps (process.args-empty) deps 0)]
     [expected0 : process.ProcessStringList
-      (source-tool-args-append (process.args-empty) "--resolved-dep")]
+      (build_run_core.source-tool-args-append
+        (process.args-empty)
+        "--resolved-dep")]
     [expected1 : process.ProcessStringList
-      (source-tool-args-append expected0 "remote")]
+      (build_run_core.source-tool-args-append expected0 "remote")]
     [expected2 : process.ProcessStringList
-      (source-tool-args-append expected1 "target/typelisp/git-deps/remote")]
+      (build_run_core.source-tool-args-append
+        expected1
+        "target/typelisp/git-deps/remote")]
     [expected3 : process.ProcessStringList
-      (source-tool-args-append expected2 "--resolved-dep")]
+      (build_run_core.source-tool-args-append expected2 "--resolved-dep")]
     [expected4 : process.ProcessStringList
-      (source-tool-args-append expected3 "local")]
+      (build_run_core.source-tool-args-append expected3 "local")]
     [expected : process.ProcessStringList
-      (source-tool-args-append expected4 "../local")]
-    (source-tool-string-list-eq? actual expected)))
+      (build_run_core.source-tool-args-append expected4 "../local")]
+    (build_run_core.source-tool-string-list-eq? actual expected)))
 
 (test
   build-package-worker-resolved-deps-args-smoke
@@ -4709,25 +4827,25 @@
 (define (build-package-worker-args-with-flag
   [worker-flag : String]
   [manifest-path : String]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [resolved-deps : CompilerPkgDepList]
+  [resolved-deps : load.CompilerPkgDepList]
   [stdlib-roots : cli_svec.Vec]) : process.ProcessStringList
   (let
     [args0 : process.ProcessStringList
       (build-package-worker-command-prefix (process.args-empty))]
     [args1 : process.ProcessStringList
-      (source-tool-args-append args0 worker-flag)]
+      (build_run_core.source-tool-args-append args0 worker-flag)]
     [args2 : process.ProcessStringList
       (build-package-worker-append-option args1 "--manifest-path" manifest-path)]
     [args3 : process.ProcessStringList
       (build-package-worker-append-option
         args2
         "--target"
-        (source-tool-target-name target))]
+        (build_run_core.source-tool-target-name target))]
     [args4 : process.ProcessStringList
       (build-package-worker-append-option
         args3
@@ -4744,8 +4862,8 @@
         "--opt-level"
         (string.int->string opt-level))]
     [debug-args : process.ProcessStringList
-      (if (compiler-debug-info-enabled?)
-        (source-tool-args-append args6 "--debug")
+      (if (ir.compiler-debug-info-enabled?)
+        (build_run_core.source-tool-args-append args6 "--debug")
         args6)]
     [args7 : process.ProcessStringList
       (build-package-lock-policy-arg debug-args lock-policy)]
@@ -4755,10 +4873,10 @@
 
 (define (build-package-worker-args
   [manifest-path : String]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]) : process.ProcessStringList
   (build-package-worker-args-with-flag
@@ -4769,15 +4887,15 @@
     profile
     mode
     lock-policy
-    (compiler-pkg-dep-list-empty)
+    (load.compiler-pkg-dep-list-empty)
     stdlib-roots))
 
 (define (build-package-worker-command
   [manifest-path : String]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]) : process.ProcessCommand
   (process.command
@@ -4793,12 +4911,12 @@
 
 (define (build-package-doctest-worker-command
   [manifest-path : String]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [resolved-deps : CompilerPkgDepList]
+  [resolved-deps : load.CompilerPkgDepList]
   [stdlib-roots : cli_svec.Vec]) : process.ProcessCommand
   (process.command
     (io.arg 0)
@@ -4817,7 +4935,7 @@
   (match (process.output
     (process.command
       (io.arg 0)
-      (source-tool-args-append (process.args-empty) "--version")))
+      (build_run_core.source-tool-args-append (process.args-empty) "--version")))
     [(process.OkProcessOutput output) (= (process.output-status output) 0)]
     [(process.ErrProcessOutput _) false]))
 
@@ -4825,13 +4943,13 @@
   [owner : String]
   [entry-path : String]
   [manifest-path : String]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [deps : CompilerPkgDeps]
-  [resolved-deps : CompilerPkgDepList]
+  [deps : load.CompilerPkgDeps]
+  [resolved-deps : load.CompilerPkgDepList]
   [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
   [emit-entry : bool]) : i64
@@ -4847,14 +4965,14 @@
       stdlib-roots))
     [(process.OkProcessOutput output)
       (begin
-        (source-tool-forward-output output)
+        (build_run_core.source-tool-forward-output output)
         (process.output-status output))]
     [(process.ErrProcessOutput error)
       (if (or
         (process.error-spawn-failed? error)
         (process.error-unsupported? error))
         (begin
-          (compiler-driver-reset-file-state!)
+          (compiler_driver_core.compiler-driver-reset-file-state!)
           (build-package-closure-doctest-status
             owner
             entry-path
@@ -4891,21 +5009,21 @@
               1)]
           [(ResultBuildManifest.Ok manifest)
             (let
-              [resolved-deps : CompilerPkgDepList
+              [resolved-deps : load.CompilerPkgDepList
                 (struct-get config resolved-deps)]
               [resolved-manifest-result : ResultBuildManifest
-                (if (= (compiler-pkg-dep-list-count resolved-deps) 0)
+                (if (= (load.compiler-pkg-dep-list-count resolved-deps) 0)
                   (build-package-resolve-manifest-deps
                     normalized-path
                     manifest
                     (struct-get config lock-policy))
                   (ResultBuildManifest.Ok
-                    (CompilerPkgManifest
+                    (load.CompilerPkgManifest
                       (struct-get manifest name)
                       (struct-get manifest version)
                       (struct-get manifest kind)
                       (struct-get manifest entry)
-                      (compiler-pkg-deps-from-list resolved-deps)
+                      (load.compiler-pkg-deps-from-list resolved-deps)
                       (struct-get manifest link))))]
               (match resolved-manifest-result
                 [(ResultBuildManifest.Err message)
@@ -4950,21 +5068,21 @@
               1)]
           [(ResultBuildManifest.Ok manifest)
             (let
-              [resolved-deps : CompilerPkgDepList
+              [resolved-deps : load.CompilerPkgDepList
                 (struct-get config resolved-deps)]
               [resolved-manifest-result : ResultBuildManifest
-                (if (= (compiler-pkg-dep-list-count resolved-deps) 0)
+                (if (= (load.compiler-pkg-dep-list-count resolved-deps) 0)
                   (build-package-resolve-manifest-deps
                     normalized-path
                     manifest
                     (struct-get config lock-policy))
                   (ResultBuildManifest.Ok
-                    (CompilerPkgManifest
+                    (load.CompilerPkgManifest
                       (struct-get manifest name)
                       (struct-get manifest version)
                       (struct-get manifest kind)
                       (struct-get manifest entry)
-                      (compiler-pkg-deps-from-list resolved-deps)
+                      (load.compiler-pkg-deps-from-list resolved-deps)
                       (struct-get manifest link))))]
               (match resolved-manifest-result
                 [(ResultBuildManifest.Err message)
@@ -4974,12 +5092,13 @@
                 [(ResultBuildManifest.Ok resolved-manifest)
                   (let
                     [manifest-dir : String
-                      (compiler-load-dirname normalized-path)]
+                      (load.compiler-load-dirname normalized-path)]
                     [entry-path : String
-                      (compiler-load-join-root-path
+                      (load.compiler-load-join-root-path
                         manifest-dir
                         (struct-get resolved-manifest entry))]
-                    [kind : CompilerPkgKind (struct-get resolved-manifest kind)]
+                    [kind : load.CompilerPkgKind
+                      (struct-get resolved-manifest kind)]
                     (build-package-closure-doctest-status
                       (struct-get resolved-manifest name)
                       entry-path
@@ -4994,16 +5113,16 @@
 
 (define (build-package-deps-built?
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : load.CompilerPkgDepList]
   [index : i64]
   [built : build_string_i64_map.Map]) : bool
-  (if (>= index (compiler-pkg-dep-list-count deps))
+  (if (>= index (load.compiler-pkg-dep-list-count deps))
     true
     (let
       [dep-manifest-path : String
         (build-package-dep-manifest-path
           manifest-dir
-          (compiler-pkg-dep-list-at deps index))]
+          (load.compiler-pkg-dep-list-at deps index))]
       (match (build_string_i64_map.get (& built) dep-manifest-path)
         [(build_string_i64_map.LookupFound _)
           (build-package-deps-built? manifest-dir deps (+ index 1) built)]
@@ -5014,11 +5133,11 @@
   [built : build_string_i64_map.Map]) : bool
   (let
     [manifest-path : String (struct-get node manifest-path)]
-    [manifest-dir : String (compiler-load-dirname manifest-path)]
-    [manifest : CompilerPkgManifest (struct-get node manifest)]
+    [manifest-dir : String (load.compiler-load-dirname manifest-path)]
+    [manifest : load.CompilerPkgManifest (struct-get node manifest)]
     (build-package-deps-built?
       manifest-dir
-      (compiler-pkg-deps-list (struct-get manifest deps))
+      (load.compiler-pkg-deps-list (struct-get manifest deps))
       0
       built)))
 
@@ -5100,15 +5219,15 @@
 
 (define (build-package-start-worker
   [node : BuildPackageGraphNode]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]) : ResultBuildPackageGraphWorker
   (let
     [manifest-path : String (struct-get node manifest-path)]
-    [manifest : CompilerPkgManifest (struct-get node manifest)]
+    [manifest : load.CompilerPkgManifest (struct-get node manifest)]
     [name : String (struct-get manifest name)]
     [artifacts : BuildPackageArtifactPaths
       (build-package-graph-node-artifact-paths node profile target)]
@@ -5137,10 +5256,10 @@
   [nodes : BuildPackageGraphNodeVec]
   [scheduled : build_string_i64_map.Map (:consume)]
   [built : build_string_i64_map.Map]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [workers : BuildPackageGraphWorkerVec]) : ResultBuildPackageSchedulePass
@@ -5234,7 +5353,7 @@
           [node : BuildPackageGraphNode (struct-get worker node)]
           [artifacts : BuildPackageArtifactPaths (struct-get worker artifacts)]
           [manifest-path : String (struct-get node manifest-path)]
-          [manifest : CompilerPkgManifest (struct-get node manifest)]
+          [manifest : load.CompilerPkgManifest (struct-get node manifest)]
           [name : String (struct-get manifest name)]
           [result : process.ResultProcessOutput
             (process.wait (struct-get worker child))]
@@ -5243,7 +5362,7 @@
               [(process.OkProcessOutput output)
                 (begin
                   (if (or announce (not (process.success? output)))
-                    (source-tool-forward-output output)
+                    (build_run_core.source-tool-forward-output output)
                     unit)
                   (if (process.success? output)
                     (let
@@ -5320,10 +5439,10 @@
 
 (define (build-package-emit-graph-nodes-parallel-loop
   [nodes : BuildPackageGraphNodeVec]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [announce : bool]
@@ -5372,10 +5491,10 @@
 
 (define (build-package-emit-graph-nodes-parallel
   [nodes : BuildPackageGraphNodeVec]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [announce : bool]
   [stdlib-roots : cli_svec.Vec]) : i64
@@ -5393,10 +5512,10 @@
 
 (define (build-package-emit-graph-nodes-serial
   [nodes : BuildPackageGraphNodeVec]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [producer-identity : String]
@@ -5411,7 +5530,7 @@
           [node : BuildPackageGraphNode
             (build-package-graph-node-vec-at nodes index)]
           [manifest-path : String (struct-get node manifest-path)]
-          [manifest : CompilerPkgManifest (struct-get node manifest)]
+          [manifest : load.CompilerPkgManifest (struct-get node manifest)]
           [node-status : i64
             (build-package-emit-one
               manifest-path
@@ -5439,10 +5558,10 @@
 
 (define (build-package-emit-graph-nodes
   [nodes : BuildPackageGraphNodeVec]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [producer-identity : String]
@@ -5470,11 +5589,11 @@
       producer-identity
       announce)))
 
-(define (build-doctest-report [report : DocTestRunReport]) : i64
-  (if (doc-test-run-report-ok? report)
+(define (build-doctest-report [report : doc_test.DocTestRunReport]) : i64
+  (if (doc_test.doc-test-run-report-ok? report)
     0
     (begin
-      (io.print-error (doc-test-run-report-render report))
+      (io.print-error (doc_test.doc-test-run-report-render report))
       1)))
 
 (define (build-doctest-typecheck-file
@@ -5484,18 +5603,18 @@
     [(io.ErrIoBytes _) 0]
     [(io.OkIoBytes contents)
       (build-doctest-report
-        (doc-test-typecheck-source-with-roots
+        (doc_test.doc-test-typecheck-source-with-roots
           source
           (byte_buf.to-string contents)
           stdlib-roots))]))
 
 (define (build-doctest-typecheck-package-paths
-  [paths : AstDeclPathList]
+  [paths : ast.AstDeclPathList]
   [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : i64
+  [deps : load.CompilerPkgDeps]) : i64
   (build-doctest-report
-    (doc-test-typecheck-package-paths-with-roots
+    (doc_test.doc-test-typecheck-package-paths-with-roots
       paths
       stdlib-roots
       manifest-dir
@@ -5505,25 +5624,27 @@
   [source : String]
   [output : String]
   [has-output : bool]
-  [target : CompilerBackendTarget]
+  [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [link-inputs : SourceToolLinkInputs]) : i64
+  [mode : backend.CompilerBackendMode]
+  [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
   (let
     [doctest-status : i64 (build-doctest-typecheck-file source stdlib-roots)]
     (if (= doctest-status 0)
       (let
         [inline-test-status : i64
-          (tltest-inline-typecheck-file-with-cfg
+          (test_cli_core.tltest-inline-typecheck-file-with-cfg
             source
             stdlib-roots
-            (compiler-driver-target-cfgs target (compiler-cfg-empty))
+            (compiler_driver_core.compiler-driver-target-cfgs
+              target
+              (compiler_parse_core.compiler-cfg-empty))
             "typecheck-prefix-inline-build")]
         (if (= inline-test-status 0)
           (begin
-            (compiler-driver-reset-file-state!)
-            (source-tool-build-source
+            (compiler_driver_core.compiler-driver-reset-file-state!)
+            (build_run_core.source-tool-build-source
               source
               output
               has-output
@@ -5537,12 +5658,12 @@
 
 (define (build-package-emit
   [manifest-path : String]
-  [manifest : CompilerPkgManifest]
+  [manifest : load.CompilerPkgManifest]
   [target-text : String]
   [_has-target : bool]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : CompilerBackendMode]
+  [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [producer-identity : String]
@@ -5613,12 +5734,12 @@
   [stdlib-roots : cli_svec.Vec]
   [producer-identity : String]
   [announce : bool]) : i64
-  (match (source-tool-backend-mode "build" mode)
-    [(ResultSourceToolBackendMode.Err message)
+  (match (build_run_core.source-tool-backend-mode "build" mode)
+    [(build_run_core.ResultSourceToolBackendMode.Err message)
       (begin
         (io.print-error message)
         1)]
-    [(ResultSourceToolBackendMode.Ok backend-mode)
+    [(build_run_core.ResultSourceToolBackendMode.Ok backend-mode)
       (match (build-load-manifest manifest-path)
         [(ResultBuildManifest.Err message)
           (begin
@@ -5674,7 +5795,7 @@
         lock-policy
         stdlib-roots)
       (let
-        [resolved-manifest : CompilerLoadMaybePath
+        [resolved-manifest : load.CompilerLoadMaybePath
           (if has-manifest
             (CompilerLoadSomePath manifest-path)
             (build-discover-manifest-up "" 256))]
@@ -5698,7 +5819,7 @@
     [_ 1]))
 
 (define (build-main-from [idx : i64] [producer-identity : String]) : i64
-  (match (build-config-from idx (arg-count))
+  (match (build-config-from idx (io.arg-count))
     [(ResultBuildConfig.Ok config)
       (match config
         [(BuildConfig.Source _ _ _ _ _ _ _ _)
@@ -5804,7 +5925,7 @@
       [current : String (io.arg idx)]
       (match (build-cli-option current)
         [(BuildCliOption.Other)
-          (if (source-tool-flag? current)
+          (if (build_run_core.source-tool-flag? current)
             (build-args-have-source? (+ idx 1) count)
             true)]
         [(BuildCliOption.Release) (build-args-have-source? (+ idx 1) count)]
@@ -5822,11 +5943,11 @@
   [has-source : bool]
   [output : String]
   [has-output : bool]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]
   [stdlib-roots : cli_svec.Vec (:consume)]
   [opt-level : i64]
-  [link-inputs : SourceToolLinkInputs]) : ResultBuildCliConfig
+  [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildCliConfig
   (match kind
     [(cli_option.CliCommonOptionKind.StdlibRoot)
       (build-cli-parse-options
@@ -5846,8 +5967,8 @@
         opt-level
         link-inputs)]
     [(cli_option.CliCommonOptionKind.Target)
-      (match (source-tool-target value)
-        [(ResultSourceToolTarget.Ok parsed-target)
+      (match (build_run_core.source-tool-target value)
+        [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
           (build-cli-parse-options
             next-idx
             count
@@ -5860,10 +5981,10 @@
             stdlib-roots
             opt-level
             link-inputs)]
-        [(ResultSourceToolTarget.Err _)
+        [(build_run_core.ResultSourceToolTarget.Err _)
           (ResultBuildCliConfig.Err (build-cli-unknown-target value))])]
     [(cli_option.CliCommonOptionKind.OptLevel)
-      (if (source-tool-opt-level-valid? value)
+      (if (build_run_core.source-tool-opt-level-valid? value)
         (build-cli-parse-options
           next-idx
           count
@@ -5887,11 +6008,11 @@
   [has-source : bool]
   [output : String]
   [has-output : bool]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]
   [stdlib-roots : cli_svec.Vec]
   [opt-level : i64]
-  [link-inputs : SourceToolLinkInputs]) : ResultBuildCliConfig
+  [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildCliConfig
   (if (>= idx count)
     (if has-source
       (ResultBuildCliConfig.Ok
@@ -5937,7 +6058,7 @@
           (match (build-cli-option current)
             [(BuildCliOption.Debug)
               (begin
-                (compiler-debug-info-set-enabled! true)
+                (ir.compiler-debug-info-set-enabled! true)
                 (build-cli-parse-options
                   (+ idx 1)
                   count
@@ -5983,8 +6104,8 @@
                   "build: --backend-mode requires a value")
                 (let
                   [value : String (io.arg (+ idx 1))]
-                  (match (source-tool-backend-mode "build" value)
-                    [(ResultSourceToolBackendMode.Ok parsed-mode)
+                  (match (build_run_core.source-tool-backend-mode "build" value)
+                    [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
                       (build-cli-parse-options
                         (+ idx 2)
                         count
@@ -5997,7 +6118,7 @@
                         stdlib-roots
                         opt-level
                         link-inputs)]
-                    [(ResultSourceToolBackendMode.Err message)
+                    [(build_run_core.ResultSourceToolBackendMode.Err message)
                       (ResultBuildCliConfig.Err message)])))]
             [(BuildCliOption.Profile)
               (ResultBuildCliConfig.Err
@@ -6025,7 +6146,7 @@
                   mode
                   stdlib-roots
                   opt-level
-                  (source-tool-link-inputs-add-lib
+                  (build_run_core.source-tool-link-inputs-add-lib
                     link-inputs
                     (io.arg (+ idx 1)))))]
             [(BuildCliOption.LinkSearch)
@@ -6043,7 +6164,7 @@
                   mode
                   stdlib-roots
                   opt-level
-                  (source-tool-link-inputs-add-search-dir
+                  (build_run_core.source-tool-link-inputs-add-search-dir
                     link-inputs
                     (io.arg (+ idx 1)))))]
             [(BuildCliOption.LinkArg)
@@ -6060,7 +6181,7 @@
                   mode
                   stdlib-roots
                   opt-level
-                  (source-tool-link-inputs-add-raw-arg
+                  (build_run_core.source-tool-link-inputs-add-raw-arg
                     link-inputs
                     (io.arg (+ idx 1)))))]
             [(BuildCliOption.ManifestPath)
@@ -6070,7 +6191,7 @@
                 (ResultBuildCliConfig.Err
                   "build: --manifest-path is handled by Rust typelisp build; selfhost build tool expects a source file"))]
             [(BuildCliOption.Other)
-              (if (source-tool-flag? current)
+              (if (build_run_core.source-tool-flag? current)
                 (ResultBuildCliConfig.Err
                   (str_cat.str-cat "build: unknown flag " current))
                 (if has-source
@@ -6097,11 +6218,11 @@
     false
     ""
     false
-    (source-tool-default-target)
-    (CompilerBackendMode.Scalar)
+    (build_run_core.source-tool-default-target)
+    (backend.CompilerBackendMode.Scalar)
     (cli_svec.new)
-    (compiler-optimize-default-level)
-    (source-tool-link-inputs-empty)))
+    (opt.compiler-optimize-default-level)
+    (build_run_core.source-tool-link-inputs-empty)))
 
 ;; Build a source file directly. Manifest builds use the older package parser so
 ;; `typelisp build` can still discover `typelisp.pkg` from the working tree.
@@ -6151,7 +6272,7 @@
   [count : i64]
   [producer-identity : String]) : i64
   (begin
-    (compiler-debug-info-set-enabled! false)
+    (ir.compiler-debug-info-set-enabled! false)
     (cond
       [(and (> count start) (string.eq (io.arg start) "--package-worker"))
         (build-package-worker-run-from (+ start 1) count producer-identity)]

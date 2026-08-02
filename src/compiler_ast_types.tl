@@ -47,25 +47,35 @@
 ;; id. Rendering must decode the latter instead of indexing the intern pool with
 ;; the composite value.
 (define (ast-nominal-name-id-display [name-id : i64]) : String
-  (cond
-    [(ci.intern-composite-triple-id? name-id)
-      (string.append
-        (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
-        (string.append
-          "/"
-          (string.append
-            (ci.intern-str (ci.intern-composite-middle-id-unchecked name-id))
+  (if (or
+    (ci.intern-composite-pair-id? name-id)
+    (ci.intern-composite-triple-id? name-id))
+    (let
+      [cached : String (ci.intern-composite-rendered-name name-id)]
+      (if (> (string.string-length cached) 0)
+        cached
+        (ci.intern-composite-rendered-name-record!
+          name-id
+          (if (ci.intern-composite-triple-id? name-id)
             (string.append
-              "."
-              (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))))]
-    [(ci.intern-composite-pair-id? name-id)
-      (string.append
-        (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
-        (string.append
-          "/"
-          (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))]
-    [(ci.intern-renderable-id? name-id) (ci.intern-str name-id)]
-    [else "<structural-nominal>"]))
+              (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
+              (string.append
+                "/"
+                (string.append
+                  (ci.intern-str
+                    (ci.intern-composite-middle-id-unchecked name-id))
+                  (string.append
+                    "."
+                    (ci.intern-str
+                      (ci.intern-composite-right-id-unchecked name-id))))))
+            (string.append
+              (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
+              (string.append
+                "/"
+                (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))))))
+    (if (ci.intern-renderable-id? name-id)
+      (ci.intern-str name-id)
+      "<structural-nominal>")))
 
 (defstruct AstSourceSpan
   (start-line i32)
@@ -2940,7 +2950,6 @@
   (Some i64))
 
 (defenum AstImportKind
-  (Path)
   (Module)
   (Macro i64 AstMaybeModuleName)
   (MacroDecls i64 AstMaybeModuleName))
@@ -7185,7 +7194,6 @@
   [remap : AstProgramCompactionRemap]
   [kind : AstImportKind]) : AstImportKind
   (match kind
-    [(AstImportKind.Path) AstImportKind.Path]
     [(AstImportKind.Module) AstImportKind.Module]
     [(AstImportKind.Macro call module-name)
       (AstImportKind.Macro

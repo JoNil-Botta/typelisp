@@ -2547,10 +2547,8 @@ the same module load one instance, and non-macro import cycles terminate
 through that load-once rule rather than being rejected. Cycles through macro
 tables are rejected; see §4.4.4.
 
-Earlier revisions imported modules by source-file path, as in
-`(import "lib/util.tl")`. That spelling remains accepted only as a temporary
-compatibility surface for named migration fixtures and is scheduled for
-removal; new source uses dotted module identities.
+String-path imports from earlier revisions are rejected. Filesystem strings
+remain valid for include forms such as `include-str` and `include-bin`.
 
 #### 4.4.1 Module identities
 
@@ -2559,15 +2557,10 @@ loaded it. The canonical identity is a dotted identifier path such as
 `stdlib.string`, `compiler.lower`, or `math.vector`. It is stable across
 platform path separators and package-root spellings.
 
-If a source file is imported by dotted identity, that identity is the canonical
-module identity for files without an explicit module declaration. Package and
-stdlib path imports also infer a stable dotted identity from the normalized
-source path without its `.tl` suffix. Legacy local relative-path imports without
-an expected module preserve their historical flat importer context. An explicit
-`(module ident)` declaration is a legacy module-boundary marker that overrides
+The dotted identity is the canonical module identity for files without an
+explicit module declaration. An explicit `(module ident)` declaration overrides
 the inferred identity for following declarations until another module boundary
-appears. Different spellings that normalize to the same source file load one
-module instance.
+appears.
 
 Identity resolution maps a dotted identity to a source file:
 
@@ -3014,7 +3007,13 @@ Example:
   `bin` packages produce `<package-name>` on Linux and `<package-name>.exe` on
   Windows. `staticlib` packages produce `lib<package-name>.a` on Linux and
   `<package-name>.lib` on Windows. Assembly and object side artifacts use the
-  same profile directory. Package builds also produce a host comptime image
+  same profile directory. Windows static archives use a stable member order
+  and reproducible header metadata: TypeLisp invokes discovered MSVC `lib.exe`
+  with `/Brepro`, or falls back to `llvm-ar --format=coff rcsD`.
+  `TYPELISP_WINDOWS_LIB` may name either tool family by the executable basename
+  `lib[.exe]` or `llvm-ar[.exe]`; other basenames are rejected because their
+  deterministic invocation contract is unknown. Package builds also produce a
+  host comptime image
   named `<package-name>.tlci` in the same profile directory; dependency DAG
   builds produce each dependency's tlci next to its static archive without
   changing runtime link behavior. Macro-free packages emit metadata-only
@@ -3030,9 +3029,10 @@ Example:
   unsupported bodies retain an explicit registered shell and interpreted
   fallback. General
   consumer catalog
-  discovery/dispatch is a separate integration layer. The tlci path is
-  target-independent in v1: cross-target builds keep target runtime artifacts
-  separate while sharing the host comptime image path.
+  discovery/dispatch is a separate integration layer. The tlci image follows
+  the build host in v2: it always executes on the host platform that produced
+  it and stays separate from the selected runtime target's artifacts; it is
+  not portable code across host operating systems.
 - The optional top-level `(link ...)` section declares native link inputs for
   `bin` package builds, so a package that links system or vendored libraries
   does not need `(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)`
@@ -6620,7 +6620,7 @@ in documentation passes.
 | Narrow integer shifts | AVX2/AVX-512 direct-map and masked `i32`/`u32`/`i64`/`u64` shifts are implemented. `i8`/`u8`/`i16`/`u16` widening/packing expansions are deferred and rejected with stable operator/type/backend diagnostics. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |
-| Dotted module imports everywhere | Migration in progress: source/docs use dotted imports as the canonical form; legacy path imports remain accepted only for compatibility fixtures before #2454 removes the syntax. |
+| Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
 | Compiled comptime execution from embedded/package `tlci` images | In progress: the embedded image is built, embedded, and validated in every bootstrap, but dispatching through it is opt-in via `--cfg tlci-native-route` and is disabled on Windows regardless of that flag, so shipped builds resolve every stdlib macro through CTFE. When the route is enabled, embedded-stdlib compilation without an explicit stdlib root maps the production image, resolves macro identities through its native registration catalog, and commits results from compiled entries directly, with observable catalog hit/miss, load-failure, native-dispatch, and interpreted-fallback counters. Registration shells and uncataloged identities still execute through CTFE, explicit stdlib roots stay on the source path, and the differential gate requires byte-identical assembly between routes. |
@@ -6845,7 +6845,7 @@ Selected Command Forms:
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
   typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
-  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--legacy-path-import]
+  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case]
   typelisp test [<file.tl>] [--check]
   typelisp inspect <file.tlci>
 ```
@@ -6920,8 +6920,6 @@ unreachable binary-package declarations from entry/test/generated roots.
 Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
 `--redundant-function-name` (redundant module-prefix names), and
 `--prefer-dotted-field` (simple `struct-get` dotted-field syntax).
-`--legacy-path-import` reports compatibility-only string-path imports and
-includes the corresponding dotted import spelling in each finding.
 `--name-case` enables four independently suppressible rules:
 `global-name-case` for kebab-case top-level values,
 `function-name-case` for kebab-case functions, dispatch functions, and macros,

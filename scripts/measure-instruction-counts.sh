@@ -6,7 +6,9 @@ set -eu
 # This is a repeatable measurement harness, not a CI gate. It measures the full
 # process under valgrind/cachegrind and records the `Ir` event (executed
 # instructions) for TypeLisp benchmark binaries, their clang -O2 C baselines,
-# and for a compiler self-compile command. TypeLisp benchmark rows reproduce
+# and for a compiler self-compile command. Benchmark measurements also require
+# exact stdout, stderr, and exit-status parity across implementations and runs.
+# TypeLisp benchmark rows reproduce
 # across supported WSL/Linux and CI hosts. The full-process self_compile
 # absolute count is environment-specific; compare two trees back to back on one
 # host and use their delta. C baselines start Cachegrind instrumentation at the
@@ -69,8 +71,8 @@ Options:
   --c-scalar            Also build each C baseline with clang vectorization
                         disabled (-fno-vectorize -fno-slp-vectorize) and
                         measure it as benchmark/c-scalar/<name> (opt-in)
-  --self-test           Verify that the C measured region excludes startup and
-                        is reproducible; does not require a TypeLisp compiler
+  --self-test           Verify the C measured region, observable-output parity,
+                        and ratio reports; does not require a TypeLisp compiler
   -h, --help            Show this help
 
 Environment:
@@ -229,7 +231,7 @@ esac
 native_link_detect_host
 configure_toolchain
 
-for tool in valgrind awk tr sed basename dirname; do
+for tool in valgrind awk tr sed basename dirname cmp; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "missing tool: $tool" >&2
         exit 1
@@ -347,6 +349,36 @@ show_logs() {
     fi
 }
 
+observable_outputs_match() {
+    _oom_left_status=$1
+    _oom_left_stdout=$2
+    _oom_left_stderr=$3
+    _oom_right_status=$4
+    _oom_right_stdout=$5
+    _oom_right_stderr=$6
+
+    [ "$_oom_left_status" = "$_oom_right_status" ] &&
+        cmp -s "$_oom_left_stdout" "$_oom_right_stdout" &&
+        cmp -s "$_oom_left_stderr" "$_oom_right_stderr"
+}
+
+assert_observable_outputs_match() {
+    _aoom_label=$1
+    shift
+    if observable_outputs_match "$@"; then
+        return 0
+    fi
+
+    echo "[ir-count] observable output differs: $_aoom_label" >&2
+    echo "[ir-count] left:  status=$1 stdout=$2 stderr=$3" >&2
+    echo "[ir-count] right: status=$4 stdout=$5 stderr=$6" >&2
+    if command -v diff >/dev/null 2>&1; then
+        diff -u "$2" "$5" >&2 || true
+        diff -u "$3" "$6" >&2 || true
+    fi
+    exit 1
+}
+
 cachegrind_ir() {
     awk '
         /^events:/ {
@@ -423,14 +455,18 @@ measure_repeated() {
     min=
     max=
     first_status=
+    first_stdout=
+    first_stderr=
     status_stable=1
     run=1
     while [ "$run" -le "$RUNS" ]; do
         echo "[ir-count] $kind/$name run $run"
         run_cachegrind "$kind" "$name" "$run" "$instr_at_start" "$@"
+        safe=$(safe_name "$kind-$name-$run")
+        current_stdout="$WORKDIR/logs/$safe.stdout"
+        current_stderr="$WORKDIR/logs/$safe.stderr"
         if [ "$require_zero" -eq 1 ] && [ "$LAST_STATUS" -ne 0 ]; then
-            safe=$(safe_name "$kind-$name-$run")
-            show_logs "$WORKDIR/logs/$safe.stdout" "$WORKDIR/logs/$safe.stderr"
+            show_logs "$current_stdout" "$current_stderr"
             fail "$kind/$name run $run exited $LAST_STATUS"
         fi
         if [ -z "$first" ]; then
@@ -438,7 +474,13 @@ measure_repeated() {
             min=$LAST_IR
             max=$LAST_IR
             first_status=$LAST_STATUS
+            first_stdout=$current_stdout
+            first_stderr=$current_stderr
         else
+            assert_observable_outputs_match \
+                "$kind/$name run 1 vs run $run" \
+                "$first_status" "$first_stdout" "$first_stderr" \
+                "$LAST_STATUS" "$current_stdout" "$current_stderr"
             if [ "$LAST_IR" -lt "$min" ]; then min=$LAST_IR; fi
             if [ "$LAST_IR" -gt "$max" ]; then max=$LAST_IR; fi
             if [ "$LAST_STATUS" != "$first_status" ]; then status_stable=0; fi
@@ -458,6 +500,8 @@ measure_repeated() {
         fail "$kind/$name exit status was not stable across $RUNS runs"
     fi
     LAST_SUMMARY_STATUS=$first_status
+    LAST_SUMMARY_STDOUT=$first_stdout
+    LAST_SUMMARY_STDERR=$first_stderr
 }
 
 build_c_region_self_test() {
@@ -528,6 +572,8 @@ build_typelisp_benchmark() {
     # shellcheck disable=SC2086
     measure_repeated "benchmark/typelisp" "$name" 0 yes "$bin" $bench_args
     TL_STATUS=$LAST_SUMMARY_STATUS
+    TL_STDOUT=$LAST_SUMMARY_STDOUT
+    TL_STDERR=$LAST_SUMMARY_STDERR
 }
 
 build_c_benchmark() {
@@ -550,6 +596,8 @@ build_c_benchmark() {
     # shellcheck disable=SC2086
     measure_repeated "benchmark/c" "$name" 0 no "$bin" $bench_args
     C_STATUS=$LAST_SUMMARY_STATUS
+    C_STDOUT=$LAST_SUMMARY_STDOUT
+    C_STDERR=$LAST_SUMMARY_STDERR
 }
 
 build_c_scalar_benchmark() {
@@ -572,6 +620,8 @@ build_c_scalar_benchmark() {
     # shellcheck disable=SC2086
     measure_repeated "benchmark/c-scalar" "$name" 0 no "$bin" $bench_args
     C_SCALAR_STATUS=$LAST_SUMMARY_STATUS
+    C_SCALAR_STDOUT=$LAST_SUMMARY_STDOUT
+    C_SCALAR_STDERR=$LAST_SUMMARY_STDERR
 }
 
 build_benchmark_pair() {
@@ -586,14 +636,19 @@ build_benchmark_pair() {
 
     build_typelisp_benchmark "$bench_tl" "$name"
     build_c_benchmark "$baseline_c" "$name"
-    [ "$TL_STATUS" = "$C_STATUS" ] || {
-        fail "benchmark $name observable output differs (typelisp exit $TL_STATUS, C exit $C_STATUS)"
-    }
+    assert_observable_outputs_match \
+        "benchmark $name TypeLisp vs auto-vectorized C" \
+        "$TL_STATUS" "$TL_STDOUT" "$TL_STDERR" \
+        "$C_STATUS" "$C_STDOUT" "$C_STDERR"
     if [ "$C_SCALAR" -eq 1 ]; then
         build_c_scalar_benchmark "$baseline_c" "$name"
-        [ "$C_SCALAR_STATUS" = "$C_STATUS" ] || {
-            fail "benchmark $name scalar C baseline output differs (c-scalar exit $C_SCALAR_STATUS, C exit $C_STATUS)"
-        }
+        assert_observable_outputs_match \
+            "benchmark $name TypeLisp vs scalar C" \
+            "$TL_STATUS" "$TL_STDOUT" "$TL_STDERR" \
+            "$C_SCALAR_STATUS" "$C_SCALAR_STDOUT" "$C_SCALAR_STDERR"
+        echo "[ir-count] benchmark $name observable output matches across TypeLisp, C, and scalar C"
+    else
+        echo "[ir-count] benchmark $name observable output matches across TypeLisp and C"
     fi
 }
 
@@ -746,6 +801,34 @@ run_ratio_self_test() {
     echo "[ir-count] benchmark ratio self-test passed"
 }
 
+run_observable_output_self_test() {
+    observable_dir="$WORKDIR/observable-output-self-test"
+    mkdir -p "$observable_dir"
+    printf 'same output\n' > "$observable_dir/left.stdout"
+    printf 'same output\n' > "$observable_dir/right.stdout"
+    : > "$observable_dir/left.stderr"
+    : > "$observable_dir/right.stderr"
+
+    observable_outputs_match \
+        0 "$observable_dir/left.stdout" "$observable_dir/left.stderr" \
+        0 "$observable_dir/right.stdout" "$observable_dir/right.stderr" ||
+        fail "observable-output self-test rejected identical results"
+
+    printf 'different output\n' > "$observable_dir/right.stdout"
+    if observable_outputs_match \
+        0 "$observable_dir/left.stdout" "$observable_dir/left.stderr" \
+        0 "$observable_dir/right.stdout" "$observable_dir/right.stderr"; then
+        fail "observable-output self-test accepted different stdout"
+    fi
+    printf 'same output\n' > "$observable_dir/right.stdout"
+    if observable_outputs_match \
+        0 "$observable_dir/left.stdout" "$observable_dir/left.stderr" \
+        1 "$observable_dir/right.stdout" "$observable_dir/right.stderr"; then
+        fail "observable-output self-test accepted different exit status"
+    fi
+    echo "[ir-count] observable-output self-test passed"
+}
+
 measure_self_compile() {
     asm="$WORKDIR/bin/self-compile.opt$OPT_LEVEL.s"
     measure_repeated self_compile "compile_cli_opt$OPT_LEVEL" 1 yes \
@@ -760,6 +843,7 @@ measure_self_compile() {
 
 if [ "$SELF_TEST" -eq 1 ]; then
     run_c_region_self_test
+    run_observable_output_self_test
     run_ratio_self_test
     exit 0
 fi

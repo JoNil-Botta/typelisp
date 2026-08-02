@@ -1,6 +1,6 @@
 .data
-.globl _tl_shared_shared
-_tl_shared_shared:
+.globl _tl_shared_shared_shared
+_tl_shared_shared_shared:
     .quad 2
     .section .rodata
 .L_tl_str_data_l10_304307728_937500463:
@@ -572,8 +572,8 @@ tl_oom_abort:
     addq $40, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
 
-.globl _tl_helper_helper_opaque
-_tl_helper_helper_opaque:
+.globl _tl_helper_helper_helper_opaque
+_tl_helper_helper_helper_opaque:
     subq $72, %rsp
     movq %rdi, 56(%rsp)
     movq %rsi, 48(%rsp)
@@ -585,7 +585,7 @@ _tl_helper_helper_opaque:
     subq $1, %r8
     movq 56(%rsp), %rdi
     movq %r8, %rsi
-    call _tl_helper_helper_opaque
+    call _tl_helper_helper_helper_opaque
     movq %rax, 8(%rsp)
     movq 56(%rsp), %rax
     movq 8(%rsp), %r8
@@ -597,24 +597,24 @@ _tl_helper_helper_opaque:
     addq $72, %rsp
     ret
 
-.globl _tl_helper_helper
-_tl_helper_helper:
+.globl _tl_helper_helper_helper
+_tl_helper_helper_helper:
     subq $40, %rsp
 .Lf19_entry:
     movl $38, %r9d
-    movq _tl_shared_shared(%rip), %r8
+    movq _tl_shared_shared_shared(%rip), %r8
     addq %r8, %r9
     movq %r9, %rdi
     movl $1, %esi
     addq $40, %rsp
-    jmp _tl_helper_helper_opaque
+    jmp _tl_helper_helper_helper_opaque
 
 .globl main
 main:
     subq $24, %rsp
 .Lf20_entry:
-    call _tl_helper_helper
-    movq _tl_shared_shared(%rip), %r8
+    call _tl_helper_helper_helper
+    movq _tl_shared_shared_shared(%rip), %r8
     addq %r8, %rax
     addq $24, %rsp
     ret

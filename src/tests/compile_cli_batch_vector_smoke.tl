@@ -1,8 +1,9 @@
 ;; compile_cli_batch_vector_smoke.tl - Batch-entry generated-vector regression.
 (import stdlib.string)
 (import stdlib.vector)
+(import stdlib.io)
 (import (vector.vector String) as cli_svec)
-(import "../compile_cli_core.tl")
+(import compile_cli_core)
 
 (define (compile-cli-batch-vector-entry-at?
   [entries : (& entries cli_svec.Vec)]
@@ -22,7 +23,7 @@
     ;; Each parsed batch entry occupies an adjacent input/output pair.
     [entries : cli_svec.Vec (cli_svec.new)]
     [status : i64
-      (compile-cli-batch-parse-entries-into!
+      (compile_cli_core.compile-cli-batch-parse-entries-into!
         source
         0
         1
@@ -30,7 +31,12 @@
         (&mut entries))]
     [empty : cli_svec.Vec (cli_svec.new)]
     [empty-status : i64
-      (compile-cli-batch-parse-entries-into! "" 0 1 0 (&mut empty))]
+      (compile_cli_core.compile-cli-batch-parse-entries-into!
+        ""
+        0
+        1
+        0
+        (&mut empty))]
     (and
       (= status 0)
       (= (cli_svec.len (& entries)) 12)
@@ -65,7 +71,7 @@
       "auto.tl|auto.obj|auto.s\r\nforced.tl|forced.obj|forced.s|force-assembly"]
     [entries : cli_svec.Vec (cli_svec.new)]
     [status : i64
-      (compile-cli-windows-batch-parse-entries-into!
+      (compile_cli_core.compile-cli-windows-batch-parse-entries-into!
         source
         0
         1
@@ -99,17 +105,17 @@
           "forced.s"
           "force-assembly")
         (string.eq
-          (compile-cli-windows-batch-result-plan (& results))
+          (compile_cli_core.compile-cli-windows-batch-result-plan (& results))
           "auto.tl|coff-object|auto.obj|none\nforced.tl|assembly|forced.s|forced-assembly\n")))))
 
 (test
   compile-cli-batch-entry-generated-vector-growth-order
   (unless
     (compile-cli-batch-vector-growth-order-ok?)
-    (panic "compile: batch entry generated vector growth/order smoke failed")))
+    (io.panic "compile: batch entry generated vector growth/order smoke failed")))
 
 (test
   compile-cli-windows-batch-plan-contract
   (unless
     (compile-cli-windows-batch-vector-contract-ok?)
-    (panic "compile: Windows batch plan contract smoke failed")))
+    (io.panic "compile: Windows batch plan contract smoke failed")))

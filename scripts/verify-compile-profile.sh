@@ -429,6 +429,22 @@ assert_profile_live_counter_at_least_in() {
     fi
 }
 
+assert_profile_counter_at_most_in() {
+    _file=$1
+    _phase=$2
+    _max=$3
+    _stdout=$4
+    _stderr=$5
+    _value=$(profile_counter_value_in "$_file" "$_phase") || {
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "missing profile counter $_phase"
+    }
+    if [ "$_value" -gt "$_max" ]; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "profile counter $_phase crossed $_max: $_value"
+    fi
+}
+
 assert_profile_total_peak_covers_live_in() {
     _file=$1
     _stdout=$2
@@ -1070,6 +1086,9 @@ fi
 # typecheck boundary before the change and 6180 after (+140), and 6144 was the
 # 6-segment capacity. The expr pools grew too (+1838..+2254 nodes) but held
 # their segment counts, which is the sizing this trade was designed to buy.
+# #6193's dotted-module migration crossed the next type-pool typecheck boundary,
+# 7 -> 8 segments: the authoritative Windows selfhost probe measured 7346 used
+# nodes, 8192 capacity, and 196608 physical payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1108,10 +1127,10 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool typecheck 29 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 22 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 7 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 8 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;
@@ -1145,6 +1164,23 @@ if [ "$NL_HOST_OS" = windows ]; then
         "typecheck.env.borrow_lifetime_scan_max")
     [ "$BORROW_LIFETIME_SCAN_MAX" -le 256 ] ||
         fail "borrow lifetime scan crossed lexical boundary: $BORROW_LIFETIME_SCAN_MAX bindings"
+    # Dotted imports revisit module markers thousands of times. Module-local
+    # macro and lowering views must therefore be reused by module, rather than
+    # rebuilt into fresh immutable overlays at every marker. The fixed #6193
+    # selfhost measures about 1.02M macro entries and 780K lowering entries;
+    # the broken traversal emitted 74.4M and 13.5M respectively.
+    assert_profile_counter_at_most_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.env.macro_cache_entries" \
+        2000000 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_counter_at_most_in \
+        "$SELFHOST_STDERR" \
+        "lower.name_cache.entries" \
+        1500000 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
 else
     echo "[compile-profile] selfhost allocation probe and pool pins SKIPPED (windows-gated)"
 fi

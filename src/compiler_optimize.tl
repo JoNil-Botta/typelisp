@@ -18418,6 +18418,22 @@
 (define (opt-licm-mode-vector? [mode : i64]) : bool
   (= mode 2))
 
+;; `descriptor-header-hoist?` licenses the descriptor-header exception to the
+;; return-shaped side-exit suppression (see opt-licm-apply-loop): it is true
+;; exactly when this is a late (post-BCE) run AND the loop body's raw store
+;; summary is header-load-safe -- no call with an unknown or memory-writing
+;; effect and no header-or-unknown store anywhere in the body (element-only
+;; stores through a descriptor's loaded data pointer remain, but those write
+;; element storage, which the memory model keeps disjoint from descriptor
+;; header words). Under that condition a `Load` whose address is a descriptor
+;; header slot -- the data-pointer slot or the length slot of a loop-invariant
+;; array/string handle -- reads the same value on every iteration, so moving
+;; it to the preheader is sound: nothing in the body can write the slot, and
+;; reading the header of a live descriptor is always safe (a dangling handle
+;; is already UB; the bce guard hoist and the unsuppressed loops already
+;; speculate header loads the same way). The exception is late-only for the
+;; established reason: before BCE, moving a descriptor length can hide the
+;; shared bound identity bounds-check elimination still needs.
 (define (opt-licm-candidate?
   [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
@@ -18431,6 +18447,7 @@
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
   [licm-mode : i64]
+  [descriptor-header-hoist? : bool]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _)
@@ -18513,19 +18530,32 @@
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources src)
         (opt-licm-value-invariant? loop-defs hoisted src)
-        (opt-licm-memory-safe?
-          store-summary
-          legacy-store-summary
-          store-roots
-          any-call?
-          (opt-licm-root-of-value roots src)
+        (or
+          (opt-licm-memory-safe?
+            store-summary
+            legacy-store-summary
+            store-roots
+            any-call?
+            (opt-licm-root-of-value roots src)
+            (and
+              (opt-licm-store-summary-header-load-safe? legacy-store-summary)
+              (opt-licm-header-slot-source?
+                type-segment-bases
+                types
+                ptrs
+                (opt-licm-mode-late? licm-mode)
+                src)))
+          ;; Descriptor-header exception: when the body provably cannot write
+          ;; a descriptor header (see the define-site comment), a header-slot
+          ;; load of a loop-invariant descriptor handle moves out even though
+          ;; the return-shaped side-exit poison closed the general path.
           (and
-            (opt-licm-store-summary-header-load-safe? legacy-store-summary)
+            descriptor-header-hoist?
             (opt-licm-header-slot-source?
               type-segment-bases
               types
               ptrs
-              (opt-licm-mode-late? licm-mode)
+              true
               src))))]
     [_ false]))
 
@@ -18550,6 +18580,7 @@
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
   [licm-mode : i64]
+  [descriptor-header-hoist? : bool]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult.Result
@@ -18572,6 +18603,7 @@
         store-roots
         any-call?
         licm-mode
+        descriptor-header-hoist?
         instr)
         (match (opt-licm-filter-instr-seq-from
           type-segment-bases
@@ -18587,6 +18619,7 @@
           store-roots
           any-call?
           licm-mode
+          descriptor-header-hoist?
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult.Result kept moved next-hoisted _)
             (OptLicmInstrsResult.Result
@@ -18608,6 +18641,7 @@
           store-roots
           any-call?
           licm-mode
+          descriptor-header-hoist?
           hoisted)
           [(OptLicmInstrsResult.Result kept moved next-hoisted changed)
             (OptLicmInstrsResult.Result
@@ -18629,6 +18663,7 @@
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
   [licm-mode : i64]
+  [descriptor-header-hoist? : bool]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     type-segment-bases
@@ -18644,6 +18679,7 @@
     store-roots
     any-call?
     licm-mode
+    descriptor-header-hoist?
     hoisted))
 
 (define (opt-licm-filter-body-blocks
@@ -18659,6 +18695,7 @@
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
   [licm-mode : i64]
+  [descriptor-header-hoist? : bool]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmBlocksResult
   (match blocks
     [(ir.CompilerIrBlockList.Nil)
@@ -18683,6 +18720,7 @@
             store-roots
             any-call?
             licm-mode
+            descriptor-header-hoist?
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
@@ -18698,6 +18736,7 @@
                 store-roots
                 any-call?
                 licm-mode
+                descriptor-header-hoist?
                 next-hoisted)
                 [(OptLicmBlocksResult.Result
                     rest-blocks
@@ -18725,6 +18764,7 @@
         store-roots
         any-call?
         licm-mode
+        descriptor-header-hoist?
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -19252,6 +19292,22 @@
         ;; return-shaped (reaches Return through staging-only blocks; an
         ;; aborting runtime call also qualifies), by folding a header-store
         ;; poison into the summary. Pure BinOp/UnOp hoisting is unaffected.
+        ;; The poison is a profitability gate, not a soundness one, so one
+        ;; load class is excepted from it: descriptor header loads (the
+        ;; data-pointer or length slot of a loop-invariant array/string
+        ;; handle) still move out of a suppressed loop when the RAW body
+        ;; summary is header-load-safe -- no call that may write and no
+        ;; header-or-unknown store, element stores excepted because they
+        ;; cannot touch header words (see opt-licm-candidate?). Their
+        ;; descriptor-address Geps already ride the late-mode exemption, so
+        ;; the loaded value replaces the address's loop-spanning live range
+        ;; instead of adding a new one. The flag stays false pre-BCE (late?
+        ;; is false there): moving a descriptor length that early can hide
+        ;; the shared bound identity bounds-check elimination needs.
+        [descriptor-header-hoist? : bool
+          (and
+            late?
+            (opt-licm-store-summary-header-load-safe? raw-legacy-summary))]
         [store-summary : OptLicmStoreSummary
           (if (= side-exit-kind 1)
             (opt-licm-store-summary-merge
@@ -19286,6 +19342,7 @@
               2
               1)
             0)
+          descriptor-header-hoist?
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             (if changed
@@ -31381,6 +31438,29 @@
   (Nil)
   (Cons OptRangeFact (Box OptRangeFacts)))
 
+;; Program facts for function-scope global-cell invariance (the "global_cell"
+;; pass): which globals can have their cell loaded once at a function's entry
+;; and have every in-function use rewritten to that SSA var. `addr-taken`
+;; holds every global whose `ir.CompilerIrValue.GlobalAddr` appears anywhere in the
+;; program (a store_ptr/syscall/callee could write the cell through such a
+;; pointer); `type-index`/`types` map a global's symbol id to its declared
+;; ast.AstType so the entry load's Mov carries the exact cell type; `word-cell` is
+;; the count of globals that pass both the not-address-taken and the
+;; single-word-cell filters (a cheap per-function skip when zero). Built once
+;; per program at level 2; empty (and the pass a no-op) elsewhere.
+(defstruct OptGlobalCellSummary
+  (addr-taken opt_i64_i64_map.Map)
+  (type-index opt_i64_i64_map.Map)
+  (types (Array ast.AstType))
+  (word-cell i64))
+
+(define (opt-global-cell-summary-empty) : OptGlobalCellSummary
+  (OptGlobalCellSummary
+    (opt_i64_i64_map.with-capacity 1)
+    (opt_i64_i64_map.with-capacity 1)
+    (array.make-array ast.AstType 0)
+    0))
+
 (defstruct OptLoopBceSummaries
   (enabled bool)
   ;; Compile-profile ownership follows the already per-program summary bundle.
@@ -31402,7 +31482,10 @@
   ;; than threaded as a separate parameter) because both are built once per
   ;; program and consumed in the same per-function level-2 pass. Empty unless
   ;; the program qualifies for summary construction.
-  (const-divisors opt_i64_i64_map.Map))
+  (const-divisors opt_i64_i64_map.Map)
+  ;; Whole-program global-cell invariance facts (see OptGlobalCellSummary);
+  ;; consumed by the global_cell pass in the level-2 fixpoint pipeline.
+  (global-cell OptGlobalCellSummary))
 
 (defstruct OptLoopBceState
   (exprs OptLoopBceExprEnv)
@@ -31448,7 +31531,8 @@
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
-    (opt_i64_i64_map.with-capacity 8)))
+    (opt_i64_i64_map.with-capacity 8)
+    (opt-global-cell-summary-empty)))
 
 (define (opt-loop-bce-summary-length-clean?
   [summaries : OptLoopBceSummaries]
@@ -40648,6 +40732,16 @@
 ;;   * idx == the counter phi      -> every trip index lies in [seed, bound),
 ;;     so `seed >= 0 && bound <= len` (signed) proves every check passes;
 ;;   * idx == BitAnd(_, M), M >= 0 -> the index lies in [0, M], so `M < len`;
+;;   * idx == scale*counter+k (literal coefficients, scale > 0), or the same
+;;     PLUS a loop-invariant VARIABLE base B when scale > 1 (either Add
+;;     operand order), or idx == B + dphi + k with dphi a derived induction
+;;     phi (invariant init, literal step > 1) -> a wrap-safe quotient guard
+;;     over the trip range; the variable-base forms synthesize the derived
+;;     seed in the guard (see opt-bce-version-var-base-scaled-guard and
+;;     opt-bce-version-var-base-derived-guard). Scale-1 variable-base indices
+;;     stay OUT of this pass on purpose: one guard per loop entry cannot pay
+;;     for one removed check per trip on pico-trip loops (measured on
+;;     intern_table's tail and miss-copy loops);
 ;;   * idx loop-invariant          -> `idx >= 0 && idx < len`.
 ;; The loop is VERSIONED on the conjunction: a fresh guard block on the entry
 ;; edge branches to a check-free fast clone when every condition holds and to
@@ -40658,6 +40752,14 @@
 ;; non-negative. Store-bearing bodies are ADMITTED (unlike the unroller):
 ;; under a true guard the clone is instruction-for-instruction the original.
 ;;
+;; A check whose condition cannot be derived no longer rejects the loop: with
+;; at least one derived check the loop PARTIALLY versions, and each
+;; underivable check STAYS (remapped) in the fast clone, preserving the slow
+;; path's exact abort semantics for its index. The guard then constrains only
+;; the removed checks; kept checks still execute (and may still abort) on the
+;; fast path. A kept check was underivable when its clone was built, so the
+;; fast clone cannot re-version on a later pipeline round.
+;;
 ;; Exit wiring exploits the post-rotation invariant: the loop block does not
 ;; dominate its exit when the exit has another predecessor, so loop defs reach
 ;; outside code only as exit-phi inputs on the loop edge -- each such input
@@ -40666,8 +40768,8 @@
 ;;
 ;; The pass runs between induction and unroll so the fast clone -- now a pure
 ;; whitelisted body -- unrolls in the SAME pipeline iteration. Rejections:
-;; non-canonical counters, multi-block loops, a check whose condition cannot
-;; be derived, and pre-existing version labels (idempotence). Verifier-gated
+;; non-canonical counters, multi-block loops, a loop with NO derivable check,
+;; and pre-existing version labels (idempotence). Verifier-gated
 ;; with fallback like unroll.
 (defenum OptBceVersionGuardAcc
   (No)
@@ -40676,6 +40778,37 @@
 (defenum OptBceVersionGuardResult
   (No)
   (Some ir.CompilerIrInstrList ir.CompilerIrValue))
+
+;; Underivable checks kept in the fast clone, identified by instruction index:
+;; guard derivation and cloning walk the same block instruction sequence in
+;; the same order, so the index is a stable identity between the two.
+(defenum OptBceVersionKeep
+  (Nil)
+  (Cons i64 (Box OptBceVersionKeep)))
+
+(define (opt-bce-version-keep-contains?
+  [keep : OptBceVersionKeep]
+  [index : i64]) : bool
+  (match keep
+    [(OptBceVersionKeep.Nil) false]
+    [(OptBceVersionKeep.Cons item rest)
+      (if (= item index)
+        true
+        (opt-bce-version-keep-contains? (box-get rest) index))]))
+
+;; Derivation fold state: the guard accumulator (conditions for REMOVED
+;; checks), the kept-check set, and how many checks derived -- partial
+;; versioning requires at least one derivable check to make cloning pay.
+(defstruct OptBceVersionDerive
+  (guard OptBceVersionGuardAcc)
+  (keep OptBceVersionKeep)
+  (derived i64))
+
+;; guard-conds output: the guard instructions + value plus the kept-check set
+;; the clone must preserve (remapped) instead of dropping.
+(defenum OptBceVersionGuardOut
+  (No)
+  (Some ir.CompilerIrInstrList ir.CompilerIrValue OptBceVersionKeep))
 
 (define (opt-bce-version-body-max) : i64
   48)
@@ -41225,6 +41358,581 @@
               capacity-safe)]
           (opt-bce-version-cond-counter-seen minimum-safe))])))
 
+;; --- strided variable-base indices ----------------------------------------------
+;;
+;; A check index of the form `B + T + k` with a loop-invariant VARIABLE base B
+;; (either Add operand order, literal k peeled off either level) and T a
+;; strided trip expression:
+;;
+;;   * T = scale*counter + k2 with a literal scale > 1 -- induction lowering
+;;     has not (or not yet) strength-reduced the multiply. Scale 1 stays out
+;;     of this pass: one guard per loop entry cannot pay for one removed
+;;     check per trip on pico-trip loops (the measured intern_table
+;;     regression), so the literal scale-1 counter forms keep their existing
+;;     handling and variable-base scale-1 forms reject;
+;;   * T = dphi + k2 with dphi a derived induction phi (invariant init d0,
+;;     literal step > 1) -- the shape induction lowering leaves behind for
+;;     `B + scale*counter + k` once the multiply becomes the phi's step.
+;;     Step 1 stays out for the same reason as scale 1: it degenerates to
+;;     one removed check per trip per entry guard (the measured pico-trip
+;;     loser class), and the primary counter is itself a step-1 phi, so an
+;;     ungated step-1 form would smuggle `base + counter` back in.
+;;
+;; Overflow-checked literal accumulation for the offset peeling below: the
+;; coefficients must stay mathematical (a wrapped offset could disguise an
+;; unbounded index expression), so an overflow rejects the whole recovery.
+(defenum OptBceVersionKSum
+  (No)
+  (Some i64))
+
+(define (opt-bce-version-k-add [a : i64] [b : i64]) : OptBceVersionKSum
+  (let
+    [minimum : i64 (- (- 0 9223372036854775807) 1)]
+    (if (or
+      (and (> b 0) (> a (- 9223372036854775807 b)))
+      (and (< b 0) (< a (- minimum b))))
+      (OptBceVersionKSum.No)
+      (OptBceVersionKSum.Some (+ a b)))))
+
+;; A strided trip expression under the variable base: `scale*counter + k`
+;; with literal scale > 1, or a derived induction phi (invariant init d0,
+;; literal step > 0) plus peeled literal k.
+(defenum OptBceVarBaseStrided
+  (No)
+  (Scaled i64 i64)
+  (Derived ir.CompilerIrValue i64 i64))
+
+;; The peel result: the remaining core variable and the accumulated literal.
+(defenum OptBceVersionStridedCore
+  (No)
+  (Some i64 i64))
+
+;; Peel literal Add/Sub addends off an index expression, returning the
+;; remaining core variable and the accumulated literal. Peeling stops at the
+;; first definition that is not a literal addend link (a var+var Add, a phi,
+;; a load, ...); a non-variable expression rejects.
+(define (opt-bce-version-strided-peel
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [value : ir.CompilerIrValue]
+  [k : i64]
+  [fuel : i64]) : OptBceVersionStridedCore
+  (match value
+    [(ir.CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+        [def-index : i64 (opt-unroll-def-index slots 0 last id)]
+        (if (or (<= fuel 0) (< def-index 0))
+          (OptBceVersionStridedCore.Some id k)
+          (match (array-ref slots def-index)
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not (opt-affine-64bit-type? ty))
+                (OptBceVersionStridedCore.Some id k)
+                (match op
+                  [(ir.CompilerIrBinOp.Add)
+                    (match (opt-affine-var-const lhs rhs)
+                      [(OptAffineOperands.Some src c)
+                        (match (opt-bce-version-k-add k c)
+                          [(OptBceVersionKSum.No) (OptBceVersionStridedCore.No)]
+                          [(OptBceVersionKSum.Some next)
+                            (opt-bce-version-strided-peel
+                              instrs
+                              phi-count
+                              last
+                              (ir.CompilerIrValue.Var src)
+                              next
+                              (- fuel 1))])]
+                      [(OptAffineOperands.No)
+                        (OptBceVersionStridedCore.Some id k)])]
+                  [(ir.CompilerIrBinOp.Sub)
+                    (match lhs
+                      [(ir.CompilerIrValue.Var src)
+                        (match rhs
+                          [(ir.CompilerIrValue.I64 c)
+                            (if (= c (- (- 0 9223372036854775807) 1))
+                              (OptBceVersionStridedCore.Some id k)
+                              (match (opt-bce-version-k-add k (- 0 c))
+                                [(OptBceVersionKSum.No)
+                                  (OptBceVersionStridedCore.No)]
+                                [(OptBceVersionKSum.Some next)
+                                  (opt-bce-version-strided-peel
+                                    instrs
+                                    phi-count
+                                    last
+                                    (ir.CompilerIrValue.Var src)
+                                    next
+                                    (- fuel 1))]))]
+                          [_ (OptBceVersionStridedCore.Some id k)])]
+                      [_ (OptBceVersionStridedCore.Some id k)])]
+                  [_ (OptBceVersionStridedCore.Some id k)]))]
+            [_ (OptBceVersionStridedCore.Some id k)])))]
+    [_ (OptBceVersionStridedCore.No)]))
+
+;; The strided side as a derived induction phi (possibly under peeled literal
+;; addends): opt-bce-version-derived-induction pins the invariant init and
+;; the positive literal step.
+(define (opt-bce-version-strided-derived
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]) : OptBceVarBaseStrided
+  (match (opt-bce-version-strided-peel instrs phi-count last value 0 fuel)
+    [(OptBceVersionStridedCore.No) (OptBceVarBaseStrided.No)]
+    [(OptBceVersionStridedCore.Some core total)
+      (let
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+        [def-index : i64 (opt-unroll-def-index slots 0 last core)]
+        (if (< def-index 0)
+          (OptBceVarBaseStrided.No)
+          (match (array-ref slots def-index)
+            [(ir.CompilerIrInstr.Phi _ inputs pty)
+              (match pty
+                [(ast.AstType.I64)
+                  (match (opt-bce-version-derived-induction
+                    instrs
+                    phi-count
+                    last
+                    defs
+                    loop-label
+                    pred-label
+                    core
+                    inputs)
+                    [(OptBceDerivedInduction.No) (OptBceVarBaseStrided.No)]
+                    [(OptBceDerivedInduction.Some d0 step)
+                      (if (> step 1)
+                        (OptBceVarBaseStrided.Derived d0 step total)
+                        (OptBceVarBaseStrided.No))])]
+                [_ (OptBceVarBaseStrided.No)])]
+            [_ (OptBceVarBaseStrided.No)])))]))
+
+;; One Add side as the strided part: the literal-coefficient recovery first
+;; (it sees through Add/Sub/Mul chains over the counter), then the
+;; derived-induction form for the strength-reduced shape.
+(define (opt-bce-version-strided-side
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
+  [iphi : i64]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]) : OptBceVarBaseStrided
+  (match (opt-bce-version-counter-affine instrs phi-count last iphi value fuel)
+    [(OptBceCounterAffine.No)
+      (opt-bce-version-strided-derived
+        instrs
+        phi-count
+        last
+        defs
+        loop-label
+        pred-label
+        value
+        fuel)]
+    [(OptBceCounterAffine.Some scale k)
+      (if (> scale 1)
+        (OptBceVarBaseStrided.Scaled scale k)
+        (OptBceVarBaseStrided.No))]))
+
+;; The synthesized derived seed: an invariant base value, an optional second
+;; invariant value, a literal offset, and the guard instruction stream the
+;; emitted adds landed on.
+(defstruct OptBceSynthSeed
+  (value ir.CompilerIrValue)
+  (instrs ir.CompilerIrInstrList))
+
+;; Fold the literal pieces and emit the adds for `base + extra + offset` into
+;; the guard stream. Every fold and every emitted Add wraps exactly like the
+;; body's own arithmetic: the language defines i64 arithmetic to wrap, so the
+;; synthesized seed equals `base + extra + offset` modulo 2^64 no matter how
+;; the pieces associate -- the same value the body's index computation
+;; produces, and the value the derived-induction guard's conditions judge
+;; (see opt-bce-version-var-base-scaled-guard for the full argument).
+(define (opt-bce-version-guard-seed-sum
+  [cell : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrList]
+  [base : ir.CompilerIrValue]
+  [extra : ir.CompilerIrMaybeValue]
+  [offset : i64]) : OptBceSynthSeed
+  (let
+    [off1 : i64
+      (match base
+        [(ir.CompilerIrValue.I64 b) (+ offset b)]
+        [_ offset])]
+    [base-term : ir.CompilerIrMaybeValue
+      (match base
+        [(ir.CompilerIrValue.I64 _) (ir.CompilerIrMaybeValue.No)]
+        [_ (ir.CompilerIrMaybeValue.Some base)])]
+    [off2 : i64
+      (match extra
+        [(ir.CompilerIrMaybeValue.No) off1]
+        [(ir.CompilerIrMaybeValue.Some ev)
+          (match ev
+            [(ir.CompilerIrValue.I64 e) (+ off1 e)]
+            [_ off1])])]
+    [extra-term : ir.CompilerIrMaybeValue
+      (match extra
+        [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrMaybeValue.No)]
+        [(ir.CompilerIrMaybeValue.Some ev)
+          (match ev
+            [(ir.CompilerIrValue.I64 _) (ir.CompilerIrMaybeValue.No)]
+            [_ (ir.CompilerIrMaybeValue.Some ev)])])]
+    (match base-term
+      [(ir.CompilerIrMaybeValue.No)
+        (match extra-term
+          [(ir.CompilerIrMaybeValue.No)
+            (OptBceSynthSeed (ir.CompilerIrValue.I64 off2) instrs)]
+          [(ir.CompilerIrMaybeValue.Some v)
+            (if (= off2 0)
+              (OptBceSynthSeed v instrs)
+              (let
+                [d : i64 (opt-bce-version-alloc-var cell)]
+                (OptBceSynthSeed
+                  (ir.CompilerIrValue.Var d)
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.BinOp
+                      d
+                      (ir.CompilerIrBinOp.Add)
+                      v
+                      (ir.CompilerIrValue.I64 off2)
+                      (ast.AstType.I64))
+                    instrs))))])]
+      [(ir.CompilerIrMaybeValue.Some u)
+        (match extra-term
+          [(ir.CompilerIrMaybeValue.No)
+            (if (= off2 0)
+              (OptBceSynthSeed u instrs)
+              (let
+                [d : i64 (opt-bce-version-alloc-var cell)]
+                (OptBceSynthSeed
+                  (ir.CompilerIrValue.Var d)
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.BinOp
+                      d
+                      (ir.CompilerIrBinOp.Add)
+                      u
+                      (ir.CompilerIrValue.I64 off2)
+                      (ast.AstType.I64))
+                    instrs))))]
+          [(ir.CompilerIrMaybeValue.Some v)
+            (let
+              [d1 : i64 (opt-bce-version-alloc-var cell)]
+              [with-sum : ir.CompilerIrInstrList
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    d1
+                    (ir.CompilerIrBinOp.Add)
+                    u
+                    v
+                    (ast.AstType.I64))
+                  instrs)]
+              (if (= off2 0)
+                (OptBceSynthSeed (ir.CompilerIrValue.Var d1) with-sum)
+                (let
+                  [d2 : i64 (opt-bce-version-alloc-var cell)]
+                  (OptBceSynthSeed
+                    (ir.CompilerIrValue.Var d2)
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.BinOp
+                        d2
+                        (ir.CompilerIrBinOp.Add)
+                        (ir.CompilerIrValue.Var d1)
+                        (ir.CompilerIrValue.I64 off2)
+                        (ast.AstType.I64))
+                      with-sum)))))])])))
+
+;; Prove `base + scale*counter + offset` stays in [0, length) for every
+;; counter in [seed, bound), with `base` loop-invariant and `scale` a literal
+;; greater than 1. With trip = counter - seed the index is
+;;
+;;   derived-seed + trip * scale    where    derived-seed = base + scale*seed + offset
+;;
+;; so the positive-step derived-induction guard (step = scale) applies once
+;; the guard stream synthesizes derived-seed -- one mul by the literal scale
+;; when the seed is not a literal, plus the adds opt-bce-version-guard-seed-sum
+;; needs. The synthesis arithmetic wraps exactly like the body's own: the
+;; language defines i64 arithmetic to wrap, and the body computes its index
+;; as wrap(base + wrap(scale*counter) + offset), which two's-complement
+;; arithmetic rewrites as wrap(derived-seed + scale*trip) -- the SAME wrapped
+;; value the guard's conditions inspect. Where those conditions hold they pin
+;; derived-seed + scale*trip into [0, length) inside [0, 2^63), where
+;; wrapping is the identity, so every executed trip's index equals the
+;; mathematical in-range value and the removed check would have passed;
+;; anywhere they fail the checked slow path runs. A wrapped synthesis
+;; intermediate therefore needs no special rejection: it can only produce a
+;; derived-seed the guard then judges on its own terms (a wrapped-negative
+;; one fails `derived-seed >= 0`; a wrapped-positive one still makes every
+;; index coincide with the body's own wrapped computation). The INT64_MIN
+;; offset rejection is shared caution with the literal affine guard, not a
+;; soundness requirement of this construction.
+(define (opt-bce-version-var-base-scaled-guard
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [base : ir.CompilerIrValue]
+  [scale : i64]
+  [offset : i64]
+  [length : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (if (or (<= scale 1) (= offset (- (- 0 9223372036854775807) 1)))
+    (OptBceVersionGuardAcc.No)
+    (match acc
+      [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+      [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+        (match seed
+          [(ir.CompilerIrValue.I64 sk)
+            ;; The literal seed folds the product into the offset; the fold
+            ;; wraps like the runtime mul would.
+            (let
+              [synth : OptBceSynthSeed
+                (opt-bce-version-guard-seed-sum
+                  cell
+                  instrs
+                  base
+                  (ir.CompilerIrMaybeValue.No)
+                  (+ offset (* scale sk)))]
+              (opt-bce-version-derived-guard
+                seed
+                bound
+                (struct-get synth value)
+                scale
+                length
+                cell
+                (OptBceVersionGuardAcc.Some
+                  (struct-get synth instrs)
+                  values
+                  counter-seen)))]
+          [_
+            (let
+              [product : i64 (opt-bce-version-alloc-var cell)]
+              [synth : OptBceSynthSeed
+                (opt-bce-version-guard-seed-sum
+                  cell
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.BinOp
+                      product
+                      (ir.CompilerIrBinOp.Mul)
+                      seed
+                      (ir.CompilerIrValue.I64 scale)
+                      (ast.AstType.I64))
+                    instrs)
+                  base
+                  (ir.CompilerIrMaybeValue.Some
+                    (ir.CompilerIrValue.Var product))
+                  offset)]
+              (opt-bce-version-derived-guard
+                seed
+                bound
+                (struct-get synth value)
+                scale
+                length
+                cell
+                (OptBceVersionGuardAcc.Some
+                  (struct-get synth instrs)
+                  values
+                  counter-seen)))])])))
+
+;; Prove `base + dphi + offset` stays in [0, length) for every counter in
+;; [seed, bound), with `base` loop-invariant and dphi a derived induction phi
+;; (invariant init d0, literal step > 1 -- step 1 is the pico-trip
+;; guard-economics class and the primary counter's own step, so it stays
+;; out). With trip = counter - seed the phi is d0 + step*trip and the index
+;; is
+;;
+;;   derived-seed + trip * step    where    derived-seed = base + d0 + offset
+;;
+;; -- the derived-induction guard again, with the seed synthesized from
+;; invariant pieces (adds only; the multiply already lives on the phi's
+;; step). The wrap argument of opt-bce-version-var-base-scaled-guard applies
+;; unchanged: the body's wrapped index is wrap(derived-seed + step*trip) and
+;; the guard's conditions pin that value into the range where wrapping is
+;; the identity.
+(define (opt-bce-version-var-base-derived-guard
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [base : ir.CompilerIrValue]
+  [d0 : ir.CompilerIrValue]
+  [step : i64]
+  [offset : i64]
+  [length : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (if (or (<= step 1) (= offset (- (- 0 9223372036854775807) 1)))
+    (OptBceVersionGuardAcc.No)
+    (match acc
+      [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+      [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+        (let
+          [synth : OptBceSynthSeed
+            (opt-bce-version-guard-seed-sum
+              cell
+              instrs
+              base
+              (ir.CompilerIrMaybeValue.Some d0)
+              offset)]
+          (opt-bce-version-derived-guard
+            seed
+            bound
+            (struct-get synth value)
+            step
+            length
+            cell
+            (OptBceVersionGuardAcc.Some
+              (struct-get synth instrs)
+              values
+              counter-seen)))])))
+
+;; One Add side as the strided part, the other as the invariant base. Exactly
+;; one side may involve the counter: an in-loop base fails the
+;; invariant-operand check.
+(define (opt-bce-version-var-base-side-strided
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
+  [iphi : i64]
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [k0 : i64]
+  [affine-side : ir.CompilerIrValue]
+  [base-side : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match (opt-bce-version-strided-side
+    instrs
+    phi-count
+    last
+    defs
+    loop-label
+    pred-label
+    iphi
+    affine-side
+    16)
+    [(OptBceVarBaseStrided.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVarBaseStrided.Scaled scale k2)
+      (match (opt-bce-version-k-add k0 k2)
+        [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
+        [(OptBceVersionKSum.Some offset)
+          (match (opt-bce-version-invariant-operand
+            instrs
+            phi-count
+            last
+            defs
+            base-side)
+            [(ir.CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
+            [(ir.CompilerIrMaybeValue.Some base)
+              (opt-bce-version-var-base-scaled-guard
+                seed
+                bound
+                base
+                scale
+                offset
+                length-value
+                cell
+                acc)])])]
+    [(OptBceVarBaseStrided.Derived d0 step k2)
+      (match (opt-bce-version-k-add k0 k2)
+        [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
+        [(OptBceVersionKSum.Some offset)
+          (match (opt-bce-version-invariant-operand
+            instrs
+            phi-count
+            last
+            defs
+            base-side)
+            [(ir.CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
+            [(ir.CompilerIrMaybeValue.Some base)
+              (opt-bce-version-var-base-derived-guard
+                seed
+                bound
+                base
+                d0
+                step
+                offset
+                length-value
+                cell
+                acc)])])]))
+
+;; The full variable-base retry for a rejected literal-affine index: peel
+;; literal addends, then split the remaining var+var Add into an invariant
+;; base and a strided trip expression (either operand order).
+(define (opt-bce-version-var-base-strided
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [loop-label : i64]
+  [pred-label : i64]
+  [iphi : i64]
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [index-value : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match (opt-bce-version-strided-peel instrs phi-count last index-value 0 8)
+    [(OptBceVersionStridedCore.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVersionStridedCore.Some core k0)
+      (let
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+        [def-index : i64 (opt-unroll-def-index slots 0 last core)]
+        (if (< def-index 0)
+          (OptBceVersionGuardAcc.No)
+          (match (array-ref slots def-index)
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not (opt-affine-64bit-type? ty))
+                (OptBceVersionGuardAcc.No)
+                (match op
+                  [(ir.CompilerIrBinOp.Add)
+                    (let
+                      [attempt : OptBceVersionGuardAcc
+                        (opt-bce-version-var-base-side-strided
+                          instrs
+                          phi-count
+                          last
+                          defs
+                          loop-label
+                          pred-label
+                          iphi
+                          seed
+                          bound
+                          cell
+                          k0
+                          lhs
+                          rhs
+                          length-value
+                          acc)]
+                      (match attempt
+                        [(OptBceVersionGuardAcc.No)
+                          (opt-bce-version-var-base-side-strided
+                            instrs
+                            phi-count
+                            last
+                            defs
+                            loop-label
+                            pred-label
+                            iphi
+                            seed
+                            bound
+                            cell
+                            k0
+                            rhs
+                            lhs
+                            length-value
+                            acc)]
+                        [_ attempt]))]
+                  [_ (OptBceVersionGuardAcc.No)]))]
+            [_ (OptBceVersionGuardAcc.No)])))]))
+
 ;; Derive the sufficient invariant condition for one check's index operand.
 (define (opt-bce-version-derive-index
   [instrs : ir.CompilerIrInstrSeq]
@@ -41308,7 +42016,24 @@
                           iphi
                           (ir.CompilerIrValue.Var id)
                           16)
-                          [(OptBceCounterAffine.No) (OptBceVersionGuardAcc.No)]
+                          [(OptBceCounterAffine.No)
+                            ;; A var+var Add defeats the literal-coefficient
+                            ;; recovery: retry as `base + strided + k` with a
+                            ;; loop-invariant variable base.
+                            (opt-bce-version-var-base-strided
+                              instrs
+                              phi-count
+                              last
+                              defs
+                              loop-label
+                              pred-label
+                              iphi
+                              seed
+                              bound
+                              cell
+                              (ir.CompilerIrValue.Var id)
+                              length-value
+                              acc)]
                           [(OptBceCounterAffine.Some scale offset)
                             (opt-bce-version-affine-guard
                               seed
@@ -41345,6 +42070,12 @@
                   [_ (OptBceVersionGuardAcc.No)]))))))]
     [_ (OptBceVersionGuardAcc.No)]))
 
+;; Fold the per-check derivations over the loop body. A check whose length
+;; is not invariant or whose index does not derive is KEPT (remapped) in the
+;; fast clone instead of rejecting the whole loop -- the guard constrains
+;; only the removed checks, and the kept check preserves the slow path's
+;; exact abort semantics for its index. A failed derivation reverts to the
+;; state's guard, so no half-built condition survives.
 (define (opt-bce-version-derive-checks
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -41357,9 +42088,9 @@
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (__tl_dyn-array i64)]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [state : OptBceVersionDerive]) : OptBceVersionDerive
   (if (>= index last)
-    acc
+    state
     (opt-bce-version-derive-checks
       instrs
       (+ index 1)
@@ -41381,22 +42112,41 @@
             defs
             length-value)
             [(ir.CompilerIrMaybeValue.Some length-invariant)
-              (opt-bce-version-derive-index
-                instrs
-                phi-count
-                last
-                defs
-                loop-label
-                pred-label
-                iphi
-                seed
-                bound
-                cell
-                index-value
-                length-invariant
-                acc)]
-            [(ir.CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)])]
-        [_ acc]))))
+              (let
+                [derived-guard : OptBceVersionGuardAcc
+                  (opt-bce-version-derive-index
+                    instrs
+                    phi-count
+                    last
+                    defs
+                    loop-label
+                    pred-label
+                    iphi
+                    seed
+                    bound
+                    cell
+                    index-value
+                    length-invariant
+                    (struct-get state guard))]
+                (match derived-guard
+                  [(OptBceVersionGuardAcc.No)
+                    (OptBceVersionDerive
+                      (struct-get state guard)
+                      (OptBceVersionKeep.Cons
+                        index
+                        (box (struct-get state keep)))
+                      (struct-get state derived))]
+                  [(OptBceVersionGuardAcc.Some _ _ _)
+                    (OptBceVersionDerive
+                      derived-guard
+                      (struct-get state keep)
+                      (+ (struct-get state derived) 1))]))]
+            [(ir.CompilerIrMaybeValue.No)
+              (OptBceVersionDerive
+                (struct-get state guard)
+                (OptBceVersionKeep.Cons index (box (struct-get state keep)))
+                (struct-get state derived))])]
+        [_ state]))))
 
 (define (opt-bce-version-and-chain
   [cell : (__tl_dyn-array i64)]
@@ -41533,27 +42283,43 @@
   [iphi : i64]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
-  [cell : (__tl_dyn-array i64)]) : OptBceVersionGuardResult
-  (opt-bce-version-guard-finish
-    seed
-    bound
-    cell
-    (opt-bce-version-derive-checks
-      instrs
-      phi-count
-      phi-count
-      last
-      defs
-      loop-label
-      pred-label
-      iphi
-      seed
-      bound
-      cell
-      (OptBceVersionGuardAcc.Some
-        (ir.CompilerIrInstrList.Nil)
-        (ir.CompilerIrValueList.Nil)
-        false))))
+  [cell : (__tl_dyn-array i64)]) : OptBceVersionGuardOut
+  (let
+    [state : OptBceVersionDerive
+      (opt-bce-version-derive-checks
+        instrs
+        phi-count
+        phi-count
+        last
+        defs
+        loop-label
+        pred-label
+        iphi
+        seed
+        bound
+        cell
+        (OptBceVersionDerive
+          (OptBceVersionGuardAcc.Some
+            (ir.CompilerIrInstrList.Nil)
+            (ir.CompilerIrValueList.Nil)
+            false)
+          (OptBceVersionKeep.Nil)
+          0))]
+    ;; Partial versioning still needs at least one REMOVED check to pay for
+    ;; the clone; with none, the loop is left untouched.
+    (if (= (struct-get state derived) 0)
+      (OptBceVersionGuardOut.No)
+      (match (opt-bce-version-guard-finish
+        seed
+        bound
+        cell
+        (struct-get state guard))
+        [(OptBceVersionGuardResult.No) (OptBceVersionGuardOut.No)]
+        [(OptBceVersionGuardResult.Some guard-instrs guard-value)
+          (OptBceVersionGuardOut.Some
+            guard-instrs
+            guard-value
+            (struct-get state keep))]))))
 
 ;; --- shape scan ---------------------------------------------------------------
 (define (opt-bce-version-shape-phi
@@ -41865,26 +42631,47 @@
               fast-label
               tail))])]))
 
+;; Clone the loop body for the fast path, dropping the checks the guard
+;; covers and KEEPING (remapped) each underivable check in the keep set:
+;; a kept check still executes -- and may still abort -- on the fast path,
+;; exactly as on the slow path.
 (define (opt-bce-version-clone-body
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [last : i64]
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [cell : (__tl_dyn-array i64)]) : ir.CompilerIrInstrList
+  [cell : (__tl_dyn-array i64)]
+  [keep : OptBceVersionKeep]) : ir.CompilerIrInstrList
   (if (>= index last)
     (ir.CompilerIrInstrList.Nil)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       (match instr
         [(ir.CompilerIrInstr.BoundsCheck _ _ _)
-          (opt-bce-version-clone-body instrs (+ index 1) last remap cell)]
+          (if (opt-bce-version-keep-contains? keep index)
+            (ir.compiler-ir-instr-cons
+              (opt-unroll-clone-instr remap cell 0 instr)
+              (opt-bce-version-clone-body
+                instrs
+                (+ index 1)
+                last
+                remap
+                cell
+                keep))
+            (opt-bce-version-clone-body instrs (+ index 1) last remap cell keep))]
         [_
           (let
             [cloned : ir.CompilerIrInstr
               (opt-unroll-clone-instr remap cell 0 instr)]
             (ir.compiler-ir-instr-cons
               cloned
-              (opt-bce-version-clone-body instrs (+ index 1) last remap cell)))]))))
+              (opt-bce-version-clone-body
+                instrs
+                (+ index 1)
+                last
+                remap
+                cell
+                keep)))]))))
 
 ;; Relabel the loop phis' outside-pred inputs to the guard block.
 (define (opt-relabel-phi-inputs
@@ -42120,9 +42907,9 @@
               seed
               bound
               cell)
-              [(OptBceVersionGuardResult.No)
+              [(OptBceVersionGuardOut.No)
                 (OptUnrollResult.Result blocks frame false)]
-              [(OptBceVersionGuardResult.Some guard-instrs guard-value)
+              [(OptBceVersionGuardOut.Some guard-instrs guard-value keep)
                 (let
                   [remap : (__tl_dyn-array ir.CompilerIrValue)
                     (array.make-array ir.CompilerIrValue frame)]
@@ -42138,7 +42925,8 @@
                       phi-count
                       last
                       remap
-                      cell)]
+                      cell
+                      keep)]
                   [fast-block : ir.CompilerIrBlock
                     (ir.compiler-ir-block
                       fast-label
@@ -42304,15 +43092,48 @@
 ;;     through any phi merge, so seed <= sphi <= scan < bound <= len); emits
 ;;     `bound <= len` and forces the counter seed compares
 ;;   * index == BitAnd(_, M), M >= 0 literal   -> `M < len`
+;;   * index == counter+offset+base (either operand order, literal offset,
+;;     scale exactly 1, loop-invariant VARIABLE base) -> the wrap-safe
+;;     scale-1 quotient guard with the base folded in for the literal
+;;     offset: `base_eff >= 0 && bound-1 <= length-1-base_eff`; the division
+;;     is exact at scale 1 and needs no instruction, and a wrapped base only
+;;     ever deselects the fast path
 ;;   * index loop-invariant                    -> `index >= 0 && index < len`
 ;; A latch-merge-phi index (sphi+1 selected at the merge) is deliberately NOT
 ;; accepted: it can reach `bound` itself, which `bound <= len` does not
 ;; exclude from failing. Likewise `sphi + 1` used directly.
 ;;
+;; A check's length must be loop-invariant. When it is not, a length that
+;; resolves to `Load (Gep base, length-slot)` of an array/string descriptor
+;; handle (the same classification LICM uses for descriptor hoisting) is
+;; still provably trip-invariant whenever NO loop block may write memory
+;; (the load_combine may-write classification: no stores, no calls): nothing
+;; can change the loaded value mid-loop. The guard then references a hoisted
+;; gep+load pair emitted into the guard block itself -- one pair per distinct
+;; (base, offset) -- reading a live descriptor's length slot is always safe,
+;; so the extra load on a zero-trip path is sound.
+;;
+;; The counted shape is either the do-while form above or a TOP-TESTED loop:
+;; latch `Jump header` with the counter compare `iphi < bound` ending the
+;; header (`Branch c body exit`, body target inside the loop). Every body
+;; execution has then already passed the compare, so the same [seed, bound)
+;; trip-range argument stays sound; early exits (a second branch leaving the
+;; loop, e.g. a flag test) only shrink the executed range.
+;;
 ;; Exit wiring generalizes the single-block scheme: loop defs may reach
-;; outside code only as exit-phi inputs on loop edges (any other outside use
-;; rejects); each such input gains a parallel input from the corresponding
-;; fast clone's edge. Fallthrough is positional: loop blocks may only fall
+;; outside code as exit-phi inputs on loop edges (each such input gains a
+;; parallel input from the corresponding fast clone's edge). A DIRECT outside
+;; use (a return operand, an arithmetic use) is also admitted when every
+;; predecessor of the using block is a loop block or a single-edge
+;; forwarding stub (an outside block that only Jumps to the user, check-free,
+;; clonable, all of whose own predecessors are loop blocks): the use is
+;; rewritten to a freshly materialized phi carrying the def on every
+;; predecessor edge, the stubs join the clone group so fast arrivals get
+;; fast twins of the stubs and the phi gains the parallel fast-edge inputs,
+;; and the slow blocks stay instruction-for-instruction the original. Any
+;; other outside use (a block with a non-loop non-stub predecessor, a phi
+;; input on a non-loop edge) rejects.
+;; Fallthrough is positional: loop blocks may only fall
 ;; through to other loop blocks, the fast clone group preserves the loop's
 ;; block order so intra-loop fallthroughs clone correctly, and the guard
 ;; sits immediately before the slow header so a fallthrough preheader lands
@@ -42509,6 +43330,56 @@
                 [_ (OptBceMbMaybeLatch.No)])]
             [_ (OptBceMbMaybeLatch.No)])))]))
 
+;; The header of a top-tested loop ends `Branch c body exit` with the body
+;; target inside the loop and the exit target outside.
+(define (opt-bce-mb-top-test-header-branch
+  [block : ir.CompilerIrBlock]
+  [body-labels : OptLabelSet]) : OptBceMbMaybeLatch
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (< count 1)
+          (OptBceMbMaybeLatch.No)
+          (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+            [(ir.CompilerIrInstr.Branch cond then-label else-label)
+              (match cond
+                [(ir.CompilerIrValue.Var cond-var)
+                  (if (and
+                    (opt-label-contains body-labels then-label)
+                    (not (opt-label-contains body-labels else-label)))
+                    (OptBceMbMaybeLatch.Some cond-var else-label)
+                    (OptBceMbMaybeLatch.No))]
+                [_ (OptBceMbMaybeLatch.No)])]
+            [_ (OptBceMbMaybeLatch.No)])))]))
+
+;; Top-tested alternative: the latch ends `Jump header` and the header ends
+;; `Branch c body exit` with the body target inside the loop and the exit
+;; target outside. The counter compare then lives in the header and every body
+;; execution has already passed it, so the [seed, bound) trip-range argument
+;; of the do-while form stays sound (a second exiting branch elsewhere in the
+;; loop -- an early flag test -- only shrinks the executed range).
+(define (opt-bce-mb-top-test-cond
+  [blocks : ir.CompilerIrBlockList]
+  [latch-block : ir.CompilerIrBlock]
+  [header : i64]
+  [body-labels : OptLabelSet]) : OptBceMbMaybeLatch
+  (match latch-block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (< count 1)
+          (OptBceMbMaybeLatch.No)
+          (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+            [(ir.CompilerIrInstr.Jump target)
+              (if (not (= target header))
+                (OptBceMbMaybeLatch.No)
+                (match (opt-cfg-find-block blocks header)
+                  [(OptMaybeBlock.No) (OptBceMbMaybeLatch.No)]
+                  [(OptMaybeBlock.Some header-block)
+                    (opt-bce-mb-top-test-header-branch header-block body-labels)]))]
+            [_ (OptBceMbMaybeLatch.No)])))]))
+
 ;; The counter phi: a header phi (only header phis carry latch-edge inputs)
 ;; of type i64 fed (seed from the preheader, inext from the latch).
 (define (opt-bce-mb-counter-phi
@@ -42603,6 +43474,103 @@
                       latch
                       preheader
                       (opt-bce-mb-resolve body-blocks cmp-src 16)
+                      cmp-rhs)
+                    (OptBceMbMaybeCounter.No))]
+                [_ (OptBceMbMaybeCounter.No)])]
+            [_ (OptBceMbMaybeCounter.No)])]
+        [_ (OptBceMbMaybeCounter.No)])]))
+
+;; The top-tested counter's +1 step: the phi's latch back-edge value resolves
+;; to `iphi + 1` (i64, step exactly one).
+(define (opt-bce-mb-counter-top-step
+  [body-blocks : ir.CompilerIrBlockList]
+  [iphi : i64]
+  [seed : ir.CompilerIrValue]
+  [back-raw : i64]
+  [bound : ir.CompilerIrValue]) : OptBceMbMaybeCounter
+  (let
+    [inext : i64 (opt-bce-mb-resolve body-blocks back-raw 16)]
+    (match (opt-bce-mb-find-def body-blocks inext)
+      [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
+      [(OptBceMbMaybeInstr.Some instr)
+        (match instr
+          [(ir.CompilerIrInstr.BinOp _ add-op add-lhs add-rhs ity)
+            (match add-op
+              [(ir.CompilerIrBinOp.Add)
+                (match add-lhs
+                  [(ir.CompilerIrValue.Var add-src)
+                    (match add-rhs
+                      [(ir.CompilerIrValue.I64 step)
+                        (if (and
+                          (= step 1)
+                          (match ity
+                            [(ast.AstType.I64) true]
+                            [_ false])
+                          (= (opt-bce-mb-resolve body-blocks add-src 16) iphi))
+                          (OptBceMbMaybeCounter.Some iphi seed inext bound)
+                          (OptBceMbMaybeCounter.No))]
+                      [_ (OptBceMbMaybeCounter.No)])]
+                  [_ (OptBceMbMaybeCounter.No)])]
+              [_ (OptBceMbMaybeCounter.No)])]
+          [_ (OptBceMbMaybeCounter.No)])])))
+
+;; The top-tested counter phi: an i64 header phi fed (seed from the
+;; preheader, +1 step from the latch).
+(define (opt-bce-mb-counter-top-phi
+  [body-blocks : ir.CompilerIrBlockList]
+  [latch : i64]
+  [preheader : i64]
+  [cmp-src : i64]
+  [bound : ir.CompilerIrValue]) : OptBceMbMaybeCounter
+  (let
+    [iphi : i64 (opt-bce-mb-resolve body-blocks cmp-src 16)]
+    (match (opt-bce-mb-find-def body-blocks iphi)
+      [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
+      [(OptBceMbMaybeInstr.Some instr)
+        (match instr
+          [(ir.CompilerIrInstr.Phi _ inputs pty)
+            (match pty
+              [(ast.AstType.I64)
+                (match (opt-unroll-split-phi-inputs inputs latch)
+                  [(OptUnrollPhiSplit.Split seed back pred-label)
+                    (if (not (= pred-label preheader))
+                      (OptBceMbMaybeCounter.No)
+                      (match back
+                        [(ir.CompilerIrValue.Var back-raw)
+                          (opt-bce-mb-counter-top-step
+                            body-blocks
+                            iphi
+                            seed
+                            back-raw
+                            bound)]
+                        [_ (OptBceMbMaybeCounter.No)]))]
+                  [(OptUnrollPhiSplit.No) (OptBceMbMaybeCounter.No)])]
+              [_ (OptBceMbMaybeCounter.No)])]
+          [_ (OptBceMbMaybeCounter.No)])])))
+
+;; The header compare `c = iphi < bound` of a top-tested loop: the counter phi
+;; itself against an invariant bound.
+(define (opt-bce-mb-counter-top
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : i64]
+  [preheader : i64]
+  [cond-var : i64]) : OptBceMbMaybeCounter
+  (match (opt-bce-mb-find-def body-blocks cond-var)
+    [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
+    [(OptBceMbMaybeInstr.Some instr)
+      (match instr
+        [(ir.CompilerIrInstr.BinOp _ cmp-op cmp-lhs cmp-rhs _)
+          (match cmp-op
+            [(ir.CompilerIrBinOp.Lt)
+              (match cmp-lhs
+                [(ir.CompilerIrValue.Var cmp-src)
+                  (if (opt-unroll-invariant-bound? defs cmp-rhs)
+                    (opt-bce-mb-counter-top-phi
+                      body-blocks
+                      latch
+                      preheader
+                      cmp-src
                       cmp-rhs)
                     (OptBceMbMaybeCounter.No))]
                 [_ (OptBceMbMaybeCounter.No)])]
@@ -42827,7 +43795,32 @@
         [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
         [(OptMaybeBlock.Some latch-block)
           (match (opt-bce-mb-latch-branch latch-block header body-labels)
-            [(OptBceMbMaybeLatch.No) (OptBceMbMaybeShape.No)]
+            [(OptBceMbMaybeLatch.No)
+              (match (opt-bce-mb-top-test-cond
+                blocks
+                latch-block
+                header
+                body-labels)
+                [(OptBceMbMaybeLatch.No) (OptBceMbMaybeShape.No)]
+                [(OptBceMbMaybeLatch.Some top-cond _)
+                  (let
+                    [defs : opt_i64_i64_map.Map
+                      (opt-bce-mb-collect-defs
+                        body-blocks
+                        (opt_i64_i64_map.with-capacity 64))]
+                    (opt-bce-mb-loop-shape-finish
+                      blocks
+                      header
+                      latch
+                      pred
+                      body-labels
+                      body-blocks
+                      (opt-bce-mb-counter-top
+                        body-blocks
+                        defs
+                        latch
+                        pred
+                        top-cond)))])]
             [(OptBceMbMaybeLatch.Some cond-var _)
               (let
                 [defs : opt_i64_i64_map.Map
@@ -42952,6 +43945,486 @@
             (opt-bce-mb-defs-escape? (box-get rest) outside))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-mb-defs-escape? (ir.compiler-ir-block-seq-to-list seq) outside)]))
+
+;; --- exit wiring for direct outside uses -------------------------------------
+;; A loop def used by a non-phi instruction outside the loop (a return
+;; operand, an arithmetic use) normally rejects versioning: the fast clone's
+;; remapped def would never reach that use. It becomes wireable when every
+;; predecessor of the using block is a loop block or a single-edge forwarding
+;; stub (an outside block that only Jumps to the user, check-free, clonable,
+;; all of whose own predecessors are loop blocks). Then the use is rewritten
+;; to a freshly materialized phi that carries the def on every predecessor
+;; edge -- valid because the original verified use implies the def dominates
+;; every such edge -- and the stubs join the clone group: the fast clone gets
+;; fast twins of the stubs, the materialized phi gains the parallel fast-edge
+;; inputs through the ordinary extension, and the slow blocks stay
+;; instruction-for-instruction the original. Blocks with a non-loop non-stub
+;; predecessor, unreachable users, phi inputs on non-loop edges, and defs
+;; without a simple result type keep the original rejection.
+(defenum OptBceMbVarList
+  (Nil)
+  (Cons i64 (Box OptBceMbVarList)))
+
+(defenum OptBceMbWireBlock
+  (No)
+  ;; no direct loop-def use: the block stays as it is
+  (Same)
+  ;; rewired block, the stub labels its predecessors needed
+  (Some ir.CompilerIrBlock OptLabelSet))
+
+(defenum OptBceMbWiring
+  (No)
+  ;; rewired function, every stub label joined into the clone group
+  (Some ir.CompilerIrBlockList OptLabelSet))
+
+(defenum OptBceMbMaybeLabels
+  (No)
+  (Some OptLabelSet))
+
+(defenum OptBceMbMaybeWirePhis
+  (No)
+  (Some OptCopyEnv ir.CompilerIrInstrList))
+
+;; Uses of any var by the non-phi instructions of one block (phi inputs are
+;; edge-scoped and handled by the ordinary extension).
+(define (opt-bce-mb-nonphi-uses-seq
+  [set : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : opt_i64_i64_map.Map
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    set
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (opt-bce-mb-nonphi-uses-seq
+        (match instr
+          [(ir.CompilerIrInstr.Phi _ _ _) set]
+          [_ (opt-collect-instr-uses set instr)])
+        instrs
+        (+ index 1)))))
+
+;; Defs of these blocks that appear in the use set, in walk order.
+(define (opt-bce-mb-wire-vars-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [uses : opt_i64_i64_map.Map]
+  [acc : OptBceMbVarList]) : OptBceMbVarList
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    acc
+    (let
+      [dst : i64 (ir.compiler-ir-instr-seq-loop-dst-or instrs index (- 0 1))]
+      (opt-bce-mb-wire-vars-instrs
+        instrs
+        (+ index 1)
+        uses
+        (if (and (>= dst 0) (opt-used-contains uses dst))
+          (OptBceMbVarList.Cons dst (box acc))
+          acc)))))
+
+(define (opt-bce-mb-wire-vars-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [uses : opt_i64_i64_map.Map]
+  [acc : OptBceMbVarList]) : OptBceMbVarList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-wire-vars-blocks
+            (box-get rest)
+            uses
+            (opt-bce-mb-wire-vars-instrs instrs 0 uses acc))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-wire-vars-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        uses
+        acc)]))
+
+(define (opt-bce-mb-var-list-append
+  [first : OptBceMbVarList]
+  [second : OptBceMbVarList]) : OptBceMbVarList
+  (match first
+    [(OptBceMbVarList.Nil) second]
+    [(OptBceMbVarList.Cons var rest)
+      (OptBceMbVarList.Cons
+        var
+        (box (opt-bce-mb-var-list-append (box-get rest) second)))]))
+
+(define (opt-bce-mb-labels-all-in? [labels : OptLabelSet] [set : OptLabelSet]) : bool
+  (match labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (if (opt-label-contains set (opt-label-ref labels 0))
+        (opt-bce-mb-labels-all-in? (opt-label-tail labels) set)
+        false)]))
+
+;; A forwarding-stub predecessor: an outside block whose only successor is the
+;; using block (an explicit Jump), check-free, clonable by the same whitelist
+;; the loop blocks pass, every one of whose own predecessors is a loop block,
+;; and whose fast twin label is fresh.
+(define (opt-bce-mb-stub-ok?
+  [pred-map : OptPredMap]
+  [blocks : ir.CompilerIrBlockList]
+  [body-labels : OptLabelSet]
+  [stub : i64]
+  [user : i64]) : bool
+  (match (opt-cfg-find-block blocks stub)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
+            (if (or
+              (< count 1)
+              (not (opt-unroll-no-phi-from? instrs phi-count))
+              (opt-cfg-instr-seq-can-fallthrough? instrs)
+              (> (- (- count 1) phi-count) (opt-bce-version-body-max))
+              (not (opt-bce-version-body-ok? instrs phi-count (- count 1)))
+              (not
+                (=
+                  (opt-bce-version-check-count instrs phi-count (- count 1) 0)
+                  0))
+              (opt-cfg-block-exists?
+                blocks
+                (ir.compiler-ir-label
+                  (string.append (ir.compiler-ir-label-text stub) "__bce_fast"))))
+              false
+              (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+                [(ir.CompilerIrInstr.Jump target)
+                  (if (not (= target user))
+                    false
+                    (opt-bce-mb-labels-all-in?
+                      (opt-pred-map-lookup pred-map stub)
+                      body-labels))]
+                [_ false])))])]))
+
+;; Classify every predecessor of the using block: loop blocks wire directly,
+;; anything else must be a forwarding stub. Returns the stub labels found.
+(define (opt-bce-mb-wire-preds
+  [pred-map : OptPredMap]
+  [blocks : ir.CompilerIrBlockList]
+  [body-labels : OptLabelSet]
+  [preds : OptLabelSet]
+  [user : i64]
+  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
+  (match preds
+    [(OptLabelSet.Nil) (OptBceMbMaybeLabels.Some stubs)]
+    [(OptLabelSet.Dense _ _)
+      (let
+        [pred : i64 (opt-label-ref preds 0)]
+        (if (opt-label-contains body-labels pred)
+          (opt-bce-mb-wire-preds
+            pred-map
+            blocks
+            body-labels
+            (opt-label-tail preds)
+            user
+            stubs)
+          (if (opt-bce-mb-stub-ok? pred-map blocks body-labels pred user)
+            (opt-bce-mb-wire-preds
+              pred-map
+              blocks
+              body-labels
+              (opt-label-tail preds)
+              user
+              (opt-label-add stubs pred))
+            (OptBceMbMaybeLabels.No))))]))
+
+;; The result type of a loop/stub def, needed for the materialized phi. Only
+;; the simple typed def kinds are supported; anything else leaves the use
+;; unwireable.
+(define (opt-bce-mb-def-type [instr : ir.CompilerIrInstr]) : OptMaybeAstType
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ _ ty) (OptMaybeAstType.Some ty)]
+    [(ir.CompilerIrInstr.Cast _ _ _ to-ty) (OptMaybeAstType.Some to-ty)]
+    [(ir.CompilerIrInstr.Bitcast _ _ _ to-ty) (OptMaybeAstType.Some to-ty)]
+    [(ir.CompilerIrInstr.BinOp _ _ _ _ ty) (OptMaybeAstType.Some ty)]
+    [(ir.CompilerIrInstr.UnOp _ _ _ ty) (OptMaybeAstType.Some ty)]
+    [(ir.CompilerIrInstr.Gep _ _ _ ty) (OptMaybeAstType.Some ty)]
+    [(ir.CompilerIrInstr.Load _ _ ty) (OptMaybeAstType.Some ty)]
+    [(ir.CompilerIrInstr.Phi _ _ ty) (OptMaybeAstType.Some ty)]
+    [_ (OptMaybeAstType.No)]))
+
+;; One input per predecessor edge, all carrying the same loop def.
+(define (opt-bce-mb-wire-phi-inputs
+  [preds : OptLabelSet]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrPhiInputList
+  (match preds
+    [(OptLabelSet.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(OptLabelSet.Dense _ _)
+      (ir.compiler-ir-phi-input-cons
+        value
+        (opt-label-ref preds 0)
+        (opt-bce-mb-wire-phi-inputs (opt-label-tail preds) value))]))
+
+;; Materialize one exit phi per wireable var and the copy env rewriting its
+;; non-phi uses to the phi's var.
+(define (opt-bce-mb-wire-phis
+  [vars : OptBceMbVarList]
+  [all-blocks : ir.CompilerIrBlockList]
+  [preds : OptLabelSet]
+  [cell : (__tl_dyn-array i64)]
+  [env : OptCopyEnv]
+  [phis : ir.CompilerIrInstrList]) : OptBceMbMaybeWirePhis
+  (match vars
+    [(OptBceMbVarList.Nil) (OptBceMbMaybeWirePhis.Some env phis)]
+    [(OptBceMbVarList.Cons var rest)
+      (match (opt-bce-mb-find-def all-blocks var)
+        [(OptBceMbMaybeInstr.No) (OptBceMbMaybeWirePhis.No)]
+        [(OptBceMbMaybeInstr.Some instr)
+          (match (opt-bce-mb-def-type instr)
+            [(OptMaybeAstType.No) (OptBceMbMaybeWirePhis.No)]
+            [(OptMaybeAstType.Some ty)
+              (let
+                [pv : i64 (opt-bce-version-alloc-var cell)]
+                (opt-bce-mb-wire-phis
+                  (box-get rest)
+                  all-blocks
+                  preds
+                  cell
+                  (OptCopyEnv.Cons var (ir.CompilerIrValue.Var pv) (box env))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Phi
+                      pv
+                      (opt-bce-mb-wire-phi-inputs
+                        preds
+                        (ir.CompilerIrValue.Var var))
+                      ty)
+                    phis)))])])]))
+
+;; The rewired block's instructions: the existing phi prefix, then the
+;; materialized phis, then every original instruction with its non-phi uses
+;; rewritten through the copy env (phi instructions are left untouched).
+(define (opt-bce-mb-wire-block-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [new-phis : ir.CompilerIrInstrList]
+  [env : OptCopyEnv]) : ir.CompilerIrInstrList
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (ir.CompilerIrInstrList.Nil)
+    (let
+      [tail : ir.CompilerIrInstrList
+        (opt-bce-mb-wire-block-instrs instrs (+ index 1) phi-count new-phis env)]
+      (if (= index phi-count)
+        (opt-aggregate-instr-list-append
+          new-phis
+          (ir.compiler-ir-instr-cons
+            (opt-copy-subst-instr
+              env
+              (ir.compiler-ir-instr-seq-ref instrs index))
+            tail))
+        (ir.compiler-ir-instr-cons
+          (opt-copy-subst-instr env (ir.compiler-ir-instr-seq-ref instrs index))
+          tail)))))
+
+;; Stub defs that appear in the use set (a stub's own computation feeding the
+;; user, e.g. a materialized exit value): wired like loop defs.
+(define (opt-bce-mb-wire-vars-stubs
+  [blocks : ir.CompilerIrBlockList]
+  [stub-labels : OptLabelSet]
+  [uses : opt_i64_i64_map.Map]
+  [acc : OptBceMbVarList]) : OptBceMbVarList
+  (match stub-labels
+    [(OptLabelSet.Nil) acc]
+    [(OptLabelSet.Dense _ _)
+      (match (opt-cfg-find-block blocks (opt-label-ref stub-labels 0))
+        [(OptMaybeBlock.No)
+          (opt-bce-mb-wire-vars-stubs
+            blocks
+            (opt-label-tail stub-labels)
+            uses
+            acc)]
+        [(OptMaybeBlock.Some block)
+          (match block
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (opt-bce-mb-wire-vars-stubs
+                blocks
+                (opt-label-tail stub-labels)
+                uses
+                (opt-bce-mb-wire-vars-instrs instrs 0 uses acc))])])]))
+
+;; Wire one outside block: when its non-phi instructions use loop (or stub)
+;; defs, materialize the exit phis and rewrite the uses.
+(define (opt-bce-mb-wire-block
+  [pred-map : OptPredMap]
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-labels : OptLabelSet]
+  [body-blocks : ir.CompilerIrBlockList]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [uses : opt_i64_i64_map.Map]
+  [cell : (__tl_dyn-array i64)]) : OptBceMbWireBlock
+  (let
+    [loop-vars : OptBceMbVarList
+      (opt-bce-mb-wire-vars-blocks body-blocks uses (OptBceMbVarList.Nil))]
+    (match loop-vars
+      [(OptBceMbVarList.Nil) (OptBceMbWireBlock.Same)]
+      [(OptBceMbVarList.Cons _ _)
+        (let
+          [preds : OptLabelSet (opt-pred-map-lookup pred-map label)]
+          (if (= (opt-label-count preds) 0)
+            (OptBceMbWireBlock.No)
+            (match (opt-bce-mb-wire-preds
+              pred-map
+              all-blocks
+              body-labels
+              preds
+              label
+              (OptLabelSet.Nil))
+              [(OptBceMbMaybeLabels.No) (OptBceMbWireBlock.No)]
+              [(OptBceMbMaybeLabels.Some stub-labels)
+                (let
+                  [stub-vars : OptBceMbVarList
+                    (opt-bce-mb-wire-vars-stubs
+                      all-blocks
+                      stub-labels
+                      uses
+                      (OptBceMbVarList.Nil))]
+                  (match (opt-bce-mb-wire-phis
+                    (opt-bce-mb-var-list-append loop-vars stub-vars)
+                    all-blocks
+                    preds
+                    cell
+                    (OptCopyEnv.Nil)
+                    (ir.CompilerIrInstrList.Nil))
+                    [(OptBceMbMaybeWirePhis.No) (OptBceMbWireBlock.No)]
+                    [(OptBceMbMaybeWirePhis.Some env new-phis)
+                      (OptBceMbWireBlock.Some
+                        (ir.compiler-ir-block
+                          label
+                          (opt-bce-mb-wire-block-instrs
+                            instrs
+                            0
+                            (opt-unroll-phi-prefix-count instrs 0)
+                            new-phis
+                            env))
+                        stub-labels)]))])))])))
+
+;; Rewire every outside block with direct loop-def uses, or fail the whole
+;; attempt (the caller then keeps the original function).
+(define (opt-bce-mb-wire-exits
+  [pred-map : OptPredMap]
+  [blocks : ir.CompilerIrBlockList]
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-labels : OptLabelSet]
+  [body-blocks : ir.CompilerIrBlockList]
+  [cell : (__tl_dyn-array i64)]
+  [stubs : OptLabelSet]) : OptBceMbWiring
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil)
+      (OptBceMbWiring.Some (ir.CompilerIrBlockList.Nil) stubs)]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-wire-exits
+        pred-map
+        (ir.compiler-ir-block-seq-to-list seq)
+        all-blocks
+        body-labels
+        body-blocks
+        cell
+        stubs)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (if (opt-label-contains body-labels label)
+            (match (opt-bce-mb-wire-exits
+              pred-map
+              (box-get rest)
+              all-blocks
+              body-labels
+              body-blocks
+              cell
+              stubs)
+              [(OptBceMbWiring.No) (OptBceMbWiring.No)]
+              [(OptBceMbWiring.Some wired-tail wired-stubs)
+                (OptBceMbWiring.Some
+                  (ir.compiler-ir-block-cons block wired-tail)
+                  wired-stubs)])
+            (let
+              [uses : opt_i64_i64_map.Map
+                (opt-bce-mb-nonphi-uses-seq
+                  (opt_i64_i64_map.with-capacity 8)
+                  instrs
+                  0)]
+              (match (opt-bce-mb-wire-block
+                pred-map
+                all-blocks
+                body-labels
+                body-blocks
+                label
+                instrs
+                uses
+                cell)
+                [(OptBceMbWireBlock.No) (OptBceMbWiring.No)]
+                [(OptBceMbWireBlock.Same)
+                  (match (opt-bce-mb-wire-exits
+                    pred-map
+                    (box-get rest)
+                    all-blocks
+                    body-labels
+                    body-blocks
+                    cell
+                    stubs)
+                    [(OptBceMbWiring.No) (OptBceMbWiring.No)]
+                    [(OptBceMbWiring.Some wired-tail wired-stubs)
+                      (OptBceMbWiring.Some
+                        (ir.compiler-ir-block-cons block wired-tail)
+                        wired-stubs)])]
+                [(OptBceMbWireBlock.Some wired-block block-stubs)
+                  (match (opt-bce-mb-wire-exits
+                    pred-map
+                    (box-get rest)
+                    all-blocks
+                    body-labels
+                    body-blocks
+                    cell
+                    (opt-bce-mb-labels-union block-stubs stubs))
+                    [(OptBceMbWiring.No) (OptBceMbWiring.No)]
+                    [(OptBceMbWiring.Some wired-tail wired-stubs)
+                      (OptBceMbWiring.Some
+                        (ir.compiler-ir-block-cons wired-block wired-tail)
+                        wired-stubs)])])))])]))
+
+;; The stub blocks in layout order (they join the fast clone group).
+(define (opt-bce-mb-stub-blocks-from
+  [blocks : ir.CompilerIrBlockList]
+  [stub-labels : OptLabelSet]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label _)
+          (let
+            [tail : ir.CompilerIrBlockList
+              (opt-bce-mb-stub-blocks-from (box-get rest) stub-labels)]
+            (if (opt-label-contains stub-labels label)
+              (ir.compiler-ir-block-cons block tail)
+              tail))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-stub-blocks-from
+        (ir.compiler-ir-block-seq-to-list seq)
+        stub-labels)]))
+
+(define (opt-bce-mb-labels-union [labels : OptLabelSet] [acc : OptLabelSet]) : OptLabelSet
+  (match labels
+    [(OptLabelSet.Nil) acc]
+    [(OptLabelSet.Dense _ _)
+      (opt-bce-mb-labels-union
+        (opt-label-tail labels)
+        (opt-label-add acc (opt-label-ref labels 0)))]))
+
+(define (opt-bce-mb-blocks-append
+  [first : ir.CompilerIrBlockList]
+  [second : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match first
+    [(ir.CompilerIrBlockList.Nil) second]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        block
+        (opt-bce-mb-blocks-append (box-get rest) second))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-blocks-append (ir.compiler-ir-block-seq-to-list seq) second)]))
 
 ;; --- guard condition derivation ------------------------------------------------
 ;; Seed equality for the bounded header phi: both seeds are preheader-edge
@@ -44169,18 +45642,367 @@
         (ir.compiler-ir-function-seq-to-list seq))]))
 
 ;; Derivation fold state: the guard accumulator (conditions for REMOVED
-;; checks), the kept-check set, and how many checks derived -- partial
-;; versioning requires at least one derivable check to make cloning pay.
+;; checks), the kept-check set, how many checks derived -- partial
+;; versioning requires at least one derivable check to make cloning pay --
+;; and the descriptor-length hoists already emitted into the guard.
 (defstruct OptBceMbDerive
   (guard OptBceVersionGuardAcc)
   (keep OptBceMbKeep)
-  (derived i64))
+  (derived i64)
+  (hoists OptBceMbHoists))
 
 ;; guard-conds output: the guard instructions + value plus the kept-check set
 ;; the clone must preserve (remapped) instead of dropping.
 (defenum OptBceMbGuardOut
   (No)
   (Some ir.CompilerIrInstrList ir.CompilerIrValue OptBceMbKeep))
+
+;; A multi-block index of the form `base + scale*counter + offset` (either
+;; operand order): one Add operand recovers counter-affine with a positive
+;; literal scale and a literal offset, the other resolves to a loop-invariant
+;; value -- the `text[start + i]` byte-loop idiom (scale 1) and its strided
+;; CSR/word cousins (scale > 1). The invariant base rides along because the
+;; guard must reference the RESOLVED definition that dominates the loop entry
+;; edge.
+(defenum OptBceCounterAffineBase
+  (No)
+  ;; literal scale, literal offset, invariant base value
+  (Some i64 i64 ir.CompilerIrValue))
+
+;; One Add side as the counter-affine part, the other as the invariant base.
+;; Exactly one side may involve the counter: an in-loop base fails the
+;; invariant-operand check. Scale 1 keeps the division-free
+;; opt-bce-version-var-base-guard; larger scales route to the synthesized
+;; derived-seed guard at the dispatch site.
+(define (opt-bce-mb-var-base-side
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [iphi : i64]
+  [affine-side : ir.CompilerIrValue]
+  [base-side : ir.CompilerIrValue]) : OptBceCounterAffineBase
+  (match (opt-bce-mb-counter-affine body-blocks iphi affine-side 16)
+    [(OptBceCounterAffine.No) (OptBceCounterAffineBase.No)]
+    [(OptBceCounterAffine.Some scale offset)
+      (if (< scale 1)
+        (OptBceCounterAffineBase.No)
+        (match (opt-bce-mb-invariant-operand body-blocks defs base-side)
+          [(ir.CompilerIrMaybeValue.No) (OptBceCounterAffineBase.No)]
+          [(ir.CompilerIrMaybeValue.Some base)
+            (OptBceCounterAffineBase.Some scale offset base)]))]))
+
+;; Try either operand order: `counter... + base` and `base + counter...`.
+(define (opt-bce-mb-var-base-add
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [iphi : i64]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : OptBceCounterAffineBase
+  (match (opt-bce-mb-var-base-side body-blocks defs iphi lhs rhs)
+    [(OptBceCounterAffineBase.Some scale offset base)
+      (OptBceCounterAffineBase.Some scale offset base)]
+    [(OptBceCounterAffineBase.No)
+      (opt-bce-mb-var-base-side body-blocks defs iphi rhs lhs)]))
+
+;; Prove `base + counter + offset` stays in [0, length) for every counter in
+;; [seed, bound), with `base` loop-invariant. This is the existing literal
+;; affine guard with scale 1 and the variable `base + offset` folded in for
+;; the literal offset; the division is exact at scale 1 and needs no
+;; instruction. The conditions are
+;;
+;;   cond A: base_eff >= 0                    (base_eff = base + offset)
+;;   cond B: bound - 1 <= length - 1 - base_eff
+;;
+;; alongside the once-only primary `seed >= 0 && seed < bound`. Every emitted
+;; instruction wraps like the body's own arithmetic, and the conjunction can
+;; be true only where every index is representable and in range: with cond A
+;; and seed >= 0 the minimum index is non-negative, and cond B -- computed as
+;; `sub bound 1; sub length 1; sub ... base_eff; signed Le` -- bounds the
+;; maximum. `length - 1 - base_eff` is representable on every path where it
+;; matters: for length in [0, 2^63) and base_eff >= 0 its minimum is -2^63,
+;; and a wrapped-negative RHS (only possible for lengths at or above 2^63,
+;; where the wrap adds back exactly 2^64) leaves cond B equivalent to
+;; `base_eff + bound - 1 <= length_u64 - 1`, so even those lengths stay
+;; sound. A base_eff that overflowed negative fails cond A and keeps the
+;; checked slow path, like every conservatively-false guard here.
+(define (opt-bce-version-var-base-guard
+  [_seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [length : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match acc
+    [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+      (let
+        [eff-var : i64
+          (if (= offset 0)
+            (- 0 1)
+            (opt-bce-version-alloc-var cell))]
+        [eff : ir.CompilerIrValue
+          (if (= offset 0)
+            base
+            (ir.CompilerIrValue.Var eff-var))]
+        [eff-instrs : ir.CompilerIrInstrList
+          (if (= offset 0)
+            instrs
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                eff-var
+                (ir.CompilerIrBinOp.Add)
+                base
+                (ir.CompilerIrValue.I64 offset)
+                (ast.AstType.I64))
+              instrs))]
+        [last-counter : i64 (opt-bce-version-alloc-var cell)]
+        [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
+        [room : i64 (opt-bce-version-alloc-var cell)]
+        [with-arithmetic : OptBceVersionGuardAcc
+          (OptBceVersionGuardAcc.Some
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                room
+                (ir.CompilerIrBinOp.Sub)
+                (ir.CompilerIrValue.Var length-minus-one)
+                eff
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  length-minus-one
+                  (ir.CompilerIrBinOp.Sub)
+                  length
+                  (ir.CompilerIrValue.I64 1)
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    last-counter
+                    (ir.CompilerIrBinOp.Sub)
+                    bound
+                    (ir.CompilerIrValue.I64 1)
+                    (ast.AstType.I64))
+                  eff-instrs)))
+            values
+            counter-seen)]
+        (opt-bce-version-cond-counter-seen
+          (opt-bce-version-cond
+            cell
+            (ir.CompilerIrBinOp.Le)
+            (ir.CompilerIrValue.Var last-counter)
+            (ir.CompilerIrValue.Var room)
+            (opt-bce-version-cond
+              cell
+              (ir.CompilerIrBinOp.Ge)
+              eff
+              (ir.CompilerIrValue.I64 0)
+              with-arithmetic))))]))
+
+;; Descriptor-length recognition context: the type-pool segment bases and the
+;; per-function descriptor-handle set they classify (the load-GVN/LICM header
+;; classification). (No) disables the descriptor-length path entirely -- test
+;; entries without type-pool access take it, and recognition then stays off
+;; exactly as before.
+(defenum OptBceMbDescriptor
+  (No)
+  (Some i64 OptLoadHeaderSet))
+
+;; Hoisted descriptor-length loads emitted into the guard, shared across
+;; checks: (base var, gep offset) -> the hoisted load's var.
+(defenum OptBceMbHoists
+  (Nil)
+  (Cons i64 i64 i64 (Box OptBceMbHoists)))
+
+(define (opt-bce-mb-hoists-lookup
+  [hoists : OptBceMbHoists]
+  [base : i64]
+  [offset : i64]) : i64
+  (match hoists
+    [(OptBceMbHoists.Nil) (- 0 1)]
+    [(OptBceMbHoists.Cons item-base item-offset load-var rest)
+      (if (and (= item-base base) (= item-offset offset))
+        load-var
+        (opt-bce-mb-hoists-lookup (box-get rest) base offset))]))
+
+;; May any instruction of these loop blocks write memory? The load_combine
+;; classification: stores, calls, syscalls, vector/predicated stores. A
+;; write-free loop cannot change any loaded value mid-loop.
+(define (opt-bce-mb-write-free-instrs?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (if (opt-load-combine-may-write?
+      (ir.compiler-ir-instr-seq-ref instrs index))
+      false
+      (opt-bce-mb-write-free-instrs? instrs (+ index 1)))))
+
+(define (opt-bce-mb-write-free-blocks? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (opt-bce-mb-write-free-instrs? instrs 0)
+            (opt-bce-mb-write-free-blocks? (box-get rest))
+            false)])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-write-free-blocks? (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The descriptor-length derivation result: the length value the guard
+;; references (a hoisted load), the updated hoist set, and the guard
+;; accumulator with the hoisted gep+load pair consed on.
+(defenum OptBceMbMaybeLength
+  (No)
+  (Some ir.CompilerIrValue OptBceMbHoists OptBceVersionGuardAcc))
+
+;; A non-invariant check length may still be a descriptor length-slot load:
+;; it resolves to `Load (Gep base, length-slot)` where base is an
+;; array/string descriptor handle defined outside the loop. When no loop
+;; block may write memory the loaded value cannot change mid-loop, so the
+;; guard may reference ONE hoisted gep+load pair per distinct (base, offset),
+;; emitted into the guard block: reading a live descriptor's length slot is
+;; always safe (a dangling handle is already UB), and the hoisted value
+;; equals every in-iteration load. The pair is consed onto the accumulator
+;; BEFORE the conditions that consume it so the final reversal emits it
+;; first.
+(define (opt-bce-mb-descriptor-length
+  [descriptor : OptBceMbDescriptor]
+  [write-free? : bool]
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [length-value : ir.CompilerIrValue]
+  [hoists : OptBceMbHoists]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceMbMaybeLength
+  (if (not write-free?)
+    (OptBceMbMaybeLength.No)
+    (match acc
+      [(OptBceVersionGuardAcc.No) (OptBceMbMaybeLength.No)]
+      [(OptBceVersionGuardAcc.Some _ _ _)
+        (match descriptor
+          [(OptBceMbDescriptor.No) (OptBceMbMaybeLength.No)]
+          [(OptBceMbDescriptor.Some type-segment-bases header-set)
+            (match length-value
+              [(ir.CompilerIrValue.Var raw)
+                (let
+                  [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+                  (match (opt-bce-mb-find-def all-blocks id)
+                    [(OptBceMbMaybeInstr.No) (OptBceMbMaybeLength.No)]
+                    [(OptBceMbMaybeInstr.Some instr)
+                      (match instr
+                        [(ir.CompilerIrInstr.Load _ src load-ty)
+                          (match load-ty
+                            [(ast.AstType.I64)
+                              (match src
+                                [(ir.CompilerIrValue.Var src-raw)
+                                  (let
+                                    [src-id : i64
+                                      (opt-bce-mb-resolve
+                                        body-blocks
+                                        src-raw
+                                        16)]
+                                    (match (opt-bce-mb-find-def
+                                      all-blocks
+                                      src-id)
+                                      [(OptBceMbMaybeInstr.No)
+                                        (OptBceMbMaybeLength.No)]
+                                      [(OptBceMbMaybeInstr.Some gep-instr)
+                                        (match gep-instr
+                                          [(ir.CompilerIrInstr.Gep
+                                              _
+                                              base
+                                              offset
+                                              gep-ty)
+                                            (match base
+                                              [(ir.CompilerIrValue.Var base-raw)
+                                                (match offset
+                                                  [(ir.CompilerIrValue.I64 off)
+                                                    (let
+                                                      [base-id : i64
+                                                        (opt-bce-mb-resolve
+                                                          body-blocks
+                                                          base-raw
+                                                          16)]
+                                                      (if (or
+                                                        (opt-used-contains
+                                                          defs
+                                                          base-id)
+                                                        (not
+                                                          (opt-load-header-var?
+                                                            header-set
+                                                            base-id))
+                                                        (not
+                                                          (opt-bounds-object-length-slot?
+                                                            type-segment-bases
+                                                            offset
+                                                            gep-ty)))
+                                                        (OptBceMbMaybeLength.No)
+                                                        (let
+                                                          [shared : i64
+                                                            (opt-bce-mb-hoists-lookup
+                                                              hoists
+                                                              base-id
+                                                              off)]
+                                                          (if (>= shared 0)
+                                                            (OptBceMbMaybeLength.Some
+                                                              (ir.CompilerIrValue.Var
+                                                                shared)
+                                                              hoists
+                                                              acc)
+                                                            (opt-bce-mb-descriptor-hoist
+                                                              base-id
+                                                              offset
+                                                              gep-ty
+                                                              load-ty
+                                                              hoists
+                                                              cell
+                                                              acc)))))]
+                                                  [_ (OptBceMbMaybeLength.No)])]
+                                              [_ (OptBceMbMaybeLength.No)])]
+                                          [_ (OptBceMbMaybeLength.No)])]))]
+                                [_ (OptBceMbMaybeLength.No)])]
+                            [_ (OptBceMbMaybeLength.No)])]
+                        [_ (OptBceMbMaybeLength.No)])]))]
+              [_ (OptBceMbMaybeLength.No)])])])))
+
+;; Emit the hoisted gep+load pair for a (base, offset) pair seen for the
+;; first time.
+(define (opt-bce-mb-descriptor-hoist
+  [base-id : i64]
+  [offset : ir.CompilerIrValue]
+  [gep-ty : ast.AstType]
+  [load-ty : ast.AstType]
+  [hoists : OptBceMbHoists]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceMbMaybeLength
+  (match acc
+    [(OptBceVersionGuardAcc.No) (OptBceMbMaybeLength.No)]
+    [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+      (let
+        [gep-var : i64 (opt-bce-version-alloc-var cell)]
+        [load-var : i64 (opt-bce-version-alloc-var cell)]
+        (match offset
+          [(ir.CompilerIrValue.I64 off)
+            (OptBceMbMaybeLength.Some
+              (ir.CompilerIrValue.Var load-var)
+              (OptBceMbHoists.Cons base-id off load-var (box hoists))
+              (OptBceVersionGuardAcc.Some
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Load
+                    load-var
+                    (ir.CompilerIrValue.Var gep-var)
+                    load-ty)
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Gep
+                      gep-var
+                      (ir.CompilerIrValue.Var base-id)
+                      offset
+                      gep-ty)
+                    instrs))
+                values
+                counter-seen))]
+          [_ (OptBceMbMaybeLength.No)]))]))
 
 (define (opt-bce-mb-derive-index
   [all-blocks : ir.CompilerIrBlockList]
@@ -44237,7 +46059,7 @@
               [(OptBceMbMaybeInstr.No) (OptBceVersionGuardAcc.No)]
               [(OptBceMbMaybeInstr.Some instr)
                 (match instr
-                  [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+                  [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
                     (match op
                       [(ir.CompilerIrBinOp.BitAnd)
                         (match (opt-affine-var-const lhs rhs)
@@ -44258,7 +46080,48 @@
                           iphi
                           (ir.CompilerIrValue.Var id)
                           16)
-                          [(OptBceCounterAffine.No) (OptBceVersionGuardAcc.No)]
+                          [(OptBceCounterAffine.No)
+                            ;; A var+var Add defeats the literal-coefficient
+                            ;; recovery: retry as `base + counter + offset`
+                            ;; with a loop-invariant variable base.
+                            (if (not (opt-affine-64bit-type? ty))
+                              (OptBceVersionGuardAcc.No)
+                              (match op
+                                [(ir.CompilerIrBinOp.Add)
+                                  (match (opt-bce-mb-var-base-add
+                                    body-blocks
+                                    defs
+                                    iphi
+                                    lhs
+                                    rhs)
+                                    [(OptBceCounterAffineBase.No)
+                                      (OptBceVersionGuardAcc.No)]
+                                    [(OptBceCounterAffineBase.Some
+                                        scale
+                                        offset
+                                        base)
+                                      (if (= scale 1)
+                                        (opt-bce-version-var-base-guard
+                                          seed
+                                          bound
+                                          base
+                                          offset
+                                          length-value
+                                          cell
+                                          acc)
+                                        ;; Strided variable base: the guard
+                                        ;; synthesizes the derived seed and
+                                        ;; reuses the positive-step quotient.
+                                        (opt-bce-version-var-base-scaled-guard
+                                          seed
+                                          bound
+                                          base
+                                          scale
+                                          offset
+                                          length-value
+                                          cell
+                                          acc))])]
+                                [_ (OptBceVersionGuardAcc.No)]))]
                           [(OptBceCounterAffine.Some scale offset)
                             (opt-bce-version-affine-guard
                               seed
@@ -44311,7 +46174,62 @@
                   [_ (OptBceVersionGuardAcc.No)])])]))]
     [_ (OptBceVersionGuardAcc.No)]))
 
+;; Derive one check against a proven-invariant length value: on success the
+;; guard gains the conditions and the derived count ticks; on failure the
+;; check joins the kept set instead. A failure reverts to the state's guard
+;; AND hoist set, so a descriptor hoist emitted for a check that then fails
+;; derivation is dropped along with its (unused) guard instructions.
+(define (opt-bce-mb-derive-check
+  [all-blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : i64]
+  [preheader : i64]
+  [iphi : i64]
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [label : i64]
+  [index : i64]
+  [index-value : ir.CompilerIrValue]
+  [length-invariant : ir.CompilerIrValue]
+  [success-hoists : OptBceMbHoists]
+  [acc : OptBceVersionGuardAcc]
+  [state : OptBceMbDerive]) : OptBceMbDerive
+  (let
+    [derived-guard : OptBceVersionGuardAcc
+      (opt-bce-mb-derive-index
+        all-blocks
+        body-blocks
+        defs
+        latch
+        preheader
+        iphi
+        seed
+        bound
+        cell
+        index-value
+        length-invariant
+        acc)]
+    (match derived-guard
+      [(OptBceVersionGuardAcc.No)
+        ;; Underivable: the check STAYS (remapped) in the fast clone instead of
+        ;; rejecting the whole loop.
+        (OptBceMbDerive
+          (struct-get state guard)
+          (opt-bce-mb-keep-cons label index (struct-get state keep))
+          (struct-get state derived)
+          (struct-get state hoists))]
+      [(OptBceVersionGuardAcc.Some _ _ _)
+        (OptBceMbDerive
+          derived-guard
+          (struct-get state keep)
+          (+ (struct-get state derived) 1)
+          success-hoists)])))
+
 (define (opt-bce-mb-derive-block
+  [descriptor : OptBceMbDescriptor]
+  [write-free? : bool]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -44328,6 +46246,8 @@
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     state
     (opt-bce-mb-derive-block
+      descriptor
+      write-free?
       label
       instrs
       (+ index 1)
@@ -44344,9 +46264,45 @@
         [(ir.CompilerIrInstr.BoundsCheck index-value length-value _)
           (match (opt-bce-mb-invariant-operand body-blocks defs length-value)
             [(ir.CompilerIrMaybeValue.Some length-invariant)
-              (let
-                [derived-guard : OptBceVersionGuardAcc
-                  (opt-bce-mb-derive-index
+              (opt-bce-mb-derive-check
+                all-blocks
+                body-blocks
+                defs
+                latch
+                preheader
+                iphi
+                seed
+                bound
+                cell
+                label
+                index
+                index-value
+                length-invariant
+                (struct-get state hoists)
+                (struct-get state guard)
+                state)]
+            [(ir.CompilerIrMaybeValue.No)
+              (match (opt-bce-mb-descriptor-length
+                descriptor
+                write-free?
+                all-blocks
+                body-blocks
+                defs
+                length-value
+                (struct-get state hoists)
+                cell
+                (struct-get state guard))
+                [(OptBceMbMaybeLength.No)
+                  (OptBceMbDerive
+                    (struct-get state guard)
+                    (opt-bce-mb-keep-cons label index (struct-get state keep))
+                    (struct-get state derived)
+                    (struct-get state hoists))]
+                [(OptBceMbMaybeLength.Some
+                    hoisted-length
+                    hoisted-hoists
+                    hoisted-guard)
+                  (opt-bce-mb-derive-check
                     all-blocks
                     body-blocks
                     defs
@@ -44356,30 +46312,18 @@
                     seed
                     bound
                     cell
+                    label
+                    index
                     index-value
-                    length-invariant
-                    (struct-get state guard))]
-                (match derived-guard
-                  [(OptBceVersionGuardAcc.No)
-                    ;; Underivable: the check STAYS (remapped) in the fast
-                    ;; clone instead of rejecting the whole loop.
-                    (OptBceMbDerive
-                      (struct-get state guard)
-                      (opt-bce-mb-keep-cons label index (struct-get state keep))
-                      (struct-get state derived))]
-                  [(OptBceVersionGuardAcc.Some _ _ _)
-                    (OptBceMbDerive
-                      derived-guard
-                      (struct-get state keep)
-                      (+ (struct-get state derived) 1))]))]
-            [(ir.CompilerIrMaybeValue.No)
-              (OptBceMbDerive
-                (struct-get state guard)
-                (opt-bce-mb-keep-cons label index (struct-get state keep))
-                (struct-get state derived))])]
+                    hoisted-length
+                    hoisted-hoists
+                    hoisted-guard
+                    state)])])]
         [_ state]))))
 
 (define (opt-bce-mb-derive-blocks
+  [descriptor : OptBceMbDescriptor]
+  [write-free? : bool]
   [remaining : ir.CompilerIrBlockList]
   [all-blocks : ir.CompilerIrBlockList]
   [body-blocks : ir.CompilerIrBlockList]
@@ -44397,6 +46341,8 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (opt-bce-mb-derive-blocks
+            descriptor
+            write-free?
             (box-get rest)
             all-blocks
             body-blocks
@@ -44408,6 +46354,8 @@
             bound
             cell
             (opt-bce-mb-derive-block
+              descriptor
+              write-free?
               label
               instrs
               0
@@ -44423,6 +46371,8 @@
               state))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-mb-derive-blocks
+        descriptor
+        write-free?
         (ir.compiler-ir-block-seq-to-list seq)
         all-blocks
         body-blocks
@@ -44436,6 +46386,8 @@
         state)]))
 
 (define (opt-bce-mb-guard-conds
+  [descriptor : OptBceMbDescriptor]
+  [write-free? : bool]
   [all-blocks : ir.CompilerIrBlockList]
   [shape : OptBceMbShape]
   [defs : opt_i64_i64_map.Map]
@@ -44443,6 +46395,8 @@
   (let
     [dr : OptBceMbDerive
       (opt-bce-mb-derive-blocks
+        descriptor
+        write-free?
         (struct-get shape body-blocks)
         all-blocks
         (struct-get shape body-blocks)
@@ -44459,7 +46413,8 @@
             (ir.CompilerIrValueList.Nil)
             false)
           (OptBceMbKeep.Nil)
-          0))]
+          0
+          (OptBceMbHoists.Nil)))]
     (if (= (struct-get dr derived) 0)
       ;; No removable check: cloning the loop would only duplicate it.
       (OptBceMbGuardOut.No)
@@ -45819,7 +47774,101 @@
           (opt-bce-mb-sink-retarget-all sunk inputs fast-labels label)]
         step)]))
 
+;; Guard derivation + fast-clone emission + rewrite over a fully wired
+;; function: `blocks` has every outside use of a clone-group def in
+;; phi-on-edge form, and `shape` carries the clone group (the natural loop
+;; plus any forwarding stubs) as its body.
+(define (opt-bce-mb-apply-wired
+  [descriptor : OptBceMbDescriptor]
+  [write-free? : bool]
+  [blocks : ir.CompilerIrBlockList]
+  [shape : OptBceMbShape]
+  [defs : opt_i64_i64_map.Map]
+  [cell : (__tl_dyn-array i64)]
+  [frame : i64]) : OptUnrollResult
+  (let
+    [body-labels : OptLabelSet (struct-get shape body-labels)]
+    [body-blocks : ir.CompilerIrBlockList (struct-get shape body-blocks)]
+    (match (opt-bce-mb-guard-conds
+      descriptor
+      write-free?
+      blocks
+      shape
+      defs
+      cell)
+      [(OptBceMbGuardOut.No) (OptUnrollResult.Result blocks frame false)]
+      [(OptBceMbGuardOut.Some guard-instrs guard-value keep)
+        (let
+          [remap : (__tl_dyn-array ir.CompilerIrValue)
+            (array.make-array ir.CompilerIrValue frame)]
+          [_fill : unit (opt-unroll-remap-fill remap 0)]
+          [_alloc : unit (opt-bce-mb-alloc-defs! body-blocks remap cell)]
+          [guard-label : i64
+            (ir.compiler-ir-label
+              (string.append
+                (ir.compiler-ir-label-text (struct-get shape header))
+                "__bce_guard"))]
+          [fast-blocks : ir.CompilerIrBlockList
+            (opt-bce-mb-clone-blocks
+              body-blocks
+              remap
+              body-labels
+              (opt-bce-mb-all-labels-from blocks (OptLabelSet.Nil))
+              (struct-get shape preheader)
+              guard-label
+              keep)]
+          [guard-block : ir.CompilerIrBlock
+            (ir.compiler-ir-block
+              guard-label
+              (opt-aggregate-instr-list-append
+                guard-instrs
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Branch
+                    guard-value
+                    (ir.compiler-ir-label
+                      (string.append
+                        (ir.compiler-ir-label-text (struct-get shape header))
+                        "__bce_fast"))
+                    (struct-get shape header))
+                  (ir.CompilerIrInstrList.Nil))))]
+          (OptUnrollResult.Result
+            (let
+              [rewritten-blocks : ir.CompilerIrBlockList
+                (opt-bce-mb-rewrite-blocks
+                  blocks
+                  shape
+                  guard-block
+                  fast-blocks
+                  remap)]
+              [bounded : i64
+                (opt-bce-mb-find-bounded-phi
+                  (struct-get shape body-blocks)
+                  rewritten-blocks
+                  (struct-get shape header)
+                  (struct-get shape preheader)
+                  (ir.compiler-ir-label
+                    (string.append
+                      (ir.compiler-ir-label-text (struct-get shape header))
+                      "__bce_guard"))
+                  (opt-bce-mb-canon-value blocks (struct-get shape seed))
+                  (struct-get shape iphi))]
+              (opt-bce-mb-split-exit-checks
+                rewritten-blocks
+                shape
+                fast-blocks
+                (if (< bounded 0)
+                  -1
+                  (match (array-ref remap bounded)
+                    [(ir.CompilerIrValue.Var fast-bounded-id) fast-bounded-id]
+                    [_ -1]))
+                guard-instrs
+                cell))
+            (array-ref cell 0)
+            true))])))
+
 (define (opt-bce-mb-apply
+  [descriptor : OptBceMbDescriptor]
+  [pred-map : OptPredMap]
   [blocks : ir.CompilerIrBlockList]
   [shape : OptBceMbShape]
   [frame : i64]) : OptUnrollResult
@@ -45833,87 +47882,68 @@
         (opt_i64_i64_map.with-capacity 64)
         blocks
         body-labels)]
-    (if (opt-bce-mb-defs-escape? body-blocks outside)
-      (OptUnrollResult.Result blocks frame false)
-      (let
-        [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-        [_cell : unit (array-set! cell 0 frame)]
-        (match (opt-bce-mb-guard-conds blocks shape defs cell)
-          [(OptBceMbGuardOut.No) (OptUnrollResult.Result blocks frame false)]
-          [(OptBceMbGuardOut.Some guard-instrs guard-value keep)
-            (let
-              [remap : (__tl_dyn-array ir.CompilerIrValue)
-                (array.make-array ir.CompilerIrValue frame)]
-              [_fill : unit (opt-unroll-remap-fill remap 0)]
-              [_alloc : unit (opt-bce-mb-alloc-defs! body-blocks remap cell)]
-              [guard-label : i64
-                (ir.compiler-ir-label
-                  (string.append
-                    (ir.compiler-ir-label-text (struct-get shape header))
-                    "__bce_guard"))]
-              [fast-blocks : ir.CompilerIrBlockList
-                (opt-bce-mb-clone-blocks
-                  body-blocks
-                  remap
-                  body-labels
-                  (opt-bce-mb-all-labels-from blocks (OptLabelSet.Nil))
+    [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [_cell : unit (array-set! cell 0 frame)]
+    (if (not (opt-bce-mb-defs-escape? body-blocks outside))
+      ;; No direct outside use: the original exit-phi-only scheme, unchanged.
+      (opt-bce-mb-apply-wired
+        descriptor
+        (opt-bce-mb-write-free-blocks? body-blocks)
+        blocks
+        shape
+        defs
+        cell
+        frame)
+      (match (opt-bce-mb-wire-exits
+        pred-map
+        blocks
+        blocks
+        body-labels
+        body-blocks
+        cell
+        (OptLabelSet.Nil))
+        [(OptBceMbWiring.No) (OptUnrollResult.Result blocks frame false)]
+        [(OptBceMbWiring.Some wired-blocks stub-labels)
+          (let
+            [stub-blocks : ir.CompilerIrBlockList
+              (opt-bce-mb-stub-blocks-from wired-blocks stub-labels)]
+            [clone-labels : OptLabelSet
+              (opt-bce-mb-labels-union stub-labels body-labels)]
+            [clone-blocks : ir.CompilerIrBlockList
+              (opt-bce-mb-blocks-append body-blocks stub-blocks)]
+            [clone-defs : opt_i64_i64_map.Map
+              (opt-bce-mb-collect-defs
+                clone-blocks
+                (opt_i64_i64_map.with-capacity 64))]
+            [clone-outside : opt_i64_i64_map.Map
+              (opt-bce-mb-outside-uses
+                (opt_i64_i64_map.with-capacity 64)
+                wired-blocks
+                clone-labels)]
+            (if (opt-bce-mb-defs-escape? clone-blocks clone-outside)
+              (OptUnrollResult.Result blocks frame false)
+              (opt-bce-mb-apply-wired
+                descriptor
+                (opt-bce-mb-write-free-blocks? body-blocks)
+                wired-blocks
+                (OptBceMbShape
+                  (struct-get shape header)
+                  (struct-get shape latch)
                   (struct-get shape preheader)
-                  guard-label
-                  keep)]
-              [guard-block : ir.CompilerIrBlock
-                (ir.compiler-ir-block
-                  guard-label
-                  (opt-aggregate-instr-list-append
-                    guard-instrs
-                    (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.Branch
-                        guard-value
-                        (ir.compiler-ir-label
-                          (string.append
-                            (ir.compiler-ir-label-text
-                              (struct-get shape header))
-                            "__bce_fast"))
-                        (struct-get shape header))
-                      (ir.CompilerIrInstrList.Nil))))]
-              (OptUnrollResult.Result
-                (let
-                  [rewritten-blocks : ir.CompilerIrBlockList
-                    (opt-bce-mb-rewrite-blocks
-                      blocks
-                      shape
-                      guard-block
-                      fast-blocks
-                      remap)]
-                  [bounded : i64
-                    (opt-bce-mb-find-bounded-phi
-                      (struct-get shape body-blocks)
-                      rewritten-blocks
-                      (struct-get shape header)
-                      (struct-get shape preheader)
-                      (ir.compiler-ir-label
-                        (string.append
-                          (ir.compiler-ir-label-text (struct-get shape header))
-                          "__bce_guard"))
-                      (opt-bce-mb-canon-value blocks (struct-get shape seed))
-                      (struct-get shape iphi))]
-                  (opt-bce-mb-split-exit-checks
-                    rewritten-blocks
-                    shape
-                    fast-blocks
-                    (if (< bounded 0)
-                      -1
-                      (match (array-ref remap bounded)
-                        [(ir.CompilerIrValue.Var fast-bounded-id)
-                          fast-bounded-id]
-                        [_ -1]))
-                    guard-instrs
-                    cell))
-                (array-ref cell 0)
-                true))])))))
+                  clone-labels
+                  clone-blocks
+                  (struct-get shape iphi)
+                  (struct-get shape seed)
+                  (struct-get shape bound))
+                clone-defs
+                cell
+                frame)))]))))
 
 ;; Apply at most one multi-block versioning per invocation, like the
 ;; single-block pass.
 (define (opt-bce-mb-loops-scan
+  [descriptor : OptBceMbDescriptor]
+  [pred-map : OptPredMap]
   [blocks : ir.CompilerIrBlockList]
   [all-loops : OptNaturalLoopList]
   [loops : OptNaturalLoopList]
@@ -45924,11 +47954,13 @@
     [(OptNaturalLoopList.Cons loop rest)
       (match (opt-bce-mb-loop-shape blocks all-loops entry-label loop)
         [(OptBceMbMaybeShape.Some shape)
-          (match (opt-bce-mb-apply blocks shape frame)
+          (match (opt-bce-mb-apply descriptor pred-map blocks shape frame)
             [(OptUnrollResult.Result next-blocks next-frame changed)
               (if changed
                 (OptUnrollResult.Result next-blocks next-frame true)
                 (opt-bce-mb-loops-scan
+                  descriptor
+                  pred-map
                   blocks
                   all-loops
                   (box-get rest)
@@ -45936,6 +47968,8 @@
                   frame))])]
         [(OptBceMbMaybeShape.No)
           (opt-bce-mb-loops-scan
+            descriptor
+            pred-map
             blocks
             all-loops
             (box-get rest)
@@ -45991,13 +48025,14 @@
             (OptFunctionCtxResult.Result func context)]))]))
 
 (define (opt-bce-version-function-verified-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
-        [(ir.CompilerIrFunction.Function _ _ _ frame blocks)
+        [(ir.CompilerIrFunction.Function _ params _ frame blocks)
           (match (opt-bce-version-blocks-scan
             blocks
             blocks
@@ -46015,7 +48050,21 @@
                 (let
                   [loops : OptNaturalLoopList
                     (opt-cfg-natural-loops-with-context blocks context)]
+                  ;; A negative bases value disables descriptor-length
+                  ;; recognition (no type-pool access); a real one classifies
+                  ;; the function's descriptor handles for it.
+                  [descriptor : OptBceMbDescriptor
+                    (if (< type-segment-bases 0)
+                      (OptBceMbDescriptor.No)
+                      (OptBceMbDescriptor.Some
+                        type-segment-bases
+                        (opt-load-header-set-from-function
+                          type-segment-bases
+                          params
+                          blocks)))]
                   (match (opt-bce-mb-loops-scan
+                    descriptor
+                    (struct-get context pred-map)
                     blocks
                     loops
                     loops
@@ -46033,6 +48082,7 @@
       (OptFunctionCtxResult.Result func context)]))
 
 (define (opt-bce-version-function-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
@@ -46043,15 +48093,32 @@
         (opt-bce-version-blocks-have-candidate? prescan-blocks)
         (opt-bce-mb-blocks-have-candidate? prescan-blocks))
         (opt-bce-version-function-verified-with-context-result
+          type-segment-bases
           context
           verified?
           func)
         (OptFunctionCtxResult.Result func context))]))
 
+;; Type-pool-free entry: descriptor-length recognition stays off (-1), so
+;; multi-block versioning behaves exactly as before for invariant lengths.
 (define (opt-bce-version-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-bce-version-function-with-context-result
+        (- 0 1)
+        (opt-cfg-context-build blocks)
+        false
+        func)
+        [(OptFunctionCtxResult.Result next _) next])]))
+
+;; Test entry with type-pool access: descriptor-length recognition is live.
+(define (opt-bce-version-function-with-types
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (match (opt-bce-version-function-with-context-result
+        type-segment-bases
         (opt-cfg-context-build blocks)
         false
         func)
@@ -50759,9 +52826,16 @@
           ;; Substitute proven constant-global operands up front so the local
           ;; folds below see literals: a mask global otherwise keeps its `and`
           ;; alive into the loop cluster, pushing an otherwise-unrollable body
-          ;; past the unroll size gate (the opt_crc32 shape). The map is shared
-          ;; with the later divisor-targeted rewrite and empty in the common
-          ;; case, which makes this a length check per function.
+          ;; past the unroll size gate (the opt_crc32 shape). Use positions
+          ;; are covered wholesale (BinOp/UnOp/Cast/Bitcast/Mov plus Store and
+          ;; StorePtr values and BoundsCheck operands -- see
+          ;; opt-const-divisor-rewrite-instr), so a literal global bound also
+          ;; constant-enables induction, bce_version, and unrolling below, and
+          ;; a descriptor-stored length global forwards as the SAME literal the
+          ;; compares see (mixed symbolic/literal state would defeat the
+          ;; ctor_fwd equality eliminations). The map is shared with the later
+          ;; divisor-targeted rewrite and empty in the common case, which
+          ;; makes this a length check per function.
           [const-global-blocks : ir.CompilerIrBlockList
             (opt-const-divisor-rewrite-summary-blocks summaries blocks)]
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
@@ -51045,9 +53119,33 @@
                             name
                             _t-ssa)
                           unit)]
-                      [ssa-frame : i64 (opt-function-frame ssa)]
+                      ;; Global-cell invariance runs on the SSA form so its
+                      ;; entry-loaded vars are single-def and the rewritten
+                      ;; descriptor geps/loads become ordinary SSA-fed
+                      ;; instructions for GVN/LICM below (and invariant loop
+                      ;; bounds for bce_version in the loop cluster). It only
+                      ;; inserts entry-block Movs and rewrites operands in
+                      ;; place, so the CFG -- and therefore ssa-context --
+                      ;; stays valid for the consumers underneath.
+                      [_t-global-cell : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [global-cell : ir.CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "global_cell"
+                          (opt-global-cell-function summaries ssa))]
+                      [_p-global-cell : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "global_cell"
+                            name
+                            _t-global-cell)
+                          unit)]
+                      [ssa-frame : i64 (opt-function-frame global-cell)]
                       [ssa-blocks : ir.CompilerIrBlockList
-                        (opt-function-blocks ssa)]
+                        (opt-function-blocks global-cell)]
                       [_t-gvn : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [gvn : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
@@ -51554,6 +53652,7 @@
                       [bce-version-result : OptFunctionCtxResult
                         (if run-loop?
                           (opt-bce-version-function-with-context-result
+                            type-segment-bases
                             induction-context
                             loop-cluster-verified?
                             induction)
@@ -61056,7 +63155,8 @@
       direct-call-clean
       call-memory
       argc-return
-      (opt_i64_i64_map.with-capacity 1))))
+      (opt_i64_i64_map.with-capacity 1)
+      (opt-global-cell-summary-empty))))
 
 (define (opt-loop-bce-summaries-set-const-divisors
   [summaries : OptLoopBceSummaries]
@@ -61068,7 +63168,21 @@
     (struct-get summaries direct-call-clean)
     (struct-get summaries call-memory)
     (struct-get summaries argc-return)
-    const-divisors))
+    const-divisors
+    (struct-get summaries global-cell)))
+
+(define (opt-loop-bce-summaries-set-global-cell
+  [summaries : OptLoopBceSummaries]
+  [global-cell : OptGlobalCellSummary]) : OptLoopBceSummaries
+  (OptLoopBceSummaries
+    (struct-get summaries enabled)
+    (struct-get summaries profile-state)
+    (struct-get summaries length-clean)
+    (struct-get summaries direct-call-clean)
+    (struct-get summaries call-memory)
+    (struct-get summaries argc-return)
+    (struct-get summaries const-divisors)
+    global-cell))
 
 (define (opt-loop-bce-summaries-set-profile-state
   [summaries : OptLoopBceSummaries]
@@ -61080,42 +63194,44 @@
     (struct-get summaries direct-call-clean)
     (struct-get summaries call-memory)
     (struct-get summaries argc-return)
-    (struct-get summaries const-divisors)))
+    (struct-get summaries const-divisors)
+    (struct-get summaries global-cell)))
 
 ;; Build the per-program summaries: the function-count-gated BCE/LICM call maps
 ;; plus the const-divisor table. The const-divisor table is built only at opt
 ;; level 2 (the only level whose pipeline runs the divisor rewrite), so opt0/opt1
 ;; -- and in particular the opt1 self-compile throughput metric -- pay nothing
-;; for it and stay byte-identical.
+;; for it and stay byte-identical. The global-cell summary follows the same
+;; gate: only the level-2 pipeline runs the global_cell pass.
 (define (opt-build-program-summaries
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalList]
   [reachable-functions : ir.CompilerIrFunctionList]
   [level : i64]) : OptLoopBceSummaries
-  (opt-loop-bce-summaries-set-const-divisors
-    (if (<=
-      (opt-function-list-count reachable-functions)
-      (opt-loop-bce-summary-function-limit))
-      (opt-loop-bce-build-summaries-with-direct-call-clean
-        type-segment-bases
-        reachable-functions
-        (>= level 2)
-        (>= level 1))
-      (opt-loop-bce-empty-summaries))
+  (opt-loop-bce-summaries-set-global-cell
+    (opt-loop-bce-summaries-set-const-divisors
+      (if (<=
+        (opt-function-list-count reachable-functions)
+        (opt-loop-bce-summary-function-limit))
+        (opt-loop-bce-build-summaries-with-direct-call-clean
+          type-segment-bases
+          reachable-functions
+          (>= level 2)
+          (>= level 1))
+        (opt-loop-bce-empty-summaries))
+      (if (>= level 2)
+        (opt-const-divisors-build globals reachable-functions)
+        (opt_i64_i64_map.with-capacity 1)))
     (if (>= level 2)
-      (opt-const-divisors-build globals reachable-functions)
-      (opt_i64_i64_map.with-capacity 1))))
+      (opt-global-cell-summary-build globals reachable-functions)
+      (opt-global-cell-summary-empty))))
 
 ;; Substitute a proven constant global with its literal value in
-;; binop operands. For an ordinary operand this lets the backend fold the literal
-;; instead of emitting a per-use rip-relative load (the opt_crc32/opt_quicksort
-;; mask-load win). For a div/mod divisor it produces a literal `CompilerIrValue.I64`, which
-;; `compiler-backend-binop-literal-divmod-asm` strength-reduces with the existing
-;; magic-multiply path (matching clang). Binops are rewritten before local
-;; folding. Lowering-time Moves are rewritten separately after BCE and
-;; unrolling: doing so at the start of the iteration can hide the symbolic
-;; descriptor-length identity before BCE consumes it. Other instruction kinds
-;; keep the global's hidden-load form.
+;; scalar operand positions. For an ordinary operand this lets the backend fold
+;; the literal instead of emitting a per-use rip-relative load (the
+;; opt_crc32/opt_quicksort mask-load win). For a div/mod divisor it produces a
+;; literal `ir.CompilerIrValue.I64`, which `compiler-backend-binop-literal-divmod-asm`
+;; strength-reduces with the existing magic-multiply path (matching clang).
 ;; (The map is named `const-divisors` for historical reasons but now holds every
 ;; proven-constant global, not only divisors.)
 (define (opt-const-global-subst-value
@@ -61130,6 +63246,24 @@
         [(opt_i64_i64_map.LookupMissing) v])]
     [_ v]))
 
+;; The early rewrite substitutes every scalar operand position whose literal
+;; the round-1 local fold and the loop passes can both consume: BinOp operands
+;; (compare operands feeding branches included), UnOp sources, Cast/Bitcast
+;; sources, and Mov sources. Running at the start of the iteration -- before
+;; induction/bce_version -- a literal global bound constant-enables unroll,
+;; induction, and versioning downstream, none of which accept a global-ref
+;; operand (a hidden rip-relative load, neither a literal nor an invariant SSA
+;; value). Substituting Mov sources early is register-neutral: the following
+;; fold propagates the literal into its uses and DCEs the Move, so a bound used
+;; only in a compare still ends as an immediate operand. The older late pass
+;; below (`opt-const-global-move-rewrite-*`) kept comparison-bound Moves
+;; symbolic to avoid holding a constant in a register across a loop; that
+;; concern does not apply here because the fold removes the Move entirely. The
+;; late passes stay in place and simply become no-ops for the sites this pass
+;; already covered (they still catch globals materialized mid-iteration by
+;; other passes). Load/StorePtr/Gep and the vector arms keep the global's
+;; hidden-load form: their operand is an address or a descriptor pointer, not
+;; a scalar the fold can use.
 (define (opt-const-divisor-rewrite-instr
   [const-divisors : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
@@ -61141,6 +63275,52 @@
         (opt-const-global-subst-value const-divisors lhs)
         (opt-const-global-subst-value const-divisors rhs)
         ty)]
+    [(ir.CompilerIrInstr.Mov dst src ty)
+      (ir.CompilerIrInstr.Mov
+        dst
+        (opt-const-global-subst-value const-divisors src)
+        ty)]
+    [(ir.CompilerIrInstr.UnOp dst op src ty)
+      (ir.CompilerIrInstr.UnOp
+        dst
+        op
+        (opt-const-global-subst-value const-divisors src)
+        ty)]
+    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
+      (ir.CompilerIrInstr.Cast
+        dst
+        (opt-const-global-subst-value const-divisors src)
+        from-ty
+        to-ty)]
+    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (ir.CompilerIrInstr.Bitcast
+        dst
+        (opt-const-global-subst-value const-divisors src)
+        from-ty
+        to-ty)]
+    ;; Store values are uses like any other: leaving a const global symbolic
+    ;; at a store while substituting it at compares would split a symbolic
+    ;; equality (e.g. ctor_fwd forwarding the descriptor-stored global to a
+    ;; length load that no longer matches the substituted loop bound), so the
+    ;; stored value is substituted too. The store's target name is not a use.
+    [(ir.CompilerIrInstr.StorePtr ptr value ty)
+      (ir.CompilerIrInstr.StorePtr
+        ptr
+        (opt-const-global-subst-value const-divisors value)
+        ty)]
+    [(ir.CompilerIrInstr.Store name value ty)
+      (ir.CompilerIrInstr.Store
+        name
+        (opt-const-global-subst-value const-divisors value)
+        ty)]
+    ;; A check whose length is a const global becomes a literal-length check:
+    ;; the forwarded/equality eliminations and the literal-bound reasoning
+    ;; downstream both consume that form.
+    [(ir.CompilerIrInstr.BoundsCheck index length label)
+      (ir.CompilerIrInstr.BoundsCheck
+        (opt-const-global-subst-value const-divisors index)
+        (opt-const-global-subst-value const-divisors length)
+        label)]
     [_ instr]))
 
 ;; One rewritten instruction per input instruction, so write straight into a
@@ -61207,7 +63387,11 @@
 ;; simplifies its dependent arithmetic before late LICM. Restrict this to Moves
 ;; feeding non-comparison arithmetic: replacing a global used only as a loop
 ;; limit with an immediate can increase register pressure without enabling a
-;; fold, while branchless min/bound recipes include bit/arithmetic uses.
+;; fold, while branchless min/bound recipes include bit/arithmetic uses. The
+;; early rewrite (opt-const-divisor-rewrite-instr) already covers every
+;; lowering-time Move at the start of the iteration, so in the pipeline this
+;; pass now fires only on const-global Moves materialized mid-iteration by
+;; other passes.
 (define (opt-const-global-move-fold-vars-instr
   [vars : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : opt_i64_i64_map.Map
@@ -61325,6 +63509,1295 @@
           (opt_i64_i64_map.with-capacity 64)
           blocks)
         blocks))))
+
+;; --- function-scope global-cell invariance (global_cell pass) ----------------
+;;
+;; A `ir.CompilerIrValue.Global name` operand is a hidden LOAD of the global's cell:
+;; the backend emits a fresh rip-relative read at every use, and because that
+;; operand is neither a literal nor an SSA var it is invisible to GVN/LICM and
+;; unacceptable to the versioning machinery as a loop bound or check length.
+;; For a global G that cannot be written during a function's execution this
+;; pass loads G's cell ONCE in the function's entry block (`mov %g, @G` --
+;; global-ref is a legal Mov source) and rewrites every in-function use of `@G`
+;; to `%g`. Downstream effects: (i) per-use rip reloads collapse to one load
+;; per activation; (ii) descriptor gep+load pairs off an array global
+;; (`gep @arr, 1; load`) become ordinary SSA-fed instructions -- the entry Mov
+;; carries the declared array type, so the load-header classification marks %g
+;; a descriptor base and the existing load-GVN/LICM machinery can dedup and
+;; hoist the length/data-pointer loads out of loops; (iii) loop bounds and
+;; check lengths that were global refs become invariant SSA vars, which
+;; bce_version accepts.
+;;
+;; SOUNDNESS. G's cell cannot change value during this function's execution
+;; when all of the following hold:
+;;   (a) no `ir.CompilerIrInstr.Store G` (set!) appears in THIS function's blocks
+;;       (a function that stores G keeps direct per-use cell semantics);
+;;   (b) `ir.CompilerIrValue.GlobalAddr G` appears NOWHERE in the whole program, so
+;;       no store_ptr/syscall/callee can reach the cell through a pointer. This
+;;       set is derived from the const-global disqualify walk -- which records
+;;       exactly Store targets and GlobalAddr operands, arm-for-arm so a new IR
+;;       instruction fails to compile until handled -- minus this program's
+;;       Store targets, so it is exactly the address-taken globals;
+;;   (c) the function contains no Call/TailCall/indirect-call/SpmdCall: any
+;;       callee could set! G. v1 deliberately treats the whole call family as
+;;       opaque; a callgraph refinement (block only callees that may set! G) is
+;;       a later packet. Passes after this one only rewrite or clone existing
+;;       instructions -- the inliner, the pipeline's only call producer, has
+;;       already run -- so the no-call fact cannot be invalidated downstream.
+;;       Trapping operations like BoundsCheck are not calls, and explicit
+;;       panic paths diverge before any write could interleave.
+;; A set! in ANOTHER function (the loader pattern) cannot interleave with this
+;; activation because (c) rules out the call that would reach it, and the
+;; entry load observes any set! made before this activation -- exactly what a
+;; per-use load would observe. Recursion needs no special case: today's
+;; semantics already reload the cell at least once per activation (every use
+;; reloads it), so materializing that load at entry is value-identical per
+;; activation. The entry block dominates every use, so the rewritten SSA stays
+;; well-formed. Multiple globals are loaded independently. Global sources of
+;; entry-block Movs are deliberately left as direct cell loads: they are this
+;; pass's own output shape, so rewriting them would re-hoist on the next
+;; fixpoint iteration, and leaving them costs at most one entry-block load.
+;;
+;; Only single-word cells qualify (opt-global-cell-word-type?): the entry
+;; Mov's declared type drives the backend's load width, and a wider
+;; register-resident aggregate cell would silently load only its first word.
+;; Register-resident aggregates (Struct/Enum and their Args forms) are
+;; excluded because the optimizer cannot resolve their inline layouts; the
+;; accepted set is exactly the types `compiler-backend-type-size` reports as
+;; 1/2/4/8 without type-segment recursion.
+(defstruct OptGlobalCellScan
+  (refs opt_i64_i64_map.Map)
+  (ref-list OptI64List)
+  (stores opt_i64_i64_map.Map)
+  (calls bool))
+
+(define (opt-global-cell-scan-new) : OptGlobalCellScan
+  (OptGlobalCellScan
+    (opt_i64_i64_map.with-capacity 8)
+    OptI64List.Nil
+    (opt_i64_i64_map.with-capacity 8)
+    false))
+
+(define (opt-global-cell-scan-ref
+  [scan : OptGlobalCellScan (:consume)]
+  [name : i64]) : OptGlobalCellScan
+  (match scan
+    [(OptGlobalCellScan refs ref-list stores calls)
+      (if (opt_i64_i64_map.contains? (& refs) name)
+        (OptGlobalCellScan refs ref-list stores calls)
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut refs) name 1)
+          (OptGlobalCellScan
+            refs
+            (OptI64List.Cons name (box ref-list))
+            stores
+            calls)))]))
+
+(define (opt-global-cell-scan-store
+  [scan : OptGlobalCellScan (:consume)]
+  [name : i64]) : OptGlobalCellScan
+  (match scan
+    [(OptGlobalCellScan refs ref-list stores calls)
+      (begin
+        (opt_i64_i64_map.insert-ref! (&mut stores) name 1)
+        (OptGlobalCellScan refs ref-list stores calls))]))
+
+(define (opt-global-cell-scan-call [scan : OptGlobalCellScan]) : OptGlobalCellScan
+  (if (struct-get scan calls)
+    scan
+    (OptGlobalCellScan
+      (struct-get scan refs)
+      (struct-get scan ref-list)
+      (struct-get scan stores)
+      true)))
+
+(define (opt-global-cell-scan-value
+  [scan : OptGlobalCellScan]
+  [value : ir.CompilerIrValue]) : OptGlobalCellScan
+  (match value
+    [(ir.CompilerIrValue.Global name)
+      (opt-global-cell-scan-ref scan (ir.compiler-ir-symbol-id name))]
+    [_ scan]))
+
+(define (opt-global-cell-scan-args-array
+  [scan : OptGlobalCellScan]
+  [values : (__tl_dyn-array ir.CompilerIrValue)]
+  [index : i64]) : OptGlobalCellScan
+  (if (>= index (array-length values))
+    scan
+    (opt-global-cell-scan-args-array
+      (opt-global-cell-scan-value scan (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (opt-global-cell-scan-args
+  [scan : OptGlobalCellScan]
+  [args : ir.CompilerIrCallArgs]) : OptGlobalCellScan
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) scan]
+    [(ir.CompilerIrCallArgs.One value) (opt-global-cell-scan-value scan value)]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan a) b)]
+    [(ir.CompilerIrCallArgs.Array values)
+      (opt-global-cell-scan-args-array scan values 0)]))
+
+(define (opt-global-cell-scan-spmd-args
+  [scan : OptGlobalCellScan]
+  [args : ir.CompilerIrSpmdCallArgList]) : OptGlobalCellScan
+  (match args
+    [(ir.CompilerIrSpmdCallArgList.Nil) scan]
+    [(ir.CompilerIrSpmdCallArgList.Cons arg rest)
+      (match arg
+        [(ir.CompilerIrSpmdCallArg.Arg _ value _)
+          (opt-global-cell-scan-spmd-args
+            (opt-global-cell-scan-value scan value)
+            (box-get rest))])]
+    [(ir.CompilerIrSpmdCallArgList.Array seq)
+      (let
+        [out : OptGlobalCellScan scan]
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
+          (struct-get seq slots)]
+        (begin
+          (while (< i count)
+            (begin
+              (match (array-ref slots i)
+                [(ir.CompilerIrSpmdCallArg.Arg _ value _)
+                  (set! out (opt-global-cell-scan-value out value))])
+              (set! i (+ i 1))))
+          out))]))
+
+(define (opt-global-cell-scan-maybe
+  [scan : OptGlobalCellScan]
+  [maybe : ir.CompilerIrMaybeValue]) : OptGlobalCellScan
+  (match maybe
+    [(ir.CompilerIrMaybeValue.No) scan]
+    [(ir.CompilerIrMaybeValue.Some value)
+      (opt-global-cell-scan-value scan value)]))
+
+(define (opt-global-cell-scan-phi
+  [scan : OptGlobalCellScan]
+  [inputs : ir.CompilerIrPhiInputList]) : OptGlobalCellScan
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) scan]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-global-cell-scan-phi scan (ir.compiler-ir-phi-input-seq-to-list seq))]
+    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+      (opt-global-cell-scan-phi
+        (opt-global-cell-scan-value scan value)
+        (box-get rest))]))
+
+;; Per-function fact scan: global-ref operand uses (refs), direct set! targets
+;; (stores), and whether any call-family instruction remains (calls). Mirrors
+;; opt-const-globals-disq-instr arm-for-arm (no wildcard): a new IR instruction
+;; fails to compile until classified here, so a new call-like or store-like
+;; operand position can never silently escape the (a)/(c) checks. Pack words
+;; carry no global operands (the same invariant opt-reach-instr relies on), so
+;; they are not scanned; a missed ref is always sound (the pass rewrites a
+;; subset of uses to a value-identical var), only a missed store or call is
+;; not -- and those arms are exactly the ones this total match protects.
+;; `entry?` marks the function's first block: Mov sources there are exempt
+;; from refs because they are this pass's own output shape (see the header).
+(define (opt-global-cell-scan-instr
+  [scan : OptGlobalCellScan]
+  [entry? : bool]
+  [instr : ir.CompilerIrInstr]) : OptGlobalCellScan
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (if entry?
+        scan
+        (opt-global-cell-scan-value scan src))]
+    [(ir.CompilerIrInstr.Alloc _ _) scan]
+    [(ir.CompilerIrInstr.AddrOf _ _) scan]
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan base) offset)]
+    [(ir.CompilerIrInstr.Load _ src _) (opt-global-cell-scan-value scan src)]
+    [(ir.CompilerIrInstr.StorePtr dst src _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan dst) src)]
+    [(ir.CompilerIrInstr.CopyBytes dst src _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan dst) src)]
+    [(ir.CompilerIrInstr.BoundsCheck idx length _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan idx) length)]
+    [(ir.CompilerIrInstr.Cast _ src _ _) (opt-global-cell-scan-value scan src)]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _)
+      (opt-global-cell-scan-value scan src)]
+    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan lhs) rhs)]
+    [(ir.CompilerIrInstr.UnOp _ _ src _) (opt-global-cell-scan-value scan src)]
+    [(ir.CompilerIrInstr.LaneId _ _ _) scan]
+    [(ir.CompilerIrInstr.Splat _ value _ _)
+      (opt-global-cell-scan-value scan value)]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        (opt-global-cell-scan-value (opt-global-cell-scan-value scan lhs) rhs))]
+    [(ir.CompilerIrInstr.VectorPrefix payload-box)
+      (let
+        [src (struct-get (box-get payload-box) src)]
+        [carry (struct-get (box-get payload-box) carry)]
+        (opt-global-cell-scan-value (opt-global-cell-scan-value scan src) carry))]
+    [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
+      (opt-global-cell-scan-value scan src)]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        (opt-global-cell-scan-value (opt-global-cell-scan-value scan lhs) rhs))]
+    [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan lhs) rhs)]
+    [(ir.CompilerIrInstr.MaskNot _ src _) (opt-global-cell-scan-value scan src)]
+    [(ir.CompilerIrInstr.MaskReduce _ _ src _)
+      (opt-global-cell-scan-value scan src)]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [mask (struct-get (box-get payload-box) mask)]
+        [on-true (struct-get (box-get payload-box) on-true)]
+        [on-false (struct-get (box-get payload-box) on-false)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value scan mask)
+            on-true)
+          on-false))]
+    [(ir.CompilerIrInstr.VectorLoad _ base idx _ _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan base) idx)]
+    [(ir.CompilerIrInstr.VectorStore payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [idx (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value scan base)
+            idx)
+          value))]
+    [(ir.CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [idx (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value
+              (opt-global-cell-scan-value scan base)
+              idx)
+            value)
+          mask))]
+    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [idx (struct-get (box-get payload-box) index)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value scan base)
+            idx)
+          mask))]
+    [(ir.CompilerIrInstr.GatherLoad payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index-base (struct-get (box-get payload-box) index-base)]
+        [idx (struct-get (box-get payload-box) index)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value scan base)
+            index-base)
+          idx))]
+    [(ir.CompilerIrInstr.VectorShuffle payload-box)
+      (let
+        [source (struct-get (box-get payload-box) source)]
+        [selector-low (struct-get (box-get payload-box) selector-low)]
+        [selector-high (struct-get (box-get payload-box) selector-high)]
+        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-maybe
+            (opt-global-cell-scan-value
+              (opt-global-cell-scan-value scan source)
+              selector-low)
+            selector-high)
+          active-lanes))]
+    [(ir.CompilerIrInstr.TailMask _ idx length _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan idx) length)]
+    [(ir.CompilerIrInstr.EntryArgc _) scan]
+    [(ir.CompilerIrInstr.EntryArgv _) scan]
+    [(ir.CompilerIrInstr.EntryEnvp _) scan]
+    [(ir.CompilerIrInstr.CpuId _ leaf subleaf _)
+      (opt-global-cell-scan-value
+        (opt-global-cell-scan-value scan leaf)
+        subleaf)]
+    [(ir.CompilerIrInstr.Xgetbv _ idx) (opt-global-cell-scan-value scan idx)]
+    [(ir.CompilerIrInstr.Syscall _ args) (opt-global-cell-scan-args scan args)]
+    [(ir.CompilerIrInstr.Call _ _ args _)
+      (opt-global-cell-scan-args (opt-global-cell-scan-call scan) args)]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [args (struct-get (box-get payload-box) args)]
+        (opt-global-cell-scan-args
+          (opt-global-cell-scan-value (opt-global-cell-scan-call scan) base)
+          args))]
+    [(ir.CompilerIrInstr.SpmdCall payload-box)
+      (let
+        [active-mask (struct-get (box-get payload-box) active-mask)]
+        [args (struct-get (box-get payload-box) args)]
+        (opt-global-cell-scan-spmd-args
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-call scan)
+            active-mask)
+          args))]
+    [(ir.CompilerIrInstr.CallIndirect _ func args _)
+      (opt-global-cell-scan-args
+        (opt-global-cell-scan-value (opt-global-cell-scan-call scan) func)
+        args)]
+    [(ir.CompilerIrInstr.CallIndirectC _ func args _)
+      (opt-global-cell-scan-args
+        (opt-global-cell-scan-value (opt-global-cell-scan-call scan) func)
+        args)]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [func (struct-get (box-get payload-box) callee)]
+        [args (struct-get (box-get payload-box) args)]
+        (opt-global-cell-scan-args
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value (opt-global-cell-scan-call scan) base)
+            func)
+          args))]
+    [(ir.CompilerIrInstr.TailCall _ args _)
+      (opt-global-cell-scan-args (opt-global-cell-scan-call scan) args)]
+    [(ir.CompilerIrInstr.Store name value _)
+      (opt-global-cell-scan-value
+        (opt-global-cell-scan-store scan (ir.compiler-ir-symbol-id name))
+        value)]
+    [(ir.CompilerIrInstr.Jump _) scan]
+    [(ir.CompilerIrInstr.Branch cond _ _)
+      (opt-global-cell-scan-value scan cond)]
+    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-global-cell-scan-value scan cond)]
+    [(ir.CompilerIrInstr.Return maybe) (opt-global-cell-scan-maybe scan maybe)]
+    [(ir.CompilerIrInstr.Phi _ inputs _) (opt-global-cell-scan-phi scan inputs)]
+    [(ir.CompilerIrInstr.Pack _ _ _) scan]
+    [(ir.CompilerIrInstr.Word _ src _ _) (opt-global-cell-scan-value scan src)]
+    [(ir.CompilerIrInstr.TailCallIndirect func args _)
+      (opt-global-cell-scan-args
+        (opt-global-cell-scan-value (opt-global-cell-scan-call scan) func)
+        args)]
+    [(ir.CompilerIrInstr.Switch idx _ _ _)
+      (opt-global-cell-scan-value scan idx)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch idx _ _ _ _)
+      (opt-global-cell-scan-value scan idx)]))
+
+(define (opt-global-cell-scan-seq-from
+  [scan : OptGlobalCellScan]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [entry? : bool]) : OptGlobalCellScan
+  (if (>= index count)
+    scan
+    (opt-global-cell-scan-seq-from
+      (opt-global-cell-scan-instr
+        scan
+        entry?
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1)
+      count
+      entry?)))
+
+(define (opt-global-cell-scan-blocks
+  [scan : OptGlobalCellScan]
+  [blocks : ir.CompilerIrBlockList]
+  [entry? : bool]) : OptGlobalCellScan
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) scan]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-cell-scan-blocks
+            (opt-global-cell-scan-seq-from
+              scan
+              instrs
+              0
+              (ir.compiler-ir-instr-seq-count instrs)
+              entry?)
+            (box-get rest)
+            false)])]
+    ;; Read-only: scan the sequence instead of materialising a block cons
+    ;; chain to walk once (refs #5729, same shape as the const-global walk).
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [acc : OptGlobalCellScan scan]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq i)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set!
+                    acc
+                    (opt-global-cell-scan-seq-from
+                      acc
+                      instrs
+                      0
+                      (ir.compiler-ir-instr-seq-count instrs)
+                      (and entry? (= i 0))))])
+              (set! i (+ i 1))))
+          acc))]))
+
+(define (opt-global-cell-scan-functions
+  [scan : OptGlobalCellScan]
+  [functions : ir.CompilerIrFunctionList]) : OptGlobalCellScan
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) scan]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+          (opt-global-cell-scan-functions
+            (opt-global-cell-scan-blocks scan blocks false)
+            (box-get rest))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-global-cell-scan-functions
+        scan
+        (ir.compiler-ir-function-seq-to-list seq))]))
+
+;; A global's cell qualifies for entry-load hoisting only when it is exactly
+;; one machine word: the entry load is a single `mov %g, @G` whose Mov type is
+;; the declared cell type, so a wider cell would silently load only its first
+;; word. See the pass header for the full argument.
+(define (opt-global-cell-word-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [(ast.AstType.F64) true]
+    [(ast.AstType.I32) true]
+    [(ast.AstType.U32) true]
+    [(ast.AstType.F32) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.U16) true]
+    [(ast.AstType.I8) true]
+    [(ast.AstType.U8) true]
+    [(ast.AstType.Bool) true]
+    [(ast.AstType.Char) true]
+    [(ast.AstType.Ptr _) true]
+    [(ast.AstType.MutPtr _) true]
+    [(ast.AstType.Ref _ _) true]
+    [(ast.AstType.MutRef _ _) true]
+    [(ast.AstType.Box _) true]
+    [(ast.AstType.String) true]
+    [(ast.AstType.Str) true]
+    [(ast.AstType.Bytes) true]
+    [(ast.AstType.DynArray _) true]
+    [(ast.AstType.Array _ _) true]
+    [(ast.AstType.Func _ _) true]
+    [(ast.AstType.Tuple _) true]
+    [_ false]))
+
+(define (opt-global-cell-types-fill
+  [globals : ir.CompilerIrGlobalList]
+  [type-index : opt_i64_i64_map.Map (:consume)]
+  [types : (Array ast.AstType)]
+  [index : i64]) : opt_i64_i64_map.Map
+  (match globals
+    [(ir.CompilerIrGlobalList.Nil) type-index]
+    [(ir.CompilerIrGlobalList.Cons global rest)
+      (match global
+        [(ir.CompilerIrGlobal.Global name ty _)
+          (begin
+            (array-set! types index ty)
+            (opt_i64_i64_map.insert-ref!
+              (&mut type-index)
+              (ir.compiler-ir-symbol-id name)
+              index)
+            (opt-global-cell-types-fill
+              (box-get rest)
+              type-index
+              types
+              (+ index 1)))])]
+    [(ir.CompilerIrGlobalList.Array seq)
+      (opt-global-cell-types-fill
+        (ir.compiler-ir-global-seq-to-list seq)
+        type-index
+        types
+        index)]))
+
+(define (opt-global-cell-type-lookup [cell : OptGlobalCellSummary] [name : i64]) : OptMaybeAstType
+  (match (opt_i64_i64_map.get
+    (& (struct-get cell type-index))
+    (ir.compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound index)
+      (OptMaybeAstType.Some (array-ref (struct-get cell types) index))]
+    [(opt_i64_i64_map.LookupMissing) (OptMaybeAstType.No)]))
+
+;; The address-taken set is exactly the const-global disqualified set minus the
+;; program's direct-store targets: the disqualify walk records a global on a
+;; `ir.CompilerIrInstr.Store name` OR a `ir.CompilerIrValue.GlobalAddr name` operand and
+;; nothing else, so subtracting the former leaves precisely the latter. Both
+;; walks are total matches over the IR, so the derivation cannot drift when the
+;; IR grows an instruction variant.
+(define (opt-global-cell-addr-taken-fill
+  [globals : ir.CompilerIrGlobalList]
+  [disq : opt_i64_i64_map.Map]
+  [stores : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match globals
+    [(ir.CompilerIrGlobalList.Nil) out]
+    [(ir.CompilerIrGlobalList.Cons global rest)
+      (match global
+        [(ir.CompilerIrGlobal.Global name _ _)
+          (opt-global-cell-addr-taken-fill
+            (box-get rest)
+            disq
+            stores
+            (if (and
+              (opt_i64_i64_map.contains?
+                (& disq)
+                (ir.compiler-ir-symbol-id name))
+              (not
+                (opt_i64_i64_map.contains?
+                  (& stores)
+                  (ir.compiler-ir-symbol-id name))))
+              (begin
+                (opt_i64_i64_map.insert-ref!
+                  (&mut out)
+                  (ir.compiler-ir-symbol-id name)
+                  1)
+                out)
+              out))])]
+    [(ir.CompilerIrGlobalList.Array seq)
+      (opt-global-cell-addr-taken-fill
+        (ir.compiler-ir-global-seq-to-list seq)
+        disq
+        stores
+        out)]))
+
+(define (opt-global-cell-word-count
+  [globals : ir.CompilerIrGlobalList]
+  [addr-taken : opt_i64_i64_map.Map]
+  [count : i64]) : i64
+  (match globals
+    [(ir.CompilerIrGlobalList.Nil) count]
+    [(ir.CompilerIrGlobalList.Cons global rest)
+      (match global
+        [(ir.CompilerIrGlobal.Global name ty _)
+          (opt-global-cell-word-count
+            (box-get rest)
+            addr-taken
+            (if (and
+              (opt-global-cell-word-type? ty)
+              (not
+                (opt_i64_i64_map.contains?
+                  (& addr-taken)
+                  (ir.compiler-ir-symbol-id name))))
+              (+ count 1)
+              count))])]
+    [(ir.CompilerIrGlobalList.Array seq)
+      (opt-global-cell-word-count
+        (ir.compiler-ir-global-seq-to-list seq)
+        addr-taken
+        count)]))
+
+;; Build the per-program global-cell summary: the declared-type table, the
+;; address-taken set, and the count of globals that survive both filters (the
+;; per-function pass skips its scan when that count is zero).
+(define (opt-global-cell-summary-build
+  [globals : ir.CompilerIrGlobalList]
+  [functions : ir.CompilerIrFunctionList]) : OptGlobalCellSummary
+  (let
+    [count : i64 (ir.compiler-ir-global-list-count globals)]
+    (if (= count 0)
+      (opt-global-cell-summary-empty)
+      (let
+        [capacity : i64 (opt-function-index-capacity count)]
+        [types : (Array ast.AstType) (array.make-array ast.AstType count)]
+        [type-index : opt_i64_i64_map.Map
+          (opt-global-cell-types-fill
+            globals
+            (opt_i64_i64_map.with-capacity capacity)
+            types
+            0)]
+        [disq : opt_i64_i64_map.Map
+          (opt-const-globals-disqualified
+            (opt_i64_i64_map.with-capacity capacity)
+            functions)]
+        [scan : OptGlobalCellScan
+          (opt-global-cell-scan-functions (opt-global-cell-scan-new) functions)]
+        [addr-taken : opt_i64_i64_map.Map
+          (opt-global-cell-addr-taken-fill
+            globals
+            disq
+            (struct-get scan stores)
+            (opt_i64_i64_map.with-capacity capacity))]
+        (OptGlobalCellSummary
+          addr-taken
+          type-index
+          types
+          (opt-global-cell-word-count globals addr-taken 0))))))
+
+;; Hoist plan for one function: candidate global symbol id -> fresh SSA var.
+;; A referenced global is a candidate unless this function stores it (a), the
+;; program takes its address (b), or its cell is not a single word.
+(defstruct OptGlobalCellPlan
+  (map opt_i64_i64_map.Map)
+  (count i64))
+
+(define (opt-global-cell-plan-build
+  [cell : OptGlobalCellSummary]
+  [stores : opt_i64_i64_map.Map]
+  [refs : OptI64List]
+  [frame-cell : (__tl_dyn-array i64)]
+  [plan : opt_i64_i64_map.Map (:consume)]
+  [count : i64]) : OptGlobalCellPlan
+  (match refs
+    [(OptI64List.Nil) (OptGlobalCellPlan plan count)]
+    [(OptI64List.Cons name rest)
+      (if (or
+        (opt_i64_i64_map.contains? (& stores) name)
+        (opt_i64_i64_map.contains? (& (struct-get cell addr-taken)) name))
+        (opt-global-cell-plan-build
+          cell
+          stores
+          (box-get rest)
+          frame-cell
+          plan
+          count)
+        (match (opt-global-cell-type-lookup cell name)
+          [(OptMaybeAstType.No)
+            (opt-global-cell-plan-build
+              cell
+              stores
+              (box-get rest)
+              frame-cell
+              plan
+              count)]
+          [(OptMaybeAstType.Some ty)
+            (if (opt-global-cell-word-type? ty)
+              (let
+                [fresh : i64 (array-ref frame-cell 0)]
+                [next : opt_i64_i64_map.Map plan]
+                (begin
+                  (array-set! frame-cell 0 (+ fresh 1))
+                  (opt_i64_i64_map.insert-ref! (&mut next) name fresh)
+                  (opt-global-cell-plan-build
+                    cell
+                    stores
+                    (box-get rest)
+                    frame-cell
+                    next
+                    (+ count 1))))
+              (opt-global-cell-plan-build
+                cell
+                stores
+                (box-get rest)
+                frame-cell
+                plan
+                count))]))]))
+
+;; Emit the entry-block cell loads in the same ref-list order the plan
+;; allocated their fresh vars.
+(define (opt-global-cell-hoists-fill!
+  [plan : opt_i64_i64_map.Map]
+  [cell : OptGlobalCellSummary]
+  [refs : OptI64List]
+  [hoists : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]) : i64
+  (match refs
+    [(OptI64List.Nil) index]
+    [(OptI64List.Cons name rest)
+      (match (opt_i64_i64_map.get (& plan) name)
+        [(opt_i64_i64_map.LookupMissing)
+          (opt-global-cell-hoists-fill! plan cell (box-get rest) hoists index)]
+        [(opt_i64_i64_map.LookupFound fresh)
+          (match (opt-global-cell-type-lookup cell name)
+            [(OptMaybeAstType.No)
+              (opt-global-cell-hoists-fill!
+                plan
+                cell
+                (box-get rest)
+                hoists
+                index)]
+            [(OptMaybeAstType.Some ty)
+              (begin
+                (array-set!
+                  hoists
+                  index
+                  (ir.CompilerIrInstr.Mov
+                    fresh
+                    (ir.CompilerIrValue.Global name)
+                    ty))
+                (opt-global-cell-hoists-fill!
+                  plan
+                  cell
+                  (box-get rest)
+                  hoists
+                  (+ index 1)))])])]))
+
+(define (opt-global-cell-subst-value
+  [plan : opt_i64_i64_map.Map]
+  [v : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match v
+    [(ir.CompilerIrValue.Global name)
+      (match (opt_i64_i64_map.get (& plan) (ir.compiler-ir-symbol-id name))
+        [(opt_i64_i64_map.LookupFound fresh) (ir.CompilerIrValue.Var fresh)]
+        [(opt_i64_i64_map.LookupMissing) v])]
+    [_ v]))
+
+(define (opt-global-cell-subst-args
+  [plan : opt_i64_i64_map.Map]
+  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) args]
+    [(ir.CompilerIrCallArgs.One value)
+      (ir.CompilerIrCallArgs.One (opt-global-cell-subst-value plan value))]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (ir.CompilerIrCallArgs.Two
+        (opt-global-cell-subst-value plan a)
+        (opt-global-cell-subst-value plan b))]
+    [(ir.CompilerIrCallArgs.Array values)
+      (let
+        [count : i64 (array-length values)]
+        [slots : (__tl_dyn-array ir.CompilerIrValue)
+          (array.make-array ir.CompilerIrValue count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (array-set!
+                slots
+                index
+                (opt-global-cell-subst-value plan (array-ref values index)))
+              (set! index (+ index 1))))
+          (ir.CompilerIrCallArgs.Array slots)))]))
+
+(define (opt-global-cell-subst-spmd-args
+  [plan : opt_i64_i64_map.Map]
+  [args : ir.CompilerIrSpmdCallArgList]) : ir.CompilerIrSpmdCallArgList
+  (match args
+    [(ir.CompilerIrSpmdCallArgList.Nil) args]
+    [(ir.CompilerIrSpmdCallArgList.Cons arg rest)
+      (match arg
+        [(ir.CompilerIrSpmdCallArg.Arg vclass value ty)
+          (ir.ir-spmd-call-arg-cons
+            (ir.CompilerIrSpmdCallArg.Arg
+              vclass
+              (opt-global-cell-subst-value plan value)
+              ty)
+            (opt-global-cell-subst-spmd-args plan (box-get rest)))])]
+    [(ir.CompilerIrSpmdCallArgList.Array seq)
+      (let
+        [count : i64 (struct-get seq len)]
+        [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
+          (array.make-array ir.CompilerIrSpmdCallArg count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (match (array-ref (struct-get seq slots) index)
+                [(ir.CompilerIrSpmdCallArg.Arg vclass value ty)
+                  (array-set!
+                    slots
+                    index
+                    (ir.CompilerIrSpmdCallArg.Arg
+                      vclass
+                      (opt-global-cell-subst-value plan value)
+                      ty))])
+              (set! index (+ index 1))))
+          (ir.CompilerIrSpmdCallArgList.Array
+            (ir.CompilerIrSpmdCallArgSeq slots count))))]))
+
+(define (opt-global-cell-subst-maybe
+  [plan : opt_i64_i64_map.Map]
+  [maybe : ir.CompilerIrMaybeValue]) : ir.CompilerIrMaybeValue
+  (match maybe
+    [(ir.CompilerIrMaybeValue.No) maybe]
+    [(ir.CompilerIrMaybeValue.Some value)
+      (ir.CompilerIrMaybeValue.Some (opt-global-cell-subst-value plan value))]))
+
+(define (opt-global-cell-subst-phi
+  [plan : opt_i64_i64_map.Map]
+  [inputs : ir.CompilerIrPhiInputList]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) ir.CompilerIrPhiInputList.Nil]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-global-cell-subst-phi
+        plan
+        (ir.compiler-ir-phi-input-seq-to-list seq))]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (ir.compiler-ir-phi-input-cons
+        (opt-global-cell-subst-value plan value)
+        label
+        (opt-global-cell-subst-phi plan (box-get rest)))]))
+
+;; Rewrite planned global-ref operands to their entry-loaded SSA vars. Covers
+;; every operand position (arm-for-arm, no wildcard) even though a missed ref
+;; would only lose the optimization, never soundness: any `@G` left behind
+;; still loads the same cell value under (a)+(b)+(c). Entry-block Mov sources
+;; are exempt (see the pass header).
+(define (opt-global-cell-rewrite-instr
+  [plan : opt_i64_i64_map.Map]
+  [entry? : bool]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Mov dst src ty)
+      (if entry?
+        instr
+        (ir.CompilerIrInstr.Mov dst (opt-global-cell-subst-value plan src) ty))]
+    [(ir.CompilerIrInstr.Alloc _ _) instr]
+    [(ir.CompilerIrInstr.AddrOf _ _) instr]
+    [(ir.CompilerIrInstr.Gep dst base offset ty)
+      (ir.CompilerIrInstr.Gep
+        dst
+        (opt-global-cell-subst-value plan base)
+        (opt-global-cell-subst-value plan offset)
+        ty)]
+    [(ir.CompilerIrInstr.Load dst src ty)
+      (ir.CompilerIrInstr.Load dst (opt-global-cell-subst-value plan src) ty)]
+    [(ir.CompilerIrInstr.StorePtr dst src ty)
+      (ir.CompilerIrInstr.StorePtr
+        (opt-global-cell-subst-value plan dst)
+        (opt-global-cell-subst-value plan src)
+        ty)]
+    [(ir.CompilerIrInstr.CopyBytes dst src size)
+      (ir.CompilerIrInstr.CopyBytes
+        (opt-global-cell-subst-value plan dst)
+        (opt-global-cell-subst-value plan src)
+        size)]
+    [(ir.CompilerIrInstr.BoundsCheck idx length msg)
+      (ir.CompilerIrInstr.BoundsCheck
+        (opt-global-cell-subst-value plan idx)
+        (opt-global-cell-subst-value plan length)
+        msg)]
+    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
+      (ir.CompilerIrInstr.Cast
+        dst
+        (opt-global-cell-subst-value plan src)
+        from-ty
+        to-ty)]
+    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (ir.CompilerIrInstr.Bitcast
+        dst
+        (opt-global-cell-subst-value plan src)
+        from-ty
+        to-ty)]
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (ir.CompilerIrInstr.BinOp
+        dst
+        op
+        (opt-global-cell-subst-value plan lhs)
+        (opt-global-cell-subst-value plan rhs)
+        ty)]
+    [(ir.CompilerIrInstr.UnOp dst op src ty)
+      (ir.CompilerIrInstr.UnOp dst op (opt-global-cell-subst-value plan src) ty)]
+    [(ir.CompilerIrInstr.LaneId _ _ _) instr]
+    [(ir.CompilerIrInstr.Splat dst value lanes ty)
+      (ir.CompilerIrInstr.Splat
+        dst
+        (opt-global-cell-subst-value plan value)
+        lanes
+        ty)]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-vector-bin-op
+          (struct-get payload dst)
+          (struct-get payload op)
+          (opt-global-cell-subst-value plan (struct-get payload lhs))
+          (opt-global-cell-subst-value plan (struct-get payload rhs))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(ir.CompilerIrInstr.VectorPrefix payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-vector-prefix
+          (struct-get payload dst)
+          (struct-get payload op)
+          (opt-global-cell-subst-value plan (struct-get payload src))
+          (opt-global-cell-subst-value plan (struct-get payload carry))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
+      (ir.CompilerIrInstr.VectorReduce
+        dst
+        op
+        (opt-global-cell-subst-value plan src)
+        lanes
+        ty)]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-vector-compare
+          (struct-get payload dst)
+          (struct-get payload op)
+          (opt-global-cell-subst-value plan (struct-get payload lhs))
+          (opt-global-cell-subst-value plan (struct-get payload rhs))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
+      (ir.CompilerIrInstr.MaskBinOp
+        dst
+        op
+        (opt-global-cell-subst-value plan lhs)
+        (opt-global-cell-subst-value plan rhs)
+        lanes)]
+    [(ir.CompilerIrInstr.MaskNot dst src lanes)
+      (ir.CompilerIrInstr.MaskNot
+        dst
+        (opt-global-cell-subst-value plan src)
+        lanes)]
+    [(ir.CompilerIrInstr.MaskReduce dst op src lanes)
+      (ir.CompilerIrInstr.MaskReduce
+        dst
+        op
+        (opt-global-cell-subst-value plan src)
+        lanes)]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-select
+          (struct-get payload dst)
+          (opt-global-cell-subst-value plan (struct-get payload mask))
+          (opt-global-cell-subst-value plan (struct-get payload on-true))
+          (opt-global-cell-subst-value plan (struct-get payload on-false))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(ir.CompilerIrInstr.VectorLoad dst base idx lanes ty)
+      (ir.CompilerIrInstr.VectorLoad
+        dst
+        (opt-global-cell-subst-value plan base)
+        (opt-global-cell-subst-value plan idx)
+        lanes
+        ty)]
+    [(ir.CompilerIrInstr.VectorStore payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-vector-store
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (opt-global-cell-subst-value plan (struct-get payload index))
+          (opt-global-cell-subst-value plan (struct-get payload value))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(ir.CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-predicated-store
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (opt-global-cell-subst-value plan (struct-get payload index))
+          (opt-global-cell-subst-value plan (struct-get payload value))
+          (opt-global-cell-subst-value plan (struct-get payload mask))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-predicated-load
+          (struct-get payload dst)
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (opt-global-cell-subst-value plan (struct-get payload index))
+          (opt-global-cell-subst-value plan (struct-get payload mask))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(ir.CompilerIrInstr.GatherLoad payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-gather-load
+          (struct-get payload dst)
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (opt-global-cell-subst-value plan (struct-get payload index-base))
+          (opt-global-cell-subst-value plan (struct-get payload index))
+          (struct-get payload lane-offset)
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(ir.CompilerIrInstr.VectorShuffle payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-vector-shuffle
+          (struct-get payload dst)
+          (opt-global-cell-subst-value plan (struct-get payload source))
+          (opt-global-cell-subst-value plan (struct-get payload selector-low))
+          (opt-global-cell-subst-maybe plan (struct-get payload selector-high))
+          (opt-global-cell-subst-value plan (struct-get payload active-lanes))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(ir.CompilerIrInstr.TailMask dst idx length lanes)
+      (ir.CompilerIrInstr.TailMask
+        dst
+        (opt-global-cell-subst-value plan idx)
+        (opt-global-cell-subst-value plan length)
+        lanes)]
+    [(ir.CompilerIrInstr.EntryArgc _) instr]
+    [(ir.CompilerIrInstr.EntryArgv _) instr]
+    [(ir.CompilerIrInstr.EntryEnvp _) instr]
+    [(ir.CompilerIrInstr.CpuId dst leaf subleaf reg-index)
+      (ir.CompilerIrInstr.CpuId
+        dst
+        (opt-global-cell-subst-value plan leaf)
+        (opt-global-cell-subst-value plan subleaf)
+        reg-index)]
+    [(ir.CompilerIrInstr.Xgetbv dst idx)
+      (ir.CompilerIrInstr.Xgetbv dst (opt-global-cell-subst-value plan idx))]
+    [(ir.CompilerIrInstr.Syscall dst args)
+      (ir.CompilerIrInstr.Syscall dst (opt-global-cell-subst-args plan args))]
+    [(ir.CompilerIrInstr.Call dst name args ty)
+      (ir.CompilerIrInstr.Call
+        dst
+        name
+        (opt-global-cell-subst-args plan args)
+        ty)]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-call-cabi-store-result
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (struct-get payload name)
+          (opt-global-cell-subst-args plan (struct-get payload args))
+          (struct-get payload slots)))]
+    [(ir.CompilerIrInstr.SpmdCall payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-spmd-call
+          (struct-get payload callee)
+          (struct-get payload backend)
+          (struct-get payload lanes)
+          (opt-global-cell-subst-value plan (struct-get payload active-mask))
+          (opt-global-cell-subst-spmd-args plan (struct-get payload args))
+          (struct-get payload result)))]
+    [(ir.CompilerIrInstr.CallIndirect dst func args ty)
+      (ir.CompilerIrInstr.CallIndirect
+        dst
+        (opt-global-cell-subst-value plan func)
+        (opt-global-cell-subst-args plan args)
+        ty)]
+    [(ir.CompilerIrInstr.CallIndirectC dst func args ty)
+      (ir.CompilerIrInstr.CallIndirectC
+        dst
+        (opt-global-cell-subst-value plan func)
+        (opt-global-cell-subst-args plan args)
+        ty)]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir.ir-instr-call-indirect-cabi-store-result
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (opt-global-cell-subst-value plan (struct-get payload callee))
+          (opt-global-cell-subst-args plan (struct-get payload args))
+          (struct-get payload slots)))]
+    [(ir.CompilerIrInstr.TailCall name args ty)
+      (ir.CompilerIrInstr.TailCall
+        name
+        (opt-global-cell-subst-args plan args)
+        ty)]
+    [(ir.CompilerIrInstr.Store name value ty)
+      (ir.CompilerIrInstr.Store
+        name
+        (opt-global-cell-subst-value plan value)
+        ty)]
+    [(ir.CompilerIrInstr.Jump _) instr]
+    [(ir.CompilerIrInstr.Branch cond true-label false-label)
+      (ir.CompilerIrInstr.Branch
+        (opt-global-cell-subst-value plan cond)
+        true-label
+        false-label)]
+    [(ir.CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (ir.CompilerIrInstr.TotalEnumBranch
+        (opt-global-cell-subst-value plan cond)
+        true-label
+        false-label)]
+    [(ir.CompilerIrInstr.Return maybe)
+      (ir.CompilerIrInstr.Return (opt-global-cell-subst-maybe plan maybe))]
+    [(ir.CompilerIrInstr.Phi dst inputs ty)
+      (ir.CompilerIrInstr.Phi dst (opt-global-cell-subst-phi plan inputs) ty)]
+    [(ir.CompilerIrInstr.Pack _ _ _) instr]
+    [(ir.CompilerIrInstr.Word dst src index ty)
+      (ir.CompilerIrInstr.Word
+        dst
+        (opt-global-cell-subst-value plan src)
+        index
+        ty)]
+    [(ir.CompilerIrInstr.TailCallIndirect func args ty)
+      (ir.CompilerIrInstr.TailCallIndirect
+        (opt-global-cell-subst-value plan func)
+        (opt-global-cell-subst-args plan args)
+        ty)]
+    [(ir.CompilerIrInstr.Switch idx default-label cases trap-label)
+      (ir.CompilerIrInstr.Switch
+        (opt-global-cell-subst-value plan idx)
+        default-label
+        cases
+        trap-label)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch
+        idx
+        default-label
+        cases
+        trap-label
+        final-label)
+      (ir.CompilerIrInstr.TotalEnumSwitch
+        (opt-global-cell-subst-value plan idx)
+        default-label
+        cases
+        trap-label
+        final-label)]))
+
+(define (opt-global-cell-rewrite-seq
+  [plan : opt_i64_i64_map.Map]
+  [entry? : bool]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (opt-global-cell-rewrite-instr
+              plan
+              entry?
+              (ir.compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
+
+(define (opt-global-cell-rewrite-block
+  [plan : opt_i64_i64_map.Map]
+  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (ir.CompilerIrBlock.Block
+        label
+        (opt-global-cell-rewrite-seq plan false instrs))]))
+
+;; The entry block gets the cell loads prepended after its own rewrite (its
+;; Mov sources stay exempt), so every fresh var dominates all rewritten uses.
+(define (opt-global-cell-entry-block
+  [plan : opt_i64_i64_map.Map]
+  [hoists : (__tl_dyn-array ir.CompilerIrInstr)]
+  [hoist-count : i64]
+  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [total : i64 (+ hoist-count count)]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr)
+          (array.make-array ir.CompilerIrInstr total)]
+        [index : i64 0]
+        (begin
+          (while (< index hoist-count)
+            (begin
+              (array-set! slots index (array-ref hoists index))
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index count)
+            (begin
+              (array-set!
+                slots
+                (+ hoist-count index)
+                (opt-global-cell-rewrite-instr
+                  plan
+                  true
+                  (ir.compiler-ir-instr-seq-ref instrs index)))
+              (set! index (+ index 1))))
+          (ir.CompilerIrBlock.Block label (ir.CompilerIrInstrSeq slots total))))]))
+
+(define (opt-global-cell-rewrite-blocks
+  [plan : opt_i64_i64_map.Map]
+  [hoists : (__tl_dyn-array ir.CompilerIrInstr)]
+  [hoist-count : i64]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (opt-global-cell-entry-block plan hoists hoist-count block)
+        (opt-global-cell-rewrite-nonentry-blocks plan (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-cell-rewrite-blocks
+        plan
+        hoists
+        hoist-count
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-global-cell-rewrite-nonentry-blocks
+  [plan : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (opt-global-cell-rewrite-block plan block)
+        (opt-global-cell-rewrite-nonentry-blocks plan (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-cell-rewrite-nonentry-blocks
+        plan
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; Load each hoistable global's cell once at entry and rewrite its uses. The
+;; pass is a no-op (returning the function by reference) when the program has
+;; no word-cell candidates, when a call-family instruction remains (c), when
+;; no global is referenced, or when every referenced global is excluded by
+;; (a)/(b)/cell-width.
+(define (opt-global-cell-function
+  [summaries : OptLoopBceSummaries]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (let
+        [cell : OptGlobalCellSummary (struct-get summaries global-cell)]
+        (if (= (struct-get cell word-cell) 0)
+          func
+          (let
+            [scan : OptGlobalCellScan
+              (opt-global-cell-scan-blocks
+                (opt-global-cell-scan-new)
+                blocks
+                true)]
+            (cond
+              [(struct-get scan calls) func]
+              [(match (struct-get scan ref-list)
+                  [(OptI64List.Nil) true]
+                  [(OptI64List.Cons _ _) false])
+                func]
+              [else
+                (let
+                  [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+                  [_seed : unit (array-set! frame-cell 0 frame)]
+                  [planned : OptGlobalCellPlan
+                    (opt-global-cell-plan-build
+                      cell
+                      (struct-get scan stores)
+                      (struct-get scan ref-list)
+                      frame-cell
+                      (opt_i64_i64_map.with-capacity 8)
+                      0)]
+                  (if (= (struct-get planned count) 0)
+                    func
+                    (let
+                      [hoists : (__tl_dyn-array ir.CompilerIrInstr)
+                        (array.make-array
+                          ir.CompilerIrInstr
+                          (struct-get planned count))]
+                      [_filled : i64
+                        (opt-global-cell-hoists-fill!
+                          (struct-get planned map)
+                          cell
+                          (struct-get scan ref-list)
+                          hoists
+                          0)]
+                      (ir.CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        (array-ref frame-cell 0)
+                        (opt-global-cell-rewrite-blocks
+                          (struct-get planned map)
+                          hoists
+                          (struct-get planned count)
+                          blocks)))))]))))]))
 
 (define (optimize-program [program : ir.CompilerIrProgram]) : ir.CompilerIrProgram
   (optimize-program-with-level program (compiler-optimize-default-level)))

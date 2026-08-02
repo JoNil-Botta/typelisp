@@ -644,8 +644,8 @@ EOF
     (archive_lib "../archive-lib")))
 EOF
     cat > "$ARCHIVE_APP_PKG/src/main.tl" <<'EOF'
-(import "pkg:archive_lib/src/lib.tl")
-(define (main) : i64 (archive-answer))
+(import archive_lib.src.lib as archive_lib)
+(define (main) : i64 (archive_lib.archive-answer))
 EOF
 
     if [ -n "$ARCHIVER_OVERRIDE" ]; then

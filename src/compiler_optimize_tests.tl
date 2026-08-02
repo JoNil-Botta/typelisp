@@ -8,6 +8,7 @@
 (import (hashmap.hashmap i64 i64) as opt_i64_i64_map)
 (import stdlib.option)
 (import (option.option i64) as option_i64)
+(import stdlib.test)
 (import stdlib.vector)
 (import (vector.vector OptAggregatePointer core) as opt_aggregate_pointer_vec)
 (import (vector.vector OptAggregateAccess core) as opt_aggregate_access_vec)
@@ -27438,3 +27439,1092 @@
       [(not (= (opt-count-load-instrs global-base-form-mismatch) 2)) 96]
       [(not (= (opt-count-mov-dst-instrs global-base-form-mismatch 4) 0)) 97]
       [else 44])))
+
+;; --- constant-trip full unroll + byte-compose load combining fixtures -----------
+;;
+;; The intern-table word-load shape: a rotated single-block loop whose counter
+;; phi has a literal seed/step/bound. The descending form (`ge %next, 0`, sub
+;; step) matches no other unroll arm, so any rewrite is the const-trip arm's;
+;; the ascending form (`lt %phi, literal`) races the guarded x16 arm and shows
+;; the exact arm winning (no guard block, no remainder loop).
+(define (opt-lc-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "base" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "at" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "len" (AstType.I64) 2)
+        (CompilerIrParamList.Nil)))))
+
+;; entry -> body (self-loop: word/b phis, byte compose, b' = b-1, b' >= bound)
+;; -> exit (returns the last trip's word). Seed and bound are arguments so one
+;; builder covers the 8-trip, 21-trip, and non-literal-bound variants.
+(define (opt-lc-word-test-body
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Phi
+      30
+      (compiler-ir-phi-input-cons
+        (CompilerIrValue.I64 0)
+        (compiler-ir-label "lc_entry")
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.Var 36)
+          (compiler-ir-label "lc_body")
+          (CompilerIrPhiInputList.Nil)))
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        28
+        (compiler-ir-phi-input-cons
+          seed
+          (compiler-ir-label "lc_entry")
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 37)
+            (compiler-ir-label "lc_body")
+            (CompilerIrPhiInputList.Nil)))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          9
+          (CompilerIrBinOp.Shl)
+          (CompilerIrValue.Var 30)
+          (CompilerIrValue.I64 8)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            10
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 28)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 10)
+              (CompilerIrValue.Var 2)
+              (compiler-ir-label "lc_bounds"))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                18
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.Var 10)
+                (AstType.U8))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 19 (CompilerIrValue.Var 18) (AstType.U8))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Cast
+                    20
+                    (CompilerIrValue.Var 19)
+                    (AstType.U8)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      21
+                      (CompilerIrBinOp.BitOr)
+                      (CompilerIrValue.Var 9)
+                      (CompilerIrValue.Var 20)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Mov
+                        36
+                        (CompilerIrValue.Var 21)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.BinOp
+                          23
+                          (CompilerIrBinOp.Sub)
+                          (CompilerIrValue.Var 28)
+                          (CompilerIrValue.I64 1)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Mov
+                            37
+                            (CompilerIrValue.Var 23)
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.BinOp
+                              39
+                              (CompilerIrBinOp.Ge)
+                              (CompilerIrValue.Var 23)
+                              bound
+                              (AstType.I64))
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.Branch
+                                (CompilerIrValue.Var 39)
+                                (compiler-ir-label "lc_body")
+                                (compiler-ir-label "lc_exit"))
+                              (CompilerIrInstrList.Nil))))))))))))))))
+
+(define (opt-lc-word-test-blocks
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "lc_entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump (compiler-ir-label "lc_body"))
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "lc_body")
+        (opt-lc-word-test-body seed bound))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "lc_exit")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 21)))
+            (CompilerIrInstrList.Nil)))
+        (CompilerIrBlockList.Nil)))))
+
+(define (opt-lc-word-test-function
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "lc_word_fixture")
+    (opt-lc-test-params)
+    (AstType.I64)
+    40
+    (opt-lc-word-test-blocks seed bound)))
+
+;; Ascending accumulator loop: i/acc phis, acc += i, i += 1, i < bound (the
+;; compare reads the phi, not the post-step value). bound 4 => 5 trips; the
+;; guarded x16 arm also matches this shape, so the result proves the exact arm
+;; is preferred (3 blocks, no __unroll_guard).
+(define (opt-lc-asc-test-body [bound : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Phi
+      30
+      (compiler-ir-phi-input-cons
+        (CompilerIrValue.I64 0)
+        (compiler-ir-label "lc_entry")
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.Var 36)
+          (compiler-ir-label "lc_body")
+          (CompilerIrPhiInputList.Nil)))
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        28
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.I64 0)
+          (compiler-ir-label "lc_entry")
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 37)
+            (compiler-ir-label "lc_body")
+            (CompilerIrPhiInputList.Nil)))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          9
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 30)
+          (CompilerIrValue.Var 28)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            23
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 28)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 36 (CompilerIrValue.Var 9) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 37 (CompilerIrValue.Var 23) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  39
+                  (CompilerIrBinOp.Lt)
+                  (CompilerIrValue.Var 28)
+                  (CompilerIrValue.I64 bound)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var 39)
+                    (compiler-ir-label "lc_body")
+                    (compiler-ir-label "lc_exit"))
+                  (CompilerIrInstrList.Nil))))))))))
+
+(define (opt-lc-asc-test-function [bound : i64]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "lc_asc_fixture")
+    (opt-lc-test-params)
+    (AstType.I64)
+    40
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "lc_entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump (compiler-ir-label "lc_body"))
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "lc_body")
+          (opt-lc-asc-test-body bound))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "lc_exit")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
+              (CompilerIrInstrList.Nil)))
+          (CompilerIrBlockList.Nil))))))
+
+;; Store-bearing descending counted loop: the const-trip arm shares the x16
+;; arm's whitelist, which excludes StorePtr, so this loop must stay rolled.
+(define (opt-lc-store-test-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "lc_store_fixture")
+    (opt-lc-test-params)
+    (AstType.I64)
+    40
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "lc_entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump (compiler-ir-label "lc_body"))
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "lc_body")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              30
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.I64 0)
+                (compiler-ir-label "lc_entry")
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 36)
+                  (compiler-ir-label "lc_body")
+                  (CompilerIrPhiInputList.Nil)))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                28
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.I64 7)
+                  (compiler-ir-label "lc_entry")
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.Var 37)
+                    (compiler-ir-label "lc_body")
+                    (CompilerIrPhiInputList.Nil)))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  10
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 1)
+                  (CompilerIrValue.Var 28)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BoundsCheck
+                    (CompilerIrValue.Var 10)
+                    (CompilerIrValue.Var 2)
+                    (compiler-ir-label "lc_store_bounds"))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Gep
+                      18
+                      (CompilerIrValue.Var 0)
+                      (CompilerIrValue.Var 10)
+                      (AstType.U8))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Cast
+                        38
+                        (CompilerIrValue.Var 30)
+                        (AstType.I64)
+                        (AstType.U8))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.StorePtr
+                          (CompilerIrValue.Var 18)
+                          (CompilerIrValue.Var 38)
+                          (AstType.U8))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Mov
+                            36
+                            (CompilerIrValue.Var 30)
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.BinOp
+                              23
+                              (CompilerIrBinOp.Sub)
+                              (CompilerIrValue.Var 28)
+                              (CompilerIrValue.I64 1)
+                              (AstType.I64))
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.Mov
+                                37
+                                (CompilerIrValue.Var 23)
+                                (AstType.I64))
+                              (compiler-ir-instr-cons
+                                (CompilerIrInstr.BinOp
+                                  39
+                                  (CompilerIrBinOp.Ge)
+                                  (CompilerIrValue.Var 23)
+                                  (CompilerIrValue.I64 0)
+                                  (AstType.I64))
+                                (compiler-ir-instr-cons
+                                  (CompilerIrInstr.Branch
+                                    (CompilerIrValue.Var 39)
+                                    (compiler-ir-label "lc_body")
+                                    (compiler-ir-label "lc_exit"))
+                                  (CompilerIrInstrList.Nil))))))))))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "lc_exit")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 36)))
+              (CompilerIrInstrList.Nil)))
+          (CompilerIrBlockList.Nil))))))
+
+;; Straight-line byte-compose fixtures for load_combine. Eight steps compose
+;; zero-extended byte loads off base %0 at (%1 + literal) offsets; step j uses
+;; var ids 100+j*10 .. 105+j*10, so the min-offset gep of the foldable shape
+;; (mode 0, descending) is 171 and the root is 175.
+;;   mode 0: exact little-endian compose -> folds
+;;   mode 1: offsets 8,6,5,4,3,2,1,0 (a gap) -> rejected
+;;   mode 2: shl by 4 -> rejected
+;;   mode 3: u16 element loads -> rejected
+;;   mode 4: step-3 cast also used by the final add (multi-use) -> rejected
+;;   mode 5: big-endian byte order (offsets ascend in program order) -> rejected
+;;   mode 6: a byte store between the loads -> rejected
+;;   mode 7: mul-by-256 / add spelling -> folds
+;;   mode 8: exact compose siblinged with a trapping `shl 0, 64` at an outer
+;;           or (root = or(<compose>, shl(0,64))): the compose's own inner
+;;           root still folds (trap-free), but the siblinged outer root is
+;;           rejected -- the shl-64 and the outer or survive
+;;   mode 9: right-nested per-byte-shift compose whose only 8-byte root is
+;;           or(<compose>, shl(0,64)) -> nothing folds, no wide load, the
+;;           shl-64 survives
+(define (opt-lc-compose-test-instrs
+  [mode : i64]
+  [j : i64]
+  [prev : CompilerIrValue]) : CompilerIrInstrList
+  (if (>= j 8)
+    (cond
+      [(= mode 4)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            300
+            (CompilerIrBinOp.Add)
+            prev
+            (CompilerIrValue.Var 133)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 300)))
+            (CompilerIrInstrList.Nil)))]
+      [(= mode 8)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            310
+            (CompilerIrBinOp.Shl)
+            (CompilerIrValue.I64 0)
+            (CompilerIrValue.I64 64)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              311
+              (CompilerIrBinOp.BitOr)
+              prev
+              (CompilerIrValue.Var 310)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 311)))
+              (CompilerIrInstrList.Nil))))]
+      [(= mode 9)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            310
+            (CompilerIrBinOp.Shl)
+            (CompilerIrValue.I64 0)
+            (CompilerIrValue.I64 64)
+            (AstType.I64))
+          (opt-lc-compose-test-nest 7))]
+      [else
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return (CompilerIrMaybeValue.Some prev))
+          (CompilerIrInstrList.Nil))])
+    (let
+      [k : i64
+        (if (= mode 5)
+          j
+          (- 7 j))]
+      [base : i64 (+ 100 (* j 10))]
+      [elem-ty : AstType
+        (if (= mode 3)
+          (AstType.U16)
+          (AstType.U8))]
+      [off : i64
+        (if (and (= mode 1) (= j 0))
+          8
+          k)]
+      [a : i64 base]
+      [g : i64 (+ base 1)]
+      [l : i64 (+ base 2)]
+      [c : i64 (+ base 3)]
+      [s : i64 (+ base 4)]
+      [r : i64 (+ base 5)]
+      [step-tail : CompilerIrInstrList
+        (if (= mode 9)
+          (opt-lc-compose-test-instrs mode (+ j 1) prev)
+          (compiler-ir-instr-cons
+            (if (= mode 7)
+              (CompilerIrInstr.BinOp
+                s
+                (CompilerIrBinOp.Mul)
+                prev
+                (CompilerIrValue.I64 256)
+                (AstType.I64))
+              (CompilerIrInstr.BinOp
+                s
+                (CompilerIrBinOp.Shl)
+                prev
+                (CompilerIrValue.I64
+                  (if (= mode 2)
+                    4
+                    8))
+                (AstType.I64)))
+            (compiler-ir-instr-cons
+              (if (= mode 7)
+                (CompilerIrInstr.BinOp
+                  r
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var s)
+                  (CompilerIrValue.Var c)
+                  (AstType.I64))
+                (CompilerIrInstr.BinOp
+                  r
+                  (CompilerIrBinOp.BitOr)
+                  (CompilerIrValue.Var s)
+                  (CompilerIrValue.Var c)
+                  (AstType.I64)))
+              (opt-lc-compose-test-instrs mode (+ j 1) (CompilerIrValue.Var r)))))]
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          a
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.I64 off)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var a)
+            (CompilerIrValue.Var 2)
+            (compiler-ir-label (string.append "lc_b" (string.int->string j))))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              g
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var a)
+              elem-ty)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load l (CompilerIrValue.Var g) elem-ty)
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Cast
+                  c
+                  (CompilerIrValue.Var l)
+                  elem-ty
+                  (AstType.I64))
+                (if (and (= mode 6) (= j 4))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.StorePtr
+                      (CompilerIrValue.Var g)
+                      (CompilerIrValue.Var c)
+                      (AstType.U8))
+                    step-tail)
+                  step-tail)))))))))
+
+(define (opt-lc-compose-test-blocks [mode : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "lc_main")
+      (opt-lc-compose-test-instrs mode 0 (CompilerIrValue.I64 0)))
+    (CompilerIrBlockList.Nil)))
+
+;; mode 9's right-nested chain: t_7 = or(<byte at offset 0>, <shl 0, 64>) and
+;; t_i = or(shl(<byte at offset 7-i>, 8*(7-i)), t_{i+1}) down to the root t_0,
+;; so the ONLY root holding all eight bytes is the one siblinged with the
+;; trapping shift.
+(define (opt-lc-compose-test-nest [i : i64]) : CompilerIrInstrList
+  (if (= i 7)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        207
+        (CompilerIrBinOp.BitOr)
+        (CompilerIrValue.Var 173)
+        (CompilerIrValue.Var 310)
+        (AstType.I64))
+      (opt-lc-compose-test-nest 6))
+    (if (< i 0)
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Return
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 200)))
+        (CompilerIrInstrList.Nil))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          (+ 300 i)
+          (CompilerIrBinOp.Shl)
+          (CompilerIrValue.Var (+ 103 (* i 10)))
+          (CompilerIrValue.I64 (* 8 (- 7 i)))
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            (+ 200 i)
+            (CompilerIrBinOp.BitOr)
+            (CompilerIrValue.Var (+ 300 i))
+            (CompilerIrValue.Var (+ 201 i))
+            (AstType.I64))
+          (opt-lc-compose-test-nest (- i 1)))))))
+
+;; kind: 0 = Load u8, 1 = Load i64, 2 = BoundsCheck, 3 = Phi, 4 = Branch.
+(define (opt-lc-test-count-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [kind : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-lc-test-count-seq
+      instrs
+      (+ index 1)
+      kind
+      (+
+        acc
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.Load _ _ ty)
+            (cond
+              [(= kind 0)
+                (match ty
+                  [(AstType.U8) 1]
+                  [_ 0])]
+              [(= kind 1)
+                (match ty
+                  [(AstType.I64) 1]
+                  [_ 0])]
+              [else 0])]
+          [(CompilerIrInstr.BoundsCheck _ _ _)
+            (if (= kind 2)
+              1
+              0)]
+          [(CompilerIrInstr.Phi _ _ _)
+            (if (= kind 3)
+              1
+              0)]
+          [(CompilerIrInstr.Branch _ _ _)
+            (if (= kind 4)
+              1
+              0)]
+          [_ 0])))))
+
+(define (opt-lc-test-count-blocks [blocks : CompilerIrBlockList] [kind : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-lc-test-count-seq instrs 0 kind 0)
+            (opt-lc-test-count-blocks (box-get rest) kind))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lc-test-count-blocks (compiler-ir-block-seq-to-list seq) kind)]))
+
+(define (opt-lc-test-count-in-block
+  [blocks : CompilerIrBlockList]
+  [label : i64]
+  [kind : i64]) : i64
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-lc-test-count-seq instrs 0 kind 0)])]))
+
+(define (opt-lc-test-block-instr-count
+  [blocks : CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs) (compiler-ir-instr-seq-count instrs)])]))
+
+(define (opt-lc-test-def-dst-count-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-lc-test-def-dst-count-seq
+      instrs
+      (+ index 1)
+      dst
+      (+
+        acc
+        (if (= (compiler-ir-instr-seq-loop-dst-or instrs index (- 0 1)) dst)
+          1
+          0)))))
+
+(define (opt-lc-test-def-dst-count-blocks
+  [blocks : CompilerIrBlockList]
+  [dst : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-lc-test-def-dst-count-seq instrs 0 dst 0)
+            (opt-lc-test-def-dst-count-blocks (box-get rest) dst))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lc-test-def-dst-count-blocks (compiler-ir-block-seq-to-list seq) dst)]))
+
+(define (opt-lc-test-has-add-lit-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [lit : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BinOp _ op _ rhs _)
+        (match op
+          [(CompilerIrBinOp.Add)
+            (match rhs
+              [(CompilerIrValue.I64 k)
+                (if (= k lit)
+                  true
+                  (opt-lc-test-has-add-lit-seq instrs (+ index 1) lit))]
+              [_ (opt-lc-test-has-add-lit-seq instrs (+ index 1) lit)])]
+          [_ (opt-lc-test-has-add-lit-seq instrs (+ index 1) lit)])]
+      [_ (opt-lc-test-has-add-lit-seq instrs (+ index 1) lit)])))
+
+(define (opt-lc-test-has-add-lit-blocks
+  [blocks : CompilerIrBlockList]
+  [lit : i64]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-lc-test-has-add-lit-seq instrs 0 lit)
+            true
+            (opt-lc-test-has-add-lit-blocks (box-get rest) lit))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lc-test-has-add-lit-blocks (compiler-ir-block-seq-to-list seq) lit)]))
+
+(define (opt-lc-test-has-shl-lit-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [lit : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BinOp _ op _ rhs _)
+        (match op
+          [(CompilerIrBinOp.Shl)
+            (match rhs
+              [(CompilerIrValue.I64 k)
+                (if (= k lit)
+                  true
+                  (opt-lc-test-has-shl-lit-seq instrs (+ index 1) lit))]
+              [_ (opt-lc-test-has-shl-lit-seq instrs (+ index 1) lit)])]
+          [_ (opt-lc-test-has-shl-lit-seq instrs (+ index 1) lit)])]
+      [_ (opt-lc-test-has-shl-lit-seq instrs (+ index 1) lit)])))
+
+(define (opt-lc-test-has-shl-lit-blocks
+  [blocks : CompilerIrBlockList]
+  [lit : i64]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-lc-test-has-shl-lit-seq instrs 0 lit)
+            true
+            (opt-lc-test-has-shl-lit-blocks (box-get rest) lit))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lc-test-has-shl-lit-blocks (compiler-ir-block-seq-to-list seq) lit)]))
+
+;; Src var of the first i64 load in the function (-1 none, -2 non-var src).
+(define (opt-lc-test-wide-load-src-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (- 0 1)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Load _ src ty)
+        (match ty
+          [(AstType.I64)
+            (match src
+              [(CompilerIrValue.Var v) v]
+              [_ (- 0 2)])]
+          [_ (opt-lc-test-wide-load-src-seq instrs (+ index 1))])]
+      [_ (opt-lc-test-wide-load-src-seq instrs (+ index 1))])))
+
+(define (opt-lc-test-wide-load-src-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) (- 0 1)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [found : i64 (opt-lc-test-wide-load-src-seq instrs 0)]
+            (if (>= found 0)
+              found
+              (opt-lc-test-wide-load-src-blocks (box-get rest))))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lc-test-wide-load-src-blocks (compiler-ir-block-seq-to-list seq))]))
+
+;; Index of dst's def in the sequence, or -1.
+(define (opt-lc-test-def-index-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (- 0 1)
+    (if (= (compiler-ir-instr-seq-loop-dst-or instrs index (- 0 1)) dst)
+      index
+      (opt-lc-test-def-index-seq instrs (+ index 1) dst))))
+
+;; The final copy of the fully unrolled word loop must be the ORIGINAL body:
+;; the exit reads its defs, so uses inside it name the original destinations
+;; (%21 = bit_or %9, %20 back to %10 = add %1, 0), not a previous copy's vars.
+(define (opt-lc-test-last-copy-exact-seq [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [i21 : i64 (opt-lc-test-def-index-seq instrs 0 21)]
+    [i9 : i64 (opt-lc-test-def-index-seq instrs 0 9)]
+    [i20 : i64 (opt-lc-test-def-index-seq instrs 0 20)]
+    [i19 : i64 (opt-lc-test-def-index-seq instrs 0 19)]
+    [i18 : i64 (opt-lc-test-def-index-seq instrs 0 18)]
+    [i10 : i64 (opt-lc-test-def-index-seq instrs 0 10)]
+    (if (or (< i21 0) (< i9 0) (< i20 0) (< i19 0) (< i18 0) (< i10 0))
+      false
+      (and
+        (match (compiler-ir-instr-seq-ref instrs i21)
+          [(CompilerIrInstr.BinOp _ op lhs rhs _)
+            (match op
+              [(CompilerIrBinOp.BitOr)
+                (and
+                  (match lhs
+                    [(CompilerIrValue.Var v) (= v 9)]
+                    [_ false])
+                  (match rhs
+                    [(CompilerIrValue.Var v) (= v 20)]
+                    [_ false]))]
+              [_ false])]
+          [_ false])
+        (match (compiler-ir-instr-seq-ref instrs i9)
+          [(CompilerIrInstr.BinOp _ op _ rhs _)
+            (match op
+              [(CompilerIrBinOp.Shl)
+                (match rhs
+                  [(CompilerIrValue.I64 k) (= k 8)]
+                  [_ false])]
+              [_ false])]
+          [_ false])
+        (match (compiler-ir-instr-seq-ref instrs i20)
+          [(CompilerIrInstr.Cast _ src _ _)
+            (match src
+              [(CompilerIrValue.Var v) (= v 19)]
+              [_ false])]
+          [_ false])
+        (match (compiler-ir-instr-seq-ref instrs i19)
+          [(CompilerIrInstr.Load _ src _)
+            (match src
+              [(CompilerIrValue.Var v) (= v 18)]
+              [_ false])]
+          [_ false])
+        (match (compiler-ir-instr-seq-ref instrs i18)
+          [(CompilerIrInstr.Gep _ base offset _)
+            (and
+              (match base
+                [(CompilerIrValue.Var v) (= v 0)]
+                [_ false])
+              (match offset
+                [(CompilerIrValue.Var v) (= v 10)]
+                [_ false]))]
+          [_ false])
+        (match (compiler-ir-instr-seq-ref instrs i10)
+          [(CompilerIrInstr.BinOp _ op lhs rhs _)
+            (match op
+              [(CompilerIrBinOp.Add)
+                (and
+                  (match lhs
+                    [(CompilerIrValue.Var v) (= v 1)]
+                    [_ false])
+                  (match rhs
+                    [(CompilerIrValue.I64 k) (= k 0)]
+                    [_ false]))]
+              [_ false])]
+          [_ false])))))
+
+(define (opt-lc-test-last-copy-exact-blocks [blocks : CompilerIrBlockList]) : bool
+  (match (opt-cfg-find-block blocks (compiler-ir-label "lc_body"))
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-lc-test-last-copy-exact-seq instrs)])]))
+
+(define (compiler-optimize-unroll-const-self-test) : i64
+  (let
+    [bases : i64 (ast-node-pool-reader-type-segment-bases)]
+    [word-func : CompilerIrFunction
+      (opt-unroll-function
+        bases
+        (opt-lc-word-test-function
+          (CompilerIrValue.I64 7)
+          (CompilerIrValue.I64 0)))]
+    [word-out : CompilerIrBlockList (opt-function-blocks word-func)]
+    [word-body : i64 (compiler-ir-label "lc_body")]
+    [asc-func : CompilerIrFunction
+      (opt-unroll-function bases (opt-lc-asc-test-function 4))]
+    [asc-out : CompilerIrBlockList (opt-function-blocks asc-func)]
+    [long-func : CompilerIrFunction
+      (opt-unroll-function
+        bases
+        (opt-lc-word-test-function
+          (CompilerIrValue.I64 20)
+          (CompilerIrValue.I64 0)))]
+    [long-out : CompilerIrBlockList (opt-function-blocks long-func)]
+    [varbound-func : CompilerIrFunction
+      (opt-unroll-function
+        bases
+        (opt-lc-word-test-function
+          (CompilerIrValue.I64 7)
+          (CompilerIrValue.Var 2)))]
+    [varbound-out : CompilerIrBlockList (opt-function-blocks varbound-func)]
+    [store-func : CompilerIrFunction
+      (opt-unroll-function bases (opt-lc-store-test-function))]
+    [store-out : CompilerIrBlockList (opt-function-blocks store-func)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function word-func))) 1]
+      ;; entry, straight-line body, exit: no guard, no remainder loop.
+      [(not (= (compiler-ir-block-list-count word-out) 3)) 2]
+      ;; 8 copies x 10 cloned body instructions + the closing jump.
+      [(not (= (opt-lc-test-block-instr-count word-out word-body) 81)) 3]
+      [(not (= (opt-lc-test-count-in-block word-out word-body 3) 0)) 4]
+      [(not (= (opt-lc-test-count-in-block word-out word-body 4) 0)) 5]
+      ;; Eight byte loads and all eight bounds checks survive the unroll.
+      [(not (= (opt-lc-test-count-blocks word-out 0) 8)) 6]
+      [(not (= (opt-lc-test-count-blocks word-out 2) 8)) 7]
+      ;; The counter reads literals 7..0 across the copies.
+      [(not (opt-lc-test-has-add-lit-blocks word-out 7)) 8]
+      [(not (opt-lc-test-has-add-lit-blocks word-out 0)) 9]
+      ;; The deleted phis are gone; the exit's last-trip defs survive.
+      [(not (= (opt-lc-test-def-dst-count-blocks word-out 28) 0)) 10]
+      [(not (= (opt-lc-test-def-dst-count-blocks word-out 30) 0)) 11]
+      [(not (= (opt-lc-test-def-dst-count-blocks word-out 21) 1)) 12]
+      [(not (= (opt-lc-test-def-dst-count-blocks word-out 36) 1)) 13]
+      [(not (opt-verify-ok? (opt-verify-function asc-func))) 14]
+      ;; The exact arm beats the guarded x16 arm: 3 blocks, no guard, and
+      ;; 5 copies x 4 cloned instructions + the closing jump.
+      [(not (= (compiler-ir-block-list-count asc-out) 3)) 15]
+      [(not (= (opt-lc-test-block-instr-count asc-out word-body) 21)) 16]
+      [(not (= (opt-lc-test-count-in-block asc-out word-body 3) 0)) 17]
+      [(not (opt-lc-test-has-add-lit-blocks asc-out 4)) 18]
+      ;; 21 trips exceeds the 16-trip cap: the loop stays rolled.
+      [(not (= (compiler-ir-block-list-count long-out) 3)) 19]
+      [(not (= (opt-lc-test-block-instr-count long-out word-body) 14)) 20]
+      [(not (= (opt-lc-test-count-in-block long-out word-body 4) 1)) 21]
+      [(not (= (opt-lc-test-count-in-block long-out word-body 3) 2)) 22]
+      ;; A non-literal bound is not statically decidable: rolled as well.
+      [(not (= (opt-lc-test-block-instr-count varbound-out word-body) 14)) 23]
+      [(not (= (opt-lc-test-count-in-block varbound-out word-body 4) 1)) 24]
+      ;; StorePtr bodies are excluded like the x16 arm.
+      [(not (= (compiler-ir-block-list-count store-out) 3)) 25]
+      [(not (= (opt-lc-test-block-instr-count store-out word-body) 12)) 26]
+      [(not (= (opt-lc-test-count-in-block store-out word-body 4) 1)) 27]
+      ;; The last copy is the original body: its compose chain names the
+      ;; original destinations (the exit's dataflow stays intact).
+      [(not (opt-lc-test-last-copy-exact-blocks word-out)) 28]
+      [else 42])))
+
+(define (compiler-optimize-load-combine-self-test) : i64
+  (let
+    [bases : i64 (ast-node-pool-reader-type-segment-bases)]
+    [m0 : CompilerIrBlockList
+      (opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 0))]
+    [m0-again : CompilerIrBlockList (opt-load-combine-blocks 400 m0)]
+    [m1 : CompilerIrBlockList
+      (opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 1))]
+    [m2 : CompilerIrBlockList
+      (opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 2))]
+    [m3 : CompilerIrBlockList
+      (opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 3))]
+    [m4 : CompilerIrBlockList
+      (opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 4))]
+    [m5 : CompilerIrBlockList
+      (opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 5))]
+    [m6 : CompilerIrBlockList
+      (opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 6))]
+    [m7 : CompilerIrBlockList
+      (opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 7))]
+    [m8 : CompilerIrBlockList
+      (opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 8))]
+    [m9 : CompilerIrBlockList
+      (opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 9))]
+    [word-func : CompilerIrFunction
+      (opt-unroll-function
+        bases
+        (opt-lc-word-test-function
+          (CompilerIrValue.I64 7)
+          (CompilerIrValue.I64 0)))]
+    [word-combined : CompilerIrBlockList
+      (opt-load-combine-blocks
+        (opt-function-frame word-func)
+        (opt-function-blocks word-func))]
+    (cond
+      ;; The exact compose folds: one i64 load, the chain elements deleted by
+      ;; the pass itself (shifts are trapping per `opt-binop-traps?`, so DCE
+      ;; could never retire them), and ALL eight bounds checks retained.
+      [(not (= (opt-lc-test-count-blocks m0 1) 1)) 1]
+      [(not (= (opt-lc-test-count-blocks m0 0) 0)) 2]
+      [(not (= (opt-lc-test-count-blocks m0 2) 8)) 3]
+      ;; The wide load reads the min-offset byte's gep (exact LE order is a
+      ;; precondition of the fold firing at all).
+      [(not (= (opt-lc-test-wide-load-src-blocks m0) 171)) 4]
+      ;; 57 instructions before, 26 after: the 8 loads, 8 casts, 7 inner ors,
+      ;; and 8 shls of the chain are gone (the root or becomes the wide load);
+      ;; the address temps and checks stay.
+      [(not
+          (=
+            (opt-lc-test-block-instr-count m0 (compiler-ir-label "lc_main"))
+            26))
+        5]
+      ;; Idempotent: the root is no longer an or/add, so a second run is a
+      ;; no-op.
+      [(not (opt-block-list-eq bases m0 m0-again)) 6]
+      ;; Rejections: offset gap, wrong shift, non-u8 element, multi-use
+      ;; intermediate, big-endian order, intervening store.
+      [(not (= (opt-lc-test-count-blocks m1 1) 0)) 7]
+      [(not (= (opt-lc-test-count-blocks m2 1) 0)) 8]
+      [(not (= (opt-lc-test-count-blocks m3 1) 0)) 9]
+      [(not (= (opt-lc-test-count-blocks m4 1) 0)) 10]
+      [(not (= (opt-lc-test-count-blocks m5 1) 0)) 11]
+      [(not (= (opt-lc-test-count-blocks m6 1) 0)) 12]
+      ;; The mul-by-256 / add spelling folds too.
+      [(not (= (opt-lc-test-count-blocks m7 1) 1)) 13]
+      [(not (= (opt-lc-test-count-blocks m7 0) 0)) 14]
+      ;; The unrolled word loop folds end to end; the wide load reuses the
+      ;; original body's min-offset gep (var 18).
+      [(not (= (opt-lc-test-count-blocks word-combined 1) 1)) 15]
+      [(not (= (opt-lc-test-wide-load-src-blocks word-combined) 18)) 16]
+      [(not (= (opt-lc-test-count-blocks word-combined 2) 8)) 17]
+      [(not (= (opt-lc-test-count-blocks word-combined 0) 0)) 18]
+      ;; A trapping `shl 0, 64` siblinged with an exact compose: the compose's
+      ;; own inner root still folds (that rewrite is trap-free), but the
+      ;; siblinged outer root is rejected -- the shl-64 and the outer or
+      ;; survive (59 - 31 chain elements = 28 instructions).
+      [(not (= (opt-lc-test-count-blocks m8 1) 1)) 19]
+      [(not (opt-lc-test-has-shl-lit-blocks m8 64)) 20]
+      [(not (= (opt-lc-test-count-blocks m8 0) 0)) 21]
+      [(not
+          (=
+            (opt-lc-test-block-instr-count m8 (compiler-ir-label "lc_main"))
+            28))
+        22]
+      ;; When the shl-64-siblinged or is the ONLY 8-byte root (right-nested
+      ;; compose), nothing folds at all: no wide load, byte loads stay, the
+      ;; trapping shift survives (57 = the unmodified fixture size).
+      [(not (= (opt-lc-test-count-blocks m9 1) 0)) 23]
+      [(not (= (opt-lc-test-count-blocks m9 0) 8)) 24]
+      [(not (opt-lc-test-has-shl-lit-blocks m9 64)) 25]
+      [(not
+          (=
+            (opt-lc-test-block-instr-count m9 (compiler-ir-label "lc_main"))
+            57))
+        26]
+      [else 42])))
+
+(define (compiler-optimize-unroll-const-pipeline-self-test) : i64
+  (let
+    [func : CompilerIrFunction
+      (optimize-function
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-lc-word-test-function
+          (CompilerIrValue.I64 7)
+          (CompilerIrValue.I64 0)))]
+    [out : CompilerIrBlockList (opt-function-blocks func)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function func))) 1]
+      ;; The whole function optimizes to straight-line code: no phis, no
+      ;; branches, no byte loads, and exactly one i64 load remains.
+      [(not (= (opt-lc-test-count-blocks out 3) 0)) 2]
+      [(not (= (opt-lc-test-count-blocks out 4) 0)) 3]
+      [(not (= (opt-lc-test-count-blocks out 0) 0)) 4]
+      [(not (= (opt-lc-test-count-blocks out 1) 1)) 5]
+      [else 42])))
+
+;; Runtime witnesses: the two compose spellings compute the little-endian
+;; word of the eight bytes at `at`.
+(define (opt-lc-runtime-fill! [data : (Array u8)] [at : i64] [j : i64]) : unit
+  (if (>= j 8)
+    unit
+    (begin
+      (array-set! data (+ at j) (cast (+ j 1) : u8))
+      (opt-lc-runtime-fill! data at (+ j 1)))))
+
+(define (opt-lc-runtime-word [src : (Array u8)] [at : i64]) : i64
+  (let
+    [word : i64 0]
+    [b : i64 7]
+    (begin
+      (while (>= b 0)
+        (begin
+          (set!
+            word
+            (bit-or (shl word 8) (cast (array-ref src (+ at b)) : i64)))
+          (set! b (- b 1))))
+      word)))
+
+(define (opt-lc-runtime-word-muladd [src : (Array u8)] [at : i64]) : i64
+  (let
+    [word : i64 0]
+    [b : i64 7]
+    (begin
+      (while (>= b 0)
+        (begin
+          (set! word (+ (* word 256) (cast (array-ref src (+ at b)) : i64)))
+          (set! b (- b 1))))
+      word)))
+
+(test
+  unroll-const-trip-full
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-const-self-test)
+    42
+    "constant-trip loops fully unroll; over-16-trip, non-literal-bound, and store loops stay rolled"))
+
+(test
+  load-combine-byte-compose
+  (test.assert-i64-eq
+    (compiler-optimize-load-combine-self-test)
+    42
+    "8-byte little-endian compose folds to one wide load with all bounds checks retained"))
+
+(test
+  unroll-const-trip-pipeline
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-const-pipeline-self-test)
+    42
+    "the pipeline leaves the word loop as straight-line code with one i64 load"))
+
+(test
+  load-combine-runtime-word
+  (let
+    [data : (Array u8) (array.make-array u8 16)]
+    (begin
+      (opt-lc-runtime-fill! data 3 0)
+      (test.assert-i64-eq
+        (opt-lc-runtime-word data 3)
+        578437695752307201
+        "shl/or compose returns the little-endian word value")
+      (test.assert-i64-eq
+        (opt-lc-runtime-word-muladd data 3)
+        578437695752307201
+        "mul/add compose returns the little-endian word value"))))

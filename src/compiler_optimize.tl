@@ -37371,6 +37371,960 @@
           (array-ref cell 0)
           true))]))
 
+;; --- constant-trip full unrolling ---------------------------------------------
+;;
+;; A rotated single-block self-loop whose counter phi has a LITERAL seed, a
+;; LITERAL step (add/sub by a literal), and a LITERAL bound reached by an
+;; ordered compare runs an exact, statically computable number of times
+;; whenever its header is entered: the branch sits at the end of the block, so
+;; entering the loop implies at least one trip, and every trip's continue
+;; decision is a pure function of the simulated counter. Such a loop is
+;; replaced by its `trips` straight-line body copies -- no entry guard, no
+;; remainder loop. Unlike the x16 arm this is exact rather than a profitability
+;; bet: the trip count is invariant, so the copies are precisely the
+;; iterations the loop would have run.
+;;
+;; Soundness:
+;; - The trip count is simulated with the counter's own integer type
+;;   (wrapping add/sub normalized per trip) and the compare's own type, so
+;;   wraparound and signed/unsigned comparisons decide exactly what the
+;;   literal loop would decide. A loop that does not settle within the
+;;   16-trip cap is rejected, never guessed.
+;; - The last copy keeps the original destinations and BoundsCheck labels, so
+;;   uses of body values outside the loop (the rotated do-while exit reads the
+;;   last trip's defs) resolve unchanged. The deleted defs (the phis and the
+;;   loop-closing compare) must have no uses outside the loop block; exit-phi
+;;   inputs name body defs, which survive.
+;; - Body cloning reuses the x16 arm's whitelist (no calls, no allocations, no
+;;   stores, no nested terminators), so every copy is pure straight-line code
+;;   and earlier copies' BoundsCheck continuation labels are suffixed unique.
+;; - Caps: trips <= 16 and body-instructions x trips <= 128 bound growth.
+(defenum OptUnrollConstMaybeStep
+  (No)
+  ;; literal step (signed), dst of the add/sub that carries the counter.
+  (Some i64 i64))
+
+(defenum OptUnrollConstMaybeCond
+  (No)
+  ;; literal bound, ordered predicate (already operand-order normalized),
+  ;; whether the compare reads the post-step value, compare type, cond def index.
+  (Some i64 CompilerIrBinOp bool AstType i64))
+
+(defstruct OptUnrollConstShape
+  (exit-label i64)
+  (phi-count i64)
+  (cond-index i64)
+  (iphi i64)
+  (seed i64)
+  (step i64)
+  (trips i64)
+  (ity AstType)
+  (others OptUnrollPhiList))
+
+(defenum OptUnrollConstMaybeShape
+  (No)
+  (Some OptUnrollConstShape))
+
+(define (opt-unroll-const-scalar-ty-tag [ty : AstType]) : i64
+  (match ty
+    [(AstType.I64) 1]
+    [(AstType.I32) 2]
+    [(AstType.I16) 3]
+    [(AstType.I8) 4]
+    [(AstType.U64) 5]
+    [(AstType.U32) 6]
+    [(AstType.U16) 7]
+    [(AstType.U8) 8]
+    [_ 0]))
+
+(define (opt-unroll-const-compare
+  [op : CompilerIrBinOp]
+  [a : i64]
+  [b : i64]
+  [ty : AstType]) : bool
+  (match op
+    [(CompilerIrBinOp.Lt) (opt-typed-lt? a b ty)]
+    [(CompilerIrBinOp.Le) (opt-typed-le? a b ty)]
+    [(CompilerIrBinOp.Gt) (opt-typed-gt? a b ty)]
+    [(CompilerIrBinOp.Ge) (opt-typed-ge? a b ty)]
+    [_ false]))
+
+;; Exact trip count for a literal counter loop, or -1 when the loop does not
+;; settle within the 16-trip cap. `on-next?` selects whether the continue
+;; compare reads the post-step value (the `ge %next, 0` shape) or the phi
+;; itself. `c` and the compare operands are normalized to their instruction
+;; types, matching the wrapping arithmetic and width of the emitted code.
+(define (opt-unroll-const-trips
+  [c : i64]
+  [step : i64]
+  [bound : i64]
+  [op : CompilerIrBinOp]
+  [ity : AstType]
+  [cty : AstType]
+  [on-next? : bool]
+  [n : i64]) : i64
+  (if (> n 16)
+    (- 0 1)
+    (let
+      [next : i64 (opt-normalize-int-to-i64 (+ c step) ity)]
+      [v : i64
+        (opt-normalize-int-to-i64
+          (if on-next?
+            next
+            c)
+          cty)]
+      (if (opt-unroll-const-compare
+        op
+        v
+        (opt-normalize-int-to-i64 bound cty)
+        cty)
+        (opt-unroll-const-trips next step bound op ity cty on-next? (+ n 1))
+        n))))
+
+;; The literal half of `lhs + rhs` when the other half resolves (through
+;; same-block Mov copies) to the counter phi.
+(define (opt-unroll-const-addend
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [iphi : i64]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]) : option_i64.Option
+  (match lhs
+    [(CompilerIrValue.Var x)
+      (match rhs
+        [(CompilerIrValue.I64 k)
+          (if (= (opt-unroll-resolve-copy instrs phi-count last x 16) iphi)
+            (option_i64.Some k)
+            (option_i64.None))]
+        [_ (option_i64.None)])]
+    [(CompilerIrValue.I64 k)
+      (match rhs
+        [(CompilerIrValue.Var x)
+          (if (= (opt-unroll-resolve-copy instrs phi-count last x 16) iphi)
+            (option_i64.Some k)
+            (option_i64.None))]
+        [_ (option_i64.None)])]
+    [_ (option_i64.None)]))
+
+;; The counter phi's back-edge must carry `counter +/- literal`; the add/sub
+;; type must be the phi's own scalar type so the simulation's normalization is
+;; exact (a narrower add would truncate the value the phi receives).
+(define (opt-unroll-const-step-shape
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [iphi : i64]
+  [iphi-tag : i64]
+  [back : CompilerIrValue]) : OptUnrollConstMaybeStep
+  (match back
+    [(CompilerIrValue.Var back-id)
+      (let
+        [slots : (__tl_dyn-array CompilerIrInstr) (struct-get instrs slots)]
+        [inext : i64 (opt-unroll-resolve-copy instrs phi-count last back-id 16)]
+        [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
+        (if (< inext-index 0)
+          (OptUnrollConstMaybeStep.No)
+          (match (compiler-ir-instr-seq-ref instrs inext-index)
+            [(CompilerIrInstr.BinOp _ op lhs rhs sty)
+              (if (!= (opt-unroll-const-scalar-ty-tag sty) iphi-tag)
+                (OptUnrollConstMaybeStep.No)
+                (match op
+                  [(CompilerIrBinOp.Add)
+                    (match (opt-unroll-const-addend
+                      instrs
+                      phi-count
+                      last
+                      iphi
+                      lhs
+                      rhs)
+                      [(option_i64.Some k)
+                        (OptUnrollConstMaybeStep.Some k inext)]
+                      [(option_i64.None) (OptUnrollConstMaybeStep.No)])]
+                  [(CompilerIrBinOp.Sub)
+                    (match lhs
+                      [(CompilerIrValue.Var x)
+                        (match rhs
+                          [(CompilerIrValue.I64 k)
+                            (if (=
+                              (opt-unroll-resolve-copy
+                                instrs
+                                phi-count
+                                last
+                                x
+                                16)
+                              iphi)
+                              (OptUnrollConstMaybeStep.Some (- 0 k) inext)
+                              (OptUnrollConstMaybeStep.No))]
+                          [_ (OptUnrollConstMaybeStep.No)])]
+                      [_ (OptUnrollConstMaybeStep.No)])]
+                  [_ (OptUnrollConstMaybeStep.No)]))]
+            [_ (OptUnrollConstMaybeStep.No)])))]
+    [_ (OptUnrollConstMaybeStep.No)]))
+
+(define (opt-unroll-const-swap-compare [op : CompilerIrBinOp]) : CompilerIrBinOp
+  (match op
+    [(CompilerIrBinOp.Lt) (CompilerIrBinOp.Gt)]
+    [(CompilerIrBinOp.Gt) (CompilerIrBinOp.Lt)]
+    [(CompilerIrBinOp.Le) (CompilerIrBinOp.Ge)]
+    [(CompilerIrBinOp.Ge) (CompilerIrBinOp.Le)]
+    [_ op]))
+
+;; The loop-closing compare must be `counter <op> literal` (either operand
+;; order, counter read before or after the step) with an ordered predicate.
+(define (opt-unroll-const-cond-finish
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [iphi : i64]
+  [inext : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [cty : AstType]
+  [cond-index : i64]) : OptUnrollConstMaybeCond
+  (match lhs
+    [(CompilerIrValue.Var lv)
+      (match rhs
+        [(CompilerIrValue.I64 bound)
+          (let
+            [resolved : i64
+              (opt-unroll-resolve-copy instrs phi-count last lv 16)]
+            (cond
+              [(= resolved inext)
+                (OptUnrollConstMaybeCond.Some bound op true cty cond-index)]
+              [(= resolved iphi)
+                (OptUnrollConstMaybeCond.Some bound op false cty cond-index)]
+              [else (OptUnrollConstMaybeCond.No)]))]
+        [_ (OptUnrollConstMaybeCond.No)])]
+    [(CompilerIrValue.I64 bound)
+      (match rhs
+        [(CompilerIrValue.Var rv)
+          (let
+            [resolved : i64
+              (opt-unroll-resolve-copy instrs phi-count last rv 16)]
+            [swapped : CompilerIrBinOp (opt-unroll-const-swap-compare op)]
+            (cond
+              [(= resolved inext)
+                (OptUnrollConstMaybeCond.Some bound swapped true cty cond-index)]
+              [(= resolved iphi)
+                (OptUnrollConstMaybeCond.Some
+                  bound
+                  swapped
+                  false
+                  cty
+                  cond-index)]
+              [else (OptUnrollConstMaybeCond.No)]))]
+        [_ (OptUnrollConstMaybeCond.No)])]
+    [_ (OptUnrollConstMaybeCond.No)]))
+
+(define (opt-unroll-const-cond-shape
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [cond-var : i64]
+  [iphi : i64]
+  [inext : i64]) : OptUnrollConstMaybeCond
+  (let
+    [slots : (__tl_dyn-array CompilerIrInstr) (struct-get instrs slots)]
+    [cond-index : i64 (opt-unroll-def-index slots phi-count last cond-var)]
+    (if (< cond-index 0)
+      (OptUnrollConstMaybeCond.No)
+      (match (compiler-ir-instr-seq-ref instrs cond-index)
+        [(CompilerIrInstr.BinOp _ op lhs rhs cty)
+          (if (not (opt-integer-type? cty))
+            (OptUnrollConstMaybeCond.No)
+            (match op
+              [(CompilerIrBinOp.Lt)
+                (opt-unroll-const-cond-finish
+                  instrs
+                  phi-count
+                  last
+                  iphi
+                  inext
+                  op
+                  lhs
+                  rhs
+                  cty
+                  cond-index)]
+              [(CompilerIrBinOp.Le)
+                (opt-unroll-const-cond-finish
+                  instrs
+                  phi-count
+                  last
+                  iphi
+                  inext
+                  op
+                  lhs
+                  rhs
+                  cty
+                  cond-index)]
+              [(CompilerIrBinOp.Gt)
+                (opt-unroll-const-cond-finish
+                  instrs
+                  phi-count
+                  last
+                  iphi
+                  inext
+                  op
+                  lhs
+                  rhs
+                  cty
+                  cond-index)]
+              [(CompilerIrBinOp.Ge)
+                (opt-unroll-const-cond-finish
+                  instrs
+                  phi-count
+                  last
+                  iphi
+                  inext
+                  op
+                  lhs
+                  rhs
+                  cty
+                  cond-index)]
+              [_ (OptUnrollConstMaybeCond.No)]))]
+        [_ (OptUnrollConstMaybeCond.No)]))))
+
+(define (opt-unroll-const-outside-uses-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-unroll-const-outside-uses-instrs
+      instrs
+      (+ index 1)
+      (opt-collect-instr-uses acc (compiler-ir-instr-seq-ref instrs index)))))
+
+(define (opt-unroll-const-outside-uses
+  [blocks : CompilerIrBlockList]
+  [loop-label : i64]
+  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (match blocks
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (opt-unroll-const-outside-uses
+            (box-get rest)
+            loop-label
+            (if (= label loop-label)
+              acc
+              (opt-unroll-const-outside-uses-instrs instrs 0 acc)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-const-outside-uses
+        (compiler-ir-block-seq-to-list seq)
+        loop-label
+        acc)]))
+
+(define (opt-unroll-const-phi-dsts-outside-free?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [outside : opt_i64_i64_map.Map]) : bool
+  (if (>= index phi-count)
+    true
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi dst _ _)
+        (if (opt-used-contains outside dst)
+          false
+          (opt-unroll-const-phi-dsts-outside-free?
+            instrs
+            (+ index 1)
+            phi-count
+            outside))]
+      [_ false])))
+
+;; The rewrite deletes the phis and the loop-closing compare, so none of those
+;; defs may be read outside the loop block (body defs survive in the last copy
+;; and need no check).
+(define (opt-unroll-const-exit-uses-free?
+  [blocks : CompilerIrBlockList]
+  [loop-label : i64]
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [cond-var : i64]) : bool
+  (let
+    [outside : opt_i64_i64_map.Map
+      (opt-unroll-const-outside-uses
+        blocks
+        loop-label
+        (opt_i64_i64_map.with-capacity 64))]
+    (and
+      (not (opt-used-contains outside cond-var))
+      (opt-unroll-const-phi-dsts-outside-free? instrs 0 phi-count outside))))
+
+(define (opt-unroll-const-phi-scan
+  [blocks : CompilerIrBlockList]
+  [label : i64]
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [cond-var : i64]
+  [exit-label : i64]
+  [index : i64]) : OptUnrollConstMaybeShape
+  (if (>= index phi-count)
+    (OptUnrollConstMaybeShape.No)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi dst inputs ity)
+        (let
+          [iphi-tag : i64 (opt-unroll-const-scalar-ty-tag ity)]
+          (if (= iphi-tag 0)
+            (opt-unroll-const-phi-scan
+              blocks
+              label
+              instrs
+              phi-count
+              last
+              cond-var
+              exit-label
+              (+ index 1))
+            (match (opt-unroll-split-phi-inputs inputs label)
+              [(OptUnrollPhiSplit.Split init back pred-label)
+                (match init
+                  [(CompilerIrValue.I64 seed)
+                    (match (opt-unroll-const-step-shape
+                      instrs
+                      phi-count
+                      last
+                      dst
+                      iphi-tag
+                      back)
+                      [(OptUnrollConstMaybeStep.No)
+                        (opt-unroll-const-phi-scan
+                          blocks
+                          label
+                          instrs
+                          phi-count
+                          last
+                          cond-var
+                          exit-label
+                          (+ index 1))]
+                      [(OptUnrollConstMaybeStep.Some step inext)
+                        (match (opt-unroll-const-cond-shape
+                          instrs
+                          phi-count
+                          last
+                          cond-var
+                          dst
+                          inext)
+                          [(OptUnrollConstMaybeCond.No)
+                            (opt-unroll-const-phi-scan
+                              blocks
+                              label
+                              instrs
+                              phi-count
+                              last
+                              cond-var
+                              exit-label
+                              (+ index 1))]
+                          [(OptUnrollConstMaybeCond.Some
+                              bound
+                              op
+                              on-next?
+                              cty
+                              cond-index)
+                            (let
+                              [trips : i64
+                                (opt-unroll-const-trips
+                                  (opt-normalize-int-to-i64 seed ity)
+                                  step
+                                  bound
+                                  op
+                                  ity
+                                  cty
+                                  on-next?
+                                  1)]
+                              (if (or
+                                (< trips 1)
+                                (> (* (- last phi-count) trips) 128))
+                                (opt-unroll-const-phi-scan
+                                  blocks
+                                  label
+                                  instrs
+                                  phi-count
+                                  last
+                                  cond-var
+                                  exit-label
+                                  (+ index 1))
+                                (match (opt-unroll-collect-other-phis
+                                  instrs
+                                  0
+                                  phi-count
+                                  label
+                                  pred-label
+                                  dst)
+                                  [(OptUnrollMaybePhis.Some others)
+                                    (if (opt-unroll-const-exit-uses-free?
+                                      blocks
+                                      label
+                                      instrs
+                                      phi-count
+                                      cond-var)
+                                      (OptUnrollConstMaybeShape.Some
+                                        (OptUnrollConstShape
+                                          exit-label
+                                          phi-count
+                                          cond-index
+                                          dst
+                                          (opt-normalize-int-to-i64 seed ity)
+                                          step
+                                          trips
+                                          ity
+                                          others))
+                                      (opt-unroll-const-phi-scan
+                                        blocks
+                                        label
+                                        instrs
+                                        phi-count
+                                        last
+                                        cond-var
+                                        exit-label
+                                        (+ index 1)))]
+                                  [(OptUnrollMaybePhis.No)
+                                    (opt-unroll-const-phi-scan
+                                      blocks
+                                      label
+                                      instrs
+                                      phi-count
+                                      last
+                                      cond-var
+                                      exit-label
+                                      (+ index 1))])))])])]
+                  [_
+                    (opt-unroll-const-phi-scan
+                      blocks
+                      label
+                      instrs
+                      phi-count
+                      last
+                      cond-var
+                      exit-label
+                      (+ index 1))])]
+              [(OptUnrollPhiSplit.No)
+                (opt-unroll-const-phi-scan
+                  blocks
+                  label
+                  instrs
+                  phi-count
+                  last
+                  cond-var
+                  exit-label
+                  (+ index 1))])))]
+      [_
+        (opt-unroll-const-phi-scan
+          blocks
+          label
+          instrs
+          phi-count
+          last
+          cond-var
+          exit-label
+          (+ index 1))])))
+
+(define (opt-unroll-const-block-shape
+  [blocks : CompilerIrBlockList]
+  [entry-label : i64]
+  [block : CompilerIrBlock]) : OptUnrollConstMaybeShape
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (< count 4)
+          (OptUnrollConstMaybeShape.No)
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Branch cond then-label else-label)
+              (match cond
+                [(CompilerIrValue.Var cond-var)
+                  (let
+                    [last : i64 (- count 1)]
+                    [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
+                    (if (or
+                      (!= then-label label)
+                      (= else-label label)
+                      (= label entry-label)
+                      (< phi-count 1)
+                      (< (- last phi-count) 2)
+                      (not (opt-unroll-no-phi-from? instrs phi-count))
+                      (not
+                        (opt-unroll-body-ok?
+                          (struct-get instrs slots)
+                          phi-count
+                          last))
+                      ;; the cond def is dropped from the copies, so the final
+                      ;; branch must be its only use inside the block.
+                      (opt-used-contains
+                        (opt-unroll-uses-before
+                          instrs
+                          0
+                          last
+                          (opt_i64_i64_map.with-capacity 64))
+                        cond-var)
+                      ;; A versioned loop's original body is the cold checked
+                      ;; fallback; growing it is cold-path bloat (same reason
+                      ;; as the x16 arm).
+                      (opt-cfg-block-exists?
+                        blocks
+                        (compiler-ir-label
+                          (string.append
+                            (compiler-ir-label-text label)
+                            "__bce_fast"))))
+                      (OptUnrollConstMaybeShape.No)
+                      (opt-unroll-const-phi-scan
+                        blocks
+                        label
+                        instrs
+                        phi-count
+                        last
+                        cond-var
+                        else-label
+                        0)))]
+                [_ (OptUnrollConstMaybeShape.No)])]
+            [_ (OptUnrollConstMaybeShape.No)])))]))
+
+;; Final-copy clone: substitute uses through the remap but keep the original
+;; destinations and BoundsCheck continuation labels, so the loop's outside
+;; uses (the rotated exit reads the last trip's defs) resolve unchanged.
+(define (opt-unroll-const-keep-clone-instr
+  [remap : (__tl_dyn-array CompilerIrValue)]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Mov dst src ty)
+      (CompilerIrInstr.Mov dst (opt-unroll-subst-value remap src) ty)]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (CompilerIrInstr.Cast
+        dst
+        (opt-unroll-subst-value remap src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (CompilerIrInstr.Bitcast
+        dst
+        (opt-unroll-subst-value remap src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (CompilerIrInstr.BinOp
+        dst
+        op
+        (opt-unroll-subst-value remap lhs)
+        (opt-unroll-subst-value remap rhs)
+        ty)]
+    [(CompilerIrInstr.UnOp dst op src ty)
+      (CompilerIrInstr.UnOp dst op (opt-unroll-subst-value remap src) ty)]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (CompilerIrInstr.Gep
+        dst
+        (opt-unroll-subst-value remap base)
+        (opt-unroll-subst-value remap offset)
+        ty)]
+    [(CompilerIrInstr.Load dst src ty)
+      (CompilerIrInstr.Load dst (opt-unroll-subst-value remap src) ty)]
+    [(CompilerIrInstr.LaneId dst lanes ty)
+      (CompilerIrInstr.LaneId dst lanes ty)]
+    [(CompilerIrInstr.Splat dst value lanes ty)
+      (CompilerIrInstr.Splat dst (opt-unroll-subst-value remap value) lanes ty)]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        [op (struct-get (box-get payload-box) op)]
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        [lanes (struct-get (box-get payload-box) lanes)]
+        [ty (struct-get (box-get payload-box) ty)]
+        (ir-instr-vector-bin-op
+          dst
+          op
+          (opt-unroll-subst-value remap lhs)
+          (opt-unroll-subst-value remap rhs)
+          lanes
+          ty))]
+    [(CompilerIrInstr.VectorReduce dst op src lanes ty)
+      (CompilerIrInstr.VectorReduce
+        dst
+        op
+        (opt-unroll-subst-value remap src)
+        lanes
+        ty)]
+    [(CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        [op (struct-get (box-get payload-box) op)]
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        [lanes (struct-get (box-get payload-box) lanes)]
+        [ty (struct-get (box-get payload-box) ty)]
+        (ir-instr-vector-compare
+          dst
+          op
+          (opt-unroll-subst-value remap lhs)
+          (opt-unroll-subst-value remap rhs)
+          lanes
+          ty))]
+    [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
+      (CompilerIrInstr.MaskBinOp
+        dst
+        op
+        (opt-unroll-subst-value remap lhs)
+        (opt-unroll-subst-value remap rhs)
+        lanes)]
+    [(CompilerIrInstr.Select payload-box)
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        [mask (struct-get (box-get payload-box) mask)]
+        [on-true (struct-get (box-get payload-box) on-true)]
+        [on-false (struct-get (box-get payload-box) on-false)]
+        [lanes (struct-get (box-get payload-box) lanes)]
+        [ty (struct-get (box-get payload-box) ty)]
+        (ir-instr-select
+          dst
+          (opt-unroll-subst-value remap mask)
+          (opt-unroll-subst-value remap on-true)
+          (opt-unroll-subst-value remap on-false)
+          lanes
+          ty))]
+    [(CompilerIrInstr.VectorLoad dst base index lanes ty)
+      (CompilerIrInstr.VectorLoad
+        dst
+        (opt-unroll-subst-value remap base)
+        (opt-unroll-subst-value remap index)
+        lanes
+        ty)]
+    [(CompilerIrInstr.BoundsCheck index length ok-label)
+      (CompilerIrInstr.BoundsCheck
+        (opt-unroll-subst-value remap index)
+        (opt-unroll-subst-value remap length)
+        ok-label)]
+    [_ instr]))
+
+;; Before the last copy is cloned, its destinations must map to THEMSELVES:
+;; the remap still holds the previous copy's fresh vars, but the final copy IS
+;; the original body (its defs feed the exit), so a use of a body-defined var
+;; resolves to the original var while the phi seeds (counter literal, chained
+;; back values) keep their mappings. Phi destinations are prefix defs, outside
+;; this range, so the reseed never touches them.
+(define (opt-unroll-const-instr-dst-or
+  [instr : CompilerIrInstr]
+  [fallback : i64]) : i64
+  (match instr
+    [(CompilerIrInstr.Mov dst _ _) dst]
+    [(CompilerIrInstr.Cast dst _ _ _) dst]
+    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
+    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.UnOp dst _ _ _) dst]
+    [(CompilerIrInstr.Gep dst _ _ _) dst]
+    [(CompilerIrInstr.Load dst _ _) dst]
+    [(CompilerIrInstr.LaneId dst _ _) dst]
+    [(CompilerIrInstr.Splat dst _ _ _) dst]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (struct-get (box-get payload-box) dst)]
+    [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
+    [(CompilerIrInstr.VectorCompare payload-box)
+      (struct-get (box-get payload-box) dst)]
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.Select payload-box)
+      (struct-get (box-get payload-box) dst)]
+    [(CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
+    [_ fallback]))
+
+(define (opt-unroll-const-reseed-body-defs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [remap : (__tl_dyn-array CompilerIrValue)]) : unit
+  (if (>= index last)
+    unit
+    (let
+      [dst : i64
+        (opt-unroll-const-instr-dst-or
+          (compiler-ir-instr-seq-ref instrs index)
+          (- 0 1))]
+      (begin
+        (if (>= dst 0)
+          (opt-unroll-remap-set remap dst (CompilerIrValue.Var dst))
+          unit)
+        (opt-unroll-const-reseed-body-defs instrs (+ index 1) last remap)))))
+
+(define (opt-unroll-const-copy-body
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [skip : i64]
+  [remap : (__tl_dyn-array CompilerIrValue)]
+  [cell : (__tl_dyn-array i64)]
+  [copy : i64]
+  [trips : i64]) : CompilerIrInstrList
+  (if (>= index last)
+    (CompilerIrInstrList.Nil)
+    (if (= index skip)
+      (opt-unroll-const-copy-body
+        instrs
+        (+ index 1)
+        last
+        skip
+        remap
+        cell
+        copy
+        trips)
+      (let
+        [cloned : CompilerIrInstr
+          (if (= copy (- trips 1))
+            (opt-unroll-const-keep-clone-instr
+              remap
+              (compiler-ir-instr-seq-ref instrs index))
+            (opt-unroll-clone-instr
+              remap
+              cell
+              copy
+              (compiler-ir-instr-seq-ref instrs index)))]
+        (compiler-ir-instr-cons
+          cloned
+          (opt-unroll-const-copy-body
+            instrs
+            (+ index 1)
+            last
+            skip
+            remap
+            cell
+            copy
+            trips))))))
+
+(define (opt-unroll-const-init-values [others : OptUnrollPhiList]) : CompilerIrValueList
+  (match others
+    [(OptUnrollPhiList.Nil) (CompilerIrValueList.Nil)]
+    [(OptUnrollPhiList.Cons phi rest)
+      (match phi
+        [(OptUnrollPhi.Phi _ init _ _)
+          (compiler-ir-value-cons
+            init
+            (opt-unroll-const-init-values (box-get rest)))])]))
+
+;; One body copy per simulated trip. The counter phi reads the literal counter
+;; value of its trip; every other phi reads its init value on copy 0 and the
+;; previous copy's remapped back-edge value afterwards (all seeds computed
+;; before any is written, so phi-to-phi back edges see the pre-copy state).
+(define (opt-unroll-const-copies
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [cond-index : i64]
+  [iphi : i64]
+  [counter : i64]
+  [step : i64]
+  [ity : AstType]
+  [others : OptUnrollPhiList]
+  [remap : (__tl_dyn-array CompilerIrValue)]
+  [cell : (__tl_dyn-array i64)]
+  [copy : i64]
+  [trips : i64]) : CompilerIrInstrList
+  (if (>= copy trips)
+    (CompilerIrInstrList.Nil)
+    (let
+      [other-seeds : CompilerIrValueList
+        (if (= copy 0)
+          (opt-unroll-const-init-values others)
+          (opt-unroll-phi-chain-values remap others))]
+      [_seed-counter : unit
+        (opt-unroll-remap-set remap iphi (CompilerIrValue.I64 counter))]
+      [_seed-others : unit
+        (opt-unroll-write-phi-seeds remap others other-seeds)]
+      [_reseed : unit
+        (if (= copy (- trips 1))
+          (opt-unroll-const-reseed-body-defs instrs phi-count last remap)
+          unit)]
+      [body : CompilerIrInstrList
+        (opt-unroll-const-copy-body
+          instrs
+          phi-count
+          last
+          cond-index
+          remap
+          cell
+          copy
+          trips)]
+      (opt-aggregate-instr-list-append
+        body
+        (opt-unroll-const-copies
+          instrs
+          phi-count
+          last
+          cond-index
+          iphi
+          (opt-normalize-int-to-i64 (+ counter step) ity)
+          step
+          ity
+          others
+          remap
+          cell
+          (+ copy 1)
+          trips)))))
+
+(define (opt-unroll-const-replace-block
+  [blocks : CompilerIrBlockList]
+  [loop-label : i64]
+  [new-block : CompilerIrBlock]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label _)
+          (compiler-ir-block-cons
+            (if (= label loop-label)
+              new-block
+              block)
+            (opt-unroll-const-replace-block (box-get rest) loop-label new-block))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-const-replace-block
+        (compiler-ir-block-seq-to-list seq)
+        loop-label
+        new-block)]))
+
+;; The loop block keeps its label and its predecessor edges; only its contents
+;; become the straight-line trip copies ending in a jump to the old exit.
+(define (opt-unroll-const-apply
+  [blocks : CompilerIrBlockList]
+  [block : CompilerIrBlock]
+  [shape : OptUnrollConstShape]
+  [frame : i64]) : OptUnrollResult
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        [last : i64 (- count 1)]
+        [remap : (__tl_dyn-array CompilerIrValue)
+          (array.make-array CompilerIrValue frame)]
+        [_fill : unit (opt-unroll-remap-fill remap 0)]
+        [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [_cell : unit (array-set! cell 0 frame)]
+        [copies : CompilerIrInstrList
+          (opt-unroll-const-copies
+            instrs
+            (struct-get shape phi-count)
+            last
+            (struct-get shape cond-index)
+            (struct-get shape iphi)
+            (struct-get shape seed)
+            (struct-get shape step)
+            (struct-get shape ity)
+            (struct-get shape others)
+            remap
+            cell
+            0
+            (struct-get shape trips))]
+        [new-block : CompilerIrBlock
+          (compiler-ir-block
+            label
+            (opt-aggregate-instr-list-append
+              copies
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump (struct-get shape exit-label))
+                (CompilerIrInstrList.Nil))))]
+        (OptUnrollResult.Result
+          (opt-unroll-const-replace-block blocks label new-block)
+          (array-ref cell 0)
+          true))]))
+
 ;; The mutable SIMD path additionally admits an ordinary canonical VectorStore.
 ;; The generic SSA cloner remains store-free. BoundsCheck is excluded because
 ;; repeating one would duplicate its function-unique continuation label;
@@ -38288,7 +39242,9 @@
           true))]))
 
 ;; Apply at most one unroll per invocation (the pipeline fixpoint picks up
-;; further loops on later iterations), bounding growth.
+;; further loops on later iterations), bounding growth. The exact constant-trip
+;; arm is tried first: when it applies it strictly dominates the guarded x16
+;; rewrite (no guard, no remainder loop).
 (define (opt-unroll-blocks-scan
   [blocks : CompilerIrBlockList]
   [remaining : CompilerIrBlockList]
@@ -38297,11 +39253,15 @@
   (match remaining
     [(CompilerIrBlockList.Nil) (OptUnrollResult.Result blocks frame false)]
     [(CompilerIrBlockList.Cons block rest)
-      (match (opt-unroll-block-shape blocks entry-label block)
-        [(OptUnrollMaybeShape.Some shape)
-          (opt-unroll-apply blocks block shape frame)]
-        [(OptUnrollMaybeShape.No)
-          (opt-unroll-blocks-scan blocks (box-get rest) entry-label frame)])]
+      (match (opt-unroll-const-block-shape blocks entry-label block)
+        [(OptUnrollConstMaybeShape.Some const-shape)
+          (opt-unroll-const-apply blocks block const-shape frame)]
+        [(OptUnrollConstMaybeShape.No)
+          (match (opt-unroll-block-shape blocks entry-label block)
+            [(OptUnrollMaybeShape.Some shape)
+              (opt-unroll-apply blocks block shape frame)]
+            [(OptUnrollMaybeShape.No)
+              (opt-unroll-blocks-scan blocks (box-get rest) entry-label frame)])])]
     [(CompilerIrBlockList.Array seq)
       (opt-unroll-blocks-scan
         blocks
@@ -38551,6 +39511,794 @@
         false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
+
+;; --- byte-compose -> wide-load combining (load_combine) ------------------------
+;;
+;; After the constant-trip unroller, an 8-byte little-endian compose appears as
+;; straight-line IR: per step a BoundsCheck, a u8 Gep, a u8 Load, a zero-extend
+;; Cast, a `shl acc, 8` (or `mul acc, 256`), and a `bit_or` (or an `add` of a
+;; single byte). When eight zero-extended byte loads sit at CONSECUTIVE literal
+;; offsets from one resolved base and the shift/or tree places each byte at
+;; shift 8*(offset - min), the compose is exactly one little-endian i64 load at
+;; base+min on x86_64. This pass rewrites the chain ROOT -- the outermost
+;; or/add -- into that one wide Load in place and DELETES the chain elements
+;; itself: the pipeline DCE treats every shift as potentially trapping
+;; (`opt-binop-traps?`), so the dead shl/or spine would otherwise pin the byte
+;; loads and casts in the emitted code. Deletion is exact here: every element
+;; is proven single-use function-wide, every shl carries a literal count that
+;; is a multiple of 8 BELOW the i64 width (k in {8..56} -- a literal count of
+;; 64 or more, e.g. `shl 0, 64` on a neutral seed, is rejected because the
+;; shift itself can trap at runtime), every mul is restricted to the literal
+;; 256, and the remaining element kinds (Mov, Cast, BitOr, Add, byte Load)
+;; cannot trap, so every deleted instruction is provably non-trapping. The
+;; address temps (geps, base+literal adds) are not elements, so the checks'
+;; inputs stay.
+;; The pass rewrites instructions only (no CFG or frame change) and is
+;; idempotent: the root is no longer an or/add afterwards, so a second run is
+;; a no-op.
+;;
+;; Soundness:
+;; - BoundsCheck instructions are never touched, removed, or reordered. The
+;;   wide load takes the root's position, which follows every chain element
+;;   (SSA def-before-use within the block), hence follows every byte's check:
+;;   a check that would abort still aborts before the wide load executes, and
+;;   when all checks pass the eight bytes are in bounds, so the wide load
+;;   cannot fault where the byte loads would not have.
+;; - The wide load reads the union of the chain's bytes at the root position,
+;;   so a memory write between the first byte load and the root could change a
+;;   byte's value: any store/call/syscall between the earliest chain load and
+;;   the root rejects the chain.
+;; - Value-chain elements (loads, casts, shifts, ors, compose movs) must be
+;;   single-use function-wide: they are deleted by this pass, and an outside
+;;   user would otherwise keep a byte load alive next to the wide load (still
+;;   sound, but rejected to keep the rewrite strictly shrinking).
+;; - Address temps (the Gep and the base+literal add) are exempt from the
+;;   single-use rule: the checks share them, they are pure, and the
+;;   min-offset Gep is reused as the wide load's address.
+;; - v1 folds 8-byte chains whose root type is i64/u64 only; shorter chains
+;;   would need a narrow load plus a widening cast (an extra instruction slot)
+;;   and are rejected.
+(define (opt-load-combine-root-op? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.BitOr) true]
+    [(CompilerIrBinOp.Add) true]
+    [_ false]))
+
+(define (opt-load-combine-wide-ty? [ty : AstType]) : bool
+  (match ty
+    [(AstType.I64) true]
+    [(AstType.U64) true]
+    [_ false]))
+
+;; Instructions that may write memory the byte loads could read. Calls and
+;; syscalls are included conservatively; pure arithmetic, loads, checks, and
+;; address formation are not barriers.
+(define (opt-load-combine-may-write? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [(CompilerIrInstr.Store _ _ _) true]
+    [(CompilerIrInstr.CopyBytes _ _ _) true]
+    [(CompilerIrInstr.Call _ _ _ _) true]
+    [(CompilerIrInstr.CallIndirect _ _ _ _) true]
+    [(CompilerIrInstr.CallIndirectC _ _ _ _) true]
+    [(CompilerIrInstr.CallCAbiStoreResult _) true]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
+    [(CompilerIrInstr.SpmdCall _) true]
+    [(CompilerIrInstr.TailCall _ _ _) true]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) true]
+    [(CompilerIrInstr.Syscall _ _) true]
+    [(CompilerIrInstr.VectorStore _) true]
+    [(CompilerIrInstr.PredicatedStore _) true]
+    [_ false]))
+
+(define (opt-load-combine-scan-candidate?
+  [slots : (__tl_dyn-array CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [roots? : bool]
+  [bytes? : bool]) : bool
+  (if (and roots? bytes?)
+    true
+    (if (>= index count)
+      false
+      (opt-load-combine-scan-candidate?
+        slots
+        (+ index 1)
+        count
+        (or
+          roots?
+          (match (array-ref slots index)
+            [(CompilerIrInstr.BinOp _ op _ _ ty)
+              (and
+                (opt-load-combine-root-op? op)
+                (opt-load-combine-wide-ty? ty))]
+            [_ false]))
+        (or
+          bytes?
+          (match (array-ref slots index)
+            [(CompilerIrInstr.Load _ _ ty)
+              (match ty
+                [(AstType.U8) true]
+                [_ false])]
+            [_ false]))))))
+
+(define (opt-load-combine-block-candidate? [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (opt-load-combine-scan-candidate?
+        (struct-get instrs slots)
+        0
+        (compiler-ir-instr-seq-count instrs)
+        false
+        false)]))
+
+(define (opt-load-combine-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (opt-load-combine-block-candidate? block)
+        true
+        (opt-load-combine-blocks-have-candidate? (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-load-combine-blocks-have-candidate?
+        (compiler-ir-block-seq-to-list seq))]))
+
+;; Single-block def index: var -> instruction index (SSA single-def makes the
+;; mapping unique).
+(define (opt-load-combine-defs-fill
+  [slots : (__tl_dyn-array CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [defs : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (>= index count)
+    defs
+    (let
+      [dst : i64 (compiler-ir-instr-array-loop-dst-or slots index (- 0 1))]
+      [next : opt_i64_i64_map.Map defs]
+      (begin
+        (if (>= dst 0)
+          (opt_i64_i64_map.insert-ref! (&mut next) dst index)
+          unit)
+        (opt-load-combine-defs-fill slots (+ index 1) count next)))))
+
+;; Chain analysis state, one scratch array per function pass, slots:
+;;   0 byte count, 1 resolved gep base var (-1 unset), 2 offset-add lhs var
+;;   (-1 for a plain literal offset), 3 earliest byte-load position,
+;;   4 bitmask of recorded shift indices (literal offsets may be negative, so
+;;   an empty slot cannot be told from one holding a negative offset),
+;;   5 chain element count, 8..15 source byte offset per shift index,
+;;   16..23 gep var per shift index, 24..87 chain element instruction indices
+;;   (deleted on a successful fold; 64 slots, an 8-byte chain needs ~40).
+(define (opt-load-combine-state-reset
+  [state : (__tl_dyn-array i64)]
+  [index : i64]) : unit
+  (if (>= index (array-length state))
+    unit
+    (begin
+      (array-set! state index (- 0 1))
+      (opt-load-combine-state-reset state (+ index 1)))))
+
+;; A chain element must be used exactly once function-wide (by the next chain
+;; link); anything else rejects the fold.
+(define (opt-load-combine-single-use? [uses : (__tl_dyn-array i64)] [var : i64]) : bool
+  (and (>= var 0) (< var (array-length uses)) (= (array-ref uses var) 1)))
+
+;; Record one chain element instruction for deletion; the count cap only
+;; bounds the scratch (a deep but ultimately rejected chain never overflows
+;; it, it just stops early).
+(define (opt-load-combine-record-element
+  [state : (__tl_dyn-array i64)]
+  [index : i64]) : bool
+  (let
+    [n : i64 (array-ref state 5)]
+    (if (>= n 64)
+      false
+      (begin
+        (array-set! state (+ 24 n) index)
+        (array-set! state 5 (+ n 1))
+        true))))
+
+;; Resolve a var through same-block Mov copies (fuel-bounded), used for both
+;; the compose accumulator chain and the gep base/offset temps.
+(define (opt-load-combine-resolve
+  [instrs : CompilerIrInstrSeq]
+  [defs : opt_i64_i64_map.Map]
+  [var : i64]
+  [fuel : i64]) : i64
+  (if (<= fuel 0)
+    var
+    (let
+      [index : i64 (opt_i64_i64_map.get-value-or (& defs) var (- 0 1))]
+      (if (< index 0)
+        var
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.Mov _ src _)
+            (match src
+              [(CompilerIrValue.Var src-id)
+                (opt-load-combine-resolve instrs defs src-id (- fuel 1))]
+              [_ var])]
+          [_ var])))))
+
+;; Record one byte leaf: `cast (load (gep base, off : u8) : u8) : i64/u64` at
+;; shift index `shift`. Fills the state's offset/gep slots and the shared base
+;; key; rejects anything off the exact shape.
+(define (opt-load-combine-record-leaf
+  [instrs : CompilerIrInstrSeq]
+  [defs : opt_i64_i64_map.Map]
+  [uses : (__tl_dyn-array i64)]
+  [state : (__tl_dyn-array i64)]
+  [gep-var : i64]
+  [load-var : i64]
+  [load-pos : i64]
+  [shift : i64]) : bool
+  (if (or
+    (< shift 0)
+    (> shift 7)
+    (not (opt-load-combine-single-use? uses load-var))
+    ;; one byte per shift index
+    (!= (bit-and (array-ref state 4) (shl 1 shift)) 0)
+    (not (opt-load-combine-record-element state load-pos)))
+    false
+    (let
+      [gep-index : i64 (opt_i64_i64_map.get-value-or (& defs) gep-var (- 0 1))]
+      (if (< gep-index 0)
+        false
+        (match (compiler-ir-instr-seq-ref instrs gep-index)
+          [(CompilerIrInstr.Gep _ base offset gep-ty)
+            (match gep-ty
+              [(AstType.U8)
+                (match base
+                  [(CompilerIrValue.Var base-id)
+                    (let
+                      [resolved-base : i64
+                        (opt-load-combine-resolve instrs defs base-id 16)]
+                      (match offset
+                        [(CompilerIrValue.I64 k)
+                          (opt-load-combine-leaf-slot
+                            state
+                            resolved-base
+                            (- 0 1)
+                            k
+                            gep-var
+                            load-pos
+                            shift)]
+                        [(CompilerIrValue.Var off-id)
+                          (let
+                            [resolved-off : i64
+                              (opt-load-combine-resolve instrs defs off-id 16)]
+                            [off-index : i64
+                              (opt_i64_i64_map.get-value-or
+                                (& defs)
+                                resolved-off
+                                (- 0 1))]
+                            (if (< off-index 0)
+                              false
+                              (match (compiler-ir-instr-seq-ref
+                                instrs
+                                off-index)
+                                [(CompilerIrInstr.BinOp
+                                    _
+                                    add-op
+                                    add-lhs
+                                    add-rhs
+                                    _)
+                                  (match add-op
+                                    [(CompilerIrBinOp.Add)
+                                      (match add-lhs
+                                        [(CompilerIrValue.Var x)
+                                          (match add-rhs
+                                            [(CompilerIrValue.I64 k)
+                                              (opt-load-combine-leaf-slot
+                                                state
+                                                resolved-base
+                                                (opt-load-combine-resolve
+                                                  instrs
+                                                  defs
+                                                  x
+                                                  16)
+                                                k
+                                                gep-var
+                                                load-pos
+                                                shift)]
+                                            [_ false])]
+                                        [(CompilerIrValue.I64 k)
+                                          (match add-rhs
+                                            [(CompilerIrValue.Var x)
+                                              (opt-load-combine-leaf-slot
+                                                state
+                                                resolved-base
+                                                (opt-load-combine-resolve
+                                                  instrs
+                                                  defs
+                                                  x
+                                                  16)
+                                                k
+                                                gep-var
+                                                load-pos
+                                                shift)]
+                                            [_ false])]
+                                        [_ false])]
+                                    [_ false])]
+                                [_ false])))]
+                        [_ false]))]
+                  [_ false])]
+              [_ false])]
+          [_ false])))))
+
+;; Shared tail of leaf recording: check/update the base key, then store the
+;; byte's offset/gep/position.
+(define (opt-load-combine-leaf-slot
+  [state : (__tl_dyn-array i64)]
+  [base-a : i64]
+  [base-b : i64]
+  [offset : i64]
+  [gep-var : i64]
+  [load-pos : i64]
+  [shift : i64]) : bool
+  (let
+    [known-a : i64 (array-ref state 1)]
+    [known-b : i64 (array-ref state 2)]
+    (if (if (< known-a 0)
+      (begin
+        (array-set! state 1 base-a)
+        (array-set! state 2 base-b)
+        true)
+      (and (= known-a base-a) (= known-b base-b)))
+      (begin
+        (array-set! state 4 (bit-or (array-ref state 4) (shl 1 shift)))
+        (array-set! state (+ 8 shift) offset)
+        (array-set! state (+ 16 shift) gep-var)
+        (array-set! state 0 (+ (array-ref state 0) 1))
+        (if (or (< (array-ref state 3) 0) (< load-pos (array-ref state 3)))
+          (array-set! state 3 load-pos)
+          unit)
+        true)
+      false)))
+
+;; Analyze `value` as a byte-compose subexpression whose bytes all sit at
+;; `shift`..`shift+7` byte positions. Mutates the state; returns false on any
+;; off-shape construct. The literal 0 is the neutral seed (shl/or of it
+;; contributes no bytes).
+(define (opt-load-combine-analyze
+  [instrs : CompilerIrInstrSeq]
+  [defs : opt_i64_i64_map.Map]
+  [uses : (__tl_dyn-array i64)]
+  [state : (__tl_dyn-array i64)]
+  [value : CompilerIrValue]
+  [shift : i64]
+  [fuel : i64]) : bool
+  (if (<= fuel 0)
+    false
+    (match value
+      [(CompilerIrValue.I64 k) (= k 0)]
+      [(CompilerIrValue.Var id)
+        (let
+          [index : i64 (opt_i64_i64_map.get-value-or (& defs) id (- 0 1))]
+          (if (< index 0)
+            false
+            (match (compiler-ir-instr-seq-ref instrs index)
+              [(CompilerIrInstr.Mov dst src _)
+                (if (and
+                  (opt-load-combine-single-use? uses dst)
+                  (opt-load-combine-record-element state index))
+                  (opt-load-combine-analyze
+                    instrs
+                    defs
+                    uses
+                    state
+                    src
+                    shift
+                    (- fuel 1))
+                  false)]
+              [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+                (if (not
+                  (and
+                    (opt-load-combine-wide-ty? ty)
+                    (opt-load-combine-single-use? uses dst)
+                    (opt-load-combine-record-element state index)))
+                  false
+                  (match op
+                    [(CompilerIrBinOp.BitOr)
+                      (and
+                        (opt-load-combine-analyze
+                          instrs
+                          defs
+                          uses
+                          state
+                          lhs
+                          shift
+                          (- fuel 1))
+                        (opt-load-combine-analyze
+                          instrs
+                          defs
+                          uses
+                          state
+                          rhs
+                          shift
+                          (- fuel 1)))]
+                    [(CompilerIrBinOp.Add)
+                      ;; `add` composes like `or` only when one side is itself a
+                      ;; single zero-extended byte load of the chain.
+                      (if (opt-load-combine-leaf? instrs defs lhs)
+                        (and
+                          (opt-load-combine-analyze
+                            instrs
+                            defs
+                            uses
+                            state
+                            lhs
+                            shift
+                            (- fuel 1))
+                          (opt-load-combine-analyze
+                            instrs
+                            defs
+                            uses
+                            state
+                            rhs
+                            shift
+                            (- fuel 1)))
+                        (if (opt-load-combine-leaf? instrs defs rhs)
+                          (and
+                            (opt-load-combine-analyze
+                              instrs
+                              defs
+                              uses
+                              state
+                              lhs
+                              shift
+                              (- fuel 1))
+                            (opt-load-combine-analyze
+                              instrs
+                              defs
+                              uses
+                              state
+                              rhs
+                              shift
+                              (- fuel 1)))
+                          false))]
+                    [(CompilerIrBinOp.Shl)
+                      ;; The count must be a multiple of 8 below the i64 width:
+                      ;; k in {8..56}. k >= 64 (e.g. `shl 0, 64` on a neutral
+                      ;; seed, which otherwise analyzes fine at shift 8) would
+                      ;; make the recorded element deletable even though the
+                      ;; shift itself can trap at runtime -- rejecting here
+                      ;; keeps every deleted instruction provably non-trapping.
+                      (match rhs
+                        [(CompilerIrValue.I64 k)
+                          (if (and
+                            (> k 0)
+                            (< k 64)
+                            (= (% k 8) 0)
+                            (<= (+ shift (/ k 8)) 8))
+                            (opt-load-combine-analyze
+                              instrs
+                              defs
+                              uses
+                              state
+                              lhs
+                              (+ shift (/ k 8))
+                              (- fuel 1))
+                            false)]
+                        [_ false])]
+                    [(CompilerIrBinOp.Mul)
+                      (match rhs
+                        [(CompilerIrValue.I64 k)
+                          (if (= k 256)
+                            (opt-load-combine-analyze
+                              instrs
+                              defs
+                              uses
+                              state
+                              lhs
+                              (+ shift 1)
+                              (- fuel 1))
+                            false)]
+                        [_
+                          (match lhs
+                            [(CompilerIrValue.I64 k)
+                              (if (= k 256)
+                                (opt-load-combine-analyze
+                                  instrs
+                                  defs
+                                  uses
+                                  state
+                                  rhs
+                                  (+ shift 1)
+                                  (- fuel 1))
+                                false)]
+                            [_ false])])]
+                    [_ false]))]
+              [(CompilerIrInstr.Cast dst src from-ty to-ty)
+                (if (not
+                  (and
+                    (match from-ty
+                      [(AstType.U8) true]
+                      [_ false])
+                    (opt-load-combine-wide-ty? to-ty)
+                    (opt-load-combine-single-use? uses dst)
+                    (opt-load-combine-record-element state index)))
+                  false
+                  (match src
+                    [(CompilerIrValue.Var load-var)
+                      (let
+                        [load-index : i64
+                          (opt_i64_i64_map.get-value-or
+                            (& defs)
+                            load-var
+                            (- 0 1))]
+                        (if (< load-index 0)
+                          false
+                          (match (compiler-ir-instr-seq-ref instrs load-index)
+                            [(CompilerIrInstr.Load _ load-src load-ty)
+                              (match load-ty
+                                [(AstType.U8)
+                                  (match load-src
+                                    [(CompilerIrValue.Var gep-var)
+                                      (opt-load-combine-record-leaf
+                                        instrs
+                                        defs
+                                        uses
+                                        state
+                                        gep-var
+                                        load-var
+                                        load-index
+                                        shift)]
+                                    [_ false])]
+                                [_ false])]
+                            [_ false])))]
+                    [_ false]))]
+              [_ false])))]
+      [_ false])))
+
+;; Is `value` a zero-extended byte load of the chain shape (without recording)?
+(define (opt-load-combine-leaf?
+  [instrs : CompilerIrInstrSeq]
+  [defs : opt_i64_i64_map.Map]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var id)
+      (let
+        [index : i64 (opt_i64_i64_map.get-value-or (& defs) id (- 0 1))]
+        (if (< index 0)
+          false
+          (match (compiler-ir-instr-seq-ref instrs index)
+            [(CompilerIrInstr.Cast _ src from-ty to-ty)
+              (and
+                (match from-ty
+                  [(AstType.U8) true]
+                  [_ false])
+                (opt-load-combine-wide-ty? to-ty)
+                (match src
+                  [(CompilerIrValue.Var load-var)
+                    (let
+                      [load-index : i64
+                        (opt_i64_i64_map.get-value-or (& defs) load-var (- 0 1))]
+                      (if (< load-index 0)
+                        false
+                        (match (compiler-ir-instr-seq-ref instrs load-index)
+                          [(CompilerIrInstr.Load _ _ load-ty)
+                            (match load-ty
+                              [(AstType.U8) true]
+                              [_ false])]
+                          [_ false])))]
+                  [_ false]))]
+            [_ false])))]
+    [_ false]))
+
+;; No may-write instruction between the earliest chain byte load and the root:
+;; the wide load reads every byte at the root's position.
+(define (opt-load-combine-barrier-free?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [root-index : i64]) : bool
+  (if (>= index root-index)
+    true
+    (if (opt-load-combine-may-write? (compiler-ir-instr-seq-ref instrs index))
+      false
+      (opt-load-combine-barrier-free? instrs (+ index 1) root-index))))
+
+;; The recorded bytes must be exactly b0..b7 with the byte at shift i read
+;; from offset min+i (an exact little-endian compose: no gaps, no overlaps, no
+;; reordering). Returns the gep var of the minimum-offset byte (the wide
+;; load's address) or -1.
+(define (opt-load-combine-exact-le-gep [state : (__tl_dyn-array i64)]) : i64
+  (if (!= (array-ref state 0) 8)
+    (- 0 1)
+    (opt-load-combine-exact-le-gep-check state 1 (array-ref state 8))))
+
+(define (opt-load-combine-exact-le-gep-check
+  [state : (__tl_dyn-array i64)]
+  [index : i64]
+  [min-offset : i64]) : i64
+  (if (>= index 8)
+    (array-ref state 16)
+    (if (= (array-ref state (+ 8 index)) (+ min-offset index))
+      (opt-load-combine-exact-le-gep-check state (+ index 1) min-offset)
+      (- 0 1))))
+
+;; Try one root instruction; returns the wide-load gep var or -1.
+(define (opt-load-combine-try-root
+  [instrs : CompilerIrInstrSeq]
+  [defs : opt_i64_i64_map.Map]
+  [uses : (__tl_dyn-array i64)]
+  [state : (__tl_dyn-array i64)]
+  [root-index : i64]
+  [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+      (if (not
+        (and (opt-load-combine-root-op? op) (opt-load-combine-wide-ty? ty)))
+        (- 0 1)
+        (begin
+          (opt-load-combine-state-reset state 0)
+          (array-set! state 0 0)
+          (array-set! state 4 0)
+          (array-set! state 5 0)
+          (if (and
+            (opt-load-combine-analyze instrs defs uses state lhs 0 128)
+            (opt-load-combine-analyze instrs defs uses state rhs 0 128)
+            (>= (array-ref state 3) 0)
+            (opt-load-combine-barrier-free?
+              instrs
+              (+ (array-ref state 3) 1)
+              root-index))
+            (opt-load-combine-exact-le-gep state)
+            (- 0 1))))]
+    [_ (- 0 1)]))
+
+(define (opt-load-combine-mark-deletes
+  [deletes : (__tl_dyn-array i64)]
+  [state : (__tl_dyn-array i64)]
+  [index : i64]) : unit
+  (if (>= index (array-ref state 5))
+    unit
+    (begin
+      (array-set! deletes (array-ref state (+ 24 index)) 1)
+      (opt-load-combine-mark-deletes deletes state (+ index 1)))))
+
+(define (opt-load-combine-block-rewrite-roots
+  [instrs : CompilerIrInstrSeq]
+  [defs : opt_i64_i64_map.Map]
+  [uses : (__tl_dyn-array i64)]
+  [state : (__tl_dyn-array i64)]
+  [rewrites : (__tl_dyn-array i64)]
+  [deletes : (__tl_dyn-array i64)]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index count)
+    0
+    (let
+      [found : i64
+        (opt-load-combine-try-root
+          instrs
+          defs
+          uses
+          state
+          index
+          (compiler-ir-instr-seq-ref instrs index))]
+      (begin
+        (if (>= found 0)
+          (begin
+            (array-set! rewrites index found)
+            (opt-load-combine-mark-deletes deletes state 0))
+          unit)
+        (+
+          (if (>= found 0)
+            1
+            0)
+          (opt-load-combine-block-rewrite-roots
+            instrs
+            defs
+            uses
+            state
+            rewrites
+            deletes
+            (+ index 1)
+            count))))))
+
+(define (opt-load-combine-rebuild-instrs
+  [instrs : CompilerIrInstrSeq]
+  [rewrites : (__tl_dyn-array i64)]
+  [deletes : (__tl_dyn-array i64)]
+  [index : i64]
+  [count : i64]) : CompilerIrInstrList
+  (if (>= index count)
+    (CompilerIrInstrList.Nil)
+    (if (= (array-ref deletes index) 1)
+      (opt-load-combine-rebuild-instrs
+        instrs
+        rewrites
+        deletes
+        (+ index 1)
+        count)
+      (let
+        [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+        (compiler-ir-instr-cons
+          (if (>= (array-ref rewrites index) 0)
+            (match instr
+              [(CompilerIrInstr.BinOp dst _ _ _ ty)
+                (CompilerIrInstr.Load
+                  dst
+                  (CompilerIrValue.Var (array-ref rewrites index))
+                  ty)]
+              [_ instr])
+            instr)
+          (opt-load-combine-rebuild-instrs
+            instrs
+            rewrites
+            deletes
+            (+ index 1)
+            count))))))
+
+;; One block: candidate prescan, def index, root scan, then a rebuild only
+;; when at least one root folded.
+(define (opt-load-combine-block
+  [uses : (__tl_dyn-array i64)]
+  [state : (__tl_dyn-array i64)]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (if (not (opt-load-combine-block-candidate? block))
+        block
+        (let
+          [count : i64 (compiler-ir-instr-seq-count instrs)]
+          [defs : opt_i64_i64_map.Map
+            (opt-load-combine-defs-fill
+              (struct-get instrs slots)
+              0
+              count
+              (opt_i64_i64_map.with-capacity 64))]
+          [rewrites : (__tl_dyn-array i64) (array.make-array i64 count)]
+          [deletes : (__tl_dyn-array i64) (array.make-array i64 count)]
+          [_fill : unit
+            (let
+              [i : i64 0]
+              (while (< i count)
+                (begin
+                  (array-set! rewrites i (- 0 1))
+                  (array-set! deletes i 0)
+                  (set! i (+ i 1)))))]
+          [folded : i64
+            (opt-load-combine-block-rewrite-roots
+              instrs
+              defs
+              uses
+              state
+              rewrites
+              deletes
+              0
+              count)]
+          (if (> folded 0)
+            (compiler-ir-block
+              label
+              (opt-load-combine-rebuild-instrs instrs rewrites deletes 0 count))
+            block)))]))
+
+(define (opt-load-combine-blocks-walk
+  [uses : (__tl_dyn-array i64)]
+  [state : (__tl_dyn-array i64)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-load-combine-block uses state block)
+        (opt-load-combine-blocks-walk uses state (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-load-combine-blocks-walk
+        uses
+        state
+        (compiler-ir-block-seq-to-list seq))]))
+
+;; Entry: a function with no candidate block (an i64/u64 or/add next to a u8
+;; load) is returned untouched, so the common case pays one instruction scan.
+(define (opt-load-combine-blocks [frame : i64] [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (if (opt-load-combine-blocks-have-candidate? blocks)
+    (opt-load-combine-blocks-walk
+      (opt-collect-blocks-uses-array frame blocks)
+      (array.make-array i64 88)
+      blocks)
+    blocks))
 
 ;; --- bounds-check loop versioning (codegen phase 7) ---------------------------
 ;;
@@ -49465,6 +51213,44 @@
                             name
                             _t-unroll)
                           unit)]
+                      ;; Byte-compose load combining runs immediately after the
+                      ;; unroller: a constant-trip loop unrolled THIS iteration
+                      ;; exposes its straight-line compose here, and the round's
+                      ;; DCE below removes the dead byte loads/casts/shifts. The
+                      ;; pass only rewrites instructions in place (no CFG or
+                      ;; frame change), so the unroll context stays valid.
+                      [_t-load-combine : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [load-combine : CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "load_combine"
+                          (if run-loop?
+                            (match unrolled
+                              [(CompilerIrFunction.Function
+                                  _name
+                                  _params
+                                  _ret-ty
+                                  unrolled-frame
+                                  unrolled-blocks)
+                                (CompilerIrFunction.Function
+                                  name
+                                  params
+                                  ret-ty
+                                  unrolled-frame
+                                  (opt-load-combine-blocks
+                                    unrolled-frame
+                                    unrolled-blocks))])
+                            unrolled))]
+                      [_p-load-combine : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "load_combine"
+                            name
+                            _t-load-combine)
+                          unit)]
                       ;; Linear-function test replacement runs here, after
                       ;; bce_version and unroll: both key their rewrites on the
                       ;; counter phi this pass retires, so it has to see their
@@ -49477,7 +51263,7 @@
                             type-segment-bases
                             unroll-context
                             loop-cluster-verified?
-                            unrolled)
+                            load-combine)
                           unroll-result)]
                       [lftr : CompilerIrFunction
                         (compiler-opt-debug-observe-function

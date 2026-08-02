@@ -31084,6 +31084,29 @@
   (Nil)
   (Cons OptRangeFact (Box OptRangeFacts)))
 
+;; Program facts for function-scope global-cell invariance (the "global_cell"
+;; pass): which globals can have their cell loaded once at a function's entry
+;; and have every in-function use rewritten to that SSA var. `addr-taken`
+;; holds every global whose `CompilerIrValue.GlobalAddr` appears anywhere in the
+;; program (a store_ptr/syscall/callee could write the cell through such a
+;; pointer); `type-index`/`types` map a global's symbol id to its declared
+;; AstType so the entry load's Mov carries the exact cell type; `word-cell` is
+;; the count of globals that pass both the not-address-taken and the
+;; single-word-cell filters (a cheap per-function skip when zero). Built once
+;; per program at level 2; empty (and the pass a no-op) elsewhere.
+(defstruct OptGlobalCellSummary
+  (addr-taken opt_i64_i64_map.Map)
+  (type-index opt_i64_i64_map.Map)
+  (types (Array AstType))
+  (word-cell i64))
+
+(define (opt-global-cell-summary-empty) : OptGlobalCellSummary
+  (OptGlobalCellSummary
+    (opt_i64_i64_map.with-capacity 1)
+    (opt_i64_i64_map.with-capacity 1)
+    (array.make-array AstType 0)
+    0))
+
 (defstruct OptLoopBceSummaries
   (enabled bool)
   ;; Compile-profile ownership follows the already per-program summary bundle.
@@ -31105,7 +31128,10 @@
   ;; than threaded as a separate parameter) because both are built once per
   ;; program and consumed in the same per-function level-2 pass. Empty unless
   ;; the program qualifies for summary construction.
-  (const-divisors opt_i64_i64_map.Map))
+  (const-divisors opt_i64_i64_map.Map)
+  ;; Whole-program global-cell invariance facts (see OptGlobalCellSummary);
+  ;; consumed by the global_cell pass in the level-2 fixpoint pipeline.
+  (global-cell OptGlobalCellSummary))
 
 (defstruct OptLoopBceState
   (exprs OptLoopBceExprEnv)
@@ -31151,7 +31177,8 @@
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
-    (opt_i64_i64_map.with-capacity 8)))
+    (opt_i64_i64_map.with-capacity 8)
+    (opt-global-cell-summary-empty)))
 
 (define (opt-loop-bce-summary-length-clean?
   [summaries : OptLoopBceSummaries]
@@ -51631,9 +51658,16 @@
           ;; Substitute proven constant-global operands up front so the local
           ;; folds below see literals: a mask global otherwise keeps its `and`
           ;; alive into the loop cluster, pushing an otherwise-unrollable body
-          ;; past the unroll size gate (the opt_crc32 shape). The map is shared
-          ;; with the later divisor-targeted rewrite and empty in the common
-          ;; case, which makes this a length check per function.
+          ;; past the unroll size gate (the opt_crc32 shape). Use positions
+          ;; are covered wholesale (BinOp/UnOp/Cast/Bitcast/Mov plus Store and
+          ;; StorePtr values and BoundsCheck operands -- see
+          ;; opt-const-divisor-rewrite-instr), so a literal global bound also
+          ;; constant-enables induction, bce_version, and unrolling below, and
+          ;; a descriptor-stored length global forwards as the SAME literal the
+          ;; compares see (mixed symbolic/literal state would defeat the
+          ;; ctor_fwd equality eliminations). The map is shared with the later
+          ;; divisor-targeted rewrite and empty in the common case, which
+          ;; makes this a length check per function.
           [const-global-blocks : CompilerIrBlockList
             (opt-const-divisor-rewrite-summary-blocks summaries blocks)]
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
@@ -51907,9 +51941,33 @@
                             name
                             _t-ssa)
                           unit)]
-                      [ssa-frame : i64 (opt-function-frame ssa)]
+                      ;; Global-cell invariance runs on the SSA form so its
+                      ;; entry-loaded vars are single-def and the rewritten
+                      ;; descriptor geps/loads become ordinary SSA-fed
+                      ;; instructions for GVN/LICM below (and invariant loop
+                      ;; bounds for bce_version in the loop cluster). It only
+                      ;; inserts entry-block Movs and rewrites operands in
+                      ;; place, so the CFG -- and therefore ssa-context --
+                      ;; stays valid for the consumers underneath.
+                      [_t-global-cell : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [global-cell : CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "global_cell"
+                          (opt-global-cell-function summaries ssa))]
+                      [_p-global-cell : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "global_cell"
+                            name
+                            _t-global-cell)
+                          unit)]
+                      [ssa-frame : i64 (opt-function-frame global-cell)]
                       [ssa-blocks : CompilerIrBlockList
-                        (opt-function-blocks ssa)]
+                        (opt-function-blocks global-cell)]
                       [_t-gvn : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [gvn : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
@@ -61779,7 +61837,8 @@
       direct-call-clean
       call-memory
       argc-return
-      (opt_i64_i64_map.with-capacity 1))))
+      (opt_i64_i64_map.with-capacity 1)
+      (opt-global-cell-summary-empty))))
 
 (define (opt-loop-bce-summaries-set-const-divisors
   [summaries : OptLoopBceSummaries]
@@ -61791,7 +61850,21 @@
     (struct-get summaries direct-call-clean)
     (struct-get summaries call-memory)
     (struct-get summaries argc-return)
-    const-divisors))
+    const-divisors
+    (struct-get summaries global-cell)))
+
+(define (opt-loop-bce-summaries-set-global-cell
+  [summaries : OptLoopBceSummaries]
+  [global-cell : OptGlobalCellSummary]) : OptLoopBceSummaries
+  (OptLoopBceSummaries
+    (struct-get summaries enabled)
+    (struct-get summaries profile-state)
+    (struct-get summaries length-clean)
+    (struct-get summaries direct-call-clean)
+    (struct-get summaries call-memory)
+    (struct-get summaries argc-return)
+    (struct-get summaries const-divisors)
+    global-cell))
 
 (define (opt-loop-bce-summaries-set-profile-state
   [summaries : OptLoopBceSummaries]
@@ -61803,42 +61876,44 @@
     (struct-get summaries direct-call-clean)
     (struct-get summaries call-memory)
     (struct-get summaries argc-return)
-    (struct-get summaries const-divisors)))
+    (struct-get summaries const-divisors)
+    (struct-get summaries global-cell)))
 
 ;; Build the per-program summaries: the function-count-gated BCE/LICM call maps
 ;; plus the const-divisor table. The const-divisor table is built only at opt
 ;; level 2 (the only level whose pipeline runs the divisor rewrite), so opt0/opt1
 ;; -- and in particular the opt1 self-compile throughput metric -- pay nothing
-;; for it and stay byte-identical.
+;; for it and stay byte-identical. The global-cell summary follows the same
+;; gate: only the level-2 pipeline runs the global_cell pass.
 (define (opt-build-program-summaries
   [type-segment-bases : i64]
   [globals : CompilerIrGlobalList]
   [reachable-functions : CompilerIrFunctionList]
   [level : i64]) : OptLoopBceSummaries
-  (opt-loop-bce-summaries-set-const-divisors
-    (if (<=
-      (opt-function-list-count reachable-functions)
-      (opt-loop-bce-summary-function-limit))
-      (opt-loop-bce-build-summaries-with-direct-call-clean
-        type-segment-bases
-        reachable-functions
-        (>= level 2)
-        (>= level 1))
-      (opt-loop-bce-empty-summaries))
+  (opt-loop-bce-summaries-set-global-cell
+    (opt-loop-bce-summaries-set-const-divisors
+      (if (<=
+        (opt-function-list-count reachable-functions)
+        (opt-loop-bce-summary-function-limit))
+        (opt-loop-bce-build-summaries-with-direct-call-clean
+          type-segment-bases
+          reachable-functions
+          (>= level 2)
+          (>= level 1))
+        (opt-loop-bce-empty-summaries))
+      (if (>= level 2)
+        (opt-const-divisors-build globals reachable-functions)
+        (opt_i64_i64_map.with-capacity 1)))
     (if (>= level 2)
-      (opt-const-divisors-build globals reachable-functions)
-      (opt_i64_i64_map.with-capacity 1))))
+      (opt-global-cell-summary-build globals reachable-functions)
+      (opt-global-cell-summary-empty))))
 
 ;; Substitute a proven constant global with its literal value in
-;; binop operands. For an ordinary operand this lets the backend fold the literal
-;; instead of emitting a per-use rip-relative load (the opt_crc32/opt_quicksort
-;; mask-load win). For a div/mod divisor it produces a literal `CompilerIrValue.I64`, which
-;; `compiler-backend-binop-literal-divmod-asm` strength-reduces with the existing
-;; magic-multiply path (matching clang). Binops are rewritten before local
-;; folding. Lowering-time Moves are rewritten separately after BCE and
-;; unrolling: doing so at the start of the iteration can hide the symbolic
-;; descriptor-length identity before BCE consumes it. Other instruction kinds
-;; keep the global's hidden-load form.
+;; scalar operand positions. For an ordinary operand this lets the backend fold
+;; the literal instead of emitting a per-use rip-relative load (the
+;; opt_crc32/opt_quicksort mask-load win). For a div/mod divisor it produces a
+;; literal `CompilerIrValue.I64`, which `compiler-backend-binop-literal-divmod-asm`
+;; strength-reduces with the existing magic-multiply path (matching clang).
 ;; (The map is named `const-divisors` for historical reasons but now holds every
 ;; proven-constant global, not only divisors.)
 (define (opt-const-global-subst-value
@@ -61853,6 +61928,24 @@
         [(opt_i64_i64_map.LookupMissing) v])]
     [_ v]))
 
+;; The early rewrite substitutes every scalar operand position whose literal
+;; the round-1 local fold and the loop passes can both consume: BinOp operands
+;; (compare operands feeding branches included), UnOp sources, Cast/Bitcast
+;; sources, and Mov sources. Running at the start of the iteration -- before
+;; induction/bce_version -- a literal global bound constant-enables unroll,
+;; induction, and versioning downstream, none of which accept a global-ref
+;; operand (a hidden rip-relative load, neither a literal nor an invariant SSA
+;; value). Substituting Mov sources early is register-neutral: the following
+;; fold propagates the literal into its uses and DCEs the Move, so a bound used
+;; only in a compare still ends as an immediate operand. The older late pass
+;; below (`opt-const-global-move-rewrite-*`) kept comparison-bound Moves
+;; symbolic to avoid holding a constant in a register across a loop; that
+;; concern does not apply here because the fold removes the Move entirely. The
+;; late passes stay in place and simply become no-ops for the sites this pass
+;; already covered (they still catch globals materialized mid-iteration by
+;; other passes). Load/StorePtr/Gep and the vector arms keep the global's
+;; hidden-load form: their operand is an address or a descriptor pointer, not
+;; a scalar the fold can use.
 (define (opt-const-divisor-rewrite-instr
   [const-divisors : opt_i64_i64_map.Map]
   [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -61864,6 +61957,52 @@
         (opt-const-global-subst-value const-divisors lhs)
         (opt-const-global-subst-value const-divisors rhs)
         ty)]
+    [(CompilerIrInstr.Mov dst src ty)
+      (CompilerIrInstr.Mov
+        dst
+        (opt-const-global-subst-value const-divisors src)
+        ty)]
+    [(CompilerIrInstr.UnOp dst op src ty)
+      (CompilerIrInstr.UnOp
+        dst
+        op
+        (opt-const-global-subst-value const-divisors src)
+        ty)]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (CompilerIrInstr.Cast
+        dst
+        (opt-const-global-subst-value const-divisors src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (CompilerIrInstr.Bitcast
+        dst
+        (opt-const-global-subst-value const-divisors src)
+        from-ty
+        to-ty)]
+    ;; Store values are uses like any other: leaving a const global symbolic
+    ;; at a store while substituting it at compares would split a symbolic
+    ;; equality (e.g. ctor_fwd forwarding the descriptor-stored global to a
+    ;; length load that no longer matches the substituted loop bound), so the
+    ;; stored value is substituted too. The store's target name is not a use.
+    [(CompilerIrInstr.StorePtr ptr value ty)
+      (CompilerIrInstr.StorePtr
+        ptr
+        (opt-const-global-subst-value const-divisors value)
+        ty)]
+    [(CompilerIrInstr.Store name value ty)
+      (CompilerIrInstr.Store
+        name
+        (opt-const-global-subst-value const-divisors value)
+        ty)]
+    ;; A check whose length is a const global becomes a literal-length check:
+    ;; the forwarded/equality eliminations and the literal-bound reasoning
+    ;; downstream both consume that form.
+    [(CompilerIrInstr.BoundsCheck index length label)
+      (CompilerIrInstr.BoundsCheck
+        (opt-const-global-subst-value const-divisors index)
+        (opt-const-global-subst-value const-divisors length)
+        label)]
     [_ instr]))
 
 ;; One rewritten instruction per input instruction, so write straight into a
@@ -61930,7 +62069,11 @@
 ;; simplifies its dependent arithmetic before late LICM. Restrict this to Moves
 ;; feeding non-comparison arithmetic: replacing a global used only as a loop
 ;; limit with an immediate can increase register pressure without enabling a
-;; fold, while branchless min/bound recipes include bit/arithmetic uses.
+;; fold, while branchless min/bound recipes include bit/arithmetic uses. The
+;; early rewrite (opt-const-divisor-rewrite-instr) already covers every
+;; lowering-time Move at the start of the iteration, so in the pipeline this
+;; pass now fires only on const-global Moves materialized mid-iteration by
+;; other passes.
 (define (opt-const-global-move-fold-vars-instr
   [vars : opt_i64_i64_map.Map]
   [instr : CompilerIrInstr]) : opt_i64_i64_map.Map
@@ -62048,6 +62191,1266 @@
           (opt_i64_i64_map.with-capacity 64)
           blocks)
         blocks))))
+
+;; --- function-scope global-cell invariance (global_cell pass) ----------------
+;;
+;; A `CompilerIrValue.Global name` operand is a hidden LOAD of the global's cell:
+;; the backend emits a fresh rip-relative read at every use, and because that
+;; operand is neither a literal nor an SSA var it is invisible to GVN/LICM and
+;; unacceptable to the versioning machinery as a loop bound or check length.
+;; For a global G that cannot be written during a function's execution this
+;; pass loads G's cell ONCE in the function's entry block (`mov %g, @G` --
+;; global-ref is a legal Mov source) and rewrites every in-function use of `@G`
+;; to `%g`. Downstream effects: (i) per-use rip reloads collapse to one load
+;; per activation; (ii) descriptor gep+load pairs off an array global
+;; (`gep @arr, 1; load`) become ordinary SSA-fed instructions -- the entry Mov
+;; carries the declared array type, so the load-header classification marks %g
+;; a descriptor base and the existing load-GVN/LICM machinery can dedup and
+;; hoist the length/data-pointer loads out of loops; (iii) loop bounds and
+;; check lengths that were global refs become invariant SSA vars, which
+;; bce_version accepts.
+;;
+;; SOUNDNESS. G's cell cannot change value during this function's execution
+;; when all of the following hold:
+;;   (a) no `CompilerIrInstr.Store G` (set!) appears in THIS function's blocks
+;;       (a function that stores G keeps direct per-use cell semantics);
+;;   (b) `CompilerIrValue.GlobalAddr G` appears NOWHERE in the whole program, so
+;;       no store_ptr/syscall/callee can reach the cell through a pointer. This
+;;       set is derived from the const-global disqualify walk -- which records
+;;       exactly Store targets and GlobalAddr operands, arm-for-arm so a new IR
+;;       instruction fails to compile until handled -- minus this program's
+;;       Store targets, so it is exactly the address-taken globals;
+;;   (c) the function contains no Call/TailCall/indirect-call/SpmdCall: any
+;;       callee could set! G. v1 deliberately treats the whole call family as
+;;       opaque; a callgraph refinement (block only callees that may set! G) is
+;;       a later packet. Passes after this one only rewrite or clone existing
+;;       instructions -- the inliner, the pipeline's only call producer, has
+;;       already run -- so the no-call fact cannot be invalidated downstream.
+;;       Trapping operations like BoundsCheck are not calls, and explicit
+;;       panic paths diverge before any write could interleave.
+;; A set! in ANOTHER function (the loader pattern) cannot interleave with this
+;; activation because (c) rules out the call that would reach it, and the
+;; entry load observes any set! made before this activation -- exactly what a
+;; per-use load would observe. Recursion needs no special case: today's
+;; semantics already reload the cell at least once per activation (every use
+;; reloads it), so materializing that load at entry is value-identical per
+;; activation. The entry block dominates every use, so the rewritten SSA stays
+;; well-formed. Multiple globals are loaded independently. Global sources of
+;; entry-block Movs are deliberately left as direct cell loads: they are this
+;; pass's own output shape, so rewriting them would re-hoist on the next
+;; fixpoint iteration, and leaving them costs at most one entry-block load.
+;;
+;; Only single-word cells qualify (opt-global-cell-word-type?): the entry
+;; Mov's declared type drives the backend's load width, and a wider
+;; register-resident aggregate cell would silently load only its first word.
+;; Register-resident aggregates (Struct/Enum and their Args forms) are
+;; excluded because the optimizer cannot resolve their inline layouts; the
+;; accepted set is exactly the types `compiler-backend-type-size` reports as
+;; 1/2/4/8 without type-segment recursion.
+(defstruct OptGlobalCellScan
+  (refs opt_i64_i64_map.Map)
+  (ref-list OptI64List)
+  (stores opt_i64_i64_map.Map)
+  (calls bool))
+
+(define (opt-global-cell-scan-new) : OptGlobalCellScan
+  (OptGlobalCellScan
+    (opt_i64_i64_map.with-capacity 8)
+    OptI64List.Nil
+    (opt_i64_i64_map.with-capacity 8)
+    false))
+
+(define (opt-global-cell-scan-ref
+  [scan : OptGlobalCellScan (:consume)]
+  [name : i64]) : OptGlobalCellScan
+  (match scan
+    [(OptGlobalCellScan refs ref-list stores calls)
+      (if (opt_i64_i64_map.contains? (& refs) name)
+        (OptGlobalCellScan refs ref-list stores calls)
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut refs) name 1)
+          (OptGlobalCellScan
+            refs
+            (OptI64List.Cons name (box ref-list))
+            stores
+            calls)))]))
+
+(define (opt-global-cell-scan-store
+  [scan : OptGlobalCellScan (:consume)]
+  [name : i64]) : OptGlobalCellScan
+  (match scan
+    [(OptGlobalCellScan refs ref-list stores calls)
+      (begin
+        (opt_i64_i64_map.insert-ref! (&mut stores) name 1)
+        (OptGlobalCellScan refs ref-list stores calls))]))
+
+(define (opt-global-cell-scan-call [scan : OptGlobalCellScan]) : OptGlobalCellScan
+  (if (struct-get scan calls)
+    scan
+    (OptGlobalCellScan
+      (struct-get scan refs)
+      (struct-get scan ref-list)
+      (struct-get scan stores)
+      true)))
+
+(define (opt-global-cell-scan-value
+  [scan : OptGlobalCellScan]
+  [value : CompilerIrValue]) : OptGlobalCellScan
+  (match value
+    [(CompilerIrValue.Global name)
+      (opt-global-cell-scan-ref scan (compiler-ir-symbol-id name))]
+    [_ scan]))
+
+(define (opt-global-cell-scan-args-array
+  [scan : OptGlobalCellScan]
+  [values : (__tl_dyn-array CompilerIrValue)]
+  [index : i64]) : OptGlobalCellScan
+  (if (>= index (array-length values))
+    scan
+    (opt-global-cell-scan-args-array
+      (opt-global-cell-scan-value scan (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (opt-global-cell-scan-args
+  [scan : OptGlobalCellScan]
+  [args : CompilerIrCallArgs]) : OptGlobalCellScan
+  (match args
+    [(CompilerIrCallArgs.Nil) scan]
+    [(CompilerIrCallArgs.One value) (opt-global-cell-scan-value scan value)]
+    [(CompilerIrCallArgs.Two a b)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan a) b)]
+    [(CompilerIrCallArgs.Array values)
+      (opt-global-cell-scan-args-array scan values 0)]))
+
+(define (opt-global-cell-scan-spmd-args
+  [scan : OptGlobalCellScan]
+  [args : CompilerIrSpmdCallArgList]) : OptGlobalCellScan
+  (match args
+    [(CompilerIrSpmdCallArgList.Nil) scan]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
+      (match arg
+        [(CompilerIrSpmdCallArg.Arg _ value _)
+          (opt-global-cell-scan-spmd-args
+            (opt-global-cell-scan-value scan value)
+            (box-get rest))])]
+    [(CompilerIrSpmdCallArgList.Array seq)
+      (let
+        [out : OptGlobalCellScan scan]
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (__tl_dyn-array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (begin
+          (while (< i count)
+            (begin
+              (match (array-ref slots i)
+                [(CompilerIrSpmdCallArg.Arg _ value _)
+                  (set! out (opt-global-cell-scan-value out value))])
+              (set! i (+ i 1))))
+          out))]))
+
+(define (opt-global-cell-scan-maybe
+  [scan : OptGlobalCellScan]
+  [maybe : CompilerIrMaybeValue]) : OptGlobalCellScan
+  (match maybe
+    [(CompilerIrMaybeValue.No) scan]
+    [(CompilerIrMaybeValue.Some value) (opt-global-cell-scan-value scan value)]))
+
+(define (opt-global-cell-scan-phi
+  [scan : OptGlobalCellScan]
+  [inputs : CompilerIrPhiInputList]) : OptGlobalCellScan
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) scan]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-global-cell-scan-phi scan (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value _ rest)
+      (opt-global-cell-scan-phi
+        (opt-global-cell-scan-value scan value)
+        (box-get rest))]))
+
+;; Per-function fact scan: global-ref operand uses (refs), direct set! targets
+;; (stores), and whether any call-family instruction remains (calls). Mirrors
+;; opt-const-globals-disq-instr arm-for-arm (no wildcard): a new IR instruction
+;; fails to compile until classified here, so a new call-like or store-like
+;; operand position can never silently escape the (a)/(c) checks. Pack words
+;; carry no global operands (the same invariant opt-reach-instr relies on), so
+;; they are not scanned; a missed ref is always sound (the pass rewrites a
+;; subset of uses to a value-identical var), only a missed store or call is
+;; not -- and those arms are exactly the ones this total match protects.
+;; `entry?` marks the function's first block: Mov sources there are exempt
+;; from refs because they are this pass's own output shape (see the header).
+(define (opt-global-cell-scan-instr
+  [scan : OptGlobalCellScan]
+  [entry? : bool]
+  [instr : CompilerIrInstr]) : OptGlobalCellScan
+  (match instr
+    [(CompilerIrInstr.Mov _ src _)
+      (if entry?
+        scan
+        (opt-global-cell-scan-value scan src))]
+    [(CompilerIrInstr.Alloc _ _) scan]
+    [(CompilerIrInstr.AddrOf _ _) scan]
+    [(CompilerIrInstr.Gep _ base offset _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan base) offset)]
+    [(CompilerIrInstr.Load _ src _) (opt-global-cell-scan-value scan src)]
+    [(CompilerIrInstr.StorePtr dst src _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan dst) src)]
+    [(CompilerIrInstr.CopyBytes dst src _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan dst) src)]
+    [(CompilerIrInstr.BoundsCheck idx length _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan idx) length)]
+    [(CompilerIrInstr.Cast _ src _ _) (opt-global-cell-scan-value scan src)]
+    [(CompilerIrInstr.Bitcast _ src _ _) (opt-global-cell-scan-value scan src)]
+    [(CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan lhs) rhs)]
+    [(CompilerIrInstr.UnOp _ _ src _) (opt-global-cell-scan-value scan src)]
+    [(CompilerIrInstr.LaneId _ _ _) scan]
+    [(CompilerIrInstr.Splat _ value _ _)
+      (opt-global-cell-scan-value scan value)]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        (opt-global-cell-scan-value (opt-global-cell-scan-value scan lhs) rhs))]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (let
+        [src (struct-get (box-get payload-box) src)]
+        [carry (struct-get (box-get payload-box) carry)]
+        (opt-global-cell-scan-value (opt-global-cell-scan-value scan src) carry))]
+    [(CompilerIrInstr.VectorReduce _ _ src _ _)
+      (opt-global-cell-scan-value scan src)]
+    [(CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        (opt-global-cell-scan-value (opt-global-cell-scan-value scan lhs) rhs))]
+    [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan lhs) rhs)]
+    [(CompilerIrInstr.MaskNot _ src _) (opt-global-cell-scan-value scan src)]
+    [(CompilerIrInstr.MaskReduce _ _ src _)
+      (opt-global-cell-scan-value scan src)]
+    [(CompilerIrInstr.Select payload-box)
+      (let
+        [mask (struct-get (box-get payload-box) mask)]
+        [on-true (struct-get (box-get payload-box) on-true)]
+        [on-false (struct-get (box-get payload-box) on-false)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value scan mask)
+            on-true)
+          on-false))]
+    [(CompilerIrInstr.VectorLoad _ base idx _ _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan base) idx)]
+    [(CompilerIrInstr.VectorStore payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [idx (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value scan base)
+            idx)
+          value))]
+    [(CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [idx (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value
+              (opt-global-cell-scan-value scan base)
+              idx)
+            value)
+          mask))]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [idx (struct-get (box-get payload-box) index)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value scan base)
+            idx)
+          mask))]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index-base (struct-get (box-get payload-box) index-base)]
+        [idx (struct-get (box-get payload-box) index)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value scan base)
+            index-base)
+          idx))]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (let
+        [source (struct-get (box-get payload-box) source)]
+        [selector-low (struct-get (box-get payload-box) selector-low)]
+        [selector-high (struct-get (box-get payload-box) selector-high)]
+        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        (opt-global-cell-scan-value
+          (opt-global-cell-scan-maybe
+            (opt-global-cell-scan-value
+              (opt-global-cell-scan-value scan source)
+              selector-low)
+            selector-high)
+          active-lanes))]
+    [(CompilerIrInstr.TailMask _ idx length _)
+      (opt-global-cell-scan-value (opt-global-cell-scan-value scan idx) length)]
+    [(CompilerIrInstr.EntryArgc _) scan]
+    [(CompilerIrInstr.EntryArgv _) scan]
+    [(CompilerIrInstr.EntryEnvp _) scan]
+    [(CompilerIrInstr.CpuId _ leaf subleaf _)
+      (opt-global-cell-scan-value
+        (opt-global-cell-scan-value scan leaf)
+        subleaf)]
+    [(CompilerIrInstr.Xgetbv _ idx) (opt-global-cell-scan-value scan idx)]
+    [(CompilerIrInstr.Syscall _ args) (opt-global-cell-scan-args scan args)]
+    [(CompilerIrInstr.Call _ _ args _)
+      (opt-global-cell-scan-args (opt-global-cell-scan-call scan) args)]
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [args (struct-get (box-get payload-box) args)]
+        (opt-global-cell-scan-args
+          (opt-global-cell-scan-value (opt-global-cell-scan-call scan) base)
+          args))]
+    [(CompilerIrInstr.SpmdCall payload-box)
+      (let
+        [active-mask (struct-get (box-get payload-box) active-mask)]
+        [args (struct-get (box-get payload-box) args)]
+        (opt-global-cell-scan-spmd-args
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-call scan)
+            active-mask)
+          args))]
+    [(CompilerIrInstr.CallIndirect _ func args _)
+      (opt-global-cell-scan-args
+        (opt-global-cell-scan-value (opt-global-cell-scan-call scan) func)
+        args)]
+    [(CompilerIrInstr.CallIndirectC _ func args _)
+      (opt-global-cell-scan-args
+        (opt-global-cell-scan-value (opt-global-cell-scan-call scan) func)
+        args)]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [func (struct-get (box-get payload-box) callee)]
+        [args (struct-get (box-get payload-box) args)]
+        (opt-global-cell-scan-args
+          (opt-global-cell-scan-value
+            (opt-global-cell-scan-value (opt-global-cell-scan-call scan) base)
+            func)
+          args))]
+    [(CompilerIrInstr.TailCall _ args _)
+      (opt-global-cell-scan-args (opt-global-cell-scan-call scan) args)]
+    [(CompilerIrInstr.Store name value _)
+      (opt-global-cell-scan-value
+        (opt-global-cell-scan-store scan (compiler-ir-symbol-id name))
+        value)]
+    [(CompilerIrInstr.Jump _) scan]
+    [(CompilerIrInstr.Branch cond _ _) (opt-global-cell-scan-value scan cond)]
+    [(CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-global-cell-scan-value scan cond)]
+    [(CompilerIrInstr.Return maybe) (opt-global-cell-scan-maybe scan maybe)]
+    [(CompilerIrInstr.Phi _ inputs _) (opt-global-cell-scan-phi scan inputs)]
+    [(CompilerIrInstr.Pack _ _ _) scan]
+    [(CompilerIrInstr.Word _ src _ _) (opt-global-cell-scan-value scan src)]
+    [(CompilerIrInstr.TailCallIndirect func args _)
+      (opt-global-cell-scan-args
+        (opt-global-cell-scan-value (opt-global-cell-scan-call scan) func)
+        args)]
+    [(CompilerIrInstr.Switch idx _ _ _) (opt-global-cell-scan-value scan idx)]
+    [(CompilerIrInstr.TotalEnumSwitch idx _ _ _ _)
+      (opt-global-cell-scan-value scan idx)]))
+
+(define (opt-global-cell-scan-seq-from
+  [scan : OptGlobalCellScan]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [entry? : bool]) : OptGlobalCellScan
+  (if (>= index count)
+    scan
+    (opt-global-cell-scan-seq-from
+      (opt-global-cell-scan-instr
+        scan
+        entry?
+        (compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1)
+      count
+      entry?)))
+
+(define (opt-global-cell-scan-blocks
+  [scan : OptGlobalCellScan]
+  [blocks : CompilerIrBlockList]
+  [entry? : bool]) : OptGlobalCellScan
+  (match blocks
+    [(CompilerIrBlockList.Nil) scan]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-global-cell-scan-blocks
+            (opt-global-cell-scan-seq-from
+              scan
+              instrs
+              0
+              (compiler-ir-instr-seq-count instrs)
+              entry?)
+            (box-get rest)
+            false)])]
+    ;; Read-only: scan the sequence instead of materialising a block cons
+    ;; chain to walk once (refs #5729, same shape as the const-global walk).
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [acc : OptGlobalCellScan scan]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set!
+                    acc
+                    (opt-global-cell-scan-seq-from
+                      acc
+                      instrs
+                      0
+                      (compiler-ir-instr-seq-count instrs)
+                      (and entry? (= i 0))))])
+              (set! i (+ i 1))))
+          acc))]))
+
+(define (opt-global-cell-scan-functions
+  [scan : OptGlobalCellScan]
+  [functions : CompilerIrFunctionList]) : OptGlobalCellScan
+  (match functions
+    [(CompilerIrFunctionList.Nil) scan]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
+          (opt-global-cell-scan-functions
+            (opt-global-cell-scan-blocks scan blocks false)
+            (box-get rest))])]
+    [(CompilerIrFunctionList.Array seq)
+      (opt-global-cell-scan-functions
+        scan
+        (compiler-ir-function-seq-to-list seq))]))
+
+;; A global's cell qualifies for entry-load hoisting only when it is exactly
+;; one machine word: the entry load is a single `mov %g, @G` whose Mov type is
+;; the declared cell type, so a wider cell would silently load only its first
+;; word. See the pass header for the full argument.
+(define (opt-global-cell-word-type? [ty : AstType]) : bool
+  (match ty
+    [(AstType.I64) true]
+    [(AstType.U64) true]
+    [(AstType.F64) true]
+    [(AstType.I32) true]
+    [(AstType.U32) true]
+    [(AstType.F32) true]
+    [(AstType.I16) true]
+    [(AstType.U16) true]
+    [(AstType.I8) true]
+    [(AstType.U8) true]
+    [(AstType.Bool) true]
+    [(AstType.Char) true]
+    [(AstType.Ptr _) true]
+    [(AstType.MutPtr _) true]
+    [(AstType.Ref _ _) true]
+    [(AstType.MutRef _ _) true]
+    [(AstType.Box _) true]
+    [(AstType.String) true]
+    [(AstType.Str) true]
+    [(AstType.Bytes) true]
+    [(AstType.DynArray _) true]
+    [(AstType.Array _ _) true]
+    [(AstType.Func _ _) true]
+    [(AstType.Tuple _) true]
+    [_ false]))
+
+(define (opt-global-cell-types-fill
+  [globals : CompilerIrGlobalList]
+  [type-index : opt_i64_i64_map.Map (:consume)]
+  [types : (Array AstType)]
+  [index : i64]) : opt_i64_i64_map.Map
+  (match globals
+    [(CompilerIrGlobalList.Nil) type-index]
+    [(CompilerIrGlobalList.Cons global rest)
+      (match global
+        [(CompilerIrGlobal.Global name ty _)
+          (begin
+            (array-set! types index ty)
+            (opt_i64_i64_map.insert-ref!
+              (&mut type-index)
+              (compiler-ir-symbol-id name)
+              index)
+            (opt-global-cell-types-fill
+              (box-get rest)
+              type-index
+              types
+              (+ index 1)))])]
+    [(CompilerIrGlobalList.Array seq)
+      (opt-global-cell-types-fill
+        (compiler-ir-global-seq-to-list seq)
+        type-index
+        types
+        index)]))
+
+(define (opt-global-cell-type-lookup [cell : OptGlobalCellSummary] [name : i64]) : OptMaybeAstType
+  (match (opt_i64_i64_map.get
+    (& (struct-get cell type-index))
+    (compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound index)
+      (OptMaybeAstType.Some (array-ref (struct-get cell types) index))]
+    [(opt_i64_i64_map.LookupMissing) (OptMaybeAstType.No)]))
+
+;; The address-taken set is exactly the const-global disqualified set minus the
+;; program's direct-store targets: the disqualify walk records a global on a
+;; `CompilerIrInstr.Store name` OR a `CompilerIrValue.GlobalAddr name` operand and
+;; nothing else, so subtracting the former leaves precisely the latter. Both
+;; walks are total matches over the IR, so the derivation cannot drift when the
+;; IR grows an instruction variant.
+(define (opt-global-cell-addr-taken-fill
+  [globals : CompilerIrGlobalList]
+  [disq : opt_i64_i64_map.Map]
+  [stores : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match globals
+    [(CompilerIrGlobalList.Nil) out]
+    [(CompilerIrGlobalList.Cons global rest)
+      (match global
+        [(CompilerIrGlobal.Global name _ _)
+          (opt-global-cell-addr-taken-fill
+            (box-get rest)
+            disq
+            stores
+            (if (and
+              (opt_i64_i64_map.contains? (& disq) (compiler-ir-symbol-id name))
+              (not
+                (opt_i64_i64_map.contains?
+                  (& stores)
+                  (compiler-ir-symbol-id name))))
+              (begin
+                (opt_i64_i64_map.insert-ref!
+                  (&mut out)
+                  (compiler-ir-symbol-id name)
+                  1)
+                out)
+              out))])]
+    [(CompilerIrGlobalList.Array seq)
+      (opt-global-cell-addr-taken-fill
+        (compiler-ir-global-seq-to-list seq)
+        disq
+        stores
+        out)]))
+
+(define (opt-global-cell-word-count
+  [globals : CompilerIrGlobalList]
+  [addr-taken : opt_i64_i64_map.Map]
+  [count : i64]) : i64
+  (match globals
+    [(CompilerIrGlobalList.Nil) count]
+    [(CompilerIrGlobalList.Cons global rest)
+      (match global
+        [(CompilerIrGlobal.Global name ty _)
+          (opt-global-cell-word-count
+            (box-get rest)
+            addr-taken
+            (if (and
+              (opt-global-cell-word-type? ty)
+              (not
+                (opt_i64_i64_map.contains?
+                  (& addr-taken)
+                  (compiler-ir-symbol-id name))))
+              (+ count 1)
+              count))])]
+    [(CompilerIrGlobalList.Array seq)
+      (opt-global-cell-word-count
+        (compiler-ir-global-seq-to-list seq)
+        addr-taken
+        count)]))
+
+;; Build the per-program global-cell summary: the declared-type table, the
+;; address-taken set, and the count of globals that survive both filters (the
+;; per-function pass skips its scan when that count is zero).
+(define (opt-global-cell-summary-build
+  [globals : CompilerIrGlobalList]
+  [functions : CompilerIrFunctionList]) : OptGlobalCellSummary
+  (let
+    [count : i64 (compiler-ir-global-list-count globals)]
+    (if (= count 0)
+      (opt-global-cell-summary-empty)
+      (let
+        [capacity : i64 (opt-function-index-capacity count)]
+        [types : (Array AstType) (array.make-array AstType count)]
+        [type-index : opt_i64_i64_map.Map
+          (opt-global-cell-types-fill
+            globals
+            (opt_i64_i64_map.with-capacity capacity)
+            types
+            0)]
+        [disq : opt_i64_i64_map.Map
+          (opt-const-globals-disqualified
+            (opt_i64_i64_map.with-capacity capacity)
+            functions)]
+        [scan : OptGlobalCellScan
+          (opt-global-cell-scan-functions (opt-global-cell-scan-new) functions)]
+        [addr-taken : opt_i64_i64_map.Map
+          (opt-global-cell-addr-taken-fill
+            globals
+            disq
+            (struct-get scan stores)
+            (opt_i64_i64_map.with-capacity capacity))]
+        (OptGlobalCellSummary
+          addr-taken
+          type-index
+          types
+          (opt-global-cell-word-count globals addr-taken 0))))))
+
+;; Hoist plan for one function: candidate global symbol id -> fresh SSA var.
+;; A referenced global is a candidate unless this function stores it (a), the
+;; program takes its address (b), or its cell is not a single word.
+(defstruct OptGlobalCellPlan
+  (map opt_i64_i64_map.Map)
+  (count i64))
+
+(define (opt-global-cell-plan-build
+  [cell : OptGlobalCellSummary]
+  [stores : opt_i64_i64_map.Map]
+  [refs : OptI64List]
+  [frame-cell : (__tl_dyn-array i64)]
+  [plan : opt_i64_i64_map.Map (:consume)]
+  [count : i64]) : OptGlobalCellPlan
+  (match refs
+    [(OptI64List.Nil) (OptGlobalCellPlan plan count)]
+    [(OptI64List.Cons name rest)
+      (if (or
+        (opt_i64_i64_map.contains? (& stores) name)
+        (opt_i64_i64_map.contains? (& (struct-get cell addr-taken)) name))
+        (opt-global-cell-plan-build
+          cell
+          stores
+          (box-get rest)
+          frame-cell
+          plan
+          count)
+        (match (opt-global-cell-type-lookup cell name)
+          [(OptMaybeAstType.No)
+            (opt-global-cell-plan-build
+              cell
+              stores
+              (box-get rest)
+              frame-cell
+              plan
+              count)]
+          [(OptMaybeAstType.Some ty)
+            (if (opt-global-cell-word-type? ty)
+              (let
+                [fresh : i64 (array-ref frame-cell 0)]
+                [next : opt_i64_i64_map.Map plan]
+                (begin
+                  (array-set! frame-cell 0 (+ fresh 1))
+                  (opt_i64_i64_map.insert-ref! (&mut next) name fresh)
+                  (opt-global-cell-plan-build
+                    cell
+                    stores
+                    (box-get rest)
+                    frame-cell
+                    next
+                    (+ count 1))))
+              (opt-global-cell-plan-build
+                cell
+                stores
+                (box-get rest)
+                frame-cell
+                plan
+                count))]))]))
+
+;; Emit the entry-block cell loads in the same ref-list order the plan
+;; allocated their fresh vars.
+(define (opt-global-cell-hoists-fill!
+  [plan : opt_i64_i64_map.Map]
+  [cell : OptGlobalCellSummary]
+  [refs : OptI64List]
+  [hoists : (__tl_dyn-array CompilerIrInstr)]
+  [index : i64]) : i64
+  (match refs
+    [(OptI64List.Nil) index]
+    [(OptI64List.Cons name rest)
+      (match (opt_i64_i64_map.get (& plan) name)
+        [(opt_i64_i64_map.LookupMissing)
+          (opt-global-cell-hoists-fill! plan cell (box-get rest) hoists index)]
+        [(opt_i64_i64_map.LookupFound fresh)
+          (match (opt-global-cell-type-lookup cell name)
+            [(OptMaybeAstType.No)
+              (opt-global-cell-hoists-fill!
+                plan
+                cell
+                (box-get rest)
+                hoists
+                index)]
+            [(OptMaybeAstType.Some ty)
+              (begin
+                (array-set!
+                  hoists
+                  index
+                  (CompilerIrInstr.Mov fresh (CompilerIrValue.Global name) ty))
+                (opt-global-cell-hoists-fill!
+                  plan
+                  cell
+                  (box-get rest)
+                  hoists
+                  (+ index 1)))])])]))
+
+(define (opt-global-cell-subst-value
+  [plan : opt_i64_i64_map.Map]
+  [v : CompilerIrValue]) : CompilerIrValue
+  (match v
+    [(CompilerIrValue.Global name)
+      (match (opt_i64_i64_map.get (& plan) (compiler-ir-symbol-id name))
+        [(opt_i64_i64_map.LookupFound fresh) (CompilerIrValue.Var fresh)]
+        [(opt_i64_i64_map.LookupMissing) v])]
+    [_ v]))
+
+(define (opt-global-cell-subst-args
+  [plan : opt_i64_i64_map.Map]
+  [args : CompilerIrCallArgs]) : CompilerIrCallArgs
+  (match args
+    [(CompilerIrCallArgs.Nil) args]
+    [(CompilerIrCallArgs.One value)
+      (CompilerIrCallArgs.One (opt-global-cell-subst-value plan value))]
+    [(CompilerIrCallArgs.Two a b)
+      (CompilerIrCallArgs.Two
+        (opt-global-cell-subst-value plan a)
+        (opt-global-cell-subst-value plan b))]
+    [(CompilerIrCallArgs.Array values)
+      (let
+        [count : i64 (array-length values)]
+        [slots : (__tl_dyn-array CompilerIrValue)
+          (array.make-array CompilerIrValue count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (array-set!
+                slots
+                index
+                (opt-global-cell-subst-value plan (array-ref values index)))
+              (set! index (+ index 1))))
+          (CompilerIrCallArgs.Array slots)))]))
+
+(define (opt-global-cell-subst-spmd-args
+  [plan : opt_i64_i64_map.Map]
+  [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
+  (match args
+    [(CompilerIrSpmdCallArgList.Nil) args]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
+      (match arg
+        [(CompilerIrSpmdCallArg.Arg vclass value ty)
+          (ir-spmd-call-arg-cons
+            (CompilerIrSpmdCallArg.Arg
+              vclass
+              (opt-global-cell-subst-value plan value)
+              ty)
+            (opt-global-cell-subst-spmd-args plan (box-get rest)))])]
+    [(CompilerIrSpmdCallArgList.Array seq)
+      (let
+        [count : i64 (struct-get seq len)]
+        [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
+          (array.make-array CompilerIrSpmdCallArg count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (match (array-ref (struct-get seq slots) index)
+                [(CompilerIrSpmdCallArg.Arg vclass value ty)
+                  (array-set!
+                    slots
+                    index
+                    (CompilerIrSpmdCallArg.Arg
+                      vclass
+                      (opt-global-cell-subst-value plan value)
+                      ty))])
+              (set! index (+ index 1))))
+          (CompilerIrSpmdCallArgList.Array
+            (CompilerIrSpmdCallArgSeq slots count))))]))
+
+(define (opt-global-cell-subst-maybe
+  [plan : opt_i64_i64_map.Map]
+  [maybe : CompilerIrMaybeValue]) : CompilerIrMaybeValue
+  (match maybe
+    [(CompilerIrMaybeValue.No) maybe]
+    [(CompilerIrMaybeValue.Some value)
+      (CompilerIrMaybeValue.Some (opt-global-cell-subst-value plan value))]))
+
+(define (opt-global-cell-subst-phi
+  [plan : opt_i64_i64_map.Map]
+  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) CompilerIrPhiInputList.Nil]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-global-cell-subst-phi plan (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (compiler-ir-phi-input-cons
+        (opt-global-cell-subst-value plan value)
+        label
+        (opt-global-cell-subst-phi plan (box-get rest)))]))
+
+;; Rewrite planned global-ref operands to their entry-loaded SSA vars. Covers
+;; every operand position (arm-for-arm, no wildcard) even though a missed ref
+;; would only lose the optimization, never soundness: any `@G` left behind
+;; still loads the same cell value under (a)+(b)+(c). Entry-block Mov sources
+;; are exempt (see the pass header).
+(define (opt-global-cell-rewrite-instr
+  [plan : opt_i64_i64_map.Map]
+  [entry? : bool]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Mov dst src ty)
+      (if entry?
+        instr
+        (CompilerIrInstr.Mov dst (opt-global-cell-subst-value plan src) ty))]
+    [(CompilerIrInstr.Alloc _ _) instr]
+    [(CompilerIrInstr.AddrOf _ _) instr]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (CompilerIrInstr.Gep
+        dst
+        (opt-global-cell-subst-value plan base)
+        (opt-global-cell-subst-value plan offset)
+        ty)]
+    [(CompilerIrInstr.Load dst src ty)
+      (CompilerIrInstr.Load dst (opt-global-cell-subst-value plan src) ty)]
+    [(CompilerIrInstr.StorePtr dst src ty)
+      (CompilerIrInstr.StorePtr
+        (opt-global-cell-subst-value plan dst)
+        (opt-global-cell-subst-value plan src)
+        ty)]
+    [(CompilerIrInstr.CopyBytes dst src size)
+      (CompilerIrInstr.CopyBytes
+        (opt-global-cell-subst-value plan dst)
+        (opt-global-cell-subst-value plan src)
+        size)]
+    [(CompilerIrInstr.BoundsCheck idx length msg)
+      (CompilerIrInstr.BoundsCheck
+        (opt-global-cell-subst-value plan idx)
+        (opt-global-cell-subst-value plan length)
+        msg)]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (CompilerIrInstr.Cast
+        dst
+        (opt-global-cell-subst-value plan src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (CompilerIrInstr.Bitcast
+        dst
+        (opt-global-cell-subst-value plan src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (CompilerIrInstr.BinOp
+        dst
+        op
+        (opt-global-cell-subst-value plan lhs)
+        (opt-global-cell-subst-value plan rhs)
+        ty)]
+    [(CompilerIrInstr.UnOp dst op src ty)
+      (CompilerIrInstr.UnOp dst op (opt-global-cell-subst-value plan src) ty)]
+    [(CompilerIrInstr.LaneId _ _ _) instr]
+    [(CompilerIrInstr.Splat dst value lanes ty)
+      (CompilerIrInstr.Splat
+        dst
+        (opt-global-cell-subst-value plan value)
+        lanes
+        ty)]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-vector-bin-op
+          (struct-get payload dst)
+          (struct-get payload op)
+          (opt-global-cell-subst-value plan (struct-get payload lhs))
+          (opt-global-cell-subst-value plan (struct-get payload rhs))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-vector-prefix
+          (struct-get payload dst)
+          (struct-get payload op)
+          (opt-global-cell-subst-value plan (struct-get payload src))
+          (opt-global-cell-subst-value plan (struct-get payload carry))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(CompilerIrInstr.VectorReduce dst op src lanes ty)
+      (CompilerIrInstr.VectorReduce
+        dst
+        op
+        (opt-global-cell-subst-value plan src)
+        lanes
+        ty)]
+    [(CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-vector-compare
+          (struct-get payload dst)
+          (struct-get payload op)
+          (opt-global-cell-subst-value plan (struct-get payload lhs))
+          (opt-global-cell-subst-value plan (struct-get payload rhs))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
+      (CompilerIrInstr.MaskBinOp
+        dst
+        op
+        (opt-global-cell-subst-value plan lhs)
+        (opt-global-cell-subst-value plan rhs)
+        lanes)]
+    [(CompilerIrInstr.MaskNot dst src lanes)
+      (CompilerIrInstr.MaskNot dst (opt-global-cell-subst-value plan src) lanes)]
+    [(CompilerIrInstr.MaskReduce dst op src lanes)
+      (CompilerIrInstr.MaskReduce
+        dst
+        op
+        (opt-global-cell-subst-value plan src)
+        lanes)]
+    [(CompilerIrInstr.Select payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-select
+          (struct-get payload dst)
+          (opt-global-cell-subst-value plan (struct-get payload mask))
+          (opt-global-cell-subst-value plan (struct-get payload on-true))
+          (opt-global-cell-subst-value plan (struct-get payload on-false))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(CompilerIrInstr.VectorLoad dst base idx lanes ty)
+      (CompilerIrInstr.VectorLoad
+        dst
+        (opt-global-cell-subst-value plan base)
+        (opt-global-cell-subst-value plan idx)
+        lanes
+        ty)]
+    [(CompilerIrInstr.VectorStore payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-vector-store
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (opt-global-cell-subst-value plan (struct-get payload index))
+          (opt-global-cell-subst-value plan (struct-get payload value))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-predicated-store
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (opt-global-cell-subst-value plan (struct-get payload index))
+          (opt-global-cell-subst-value plan (struct-get payload value))
+          (opt-global-cell-subst-value plan (struct-get payload mask))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-predicated-load
+          (struct-get payload dst)
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (opt-global-cell-subst-value plan (struct-get payload index))
+          (opt-global-cell-subst-value plan (struct-get payload mask))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-gather-load
+          (struct-get payload dst)
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (opt-global-cell-subst-value plan (struct-get payload index-base))
+          (opt-global-cell-subst-value plan (struct-get payload index))
+          (struct-get payload lane-offset)
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-vector-shuffle
+          (struct-get payload dst)
+          (opt-global-cell-subst-value plan (struct-get payload source))
+          (opt-global-cell-subst-value plan (struct-get payload selector-low))
+          (opt-global-cell-subst-maybe plan (struct-get payload selector-high))
+          (opt-global-cell-subst-value plan (struct-get payload active-lanes))
+          (struct-get payload lanes)
+          (struct-get payload ty)))]
+    [(CompilerIrInstr.TailMask dst idx length lanes)
+      (CompilerIrInstr.TailMask
+        dst
+        (opt-global-cell-subst-value plan idx)
+        (opt-global-cell-subst-value plan length)
+        lanes)]
+    [(CompilerIrInstr.EntryArgc _) instr]
+    [(CompilerIrInstr.EntryArgv _) instr]
+    [(CompilerIrInstr.EntryEnvp _) instr]
+    [(CompilerIrInstr.CpuId dst leaf subleaf reg-index)
+      (CompilerIrInstr.CpuId
+        dst
+        (opt-global-cell-subst-value plan leaf)
+        (opt-global-cell-subst-value plan subleaf)
+        reg-index)]
+    [(CompilerIrInstr.Xgetbv dst idx)
+      (CompilerIrInstr.Xgetbv dst (opt-global-cell-subst-value plan idx))]
+    [(CompilerIrInstr.Syscall dst args)
+      (CompilerIrInstr.Syscall dst (opt-global-cell-subst-args plan args))]
+    [(CompilerIrInstr.Call dst name args ty)
+      (CompilerIrInstr.Call dst name (opt-global-cell-subst-args plan args) ty)]
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-call-cabi-store-result
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (struct-get payload name)
+          (opt-global-cell-subst-args plan (struct-get payload args))
+          (struct-get payload slots)))]
+    [(CompilerIrInstr.SpmdCall payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-spmd-call
+          (struct-get payload callee)
+          (struct-get payload backend)
+          (struct-get payload lanes)
+          (opt-global-cell-subst-value plan (struct-get payload active-mask))
+          (opt-global-cell-subst-spmd-args plan (struct-get payload args))
+          (struct-get payload result)))]
+    [(CompilerIrInstr.CallIndirect dst func args ty)
+      (CompilerIrInstr.CallIndirect
+        dst
+        (opt-global-cell-subst-value plan func)
+        (opt-global-cell-subst-args plan args)
+        ty)]
+    [(CompilerIrInstr.CallIndirectC dst func args ty)
+      (CompilerIrInstr.CallIndirectC
+        dst
+        (opt-global-cell-subst-value plan func)
+        (opt-global-cell-subst-args plan args)
+        ty)]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (let
+        [payload (box-get payload-box)]
+        (ir-instr-call-indirect-cabi-store-result
+          (opt-global-cell-subst-value plan (struct-get payload base))
+          (opt-global-cell-subst-value plan (struct-get payload callee))
+          (opt-global-cell-subst-args plan (struct-get payload args))
+          (struct-get payload slots)))]
+    [(CompilerIrInstr.TailCall name args ty)
+      (CompilerIrInstr.TailCall name (opt-global-cell-subst-args plan args) ty)]
+    [(CompilerIrInstr.Store name value ty)
+      (CompilerIrInstr.Store name (opt-global-cell-subst-value plan value) ty)]
+    [(CompilerIrInstr.Jump _) instr]
+    [(CompilerIrInstr.Branch cond true-label false-label)
+      (CompilerIrInstr.Branch
+        (opt-global-cell-subst-value plan cond)
+        true-label
+        false-label)]
+    [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
+      (CompilerIrInstr.TotalEnumBranch
+        (opt-global-cell-subst-value plan cond)
+        true-label
+        false-label)]
+    [(CompilerIrInstr.Return maybe)
+      (CompilerIrInstr.Return (opt-global-cell-subst-maybe plan maybe))]
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (CompilerIrInstr.Phi dst (opt-global-cell-subst-phi plan inputs) ty)]
+    [(CompilerIrInstr.Pack _ _ _) instr]
+    [(CompilerIrInstr.Word dst src index ty)
+      (CompilerIrInstr.Word dst (opt-global-cell-subst-value plan src) index ty)]
+    [(CompilerIrInstr.TailCallIndirect func args ty)
+      (CompilerIrInstr.TailCallIndirect
+        (opt-global-cell-subst-value plan func)
+        (opt-global-cell-subst-args plan args)
+        ty)]
+    [(CompilerIrInstr.Switch idx default-label cases trap-label)
+      (CompilerIrInstr.Switch
+        (opt-global-cell-subst-value plan idx)
+        default-label
+        cases
+        trap-label)]
+    [(CompilerIrInstr.TotalEnumSwitch
+        idx
+        default-label
+        cases
+        trap-label
+        final-label)
+      (CompilerIrInstr.TotalEnumSwitch
+        (opt-global-cell-subst-value plan idx)
+        default-label
+        cases
+        trap-label
+        final-label)]))
+
+(define (opt-global-cell-rewrite-seq
+  [plan : opt_i64_i64_map.Map]
+  [entry? : bool]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array CompilerIrInstr)
+      (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (opt-global-cell-rewrite-instr
+              plan
+              entry?
+              (compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq slots count))))
+
+(define (opt-global-cell-rewrite-block
+  [plan : opt_i64_i64_map.Map]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (CompilerIrBlock.Block
+        label
+        (opt-global-cell-rewrite-seq plan false instrs))]))
+
+;; The entry block gets the cell loads prepended after its own rewrite (its
+;; Mov sources stay exempt), so every fresh var dominates all rewritten uses.
+(define (opt-global-cell-entry-block
+  [plan : opt_i64_i64_map.Map]
+  [hoists : (__tl_dyn-array CompilerIrInstr)]
+  [hoist-count : i64]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        [total : i64 (+ hoist-count count)]
+        [slots : (__tl_dyn-array CompilerIrInstr)
+          (array.make-array CompilerIrInstr total)]
+        [index : i64 0]
+        (begin
+          (while (< index hoist-count)
+            (begin
+              (array-set! slots index (array-ref hoists index))
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index count)
+            (begin
+              (array-set!
+                slots
+                (+ hoist-count index)
+                (opt-global-cell-rewrite-instr
+                  plan
+                  true
+                  (compiler-ir-instr-seq-ref instrs index)))
+              (set! index (+ index 1))))
+          (CompilerIrBlock.Block label (CompilerIrInstrSeq slots total))))]))
+
+(define (opt-global-cell-rewrite-blocks
+  [plan : opt_i64_i64_map.Map]
+  [hoists : (__tl_dyn-array CompilerIrInstr)]
+  [hoist-count : i64]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-global-cell-entry-block plan hoists hoist-count block)
+        (opt-global-cell-rewrite-nonentry-blocks plan (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-global-cell-rewrite-blocks
+        plan
+        hoists
+        hoist-count
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-global-cell-rewrite-nonentry-blocks
+  [plan : opt_i64_i64_map.Map]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-global-cell-rewrite-block plan block)
+        (opt-global-cell-rewrite-nonentry-blocks plan (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-global-cell-rewrite-nonentry-blocks
+        plan
+        (compiler-ir-block-seq-to-list seq))]))
+
+;; Load each hoistable global's cell once at entry and rewrite its uses. The
+;; pass is a no-op (returning the function by reference) when the program has
+;; no word-cell candidates, when a call-family instruction remains (c), when
+;; no global is referenced, or when every referenced global is excluded by
+;; (a)/(b)/cell-width.
+(define (opt-global-cell-function
+  [summaries : OptLoopBceSummaries]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty frame blocks)
+      (let
+        [cell : OptGlobalCellSummary (struct-get summaries global-cell)]
+        (if (= (struct-get cell word-cell) 0)
+          func
+          (let
+            [scan : OptGlobalCellScan
+              (opt-global-cell-scan-blocks
+                (opt-global-cell-scan-new)
+                blocks
+                true)]
+            (cond
+              [(struct-get scan calls) func]
+              [(match (struct-get scan ref-list)
+                  [(OptI64List.Nil) true]
+                  [(OptI64List.Cons _ _) false])
+                func]
+              [else
+                (let
+                  [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+                  [_seed : unit (array-set! frame-cell 0 frame)]
+                  [planned : OptGlobalCellPlan
+                    (opt-global-cell-plan-build
+                      cell
+                      (struct-get scan stores)
+                      (struct-get scan ref-list)
+                      frame-cell
+                      (opt_i64_i64_map.with-capacity 8)
+                      0)]
+                  (if (= (struct-get planned count) 0)
+                    func
+                    (let
+                      [hoists : (__tl_dyn-array CompilerIrInstr)
+                        (array.make-array
+                          CompilerIrInstr
+                          (struct-get planned count))]
+                      [_filled : i64
+                        (opt-global-cell-hoists-fill!
+                          (struct-get planned map)
+                          cell
+                          (struct-get scan ref-list)
+                          hoists
+                          0)]
+                      (CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        (array-ref frame-cell 0)
+                        (opt-global-cell-rewrite-blocks
+                          (struct-get planned map)
+                          hoists
+                          (struct-get planned count)
+                          blocks)))))]))))]))
 
 (define (optimize-program [program : CompilerIrProgram]) : CompilerIrProgram
   (optimize-program-with-level program (compiler-optimize-default-level)))

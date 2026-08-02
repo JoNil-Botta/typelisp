@@ -6691,7 +6691,8 @@
       clean
       (opt_i64_i64_map.with-capacity 8)
       argc
-      (opt_i64_i64_map.with-capacity 8))))
+      (opt_i64_i64_map.with-capacity 8)
+      (opt-global-cell-summary-empty))))
 
 (define (opt-loop-bce-test-entry-tail [init : i64]) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -29002,3 +29003,977 @@
         (opt-lc-runtime-word-muladd data 3)
         578437695752307201
         "mul/add compose returns the little-endian word value"))))
+
+;; --- const-global early substitution + global-cell invariance self-tests -----
+;; Self-test: the early const-global rewrite now covers every scalar operand
+;; position (compare operands feeding branches, Mov sources, UnOp sources,
+;; Cast sources), not just BinOp operands, and still leaves globals
+;; disqualified by a store or an address-take as hidden loads.
+(define (opt-const-global-early-test-unop-src-in-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [dst : i64]) : CompilerIrValue
+  (if (>= index count)
+    (CompilerIrValue.Unit)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.UnOp d _ src _)
+        (if (= d dst)
+          src
+          (opt-const-global-early-test-unop-src-in-seq
+            instrs
+            (+ index 1)
+            count
+            dst))]
+      [_
+        (opt-const-global-early-test-unop-src-in-seq
+          instrs
+          (+ index 1)
+          count
+          dst)])))
+
+(define (opt-const-global-early-test-unop-src
+  [blocks : CompilerIrBlockList]
+  [dst : i64]) : CompilerIrValue
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrValue.Unit)]
+    [(CompilerIrBlockList.Cons block _)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-const-global-early-test-unop-src-in-seq
+            instrs
+            0
+            (compiler-ir-instr-seq-count instrs)
+            dst)])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-const-global-early-test-unop-src
+        (compiler-ir-block-seq-to-list seq)
+        dst)]))
+
+(define (opt-const-global-early-test-cast-src-in-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [dst : i64]) : CompilerIrValue
+  (if (>= index count)
+    (CompilerIrValue.Unit)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Cast d src _ _)
+        (if (= d dst)
+          src
+          (opt-const-global-early-test-cast-src-in-seq
+            instrs
+            (+ index 1)
+            count
+            dst))]
+      [_
+        (opt-const-global-early-test-cast-src-in-seq
+          instrs
+          (+ index 1)
+          count
+          dst)])))
+
+(define (opt-const-global-early-test-cast-src
+  [blocks : CompilerIrBlockList]
+  [dst : i64]) : CompilerIrValue
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrValue.Unit)]
+    [(CompilerIrBlockList.Cons block _)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-const-global-early-test-cast-src-in-seq
+            instrs
+            0
+            (compiler-ir-instr-seq-count instrs)
+            dst)])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-const-global-early-test-cast-src
+        (compiler-ir-block-seq-to-list seq)
+        dst)]))
+
+(define (opt-const-global-early-test-blocks
+  [symbols : OptConstDivisorTestSymbols]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        ;; Mov source -> rewritten
+        (CompilerIrInstr.Mov
+          11
+          (CompilerIrValue.Global (struct-get symbols konst))
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          ;; UnOp source -> rewritten
+          (CompilerIrInstr.UnOp
+            12
+            (CompilerIrUnOp.Neg)
+            (CompilerIrValue.Global (struct-get symbols konst))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            ;; Cast source -> rewritten
+            (CompilerIrInstr.Cast
+              13
+              (CompilerIrValue.Global (struct-get symbols konst))
+              (AstType.I64)
+              (AstType.U64))
+            (compiler-ir-instr-cons
+              ;; stored global (disqualifier: direct set!) -> NOT rewritten
+              (CompilerIrInstr.Mov
+                14
+                (CompilerIrValue.Global (struct-get symbols mutable))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                ;; address-taken global (disqualifier: &) -> NOT rewritten
+                (CompilerIrInstr.Mov
+                  15
+                  (CompilerIrValue.Global (struct-get symbols borrowed))
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Mov
+                    16
+                    (CompilerIrValue.GlobalAddr (struct-get symbols borrowed))
+                    (AstType.U64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Store
+                      (struct-get symbols mutable)
+                      (CompilerIrValue.I64 9)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      ;; compare operand feeding a branch -> rewritten
+                      (CompilerIrInstr.BinOp
+                        10
+                        (CompilerIrBinOp.Lt)
+                        (CompilerIrValue.Var 0)
+                        (CompilerIrValue.Global (struct-get symbols konst))
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Branch
+                          (CompilerIrValue.Var 10)
+                          (compiler-ir-label "then")
+                          (compiler-ir-label "else"))
+                        CompilerIrInstrList.Nil))))))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "then")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 11)))
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "else")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+(define (compiler-optimize-const-global-early-self-test) : i64
+  (let
+    [symbols : OptConstDivisorTestSymbols (opt-const-divisor-test-symbols)]
+    [globals : CompilerIrGlobalList (opt-const-divisor-test-globals symbols)]
+    [blocks : CompilerIrBlockList (opt-const-global-early-test-blocks symbols)]
+    [functions : CompilerIrFunctionList
+      (compiler-ir-function-cons
+        (CompilerIrFunction.Function
+          (opt-test-symbol "f")
+          CompilerIrParamList.Nil
+          (AstType.I64)
+          17
+          blocks)
+        CompilerIrFunctionList.Nil)]
+    [table : opt_i64_i64_map.Map (opt-const-divisors-build globals functions)]
+    [rewritten : CompilerIrBlockList
+      (opt-const-divisor-rewrite-blocks table blocks)]
+    (cond
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-divisor-test-rhs rewritten 10)
+            1000000007))
+        1]
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-divisor-test-mov-src rewritten 11)
+            1000000007))
+        2]
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-global-early-test-unop-src rewritten 12)
+            1000000007))
+        3]
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-global-early-test-cast-src rewritten 13)
+            1000000007))
+        4]
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-mov-src rewritten 14)
+            "mut"))
+        5]
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-mov-src rewritten 15)
+            "borrowed"))
+        6]
+      [else 42])))
+
+;; --- global-cell invariance (global_cell pass) self-tests --------------------
+(defstruct OptGcTestSymbols
+  (arr i64)
+  (k i64)
+  (agg i64)
+  (callee i64)
+  (reader i64)
+  (other i64)
+  (writer i64))
+
+(define (opt-gc-test-symbols) : OptGcTestSymbols
+  (OptGcTestSymbols
+    (opt-test-symbol "gc_arr")
+    (opt-test-symbol "gc_k")
+    (opt-test-symbol "gc_agg")
+    (opt-test-symbol "gc_callee")
+    (opt-test-symbol "gc_reader")
+    (opt-test-symbol "gc_other")
+    (opt-test-symbol "gc_writer")))
+
+(define (opt-gc-test-globals [symbols : OptGcTestSymbols]) : CompilerIrGlobalList
+  (compiler-ir-global-cons
+    (CompilerIrGlobal.Global
+      (struct-get symbols arr)
+      (AstType.DynArray 0)
+      (CompilerIrValue.Unit))
+    (compiler-ir-global-cons
+      (CompilerIrGlobal.Global
+        (struct-get symbols k)
+        (AstType.I64)
+        (CompilerIrValue.I64 5))
+      (compiler-ir-global-cons
+        ;; non-word-cell global: register-resident aggregates are never
+        ;; hoisted (the entry Mov would load only the cell's first word)
+        (CompilerIrGlobal.Global
+          (struct-get symbols agg)
+          (AstType.Struct (struct-get symbols agg))
+          (CompilerIrValue.Unit))
+        CompilerIrGlobalList.Nil))))
+
+(define (opt-gc-test-reader-tail
+  [symbols : OptGcTestSymbols]
+  [store-k? : bool]
+  [call? : bool]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Mov
+      6
+      (CompilerIrValue.Global (struct-get symbols agg))
+      (AstType.Struct (struct-get symbols agg)))
+    (cond
+      [call?
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Call
+            9
+            (struct-get symbols callee)
+            (CompilerIrCallArgs.One (CompilerIrValue.Var 3))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+            CompilerIrInstrList.Nil))]
+      [store-k?
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Store
+            (struct-get symbols k)
+            (CompilerIrValue.Var 5)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+            CompilerIrInstrList.Nil))]
+      [else
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+          CompilerIrInstrList.Nil)])))
+
+;; reader fixture: descriptor gep off @gc_arr, a scalar operand @gc_k, a
+;; Mov of @gc_k, and a Mov of the non-word-cell @gc_agg.
+(define (opt-gc-test-reader-blocks
+  [symbols : OptGcTestSymbols]
+  [store-k? : bool]
+  [call? : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump (compiler-ir-label "body"))
+        CompilerIrInstrList.Nil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "body")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            1
+            (CompilerIrValue.Global (struct-get symbols arr))
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                3
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.Global (struct-get symbols k))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Mov
+                  4
+                  (CompilerIrValue.Global (struct-get symbols k))
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    5
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 3)
+                    (CompilerIrValue.Var 4)
+                    (AstType.I64))
+                  (opt-gc-test-reader-tail symbols store-k? call?)))))))
+      CompilerIrBlockList.Nil)))
+
+(define (opt-gc-test-reader-function
+  [symbols : OptGcTestSymbols]
+  [store-k? : bool]
+  [call? : bool]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols reader)
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    (if call?
+      10
+      7)
+    (opt-gc-test-reader-blocks symbols store-k? call?)))
+
+;; takes the address of gc_arr (disqualifies it program-wide, mechanism (b))
+(define (opt-gc-test-other-function [symbols : OptGcTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols other)
+    CompilerIrParamList.Nil
+    (AstType.U64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov
+            0
+            (CompilerIrValue.GlobalAddr (struct-get symbols arr))
+            (AstType.U64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
+
+;; stores gc_k in ANOTHER function (the loader pattern: must NOT disqualify
+;; the reader's hoist of gc_k -- the store cannot interleave with a call-free
+;; reader activation)
+(define (opt-gc-test-writer-function [symbols : OptGcTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols writer)
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Store
+            (struct-get symbols k)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
+
+(define (opt-gc-test-functions1 [f : CompilerIrFunction]) : CompilerIrFunctionList
+  (compiler-ir-function-cons f CompilerIrFunctionList.Nil))
+
+(define (opt-gc-test-functions2
+  [f : CompilerIrFunction]
+  [g : CompilerIrFunction]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    f
+    (compiler-ir-function-cons g CompilerIrFunctionList.Nil)))
+
+(define (opt-gc-test-summaries
+  [symbols : OptGcTestSymbols]
+  [functions : CompilerIrFunctionList]) : OptLoopBceSummaries
+  (opt-loop-bce-summaries-set-global-cell
+    (opt-loop-bce-empty-summaries)
+    (opt-global-cell-summary-build (opt-gc-test-globals symbols) functions)))
+
+(define (opt-gc-test-block-at [blocks : CompilerIrBlockList] [index : i64]) : CompilerIrBlock
+  (match blocks
+    [(CompilerIrBlockList.Nil)
+      (CompilerIrBlock.Block
+        (compiler-ir-label-none)
+        (CompilerIrInstrSeq (array.make-array CompilerIrInstr 0) 0))]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (= index 0)
+        block
+        (opt-gc-test-block-at (box-get rest) (- index 1)))]
+    [(CompilerIrBlockList.Array seq)
+      (if (or (< index 0) (>= index (compiler-ir-block-seq-count seq)))
+        (CompilerIrBlock.Block
+          (compiler-ir-label-none)
+          (CompilerIrInstrSeq (array.make-array CompilerIrInstr 0) 0))
+        (compiler-ir-block-seq-ref seq index))]))
+
+(define (opt-gc-test-instr-at
+  [blocks : CompilerIrBlockList]
+  [block-index : i64]
+  [instr-index : i64]) : CompilerIrInstr
+  (match (opt-gc-test-block-at blocks block-index)
+    [(CompilerIrBlock.Block _ instrs)
+      (if (or
+        (< instr-index 0)
+        (>= instr-index (compiler-ir-instr-seq-count instrs)))
+        (CompilerIrInstr.Jump (compiler-ir-label-none))
+        (compiler-ir-instr-seq-ref instrs instr-index))]))
+
+(define (opt-gc-test-block-instr-count
+  [blocks : CompilerIrBlockList]
+  [block-index : i64]) : i64
+  (match (opt-gc-test-block-at blocks block-index)
+    [(CompilerIrBlock.Block _ instrs) (compiler-ir-instr-seq-count instrs)]))
+
+;; count of Mov/Gep/Load/BinOp instructions still carrying a global operand,
+;; in all blocks after the first (the entry block's exempt Movs are skipped)
+(define (opt-gc-test-stray-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ (CompilerIrValue.Global _) _) true]
+    [(CompilerIrInstr.Gep _ (CompilerIrValue.Global _) _ _) true]
+    [(CompilerIrInstr.Load _ (CompilerIrValue.Global _) _) true]
+    [(CompilerIrInstr.BinOp _ _ (CompilerIrValue.Global _) _ _) true]
+    [(CompilerIrInstr.BinOp _ _ _ (CompilerIrValue.Global _) _) true]
+    [_ false]))
+
+(define (opt-gc-test-stray-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-gc-test-stray-seq
+      instrs
+      (+ index 1)
+      (if (opt-gc-test-stray-instr? (compiler-ir-instr-seq-ref instrs index))
+        (+ acc 1)
+        acc))))
+
+(define (opt-gc-test-stray-blocks
+  [blocks : CompilerIrBlockList]
+  [skip-first? : bool]
+  [acc : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-gc-test-stray-blocks
+            (box-get rest)
+            false
+            (if skip-first?
+              acc
+              (opt-gc-test-stray-seq instrs 0 acc)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-gc-test-stray-blocks
+        (compiler-ir-block-seq-to-list seq)
+        skip-first?
+        acc)]))
+
+(define (opt-gc-test-is-global-named? [v : CompilerIrValue] [name : String]) : bool
+  (match v
+    [(CompilerIrValue.Global g) (string.eq (compiler-ir-symbol-text g) name)]
+    [_ false]))
+
+(define (opt-gc-test-is-var? [v : CompilerIrValue] [id : i64]) : bool
+  (match v
+    [(CompilerIrValue.Var v2) (= v2 id)]
+    [_ false]))
+
+;; checks shared by the plain-hoist and loader-pattern fixtures: gc_k and
+;; gc_arr hoisted (fresh vars 7 and 8), uses rewritten, gc_agg left alone
+(define (opt-gc-test-plain-hoist-ok? [out : CompilerIrFunction]) : i64
+  (let
+    [blocks : CompilerIrBlockList (opt-function-blocks out)]
+    (cond
+      [(not (= (opt-function-frame out) 9)) 1]
+      [(not (= (opt-gc-test-block-instr-count blocks 0) 3)) 2]
+      [(match (opt-gc-test-instr-at blocks 0 0)
+          [(CompilerIrInstr.Mov d src _)
+            (not (and (= d 7) (opt-gc-test-is-global-named? src "gc_k")))]
+          [_ true])
+        3]
+      [(match (opt-gc-test-instr-at blocks 0 1)
+          [(CompilerIrInstr.Mov d src _)
+            (not (and (= d 8) (opt-gc-test-is-global-named? src "gc_arr")))]
+          [_ true])
+        4]
+      [(match (opt-gc-test-instr-at blocks 1 0)
+          [(CompilerIrInstr.Gep _ base _ _) (not (opt-gc-test-is-var? base 8))]
+          [_ true])
+        5]
+      [(match (opt-gc-test-instr-at blocks 1 2)
+          [(CompilerIrInstr.BinOp _ _ _ rhs _)
+            (not (opt-gc-test-is-var? rhs 7))]
+          [_ true])
+        6]
+      [(match (opt-gc-test-instr-at blocks 1 3)
+          [(CompilerIrInstr.Mov _ src _) (not (opt-gc-test-is-var? src 7))]
+          [_ true])
+        7]
+      [(match (opt-gc-test-instr-at blocks 1 5)
+          [(CompilerIrInstr.Mov _ src _)
+            (not (opt-gc-test-is-global-named? src "gc_agg"))]
+          [_ true])
+        8]
+      [(not (= (opt-gc-test-stray-blocks blocks true 0) 1)) 9]
+      [else 42])))
+
+(define (compiler-optimize-global-cell-self-test) : i64
+  (let
+    [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
+    ;; fixture A: plain hoist of gc_k + gc_arr
+    [reader-a : CompilerIrFunction
+      (opt-gc-test-reader-function symbols false false)]
+    [summaries-a : OptLoopBceSummaries
+      (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-a))]
+    [out-a : CompilerIrFunction (opt-global-cell-function summaries-a reader-a)]
+    ;; fixture B: the function stores gc_k itself -> gc_k stays direct (a)
+    [reader-b : CompilerIrFunction
+      (opt-gc-test-reader-function symbols true false)]
+    [summaries-b : OptLoopBceSummaries
+      (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-b))]
+    [out-b : CompilerIrFunction (opt-global-cell-function summaries-b reader-b)]
+    [blocks-b : CompilerIrBlockList (opt-function-blocks out-b)]
+    ;; fixture C: a remaining call excludes the whole function (c)
+    [reader-c : CompilerIrFunction
+      (opt-gc-test-reader-function symbols false true)]
+    [summaries-c : OptLoopBceSummaries
+      (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-c))]
+    [out-c : CompilerIrFunction (opt-global-cell-function summaries-c reader-c)]
+    [blocks-c : CompilerIrBlockList (opt-function-blocks out-c)]
+    ;; fixture D: gc_arr's address is taken in another function -> gc_arr
+    ;; stays direct (b), gc_k still hoists
+    [reader-d : CompilerIrFunction
+      (opt-gc-test-reader-function symbols false false)]
+    [summaries-d : OptLoopBceSummaries
+      (opt-gc-test-summaries
+        symbols
+        (opt-gc-test-functions2 reader-d (opt-gc-test-other-function symbols)))]
+    [out-d : CompilerIrFunction (opt-global-cell-function summaries-d reader-d)]
+    [blocks-d : CompilerIrBlockList (opt-function-blocks out-d)]
+    ;; fixture E: gc_k is stored in ANOTHER function (loader pattern) -> the
+    ;; call-free reader still hoists gc_k
+    [reader-e : CompilerIrFunction
+      (opt-gc-test-reader-function symbols false false)]
+    [summaries-e : OptLoopBceSummaries
+      (opt-gc-test-summaries
+        symbols
+        (opt-gc-test-functions2 reader-e (opt-gc-test-writer-function symbols)))]
+    [out-e : CompilerIrFunction (opt-global-cell-function summaries-e reader-e)]
+    ;; fixture F: idempotence -- a second run over A's output adds nothing
+    [out-f : CompilerIrFunction (opt-global-cell-function summaries-a out-a)]
+    [blocks-f : CompilerIrBlockList (opt-function-blocks out-f)]
+    [cell-a : OptGlobalCellSummary (struct-get summaries-a global-cell)]
+    [cell-d : OptGlobalCellSummary (struct-get summaries-d global-cell)]
+    (cond
+      ;; summary-level checks: declared types resolve, the word-cell count
+      ;; excludes the aggregate global and (for D) the address-taken array
+      [(match (opt-global-cell-type-lookup cell-a (struct-get symbols k))
+          [(OptMaybeAstType.Some (AstType.I64)) false]
+          [_ true])
+        10]
+      [(match (opt-global-cell-type-lookup cell-a (struct-get symbols arr))
+          [(OptMaybeAstType.Some (AstType.DynArray _)) false]
+          [_ true])
+        11]
+      [(not (= (struct-get cell-a word-cell) 2)) 12]
+      [(not (= (struct-get cell-d word-cell) 1)) 13]
+      [(not
+          (opt_i64_i64_map.contains?
+            (& (struct-get cell-d addr-taken))
+            (struct-get symbols arr)))
+        14]
+      [(not (= (opt-gc-test-plain-hoist-ok? out-a) 42)) 15]
+      ;; fixture B: gc_arr hoists (fresh var 7), gc_k stays a direct global
+      [(not (= (opt-function-frame out-b) 8)) 20]
+      [(not (= (opt-gc-test-block-instr-count blocks-b 0) 2)) 21]
+      [(match (opt-gc-test-instr-at blocks-b 0 0)
+          [(CompilerIrInstr.Mov d src _)
+            (not (and (= d 7) (opt-gc-test-is-global-named? src "gc_arr")))]
+          [_ true])
+        22]
+      [(match (opt-gc-test-instr-at blocks-b 1 0)
+          [(CompilerIrInstr.Gep _ base _ _) (not (opt-gc-test-is-var? base 7))]
+          [_ true])
+        23]
+      [(match (opt-gc-test-instr-at blocks-b 1 2)
+          [(CompilerIrInstr.BinOp _ _ _ rhs _)
+            (not (opt-gc-test-is-global-named? rhs "gc_k"))]
+          [_ true])
+        24]
+      [(match (opt-gc-test-instr-at blocks-b 1 3)
+          [(CompilerIrInstr.Mov _ src _)
+            (not (opt-gc-test-is-global-named? src "gc_k"))]
+          [_ true])
+        25]
+      [(not (= (opt-gc-test-stray-blocks blocks-b true 0) 3)) 26]
+      [(match (opt-gc-test-instr-at blocks-b 1 6)
+          [(CompilerIrInstr.Store _ _ _) false]
+          [_ true])
+        27]
+      ;; fixture C: untouched (same frame, no hoists, global base intact)
+      [(not (= (opt-function-frame out-c) 10)) 30]
+      [(not (= (opt-gc-test-block-instr-count blocks-c 0) 1)) 31]
+      [(match (opt-gc-test-instr-at blocks-c 1 0)
+          [(CompilerIrInstr.Gep _ base _ _)
+            (not (opt-gc-test-is-global-named? base "gc_arr"))]
+          [_ true])
+        32]
+      ;; fixture D: gc_k hoists, gc_arr stays a direct global
+      [(not (= (opt-function-frame out-d) 8)) 40]
+      [(not (= (opt-gc-test-block-instr-count blocks-d 0) 2)) 41]
+      [(match (opt-gc-test-instr-at blocks-d 0 0)
+          [(CompilerIrInstr.Mov d src _)
+            (not (and (= d 7) (opt-gc-test-is-global-named? src "gc_k")))]
+          [_ true])
+        42]
+      [(match (opt-gc-test-instr-at blocks-d 1 0)
+          [(CompilerIrInstr.Gep _ base _ _)
+            (not (opt-gc-test-is-global-named? base "gc_arr"))]
+          [_ true])
+        43]
+      [(not (= (opt-gc-test-stray-blocks blocks-d true 0) 2)) 44]
+      ;; fixture E: loader pattern hoists exactly like fixture A
+      [(not (= (opt-gc-test-plain-hoist-ok? out-e) 42)) 50]
+      ;; fixture F: second run is a no-op
+      [(not (= (opt-function-frame out-f) 9)) 60]
+      [(not (= (opt-gc-test-block-instr-count blocks-f 0) 3)) 61]
+      [(match (opt-gc-test-instr-at blocks-f 0 0)
+          [(CompilerIrInstr.Mov d src _)
+            (not (and (= d 7) (opt-gc-test-is-global-named? src "gc_k")))]
+          [_ true])
+        62]
+      [(match (opt-gc-test-instr-at blocks-f 1 0)
+          [(CompilerIrInstr.Gep _ base _ _) (not (opt-gc-test-is-var? base 8))]
+          [_ true])
+        63]
+      [else 42])))
+
+;; --- global-cell pipeline self-test (bce_version unblocked) ------------------
+(define (opt-gc-test-while-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "n" (AstType.I64) 0)
+    CompilerIrParamList.Nil))
+
+;; A counted loop over the GLOBAL array: the check length and the data pointer
+;; both come from `gep @gc_arr, ...; load` inside the loop body, so without
+;; global-cell invariance neither is an invariant SSA value and the loop never
+;; versions. The entry load turns them into preheader values and bce_version
+;; fires.
+(define (opt-gc-test-while-blocks [symbols : OptGcTestSymbols]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 0) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump (compiler-ir-label "header"))
+            CompilerIrInstrList.Nil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "header")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            5
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Var 0)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 5)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
+            CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "body")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              11
+              (CompilerIrValue.Global (struct-get symbols arr))
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 12 (CompilerIrValue.Var 11) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BoundsCheck
+                  (CompilerIrValue.Var 4)
+                  (CompilerIrValue.Var 12)
+                  (compiler-ir-label "gc_while_ok"))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    13
+                    (CompilerIrValue.Global (struct-get symbols arr))
+                    (CompilerIrValue.I64 0)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Load
+                      14
+                      (CompilerIrValue.Var 13)
+                      (AstType.U64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Gep
+                        6
+                        (CompilerIrValue.Var 14)
+                        (CompilerIrValue.Var 4)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Load
+                          7
+                          (CompilerIrValue.Var 6)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.BinOp
+                            8
+                            (CompilerIrBinOp.Add)
+                            (CompilerIrValue.Var 3)
+                            (CompilerIrValue.Var 7)
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.Mov
+                              3
+                              (CompilerIrValue.Var 8)
+                              (AstType.I64))
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.BinOp
+                                9
+                                (CompilerIrBinOp.Add)
+                                (CompilerIrValue.Var 4)
+                                (CompilerIrValue.I64 1)
+                                (AstType.I64))
+                              (compiler-ir-instr-cons
+                                (CompilerIrInstr.Mov
+                                  4
+                                  (CompilerIrValue.Var 9)
+                                  (AstType.I64))
+                                (compiler-ir-instr-cons
+                                  (CompilerIrInstr.Jump
+                                    (compiler-ir-label "header"))
+                                  CompilerIrInstrList.Nil)))))))))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "exit")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil)))))
+
+(define (opt-gc-test-while-function [symbols : OptGcTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "gc_while_fixture")
+    (opt-gc-test-while-params)
+    (AstType.I64)
+    20
+    (opt-gc-test-while-blocks symbols)))
+
+(define (compiler-optimize-global-cell-pipeline-self-test) : i64
+  (let
+    [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
+    [type-segment-bases : i64 (ast-node-pool-reader-type-segment-bases)]
+    [fixture : CompilerIrFunction (opt-gc-test-while-function symbols)]
+    [functions : CompilerIrFunctionList (opt-gc-test-functions1 fixture)]
+    [summaries : OptLoopBceSummaries
+      (opt-build-program-summaries
+        type-segment-bases
+        (opt-gc-test-globals symbols)
+        functions
+        2)]
+    [pools : AstNodePoolContext (ast-node-pool-reader-context-current)]
+    [optimized : CompilerIrFunction
+      (optimize-function-with-level-and-summaries
+        pools
+        type-segment-bases
+        fixture
+        2
+        summaries)]
+    [blocks : CompilerIrBlockList (opt-function-blocks optimized)]
+    ;; control: same summaries minus the global-cell facts -> the pass is a
+    ;; no-op and the loop keeps its per-iteration check
+    [control : CompilerIrFunction
+      (optimize-function-with-level-and-summaries
+        pools
+        type-segment-bases
+        fixture
+        2
+        (opt-loop-bce-summaries-set-global-cell
+          summaries
+          (opt-global-cell-summary-empty)))]
+    [control-blocks : CompilerIrBlockList (opt-function-blocks control)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
+      ;; the fast clone exists and is check-free ...
+      [(match (opt-cfg-find-block blocks (compiler-ir-label "body__bce_fast"))
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        2]
+      [(not
+          (= (opt-bce-version-test-prefix-checks blocks "body__bce_fast" 0) 0))
+        3]
+      ;; ... the slow original keeps its per-iteration check ...
+      [(<
+          (opt-bce-version-test-block-checks blocks (compiler-ir-label "body"))
+          1)
+        4]
+      ;; ... and the control (pass disabled) never versions
+      [(not (opt-verify-ok? (opt-verify-function control))) 5]
+      [(match (opt-cfg-find-block
+          control-blocks
+          (compiler-ir-label "body__bce_fast"))
+          [(OptMaybeBlock.No) false]
+          [(OptMaybeBlock.Some _) true])
+        6]
+      [else 42])))
+
+;; --- global-cell runtime witnesses -------------------------------------------
+;;
+;; Compiled like every other inline test; they pin the language semantics the
+;; pass must preserve (the opt-2 benchmark builds and this compiler's own
+;; opt-2 self-build exercise the pass itself).
+(define opt-gc-runtime-cell : i64
+  3)
+(define opt-gc-runtime-table : (Array i64)
+  (array.make-array i64 4))
+
+(define (opt-gc-runtime-load! [v : i64]) : unit
+  (set! opt-gc-runtime-cell v))
+
+;; reads the cell in a loop; call-free, so the pass can entry-load both the
+;; cell and the table descriptor (the loader-pattern case: the set! lives in
+;; ANOTHER function and must still be observed on the next activation)
+(define (opt-gc-runtime-read-loop [n : i64]) : i64
+  (let
+    [acc : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            acc
+            (+ acc (* (array-ref opt-gc-runtime-table i) opt-gc-runtime-cell)))
+          (set! i (+ i 1))))
+      acc)))
+
+;; stores the cell in the SAME function that reads it: the function keeps
+;; direct per-use cell semantics (exclusion (a), the untouched path)
+(define (opt-gc-runtime-rw-loop [n : i64] [v : i64]) : i64
+  (let
+    [acc : i64 0]
+    [i : i64 0]
+    (begin
+      (set! opt-gc-runtime-cell v)
+      (while (< i n)
+        (begin
+          (set!
+            acc
+            (+ acc (* (array-ref opt-gc-runtime-table i) opt-gc-runtime-cell)))
+          (set! i (+ i 1))))
+      acc)))
+
+(test
+  const-global-early-substitution
+  (test.assert-i64-eq
+    (compiler-optimize-const-global-early-self-test)
+    42
+    "early const-global substitution covers compare/Mov/UnOp/Cast sites and skips disqualified globals"))
+
+(test
+  global-cell-invariance
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-self-test)
+    42
+    "global-cell entry-load + rewrite with store/call/address-taken exclusions and idempotence"))
+
+(test
+  global-cell-pipeline-bce
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-pipeline-self-test)
+    42
+    "global-array loop versions once the descriptor loads become invariant SSA values"))
+
+(test
+  global-cell-runtime-loader
+  (begin
+    (array-set! opt-gc-runtime-table 0 1)
+    (array-set! opt-gc-runtime-table 1 2)
+    (array-set! opt-gc-runtime-table 2 3)
+    (array-set! opt-gc-runtime-table 3 4)
+    (opt-gc-runtime-load! 5)
+    (test.assert-i64-eq
+      (opt-gc-runtime-read-loop 4)
+      50
+      "loop read observes the set! made by another function before this call")
+    (opt-gc-runtime-load! 9)
+    (test.assert-i64-eq
+      (opt-gc-runtime-read-loop 4)
+      90
+      "a later loader call is observed on the next activation")
+    (test.assert-i64-eq
+      (opt-gc-runtime-rw-loop 4 2)
+      20
+      "a same-function set! keeps direct per-use cell semantics")))
+
+;; Runtime witness for bit-test semantics on descriptor loads (the folded
+;; gep+load+compare form): (bit-and arr[k], mask) ==/!= 0 must evaluate as a
+;; bit test, not an equality compare.
+(define opt-bt-expand-witness-arr : (Array i64)
+  (array.make-array i64 8))
+
+(define (opt-bt-expand-witness-run [k : i64]) : i64
+  (let
+    [arr : (Array i64) opt-bt-expand-witness-arr]
+    (if (= (bit-and (array-ref arr 3) 2) 0)
+      (+ k 100)
+      (+ k 200))))
+
+(test
+  bit-test-expand-runtime
+  (begin
+    (array-set! opt-bt-expand-witness-arr 3 0)
+    (test.assert-i64-eq
+      (opt-bt-expand-witness-run 1)
+      101
+      "(0 & 2) == 0 is true, not (0 == 2)")
+    (array-set! opt-bt-expand-witness-arr 3 1)
+    (test.assert-i64-eq
+      (opt-bt-expand-witness-run 10)
+      110
+      "(1 & 2) == 0 is true, not (1 == 2)")
+    (array-set! opt-bt-expand-witness-arr 3 3)
+    (test.assert-i64-eq
+      (opt-bt-expand-witness-run 100)
+      300
+      "(3 & 2) == 0 is false, matching (3 == 2) only by accident")
+    (array-set! opt-bt-expand-witness-arr 3 2)
+    (test.assert-i64-eq
+      (opt-bt-expand-witness-run 1000)
+      1200
+      "(2 & 2) == 0 is false")))

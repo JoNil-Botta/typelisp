@@ -34010,6 +34010,48 @@
 (define tc-inlay-hint-types : (__tl_dyn-array String)
   (array.make-array String 0))
 
+;; Rendered hint type strings are copied out of the typecheck's transient
+;; arenas (they would dangle once the check tears down) but must not go into
+;; the never-reset lazy global table arena either: every inlayHint/tl/getType
+;; request re-records up to tc-inlay-hint-capacity strings, so a long LSP
+;; session would grow without bound. Give the strings their own arena that
+;; tc-inlay-hints-enable! destroys once per request generation. The hint arrays
+;; themselves stay in the lazy global table arena.
+(define tc-inlay-hint-string-arena : i64
+  0)
+
+(define (tc-inlay-hint-string-arena-ensure!) : i64
+  (if (= tc-inlay-hint-string-arena 0)
+    (begin
+      (set! tc-inlay-hint-string-arena (arena.tl_arena_make_small))
+      tc-inlay-hint-string-arena)
+    tc-inlay-hint-string-arena))
+
+;; Republish the newest segment head: the arena grows by chaining segments and
+;; the stored handle has to track the head so a later switch does not re-anchor
+;; allocation onto an exhausted segment.
+(define (tc-inlay-hint-string-arena-finish! [previous : i64] [owner : i64]) : unit
+  (let
+    [head : i64 (arena.tl_arena_current)]
+    (begin
+      (set! tc-inlay-hint-string-arena head)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous owner)
+            head
+            previous))))))
+
+;; Destroying any segment of the chain frees the whole arena: the runtime
+;; resolves the handle to its root (header +40) and unmaps the active chain
+;; from the root's head (+56) plus the retired list (+32).
+(define (tc-inlay-hint-string-arena-release!) : unit
+  (if (= tc-inlay-hint-string-arena 0)
+    unit
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy tc-inlay-hint-string-arena))
+      (set! tc-inlay-hint-string-arena 0))))
+
 (define (tc-inlay-hint-storage-ensure!) : unit
   (if (= (array-length tc-inlay-hint-lines) tc-inlay-hint-capacity)
     unit
@@ -34030,7 +34072,15 @@
 (define (tc-inlay-hints-enable!) : unit
   (begin
     (tc-inlay-hint-storage-ensure!)
+    ;; Drop the previous generation's strings. Zero the count first: readers
+    ;; only ever walk i < tc-inlay-hints-size, which is count-bounded, so the
+    ;; slots still holding now-freed Strings become unreachable before the
+    ;; memory goes away. Every reader finishes with the hints it collected
+    ;; before the next enable! (the server is single-threaded and each request
+    ;; reads its hints before answering), so this bounds hint string memory to
+    ;; a single request instead of a whole session.
     (set! tc-inlay-hint-count 0)
+    (tc-inlay-hint-string-arena-release!)
     (set! tc-inlay-hint-enabled true)))
 
 (define (tc-inlay-hints-disable!) : unit
@@ -34054,11 +34104,12 @@
   ;; The hint arrays live in the never-reset lazy global table arena, but the
   ;; rendered type string was allocated in the typecheck's transient arena and
   ;; dangles once the check tears down (tl/getType JSON-encodes it afterwards).
-  ;; Copy it into the stable arena so it outlives the check.
+  ;; Copy it into the per-generation hint string arena so it outlives the check
+  ;; without accumulating across requests.
   (let
     [slot : i64 (% tc-inlay-hint-count tc-inlay-hint-capacity)]
     [previous : i64 (arena.tl_arena_current)]
-    [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+    [owner : i64 (tc-inlay-hint-string-arena-ensure!)]
     [_set-owner : unit
       (unsafe
         (arena.tl_arena_set owner))]
@@ -34066,7 +34117,7 @@
       (array-set! tc-inlay-hint-lines slot line)
       (array-set! tc-inlay-hint-cols slot col)
       (array-set! tc-inlay-hint-types slot (string.copy (& ty)))
-      (tc-lazy-global-table-arena-finish! previous owner)
+      (tc-inlay-hint-string-arena-finish! previous owner)
       (set! tc-inlay-hint-count (+ tc-inlay-hint-count 1)))))
 
 ;; Record the inferred type of an un-annotated let binding value, if collection

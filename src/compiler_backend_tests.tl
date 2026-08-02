@@ -6874,31 +6874,39 @@
       (compiler-backend-reg-part-entry-ok? reg "%ebp" "%bp" "%bpl")]
     [else false]))
 
-(define (compiler-backend-reg-part-list-ok?
-  [regs : compiler_regalloc.CompilerRegIdList]) : bool
-  (match regs
-    [(compiler_regalloc.CompilerRegIdList.Nil) true]
-    [(compiler_regalloc.CompilerRegIdList.Cons reg rest)
-      (and
-        (compiler-backend-reg-part-known-entry-ok?
-          (compiler_abi.compiler-abi-register-spelling reg))
-        (compiler-backend-reg-part-list-ok? (box-get rest)))]))
+(define (compiler-backend-reg-part-seq-ok?
+  [regs : compiler_regalloc.CompilerRegIdSeq]) : bool
+  (let
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and
+        (< index (compiler_regalloc.compiler-reg-id-seq-count regs))
+        ok)
+        (begin
+          (if (compiler-backend-reg-part-known-entry-ok?
+            (compiler_abi.compiler-abi-register-spelling
+              (compiler_regalloc.compiler-reg-id-seq-ref regs index)))
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
 
 (define (compiler-backend-reg-part-pools-ok?) : bool
   (and
-    (compiler-backend-reg-part-list-ok?
+    (compiler-backend-reg-part-seq-ok?
       (compiler_regalloc.compiler-reg-sysv-integer-registers-with-rbp))
-    (compiler-backend-reg-part-list-ok?
+    (compiler-backend-reg-part-seq-ok?
       (compiler_regalloc.compiler-reg-zero-call-caller-saved-integer-registers))
-    (compiler-backend-reg-part-list-ok?
+    (compiler-backend-reg-part-seq-ok?
       (compiler_regalloc.compiler-reg-sysv-caller-saved-integer-registers))
-    (compiler-backend-reg-part-list-ok?
+    (compiler-backend-reg-part-seq-ok?
       (compiler_regalloc.compiler-reg-sysv-callee-saved-integer-registers))
-    (compiler-backend-reg-part-list-ok?
+    (compiler-backend-reg-part-seq-ok?
       (compiler_regalloc.compiler-reg-win64-caller-saved-integer-registers))
-    (compiler-backend-reg-part-list-ok?
+    (compiler-backend-reg-part-seq-ok?
       (compiler_regalloc.compiler-reg-win64-callee-saved-integer-registers))
-    (compiler-backend-reg-part-list-ok?
+    (compiler-backend-reg-part-seq-ok?
       (compiler_regalloc.compiler-reg-greedy-div-clobber-registers))))
 
 (define (compiler-backend-scavenge-emergency-reg-support-ok?) : bool
@@ -13734,7 +13742,7 @@
     (compiler_regalloc.compiler-reg-scratch-policy
       (compiler_abi.CompilerRegTargetAbi.Linux)
       compiler_regalloc.CompilerRegAssignmentList.Nil
-      compiler_regalloc.CompilerRegIdList.Nil)
+      (compiler_regalloc.compiler-reg-id-seq-empty))
     compiler_regalloc.CompilerRegAssignmentList.Nil
     (compiler_regalloc.compiler-reg-var-types-empty)
     (compiler_ir_types.ir-instr-vector-prefix
@@ -31627,7 +31635,7 @@
         (match listed
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (compiler_regalloc.compiler-reg-id-list-contains?
+              (compiler_regalloc.compiler-reg-id-seq-contains?
                 (struct-get
                   (struct-get
                     (struct-get
@@ -31636,7 +31644,7 @@
                     constraint)
                   excluded)
                 "%r8")
-              (compiler_regalloc.compiler-reg-id-list-contains?
+              (compiler_regalloc.compiler-reg-id-seq-contains?
                 (struct-get
                   (struct-get
                     (struct-get
@@ -32360,16 +32368,16 @@
         (array-ref items index)]
       [requirement : compiler_regalloc.CompilerRegScratchRequirement
         (struct-get item requirement)]
-      [excluded : compiler_regalloc.CompilerRegIdList
+      [excluded : compiler_regalloc.CompilerRegIdSeq
         (struct-get (struct-get requirement constraint) excluded)]
       (and
         (< index (array-length dense-items))
         (= (struct-get requirement lo) 0)
         (= (struct-get requirement hi) 7)
-        (compiler_regalloc.compiler-reg-id-list-contains?
+        (compiler_regalloc.compiler-reg-id-seq-contains?
           excluded
           compiler_abi.compiler-reg-id-r8)
-        (compiler_regalloc.compiler-reg-id-list-contains?
+        (compiler_regalloc.compiler-reg-id-seq-contains?
           excluded
           compiler_abi.compiler-reg-id-r9)
         (not (= (struct-get item register) compiler_abi.compiler-reg-id-r8))
@@ -32952,8 +32960,8 @@
               (compiler_ir_types.CompilerIrValue.Global
                 (ci.intern "scratch_float_global"))
               (compiler_ast_types.AstType.F64))
-            compiler_regalloc.CompilerRegLabelList.Nil
-            compiler_regalloc.CompilerRegLabelList.Nil
+            (compiler_regalloc.compiler-reg-label-seq-empty)
+            (compiler_regalloc.compiler-reg-label-seq-empty)
             false)
           0)
         (=
@@ -32969,8 +32977,8 @@
               (compiler_ir_types.CompilerIrValue.Global
                 (ci.intern "scratch_float_global"))
               (compiler_ast_types.AstType.Bool))
-            compiler_regalloc.CompilerRegLabelList.Nil
-            compiler_regalloc.CompilerRegLabelList.Nil
+            (compiler_regalloc.compiler-reg-label-seq-empty)
+            (compiler_regalloc.compiler-reg-label-seq-empty)
             false)
           0)
         (compiler_regalloc.compiler-reg-scratch-compare-op?
@@ -33790,8 +33798,8 @@
               1
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ast_types.AstType.F64))
-            compiler_regalloc.CompilerRegLabelList.Nil
-            compiler_regalloc.CompilerRegLabelList.Nil
+            (compiler_regalloc.compiler-reg-label-seq-empty)
+            (compiler_regalloc.compiler-reg-label-seq-empty)
             false)
           0)
         (match cast
@@ -33975,8 +33983,8 @@
       [fixed-rcx : compiler_regalloc.CompilerRegScratchConstraint
         (compiler_regalloc.CompilerRegScratchConstraint
           (compiler_regalloc.CompilerRegScratchClass.Gp)
-          compiler_regalloc.CompilerRegIdList.Nil
-          compiler_regalloc.CompilerRegIdList.Nil
+          (compiler_regalloc.compiler-reg-id-seq-empty)
+          (compiler_regalloc.compiler-reg-id-seq-empty)
           compiler_abi.compiler-reg-id-rcx)]
       (begin
         (compiler_regalloc.compiler-reg-fill-i64-array starts -1)
@@ -34085,34 +34093,34 @@
       [gp-fixed-rcx : compiler_regalloc.CompilerRegScratchConstraint
         (compiler_regalloc.CompilerRegScratchConstraint
           (compiler_regalloc.CompilerRegScratchClass.Gp)
-          compiler_regalloc.CompilerRegIdList.Nil
-          compiler_regalloc.CompilerRegIdList.Nil
+          (compiler_regalloc.compiler-reg-id-seq-empty)
+          (compiler_regalloc.compiler-reg-id-seq-empty)
           compiler_abi.compiler-reg-id-rcx)]
       [gp-r10-not-rcx : compiler_regalloc.CompilerRegScratchConstraint
         (compiler_regalloc.CompilerRegScratchConstraint
           (compiler_regalloc.CompilerRegScratchClass.Gp)
-          (compiler_regalloc.compiler-reg-id-cons
+          (compiler_regalloc.compiler-reg-id-seq-prepend
             compiler_abi.compiler-reg-id-rcx
-            (compiler_regalloc.compiler-reg-id-cons
+            (compiler_regalloc.compiler-reg-id-seq-prepend
               compiler_abi.compiler-reg-id-r10
-              compiler_regalloc.CompilerRegIdList.Nil))
-          (compiler_regalloc.compiler-reg-id-cons
+              (compiler_regalloc.compiler-reg-id-seq-empty)))
+          (compiler_regalloc.compiler-reg-id-seq-prepend
             compiler_abi.compiler-reg-id-rcx
-            compiler_regalloc.CompilerRegIdList.Nil)
+            (compiler_regalloc.compiler-reg-id-seq-empty))
           compiler_abi.compiler-reg-id-invalid)]
       [gp-r10 : compiler_regalloc.CompilerRegScratchConstraint
         (compiler_regalloc.CompilerRegScratchConstraint
           (compiler_regalloc.CompilerRegScratchClass.Gp)
-          (compiler_regalloc.compiler-reg-id-cons
+          (compiler_regalloc.compiler-reg-id-seq-prepend
             compiler_abi.compiler-reg-id-r10
-            compiler_regalloc.CompilerRegIdList.Nil)
-          compiler_regalloc.CompilerRegIdList.Nil
+            (compiler_regalloc.compiler-reg-id-seq-empty))
+          (compiler_regalloc.compiler-reg-id-seq-empty)
           compiler_abi.compiler-reg-id-invalid)]
       [xmm-any : compiler_regalloc.CompilerRegScratchConstraint
         (compiler_regalloc.CompilerRegScratchConstraint
           (compiler_regalloc.CompilerRegScratchClass.Xmm)
-          compiler_regalloc.CompilerRegIdList.Nil
-          compiler_regalloc.CompilerRegIdList.Nil
+          (compiler_regalloc.compiler-reg-id-seq-empty)
+          (compiler_regalloc.compiler-reg-id-seq-empty)
           compiler_abi.compiler-reg-id-invalid)]
       (begin
         (compiler_regalloc.compiler-reg-fill-i64-array starts -1)
@@ -34542,54 +34550,54 @@
 (define (compiler-backend-const-hoist-candidates-abi-ok?) : bool
   (and
     (=
-      (compiler_regalloc.compiler-reg-id-list-count
+      (compiler_regalloc.compiler-reg-id-seq-count
         (compiler_backend.compiler-backend-const-hoist-candidate-regs
           (compiler_backend.CompilerBackendTarget.Linux)))
       5)
-    (compiler_regalloc.compiler-reg-id-list-contains?
+    (compiler_regalloc.compiler-reg-id-seq-contains?
       (compiler_backend.compiler-backend-const-hoist-candidate-regs
         (compiler_backend.CompilerBackendTarget.Linux))
       compiler_abi.compiler-reg-id-rsi)
-    (compiler_regalloc.compiler-reg-id-list-contains?
+    (compiler_regalloc.compiler-reg-id-seq-contains?
       (compiler_backend.compiler-backend-const-hoist-candidate-regs
         (compiler_backend.CompilerBackendTarget.Linux))
       compiler_abi.compiler-reg-id-rdi)
-    (compiler_regalloc.compiler-reg-id-list-contains?
+    (compiler_regalloc.compiler-reg-id-seq-contains?
       (compiler_backend.compiler-backend-const-hoist-candidate-regs
         (compiler_backend.CompilerBackendTarget.Linux))
       compiler_abi.compiler-reg-id-r8)
-    (compiler_regalloc.compiler-reg-id-list-contains?
+    (compiler_regalloc.compiler-reg-id-seq-contains?
       (compiler_backend.compiler-backend-const-hoist-candidate-regs
         (compiler_backend.CompilerBackendTarget.Linux))
       compiler_abi.compiler-reg-id-r9)
-    (compiler_regalloc.compiler-reg-id-list-contains?
+    (compiler_regalloc.compiler-reg-id-seq-contains?
       (compiler_backend.compiler-backend-const-hoist-candidate-regs
         (compiler_backend.CompilerBackendTarget.Linux))
       compiler_abi.compiler-reg-id-rbx)
     (=
-      (compiler_regalloc.compiler-reg-id-list-count
+      (compiler_regalloc.compiler-reg-id-seq-count
         (compiler_backend.compiler-backend-const-hoist-candidate-regs
           (compiler_backend.CompilerBackendTarget.Windows)))
       3)
-    (compiler_regalloc.compiler-reg-id-list-contains?
+    (compiler_regalloc.compiler-reg-id-seq-contains?
       (compiler_backend.compiler-backend-const-hoist-candidate-regs
         (compiler_backend.CompilerBackendTarget.Windows))
       compiler_abi.compiler-reg-id-r8)
-    (compiler_regalloc.compiler-reg-id-list-contains?
+    (compiler_regalloc.compiler-reg-id-seq-contains?
       (compiler_backend.compiler-backend-const-hoist-candidate-regs
         (compiler_backend.CompilerBackendTarget.Windows))
       compiler_abi.compiler-reg-id-r9)
-    (compiler_regalloc.compiler-reg-id-list-contains?
+    (compiler_regalloc.compiler-reg-id-seq-contains?
       (compiler_backend.compiler-backend-const-hoist-candidate-regs
         (compiler_backend.CompilerBackendTarget.Windows))
       compiler_abi.compiler-reg-id-rbx)
     (not
-      (compiler_regalloc.compiler-reg-id-list-contains?
+      (compiler_regalloc.compiler-reg-id-seq-contains?
         (compiler_backend.compiler-backend-const-hoist-candidate-regs
           (compiler_backend.CompilerBackendTarget.Windows))
         compiler_abi.compiler-reg-id-rsi))
     (not
-      (compiler_regalloc.compiler-reg-id-list-contains?
+      (compiler_regalloc.compiler-reg-id-seq-contains?
         (compiler_backend.compiler-backend-const-hoist-candidate-regs
           (compiler_backend.CompilerBackendTarget.Windows))
         compiler_abi.compiler-reg-id-rdi))))
@@ -34616,8 +34624,8 @@
             (compiler_regalloc.CompilerRegScratchRole.ScalarPrimary)
             (compiler_regalloc.CompilerRegScratchConstraint
               (compiler_regalloc.CompilerRegScratchClass.Gp)
-              compiler_regalloc.CompilerRegIdList.Nil
-              compiler_regalloc.CompilerRegIdList.Nil
+              (compiler_regalloc.compiler-reg-id-seq-empty)
+              (compiler_regalloc.compiler-reg-id-seq-empty)
               compiler_abi.compiler-reg-id-invalid)
             4
             8

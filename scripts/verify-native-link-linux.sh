@@ -536,10 +536,10 @@ EOF
     assert_file_exact "$_again" "$_asm" compiler-driver-import-deterministic
     assert_file_exact "$_asm" "$ROOT/tests/golden/selfhost_compiler_driver_import.s" compiler-driver-import-golden
     for _snippet in \
-        "_tl_shared_shared:" \
-        "_tl_helper_helper:" \
-        "call _tl_helper_helper" \
-        "_tl_shared_shared(%rip)" \
+        "_tl_shared_shared_shared:" \
+        "_tl_helper_helper_helper:" \
+        "call _tl_helper_helper_helper" \
+        "_tl_shared_shared_shared(%rip)" \
         "_tl_start:"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-import
@@ -565,7 +565,11 @@ verify_compiler_driver_pkg_import() {
     (math "vendor/math")))
 EOF
     cat > "$_pkg/vendor/math/src/lib.tl" <<'EOF'
-(define (add-one [x : i64]) : i64 (+ x 1))
+(define (add-one-opaque [x : i64] [rounds : i64]) : i64
+  (if (> rounds 1)
+    (add-one-opaque (+ x 1) (- rounds 1))
+    (+ x 1)))
+(define (add-one [x : i64]) : i64 (add-one-opaque x 1))
 EOF
     cat > "$_pkg/vendor/math/src/dup.tl" <<'EOF'
 (define (dup) : i64 1)
@@ -594,7 +598,11 @@ EOF
         compiler-driver-pkg-missing-alias \
         "$_pkg/bad/missing-alias.tl" \
         "$_dir/missing-alias.s" \
-        "compiler-load: unknown package alias 'nope': pkg:nope/src/lib.tl"
+        "compiler-load: cannot read import"
+    assert_contains \
+        "$WORKDIR/compiler-driver-pkg-missing-alias.driver.stderr" \
+        "bad/nope/src/lib.tl" \
+        compiler-driver-pkg-missing-alias
 
     cat > "$_pkg/bad/missing-dep.tl" <<'EOF'
 (import math.src.missing)

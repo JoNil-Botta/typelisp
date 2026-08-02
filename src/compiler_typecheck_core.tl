@@ -10396,6 +10396,13 @@
 (define tc-unused-unsafe-block-len : i64
   0)
 
+;; Set once the block arrays have been reallocated into the never-reset lazy
+;; global table arena. The define-time initializers above run under whatever
+;; arena is active at program init, so array capacity cannot be used to detect
+;; that migration; track it explicitly instead.
+(define tc-unused-unsafe-blocks-stable : bool
+  false)
+
 (define (tc-unused-unsafe-no-span) : AstSourceSpan
   (ast-source-span 0 0 0 0))
 
@@ -10422,17 +10429,30 @@
     ;; are finished as the check progresses; allocating under the caller's
     ;; transient arena would leave these globals dangling when the LSP runs
     ;; lint and check back-to-back in one process (array index OOB).
-    (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (set! tc-unused-unsafe-block-spans (array.make-array AstSourceSpan 128))
-        (set! tc-unused-unsafe-block-paths (array.make-array String 128))
-        (set! tc-unused-unsafe-block-used (array.make-array bool 128))
-        (tc-lazy-global-table-arena-finish! previous owner)))
+    ;;
+    ;; Allocate only once. This runs per linted file, and the stable arena is
+    ;; never reset, so reallocating here would leak three arrays (plus every
+    ;; grow-doubling step) per file. The buffers stay valid across files
+    ;; because every read is guarded by tc-unused-unsafe-block-len, which both
+    ;; this function and tracking-reset! zero before any push; entries left
+    ;; above the length are unreachable. Reusing them also preserves grown
+    ;; capacity, so grow! runs once per high-water mark instead of per file.
+    (if tc-unused-unsafe-blocks-stable
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+        [_set-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        (begin
+          (set!
+            tc-unused-unsafe-block-spans
+            (array.make-array AstSourceSpan 128))
+          (set! tc-unused-unsafe-block-paths (array.make-array String 128))
+          (set! tc-unused-unsafe-block-used (array.make-array bool 128))
+          (tc-lazy-global-table-arena-finish! previous owner)
+          (set! tc-unused-unsafe-blocks-stable true))))
     (set! tc-unused-unsafe-block-len 0)))
 
 (define (tc-unused-unsafe-block-count) : i64

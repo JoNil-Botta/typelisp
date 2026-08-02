@@ -30396,6 +30396,72 @@
             "%r14"
             "%r15")
           "    cmpq %r15, 16(%r14)\n")
+        ;; #6250: a fused gep+load bit test must emit testq (bit semantics),
+        ;; never cmpq (equality semantics).
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-gep-load-compare-branch-with-plan
+            (ast-node-pool-reader-type-segment-bases)
+            assignments
+            "scratch_gep_compare"
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 2)
+            (AstType.I64)
+            (CompilerIrBinOp.BitTestEq)
+            (CompilerIrValue.Var 1)
+            (AstType.I64)
+            (compiler-ir-label "yes")
+            (compiler-ir-label "no")
+            fallthrough
+            "%r14"
+            "%r15")
+          "    testq %r15, 16(%r14)\n")
+        (not
+          (compiler-backend-scratch-vreg-result-contains?
+            (compiler-backend-emit-gep-load-compare-branch-with-plan
+              (ast-node-pool-reader-type-segment-bases)
+              assignments
+              "scratch_gep_compare"
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 2)
+              (AstType.I64)
+              (CompilerIrBinOp.BitTestEq)
+              (CompilerIrValue.Var 1)
+              (AstType.I64)
+              (compiler-ir-label "yes")
+              (compiler-ir-label "no")
+              fallthrough
+              "%r14"
+              "%r15")
+            "    cmpq %r15, 16(%r14)\n"))
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-load-compare-branch-with-plan
+            assignments
+            "scratch_load_compare"
+            (CompilerIrValue.Var 0)
+            (CompilerIrBinOp.BitTestNe)
+            (CompilerIrValue.Var 1)
+            (AstType.I64)
+            (compiler-ir-label "yes")
+            (compiler-ir-label "no")
+            fallthrough
+            "%r14"
+            "%r15")
+          "    testq %r15, (%r14)\n")
+        (not
+          (compiler-backend-scratch-vreg-result-contains?
+            (compiler-backend-emit-load-compare-branch-with-plan
+              assignments
+              "scratch_load_compare"
+              (CompilerIrValue.Var 0)
+              (CompilerIrBinOp.BitTestNe)
+              (CompilerIrValue.Var 1)
+              (AstType.I64)
+              (compiler-ir-label "yes")
+              (compiler-ir-label "no")
+              fallthrough
+              "%r14"
+              "%r15")
+            "    cmpq %r15, (%r14)\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler-backend-emit-unop-with-plan
             assignments

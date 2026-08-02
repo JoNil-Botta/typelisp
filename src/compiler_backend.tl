@@ -23846,14 +23846,31 @@
     (= (compiler-backend-type-size type-segment-bases ty) 8)))
 
 (define (compiler-backend-emit-compare-memory-address-flags
+  [op : CompilerIrBinOp]
   [rhs : String]
   [addr : String]) : String
-  (str_cat.str-cat "    cmpq " rhs ", " addr "\n"))
+  ;; Bit-test operators need TEST semantics ((x & rhs) ==/!= 0); CMP would be
+  ;; an equality test (x == rhs). The register compare path already selects
+  ;; `test` for these (compiler-backend-binop-compare-flags-reg-asm); the
+  ;; memory-operand fusions select it here. The jcc tables need no change:
+  ;; test sets ZF from the AND result exactly where cmp sets it from the
+  ;; subtraction result, and je/jne keep their meaning.
+  (str_cat.str-cat
+    "    "
+    (if (compiler-backend-bit-test-op? op)
+      "testq "
+      "cmpq ")
+    rhs
+    ", "
+    addr
+    "\n"))
 
 (define (compiler-backend-emit-compare-memory-flags
+  [op : CompilerIrBinOp]
   [rhs : String]
   [base : String]) : String
   (compiler-backend-emit-compare-memory-address-flags
+    op
     rhs
     (compiler-backend-copy-address 0 base)))
 
@@ -23896,7 +23913,10 @@
                   (string.append
                     ptr-asm
                     (string.append
-                      (compiler-backend-emit-compare-memory-flags imm scav-base)
+                      (compiler-backend-emit-compare-memory-flags
+                        op
+                        imm
+                        scav-base)
                       (compiler-backend-emit-compare-branch-jumps
                         function
                         true-label
@@ -23919,6 +23939,7 @@
                         ptr-asm
                         (string.append
                           (compiler-backend-emit-compare-memory-flags
+                            op
                             rhs-home
                             scav-base)
                           (compiler-backend-emit-compare-branch-jumps
@@ -23952,6 +23973,7 @@
                                 rhs-asm
                                 (string.append
                                   (compiler-backend-emit-compare-memory-flags
+                                    op
                                     scav-rhs
                                     scav-base)
                                   (compiler-backend-emit-compare-branch-jumps
@@ -24026,6 +24048,7 @@
                         base-asm
                         (string.append
                           (compiler-backend-emit-compare-memory-address-flags
+                            op
                             imm
                             addr)
                           (compiler-backend-emit-compare-branch-jumps
@@ -24054,6 +24077,7 @@
                             base-asm
                             (string.append
                               (compiler-backend-emit-compare-memory-address-flags
+                                op
                                 rhs-home
                                 addr)
                               (compiler-backend-emit-compare-branch-jumps
@@ -24089,6 +24113,7 @@
                                     rhs-asm
                                     (string.append
                                       (compiler-backend-emit-compare-memory-address-flags
+                                        op
                                         scav-rhs
                                         addr)
                                       (compiler-backend-emit-compare-branch-jumps

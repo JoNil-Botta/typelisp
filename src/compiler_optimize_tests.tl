@@ -6691,7 +6691,8 @@
       clean
       (opt_i64_i64_map.with-capacity 8)
       argc
-      (opt_i64_i64_map.with-capacity 8))))
+      (opt_i64_i64_map.with-capacity 8)
+      (opt-global-cell-summary-empty))))
 
 (define (opt-loop-bce-test-entry-tail [init : i64]) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -20105,8 +20106,39 @@
 ;; and is underivable; 1 checks i directly; 2 checks i*3; 3 checks i-2; 4
 ;; checks i*(-3), whose decreasing/wrapping range must remain underivable; and
 ;; 5 checks a strength-reduced derived phi that starts at 1 and steps by 3.
+;; Variants 6-13 cover the strided variable-base forms: 6 checks base+2*i
+;; (Mul form) and 7 does the same with a StorePtr body; 8 checks base+dphi
+;; and 9 checks (base+dphi)+1, where dphi is a derived phi stepping by 2
+;; (the shape induction lowering leaves for base+2*i); 10 adds a second,
+;; underivable data check that must STAY in the fast clone (partial
+;; versioning); 11 gives the strided offset INT64_MIN (rejects), 12 scales by
+;; -2 (rejects), 13 scales by 0 (rejects), 14 checks base+i directly, and 15
+;; gives the base an in-loop definition (rejects) -- the scale-1/step-1 and
+;; non-invariant-base forms stay out (guard economics / the invariance
+;; requirement).
 (define (opt-bce-version-test-check-tail [variant : i64]) : CompilerIrInstrList
   (let
+    [after-check : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          6
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            7
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 6)
+            (CompilerIrValue.Var 0)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 7)
+              (compiler-ir-label "loop")
+              (compiler-ir-label "done"))
+            (CompilerIrInstrList.Nil))))]
     [check : CompilerIrInstrList
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
@@ -20116,26 +20148,25 @@
             [else (CompilerIrValue.Var 9)])
           (CompilerIrValue.Var 1)
           (compiler-ir-label "bce_version_ok"))
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.BinOp
-            6
-            (CompilerIrBinOp.Add)
-            (CompilerIrValue.Var 3)
-            (CompilerIrValue.I64 1)
-            (AstType.I64))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.BinOp
-              7
-              (CompilerIrBinOp.Lt)
-              (CompilerIrValue.Var 6)
-              (CompilerIrValue.Var 0)
-              (AstType.Bool))
+        (cond
+          ;; 7 stores through the checked index.
+          [(= variant 7)
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch
-                (CompilerIrValue.Var 7)
-                (compiler-ir-label "loop")
-                (compiler-ir-label "done"))
-              (CompilerIrInstrList.Nil)))))]
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.Var 9)
+                (AstType.I64))
+              after-check)]
+          ;; 10's second check is data-shaped (a product of two in-loop
+          ;; values): underivable, so it must stay in the fast clone.
+          [(= variant 10)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BoundsCheck
+                (CompilerIrValue.Var 15)
+                (CompilerIrValue.Var 1)
+                (compiler-ir-label "bce_version_ok_data"))
+              after-check)]
+          [else after-check]))]
     (cond
       [(= variant 2)
         (compiler-ir-instr-cons
@@ -20173,6 +20204,158 @@
             (CompilerIrValue.I64 3)
             (AstType.I64))
           check)]
+      [(or (= variant 6) (= variant 7))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            11
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              9
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 11)
+              (AstType.I64))
+            check))]
+      [(= variant 8)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            13
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 12)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              9
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 12)
+              (AstType.I64))
+            check))]
+      [(= variant 9)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            13
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 12)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              14
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 12)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                9
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 14)
+                (CompilerIrValue.I64 1)
+                (AstType.I64))
+              check)))]
+      [(= variant 10)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            11
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              9
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 11)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                15
+                (CompilerIrBinOp.Mul)
+                (CompilerIrValue.Var 9)
+                (CompilerIrValue.Var 9)
+                (AstType.I64))
+              check)))]
+      [(= variant 11)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            11
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              16
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 11)
+              (CompilerIrValue.I64 (- (- 0 9223372036854775807) 1))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                9
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.Var 16)
+                (AstType.I64))
+              check)))]
+      [(= variant 15)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            11
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              16
+              (CompilerIrBinOp.Mul)
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.Var 3)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                9
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 16)
+                (CompilerIrValue.Var 11)
+                (AstType.I64))
+              check)))]
+      [(= variant 14)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            9
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.Var 3)
+            (AstType.I64))
+          check)]
+      [(or (= variant 12) (= variant 13))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            11
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64
+              (if (= variant 12)
+                -2
+                0))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              9
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 11)
+              (AstType.I64))
+            check))]
       [else check])))
 
 (define (opt-bce-version-test-blocks [variant : i64]) : CompilerIrBlockList
@@ -20210,18 +20393,48 @@
                   (compiler-ir-label "loop")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
-            (if (= variant 5)
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.Phi
-                  9
-                  (compiler-ir-phi-input-cons
-                    (CompilerIrValue.I64 1)
-                    (compiler-ir-label "entry")
+            (cond
+              [(= variant 5)
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    9
                     (compiler-ir-phi-input-cons
-                      (CompilerIrValue.Var 10)
-                      (compiler-ir-label "loop")
-                      (CompilerIrPhiInputList.Nil)))
-                  (AstType.I64))
+                      (CompilerIrValue.I64 1)
+                      (compiler-ir-label "entry")
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Var 10)
+                        (compiler-ir-label "loop")
+                        (CompilerIrPhiInputList.Nil)))
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      5
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 4)
+                      (CompilerIrValue.Var 3)
+                      (AstType.I64))
+                    (opt-bce-version-test-check-tail variant)))]
+              [(or (= variant 8) (= variant 9))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    12
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.I64 0)
+                      (compiler-ir-label "entry")
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Var 13)
+                        (compiler-ir-label "loop")
+                        (CompilerIrPhiInputList.Nil)))
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      5
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 4)
+                      (CompilerIrValue.Var 3)
+                      (AstType.I64))
+                    (opt-bce-version-test-check-tail variant)))]
+              [else
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.BinOp
                     5
@@ -20229,15 +20442,7 @@
                     (CompilerIrValue.Var 4)
                     (CompilerIrValue.Var 3)
                     (AstType.I64))
-                  (opt-bce-version-test-check-tail variant)))
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.BinOp
-                  5
-                  (CompilerIrBinOp.Add)
-                  (CompilerIrValue.Var 4)
-                  (CompilerIrValue.Var 3)
-                  (AstType.I64))
-                (opt-bce-version-test-check-tail variant))))))
+                  (opt-bce-version-test-check-tail variant))]))))
       (compiler-ir-block-cons
         (compiler-ir-block
           (compiler-ir-label "done")
@@ -20260,7 +20465,7 @@
     (opt-test-symbol "bce_version_fixture")
     (opt-bce-version-test-params)
     (AstType.I64)
-    11
+    17
     blocks))
 
 (define (opt-bce-version-test-block-checks
@@ -20596,6 +20801,193 @@
             0))
         7]
       [else 42])))
+
+;; --- strided variable-base bce-version self-tests ---------------------------------
+;;
+;; The `tokens[edge-base + 2*edge]` CSR idiom: the check index is an Add of a
+;; loop-invariant VARIABLE base and a strided trip expression -- either a
+;; literal-scale multiply of the counter (Mul form) or a derived induction
+;; phi carrying the stride as its step (the form induction lowering leaves
+;; behind). The guard synthesizes the derived seed and reuses the
+;; positive-step quotient guard. Fixture variant 6 loads through base+2*i, 7
+;; stores through it, 8 loads through base+dphi, 9 through (base+dphi)+1, 10
+;; adds an underivable data check that must stay in the fast clone, and
+;; 11-13 are the rejections (offset INT64_MIN, scale -2, scale 0).
+(define (opt-bce-sb-test-block-stores-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-bce-sb-test-block-stores-from
+      instrs
+      (+ index 1)
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.StorePtr _ _ _) (+ acc 1)]
+        [_ acc]))))
+
+(define (opt-bce-sb-test-block-stores
+  [blocks : CompilerIrBlockList]
+  [label-want : i64]) : i64
+  (match (opt-cfg-find-block blocks label-want)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bce-sb-test-block-stores-from instrs 0 0)])]))
+
+(define (compiler-optimize-bce-version-strided-self-test) : i64
+  (let
+    [mul-load : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 6)))]
+    [mul-load-out : CompilerIrBlockList (opt-function-blocks mul-load)]
+    [mul-store : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 7)))]
+    [mul-store-out : CompilerIrBlockList (opt-function-blocks mul-store)]
+    [dphi : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 8)))]
+    [dphi-out : CompilerIrBlockList (opt-function-blocks dphi)]
+    [dphi-off : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 9)))]
+    [dphi-off-out : CompilerIrBlockList (opt-function-blocks dphi-off)]
+    [partial : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 10)))]
+    [partial-out : CompilerIrBlockList (opt-function-blocks partial)]
+    [kmin-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 11))))]
+    [neg-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 12))))]
+    [zero-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 13))))]
+    [base-counter-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 14))))]
+    [in-loop-base-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 15))))]
+    (cond
+      ;; scale-2 Mul-form variable-base load: versions through the
+      ;; synthesized derived-seed quotient guard (one division by the step).
+      [(not (opt-verify-ok? (opt-verify-function mul-load))) 1]
+      ;; entry, guard, fast, slow loop, exit.
+      [(not (= (compiler-ir-block-list-count mul-load-out) 5)) 2]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              mul-load-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        3]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              mul-load-out
+              (compiler-ir-label "loop"))
+            1))
+        4]
+      [(not
+          (= (opt-count-binop-op-blocks mul-load-out (CompilerIrBinOp.Div)) 1))
+        5]
+      ;; the store form versions identically and keeps its (remapped) store.
+      [(not (opt-verify-ok? (opt-verify-function mul-store))) 6]
+      [(not (= (compiler-ir-block-list-count mul-store-out) 5)) 7]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              mul-store-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        8]
+      [(not
+          (=
+            (opt-bce-sb-test-block-stores
+              mul-store-out
+              (compiler-ir-label "loop__bce_fast"))
+            1))
+        9]
+      [(not
+          (=
+            (opt-bce-sb-test-block-stores
+              mul-store-out
+              (compiler-ir-label "loop"))
+            1))
+        10]
+      ;; the derived-phi form (induction lowering's shape) versions too.
+      [(not (opt-verify-ok? (opt-verify-function dphi))) 11]
+      [(not (= (compiler-ir-block-list-count dphi-out) 5)) 12]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              dphi-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        13]
+      [(not (= (opt-count-binop-op-blocks dphi-out (CompilerIrBinOp.Div)) 1))
+        14]
+      ;; ... including a literal offset peeled above the base add.
+      [(not (opt-verify-ok? (opt-verify-function dphi-off))) 15]
+      [(not (= (compiler-ir-block-list-count dphi-off-out) 5)) 16]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              dphi-off-out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        17]
+      [(not
+          (= (opt-count-binop-op-blocks dphi-off-out (CompilerIrBinOp.Div)) 1))
+        18]
+      ;; partial versioning: the strided check leaves the fast clone, the
+      ;; underivable data check STAYS (remapped); the slow loop keeps both.
+      [(not (opt-verify-ok? (opt-verify-function partial))) 19]
+      [(not (= (compiler-ir-block-list-count partial-out) 5)) 20]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              partial-out
+              (compiler-ir-label "loop__bce_fast"))
+            1))
+        21]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              partial-out
+              (compiler-ir-label "loop"))
+            2))
+        22]
+      [(not (= (opt-count-binop-op-blocks partial-out (CompilerIrBinOp.Div)) 1))
+        23]
+      ;; an INT64_MIN strided offset rejects (nothing derives: untouched).
+      [(not (= (compiler-ir-block-list-count kmin-out) 3)) 24]
+      ;; non-positive literal scales reject.
+      [(not (= (compiler-ir-block-list-count neg-out) 3)) 25]
+      [(not (= (compiler-ir-block-list-count zero-out) 3)) 26]
+      ;; scale-1/step-1 variable-base forms reject on guard economics:
+      ;; base+i stays checked even though the counter is a step-1 phi.
+      [(not (= (compiler-ir-block-list-count base-counter-out) 3)) 27]
+      ;; an in-loop base definition cannot prove invariance: untouched.
+      [(not (= (compiler-ir-block-list-count in-loop-base-out) 3)) 28]
+      [else 42])))
+
+(test
+  bce-version-strided-var-base-ir
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-strided-self-test)
+    42
+    "strided variable-base indices version through the synthesized derived-seed guard"))
 
 ;; --- multi-block bce-version self-tests -------------------------------------------
 ;;
@@ -22032,6 +22424,716 @@
       [(< (opt-bce-version-test-prefix-checks blocks "" 0) 2) 4]
       [else 42])))
 
+;; --- multi-block eq-loop bce-version self-tests --------------------------------
+;;
+;; The byte-compare loop shape (intern_table's it-slice-eq?): a top-tested
+;; counted loop (the counter compare ends the header, the latch jumps back)
+;; with a second header phi carrying the running flag, two variable-base
+;; checked loads whose lengths are per-iteration descriptor loads, and a
+;; direct outside use of the flag in an exit block reached through two
+;; single-edge forwarding stubs. Variant 1 versions: the guard hoists one
+;; gep+load per descriptor length, both checks leave the fast clone, the
+;; stubs gain fast twins, and the materialized exit phi carries the fast-edge
+;; inputs. Variant 2 gives the check index an in-loop base (that check stays
+;; underivable; the second still derives, so the loop partially versions), 3
+;; scales the counter by two (the scale-N variable-base guard covers it: the
+;; check derives through a synthesized derived seed, so the loop versions
+;; check-free), and 4 stores into the loop body (the descriptor-length hoist
+;; needs a write-free loop, so no check derives and the function is
+;; untouched).
+(define (opt-bce-mb-eq-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "arr" (AstType.DynArray 0) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "arr2" (AstType.DynArray 0) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "len" (AstType.I64) 2)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "start" (AstType.I64) 3)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "start2" (AstType.I64) 4)
+            (CompilerIrParamList.Nil)))))))
+
+(define (opt-bce-mb-eq-test-header-block) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "header")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        5
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.I64 0)
+          (compiler-ir-label "entry")
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 13)
+            (compiler-ir-label "latch")
+            (CompilerIrPhiInputList.Nil)))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Phi
+          6
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Bool true)
+            (compiler-ir-label "entry")
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 14)
+              (compiler-ir-label "latch")
+              (CompilerIrPhiInputList.Nil)))
+          (AstType.Bool))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            7
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 5)
+            (CompilerIrValue.Var 2)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 7)
+              (compiler-ir-label "flagtest")
+              (compiler-ir-label "exita"))
+            (CompilerIrInstrList.Nil)))))))
+
+;; The two var-base checked byte loads over descriptor lengths. Variant 2
+;; moves the base into the loop (`(i*i) + i`), 3 scales the counter
+;; (`start + 2*i`), and 4 stores into the body.
+(define (opt-bce-mb-eq-test-body-block [variant : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "body")
+    (compiler-ir-instr-cons
+      (cond
+        [(= variant 2)
+          (CompilerIrInstr.BinOp
+            30
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 5)
+            (CompilerIrValue.Var 5)
+            (AstType.I64))]
+        [(= variant 3)
+          (CompilerIrInstr.BinOp
+            30
+            (CompilerIrBinOp.Mul)
+            (CompilerIrValue.Var 5)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))]
+        [else (CompilerIrInstr.Mov 30 (CompilerIrValue.I64 0) (AstType.I64))])
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          8
+          (CompilerIrBinOp.Add)
+          (if (= variant 2)
+            (CompilerIrValue.Var 30)
+            (CompilerIrValue.Var 3))
+          (if (= variant 3)
+            (CompilerIrValue.Var 30)
+            (CompilerIrValue.Var 5))
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Cast
+            9
+            (CompilerIrValue.Var 8)
+            (AstType.I64)
+            (AstType.U64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              10
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 11 (CompilerIrValue.Var 10) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Cast
+                  12
+                  (CompilerIrValue.Var 11)
+                  (AstType.I64)
+                  (AstType.U64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BoundsCheck
+                    (CompilerIrValue.Var 9)
+                    (CompilerIrValue.Var 12)
+                    (compiler-ir-label "mbe_ok0"))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      15
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 4)
+                      (CompilerIrValue.Var 5)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Cast
+                        16
+                        (CompilerIrValue.Var 15)
+                        (AstType.I64)
+                        (AstType.U64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Gep
+                          17
+                          (CompilerIrValue.Var 1)
+                          (CompilerIrValue.I64 1)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Load
+                            18
+                            (CompilerIrValue.Var 17)
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.Cast
+                              19
+                              (CompilerIrValue.Var 18)
+                              (AstType.I64)
+                              (AstType.U64))
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.BoundsCheck
+                                (CompilerIrValue.Var 16)
+                                (CompilerIrValue.Var 19)
+                                (compiler-ir-label "mbe_ok1"))
+                              (compiler-ir-instr-cons
+                                (CompilerIrInstr.Gep
+                                  20
+                                  (CompilerIrValue.Var 0)
+                                  (CompilerIrValue.I64 0)
+                                  (AstType.I64))
+                                (compiler-ir-instr-cons
+                                  (CompilerIrInstr.Load
+                                    21
+                                    (CompilerIrValue.Var 20)
+                                    (AstType.U64))
+                                  (compiler-ir-instr-cons
+                                    (CompilerIrInstr.Gep
+                                      22
+                                      (CompilerIrValue.Var 21)
+                                      (CompilerIrValue.Var 8)
+                                      (AstType.U8))
+                                    (compiler-ir-instr-cons
+                                      (CompilerIrInstr.Load
+                                        23
+                                        (CompilerIrValue.Var 22)
+                                        (AstType.U8))
+                                      (compiler-ir-instr-cons
+                                        (if (= variant 4)
+                                          (CompilerIrInstr.StorePtr
+                                            (CompilerIrValue.Var 21)
+                                            (CompilerIrValue.Var 23)
+                                            (AstType.U8))
+                                          (CompilerIrInstr.Mov
+                                            29
+                                            (CompilerIrValue.Var 23)
+                                            (AstType.U8)))
+                                        (compiler-ir-instr-cons
+                                          (CompilerIrInstr.Gep
+                                            24
+                                            (CompilerIrValue.Var 1)
+                                            (CompilerIrValue.I64 0)
+                                            (AstType.I64))
+                                          (compiler-ir-instr-cons
+                                            (CompilerIrInstr.Load
+                                              25
+                                              (CompilerIrValue.Var 24)
+                                              (AstType.U64))
+                                            (compiler-ir-instr-cons
+                                              (CompilerIrInstr.Gep
+                                                26
+                                                (CompilerIrValue.Var 25)
+                                                (CompilerIrValue.Var 15)
+                                                (AstType.U8))
+                                              (compiler-ir-instr-cons
+                                                (CompilerIrInstr.Load
+                                                  27
+                                                  (CompilerIrValue.Var 26)
+                                                  (AstType.U8))
+                                                (compiler-ir-instr-cons
+                                                  (CompilerIrInstr.BinOp
+                                                    28
+                                                    (CompilerIrBinOp.Eq)
+                                                    (CompilerIrValue.Var 23)
+                                                    (CompilerIrValue.Var 27)
+                                                    (AstType.U8))
+                                                  (compiler-ir-instr-cons
+                                                    (CompilerIrInstr.Branch
+                                                      (CompilerIrValue.Var 28)
+                                                      (compiler-ir-label "then")
+                                                      (compiler-ir-label "else"))
+                                                    (CompilerIrInstrList.Nil)))))))))))))))))))))))))))
+
+(define (opt-bce-mb-eq-test-blocks [variant : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump (compiler-ir-label "header"))
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (opt-bce-mb-eq-test-header-block)
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "flagtest")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 6)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exitb"))
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (opt-bce-mb-eq-test-body-block variant)
+          (compiler-ir-block-cons
+            (opt-bce-mb-test-jump-block
+              (compiler-ir-label "then")
+              (compiler-ir-label "latch"))
+            (compiler-ir-block-cons
+              (opt-bce-mb-test-jump-block
+                (compiler-ir-label "else")
+                (compiler-ir-label "latch"))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  (compiler-ir-label "latch")
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Phi
+                      14
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Var 6)
+                        (compiler-ir-label "then")
+                        (compiler-ir-phi-input-cons
+                          (CompilerIrValue.Bool false)
+                          (compiler-ir-label "else")
+                          (CompilerIrPhiInputList.Nil)))
+                      (AstType.Bool))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        13
+                        (CompilerIrBinOp.Add)
+                        (CompilerIrValue.Var 5)
+                        (CompilerIrValue.I64 1)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Jump (compiler-ir-label "header"))
+                        (CompilerIrInstrList.Nil)))))
+                (compiler-ir-block-cons
+                  (opt-bce-mb-test-jump-block
+                    (compiler-ir-label "exita")
+                    (compiler-ir-label "exit"))
+                  (compiler-ir-block-cons
+                    (opt-bce-mb-test-jump-block
+                      (compiler-ir-label "exitb")
+                      (compiler-ir-label "exit"))
+                    (compiler-ir-block-cons
+                      (compiler-ir-block
+                        (compiler-ir-label "exit")
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Return
+                            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
+                          (CompilerIrInstrList.Nil)))
+                      CompilerIrBlockList.Nil)))))))))))
+
+(define (opt-bce-mb-eq-test-function [variant : i64]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_mb_eq_fixture")
+    (opt-bce-mb-eq-test-params)
+    (AstType.Bool)
+    31
+    (opt-bce-mb-eq-test-blocks variant)))
+
+(define (opt-bce-mb-eq-test-no-fast? [blocks : CompilerIrBlockList]) : bool
+  (match (opt-cfg-find-block blocks (compiler-ir-label "header__bce_fast"))
+    [(OptMaybeBlock.No) true]
+    [(OptMaybeBlock.Some _) false]))
+
+(define (compiler-optimize-bce-version-mb-eq-self-test) : i64
+  (let
+    [versioned : CompilerIrFunction
+      (opt-bce-version-function-with-types
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-bce-mb-eq-test-function 1))]
+    [out : CompilerIrBlockList (opt-function-blocks versioned)]
+    [in-loop-base-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function-with-types
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-bce-mb-eq-test-function 2)))]
+    [scaled-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function-with-types
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-bce-mb-eq-test-function 3)))]
+    [stored-out : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function-with-types
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-bce-mb-eq-test-function 4)))]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function versioned))) 1]
+      ;; ten originals + guard + six fast loop blocks + two stub twins.
+      [(not (= (compiler-ir-block-list-count out) 19)) 2]
+      [(match (opt-cfg-find-block out (compiler-ir-label "header__bce_guard"))
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        3]
+      ;; both checks left the fast clone body; the slow body keeps both.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler-ir-label "body__bce_fast"))
+            0))
+        4]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks out (compiler-ir-label "body"))
+            2))
+        5]
+      ;; the forwarding stubs gained fast twins.
+      [(opt-bce-mb-eq-test-no-fast? out) 6]
+      [(match (opt-cfg-find-block out (compiler-ir-label "exita__bce_fast"))
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        7]
+      [(match (opt-cfg-find-block out (compiler-ir-label "exitb__bce_fast"))
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        8]
+      ;; the materialized exit phi carries both slow and both fast edges.
+      [(not
+          (=
+            (opt-bce-version-test-exit-phi-inputs
+              out
+              (compiler-ir-label "exit"))
+            4))
+        9]
+      ;; the scale-1 quotient is exact: the guard needs no division.
+      [(not (= (opt-count-binop-op-blocks out (CompilerIrBinOp.Div)) 0)) 10]
+      ;; an in-loop base cannot prove invariance: that check stays, but the
+      ;; second check still derives, so the loop PARTIALLY versions.
+      [(not (= (compiler-ir-block-list-count in-loop-base-out) 19)) 11]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              in-loop-base-out
+              (compiler-ir-label "body__bce_fast"))
+            1))
+        12]
+      ;; scale-2 with a variable base now DERIVES through the scale-N
+      ;; variable-base guard (a synthesized derived seed with step 2), so the
+      ;; loop versions check-free instead of keeping the strided check.
+      [(not (= (compiler-ir-block-list-count scaled-out) 19)) 13]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              scaled-out
+              (compiler-ir-label "body__bce_fast"))
+            0))
+        14]
+      ;; a store in the body blocks the descriptor-length hoist: no
+      ;; derivable check, so the loop is left untouched.
+      [(not (= (compiler-ir-block-list-count stored-out) 10)) 15]
+      [(not (opt-bce-mb-eq-test-no-fast? stored-out)) 16]
+      ;; the scale-2 variable-base check pays one quotient division.
+      [(not (= (opt-count-binop-op-blocks scaled-out (CompilerIrBinOp.Div)) 1))
+        17]
+      [else 42])))
+
+;; Runtime boundary behavior of the versioned eq loop: windows ending exactly
+;; at the array end still pass the guard, and every window compares the same
+;; with or without versioning.
+(define (opt-bce-mb-eq-runtime-make [n : i64] [seed : i64]) : (Array u8)
+  (let
+    [out : (Array u8) (array.make-array u8 n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! out i (cast (+ seed i) : u8))
+          (set! i (+ i 1))))
+      out)))
+
+(define (opt-bce-mb-eq-runtime-slice-eq?
+  [a : (Array u8)]
+  [a-start : i64]
+  [b : (Array u8)]
+  [b-start : i64]
+  [len : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and (< i len) ok)
+        (begin
+          (if (= (array-ref a (+ a-start i)) (array-ref b (+ b-start i)))
+            unit
+            (set! ok false))
+          (set! i (+ i 1))))
+      ok)))
+
+(test
+  bce-version-mb-eq-loop-ir
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-eq-self-test)
+    42
+    "top-tested eq loop with var-base descriptor-length checks versions check-free"))
+
+(test
+  bce-version-mb-eq-loop-runtime-boundary
+  (let
+    [buf : (Array u8) (opt-bce-mb-eq-runtime-make 16 0)]
+    [other : (Array u8) (opt-bce-mb-eq-runtime-make 16 0)]
+    (begin
+      (array-set! other 15 255)
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 8 buf 8 8)
+        true
+        "equal window ending exactly at the array end")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 0 other 0 8)
+        true
+        "equal window from a zero base")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 8 other 8 8)
+        false
+        "last byte differs at the array end")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 8 other 8 7)
+        true
+        "shared prefix compares equal")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 0 buf 1 8)
+        false
+        "offset windows differ")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 15 buf 15 1)
+        true
+        "single byte at the last slot")
+      (test.assert-bool-eq
+        (opt-bce-mb-eq-runtime-slice-eq? buf 4 buf 4 0)
+        true
+        "empty window"))))
+
+;; --- strided variable-base runtime boundary tests ---------------------------------
+;;
+;; Strided windows with a variable base: `base + scale*i + k` exactly at the
+;; array end still passes the synthesized derived-seed guard, and every
+;; in-bounds window computes the same result with or without versioning. A
+;; window one past the end fails the guard and aborts on the checked slow
+;; path; the inline harness has no way to assert aborts, so only correct
+;; results are asserted here.
+(define (opt-bce-sb-runtime-make [n : i64] [step : i64]) : (Array i64)
+  (let
+    [out : (Array i64) (array.make-array i64 n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! out i (* i step))
+          (set! i (+ i 1))))
+      out)))
+
+(define (opt-bce-sb-runtime-sum2
+  [text : (Array i64)]
+  [base : i64]
+  [count : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set! acc (+ acc (array-ref text (+ base (* i 2)))))
+          (set! acc (+ acc (array-ref text (+ (+ base (* i 2)) 1))))
+          (set! i (+ i 1))))
+      acc)))
+
+(define (opt-bce-sb-runtime-sum8
+  [text : (Array i64)]
+  [base : i64]
+  [count : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set! acc (+ acc (array-ref text (+ base (* i 8)))))
+          (set! i (+ i 1))))
+      acc)))
+
+(define (opt-bce-sb-runtime-fill2
+  [out : (Array i64)]
+  [base : i64]
+  [count : i64]
+  [value : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! out (+ base (* i 2)) value)
+          (set! i (+ i 1))))
+      unit)))
+
+(define (opt-bce-sb-runtime-fill8
+  [out : (Array i64)]
+  [base : i64]
+  [count : i64]
+  [value : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! out (+ base (* i 8)) value)
+          (set! i (+ i 1))))
+      unit)))
+
+;; The CSR counting-fill shape: a strided variable-base token read (derivable)
+;; feeding a data-indexed fill read+write (kept in the fast clone).
+(define (opt-bce-sb-runtime-hist2
+  [tokens : (Array i64)]
+  [fill : (Array i64)]
+  [base : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (let
+          [src : i64 (array-ref tokens (+ base (* i 2)))]
+          (begin
+            (array-set! fill src (+ (array-ref fill src) 1))
+            (set! i (+ i 1)))))
+      unit)))
+
+(test
+  bce-version-strided-runtime-load2-boundary
+  (let
+    [buf : (Array i64) (opt-bce-sb-runtime-make 16 3)]
+    (begin
+      ;; base + 2*(count-1) + 1 == 15: the pair window ends exactly at the
+      ;; array end, so the guard accepts at equality.
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum2 buf 4 6)
+        342
+        "scale-2 pair window ending exactly at the array end")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum2 buf 0 8)
+        360
+        "scale-2 whole array from a zero base")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum2 buf 14 1)
+        87
+        "scale-2 single pair at the last slots")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum2 buf 4 0)
+        0
+        "scale-2 empty window"))))
+
+(test
+  bce-version-strided-runtime-load8-boundary
+  (let
+    [buf : (Array i64) (opt-bce-sb-runtime-make 25 1)]
+    (begin
+      ;; base + 8*(count-1) == 24: the stride lands exactly on the last slot.
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum8 buf 0 4)
+        48
+        "scale-8 window landing exactly on the last slot")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum8 buf 1 3)
+        27
+        "scale-8 interior window")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum8 buf 24 1)
+        24
+        "scale-8 single read at the last slot")
+      (test.assert-i64-eq
+        (opt-bce-sb-runtime-sum8 buf 3 0)
+        0
+        "scale-8 empty window"))))
+
+(test
+  bce-version-strided-runtime-store2-boundary
+  (let
+    [buf : (Array i64) (opt-bce-sb-runtime-make 16 1)]
+    (begin
+      ;; base + 2*(count-1) == 14: the last store lands at the stride boundary.
+      (opt-bce-sb-runtime-fill2 buf 4 6 7)
+      (test.assert-i64-eq
+        (array-ref buf 14)
+        7
+        "scale-2 store at the stride boundary")
+      (test.assert-i64-eq
+        (array-ref buf 15)
+        15
+        "slot past the stride untouched")
+      (test.assert-i64-eq
+        (array-ref buf 2)
+        2
+        "slot before the window untouched")
+      (opt-bce-sb-runtime-fill2 buf 0 8 9)
+      (test.assert-i64-eq (array-ref buf 0) 9 "scale-2 store from a zero base")
+      (test.assert-i64-eq
+        (array-ref buf 14)
+        9
+        "scale-2 boundary store from a zero base"))))
+
+(test
+  bce-version-strided-runtime-store8-boundary
+  (let
+    [buf : (Array i64) (opt-bce-sb-runtime-make 25 1)]
+    (begin
+      ;; base + 8*(count-1) == 24: the last store lands exactly on the last slot.
+      (opt-bce-sb-runtime-fill8 buf 0 4 7)
+      (test.assert-i64-eq (array-ref buf 24) 7 "scale-8 store on the last slot")
+      (test.assert-i64-eq
+        (array-ref buf 23)
+        23
+        "slot beside the stride untouched")
+      (test.assert-i64-eq (array-ref buf 8) 7 "scale-8 interior stride slot")
+      (opt-bce-sb-runtime-fill8 buf 1 3 9)
+      (test.assert-i64-eq
+        (array-ref buf 17)
+        9
+        "scale-8 store from a nonzero base")
+      (test.assert-i64-eq
+        (array-ref buf 18)
+        18
+        "slot past the nonzero stride untouched"))))
+
+(test
+  bce-version-strided-runtime-partial-hist
+  (let
+    [tokens : (Array i64) (opt-bce-sb-runtime-make 16 0)]
+    [fill : (Array i64) (opt-bce-sb-runtime-make 8 0)]
+    (begin
+      (array-set! tokens 0 7)
+      (array-set! tokens 2 3)
+      (array-set! tokens 4 7)
+      (array-set! tokens 6 1)
+      (array-set! tokens 8 3)
+      (array-set! tokens 10 7)
+      (array-set! tokens 12 2)
+      (array-set! tokens 14 5)
+      ;; base + 2*(count-1) == 14: the last token read is in bounds; the
+      ;; fill checks ride along in the fast clone.
+      (opt-bce-sb-runtime-hist2 tokens fill 0 8)
+      (test.assert-i64-eq
+        (array-ref fill 7)
+        3
+        "histogram slot 7 counted three hits")
+      (test.assert-i64-eq
+        (array-ref fill 3)
+        2
+        "histogram slot 3 counted two hits")
+      (test.assert-i64-eq
+        (array-ref fill 1)
+        1
+        "histogram slot 1 counted one hit")
+      (test.assert-i64-eq
+        (array-ref fill 2)
+        1
+        "histogram slot 2 counted one hit")
+      (test.assert-i64-eq
+        (array-ref fill 5)
+        1
+        "histogram slot 5 counted one hit")
+      (test.assert-i64-eq (array-ref fill 0) 0 "histogram slot 0 stayed empty"))))
+
 (define (opt-unroll-mb-read-only-test-body) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -22714,6 +23816,389 @@
             3))
         7]
       [else 42])))
+
+;; --- descriptor-header hoist past the return-shaped suppression ---------------
+;;
+;; The probe-shaped side-exit suppression (opt-licm-apply-loop) is a
+;; profitability gate: descriptor header loads (data-pointer and length slots
+;; of a loop-invariant array handle) are excepted from it in the late licm
+;; when the loop body cannot write a descriptor header. This shape mirrors
+;; opt-licm-multi-exit-test-blocks but with an array-typed parameter: a
+;; guarded counted loop whose body bounds-checks against the descriptor
+;; length, reads an element through the descriptor data pointer, and exits
+;; early through a RETURN-shaped side exit. Poison variants: 0 = clean body,
+;; 1 = unknown call in the latch, 2 = store through an unknown pointer,
+;; 3 = store through the loaded element pointer (an element-only store, which
+;; must NOT block the header hoist).
+(define (opt-licm-dh-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "array" (AstType.DynArray 0) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "key" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "limit" (AstType.I64) 2)
+        (CompilerIrParamList.Nil)))))
+
+(define (opt-licm-dh-header-block [variant-base? : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "header")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        3
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.I64 0)
+          (compiler-ir-label "entry")
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 10)
+            (compiler-ir-label "next")
+            (CompilerIrPhiInputList.Nil)))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        ;; In the variant-base shape the descriptor handle is re-merged inside
+        ;; the loop, so the data-slot address is no longer loop-invariant.
+        (if variant-base?
+          (CompilerIrInstr.Phi
+            16
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "entry")
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 0)
+                (compiler-ir-label "next")
+                (CompilerIrPhiInputList.Nil)))
+            (AstType.DynArray 0))
+          (CompilerIrInstr.Mov 16 (CompilerIrValue.I64 0) (AstType.I64)))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            5
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 2)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 5)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-licm-dh-body-block [variant-base? : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "body")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        6
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 7 (CompilerIrValue.Var 6) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 7)
+            (compiler-ir-label "licm_dh_ok"))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              8
+              (CompilerIrValue.Var
+                (if variant-base?
+                  16
+                  0))
+              (CompilerIrValue.I64 0)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 9 (CompilerIrValue.Var 8) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Gep
+                  12
+                  (CompilerIrValue.Var 9)
+                  (CompilerIrValue.Var 3)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Load
+                    13
+                    (CompilerIrValue.Var 12)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      14
+                      (CompilerIrBinOp.Eq)
+                      (CompilerIrValue.Var 13)
+                      (CompilerIrValue.Var 1)
+                      (AstType.Bool))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Branch
+                        (CompilerIrValue.Var 14)
+                        (compiler-ir-label "found")
+                        (compiler-ir-label "next"))
+                      (CompilerIrInstrList.Nil))))))))))))
+
+(define (opt-licm-dh-next-block [poison : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "next")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        10
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 3)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (cond
+          [(= poison 1)
+            (CompilerIrInstr.Call
+              15
+              (opt-test-symbol "licm_dh_callee")
+              (CompilerIrCallArgs.Nil)
+              (AstType.I64))]
+          [(= poison 2)
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.Var 13)
+              (AstType.I64))]
+          [(= poison 3)
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 12)
+              (CompilerIrValue.Var 13)
+              (AstType.I64))]
+          [else (CompilerIrInstr.Mov 15 (CompilerIrValue.I64 0) (AstType.I64))])
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump (compiler-ir-label "header"))
+          (CompilerIrInstrList.Nil))))))
+
+(define (opt-licm-dh-test-blocks [poison : i64] [variant-base? : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump (compiler-ir-label "header"))
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (opt-licm-dh-header-block variant-base?)
+      (compiler-ir-block-cons
+        (opt-licm-dh-body-block variant-base?)
+        (compiler-ir-block-cons
+          (opt-licm-dh-next-block poison)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (compiler-ir-label "found")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 13)))
+                (CompilerIrInstrList.Nil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                (compiler-ir-label "exit")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+                  (CompilerIrInstrList.Nil)))
+              (CompilerIrBlockList.Nil))))))))
+
+(define (opt-licm-dh-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "licm_dh")
+    (opt-licm-dh-test-params)
+    (AstType.I64)
+    17
+    blocks))
+
+(define (opt-licm-dh-late-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (let
+    [func : CompilerIrFunction (opt-licm-dh-test-function blocks)]
+    (match (opt-licm-function-with-context-result-and-direct-call-clean
+      (ast-node-pool-reader-type-segment-bases)
+      (opt-cfg-context-build blocks)
+      false
+      (opt_i64_i64_map.with-capacity 1)
+      true
+      func)
+      [(OptFunctionCtxResult.Result next _) next])))
+
+(define (compiler-optimize-licm-dh-self-test) : i64
+  (let
+    [early : CompilerIrFunction
+      (opt-licm-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-licm-dh-test-function (opt-licm-dh-test-blocks 0 false)))]
+    [early-blocks : CompilerIrBlockList (opt-function-blocks early)]
+    [clean : CompilerIrFunction
+      (opt-licm-dh-late-optimized-function (opt-licm-dh-test-blocks 0 false))]
+    [clean-blocks : CompilerIrBlockList (opt-function-blocks clean)]
+    [called : CompilerIrFunction
+      (opt-licm-dh-late-optimized-function (opt-licm-dh-test-blocks 1 false))]
+    [called-blocks : CompilerIrBlockList (opt-function-blocks called)]
+    [stored : CompilerIrFunction
+      (opt-licm-dh-late-optimized-function (opt-licm-dh-test-blocks 2 false))]
+    [stored-blocks : CompilerIrBlockList (opt-function-blocks stored)]
+    [elem : CompilerIrFunction
+      (opt-licm-dh-late-optimized-function (opt-licm-dh-test-blocks 3 false))]
+    [elem-blocks : CompilerIrBlockList (opt-function-blocks elem)]
+    [varbase : CompilerIrFunction
+      (opt-licm-dh-late-optimized-function (opt-licm-dh-test-blocks 0 true))]
+    [varbase-blocks : CompilerIrBlockList (opt-function-blocks varbase)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function clean))) 1]
+      [(not (opt-verify-ok? (opt-verify-function elem))) 2]
+      [(not (opt-verify-ok? (opt-verify-function varbase))) 3]
+      ;; late licm, clean body: both descriptor header loads (length AND
+      ;; data-pointer) leave the return-shaped-exit loop; only the varying
+      ;; element load stays.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              clean-blocks
+              (compiler-ir-label "body"))
+            1))
+        4]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              clean-blocks
+              (compiler-ir-label "entry"))
+            2))
+        5]
+      ;; the PRE-BCE licm keeps the suppression: moving descriptor facts that
+      ;; early can hide the bound identity bce still needs.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              early-blocks
+              (compiler-ir-label "body"))
+            3))
+        6]
+      ;; an unknown call in the body blocks the exception.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              called-blocks
+              (compiler-ir-label "body"))
+            3))
+        7]
+      ;; a store through an unknown pointer (a header-or-unknown store) blocks
+      ;; the exception.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              stored-blocks
+              (compiler-ir-label "body"))
+            3))
+        8]
+      ;; an element-only store through the loaded data pointer does NOT block
+      ;; it: element storage is disjoint from descriptor header words.
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              elem-blocks
+              (compiler-ir-label "body"))
+            1))
+        9]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              elem-blocks
+              (compiler-ir-label "entry"))
+            2))
+        10]
+      ;; a loop-variant descriptor base keeps its data-pointer load in the
+      ;; body (the invariant length load still hoists).
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              varbase-blocks
+              (compiler-ir-label "body"))
+            2))
+        11]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              varbase-blocks
+              (compiler-ir-label "entry"))
+            1))
+        12]
+      [else 42])))
+
+(test
+  licm-descriptor-header-hoist
+  (test.assert-i64-eq
+    (compiler-optimize-licm-dh-self-test)
+    42
+    "late licm hoists descriptor header loads from a header-write-free loop past the return-shaped suppression"))
+
+;; Runtime witnesses for the hoisted data-pointer semantics: reads through the
+;; descriptor must return the right values, and an element store in the loop
+;; must be observed by the element reads (only the header load moves; element
+;; loads stay in the body -- the IR-level poison-3 case stores through the
+;; loaded element pointer, an alias of the hoisted header's data pointer).
+(define (opt-licm-dh-runtime-sum [arr : (Array i64)] [n : i64] [stop : i64]) : i64
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    [acc : i64 0]
+    (begin
+      (while (and (< i n) ok)
+        (begin
+          (set! acc (+ acc (array-ref arr i)))
+          (if (= (array-ref arr i) stop)
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      acc)))
+
+;; Store at i, accumulate the mirror slot n-1-i: the middle iteration reads a
+;; slot stored by an earlier iteration, so the stores must be observed through
+;; whatever pointer the loads use.
+(define (opt-licm-dh-runtime-alias-store [arr : (Array i64)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    [acc : i64 0]
+    (begin
+      (while (and (< i n) ok)
+        (begin
+          (array-set! arr i (+ (array-ref arr i) 1))
+          (set! acc (+ acc (array-ref arr (- (- n 1) i))))
+          (if (< (array-ref arr (- (- n 1) i)) 0)
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      acc)))
+
+(test
+  licm-descriptor-header-runtime
+  (let
+    [arr : (Array i64) (array.make-array i64 8)]
+    [work : (Array i64) (array.make-array i64 5)]
+    (begin
+      (array-set! arr 0 3)
+      (array-set! arr 1 1)
+      (array-set! arr 2 4)
+      (array-set! arr 3 1)
+      (array-set! arr 4 5)
+      (array-set! arr 5 9)
+      (array-set! arr 6 2)
+      (array-set! arr 7 6)
+      (test.assert-i64-eq
+        (opt-licm-dh-runtime-sum arr 8 100)
+        31
+        "flag-exit loop over the descriptor data pointer sums every element")
+      (test.assert-i64-eq
+        (opt-licm-dh-runtime-sum arr 8 4)
+        8
+        "the early flag exit keeps the partial sum")
+      (array-set! work 1 1)
+      (array-set! work 2 2)
+      (array-set! work 3 3)
+      (array-set! work 4 4)
+      (test.assert-i64-eq
+        (opt-licm-dh-runtime-alias-store work 5)
+        13
+        "element reads observe the loop's earlier element stores")
+      (test.assert-i64-eq
+        (array-ref work 3)
+        4
+        "each element store landed exactly once"))))
 
 ;; --- affine chain folding self-test -------------------------------------------
 ;; Emulates the x4 unroller's output: an LCG chain `((x*5+3)*5+3)*5+3` must
@@ -28528,3 +30013,977 @@
         (opt-lc-runtime-word-muladd data 3)
         578437695752307201
         "mul/add compose returns the little-endian word value"))))
+
+;; --- const-global early substitution + global-cell invariance self-tests -----
+;; Self-test: the early const-global rewrite now covers every scalar operand
+;; position (compare operands feeding branches, Mov sources, UnOp sources,
+;; Cast sources), not just BinOp operands, and still leaves globals
+;; disqualified by a store or an address-take as hidden loads.
+(define (opt-const-global-early-test-unop-src-in-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [dst : i64]) : CompilerIrValue
+  (if (>= index count)
+    (CompilerIrValue.Unit)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.UnOp d _ src _)
+        (if (= d dst)
+          src
+          (opt-const-global-early-test-unop-src-in-seq
+            instrs
+            (+ index 1)
+            count
+            dst))]
+      [_
+        (opt-const-global-early-test-unop-src-in-seq
+          instrs
+          (+ index 1)
+          count
+          dst)])))
+
+(define (opt-const-global-early-test-unop-src
+  [blocks : CompilerIrBlockList]
+  [dst : i64]) : CompilerIrValue
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrValue.Unit)]
+    [(CompilerIrBlockList.Cons block _)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-const-global-early-test-unop-src-in-seq
+            instrs
+            0
+            (compiler-ir-instr-seq-count instrs)
+            dst)])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-const-global-early-test-unop-src
+        (compiler-ir-block-seq-to-list seq)
+        dst)]))
+
+(define (opt-const-global-early-test-cast-src-in-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [dst : i64]) : CompilerIrValue
+  (if (>= index count)
+    (CompilerIrValue.Unit)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Cast d src _ _)
+        (if (= d dst)
+          src
+          (opt-const-global-early-test-cast-src-in-seq
+            instrs
+            (+ index 1)
+            count
+            dst))]
+      [_
+        (opt-const-global-early-test-cast-src-in-seq
+          instrs
+          (+ index 1)
+          count
+          dst)])))
+
+(define (opt-const-global-early-test-cast-src
+  [blocks : CompilerIrBlockList]
+  [dst : i64]) : CompilerIrValue
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrValue.Unit)]
+    [(CompilerIrBlockList.Cons block _)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-const-global-early-test-cast-src-in-seq
+            instrs
+            0
+            (compiler-ir-instr-seq-count instrs)
+            dst)])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-const-global-early-test-cast-src
+        (compiler-ir-block-seq-to-list seq)
+        dst)]))
+
+(define (opt-const-global-early-test-blocks
+  [symbols : OptConstDivisorTestSymbols]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        ;; Mov source -> rewritten
+        (CompilerIrInstr.Mov
+          11
+          (CompilerIrValue.Global (struct-get symbols konst))
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          ;; UnOp source -> rewritten
+          (CompilerIrInstr.UnOp
+            12
+            (CompilerIrUnOp.Neg)
+            (CompilerIrValue.Global (struct-get symbols konst))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            ;; Cast source -> rewritten
+            (CompilerIrInstr.Cast
+              13
+              (CompilerIrValue.Global (struct-get symbols konst))
+              (AstType.I64)
+              (AstType.U64))
+            (compiler-ir-instr-cons
+              ;; stored global (disqualifier: direct set!) -> NOT rewritten
+              (CompilerIrInstr.Mov
+                14
+                (CompilerIrValue.Global (struct-get symbols mutable))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                ;; address-taken global (disqualifier: &) -> NOT rewritten
+                (CompilerIrInstr.Mov
+                  15
+                  (CompilerIrValue.Global (struct-get symbols borrowed))
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Mov
+                    16
+                    (CompilerIrValue.GlobalAddr (struct-get symbols borrowed))
+                    (AstType.U64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Store
+                      (struct-get symbols mutable)
+                      (CompilerIrValue.I64 9)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      ;; compare operand feeding a branch -> rewritten
+                      (CompilerIrInstr.BinOp
+                        10
+                        (CompilerIrBinOp.Lt)
+                        (CompilerIrValue.Var 0)
+                        (CompilerIrValue.Global (struct-get symbols konst))
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Branch
+                          (CompilerIrValue.Var 10)
+                          (compiler-ir-label "then")
+                          (compiler-ir-label "else"))
+                        CompilerIrInstrList.Nil))))))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "then")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 11)))
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "else")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+(define (compiler-optimize-const-global-early-self-test) : i64
+  (let
+    [symbols : OptConstDivisorTestSymbols (opt-const-divisor-test-symbols)]
+    [globals : CompilerIrGlobalList (opt-const-divisor-test-globals symbols)]
+    [blocks : CompilerIrBlockList (opt-const-global-early-test-blocks symbols)]
+    [functions : CompilerIrFunctionList
+      (compiler-ir-function-cons
+        (CompilerIrFunction.Function
+          (opt-test-symbol "f")
+          CompilerIrParamList.Nil
+          (AstType.I64)
+          17
+          blocks)
+        CompilerIrFunctionList.Nil)]
+    [table : opt_i64_i64_map.Map (opt-const-divisors-build globals functions)]
+    [rewritten : CompilerIrBlockList
+      (opt-const-divisor-rewrite-blocks table blocks)]
+    (cond
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-divisor-test-rhs rewritten 10)
+            1000000007))
+        1]
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-divisor-test-mov-src rewritten 11)
+            1000000007))
+        2]
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-global-early-test-unop-src rewritten 12)
+            1000000007))
+        3]
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-global-early-test-cast-src rewritten 13)
+            1000000007))
+        4]
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-mov-src rewritten 14)
+            "mut"))
+        5]
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-mov-src rewritten 15)
+            "borrowed"))
+        6]
+      [else 42])))
+
+;; --- global-cell invariance (global_cell pass) self-tests --------------------
+(defstruct OptGcTestSymbols
+  (arr i64)
+  (k i64)
+  (agg i64)
+  (callee i64)
+  (reader i64)
+  (other i64)
+  (writer i64))
+
+(define (opt-gc-test-symbols) : OptGcTestSymbols
+  (OptGcTestSymbols
+    (opt-test-symbol "gc_arr")
+    (opt-test-symbol "gc_k")
+    (opt-test-symbol "gc_agg")
+    (opt-test-symbol "gc_callee")
+    (opt-test-symbol "gc_reader")
+    (opt-test-symbol "gc_other")
+    (opt-test-symbol "gc_writer")))
+
+(define (opt-gc-test-globals [symbols : OptGcTestSymbols]) : CompilerIrGlobalList
+  (compiler-ir-global-cons
+    (CompilerIrGlobal.Global
+      (struct-get symbols arr)
+      (AstType.DynArray 0)
+      (CompilerIrValue.Unit))
+    (compiler-ir-global-cons
+      (CompilerIrGlobal.Global
+        (struct-get symbols k)
+        (AstType.I64)
+        (CompilerIrValue.I64 5))
+      (compiler-ir-global-cons
+        ;; non-word-cell global: register-resident aggregates are never
+        ;; hoisted (the entry Mov would load only the cell's first word)
+        (CompilerIrGlobal.Global
+          (struct-get symbols agg)
+          (AstType.Struct (struct-get symbols agg))
+          (CompilerIrValue.Unit))
+        CompilerIrGlobalList.Nil))))
+
+(define (opt-gc-test-reader-tail
+  [symbols : OptGcTestSymbols]
+  [store-k? : bool]
+  [call? : bool]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Mov
+      6
+      (CompilerIrValue.Global (struct-get symbols agg))
+      (AstType.Struct (struct-get symbols agg)))
+    (cond
+      [call?
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Call
+            9
+            (struct-get symbols callee)
+            (CompilerIrCallArgs.One (CompilerIrValue.Var 3))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+            CompilerIrInstrList.Nil))]
+      [store-k?
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Store
+            (struct-get symbols k)
+            (CompilerIrValue.Var 5)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+            CompilerIrInstrList.Nil))]
+      [else
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+          CompilerIrInstrList.Nil)])))
+
+;; reader fixture: descriptor gep off @gc_arr, a scalar operand @gc_k, a
+;; Mov of @gc_k, and a Mov of the non-word-cell @gc_agg.
+(define (opt-gc-test-reader-blocks
+  [symbols : OptGcTestSymbols]
+  [store-k? : bool]
+  [call? : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump (compiler-ir-label "body"))
+        CompilerIrInstrList.Nil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "body")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            1
+            (CompilerIrValue.Global (struct-get symbols arr))
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                3
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.Global (struct-get symbols k))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Mov
+                  4
+                  (CompilerIrValue.Global (struct-get symbols k))
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    5
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 3)
+                    (CompilerIrValue.Var 4)
+                    (AstType.I64))
+                  (opt-gc-test-reader-tail symbols store-k? call?)))))))
+      CompilerIrBlockList.Nil)))
+
+(define (opt-gc-test-reader-function
+  [symbols : OptGcTestSymbols]
+  [store-k? : bool]
+  [call? : bool]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols reader)
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    (if call?
+      10
+      7)
+    (opt-gc-test-reader-blocks symbols store-k? call?)))
+
+;; takes the address of gc_arr (disqualifies it program-wide, mechanism (b))
+(define (opt-gc-test-other-function [symbols : OptGcTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols other)
+    CompilerIrParamList.Nil
+    (AstType.U64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov
+            0
+            (CompilerIrValue.GlobalAddr (struct-get symbols arr))
+            (AstType.U64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
+
+;; stores gc_k in ANOTHER function (the loader pattern: must NOT disqualify
+;; the reader's hoist of gc_k -- the store cannot interleave with a call-free
+;; reader activation)
+(define (opt-gc-test-writer-function [symbols : OptGcTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols writer)
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Store
+            (struct-get symbols k)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
+
+(define (opt-gc-test-functions1 [f : CompilerIrFunction]) : CompilerIrFunctionList
+  (compiler-ir-function-cons f CompilerIrFunctionList.Nil))
+
+(define (opt-gc-test-functions2
+  [f : CompilerIrFunction]
+  [g : CompilerIrFunction]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    f
+    (compiler-ir-function-cons g CompilerIrFunctionList.Nil)))
+
+(define (opt-gc-test-summaries
+  [symbols : OptGcTestSymbols]
+  [functions : CompilerIrFunctionList]) : OptLoopBceSummaries
+  (opt-loop-bce-summaries-set-global-cell
+    (opt-loop-bce-empty-summaries)
+    (opt-global-cell-summary-build (opt-gc-test-globals symbols) functions)))
+
+(define (opt-gc-test-block-at [blocks : CompilerIrBlockList] [index : i64]) : CompilerIrBlock
+  (match blocks
+    [(CompilerIrBlockList.Nil)
+      (CompilerIrBlock.Block
+        (compiler-ir-label-none)
+        (CompilerIrInstrSeq (array.make-array CompilerIrInstr 0) 0))]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (= index 0)
+        block
+        (opt-gc-test-block-at (box-get rest) (- index 1)))]
+    [(CompilerIrBlockList.Array seq)
+      (if (or (< index 0) (>= index (compiler-ir-block-seq-count seq)))
+        (CompilerIrBlock.Block
+          (compiler-ir-label-none)
+          (CompilerIrInstrSeq (array.make-array CompilerIrInstr 0) 0))
+        (compiler-ir-block-seq-ref seq index))]))
+
+(define (opt-gc-test-instr-at
+  [blocks : CompilerIrBlockList]
+  [block-index : i64]
+  [instr-index : i64]) : CompilerIrInstr
+  (match (opt-gc-test-block-at blocks block-index)
+    [(CompilerIrBlock.Block _ instrs)
+      (if (or
+        (< instr-index 0)
+        (>= instr-index (compiler-ir-instr-seq-count instrs)))
+        (CompilerIrInstr.Jump (compiler-ir-label-none))
+        (compiler-ir-instr-seq-ref instrs instr-index))]))
+
+(define (opt-gc-test-block-instr-count
+  [blocks : CompilerIrBlockList]
+  [block-index : i64]) : i64
+  (match (opt-gc-test-block-at blocks block-index)
+    [(CompilerIrBlock.Block _ instrs) (compiler-ir-instr-seq-count instrs)]))
+
+;; count of Mov/Gep/Load/BinOp instructions still carrying a global operand,
+;; in all blocks after the first (the entry block's exempt Movs are skipped)
+(define (opt-gc-test-stray-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ (CompilerIrValue.Global _) _) true]
+    [(CompilerIrInstr.Gep _ (CompilerIrValue.Global _) _ _) true]
+    [(CompilerIrInstr.Load _ (CompilerIrValue.Global _) _) true]
+    [(CompilerIrInstr.BinOp _ _ (CompilerIrValue.Global _) _ _) true]
+    [(CompilerIrInstr.BinOp _ _ _ (CompilerIrValue.Global _) _) true]
+    [_ false]))
+
+(define (opt-gc-test-stray-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-gc-test-stray-seq
+      instrs
+      (+ index 1)
+      (if (opt-gc-test-stray-instr? (compiler-ir-instr-seq-ref instrs index))
+        (+ acc 1)
+        acc))))
+
+(define (opt-gc-test-stray-blocks
+  [blocks : CompilerIrBlockList]
+  [skip-first? : bool]
+  [acc : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-gc-test-stray-blocks
+            (box-get rest)
+            false
+            (if skip-first?
+              acc
+              (opt-gc-test-stray-seq instrs 0 acc)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-gc-test-stray-blocks
+        (compiler-ir-block-seq-to-list seq)
+        skip-first?
+        acc)]))
+
+(define (opt-gc-test-is-global-named? [v : CompilerIrValue] [name : String]) : bool
+  (match v
+    [(CompilerIrValue.Global g) (string.eq (compiler-ir-symbol-text g) name)]
+    [_ false]))
+
+(define (opt-gc-test-is-var? [v : CompilerIrValue] [id : i64]) : bool
+  (match v
+    [(CompilerIrValue.Var v2) (= v2 id)]
+    [_ false]))
+
+;; checks shared by the plain-hoist and loader-pattern fixtures: gc_k and
+;; gc_arr hoisted (fresh vars 7 and 8), uses rewritten, gc_agg left alone
+(define (opt-gc-test-plain-hoist-ok? [out : CompilerIrFunction]) : i64
+  (let
+    [blocks : CompilerIrBlockList (opt-function-blocks out)]
+    (cond
+      [(not (= (opt-function-frame out) 9)) 1]
+      [(not (= (opt-gc-test-block-instr-count blocks 0) 3)) 2]
+      [(match (opt-gc-test-instr-at blocks 0 0)
+          [(CompilerIrInstr.Mov d src _)
+            (not (and (= d 7) (opt-gc-test-is-global-named? src "gc_k")))]
+          [_ true])
+        3]
+      [(match (opt-gc-test-instr-at blocks 0 1)
+          [(CompilerIrInstr.Mov d src _)
+            (not (and (= d 8) (opt-gc-test-is-global-named? src "gc_arr")))]
+          [_ true])
+        4]
+      [(match (opt-gc-test-instr-at blocks 1 0)
+          [(CompilerIrInstr.Gep _ base _ _) (not (opt-gc-test-is-var? base 8))]
+          [_ true])
+        5]
+      [(match (opt-gc-test-instr-at blocks 1 2)
+          [(CompilerIrInstr.BinOp _ _ _ rhs _)
+            (not (opt-gc-test-is-var? rhs 7))]
+          [_ true])
+        6]
+      [(match (opt-gc-test-instr-at blocks 1 3)
+          [(CompilerIrInstr.Mov _ src _) (not (opt-gc-test-is-var? src 7))]
+          [_ true])
+        7]
+      [(match (opt-gc-test-instr-at blocks 1 5)
+          [(CompilerIrInstr.Mov _ src _)
+            (not (opt-gc-test-is-global-named? src "gc_agg"))]
+          [_ true])
+        8]
+      [(not (= (opt-gc-test-stray-blocks blocks true 0) 1)) 9]
+      [else 42])))
+
+(define (compiler-optimize-global-cell-self-test) : i64
+  (let
+    [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
+    ;; fixture A: plain hoist of gc_k + gc_arr
+    [reader-a : CompilerIrFunction
+      (opt-gc-test-reader-function symbols false false)]
+    [summaries-a : OptLoopBceSummaries
+      (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-a))]
+    [out-a : CompilerIrFunction (opt-global-cell-function summaries-a reader-a)]
+    ;; fixture B: the function stores gc_k itself -> gc_k stays direct (a)
+    [reader-b : CompilerIrFunction
+      (opt-gc-test-reader-function symbols true false)]
+    [summaries-b : OptLoopBceSummaries
+      (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-b))]
+    [out-b : CompilerIrFunction (opt-global-cell-function summaries-b reader-b)]
+    [blocks-b : CompilerIrBlockList (opt-function-blocks out-b)]
+    ;; fixture C: a remaining call excludes the whole function (c)
+    [reader-c : CompilerIrFunction
+      (opt-gc-test-reader-function symbols false true)]
+    [summaries-c : OptLoopBceSummaries
+      (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-c))]
+    [out-c : CompilerIrFunction (opt-global-cell-function summaries-c reader-c)]
+    [blocks-c : CompilerIrBlockList (opt-function-blocks out-c)]
+    ;; fixture D: gc_arr's address is taken in another function -> gc_arr
+    ;; stays direct (b), gc_k still hoists
+    [reader-d : CompilerIrFunction
+      (opt-gc-test-reader-function symbols false false)]
+    [summaries-d : OptLoopBceSummaries
+      (opt-gc-test-summaries
+        symbols
+        (opt-gc-test-functions2 reader-d (opt-gc-test-other-function symbols)))]
+    [out-d : CompilerIrFunction (opt-global-cell-function summaries-d reader-d)]
+    [blocks-d : CompilerIrBlockList (opt-function-blocks out-d)]
+    ;; fixture E: gc_k is stored in ANOTHER function (loader pattern) -> the
+    ;; call-free reader still hoists gc_k
+    [reader-e : CompilerIrFunction
+      (opt-gc-test-reader-function symbols false false)]
+    [summaries-e : OptLoopBceSummaries
+      (opt-gc-test-summaries
+        symbols
+        (opt-gc-test-functions2 reader-e (opt-gc-test-writer-function symbols)))]
+    [out-e : CompilerIrFunction (opt-global-cell-function summaries-e reader-e)]
+    ;; fixture F: idempotence -- a second run over A's output adds nothing
+    [out-f : CompilerIrFunction (opt-global-cell-function summaries-a out-a)]
+    [blocks-f : CompilerIrBlockList (opt-function-blocks out-f)]
+    [cell-a : OptGlobalCellSummary (struct-get summaries-a global-cell)]
+    [cell-d : OptGlobalCellSummary (struct-get summaries-d global-cell)]
+    (cond
+      ;; summary-level checks: declared types resolve, the word-cell count
+      ;; excludes the aggregate global and (for D) the address-taken array
+      [(match (opt-global-cell-type-lookup cell-a (struct-get symbols k))
+          [(OptMaybeAstType.Some (AstType.I64)) false]
+          [_ true])
+        10]
+      [(match (opt-global-cell-type-lookup cell-a (struct-get symbols arr))
+          [(OptMaybeAstType.Some (AstType.DynArray _)) false]
+          [_ true])
+        11]
+      [(not (= (struct-get cell-a word-cell) 2)) 12]
+      [(not (= (struct-get cell-d word-cell) 1)) 13]
+      [(not
+          (opt_i64_i64_map.contains?
+            (& (struct-get cell-d addr-taken))
+            (struct-get symbols arr)))
+        14]
+      [(not (= (opt-gc-test-plain-hoist-ok? out-a) 42)) 15]
+      ;; fixture B: gc_arr hoists (fresh var 7), gc_k stays a direct global
+      [(not (= (opt-function-frame out-b) 8)) 20]
+      [(not (= (opt-gc-test-block-instr-count blocks-b 0) 2)) 21]
+      [(match (opt-gc-test-instr-at blocks-b 0 0)
+          [(CompilerIrInstr.Mov d src _)
+            (not (and (= d 7) (opt-gc-test-is-global-named? src "gc_arr")))]
+          [_ true])
+        22]
+      [(match (opt-gc-test-instr-at blocks-b 1 0)
+          [(CompilerIrInstr.Gep _ base _ _) (not (opt-gc-test-is-var? base 7))]
+          [_ true])
+        23]
+      [(match (opt-gc-test-instr-at blocks-b 1 2)
+          [(CompilerIrInstr.BinOp _ _ _ rhs _)
+            (not (opt-gc-test-is-global-named? rhs "gc_k"))]
+          [_ true])
+        24]
+      [(match (opt-gc-test-instr-at blocks-b 1 3)
+          [(CompilerIrInstr.Mov _ src _)
+            (not (opt-gc-test-is-global-named? src "gc_k"))]
+          [_ true])
+        25]
+      [(not (= (opt-gc-test-stray-blocks blocks-b true 0) 3)) 26]
+      [(match (opt-gc-test-instr-at blocks-b 1 6)
+          [(CompilerIrInstr.Store _ _ _) false]
+          [_ true])
+        27]
+      ;; fixture C: untouched (same frame, no hoists, global base intact)
+      [(not (= (opt-function-frame out-c) 10)) 30]
+      [(not (= (opt-gc-test-block-instr-count blocks-c 0) 1)) 31]
+      [(match (opt-gc-test-instr-at blocks-c 1 0)
+          [(CompilerIrInstr.Gep _ base _ _)
+            (not (opt-gc-test-is-global-named? base "gc_arr"))]
+          [_ true])
+        32]
+      ;; fixture D: gc_k hoists, gc_arr stays a direct global
+      [(not (= (opt-function-frame out-d) 8)) 40]
+      [(not (= (opt-gc-test-block-instr-count blocks-d 0) 2)) 41]
+      [(match (opt-gc-test-instr-at blocks-d 0 0)
+          [(CompilerIrInstr.Mov d src _)
+            (not (and (= d 7) (opt-gc-test-is-global-named? src "gc_k")))]
+          [_ true])
+        42]
+      [(match (opt-gc-test-instr-at blocks-d 1 0)
+          [(CompilerIrInstr.Gep _ base _ _)
+            (not (opt-gc-test-is-global-named? base "gc_arr"))]
+          [_ true])
+        43]
+      [(not (= (opt-gc-test-stray-blocks blocks-d true 0) 2)) 44]
+      ;; fixture E: loader pattern hoists exactly like fixture A
+      [(not (= (opt-gc-test-plain-hoist-ok? out-e) 42)) 50]
+      ;; fixture F: second run is a no-op
+      [(not (= (opt-function-frame out-f) 9)) 60]
+      [(not (= (opt-gc-test-block-instr-count blocks-f 0) 3)) 61]
+      [(match (opt-gc-test-instr-at blocks-f 0 0)
+          [(CompilerIrInstr.Mov d src _)
+            (not (and (= d 7) (opt-gc-test-is-global-named? src "gc_k")))]
+          [_ true])
+        62]
+      [(match (opt-gc-test-instr-at blocks-f 1 0)
+          [(CompilerIrInstr.Gep _ base _ _) (not (opt-gc-test-is-var? base 8))]
+          [_ true])
+        63]
+      [else 42])))
+
+;; --- global-cell pipeline self-test (bce_version unblocked) ------------------
+(define (opt-gc-test-while-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "n" (AstType.I64) 0)
+    CompilerIrParamList.Nil))
+
+;; A counted loop over the GLOBAL array: the check length and the data pointer
+;; both come from `gep @gc_arr, ...; load` inside the loop body, so without
+;; global-cell invariance neither is an invariant SSA value and the loop never
+;; versions. The entry load turns them into preheader values and bce_version
+;; fires.
+(define (opt-gc-test-while-blocks [symbols : OptGcTestSymbols]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 0) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump (compiler-ir-label "header"))
+            CompilerIrInstrList.Nil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "header")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            5
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Var 0)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 5)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
+            CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "body")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              11
+              (CompilerIrValue.Global (struct-get symbols arr))
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 12 (CompilerIrValue.Var 11) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BoundsCheck
+                  (CompilerIrValue.Var 4)
+                  (CompilerIrValue.Var 12)
+                  (compiler-ir-label "gc_while_ok"))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    13
+                    (CompilerIrValue.Global (struct-get symbols arr))
+                    (CompilerIrValue.I64 0)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Load
+                      14
+                      (CompilerIrValue.Var 13)
+                      (AstType.U64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Gep
+                        6
+                        (CompilerIrValue.Var 14)
+                        (CompilerIrValue.Var 4)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Load
+                          7
+                          (CompilerIrValue.Var 6)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.BinOp
+                            8
+                            (CompilerIrBinOp.Add)
+                            (CompilerIrValue.Var 3)
+                            (CompilerIrValue.Var 7)
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.Mov
+                              3
+                              (CompilerIrValue.Var 8)
+                              (AstType.I64))
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.BinOp
+                                9
+                                (CompilerIrBinOp.Add)
+                                (CompilerIrValue.Var 4)
+                                (CompilerIrValue.I64 1)
+                                (AstType.I64))
+                              (compiler-ir-instr-cons
+                                (CompilerIrInstr.Mov
+                                  4
+                                  (CompilerIrValue.Var 9)
+                                  (AstType.I64))
+                                (compiler-ir-instr-cons
+                                  (CompilerIrInstr.Jump
+                                    (compiler-ir-label "header"))
+                                  CompilerIrInstrList.Nil)))))))))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "exit")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil)))))
+
+(define (opt-gc-test-while-function [symbols : OptGcTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "gc_while_fixture")
+    (opt-gc-test-while-params)
+    (AstType.I64)
+    20
+    (opt-gc-test-while-blocks symbols)))
+
+(define (compiler-optimize-global-cell-pipeline-self-test) : i64
+  (let
+    [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
+    [type-segment-bases : i64 (ast-node-pool-reader-type-segment-bases)]
+    [fixture : CompilerIrFunction (opt-gc-test-while-function symbols)]
+    [functions : CompilerIrFunctionList (opt-gc-test-functions1 fixture)]
+    [summaries : OptLoopBceSummaries
+      (opt-build-program-summaries
+        type-segment-bases
+        (opt-gc-test-globals symbols)
+        functions
+        2)]
+    [pools : AstNodePoolContext (ast-node-pool-reader-context-current)]
+    [optimized : CompilerIrFunction
+      (optimize-function-with-level-and-summaries
+        pools
+        type-segment-bases
+        fixture
+        2
+        summaries)]
+    [blocks : CompilerIrBlockList (opt-function-blocks optimized)]
+    ;; control: same summaries minus the global-cell facts -> the pass is a
+    ;; no-op and the loop keeps its per-iteration check
+    [control : CompilerIrFunction
+      (optimize-function-with-level-and-summaries
+        pools
+        type-segment-bases
+        fixture
+        2
+        (opt-loop-bce-summaries-set-global-cell
+          summaries
+          (opt-global-cell-summary-empty)))]
+    [control-blocks : CompilerIrBlockList (opt-function-blocks control)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
+      ;; the fast clone exists and is check-free ...
+      [(match (opt-cfg-find-block blocks (compiler-ir-label "body__bce_fast"))
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        2]
+      [(not
+          (= (opt-bce-version-test-prefix-checks blocks "body__bce_fast" 0) 0))
+        3]
+      ;; ... the slow original keeps its per-iteration check ...
+      [(<
+          (opt-bce-version-test-block-checks blocks (compiler-ir-label "body"))
+          1)
+        4]
+      ;; ... and the control (pass disabled) never versions
+      [(not (opt-verify-ok? (opt-verify-function control))) 5]
+      [(match (opt-cfg-find-block
+          control-blocks
+          (compiler-ir-label "body__bce_fast"))
+          [(OptMaybeBlock.No) false]
+          [(OptMaybeBlock.Some _) true])
+        6]
+      [else 42])))
+
+;; --- global-cell runtime witnesses -------------------------------------------
+;;
+;; Compiled like every other inline test; they pin the language semantics the
+;; pass must preserve (the opt-2 benchmark builds and this compiler's own
+;; opt-2 self-build exercise the pass itself).
+(define opt-gc-runtime-cell : i64
+  3)
+(define opt-gc-runtime-table : (Array i64)
+  (array.make-array i64 4))
+
+(define (opt-gc-runtime-load! [v : i64]) : unit
+  (set! opt-gc-runtime-cell v))
+
+;; reads the cell in a loop; call-free, so the pass can entry-load both the
+;; cell and the table descriptor (the loader-pattern case: the set! lives in
+;; ANOTHER function and must still be observed on the next activation)
+(define (opt-gc-runtime-read-loop [n : i64]) : i64
+  (let
+    [acc : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            acc
+            (+ acc (* (array-ref opt-gc-runtime-table i) opt-gc-runtime-cell)))
+          (set! i (+ i 1))))
+      acc)))
+
+;; stores the cell in the SAME function that reads it: the function keeps
+;; direct per-use cell semantics (exclusion (a), the untouched path)
+(define (opt-gc-runtime-rw-loop [n : i64] [v : i64]) : i64
+  (let
+    [acc : i64 0]
+    [i : i64 0]
+    (begin
+      (set! opt-gc-runtime-cell v)
+      (while (< i n)
+        (begin
+          (set!
+            acc
+            (+ acc (* (array-ref opt-gc-runtime-table i) opt-gc-runtime-cell)))
+          (set! i (+ i 1))))
+      acc)))
+
+(test
+  const-global-early-substitution
+  (test.assert-i64-eq
+    (compiler-optimize-const-global-early-self-test)
+    42
+    "early const-global substitution covers compare/Mov/UnOp/Cast sites and skips disqualified globals"))
+
+(test
+  global-cell-invariance
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-self-test)
+    42
+    "global-cell entry-load + rewrite with store/call/address-taken exclusions and idempotence"))
+
+(test
+  global-cell-pipeline-bce
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-pipeline-self-test)
+    42
+    "global-array loop versions once the descriptor loads become invariant SSA values"))
+
+(test
+  global-cell-runtime-loader
+  (begin
+    (array-set! opt-gc-runtime-table 0 1)
+    (array-set! opt-gc-runtime-table 1 2)
+    (array-set! opt-gc-runtime-table 2 3)
+    (array-set! opt-gc-runtime-table 3 4)
+    (opt-gc-runtime-load! 5)
+    (test.assert-i64-eq
+      (opt-gc-runtime-read-loop 4)
+      50
+      "loop read observes the set! made by another function before this call")
+    (opt-gc-runtime-load! 9)
+    (test.assert-i64-eq
+      (opt-gc-runtime-read-loop 4)
+      90
+      "a later loader call is observed on the next activation")
+    (test.assert-i64-eq
+      (opt-gc-runtime-rw-loop 4 2)
+      20
+      "a same-function set! keeps direct per-use cell semantics")))
+
+;; Runtime witness for bit-test semantics on descriptor loads (the folded
+;; gep+load+compare form): (bit-and arr[k], mask) ==/!= 0 must evaluate as a
+;; bit test, not an equality compare.
+(define opt-bt-expand-witness-arr : (Array i64)
+  (array.make-array i64 8))
+
+(define (opt-bt-expand-witness-run [k : i64]) : i64
+  (let
+    [arr : (Array i64) opt-bt-expand-witness-arr]
+    (if (= (bit-and (array-ref arr 3) 2) 0)
+      (+ k 100)
+      (+ k 200))))
+
+(test
+  bit-test-expand-runtime
+  (begin
+    (array-set! opt-bt-expand-witness-arr 3 0)
+    (test.assert-i64-eq
+      (opt-bt-expand-witness-run 1)
+      101
+      "(0 & 2) == 0 is true, not (0 == 2)")
+    (array-set! opt-bt-expand-witness-arr 3 1)
+    (test.assert-i64-eq
+      (opt-bt-expand-witness-run 10)
+      110
+      "(1 & 2) == 0 is true, not (1 == 2)")
+    (array-set! opt-bt-expand-witness-arr 3 3)
+    (test.assert-i64-eq
+      (opt-bt-expand-witness-run 100)
+      300
+      "(3 & 2) == 0 is false, matching (3 == 2) only by accident")
+    (array-set! opt-bt-expand-witness-arr 3 2)
+    (test.assert-i64-eq
+      (opt-bt-expand-witness-run 1000)
+      1200
+      "(2 & 2) == 0 is false")))

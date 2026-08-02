@@ -24345,7 +24345,7 @@
     (= (compiler-backend-type-size type-segment-bases ty) 8)))
 
 (define (compiler-backend-emit-compare-memory-address-flags
-  [op : CompilerIrBinOp]
+  [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : String]
   [addr : String]) : String
   ;; Bit-test operators need TEST semantics ((x & rhs) ==/!= 0); CMP would be
@@ -24365,7 +24365,7 @@
     "\n"))
 
 (define (compiler-backend-emit-compare-memory-flags
-  [op : CompilerIrBinOp]
+  [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : String]
   [base : String]) : String
   (compiler-backend-emit-compare-memory-address-flags

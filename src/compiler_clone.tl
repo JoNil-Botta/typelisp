@@ -886,6 +886,12 @@
         (clone-type-get pools elem)
         names
         module-id)]
+    [(ast.AstType.Slice elem)
+      (clone-field-type-able-id?
+        pools
+        (clone-type-get pools elem)
+        names
+        module-id)]
     [(ast.AstType.Box elem)
       (clone-field-type-able-id?
         pools
@@ -1347,6 +1353,14 @@
         (clone-type-get pools elem)
         module-id)]
     [(ast.AstType.DynArray elem)
+      (clone-root-add-type
+        pools
+        decls
+        able
+        roots
+        (clone-type-get pools elem)
+        module-id)]
+    [(ast.AstType.Slice elem)
       (clone-root-add-type
         pools
         decls

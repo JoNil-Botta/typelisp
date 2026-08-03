@@ -1379,6 +1379,11 @@
 (define (compiler-parse-tag-ty-dyn-array) : i64
   139)
 
+;; Borrowed slices are deliberately assigned a fresh parser tag so the
+;; existing type tags remain stable for macro/serialized AST consumers.
+(define (compiler-parse-tag-ty-slice) : i64
+  140)
+
 (define (compiler-parse-tag-expr-if) : i64
   200)
 
@@ -2036,6 +2041,9 @@
           out
           "__tl_dyn-array"
           (compiler-parse-tag-ty-dyn-array)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind out "Slice" (compiler-parse-tag-ty-slice)))
       out)))
 
 (define (compiler-parse-dispatch-exprs [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
@@ -2770,7 +2778,7 @@
           (<= tag (compiler-parse-tag-ty-bytes)))
         (and
           (>= tag (compiler-parse-tag-ty-func))
-          (<= tag (compiler-parse-tag-ty-dyn-array)))))))
+          (<= tag (compiler-parse-tag-ty-slice)))))))
 
 (define (parse-ast-lifetime-list
   [dispatch : sym_i64_env.SymI64Env]
@@ -3118,6 +3126,22 @@
                   [_
                     (ResultAstType.Err
                       "parse: __tl_dyn-array expects exactly one type")])]
+              [(= tag (compiler-parse-tag-ty-slice))
+                (match (reader.sexpr-view rest)
+                  [(reader.SexprView.Cons elem tail)
+                    (match (reader.sexpr-view tail)
+                      [(reader.SexprView.Nil)
+                        (match (parse-ast-type dispatch pools elem)
+                          [(ResultAstType.Ok elem-ty)
+                            (ResultAstType.Ok
+                              (ast.ast-ty-slice-with-pools pools elem-ty))]
+                          [(ResultAstType.Err message)
+                            (ResultAstType.Err message)])]
+                      [_
+                        (ResultAstType.Err
+                          "parse: Slice expects exactly one type")])]
+                  [_
+                    (ResultAstType.Err "parse: Slice expects exactly one type")])]
               [(= tag (compiler-parse-tag-ty-ptr))
                 (match (reader.sexpr-view rest)
                   [(reader.SexprView.Cons elem tail)
@@ -3398,7 +3422,8 @@
     (= name (cbi.compiler-builtin-ctfe-ref 231))
     (= name (cbi.compiler-builtin-ctfe-ref 232))
     (= name (cbi.compiler-builtin-ctfe-ref 233))
-    (= name (cbi.compiler-builtin-ctfe-ref 132))))
+    (= name (cbi.compiler-builtin-ctfe-ref 132))
+    (= name (cbi.compiler-builtin-ctfe-ref 281))))
 
 (define (parse-ast-macro-type-kind-error
   [operand-name : String]
@@ -12420,10 +12445,19 @@
     (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
     (compiler-parse-ok?
       "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))")
+    (compiler-parse-ok? "(define (main) : i64 (begin (type (Slice i64)) 0))")
+    (compiler-parse-ok?
+      "(define (main) : i64 (begin (type (Slice (Array i64 2))) 0))")
     (compiler-parse-ok? "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
     (compiler-parse-error-ok?
       "(define (main) : i64 (begin (type (__tl_dyn-array i64 4)) 0))"
       "parse: __tl_dyn-array expects exactly one type")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (type (Slice)) 0))"
+      "parse: Slice expects exactly one type")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (type (Slice i64 bool)) 0))"
+      "parse: Slice expects exactly one type")
     (compiler-parse-error-ok?
       "(define (main) : i64 (type))"
       "parse: type expects exactly one type")
@@ -12795,13 +12829,14 @@
     [(= index 26) (cbi.compiler-builtin-ctfe-ref 232)]
     [(= index 27) (cbi.compiler-builtin-ctfe-ref 233)]
     [(= index 28) (cbi.compiler-builtin-ctfe-ref 132)]
+    [(= index 29) (cbi.compiler-builtin-ctfe-ref 281)]
     [else 0]))
 
 (define (compiler-parse-macro-type-kind-all-order-ok?
   [kinds : (& kinds ast.AstMacroTypeKindList)]
   [index : i64]) : bool
-  (if (>= index 29)
-    (= (ast.ast-macro-type-kind-list-len kinds) 29)
+  (if (>= index 30)
+    (= (ast.ast-macro-type-kind-list-len kinds) 30)
     (and
       (=
         (ast.ast-macro-type-kind-list-get kinds index 0)
@@ -12874,10 +12909,10 @@
       "box"
       false)
     (compiler-parse-defmacro-type-kind-storage-case-ok?
-      "(defmacro (all-kinds [T : type (:kind i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char string unit never array dyn-array function tuple struct enum str ptr mut-ptr ref mut-ref region type-var box)]) : Module unit)"
-      29
+      "(defmacro (all-kinds [T : type (:kind i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char string unit never array dyn-array function tuple struct enum str ptr mut-ptr ref mut-ref region type-var box slice)]) : Module unit)"
+      30
       "i64"
-      "box"
+      "slice"
       true)))
 
 (define (compiler-parse-fixed-source-id-only-ok?
@@ -12914,6 +12949,11 @@
       (not (= generated-all (cbi.compiler-builtin-ctfe-ref 219)))
       (= source-dots (cbi.compiler-builtin-ctfe-ref 222))
       (not (= generated-dots (cbi.compiler-builtin-ctfe-ref 222)))
+      (= (reader.stable-symbol-id "slice") (cbi.compiler-builtin-ctfe-ref 281))
+      (not
+        (=
+          (ci.intern-generated-canonical-name "slice")
+          (cbi.compiler-builtin-ctfe-ref 281)))
       ;; One adversarial spelling per new fixed-name family proves that equal
       ;; rendered text does not confer parser syntax identity.
       (compiler-parse-fixed-source-id-only-ok?

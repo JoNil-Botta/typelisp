@@ -765,6 +765,8 @@
   -1)
 (define compiler-builtin-id-comptime-type-info-opaque-variant : i64
   -1)
+(define compiler-builtin-id-comptime-type-info-slice-variant : i64
+  -1)
 (define compiler-builtin-id-fix-name : i64
   -1)
 (define compiler-builtin-id-fix-pattern : i64
@@ -786,7 +788,7 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (make-array i64 281))
+  (make-array i64 282))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -797,20 +799,20 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (__tl_dyn-array i64) (make-array i64 4)]
-    [ids : (__tl_dyn-array i64) (make-array i64 315)]
-    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 281)]
+    [ids : (__tl_dyn-array i64) (make-array i64 316)]
+    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 282)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 315)
+      (while (< i 316)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 281)
+      (while (< i 282)
         (begin
           (array-set! ctfe-ids i -1)
           (set! i (+ i 1))))
@@ -884,7 +886,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 281)
+    (while (< i 282)
       (begin
         (array-set! (struct-get state ctfe-ids) i (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -892,7 +894,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 281)
+    (while (< i 282)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
         (set! i (+ i 1))))))
@@ -1289,6 +1291,7 @@
       state
       314
       compiler-builtin-id-tl-arena-debug-assert-pool-install)
+    (state-set! state 315 compiler-builtin-id-comptime-type-info-slice-variant)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1652,6 +1655,9 @@
     (set!
       compiler-builtin-id-comptime-type-info-opaque-variant
       (state-ref state 263))
+    (set!
+      compiler-builtin-id-comptime-type-info-slice-variant
+      (state-ref state 315))
     (set! compiler-builtin-id-fix-name (state-ref state 264))
     (set! compiler-builtin-id-fix-pattern (state-ref state 265))
     (set! compiler-builtin-id-fix-ty (state-ref state 266))
@@ -2061,7 +2067,8 @@
     (compiler-builtin-load-ctfe-id! insert-missing 279 "syntax-name-fresh")
     ;; CTFE type syntax appends after all shipped IDs so generated names with
     ;; the same display text cannot acquire the private source-head identity.
-    (compiler-builtin-load-ctfe-id! insert-missing 280 "__tl_dyn-array")))
+    (compiler-builtin-load-ctfe-id! insert-missing 280 "__tl_dyn-array")
+    (compiler-builtin-load-ctfe-id! insert-missing 281 "slice")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -2970,6 +2977,9 @@
       compiler-builtin-id-comptime-type-info-opaque-variant
       (compiler-builtin-resolve-name insert-missing "Opaque"))
     (set!
+      compiler-builtin-id-comptime-type-info-slice-variant
+      (compiler-builtin-resolve-name insert-missing "Slice"))
+    (set!
       compiler-builtin-id-fix-name
       (compiler-builtin-resolve-name insert-missing "name"))
     (set!
@@ -3096,6 +3106,46 @@
 
 (cfg
   test
+  (define (compiler-builtin-comptime-type-info-slice-id-current-ok?) : bool
+    (begin
+      (compiler-builtin-refresh!)
+      (=
+        compiler-builtin-id-comptime-type-info-slice-variant
+        (ci.intern-source-slice "Slice" 0 5)))))
+
+(cfg
+  test
+  (define (compiler-builtin-comptime-type-info-slice-id-reset-ok?) : bool
+    (begin
+      (ci.intern-reset!)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (unless
+        (compiler-builtin-comptime-type-info-slice-id-current-ok?)
+        (return false))
+      (let
+        [snapshot : CompilerBuiltinIdsState (state-capture)]
+        (begin
+          (set! compiler-builtin-id-comptime-type-info-slice-variant -1)
+          (state-install! snapshot)
+          (and
+            (=
+              compiler-builtin-id-comptime-type-info-slice-variant
+              (ci.intern-source-slice "Slice" 0 5))
+            (=
+              (state-ref snapshot 315)
+              compiler-builtin-id-comptime-type-info-slice-variant)))))))
+
+(cfg
+  test
+  (test
+    compiler-builtin-comptime-type-info-slice-id
+    (if (compiler-builtin-comptime-type-info-slice-id-reset-ok?)
+      unit
+      (io.panic "compiler builtin TypeInfo Slice ID lifecycle failed"))))
+
+(cfg
+  test
   (define (compiler-builtin-parser-syntax-ids-current-ok?) : bool
     (and
       (= (compiler-builtin-ctfe-ref 219) (ci.intern-source-slice "all" 0 3))
@@ -3207,6 +3257,10 @@
       (=
         (compiler-builtin-ctfe-ref 279)
         (ci.intern-source-slice "syntax-name-fresh" 0 17))
+      (=
+        (compiler-builtin-ctfe-ref 280)
+        (ci.intern-source-slice "__tl_dyn-array" 0 14))
+      (= (compiler-builtin-ctfe-ref 281) (ci.intern-source-slice "slice" 0 5))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
@@ -3230,7 +3284,15 @@
       (not
         (=
           (compiler-builtin-ctfe-ref 265)
-          (ci.intern-generated-canonical-name "defgeneric"))))))
+          (ci.intern-generated-canonical-name "defgeneric")))
+      (not
+        (=
+          (compiler-builtin-ctfe-ref 280)
+          (ci.intern-generated-canonical-name "__tl_dyn-array")))
+      (not
+        (=
+          (compiler-builtin-ctfe-ref 281)
+          (ci.intern-generated-canonical-name "slice"))))))
 
 (cfg
   test
@@ -3248,6 +3310,8 @@
           (compiler-builtin-ctfe-set! 234 -1)
           (compiler-builtin-ctfe-set! 271 -1)
           (compiler-builtin-ctfe-set! 279 -1)
+          (compiler-builtin-ctfe-set! 280 -1)
+          (compiler-builtin-ctfe-set! 281 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)

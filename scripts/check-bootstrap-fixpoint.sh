@@ -503,6 +503,7 @@ if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
     BRIDGE_BIN="$BRIDGE_DIR/bridge$BIN_EXT"
     BRIDGE_CWD="$BRIDGE_DIR/cwd"
     mkdir -p "$BRIDGE_CWD"
+    # Isolate bridge compiles so repository-local implicit stdlib roots cannot shadow the prepared roots.
     if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
         BRIDGE_LEGACY_STDLIB="$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/bootstrap/stdlib"
         (
@@ -522,18 +523,21 @@ if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
                 --opt-level 2
         )
     else
-        run_with_heartbeat \
-            "published seed -> comptime short-variant bridge" \
-            "$COMPILER" compile \
-            "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/$BOOTSTRAP_SRC" \
-            -o "$BRIDGE_ASM" \
-            --target "$BOOTSTRAP_TARGET" \
-            $(native_target_cfg_args) \
-            $(bootstrap_extra_cfg_args) \
-            --cfg stage0-seed-bootstrap \
-            --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
-            --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
-            --opt-level 2
+        (
+            cd "$BRIDGE_CWD"
+            run_with_heartbeat \
+                "published seed -> comptime short-variant bridge" \
+                "$COMPILER" compile \
+                "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/$BOOTSTRAP_SRC" \
+                -o "$BRIDGE_ASM" \
+                --target "$BOOTSTRAP_TARGET" \
+                $(native_target_cfg_args) \
+                $(bootstrap_extra_cfg_args) \
+                --cfg stage0-seed-bootstrap \
+                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
+                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
+                --opt-level 2
+        )
     fi
     assemble_and_link \
         "comptime short-variant bridge" \

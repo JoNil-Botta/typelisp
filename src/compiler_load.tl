@@ -4836,6 +4836,13 @@
         alias
         summary
         locals)]
+    [(ast.AstType.Slice elem)
+      (compiler-load-session-state-lazy-type-id-demand
+        state
+        elem
+        alias
+        summary
+        locals)]
     [(ast.AstType.Box elem)
       (compiler-load-session-state-lazy-type-id-demand
         state

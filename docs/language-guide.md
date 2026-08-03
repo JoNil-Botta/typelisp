@@ -70,12 +70,15 @@ i64 i32 i16 i8   u64 u32 u16 u8   f64 f32   bool   char   unit   String
 ByteBuf           ; owned mutable byte buffer
 (Array t n)       ; fixed-size array (public Array end state)
 (Array t)         ; compatibility runtime-sized buffer during migration
+(Slice t)          ; unsized borrowed referent (never a bare runtime value)
 (Tuple t1 t2 ...) ; tuple (by-value params/returns supported)
 (Box t)           ; arena-owned indirection for recursive aggregates
 (& r t)           ; immutable reference tied to lifetime/arena r
 (& r str)         ; borrowed string view of an owned String
 (& r bytes)       ; immutable borrowed byte slice
 (&mut r bytes)    ; exclusive mutable borrowed byte slice
+(& r (Slice t))   ; immutable borrowed Slice view
+(&mut r (Slice t)) ; exclusive mutable borrowed Slice view
 (-> arg... ret)   ; function type
 Name              ; a defenum / defstruct nominal type
 (Name r...)       ; lifetime-parameterized nominal type use
@@ -89,6 +92,11 @@ consistent raw-pointer atomics (`atomic-load`, `atomic-store!`,
 `atomic-add!`, `atomic-fetch-add!`, `atomic-cas!`) for 32/64-bit integer
 elements.
 
+Borrowed Slice references are not C `extern` parameter or return types. A C
+boundary must spell an explicit `(Ptr T)` or `(MutPtr T)` plus a scalar length;
+getting that storage from an owner with `array-data` or pointer casts is
+`unsafe`, and a borrowed Slice has no `array-data` extractor.
+
 Function signatures normally elide reference lifetime names: write
 `[item : (& Item)]` or `[item : (&mut Item)]`, and an elided reference return
 uses the sole input reference lifetime. Use explicit names such as
@@ -98,6 +106,27 @@ explicit. Borrow expressions stay `(& place)` and `(&mut place)`.
 At a typed call, an existing `&mut T` argument may be passed to an `&T`
 parameter as a tracked shared reborrow; the reverse conversion is never
 implicit.
+
+`Slice` is an unsized borrowed referent, so only `(& r (Slice t))` and
+`(&mut r (Slice t))` are runtime forms; a bare `(Slice t)` cannot be a value,
+field, or ordinary parameter. At an exact typed call boundary, an explicit
+fixed-array borrow unsizes to the same-mutability Slice parameter (`(& items)`
+to `& Slice`, or `(&mut items)` to `&mut Slice`); a bare array is never
+auto-borrowed for this conversion. The checked `slice-view` and
+`slice-mut-view` builtins accept fixed/compatibility arrays, suitable references,
+or existing Slice views and return allocation-free, provenance-tied subviews.
+`length`/`array-length`, `array-ref`, and mutable `array-set!` operate on these
+views with checked ranges and indices; zero-length views are valid. For
+example:
+
+```lisp
+(define (middle-length [view : (& r (Slice i64))]) : i64
+  (length view))
+
+(let [items : (Array i64 4) (array 10 20 30 40)]
+  (middle-length (& items))                    ; explicit whole-array unsize
+  (middle-length (slice-view items 1 2)))      ; checked borrowed subview
+```
 
 ### Abstraction: comptime, not generics
 
@@ -212,11 +241,12 @@ calls.
 
 ### Builtins and stdlib
 
-Compiler-owned builtins are a small set: fixed-array element operations
-(`array-ref`, `array-set!`, `array-length`/`length`), string
-indexing/slicing primitives (`substring`/`string-slice`, `int->string`),
-and the CPU instruction intrinsics. Array and string indexing is
-bounds-checked at runtime. Everything else lives in stdlib modules imported
+Compiler-owned builtins are a small set: fixed-array and borrowed-Slice element
+operations (`array-ref`, `array-set!`, `array-length`/`length`), checked
+`slice-view`/`slice-mut-view`, string indexing/slicing primitives
+(`substring`/`string-slice`, `int->string`), and the CPU instruction intrinsics.
+Array, Slice, and string indexing/ranges are bounds-checked at runtime.
+Everything else lives in stdlib modules imported
 with dotted imports: printing and `panic`/`error` in `stdlib.io`, string
 inspection/parsing in `stdlib.string`, files and processes in `stdlib.io`
 and `stdlib.fs`, string building in `stdlib.str_cat`, `stdlib.format`, and `stdlib.text_buf`,

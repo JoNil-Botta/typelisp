@@ -118,6 +118,32 @@ fi
 grep -F "optimizer pass 'no-such-pass' did not run" "$WORKDIR/missing.stderr" >/dev/null
 test ! -e "$WORKDIR/should-not-exist.ir"
 
+SLICE_SOURCE="$ROOT/tests/golden/slice_text_ir.tl"
+SLICE_IR_FIRST="$WORKDIR/slice_text.first.ir"
+SLICE_IR_SECOND="$WORKDIR/slice_text.second.ir"
+SLICE_IR_FIRST_NORMALIZED="$WORKDIR/slice_text.first.normalized.ir"
+SLICE_IR_SECOND_NORMALIZED="$WORKDIR/slice_text.second.normalized.ir"
+
+for SLICE_OUTPUT in "$SLICE_IR_FIRST" "$SLICE_IR_SECOND"; do
+    "$COMPILER" compile "$SLICE_SOURCE" \
+        --dump-ir \
+        --verify-ir \
+        --opt-level 0 \
+        -o "$SLICE_OUTPUT" \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/src" \
+        >"$WORKDIR/slice_text.stdout" 2>"$WORKDIR/slice_text.stderr"
+done
+
+tr -d '\r' <"$SLICE_IR_FIRST" >"$SLICE_IR_FIRST_NORMALIZED"
+tr -d '\r' <"$SLICE_IR_SECOND" >"$SLICE_IR_SECOND_NORMALIZED"
+if ! cmp -s "$SLICE_IR_FIRST_NORMALIZED" "$SLICE_IR_SECOND_NORMALIZED"; then
+    echo "borrowed Slice textual IR dump is not deterministic" >&2
+    diff -u "$SLICE_IR_FIRST_NORMALIZED" "$SLICE_IR_SECOND_NORMALIZED" >&2 || true
+    exit 1
+fi
+grep -F "(& lifetime (Slice i64))" "$SLICE_IR_FIRST_NORMALIZED" >/dev/null
+
 # #6115 regression: a scaled dump must render with memory proportional to the
 # output, not the retired quadratic recursive concatenation. 6000 tiny
 # functions render ~1.5MB of IR text; the old render copied the remaining

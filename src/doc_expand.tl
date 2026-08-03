@@ -211,6 +211,8 @@
         ")")]
     [(ast.AstType.DynArray elem)
       (doc-cat3 "(Array " (doc-ast-type-id-source type-segment-bases elem) ")")]
+    [(ast.AstType.Slice elem)
+      (doc-cat3 "(Slice " (doc-ast-type-id-source type-segment-bases elem) ")")]
     [(ast.AstType.Box elem)
       (doc-cat3 "(Box " (doc-ast-type-id-source type-segment-bases elem) ")")]
     [(ast.AstType.Region region elem)

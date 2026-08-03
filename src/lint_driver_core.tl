@@ -1947,6 +1947,7 @@
       (selfhost-lint-dead-type-list-refs (box-get items) refs)]
     [(ast.AstType.Array elem _) (selfhost-lint-dead-type-id-refs elem refs)]
     [(ast.AstType.DynArray elem) (selfhost-lint-dead-type-id-refs elem refs)]
+    [(ast.AstType.Slice elem) (selfhost-lint-dead-type-id-refs elem refs)]
     [(ast.AstType.Box elem) (selfhost-lint-dead-type-id-refs elem refs)]
     [(ast.AstType.Region _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
     [(ast.AstType.Ref _ inner) (selfhost-lint-dead-type-id-refs inner refs)]

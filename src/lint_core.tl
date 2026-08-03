@@ -2109,6 +2109,8 @@
       (lint-type-id-uses-import? elem alias module-name)]
     [(ast.AstType.DynArray elem)
       (lint-type-id-uses-import? elem alias module-name)]
+    [(ast.AstType.Slice elem)
+      (lint-type-id-uses-import? elem alias module-name)]
     [(ast.AstType.Box elem) (lint-type-id-uses-import? elem alias module-name)]
     [(ast.AstType.Region _ inner)
       (lint-type-id-uses-import? inner alias module-name)]

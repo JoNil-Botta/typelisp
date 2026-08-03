@@ -1552,6 +1552,78 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-byte-array-eq?
+    [left : (__tl_dyn-array u8)]
+    [right : (__tl_dyn-array u8)]) : bool
+    (let
+      [count : i64 (array-length left)]
+      [index : i64 0]
+      (if (not (= count (array-length right)))
+        false
+        (begin
+          (while (and
+            (< index count)
+            (= (array-ref left index) (array-ref right index)))
+            (set! index (+ index 1)))
+          (= index count))))))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-encode-deterministic
+    [decls : ast.AstDeclList]
+    [paths : ast.AstDeclPathList]
+    [modules : ast.AstDeclModuleList]
+    [seen : sym_i64_env.SymI64Env]
+    [source-pools : ast.AstNodePoolContext]
+    [source-count : i64]
+    [identity-count : i64]) : ResultSurfaceAstBytes
+    (match (surface-ast-encode
+      decls
+      paths
+      modules
+      seen
+      source-pools
+      source-count
+      identity-count)
+      [(ResultSurfaceAstBytes.Err message) (ResultSurfaceAstBytes.Err message)]
+      [(ResultSurfaceAstBytes.Ok first)
+        (match (surface-ast-encode
+          decls
+          paths
+          modules
+          seen
+          source-pools
+          source-count
+          identity-count)
+          [(ResultSurfaceAstBytes.Err message)
+            (ResultSurfaceAstBytes.Err message)]
+          [(ResultSurfaceAstBytes.Ok second)
+            (if (surface-ast-byte-array-eq? first second)
+              (ResultSurfaceAstBytes.Ok first)
+              (ResultSurfaceAstBytes.Err
+                "surface ast: repeated encoding mismatch"))])])))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-borrowed-slice-type-ok?
+    [pools : ast.AstNodePoolContext]
+    [ty : ast.AstType]) : bool
+    (match ty
+      [(ast.AstType.Ref region inner)
+        (and
+          (surface_identity.surface-identity-string-eq?
+            (ci.intern-str region)
+            "borrow-region")
+          (match (ast.ast-node-pool-context-type-get pools inner)
+            [(ast.AstType.Slice elem)
+              (match (ast.ast-node-pool-context-type-get pools elem)
+                [(ast.AstType.I64) true]
+                [_ false])]
+            [_ false]))]
+      [_ false])))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-tests-ok?) : bool
     (let
       [_reset : unit (ci.intern-reset!)]
@@ -1579,6 +1651,11 @@
           source-pools
           (ast.AstExpr.Binary ast.AstBinOp.Add left right))]
       [borrow-lifetime-id : i64 (ci.intern "borrow-region")]
+      [view-param-id : i64 (ci.intern "view")]
+      [slice-i64 : ast.AstType
+        (ast.ast-ty-slice-with-pools source-pools ast.AstType.I64)]
+      [borrowed-slice : ast.AstType
+        (ast.ast-ty-ref-with-pools source-pools borrow-lifetime-id slice-i64)]
       [body : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
@@ -1591,6 +1668,8 @@
         (ast.ast-macro-type-kind-list-with-length 3)]
       [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
         (make-array ast.AstMacroParam 1)]
+      [view-param-slots : (__tl_dyn-array ast.AstParam)
+        (make-array ast.AstParam 1)]
       [decl-slots : (__tl_dyn-array ast.AstDecl) (make-array ast.AstDecl 2)]
       [path-slots : (__tl_dyn-array String) (make-array String 2)]
       [owner-slots : (__tl_dyn-array i64) (make-array i64 2)]
@@ -1618,13 +1697,17 @@
             false
             macro-type-kinds))
         (array-set!
+          view-param-slots
+          0
+          (ast.AstParam.Param view-param-id borrowed-slice false false))
+        (array-set!
           decl-slots
           0
           (ast.AstDecl.DefFn
             ast.ast-decl-meta-runtime
             fn-id
-            (ast.AstParamList (make-array ast.AstParam 0) 0)
-            ast.AstType.I64
+            (ast.AstParamList view-param-slots 1)
+            borrowed-slice
             body
             ast.AstFnMetadata.No))
         (array-set!
@@ -1669,7 +1752,7 @@
           (match (surface_identity.surface-identity-encode identity-payload)
             [(surface_identity.ResultSurfaceIdentityBytes.Err _) false]
             [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
-              (match (surface-ast-encode
+              (match (surface-ast-encode-deterministic
                 decls
                 paths
                 modules
@@ -1721,14 +1804,39 @@
                                     [(ast.AstDecl.DefFn
                                         _
                                         hydrated-name
-                                        _
-                                        _
+                                        hydrated-params
+                                        hydrated-ret
                                         hydrated-body
                                         _)
                                       (and
                                         (surface_identity.surface-identity-string-eq?
                                           (ci.intern-str hydrated-name)
                                           "main")
+                                        (=
+                                          (ast.ast-param-list-len
+                                            (& hydrated-params))
+                                          1)
+                                        (surface-ast-borrowed-slice-type-ok?
+                                          (struct-get hydration pools)
+                                          hydrated-ret)
+                                        (match (ast.ast-param-list-get
+                                          (& hydrated-params)
+                                          0
+                                          (ast.ast-param-fallback))
+                                          [(ast.AstParam.Param
+                                              hydrated-param-name
+                                              hydrated-param-ty
+                                              false
+                                              false)
+                                            (and
+                                              (surface_identity.surface-identity-string-eq?
+                                                (ci.intern-str
+                                                  hydrated-param-name)
+                                                "view")
+                                              (surface-ast-borrowed-slice-type-ok?
+                                                (struct-get hydration pools)
+                                                hydrated-param-ty))]
+                                          [_ false])
                                         (match (ast.ast-node-pool-context-expr-get
                                           (struct-get hydration pools)
                                           hydrated-body)

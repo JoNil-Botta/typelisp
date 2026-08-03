@@ -6,5 +6,10 @@
     [(comptime.Expr.Var _) true]
     [_ false]))
 
+(define (bootstrap-comptime-slice-variant-probe [value : comptime.TypeInfo]) : bool
+  (match value
+    [(comptime.TypeInfo.Slice _) true]
+    [_ false]))
+
 (define (main) : i64
   0)

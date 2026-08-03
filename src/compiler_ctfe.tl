@@ -3169,6 +3169,13 @@
           pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
+    [(ast.AstType.Slice elem)
+      (ast.ast-ty-slice-with-pools
+        pools
+        (ctfe-reflect-resolve-type-with-pools
+          pools
+          infos
+          (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Box elem)
       (ast.ast-ty-box-with-pools
         pools
@@ -3367,6 +3374,13 @@
           pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
+    [(ast.AstType.Slice elem)
+      (string.append
+        "slice_"
+        (ctfe-type-key-with-reflections-and-pools
+          pools
+          infos
+          (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Box elem)
       (string.append
         "box_"
@@ -3491,6 +3505,7 @@
     [(ast.AstType.Tuple _) "tuple"]
     [(ast.AstType.Array _ _) "array"]
     [(ast.AstType.DynArray _) "dyn-array"]
+    [(ast.AstType.Slice _) "slice"]
     [(ast.AstType.Box _) "box"]
     [(ast.AstType.Ptr _) "ptr"]
     [(ast.AstType.MutPtr _) "mut-ptr"]
@@ -3783,6 +3798,15 @@
                 (ast.ast-node-pool-context-type-get pools elem)))
             env)
           (CtfePatternMatch.No))]
+      [(ast.AstType.Slice elem)
+        (if (ctfe-pattern-variant-name? variant "Slice")
+          (ctfe-match-pattern-list
+            args
+            (ctfe-value-list1
+              (CompilerCtfeValue.TypeInfoBox
+                (ast.ast-node-pool-context-type-get pools elem)))
+            env)
+          (CtfePatternMatch.No))]
       [(ast.AstType.Func params ret)
         (if (ctfe-pattern-variant-name? variant "Function")
           (ctfe-match-pattern-list
@@ -3956,6 +3980,17 @@
 ;; lowerer ABI; user-defined names come from the layout table carried in `env`.
 ;; Unresolved type variables without a table entry return -1 so callers can
 ;; produce a source-located diagnostic instead of inventing runtime metadata.
+;; References carry a type-pool id for their referent. Peel only Region
+;; wrappers around that immediate referent; owning containers remain ordinary
+;; one-word references.
+(define (ctfe-reference-to-slice?
+  [pools : ast.AstNodePoolContext]
+  [inner : i64]) : bool
+  (match (ast.ast-node-pool-context-type-get pools inner)
+    [(ast.AstType.Region _ nested) (ctfe-reference-to-slice? pools nested)]
+    [(ast.AstType.Slice _) true]
+    [_ false]))
+
 (define (ctfe-type-size-with-pools
   [pools : ast.AstNodePoolContext]
   [layouts : CtfeLayoutInfoList]
@@ -3992,11 +4027,19 @@
           -1
           (* elem-size count)))]
     [(ast.AstType.DynArray _) 8]
+    ;; Bare slices remain unsized; only borrowed Slice references have layout.
+    [(ast.AstType.Slice _) -1]
     [(ast.AstType.Box _) 8]
     [(ast.AstType.Ptr _) 8]
     [(ast.AstType.MutPtr _) 8]
-    [(ast.AstType.Ref _ _) 8]
-    [(ast.AstType.MutRef _ _) 8]
+    [(ast.AstType.Ref _ inner)
+      (if (ctfe-reference-to-slice? pools inner)
+        16
+        8)]
+    [(ast.AstType.MutRef _ inner)
+      (if (ctfe-reference-to-slice? pools inner)
+        16
+        8)]
     [(ast.AstType.Region _ inner)
       (ctfe-type-size-with-pools
         pools
@@ -4081,6 +4124,7 @@
         layouts
         (ast.ast-node-pool-context-type-get pools elem))]
     [(ast.AstType.DynArray _) 8]
+    [(ast.AstType.Slice _) -1]
     [(ast.AstType.Box _) 8]
     [(ast.AstType.Ptr _) 8]
     [(ast.AstType.MutPtr _) 8]
@@ -4469,6 +4513,10 @@
                       (CompilerCtfeValue.Type (ctfe-ty-get env elem))
                       arg-fuel)]
                   [(ast.AstType.DynArray elem)
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
+                      arg-fuel)]
+                  [(ast.AstType.Slice elem)
                     (ResultCtfe.Ok
                       (CompilerCtfeValue.Type (ctfe-ty-get env elem))
                       arg-fuel)]
@@ -9918,6 +9966,13 @@
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
           (ast.ast-expr-list-new))
         env)]
+    [(ast.AstType.Slice elem)
+      (ctfe-type-syntax-call-id
+        cbi.compiler-builtin-id-comptime-type-info-slice-variant
+        (ast.ast-expr-cons
+          (ctfe-type-to-expr (ctfe-ty-get env elem) env)
+          (ast.ast-expr-list-new))
+        env)]
     [(ast.AstType.Box elem)
       (ctfe-type-syntax-call-id
         cbi.compiler-builtin-id-fix-Box
@@ -10061,6 +10116,8 @@
                   (= name (ctfe-builtin-ref 109))
                   (= name (ctfe-builtin-ref 280)))
                 (ast.ast-ty-dyn-array-with-pools (ctfe-env-pools env) elem-ty)]
+              [(= name cbi.compiler-builtin-id-comptime-type-info-slice-variant)
+                (ast.ast-ty-slice-with-pools (ctfe-env-pools env) elem-ty)]
               [(= name cbi.compiler-builtin-id-fix-Box)
                 (ast.ast-ty-box-with-pools (ctfe-env-pools env) elem-ty)]
               [(= name (ctfe-builtin-ref 177))
@@ -10306,6 +10363,9 @@
                 (ctfe-expr-array-type args origin env fuel)]
               [(or
                   (= name (ctfe-builtin-ref 280))
+                  (=
+                    name
+                    cbi.compiler-builtin-id-comptime-type-info-slice-variant)
                   (= name cbi.compiler-builtin-id-fix-Box)
                   (= name (ctfe-builtin-ref 177))
                   (= name (ctfe-builtin-ref 178)))
@@ -10446,6 +10506,13 @@
         [(ResultCtfeQuoteType.Ok quoted next-fuel)
           (ResultCtfeQuoteType.Ok
             (ast.ast-ty-dyn-array-with-pools (ctfe-env-pools env) quoted)
+            next-fuel)]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
+    [(ast.AstType.Slice elem)
+      (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
+            (ast.ast-ty-slice-with-pools (ctfe-env-pools env) quoted)
             next-fuel)]
         [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(ast.AstType.Box elem)
@@ -13804,6 +13871,14 @@
             (ctfe-ty-get env a-elem)
             (ctfe-ty-get env b-elem))]
         [_ false])]
+    [(ast.AstType.Slice a-elem)
+      (match b
+        [(ast.AstType.Slice b-elem)
+          (ctfe-type-eq-in-env
+            env
+            (ctfe-ty-get env a-elem)
+            (ctfe-ty-get env b-elem))]
+        [_ false])]
     [(ast.AstType.Box a-elem)
       (match b
         [(ast.AstType.Box b-elem)
@@ -14142,6 +14217,44 @@
             (= (struct-get (& args) len) 1)
             (match (ctfe-expr-unspan env (ctfe-ast-get env func-box))
               [(ast.AstExpr.Var name) (= name (ctfe-builtin-ref 280))]
+              [_ false]))]
+        [_ false]))))
+
+(define (compiler-ctfe-slice-type-head-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [i64-expr : i64
+      (ctfe-ast-push env (ast.AstExpr.Var (ctfe-builtin-ref 159)))]
+    [count-expr : i64
+      (ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
+    [slice-id : i64 cbi.compiler-builtin-id-comptime-type-info-slice-variant]
+    [slice-call : i64 (compiler-ctfe-call1-in-env env slice-id i64-expr)]
+    [slice-empty-call : i64
+      (ast.ast-expr-call-with-pools
+        (ctfe-env-pools env)
+        (ctfe-ast-push env (ast.AstExpr.Var slice-id))
+        (ast.ast-expr-list-new))]
+    [slice-two-call : i64
+      (compiler-ctfe-call2-in-env env slice-id i64-expr count-expr)]
+    [generated-slice-id : i64 (ctfe-materialize-generated-name-id "Slice")]
+    [generated-slice-call : i64
+      (compiler-ctfe-call1-in-env env generated-slice-id i64-expr)]
+    [slice-ty : ast.AstType
+      (ast.ast-ty-slice-with-pools (ctfe-env-pools env) ast.AstType.I64)]
+    [roundtrip-call : i64 (ctfe-type-to-expr slice-ty env)]
+    [origin : ast.AstExpr (ctfe-ast-get env slice-call)]
+    (and
+      (compiler-ctfe-type-expr-is? env slice-call origin slice-ty)
+      (compiler-ctfe-type-expr-rejected? env slice-empty-call origin)
+      (compiler-ctfe-type-expr-rejected? env slice-two-call origin)
+      (compiler-ctfe-type-expr-rejected? env generated-slice-call origin)
+      (compiler-ctfe-type-expr-is? env roundtrip-call origin slice-ty)
+      (match (ctfe-expr-unspan env (ctfe-ast-get env roundtrip-call))
+        [(ast.AstExpr.Call func-box args)
+          (and
+            (= (struct-get (& args) len) 1)
+            (match (ctfe-expr-unspan env (ctfe-ast-get env func-box))
+              [(ast.AstExpr.Var name) (= name slice-id)]
               [_ false]))]
         [_ false]))))
 
@@ -15454,6 +15567,104 @@
         [(ResultCtfe.Err _) (set! ok false)])
       (unless (compiler-ctfe-type-info-source-match-ok? env) (set! ok false))
       ok)))
+
+;; Slice reflection uses a dedicated short-lived environment so its pooled
+;; AstType child remains live across each public query without extending the
+;; already-large general TypeInfo reflection smoke.
+(define (compiler-ctfe-slice-type-literal [env : CtfeEnv]) : i64
+  (ctfe-ast-push
+    env
+    (ast.AstExpr.TypeLiteral
+      (ctfe-ty-push
+        env
+        (ast.ast-ty-slice-with-pools (ctfe-env-pools env) (ast.AstType.Bool))))))
+
+(define (compiler-ctfe-slice-type-info-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [slice-ty : i64 (compiler-ctfe-slice-type-literal env)]
+    (match (compiler-ctfe-eval
+      (ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 46) slice-ty))
+      env
+      (ctfe-fuel-limit))
+      [(ResultCtfe.Ok value _)
+        (match value
+          [(CompilerCtfeValue.TypeInfo ty)
+            (match (ctfe-match-type-info-variant
+              cbi.compiler-builtin-id-comptime-type-info-slice-variant
+              (ast.ast-pattern-cons
+                (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
+                (ast.ast-pattern-list-new))
+              ty
+              env)
+              [(CtfePatternMatch.Matched matched)
+                (compiler-ctfe-env-type-info-box-builtin-kind?
+                  matched
+                  cbi.compiler-builtin-id-fix-items
+                  "bool")]
+              [(CtfePatternMatch.No) false])]
+          [_ false])]
+      [(ResultCtfe.Err _) false])))
+
+(define (compiler-ctfe-slice-type-kind-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [slice-ty : i64 (compiler-ctfe-slice-type-literal env)]
+    (match (compiler-ctfe-eval
+      (ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 71) slice-ty))
+      env
+      (ctfe-fuel-limit))
+      [(ResultCtfe.Ok value _)
+        (match value
+          [(CompilerCtfeValue.String kind _) (string.eq kind "slice")]
+          [_ false])]
+      [(ResultCtfe.Err _) false])))
+
+(define (compiler-ctfe-slice-type-key-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [slice-ty : i64 (compiler-ctfe-slice-type-literal env)]
+    (match (compiler-ctfe-eval
+      (ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 72) slice-ty))
+      env
+      (ctfe-fuel-limit))
+      [(ResultCtfe.Ok value _)
+        (match value
+          [(CompilerCtfeValue.String key _) (string.eq key "slice_bool")]
+          [_ false])]
+      [(ResultCtfe.Err _) false])))
+
+(define (compiler-ctfe-slice-array-element-type-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [slice-ty : i64 (compiler-ctfe-slice-type-literal env)]
+    (match (compiler-ctfe-eval
+      (ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 82) slice-ty))
+      env
+      (ctfe-fuel-limit))
+      [(ResultCtfe.Ok value _)
+        (match value
+          [(CompilerCtfeValue.Type ty)
+            (match ty
+              [(ast.AstType.Bool) true]
+              [_ false])]
+          [_ false])]
+      [(ResultCtfe.Err _) false])))
+
+(define (compiler-ctfe-slice-reflection-ok?) : bool
+  (and
+    (compiler-ctfe-slice-type-info-ok?)
+    (compiler-ctfe-slice-type-kind-ok?)
+    (compiler-ctfe-slice-type-key-ok?)
+    (compiler-ctfe-slice-array-element-type-ok?)))
 
 ;; --- self-tests ---------------------------------------------------------------
 ;; Basic round-trip: build an `if` expression from bool literal constructors,
@@ -16828,6 +17039,7 @@
     (unless (compiler-ctfe-raw-pointer-type-comparison-ok?) (return 1))
     (unless (compiler-ctfe-fixed-type-head-name-provenance-ok?) (return 1))
     (unless (compiler-ctfe-dyn-array-type-head-ok?) (return 1))
+    (unless (compiler-ctfe-slice-type-head-ok?) (return 1))
     (unless (compiler-ctfe-f64-ok?) (return 1))
     (unless (compiler-ctfe-layout-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-query-ok?) (return 1))
@@ -16835,6 +17047,7 @@
     (unless (compiler-ctfe-module-value-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-from-program-ok?) (return 1))
     (unless (compiler-ctfe-type-info-reflection-ok?) (return 1))
+    (unless (compiler-ctfe-slice-reflection-ok?) (return 1))
     (unless (compiler-ctfe-expr-eq-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-fold-sketch-ok?) (return 1))

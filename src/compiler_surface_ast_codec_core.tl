@@ -384,7 +384,11 @@
       [(ast.AstType.Consume inner)
         (begin
           (surface-ast-write-i64! out 35)
-          (surface-ast-write-i64! out inner))])))
+          (surface-ast-write-i64! out inner))]
+      [(ast.AstType.Slice elem)
+        (begin
+          (surface-ast-write-i64! out 36)
+          (surface-ast-write-i64! out elem))])))
 
 (define (surface-ast-read-type! [reader : SurfaceAstReader]) : ast.AstType
   (let
@@ -451,6 +455,7 @@
       [(= tag 33) (ast.AstType.Ptr (surface-ast-read-i64! reader))]
       [(= tag 34) (ast.AstType.MutPtr (surface-ast-read-i64! reader))]
       [(= tag 35) (ast.AstType.Consume (surface-ast-read-i64! reader))]
+      [(= tag 36) (ast.AstType.Slice (surface-ast-read-i64! reader))]
       [else
         (begin
           (surface-ast-reader-fail! reader "surface ast: invalid type tag")

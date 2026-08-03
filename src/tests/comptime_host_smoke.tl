@@ -302,6 +302,103 @@
           [_ false]))]
     [_ false]))
 
+(define (comptime-host-smoke-result-slice-i64?
+  [pools : compiler_ast_types.AstNodePoolContext]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Type ty)
+      (match ty
+        [(compiler_ast_types.AstType.Slice elem)
+          (match (compiler_ast_types.ast-node-pool-context-type-get pools elem)
+            [(compiler_ast_types.AstType.I64) true]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+;; The native type-slice wrapper and array-element-type callback share the
+;; same value stack ABI as the other composite type callbacks. Use separate
+;; sessions so the committed Slice shape and the unwrapped element are each
+;; observed as the result value of a direct callback sequence.
+(define (comptime-host-smoke-type-slice-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 0)]
+    (begin
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        0
+        8
+        comptime-host-smoke-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [scalar-status : i64
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-type-scalar
+            comptime-host-smoke-cookie
+            0
+            0
+            0)]
+        [slice-status : i64
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-type-slice
+            comptime-host-smoke-cookie
+            0
+            0
+            0)]
+        [commit-status : i64
+          (comptime-host-smoke-invoke
+            compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-commit-result
+            0
+            0)]
+        [constructed-ok : bool
+          (and
+            (= scalar-status tlci_core.tlci-host-callback-status-ok)
+            (= slice-status tlci_core.tlci-host-callback-status-ok)
+            (= commit-status tlci_core.tlci-host-callback-status-ok)
+            (comptime-host-smoke-result-slice-i64? pools))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+            pools
+            operands
+            0
+            8
+            comptime-host-smoke-cookie
+            (compiler_ctfe.ctfe-reflect-info-list-empty))
+          (let
+            [scalar-status : i64
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-type-scalar
+                comptime-host-smoke-cookie
+                0
+                0
+                0)]
+            [slice-status : i64
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-type-slice
+                comptime-host-smoke-cookie
+                0
+                0
+                0)]
+            [element-status : i64
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-array-element-type
+                0
+                0)]
+            [commit-status : i64
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-commit-result
+                0
+                0)]
+            [extracted-ok : bool
+              (and
+                (= scalar-status tlci_core.tlci-host-callback-status-ok)
+                (= slice-status tlci_core.tlci-host-callback-status-ok)
+                (= element-status tlci_core.tlci-host-callback-status-ok)
+                (= commit-status tlci_core.tlci-host-callback-status-ok)
+                (comptime-host-smoke-result-type? false))]
+            (begin
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+              (and constructed-ok extracted-ok))))))))
+
 (define (comptime-host-smoke-result-string-expr?
   [pools : compiler_ast_types.AstNodePoolContext]
   [expected : String]) : bool
@@ -1104,6 +1201,8 @@
       (io.panic "comptime host smoke: construction")]
     [(not (comptime-host-smoke-type-kind-data-ok?))
       (io.panic "comptime host smoke: type-kind data status")]
+    [(not (comptime-host-smoke-type-slice-ok?))
+      (io.panic "comptime host smoke: type-slice callback")]
     [(not (comptime-host-smoke-reflection-builders-ok?))
       (io.panic "comptime host smoke: reflection builders")]
     [(not (comptime-host-smoke-pattern-binding-fuel-ok?))

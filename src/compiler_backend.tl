@@ -12962,6 +12962,22 @@
       (str_cat.str-cat "f" (string.int->string slot) "")]
     [(backend_i64_i64_map.LookupMissing) (compiler-backend-user-symbol-id name)]))
 
+;; Borrowed Slice references are structural two-word values.  The backend only
+;; has the type-segment-bases pool (rather than a typecheck context), so peel
+;; Region wrappers while walking the referent node directly.  This predicate is
+;; intentionally restricted to an immediate Slice referent; no nominal name is
+;; manufactured for the structural group.
+(define (compiler-backend-reference-to-slice?
+  [type-segment-bases : i64]
+  [inner : i64]) : bool
+  (match (compiler_ast_types.ast-type-segment-bases-get
+    type-segment-bases
+    inner)
+    [(compiler_ast_types.AstType.Region _ nested)
+      (compiler-backend-reference-to-slice? type-segment-bases nested)]
+    [(compiler_ast_types.AstType.Slice _) true]
+    [_ false]))
+
 (define (compiler-backend-type-size
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]) : i64
@@ -12986,11 +13002,19 @@
     [(compiler_ast_types.AstType.Tuple _) 8]
     [(compiler_ast_types.AstType.Array _ _) 8]
     [(compiler_ast_types.AstType.DynArray _) 8]
+    ;; A bare slice has no runtime value layout in this foundation packet.
+    [(compiler_ast_types.AstType.Slice _) 0]
     [(compiler_ast_types.AstType.Box _) 8]
     [(compiler_ast_types.AstType.Ptr _) 8]
     [(compiler_ast_types.AstType.MutPtr _) 8]
-    [(compiler_ast_types.AstType.Ref _ _) 8]
-    [(compiler_ast_types.AstType.MutRef _ _) 8]
+    [(compiler_ast_types.AstType.Ref _ inner)
+      (if (compiler-backend-reference-to-slice? type-segment-bases inner)
+        16
+        8)]
+    [(compiler_ast_types.AstType.MutRef _ inner)
+      (if (compiler-backend-reference-to-slice? type-segment-bases inner)
+        16
+        8)]
     [(compiler_ast_types.AstType.Region _ inner)
       (compiler-backend-type-size
         type-segment-bases
@@ -29540,15 +29564,31 @@
   [type-segment-bases : i64]
   [index : CompilerBackendProgramIndex]
   [ty : compiler_ast_types.AstType]) : i64
-  (let
-    [name : String (compiler-backend-aggregate-type-name type-segment-bases ty)]
-    (if (string.eq name "")
-      1
-      (match (backend_string_i64_map.get
-        (& (struct-get index group-word-counts))
-        name)
-        [(backend_string_i64_map.LookupFound count) count]
-        [(backend_string_i64_map.LookupMissing) 1]))))
+  (match ty
+    [(compiler_ast_types.AstType.Ref _ inner)
+      (if (compiler-backend-reference-to-slice? type-segment-bases inner)
+        2
+        1)]
+    [(compiler_ast_types.AstType.MutRef _ inner)
+      (if (compiler-backend-reference-to-slice? type-segment-bases inner)
+        2
+        1)]
+    [(compiler_ast_types.AstType.Region _ inner)
+      (compiler-backend-group-word-count
+        type-segment-bases
+        index
+        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
+    [_
+      (let
+        [name : String
+          (compiler-backend-aggregate-type-name type-segment-bases ty)]
+        (if (string.eq name "")
+          1
+          (match (backend_string_i64_map.get
+            (& (struct-get index group-word-counts))
+            name)
+            [(backend_string_i64_map.LookupFound count) count]
+            [(backend_string_i64_map.LookupMissing) 1])))]))
 
 (define (compiler-backend-group-type?
   [type-segment-bases : i64]
@@ -29705,15 +29745,25 @@
   [type-segment-bases : i64]
   [index : CompilerBackendProgramIndex]
   [ty : compiler_ast_types.AstType]) : i64
-  (let
-    [name : String (compiler-backend-aggregate-type-name type-segment-bases ty)]
-    (if (string.eq name "")
-      0
-      (match (backend_string_i64_map.get
-        (& (struct-get index group-word-class-masks))
-        name)
-        [(backend_string_i64_map.LookupFound mask) mask]
-        [(backend_string_i64_map.LookupMissing) 0]))))
+  (match ty
+    [(compiler_ast_types.AstType.Ref _ _) 0]
+    [(compiler_ast_types.AstType.MutRef _ _) 0]
+    [(compiler_ast_types.AstType.Region _ inner)
+      (compiler-backend-group-word-class-mask
+        type-segment-bases
+        index
+        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
+    [_
+      (let
+        [name : String
+          (compiler-backend-aggregate-type-name type-segment-bases ty)]
+        (if (string.eq name "")
+          0
+          (match (backend_string_i64_map.get
+            (& (struct-get index group-word-class-masks))
+            name)
+            [(backend_string_i64_map.LookupFound mask) mask]
+            [(backend_string_i64_map.LookupMissing) 0])))]))
 
 (define (compiler-backend-group-word-sse?
   [type-segment-bases : i64]

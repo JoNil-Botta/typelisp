@@ -900,6 +900,8 @@
           (string.append "_" (spec-int-key count))))]
     [(ast.AstType.DynArray elem)
       (string.append "dynarray_" (spec-type-key (ast.ty-node-get elem)))]
+    [(ast.AstType.Slice elem)
+      (string.append "slice_" (spec-type-key (ast.ty-node-get elem)))]
     [(ast.AstType.Box elem)
       (string.append "box_" (spec-type-key (ast.ty-node-get elem)))]
     [(ast.AstType.Ptr elem)
@@ -1032,6 +1034,10 @@
     [(ast.AstType.DynArray elem)
       (string.append
         "dynarray_"
+        (spec-type-key-with-owner owner (spec-owner-type-get owner elem)))]
+    [(ast.AstType.Slice elem)
+      (string.append
+        "slice_"
         (spec-type-key-with-owner owner (spec-owner-type-get owner elem)))]
     [(ast.AstType.Box elem)
       (string.append
@@ -3542,6 +3548,13 @@
         count)]
     [(ast.AstType.DynArray elem)
       (ast.ast-ty-dyn-array-with-pools
+        (spec-owner-pools owner)
+        (spec-substitute-type-with-owner
+          owner
+          (spec-owner-type-get owner elem)
+          subs))]
+    [(ast.AstType.Slice elem)
+      (ast.ast-ty-slice-with-pools
         (spec-owner-pools owner)
         (spec-substitute-type-with-owner
           owner
@@ -8341,6 +8354,34 @@
           subs)
         (ast.ast-ty-mut-ptr (ast.AstType.I64))))))
 
+(define (compiler-specialize-owner-slice-type-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
+    [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
+    [slice-i64 : ast.AstType
+      (ast.ast-ty-slice-with-pools pools ast.AstType.I64)]
+    [slice-t : ast.AstType
+      (ast.ast-ty-slice-with-pools
+        pools
+        (ast.AstType.Var cbi.compiler-builtin-id-fix-T))]
+    [subs : SpecTypeSubst
+      (spec-type-subst-cons
+        cbi.compiler-builtin-id-fix-T
+        ast.AstType.I64
+        (spec-type-subst-new))]
+    [substituted : ast.AstType
+      (spec-substitute-type-with-owner owner slice-t subs)]
+    (and
+      (string.eq (spec-type-key-with-owner owner slice-i64) "slice_i64")
+      (match substituted
+        [(ast.AstType.Slice elem)
+          (match (spec-owner-type-get owner elem)
+            [(ast.AstType.I64) true]
+            [_ false])]
+        [_ false]))))
+
 ;: Deterministic specialized name + stable specialization key (mirrors
 ;: src/specialize.rs deterministic-names / stable-keys coverage). The mangling
 ;: is a pure function of the template name and comptime argument values, so
@@ -8982,6 +9023,7 @@
     (unless (compiler-specialize-template-shadow-sibling-ok?) (return 0))
     (unless (compiler-specialize-type-shadow-ok?) (return 0))
     (unless (compiler-specialize-raw-pointer-type-ok?) (return 0))
+    (unless (compiler-specialize-owner-slice-type-ok?) (return 0))
     (unless (compiler-specialize-name-key-ok?) (return 0))
     (unless (compiler-specialize-reuse-ok?) (return 0))
     (unless (compiler-specialize-subst-ok?) (return 0))

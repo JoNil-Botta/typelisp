@@ -1433,6 +1433,8 @@
     [(ast.AstType.Box _) true]
     [(ast.AstType.Array _ _) true]
     [(ast.AstType.DynArray _) true]
+    ;; Bare Slice has no runtime by-value representation in this packet.
+    [(ast.AstType.Slice _) false]
     [(ast.AstType.Enum _) true]
     [(ast.AstType.EnumArgs _ _) true]
     [(ast.AstType.Struct _) true]
@@ -17293,6 +17295,15 @@
 
 ;; The aggregate type name a value carries (mirror of
 ;; compiler-backend-aggregate-type-name); empty for non-aggregate types.
+(define (compiler-reg-reference-to-slice?
+  [type-segment-bases : i64]
+  [inner : i64]) : bool
+  (match (ast.ast-type-segment-bases-get type-segment-bases inner)
+    [(ast.AstType.Region _ nested)
+      (compiler-reg-reference-to-slice? type-segment-bases nested)]
+    [(ast.AstType.Slice _) true]
+    [_ false]))
+
 (define (compiler-reg-aggregate-type-name-with-seg-bases
   [type-segment-bases : i64]
   [ty : ast.AstType]) : String
@@ -17311,47 +17322,84 @@
 (define (compiler-reg-type-register-group?
   [type-segment-bases : i64]
   [ty : ast.AstType]) : bool
-  (let
-    [name : String
-      (compiler-reg-aggregate-type-name-with-seg-bases type-segment-bases ty)]
-    (if (string.eq name "")
-      false
-      (match (reg_string_i64_map.get (& compiler-reg-group-counts) name)
-        [(reg_string_i64_map.LookupFound count) (> count 1)]
-        [(reg_string_i64_map.LookupMissing) false]))))
+  (match ty
+    [(ast.AstType.Ref _ inner)
+      (compiler-reg-reference-to-slice? type-segment-bases inner)]
+    [(ast.AstType.MutRef _ inner)
+      (compiler-reg-reference-to-slice? type-segment-bases inner)]
+    [(ast.AstType.Region _ inner)
+      (compiler-reg-type-register-group?
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [_
+      (let
+        [name : String
+          (compiler-reg-aggregate-type-name-with-seg-bases
+            type-segment-bases
+            ty)]
+        (if (string.eq name "")
+          false
+          (match (reg_string_i64_map.get (& compiler-reg-group-counts) name)
+            [(reg_string_i64_map.LookupFound count) (> count 1)]
+            [(reg_string_i64_map.LookupMissing) false])))]))
 
 (define (compiler-reg-type-register-group-has-sse?
   [type-segment-bases : i64]
   [ty : ast.AstType]) : bool
-  (let
-    [name : String
-      (compiler-reg-aggregate-type-name-with-seg-bases type-segment-bases ty)]
-    (if (string.eq name "")
-      false
-      (match (reg_string_i64_map.get (& compiler-reg-group-class-masks) name)
-        [(reg_string_i64_map.LookupFound mask) (> mask 0)]
-        [(reg_string_i64_map.LookupMissing) false]))))
+  (match ty
+    [(ast.AstType.Ref _ _) false]
+    [(ast.AstType.MutRef _ _) false]
+    [(ast.AstType.Region _ inner)
+      (compiler-reg-type-register-group-has-sse?
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [_
+      (let
+        [name : String
+          (compiler-reg-aggregate-type-name-with-seg-bases
+            type-segment-bases
+            ty)]
+        (if (string.eq name "")
+          false
+          (match (reg_string_i64_map.get
+            (& compiler-reg-group-class-masks)
+            name)
+            [(reg_string_i64_map.LookupFound mask) (> mask 0)]
+            [(reg_string_i64_map.LookupMissing) false])))]))
 
 (define (compiler-reg-type-register-group-word-sse?
   [type-segment-bases : i64]
   [ty : ast.AstType]
   [word-index : i64]) : bool
-  (let
-    [name : String
-      (compiler-reg-aggregate-type-name-with-seg-bases type-segment-bases ty)]
-    (if (or (string.eq name "") (< word-index 0) (> word-index 1))
-      false
-      (match (reg_string_i64_map.get (& compiler-reg-group-class-masks) name)
-        [(reg_string_i64_map.LookupFound mask)
-          (not
-            (=
-              (bit-and
-                mask
-                (if (= word-index 0)
-                  1
-                  2))
-              0))]
-        [(reg_string_i64_map.LookupMissing) false]))))
+  (match ty
+    [(ast.AstType.Ref _ _) false]
+    [(ast.AstType.MutRef _ _) false]
+    [(ast.AstType.Region _ inner)
+      (compiler-reg-type-register-group-word-sse?
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner)
+        word-index)]
+    [_
+      (let
+        [name : String
+          (compiler-reg-aggregate-type-name-with-seg-bases
+            type-segment-bases
+            ty)]
+        (if (or (string.eq name "") (< word-index 0) (> word-index 1))
+          false
+          (match (reg_string_i64_map.get
+            (& compiler-reg-group-class-masks)
+            name)
+            [(reg_string_i64_map.LookupFound mask)
+              (not
+                (=
+                  (bit-and
+                    mask
+                    (if (= word-index 0)
+                      1
+                      2))
+                  0))]
+            [(reg_string_i64_map.LookupMissing) false])))]))
 
 (define (compiler-reg-var-register-group-has-sse?
   [type-segment-bases : i64]

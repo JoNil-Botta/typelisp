@@ -259,6 +259,10 @@
       (string.append
         "(Array "
         (string.append (repl-type-render (ast.ty-node-get elem)) ")"))]
+    [(ast.AstType.Slice elem)
+      (string.append
+        "(Slice "
+        (string.append (repl-type-render (ast.ty-node-get elem)) ")"))]
     [(ast.AstType.Box elem)
       (string.append
         "(Box "

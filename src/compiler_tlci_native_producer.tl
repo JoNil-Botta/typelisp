@@ -1899,6 +1899,14 @@
         "0"
         ops
         ops-count)]
+    [(compiler_ast_types.AstType.Slice elem-id)
+      (embedded-native-template-type-wrap-ops
+        params
+        elem-id
+        tlci_core.tlci-host-callback-name-type-slice
+        "0"
+        ops
+        ops-count)]
     [(compiler_ast_types.AstType.Array elem-id count)
       (embedded-native-template-type-wrap-ops
         params
@@ -6110,6 +6118,7 @@
     "(extern comptime-host-type-box (:symbol \"_tl_comptime_host_type-box\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-dyn-array (:symbol \"_tl_comptime_host_type-dyn-array\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-array (:symbol \"_tl_comptime_host_type-array\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-type-slice (:symbol \"_tl_comptime_host_type-slice\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-ref (:symbol \"_tl_comptime_host_type-ref\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-operand-expr-string-value (:symbol \"_tl_comptime_host_operand-expr-string-value\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-operand-expr-string? (:symbol \"_tl_comptime_host_operand-expr-string?\") : (-> i64 i64 i64 i64 i64 i64))\n"

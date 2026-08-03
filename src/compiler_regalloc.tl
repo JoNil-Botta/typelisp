@@ -2868,9 +2868,11 @@
             (array-set! starts var point)
             (array-set! ends var next)))))))
 
-;; One pass over the three per-instruction live sets, replacing the four
-;; separate word walks this used to be (defs@point, uses@point,
-;; live-after@point, live-after@point+1).
+;; Segment build for one instruction point: a def/use pass at `point` followed
+;; by a live-after pass bridging `point`/`point + 1`. This replaces the four
+;; separate word walks it once was (defs@point, uses@point, live-after@point,
+;; live-after@point+1), and the def/use pass now takes the var ids directly
+;; instead of decoding them back out of freshly built per-instruction bitsets.
 ;;
 ;; Equivalence: every step below reads and writes only the slot of the variable
 ;; it is handling, and the coarse `starts`/`ends` arrays are always distinct
@@ -2880,7 +2882,8 @@
 ;; preserved:
 ;;   * defs and uses apply the SAME idempotent pair (extend the coarse interval
 ;;     to `point`, note `point` in the segment), so a variable that is both a
-;;     def and a use gets one application instead of two identical ones;
+;;     def and a use gets one application, whether the two arrive OR'd into one
+;;     word (the set form) or as a def id plus a use id (the id form);
 ;;   * live-after still notes `point` before `point + 1` (fused into
 ;;     `compiler-reg-segment-note-span!`) and still extends the coarse interval
 ;;     to `point + 1`.
@@ -2892,6 +2895,135 @@
 ;; NOT in live-after, so it still ends at `point`, preserving the def/use touch
 ;; that lets a copy/two-address result coalesce. Defs are marked at `point`
 ;; first, so this never extends a def back.
+;;
+;; The def/use half of the walk for one variable:
+(define (compiler-reg-extend-segment-touch!
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [var : i64]
+  [point : i64]) : unit
+  (if (< var 0)
+    unit
+    (begin
+      (compiler-reg-extend-interval starts ends var point)
+      (compiler-reg-segment-note-point!
+        segments
+        segment-starts
+        segment-ends
+        var
+        point))))
+
+(define (compiler-reg-extend-segment-touch-ids!
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [point : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index id-count)
+      (begin
+        (compiler-reg-extend-segment-touch!
+          starts
+          ends
+          segments
+          segment-starts
+          segment-ends
+          (array-ref ids index)
+          point)
+        (set! index (+ index 1))))))
+
+;; The live-after half: bridge every value live out of this instruction across
+;; the `point`/`next` pair. This one stays a word walk -- live-after is a real
+;; dense live row (36.9M of the 39.1M words this walk reads in an opt2
+;; self-compile), not a one-or-two-bit per-instruction set.
+(define (compiler-reg-extend-segment-after-words!
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [live-after : live.CompilerLiveI64Set]
+  [point : i64]) : unit
+  (let
+    [after-words : i64 (live.compiler-live-set-word-count live-after)]
+    [next : i64 (+ point 1)]
+    [index : i64 0]
+    (while (< index after-words)
+      (let
+        [base : i64 (* index (live.compiler-live-set-word-bits))]
+        [after-bits : i64
+          (live.compiler-live-set-word-at-bounded live-after index)]
+        (begin
+          (while (not (= after-bits 0))
+            (let
+              [item-var : i64
+                (+ base (compiler-reg-low-bit-index32 after-bits))]
+              (begin
+                (compiler-reg-segment-note-span!
+                  segments
+                  segment-starts
+                  segment-ends
+                  item-var
+                  point
+                  next)
+                (compiler-reg-extend-interval starts ends item-var next)
+                (set! after-bits (bit-and after-bits (- after-bits 1))))))
+          (set! index (+ index 1)))))))
+
+;; Id-driven build: the def is one var id and the uses are a short id list, so
+;; neither needs a bitset. Only the per-variable ORDER of the two passes is
+;; observable (every step reads and writes just the slots of the variable it
+;; handles -- `starts`/`ends`, `segment-starts`/`segment-ends` and `segments`
+;; are var-indexed and compiler-reg-segment-flush-var! touches only that var's
+;; row -- so steps for different variables commute), and it is the same order
+;; the fused walk used: def/use at `point` first, then the live-after span.
+(define (compiler-reg-extend-segment-ids!
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [def-var : i64]
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [live-after : live.CompilerLiveI64Set]
+  [point : i64]) : unit
+  (begin
+    (compiler-reg-extend-segment-touch!
+      starts
+      ends
+      segments
+      segment-starts
+      segment-ends
+      def-var
+      point)
+    (compiler-reg-extend-segment-touch-ids!
+      starts
+      ends
+      segments
+      segment-starts
+      segment-ends
+      ids
+      id-count
+      point)
+    (compiler-reg-extend-segment-after-words!
+      starts
+      ends
+      segments
+      segment-starts
+      segment-ends
+      live-after
+      point)))
+
+;; Bitset build, kept for the rare instruction whose use list is wider than the
+;; id buffer. Same two passes in the same per-variable order.
 (define (compiler-reg-extend-segment-sets!
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
@@ -2905,19 +3037,13 @@
   (let
     [defs-words : i64 (live.compiler-live-set-word-count defs)]
     [uses-words : i64 (live.compiler-live-set-word-count uses)]
-    [after-words : i64 (live.compiler-live-set-word-count live-after)]
     [word-count : i64
       (if (>= defs-words uses-words)
-        (if (>= defs-words after-words)
-          defs-words
-          after-words)
-        (if (>= uses-words after-words)
-          uses-words
-          after-words))]
-    [next : i64 (+ point 1)]
+        defs-words
+        uses-words)]
     [index : i64 0]
-    (while (< index word-count)
-      (begin
+    (begin
+      (while (< index word-count)
         (let
           [base : i64 (* index (live.compiler-live-set-word-bits))]
           ;; `compiler-live-set-word-at-bounded` is an unchecked read, so each
@@ -2932,38 +3058,29 @@
               (if (< index uses-words)
                 (live.compiler-live-set-word-at-bounded uses index)
                 0))]
-          [after-bits : i64
-            (if (< index after-words)
-              (live.compiler-live-set-word-at-bounded live-after index)
-              0)]
           (begin
             (while (not (= touched 0))
               (let
                 [item-var : i64 (+ base (compiler-reg-low-bit-index32 touched))]
                 (begin
-                  (compiler-reg-extend-interval starts ends item-var point)
-                  (compiler-reg-segment-note-point!
+                  (compiler-reg-extend-segment-touch!
+                    starts
+                    ends
                     segments
                     segment-starts
                     segment-ends
                     item-var
                     point)
                   (set! touched (bit-and touched (- touched 1))))))
-            (while (not (= after-bits 0))
-              (let
-                [item-var : i64
-                  (+ base (compiler-reg-low-bit-index32 after-bits))]
-                (begin
-                  (compiler-reg-segment-note-span!
-                    segments
-                    segment-starts
-                    segment-ends
-                    item-var
-                    point
-                    next)
-                  (compiler-reg-extend-interval starts ends item-var next)
-                  (set! after-bits (bit-and after-bits (- after-bits 1))))))))
-        (set! index (+ index 1))))))
+            (set! index (+ index 1)))))
+      (compiler-reg-extend-segment-after-words!
+        starts
+        ends
+        segments
+        segment-starts
+        segment-ends
+        live-after
+        point))))
 
 (define (compiler-reg-extend-segment-instr!
   [starts : (__tl_dyn-array i64)]
@@ -2974,16 +3091,31 @@
   [live-after : live.CompilerLiveI64Set]
   [point : i64]
   [instr : ir.CompilerIrInstr]) : unit
-  (compiler-reg-extend-segment-sets!
-    starts
-    ends
-    segments
-    segment-starts
-    segment-ends
-    (live.compiler-live-instr-defs instr)
-    (live.compiler-live-instr-uses instr)
-    live-after
-    point))
+  (let
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+    (if (< id-count 0)
+      (compiler-reg-extend-segment-sets!
+        starts
+        ends
+        segments
+        segment-starts
+        segment-ends
+        (live.compiler-live-instr-defs instr)
+        (live.compiler-live-instr-uses instr)
+        live-after
+        point)
+      (compiler-reg-extend-segment-ids!
+        starts
+        ends
+        segments
+        segment-starts
+        segment-ends
+        (live.compiler-live-instr-def-var instr)
+        ids
+        id-count
+        live-after
+        point))))
 
 (define (compiler-reg-extend-set-words
   [starts : (__tl_dyn-array i64)]
@@ -3029,26 +3161,54 @@
           var
           point)))))
 
+(define (compiler-reg-extend-interval-ids!
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [point : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index id-count)
+      (begin
+        (compiler-reg-extend-interval starts ends (array-ref ids index) point)
+        (set! index (+ index 1))))))
+
+;; Extend one instruction's coarse intervals. The def/use halves take the ids
+;; directly (compiler-reg-extend-set-words exists only to recover those same ids
+;; from freshly allocated bitsets); live-after stays a word walk.
 (define (compiler-reg-extend-instr
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
   [live-after : live.CompilerLiveI64Set]
   [point : i64]
   [instr : ir.CompilerIrInstr]) : unit
-  (begin
-    (compiler-reg-extend-set-words
-      starts
-      ends
-      (live.compiler-live-instr-defs instr)
-      0
-      point)
-    (compiler-reg-extend-set-words
-      starts
-      ends
-      (live.compiler-live-instr-uses instr)
-      0
-      point)
-    (compiler-reg-extend-set-words starts ends live-after 0 (+ point 1))))
+  (let
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+    (begin
+      (if (< id-count 0)
+        (begin
+          (compiler-reg-extend-set-words
+            starts
+            ends
+            (live.compiler-live-instr-defs instr)
+            0
+            point)
+          (compiler-reg-extend-set-words
+            starts
+            ends
+            (live.compiler-live-instr-uses instr)
+            0
+            point))
+        (begin
+          (compiler-reg-extend-interval
+            starts
+            ends
+            (live.compiler-live-instr-def-var instr)
+            point)
+          (compiler-reg-extend-interval-ids! starts ends ids id-count point)))
+      (compiler-reg-extend-set-words starts ends live-after 0 (+ point 1)))))
 
 (define (compiler-reg-live-intervals-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
@@ -3360,18 +3520,31 @@
   [live-after : live.CompilerLiveI64Set]
   [point : i64]
   [instr : ir.CompilerIrInstr]) : unit
-  (compiler-reg-extend-segment-sets!
-    starts
-    ends
-    segments
-    segment-starts
-    segment-ends
-    (live.compiler-live-instr-defs instr)
-    (match instr
-      [(ir.CompilerIrInstr.Phi _ _ _) (live.compiler-live-set-empty)]
-      [_ (live.compiler-live-instr-uses instr)])
-    live-after
-    point))
+  (let
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64 (live.compiler-live-instr-use-ids-nophi! instr)]
+    (if (< id-count 0)
+      (compiler-reg-extend-segment-sets!
+        starts
+        ends
+        segments
+        segment-starts
+        segment-ends
+        (live.compiler-live-instr-defs instr)
+        (live.compiler-live-instr-uses-nophi instr)
+        live-after
+        point)
+      (compiler-reg-extend-segment-ids!
+        starts
+        ends
+        segments
+        segment-starts
+        segment-ends
+        (live.compiler-live-instr-def-var instr)
+        ids
+        id-count
+        live-after
+        point))))
 
 (define (compiler-reg-live-interval-selection-ep-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
@@ -3601,9 +3774,9 @@
     (begin
       (while (and (< index count) (not found))
         (begin
-          (if (live.compiler-live-set-contains?
-            (live.compiler-live-instr-defs (array-ref slots index))
-            var)
+          (if (and
+            (>= var 0)
+            (= (compiler-reg-instr-def-var (array-ref slots index)) var))
             (set! found true)
             unit)
           (set! index (+ index 1))))
@@ -6704,75 +6877,14 @@
 ;; for proven same-value pairs; the geometry predicate is unchanged, and the
 ;; all-pairs class-compatibility check still rejects any class that would mix a
 ;; distinct-value var with an overlapping member.
-;; The single var an instruction defines, or -1. Mirrors the def list of
-;; compiler-reg-instr-def-type-array! so the def census stays complete (a missed def
-;; site would understate a multi-def var and is the one unsound failure mode).
+;; The single var an instruction defines, or -1. This is
+;; `live.compiler-live-instr-def-var`, the same decode the liveness def set is
+;; built from, so the def census can never disagree with liveness about where a
+;; var is defined (a missed def site would understate a multi-def var and is the
+;; one unsound failure mode). Mirrors the def list of
+;; compiler-reg-instr-def-type-array!.
 (define (compiler-reg-instr-def-var [instr : ir.CompilerIrInstr]) : i64
-  (match instr
-    [(ir.CompilerIrInstr.Mov dst _ _) dst]
-    [(ir.CompilerIrInstr.Alloc dst _) dst]
-    [(ir.CompilerIrInstr.AddrOf dst _) dst]
-    [(ir.CompilerIrInstr.Gep dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Load dst _ _) dst]
-    [(ir.CompilerIrInstr.Cast dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Bitcast dst _ _ _) dst]
-    [(ir.CompilerIrInstr.BinOp dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.UnOp dst _ _ _) dst]
-    [(ir.CompilerIrInstr.LaneId dst _ _) dst]
-    [(ir.CompilerIrInstr.Splat dst _ _ _) dst]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (struct-get (box-get payload-box) dst)]
-        dst)]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [dst (struct-get (box-get payload-box) dst)]
-        dst)]
-    [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (struct-get (box-get payload-box) dst)]
-        dst)]
-    [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.MaskNot dst _ _) dst]
-    [(ir.CompilerIrInstr.MaskReduce dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [dst (struct-get (box-get payload-box) dst)]
-        dst)]
-    [(ir.CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [dst (struct-get (box-get payload-box) dst)]
-        dst)]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [dst (struct-get (box-get payload-box) dst)]
-        dst)]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [dst (struct-get (box-get payload-box) dst)]
-        dst)]
-    [(ir.CompilerIrInstr.TailMask dst _ _ _) dst]
-    [(ir.CompilerIrInstr.EntryArgc dst) dst]
-    [(ir.CompilerIrInstr.EntryArgv dst) dst]
-    [(ir.CompilerIrInstr.EntryEnvp dst) dst]
-    [(ir.CompilerIrInstr.CpuId dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Xgetbv dst _) dst]
-    [(ir.CompilerIrInstr.Syscall dst _) dst]
-    [(ir.CompilerIrInstr.Call dst _ _ _) dst]
-    [(ir.CompilerIrInstr.CallIndirect dst _ _ _) dst]
-    [(ir.CompilerIrInstr.CallIndirectC dst _ _ _) dst]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [result (struct-get (box-get payload-box) result)]
-        (match result
-          [(ir.CompilerIrSpmdCallResult.Unit) (- 0 1)]
-          [(ir.CompilerIrSpmdCallResult.Value dst _ _) dst]))]
-    [(ir.CompilerIrInstr.Phi dst _ _) dst]
-    [(ir.CompilerIrInstr.Pack dst _ _) dst]
-    [(ir.CompilerIrInstr.Word dst _ _ _) dst]
-    [_ (- 0 1)]))
+  (live.compiler-live-instr-def-var instr))
 
 (define (compiler-reg-count-def! [counts : (__tl_dyn-array i64)] [var : i64]) : unit
   (if (and (>= var 0) (< var (array-length counts)))
@@ -9194,6 +9306,29 @@
       (compiler-reg-loop-depths-from-ends! loop-ends depths 0)
       depths)))
 
+(define (compiler-reg-ref-counts-add-var-weighted!
+  [counts : (__tl_dyn-array i64)]
+  [var : i64]
+  [weight : i64]) : unit
+  (if (and (>= var 0) (< var (array-length counts)))
+    (array-set! counts var (+ (array-ref counts var) weight))
+    unit))
+
+(define (compiler-reg-ref-counts-add-ids-weighted!
+  [counts : (__tl_dyn-array i64)]
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [weight : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index id-count)
+      (begin
+        (compiler-reg-ref-counts-add-var-weighted!
+          counts
+          (array-ref ids index)
+          weight)
+        (set! index (+ index 1))))))
+
 (define (compiler-reg-ref-counts-add-word-weighted!
   [counts : (__tl_dyn-array i64)]
   [bits : i64]
@@ -9205,38 +9340,12 @@
       [i : i64 (compiler-reg-low-bit-index32 bits)]
       [var : i64 (+ var-base i)]
       (begin
-        (if (and (>= var 0) (< var (array-length counts)))
-          (array-set! counts var (+ (array-ref counts var) weight))
-          unit)
+        (compiler-reg-ref-counts-add-var-weighted! counts var weight)
         (compiler-reg-ref-counts-add-word-weighted!
           counts
           (bit-and bits (- bits 1))
           var-base
           weight)))))
-
-(define (compiler-reg-ref-counts-add-word!
-  [counts : (__tl_dyn-array i64)]
-  [bits : i64]
-  [var-base : i64]) : unit
-  (compiler-reg-ref-counts-add-word-weighted! counts bits var-base 1))
-
-(define (compiler-reg-ref-counts-add-set-words!
-  [counts : (__tl_dyn-array i64)]
-  [set : live.CompilerLiveI64Set]
-  [word-index : i64]) : unit
-  (if (>= word-index (live.compiler-live-set-word-count set))
-    unit
-    (begin
-      (compiler-reg-ref-counts-add-word!
-        counts
-        (live.compiler-live-set-word-at-bounded set word-index)
-        (* word-index (live.compiler-live-set-word-bits)))
-      (compiler-reg-ref-counts-add-set-words! counts set (+ word-index 1)))))
-
-(define (compiler-reg-ref-counts-add-set!
-  [counts : (__tl_dyn-array i64)]
-  [set : live.CompilerLiveI64Set]) : unit
-  (compiler-reg-ref-counts-add-set-words! counts set 0))
 
 (define (compiler-reg-ref-counts-add-set-words-weighted!
   [counts : (__tl_dyn-array i64)]
@@ -9273,27 +9382,33 @@
 (define (compiler-reg-ref-counts-add-instr!
   [counts : (__tl_dyn-array i64)]
   [instr : ir.CompilerIrInstr]) : unit
-  (begin
-    (compiler-reg-ref-counts-add-set!
-      counts
-      (live.compiler-live-instr-uses instr))
-    (compiler-reg-ref-counts-add-set!
-      counts
-      (live.compiler-live-instr-defs instr))))
+  (compiler-reg-ref-counts-add-instr-weighted! counts instr 1))
 
 (define (compiler-reg-ref-counts-add-instr-weighted!
   [counts : (__tl_dyn-array i64)]
   [instr : ir.CompilerIrInstr]
   [weight : i64]) : unit
-  (begin
-    (compiler-reg-ref-counts-add-set-weighted!
-      counts
-      (live.compiler-live-instr-uses instr)
-      weight)
-    (compiler-reg-ref-counts-add-set-weighted!
-      counts
-      (live.compiler-live-instr-defs instr)
-      weight)))
+  (let
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+    (if (< id-count 0)
+      (begin
+        (compiler-reg-ref-counts-add-set-weighted!
+          counts
+          (live.compiler-live-instr-uses instr)
+          weight)
+        (compiler-reg-ref-counts-add-set-weighted!
+          counts
+          (live.compiler-live-instr-defs instr)
+          weight))
+      (begin
+        ;; Uses and defs are counted independently -- a var that is read and
+        ;; written here scores twice, exactly as the two separate set walks did.
+        (compiler-reg-ref-counts-add-ids-weighted! counts ids id-count weight)
+        (compiler-reg-ref-counts-add-var-weighted!
+          counts
+          (live.compiler-live-instr-def-var instr)
+          weight)))))
 
 (define (compiler-reg-ref-counts-seq!
   [counts : (__tl_dyn-array i64)]
@@ -9718,12 +9833,22 @@
   [weight : i64]
   [allow-invariant-loads : bool]) : unit
   (let
-    [uses : live.CompilerLiveI64Set (live.compiler-live-instr-uses instr)]
-    [defs : live.CompilerLiveI64Set (live.compiler-live-instr-defs instr)]
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+    [def-var : i64 (live.compiler-live-instr-def-var instr)]
     (begin
-      (compiler-reg-ref-counts-add-set-weighted! counts uses weight)
-      (compiler-reg-ref-counts-add-set-weighted! counts defs weight)
-      (compiler-reg-ref-counts-add-set-weighted! def-status defs 2)
+      (if (< id-count 0)
+        (let
+          [uses : live.CompilerLiveI64Set (live.compiler-live-instr-uses instr)]
+          [defs : live.CompilerLiveI64Set (live.compiler-live-instr-defs instr)]
+          (begin
+            (compiler-reg-ref-counts-add-set-weighted! counts uses weight)
+            (compiler-reg-ref-counts-add-set-weighted! counts defs weight)
+            (compiler-reg-ref-counts-add-set-weighted! def-status defs 2)))
+        (begin
+          (compiler-reg-ref-counts-add-ids-weighted! counts ids id-count weight)
+          (compiler-reg-ref-counts-add-var-weighted! counts def-var weight)
+          (compiler-reg-ref-counts-add-var-weighted! def-status def-var 2)))
       (compiler-reg-remat-status-candidate-add-instr!
         def-status
         instr
@@ -15830,39 +15955,114 @@
               [b : i64 (compiler-reg-low-bit-index32 bits)]
               [v : i64 (+ (* wi (live.compiler-live-set-word-bits)) b)]
               (begin
-                (if (and (>= v 0) (< v n) (= (array-ref cand v) 1))
-                  (begin
-                    (if (not (= (array-ref cur-region v) rid))
-                      (begin
-                        (compiler-reg-call-region-flush-root!
-                          v
-                          buckets
-                          cur-lo
-                          cur-hi
-                          cur-uses
-                          cur-defs
-                          cur-firstdef
-                          cur-depth)
-                        (array-set! cur-region v rid)
-                        (array-set! cur-lo v p)
-                        (array-set! cur-hi v p)
-                        (array-set! cur-uses v 0)
-                        (array-set! cur-defs v 0)
-                        (array-set!
-                          cur-firstdef
-                          v
-                          (if is-def
-                            1
-                            0))
-                        (array-set! cur-depth v depth))
-                      unit)
-                    (array-set! cur-hi v p)
-                    (if is-def
-                      (array-set! cur-defs v (+ (array-ref cur-defs v) 1))
-                      (array-set! cur-uses v (+ (array-ref cur-uses v) 1))))
-                  unit)
+                (compiler-reg-call-region-note-var!
+                  v
+                  is-def
+                  cand
+                  n
+                  rid
+                  p
+                  depth
+                  buckets
+                  cur-region
+                  cur-lo
+                  cur-hi
+                  cur-uses
+                  cur-defs
+                  cur-firstdef
+                  cur-depth)
                 (set! bits (bit-and bits (- bits 1))))))
           (set! wi (+ wi 1)))))))
+
+;; Per-var body of compiler-reg-call-region-note-set!, shared by the id form
+;; below. Each var's row is independent, so the order the vars arrive in does
+;; not matter; only uses-before-defs at one point does, and that is the caller's
+;; two-call sequence.
+(define (compiler-reg-call-region-note-var!
+  [v : i64]
+  [is-def : bool]
+  [cand : (__tl_dyn-array i64)]
+  [n : i64]
+  [rid : i64]
+  [p : i64]
+  [depth : i64]
+  [buckets : (__tl_dyn-array CompilerRegCallRegionStatSeq)]
+  [cur-region : (__tl_dyn-array i64)]
+  [cur-lo : (__tl_dyn-array i64)]
+  [cur-hi : (__tl_dyn-array i64)]
+  [cur-uses : (__tl_dyn-array i64)]
+  [cur-defs : (__tl_dyn-array i64)]
+  [cur-firstdef : (__tl_dyn-array i64)]
+  [cur-depth : (__tl_dyn-array i64)]) : unit
+  (if (and (>= v 0) (< v n) (= (array-ref cand v) 1))
+    (begin
+      (if (not (= (array-ref cur-region v) rid))
+        (begin
+          (compiler-reg-call-region-flush-root!
+            v
+            buckets
+            cur-lo
+            cur-hi
+            cur-uses
+            cur-defs
+            cur-firstdef
+            cur-depth)
+          (array-set! cur-region v rid)
+          (array-set! cur-lo v p)
+          (array-set! cur-hi v p)
+          (array-set! cur-uses v 0)
+          (array-set! cur-defs v 0)
+          (array-set!
+            cur-firstdef
+            v
+            (if is-def
+              1
+              0))
+          (array-set! cur-depth v depth))
+        unit)
+      (array-set! cur-hi v p)
+      (if is-def
+        (array-set! cur-defs v (+ (array-ref cur-defs v) 1))
+        (array-set! cur-uses v (+ (array-ref cur-uses v) 1))))
+    unit))
+
+(define (compiler-reg-call-region-note-ids!
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [cand : (__tl_dyn-array i64)]
+  [n : i64]
+  [rid : i64]
+  [p : i64]
+  [depth : i64]
+  [buckets : (__tl_dyn-array CompilerRegCallRegionStatSeq)]
+  [cur-region : (__tl_dyn-array i64)]
+  [cur-lo : (__tl_dyn-array i64)]
+  [cur-hi : (__tl_dyn-array i64)]
+  [cur-uses : (__tl_dyn-array i64)]
+  [cur-defs : (__tl_dyn-array i64)]
+  [cur-firstdef : (__tl_dyn-array i64)]
+  [cur-depth : (__tl_dyn-array i64)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index id-count)
+      (begin
+        (compiler-reg-call-region-note-var!
+          (array-ref ids index)
+          false
+          cand
+          n
+          rid
+          p
+          depth
+          buckets
+          cur-region
+          cur-lo
+          cur-hi
+          cur-uses
+          cur-defs
+          cur-firstdef
+          cur-depth)
+        (set! index (+ index 1))))))
 
 ;; Enumeration walk: single pass over all instrs in layout order with the
 ;; greedy's point numbering (+2 per instr across blocks). Phi instructions
@@ -15954,39 +16154,61 @@
                         (match instr
                           [(ir.CompilerIrInstr.Phi _ _ _) unit]
                           [_
-                            (begin
-                              (compiler-reg-call-region-note-set!
-                                (live.compiler-live-instr-uses instr)
-                                false
-                                cand
-                                n
-                                rid
-                                p
-                                depth
-                                buckets
-                                cur-region
-                                cur-lo
-                                cur-hi
-                                cur-uses
-                                cur-defs
-                                cur-firstdef
-                                cur-depth)
-                              (compiler-reg-call-region-note-set!
-                                (live.compiler-live-instr-defs instr)
-                                true
-                                cand
-                                n
-                                rid
-                                p
-                                depth
-                                buckets
-                                cur-region
-                                cur-lo
-                                cur-hi
-                                cur-uses
-                                cur-defs
-                                cur-firstdef
-                                cur-depth))]))
+                            (let
+                              [ids : (__tl_dyn-array i64)
+                                (live.compiler-live-instr-ids)]
+                              [id-count : i64
+                                (live.compiler-live-instr-use-ids! instr)]
+                              (begin
+                                (if (< id-count 0)
+                                  (compiler-reg-call-region-note-set!
+                                    (live.compiler-live-instr-uses instr)
+                                    false
+                                    cand
+                                    n
+                                    rid
+                                    p
+                                    depth
+                                    buckets
+                                    cur-region
+                                    cur-lo
+                                    cur-hi
+                                    cur-uses
+                                    cur-defs
+                                    cur-firstdef
+                                    cur-depth)
+                                  (compiler-reg-call-region-note-ids!
+                                    ids
+                                    id-count
+                                    cand
+                                    n
+                                    rid
+                                    p
+                                    depth
+                                    buckets
+                                    cur-region
+                                    cur-lo
+                                    cur-hi
+                                    cur-uses
+                                    cur-defs
+                                    cur-firstdef
+                                    cur-depth))
+                                (compiler-reg-call-region-note-var!
+                                  (live.compiler-live-instr-def-var instr)
+                                  true
+                                  cand
+                                  n
+                                  rid
+                                  p
+                                  depth
+                                  buckets
+                                  cur-region
+                                  cur-lo
+                                  cur-hi
+                                  cur-uses
+                                  cur-defs
+                                  cur-firstdef
+                                  cur-depth)))]))
                       (set! p (+ p 2))
                       (set! i (+ i 1))))))])
           (set! b (+ b 1))))
@@ -24955,19 +25177,35 @@
             (if (< index (array-length after-items))
               (array-ref after-items index)
               (live.compiler-live-set-empty))]
+          [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+          [id-count : i64 (live.compiler-live-instr-use-ids-nophi! instr)]
           (begin
-            (compiler-reg-extend-set-words
-              starts
-              ends
-              (live.compiler-live-instr-defs instr)
-              0
-              out-point)
-            (compiler-reg-extend-set-words
-              starts
-              ends
-              (live.compiler-live-instr-uses-nophi instr)
-              0
-              out-point)
+            (if (< id-count 0)
+              (begin
+                (compiler-reg-extend-set-words
+                  starts
+                  ends
+                  (live.compiler-live-instr-defs instr)
+                  0
+                  out-point)
+                (compiler-reg-extend-set-words
+                  starts
+                  ends
+                  (live.compiler-live-instr-uses-nophi instr)
+                  0
+                  out-point))
+              (begin
+                (compiler-reg-extend-interval
+                  starts
+                  ends
+                  (live.compiler-live-instr-def-var instr)
+                  out-point)
+                (compiler-reg-extend-interval-ids!
+                  starts
+                  ends
+                  ids
+                  id-count
+                  out-point)))
             (compiler-reg-extend-set-words
               starts
               ends
@@ -31055,9 +31293,9 @@
     [op-types : (__tl_dyn-array ast.AstType) (struct-get table op-types)]
     [types : (__tl_dyn-array ast.AstType) (struct-get table types)]
     (begin
-      (compiler-reg-ref-counts-add-set-weighted!
+      (compiler-reg-ref-counts-add-var-weighted!
         def-counts
-        (live.compiler-live-instr-defs instr)
+        (compiler-reg-instr-def-var instr)
         1)
       (match instr
         [(ir.CompilerIrInstr.Mov dst value ty)

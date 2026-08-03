@@ -528,6 +528,53 @@
           (set! index (+ index 1))))
       (compiler-live-set-max active-count count))))
 
+;; Id form of compiler-live-scratch-step!: `live = (live & ~defs) | uses` for a
+;; one-def, few-use instruction, without walking the live row.
+;;
+;; The word form rewrites EVERY word below `max(active, use-words, def-words)`,
+;; which is the whole live row -- a 30-word row pays 30 read-modify-writes to
+;; move two bits. Clearing the single def bit and then setting the use bits
+;; produces the same row: words the sets do not name are rewritten to
+;; themselves, `use` wins over `def` for a var that is both (the word form ORs
+;; the uses in after masking the defs out), and scratch words at or above
+;; `active-count` are zero, so the word form's writes there are exactly the use
+;; bits. `count` is computed from the same three widths, so the returned trim
+;; length is the same too.
+(define (compiler-live-scratch-step-ids!
+  [words : (__tl_dyn-array i64)]
+  [active-count : i64]
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [def-var : i64]) : i64
+  (let
+    [count : i64 active-count]
+    [index : i64 0]
+    (begin
+      (if (< def-var 0)
+        unit
+        (let
+          [word : i64 (compiler-live-set-word-index def-var)]
+          (begin
+            (set! count (compiler-live-set-max count (+ word 1)))
+            (array-set!
+              words
+              word
+              (bit-and
+                (array-ref words word)
+                (bit-xor (compiler-live-set-bit-mask def-var) -1))))))
+      (while (< index id-count)
+        (let
+          [var : i64 (array-ref ids index)]
+          [word : i64 (compiler-live-set-word-index var)]
+          (begin
+            (set! count (compiler-live-set-max count (+ word 1)))
+            (array-set!
+              words
+              word
+              (bit-or (array-ref words word) (compiler-live-set-bit-mask var)))
+            (set! index (+ index 1)))))
+      (compiler-live-set-trim-length words count))))
+
 (define (compiler-live-scratch-step!
   [words : (__tl_dyn-array i64)]
   [active-count : i64]
@@ -915,6 +962,196 @@
       short-ok
       (= (compiler-live-set-trim-length words 6) 0))))
 
+;; Differential proof for the direct-id API: the ids an instruction hands over
+;; must describe exactly the sets the bitset decode builds. Every id-driven
+;; consumer rests on this, so it is checked per instruction rather than per
+;; consumer.
+(define (compiler-live-instr-ids-match-set? [instr : ir.CompilerIrInstr]) : bool
+  (let
+    [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
+    [defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
+    [def-var : i64 (compiler-live-instr-def-var instr)]
+    [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
+    [id-count : i64 (compiler-live-instr-use-ids! instr)]
+    [index : i64 0]
+    [ok : bool (= id-count (compiler-live-set-count uses))]
+    (begin
+      (while (< index id-count)
+        (begin
+          (if (compiler-live-set-contains? uses (array-ref ids index))
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      (and
+        ok
+        (=
+          (compiler-live-set-count defs)
+          (if (< def-var 0)
+            0
+            1))
+        (or (< def-var 0) (compiler-live-set-contains? defs def-var))))))
+
+(define (compiler-live-instr-ids-list-match-set?
+  [instrs : ir.CompilerIrInstrList]) : bool
+  (match instrs
+    [(ir.CompilerIrInstrList.Nil) true]
+    [(ir.CompilerIrInstrList.Cons instr rest)
+      (and
+        (compiler-live-instr-ids-match-set? instr)
+        (compiler-live-instr-ids-list-match-set? (box-get rest)))]))
+
+;; Instruction shapes that exercise the parts of the decode a straight
+;; one-operand arm does not: a repeated operand (the set de-duplicates, so the
+;; id list must too), a two-arg call, a phi input list, a packed value list, a
+;; raw-var AddrOf operand, and a def-less terminator.
+(define (compiler-live-ids-sample-instrs) : ir.CompilerIrInstrList
+  (ir.compiler-ir-instr-cons
+    (ir.CompilerIrInstr.Mov
+      0
+      (ir.CompilerIrValue.Var 10)
+      (compiler-live-i64-ty))
+    (ir.compiler-ir-instr-cons
+      (ir.CompilerIrInstr.BinOp
+        1
+        ir.CompilerIrBinOp.Add
+        (ir.CompilerIrValue.Var 7)
+        (ir.CompilerIrValue.Var 7)
+        (compiler-live-i64-ty))
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.AddrOf 2 33)
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Gep
+            3
+            (ir.CompilerIrValue.Var 40)
+            (ir.CompilerIrValue.I64 8)
+            (compiler-live-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Call
+              4
+              (ir.compiler-ir-test-symbol "f")
+              (ir.CompilerIrCallArgs.Two
+                (ir.CompilerIrValue.Var 41)
+                (ir.CompilerIrValue.Var 41))
+              (compiler-live-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Pack
+                5
+                (ir.compiler-ir-value-cons
+                  (ir.CompilerIrValue.Var 42)
+                  (ir.compiler-ir-value-cons
+                    (ir.CompilerIrValue.Var 43)
+                    ir.CompilerIrValueList.Nil))
+                (compiler-live-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Phi
+                  6
+                  (ir.compiler-ir-phi-input-cons
+                    (ir.CompilerIrValue.Var 44)
+                    (ir.compiler-ir-label "a")
+                    (ir.compiler-ir-phi-input-cons
+                      (ir.CompilerIrValue.Var 44)
+                      (ir.compiler-ir-label "b")
+                      ir.CompilerIrPhiInputList.Nil))
+                  (compiler-live-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.StorePtr
+                    (ir.CompilerIrValue.Var 45)
+                    (ir.CompilerIrValue.Var 46)
+                    (compiler-live-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Branch
+                      (ir.CompilerIrValue.Var 47)
+                      (ir.compiler-ir-label "a")
+                      (ir.compiler-ir-label "b"))
+                    ir.CompilerIrInstrList.Nil))))))))))
+
+;; The two id-driven scratch steps must leave the row -- and the trimmed active
+;; count -- exactly where the bitset forms leave them.
+(define (compiler-live-step-ids-ok?) : bool
+  (let
+    [set-words : (__tl_dyn-array i64) (make-array i64 6)]
+    [id-words : (__tl_dyn-array i64) (make-array i64 6)]
+    [ids : (__tl_dyn-array i64) (make-array i64 4)]
+    [set-use-words : (__tl_dyn-array i64) (make-array i64 6)]
+    [set-def-words : (__tl_dyn-array i64) (make-array i64 6)]
+    [id-use-words : (__tl_dyn-array i64) (make-array i64 6)]
+    [id-def-words : (__tl_dyn-array i64) (make-array i64 6)]
+    [seed : CompilerLiveI64Set (compiler-live-set3 1 64 130)]
+    [set-active : i64 (compiler-live-scratch-copy-set! set-words seed)]
+    [id-active : i64 (compiler-live-scratch-copy-set! id-words seed)]
+    ;; `130` is used and defined here, and `1` is only defined: the def clear
+    ;; must lose `1`, the use must keep `130`, and the row must grow to hold the
+    ;; new use `191`.
+    [_ids-fill : unit
+      (begin
+        (array-set! ids 0 130)
+        (array-set! ids 1 191))]
+    [set-count : i64
+      (compiler-live-scratch-step!
+        set-words
+        set-active
+        (compiler-live-set2 130 191)
+        (compiler-live-set1 1))]
+    [id-count : i64
+      (compiler-live-scratch-step-ids! id-words id-active ids 2 1)]
+    [step-ok : bool
+      (and
+        (= set-count id-count)
+        (compiler-live-set-eq?
+          (compiler-live-scratch-freeze set-words set-count)
+          (compiler-live-scratch-freeze id-words id-count)))]
+    ;; The block use/def accumulation: `9` is already defined by an earlier
+    ;; instruction, so using it here must NOT make it a block use; `70` must.
+    [_seed-defs : unit
+      (begin
+        (compiler-live-set-builder-insert! set-def-words 9)
+        (compiler-live-set-builder-insert! id-def-words 9))]
+    [_step2-ids : unit
+      (begin
+        (array-set! ids 0 9)
+        (array-set! ids 1 70))]
+    [_set-step : unit
+      (compiler-live-block-use-def-step!
+        set-use-words
+        set-def-words
+        (compiler-live-set2 9 70)
+        (compiler-live-set1 130))]
+    [_id-step : unit
+      (compiler-live-block-use-def-step-ids!
+        id-use-words
+        id-def-words
+        ids
+        2
+        130)]
+    [use-def-ok : bool
+      (and
+        (compiler-live-set-eq?
+          (compiler-live-scratch-freeze set-use-words 6)
+          (compiler-live-set1 70))
+        (compiler-live-set-eq?
+          (compiler-live-scratch-freeze set-use-words 6)
+          (compiler-live-scratch-freeze id-use-words 6))
+        (compiler-live-set-eq?
+          (compiler-live-scratch-freeze set-def-words 6)
+          (compiler-live-scratch-freeze id-def-words 6)))]
+    ;; A use list wider than the buffer reports -1 so the caller can fall back.
+    [narrow : (__tl_dyn-array i64) (make-array i64 1)]
+    [overflow-ok : bool
+      (=
+        (compiler-live-instr-use-ids-into!
+          (ir.CompilerIrInstr.StorePtr
+            (ir.CompilerIrValue.Var 3)
+            (ir.CompilerIrValue.Var 4)
+            (compiler-live-i64-ty))
+          narrow)
+        -1)]
+    (and
+      step-ok
+      use-def-ok
+      overflow-ok
+      (compiler-live-instr-ids-list-match-set?
+        (compiler-live-ids-sample-instrs)))))
+
 (define (compiler-live-label-set-contains?
   [set : CompilerLiveLabelSet]
   [value : i64]) : bool
@@ -1019,12 +1256,6 @@
             value)])]
     [(ir.CompilerIrSpmdCallArgList.Array seq)
       (compiler-live-spmd-call-args-seq-vars seq 0)]))
-
-(define (compiler-live-spmd-call-result-defs
-  [result : ir.CompilerIrSpmdCallResult]) : CompilerLiveI64Set
-  (match result
-    [(ir.CompilerIrSpmdCallResult.Unit) (compiler-live-set-empty)]
-    [(ir.CompilerIrSpmdCallResult.Value dst _ _) (compiler-live-set1 dst)]))
 
 (define (compiler-live-maybe-value-vars [value : ir.CompilerIrMaybeValue]) : CompilerLiveI64Set
   (match value
@@ -1193,70 +1424,555 @@
     [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
       (compiler-live-value-vars index)]))
 
-(define (compiler-live-instr-defs [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
+;; ---------------------------------------------------------------------------
+;; Direct per-instruction var-id extraction.
+;;
+;; An instruction names one def and (almost always) one to three uses, but
+;; CompilerLiveI64Set is keyed by ABSOLUTE var id: `(compiler-live-set1 v)`
+;; allocates `v / 32 + 1` words to carry a single bit, and every consumer then
+;; scans those words to recover the id the instruction constructor already
+;; holds. The set is the right shape for BLOCK facts (live-in/out are genuinely
+;; dense and get unioned/subtracted), but for the per-instruction step the
+;; allocation and the word scan are both pure overhead.
+;;
+;; These entry points hand the ids over directly:
+;;   * `compiler-live-instr-def-var` -- the single defined var, or -1.
+;;   * `compiler-live-instr-use-ids-into!` -- the DISTINCT used var ids written
+;;     into a caller-owned scratch array, or -1 when they do not fit.
+;; Both are exact mirrors of `compiler-live-instr-defs` / `-uses`: same arms,
+;; same operands, same de-duplication, so `{ids} == set` element-wise. Order is
+;; operand order rather than the set's ascending id order, which is why
+;; order-sensitive consumers (remat's var renumbering) keep the bitset.
+;; ---------------------------------------------------------------------------
+;; The single var an instruction defines, or -1. Mirrors compiler-live-instr-defs
+;; arm for arm (compiler_regalloc's compiler-reg-instr-def-var is the same
+;; function over the same arms, kept there for the def census).
+(define (compiler-live-instr-def-var [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(ir.CompilerIrInstr.Mov dst _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Alloc dst _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.AddrOf dst _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Gep dst _ _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Load dst _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Cast dst _ _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Bitcast dst _ _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.BinOp dst _ _ _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.UnOp dst _ _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.LaneId dst _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Splat dst _ _ _) (compiler-live-set1 dst)]
+    [(ir.CompilerIrInstr.Mov dst _ _) dst]
+    [(ir.CompilerIrInstr.Alloc dst _) dst]
+    [(ir.CompilerIrInstr.AddrOf dst _) dst]
+    [(ir.CompilerIrInstr.Gep dst _ _ _) dst]
+    [(ir.CompilerIrInstr.Load dst _ _) dst]
+    [(ir.CompilerIrInstr.Cast dst _ _ _) dst]
+    [(ir.CompilerIrInstr.Bitcast dst _ _ _) dst]
+    [(ir.CompilerIrInstr.BinOp dst _ _ _ _) dst]
+    [(ir.CompilerIrInstr.UnOp dst _ _ _) dst]
+    [(ir.CompilerIrInstr.LaneId dst _ _) dst]
+    [(ir.CompilerIrInstr.Splat dst _ _ _) dst]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (struct-get (box-get payload-box) dst)]
+    [(ir.CompilerIrInstr.VectorPrefix payload-box)
+      (struct-get (box-get payload-box) dst)]
+    [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (struct-get (box-get payload-box) dst)]
+    [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
+    [(ir.CompilerIrInstr.MaskNot dst _ _) dst]
+    [(ir.CompilerIrInstr.MaskReduce dst _ _ _) dst]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (struct-get (box-get payload-box) dst)]
+    [(ir.CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
+    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
+      (struct-get (box-get payload-box) dst)]
+    [(ir.CompilerIrInstr.GatherLoad payload-box)
+      (struct-get (box-get payload-box) dst)]
+    [(ir.CompilerIrInstr.VectorShuffle payload-box)
+      (struct-get (box-get payload-box) dst)]
+    [(ir.CompilerIrInstr.TailMask dst _ _ _) dst]
+    [(ir.CompilerIrInstr.EntryArgc dst) dst]
+    [(ir.CompilerIrInstr.EntryArgv dst) dst]
+    [(ir.CompilerIrInstr.EntryEnvp dst) dst]
+    [(ir.CompilerIrInstr.CpuId dst _ _ _) dst]
+    [(ir.CompilerIrInstr.Xgetbv dst _) dst]
+    [(ir.CompilerIrInstr.Syscall dst _) dst]
+    [(ir.CompilerIrInstr.Call dst _ _ _) dst]
+    [(ir.CompilerIrInstr.CallIndirect dst _ _ _) dst]
+    [(ir.CompilerIrInstr.CallIndirectC dst _ _ _) dst]
+    [(ir.CompilerIrInstr.SpmdCall payload-box)
+      (match (struct-get (box-get payload-box) result)
+        [(ir.CompilerIrSpmdCallResult.Unit) -1]
+        [(ir.CompilerIrSpmdCallResult.Value dst _ _) dst])]
+    [(ir.CompilerIrInstr.Phi dst _ _) dst]
+    [(ir.CompilerIrInstr.Pack dst _ _) dst]
+    [(ir.CompilerIrInstr.Word dst _ _ _) dst]
+    [_ -1]))
+
+;; Append `id` to `out[0..n)` unless it is already there (the bitset de-dups,
+;; so `x = x + x` must yield one id, not two). Negative ids are dropped exactly
+;; as compiler-live-set-builder-insert! drops them. Returns the new count, or
+;; -1 once the ids no longer fit; -1 is sticky so an overflow survives the rest
+;; of the walk and the caller falls back to the bitset.
+(define (compiler-live-use-ids-push!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [id : i64]) : i64
+  (if (< n 0)
+    -1
+    (if (< id 0)
+      n
+      (let
+        [index : i64 0]
+        [found : bool false]
+        (begin
+          (while (and (< index n) (not found))
+            (begin
+              (if (= (array-ref out index) id)
+                (set! found true)
+                unit)
+              (set! index (+ index 1))))
+          (if found
+            n
+            (if (>= n (array-length out))
+              -1
+              (begin
+                (array-set! out n id)
+                (+ n 1)))))))))
+
+(define (compiler-live-use-ids-add-value!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var id) (compiler-live-use-ids-push! out n id)]
+    [_ n]))
+
+(define (compiler-live-use-ids-add-maybe-value!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [value : ir.CompilerIrMaybeValue]) : i64
+  (match value
+    [(ir.CompilerIrMaybeValue.No) n]
+    [(ir.CompilerIrMaybeValue.Some inner)
+      (compiler-live-use-ids-add-value! out n inner)]))
+
+(define (compiler-live-use-ids-add-value-array!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [values : (Array ir.CompilerIrValue)]
+  [index : i64]) : i64
+  (if (>= index (array-length values))
+    n
+    (compiler-live-use-ids-add-value-array!
+      out
+      (compiler-live-use-ids-add-value! out n (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (compiler-live-use-ids-add-call-args!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [args : ir.CompilerIrCallArgs]) : i64
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) n]
+    [(ir.CompilerIrCallArgs.One value)
+      (compiler-live-use-ids-add-value! out n value)]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out n a)
+        b)]
+    [(ir.CompilerIrCallArgs.Array values)
+      (compiler-live-use-ids-add-value-array! out n values 0)]))
+
+;; Walk the seq/list value forms in place. The bitset path reaches these through
+;; `compiler-ir-value-list-force-cons`, which MATERIALIZES a cons list (one box
+;; per element) for the array representation before reading it; walking the
+;; slots directly drops that per-instruction list build as well.
+(define (compiler-live-use-ids-add-value-seq!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [seq : ir.CompilerIrValueSeq]
+  [index : i64]) : i64
+  (if (>= index (struct-get seq len))
+    n
+    (compiler-live-use-ids-add-value-seq!
+      out
+      (compiler-live-use-ids-add-value!
+        out
+        n
+        (array-ref (struct-get seq slots) index))
+      seq
+      (+ index 1))))
+
+(define (compiler-live-use-ids-add-value-list!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [values : ir.CompilerIrValueList]) : i64
+  (match values
+    [(ir.CompilerIrValueList.Nil) n]
+    [(ir.CompilerIrValueList.Array seq)
+      (compiler-live-use-ids-add-value-seq! out n seq 0)]
+    [(ir.CompilerIrValueList.Cons value rest)
+      (compiler-live-use-ids-add-value-list!
+        out
+        (compiler-live-use-ids-add-value! out n value)
+        (box-get rest))]))
+
+(define (compiler-live-use-ids-add-phi-input-seq!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [seq : ir.CompilerIrPhiInputSeq]
+  [index : i64]) : i64
+  (if (>= index (struct-get seq len))
+    n
+    (compiler-live-use-ids-add-phi-input-seq!
+      out
+      (compiler-live-use-ids-add-value!
+        out
+        n
+        (struct-get (array-ref (struct-get seq slots) index) value))
+      seq
+      (+ index 1))))
+
+(define (compiler-live-use-ids-add-phi-inputs!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [inputs : ir.CompilerIrPhiInputList]) : i64
+  (match inputs
+    [(ir.CompilerIrPhiInputList.Nil) n]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (compiler-live-use-ids-add-phi-input-seq! out n seq 0)]
+    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+      (compiler-live-use-ids-add-phi-inputs!
+        out
+        (compiler-live-use-ids-add-value! out n value)
+        (box-get rest))]))
+
+(define (compiler-live-use-ids-add-spmd-args-seq!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [seq : ir.CompilerIrSpmdCallArgSeq]
+  [index : i64]) : i64
+  (if (>= index (struct-get seq len))
+    n
+    (compiler-live-use-ids-add-spmd-args-seq!
+      out
+      (match (array-ref (struct-get seq slots) index)
+        [(ir.CompilerIrSpmdCallArg.Arg _ value _)
+          (compiler-live-use-ids-add-value! out n value)])
+      seq
+      (+ index 1))))
+
+(define (compiler-live-use-ids-add-spmd-args!
+  [out : (__tl_dyn-array i64)]
+  [n : i64]
+  [args : ir.CompilerIrSpmdCallArgList]) : i64
+  (match args
+    [(ir.CompilerIrSpmdCallArgList.Nil) n]
+    [(ir.CompilerIrSpmdCallArgList.Array seq)
+      (compiler-live-use-ids-add-spmd-args-seq! out n seq 0)]
+    [(ir.CompilerIrSpmdCallArgList.Cons arg rest)
+      (compiler-live-use-ids-add-spmd-args!
+        out
+        (match arg
+          [(ir.CompilerIrSpmdCallArg.Arg _ value _)
+            (compiler-live-use-ids-add-value! out n value)])
+        (box-get rest))]))
+
+;; Write the distinct used var ids of `instr` into `out`, returning the count,
+;; or -1 when they do not fit (caller falls back to compiler-live-instr-uses).
+;; Arm for arm this is compiler-live-instr-uses with `compiler-live-set*`
+;; replaced by `push!`.
+(define (compiler-live-instr-use-ids-into!
+  [instr : ir.CompilerIrInstr]
+  [out : (__tl_dyn-array i64)]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.Alloc _ _) 0]
+    [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-use-ids-push! out 0 src)]
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 base)
+        offset)]
+    [(ir.CompilerIrInstr.Load _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.StorePtr dst src _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 dst)
+        src)]
+    [(ir.CompilerIrInstr.CopyBytes dst src _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 dst)
+        src)]
+    [(ir.CompilerIrInstr.BoundsCheck index length _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 index)
+        length)]
+    [(ir.CompilerIrInstr.Cast _ src _ _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 lhs)
+        rhs)]
+    [(ir.CompilerIrInstr.UnOp _ _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.LaneId _ _ _) 0]
+    [(ir.CompilerIrInstr.Splat _ value _ _)
+      (compiler-live-use-ids-add-value! out 0 value)]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        (compiler-live-set1 dst))]
+        [payload : ir.CompilerIrInstrVectorBinOpPayload (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value! out 0 (struct-get payload lhs))
+          (struct-get payload rhs)))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        (compiler-live-set1 dst))]
-    [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _) (compiler-live-set1 dst)]
+        [payload : ir.CompilerIrInstrVectorPrefixPayload (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value! out 0 (struct-get payload src))
+          (struct-get payload carry)))]
+    [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
+      (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        (compiler-live-set1 dst))]
-    [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.MaskNot dst _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.MaskReduce dst _ _ _) (compiler-live-set1 dst)]
+        [payload : ir.CompilerIrInstrVectorComparePayload (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value! out 0 (struct-get payload lhs))
+          (struct-get payload rhs)))]
+    [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 lhs)
+        rhs)]
+    [(ir.CompilerIrInstr.MaskNot _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.MaskReduce _ _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        (compiler-live-set1 dst))]
-    [(ir.CompilerIrInstr.VectorLoad dst _ _ _ _) (compiler-live-set1 dst)]
+        [payload : ir.CompilerIrInstrSelectPayload (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value! out 0 (struct-get payload mask))
+            (struct-get payload on-true))
+          (struct-get payload on-false)))]
+    [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 base)
+        index)]
+    [(ir.CompilerIrInstr.VectorStore payload-box)
+      (let
+        [payload : ir.CompilerIrInstrVectorStorePayload (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value! out 0 (struct-get payload base))
+            (struct-get payload index))
+          (struct-get payload value)))]
+    [(ir.CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [payload : ir.CompilerIrInstrPredicatedStorePayload
+          (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value!
+              out
+              (compiler-live-use-ids-add-value! out 0 (struct-get payload base))
+              (struct-get payload index))
+            (struct-get payload value))
+          (struct-get payload mask)))]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        (compiler-live-set1 dst))]
+        [payload : ir.CompilerIrInstrPredicatedLoadPayload
+          (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value! out 0 (struct-get payload base))
+            (struct-get payload index))
+          (struct-get payload mask)))]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        (compiler-live-set1 dst))]
+        [payload : ir.CompilerIrInstrGatherLoadPayload (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value! out 0 (struct-get payload base))
+            (struct-get payload index-base))
+          (struct-get payload index)))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        (compiler-live-set1 dst))]
-    [(ir.CompilerIrInstr.TailMask dst _ _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.EntryArgc dst) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.EntryArgv dst) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.EntryEnvp dst) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.CpuId dst _ _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Xgetbv dst _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Syscall dst _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Call dst _ _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.CallIndirect dst _ _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.CallIndirectC dst _ _ _) (compiler-live-set1 dst)]
+        [payload : ir.CompilerIrInstrVectorShufflePayload (box-get payload-box)]
+        (compiler-live-use-ids-add-maybe-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-value!
+              out
+              (compiler-live-use-ids-add-value!
+                out
+                0
+                (struct-get payload source))
+              (struct-get payload selector-low))
+            (struct-get payload active-lanes))
+          (struct-get payload selector-high)))]
+    [(ir.CompilerIrInstr.TailMask _ index len _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 index)
+        len)]
+    [(ir.CompilerIrInstr.EntryArgc _) 0]
+    [(ir.CompilerIrInstr.EntryArgv _) 0]
+    [(ir.CompilerIrInstr.EntryEnvp _) 0]
+    [(ir.CompilerIrInstr.CpuId _ leaf subleaf _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-value! out 0 leaf)
+        subleaf)]
+    [(ir.CompilerIrInstr.Xgetbv _ index)
+      (compiler-live-use-ids-add-value! out 0 index)]
+    [(ir.CompilerIrInstr.Syscall _ args)
+      (compiler-live-use-ids-add-call-args! out 0 args)]
+    [(ir.CompilerIrInstr.Call _ _ args _)
+      (compiler-live-use-ids-add-call-args! out 0 args)]
+    [(ir.CompilerIrInstr.CallIndirect _ func args _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-call-args! out 0 args)
+        func)]
+    [(ir.CompilerIrInstr.CallIndirectC _ func args _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-call-args! out 0 args)
+        func)]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (let
+        [payload : ir.CompilerIrInstrCallCAbiStoreResultPayload
+          (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-call-args! out 0 (struct-get payload args))
+          (struct-get payload base)))]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (let
+        [payload : ir.CompilerIrInstrCallIndirectCAbiStoreResultPayload
+          (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-value!
+            out
+            (compiler-live-use-ids-add-call-args!
+              out
+              0
+              (struct-get payload args))
+            (struct-get payload base))
+          (struct-get payload callee)))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [result (struct-get (box-get payload-box) result)]
-        (compiler-live-spmd-call-result-defs result))]
-    [(ir.CompilerIrInstr.Phi dst _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Pack dst _ _) (compiler-live-set1 dst)]
-    [(ir.CompilerIrInstr.Word dst _ _ _) (compiler-live-set1 dst)]
-    [_ (compiler-live-set-empty)]))
+        [payload : ir.CompilerIrInstrSpmdCallPayload (box-get payload-box)]
+        (compiler-live-use-ids-add-value!
+          out
+          (compiler-live-use-ids-add-spmd-args! out 0 (struct-get payload args))
+          (struct-get payload active-mask)))]
+    [(ir.CompilerIrInstr.TailCall _ args _)
+      (compiler-live-use-ids-add-call-args! out 0 args)]
+    [(ir.CompilerIrInstr.Store _ value _)
+      (compiler-live-use-ids-add-value! out 0 value)]
+    [(ir.CompilerIrInstr.Branch cond _ _)
+      (compiler-live-use-ids-add-value! out 0 cond)]
+    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
+      (compiler-live-use-ids-add-value! out 0 cond)]
+    [(ir.CompilerIrInstr.Return value)
+      (compiler-live-use-ids-add-maybe-value! out 0 value)]
+    [(ir.CompilerIrInstr.Phi _ inputs _)
+      (compiler-live-use-ids-add-phi-inputs! out 0 inputs)]
+    [(ir.CompilerIrInstr.Pack _ words _)
+      (compiler-live-use-ids-add-value-list! out 0 words)]
+    [(ir.CompilerIrInstr.Word _ src _ _)
+      (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.Jump _) 0]
+    [(ir.CompilerIrInstr.TailCallIndirect func args _)
+      (compiler-live-use-ids-add-value!
+        out
+        (compiler-live-use-ids-add-call-args! out 0 args)
+        func)]
+    [(ir.CompilerIrInstr.Switch index _ _ _)
+      (compiler-live-use-ids-add-value! out 0 index)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
+      (compiler-live-use-ids-add-value! out 0 index)]))
+
+;; Edge-precise counterpart of compiler-live-instr-use-ids-into!: a phi's inputs
+;; are edge uses, so the phi point itself uses nothing.
+(define (compiler-live-instr-use-ids-nophi-into!
+  [instr : ir.CompilerIrInstr]
+  [out : (__tl_dyn-array i64)]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Phi _ _ _) 0]
+    [_ (compiler-live-instr-use-ids-into! instr out)]))
+
+;; One shared extraction buffer. Every consumer extracts the ids and consumes
+;; them in the same leaf loop, and no such loop starts a second extraction, so a
+;; single buffer serves all of them and no caller has to thread a scratch array
+;; down the liveness / interval / ref-count call chains. Hold the ids only until
+;; the next `compiler-live-instr-use-ids!` call.
+;;
+;; 64 slots: an opt2 self-compile decodes 15,877,540 use lists whose widest is a
+;; 17..64-id call/phi (1,571 of them) and never exceeds 64; a wider one simply
+;; returns -1 and the caller takes the bitset path, so capacity is a throughput
+;; choice, not a correctness one.
+(define compiler-live-instr-ids-buffer : (__tl_dyn-array i64)
+  (make-array i64 64))
+
+(define (compiler-live-instr-ids) : (__tl_dyn-array i64)
+  compiler-live-instr-ids-buffer)
+
+(define (compiler-live-instr-use-ids! [instr : ir.CompilerIrInstr]) : i64
+  (compiler-live-instr-use-ids-into! instr compiler-live-instr-ids-buffer))
+
+(define (compiler-live-instr-use-ids-nophi! [instr : ir.CompilerIrInstr]) : i64
+  (compiler-live-instr-use-ids-nophi-into! instr compiler-live-instr-ids-buffer))
+
+;; Word count of the bitset the ids would have produced: the widest id decides
+;; it, exactly as `compiler-live-set-word-count` reads it off a set whose top
+;; word is nonzero by construction.
+(define (compiler-live-use-ids-word-count
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]) : i64
+  (let
+    [index : i64 0]
+    [words : i64 0]
+    (begin
+      (while (< index id-count)
+        (begin
+          (set!
+            words
+            (compiler-live-set-max
+              words
+              (+ (compiler-live-set-word-index (array-ref ids index)) 1)))
+          (set! index (+ index 1))))
+      words)))
+
+(define (compiler-live-var-word-count-of [var : i64]) : i64
+  (if (< var 0)
+    0
+    (+ (compiler-live-set-word-index var) 1)))
+
+(define (compiler-live-instr-defs [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
+  (let
+    [dst : i64 (compiler-live-instr-def-var instr)]
+    (if (< dst 0)
+      (compiler-live-set-empty)
+      (compiler-live-set1 dst))))
 
 (define (compiler-live-block-use-def-instrs
   [instrs : ir.CompilerIrInstrList]
@@ -1280,6 +1996,43 @@
     instrs
     (compiler-live-set-empty)
     (compiler-live-set-empty)))
+
+;; Id form of compiler-live-block-use-def-step!: `uses |= instr-uses & ~defs`
+;; and `defs |= instr-defs`, applied one bit at a time.
+;;
+;; Equivalent to the word form because each use id is still tested against the
+;; defs accumulated by EARLIER instructions (this instruction's def bit is set
+;; only after every use has been considered), the def set holds at most one bit,
+;; and setting a bit twice is idempotent, so an id list that repeats nothing --
+;; `compiler-live-instr-use-ids-into!` de-duplicates -- writes exactly the bits
+;; the OR of the two word arrays would have written.
+(define (compiler-live-block-use-def-step-ids!
+  [uses : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [def-var : i64]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index id-count)
+        (let
+          [var : i64 (array-ref ids index)]
+          [word : i64 (compiler-live-set-word-index var)]
+          [mask : i64 (compiler-live-set-bit-mask var)]
+          (begin
+            (if (= (bit-and (array-ref defs word) mask) 0)
+              (array-set! uses word (bit-or (array-ref uses word) mask))
+              unit)
+            (set! index (+ index 1)))))
+      (if (< def-var 0)
+        unit
+        (let
+          [word : i64 (compiler-live-set-word-index def-var)]
+          (array-set!
+            defs
+            word
+            (bit-or (array-ref defs word) (compiler-live-set-bit-mask def-var))))))))
 
 (define (compiler-live-block-use-def-step!
   [uses : (__tl_dyn-array i64)]
@@ -1352,23 +2105,56 @@
         (let
           [instr : ir.CompilerIrInstr
             (ir.compiler-ir-instr-seq-ref instrs index)]
-          [instr-uses : CompilerLiveI64Set
+          [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
+          [id-count : i64
             (if edge-precise?
-              (compiler-live-instr-uses-nophi instr)
-              (compiler-live-instr-uses instr))]
-          [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
+              (compiler-live-instr-use-ids-nophi! instr)
+              (compiler-live-instr-use-ids! instr))]
+          [def-var : i64 (compiler-live-instr-def-var instr)]
           (begin
-            (compiler-live-block-use-def-step! uses defs instr-uses instr-defs)
-            (set!
-              use-count
-              (compiler-live-set-max
-                use-count
-                (compiler-live-set-word-count instr-uses)))
-            (set!
-              def-count
-              (compiler-live-set-max
-                def-count
-                (compiler-live-set-word-count instr-defs)))
+            (if (< id-count 0)
+              ;; Wider than the extraction buffer: take the bitset path, which
+              ;; has no width limit.
+              (let
+                [instr-uses : CompilerLiveI64Set
+                  (if edge-precise?
+                    (compiler-live-instr-uses-nophi instr)
+                    (compiler-live-instr-uses instr))]
+                [instr-defs : CompilerLiveI64Set
+                  (compiler-live-instr-defs instr)]
+                (begin
+                  (compiler-live-block-use-def-step!
+                    uses
+                    defs
+                    instr-uses
+                    instr-defs)
+                  (set!
+                    use-count
+                    (compiler-live-set-max
+                      use-count
+                      (compiler-live-set-word-count instr-uses)))
+                  (set!
+                    def-count
+                    (compiler-live-set-max
+                      def-count
+                      (compiler-live-set-word-count instr-defs)))))
+              (begin
+                (compiler-live-block-use-def-step-ids!
+                  uses
+                  defs
+                  ids
+                  id-count
+                  def-var)
+                (set!
+                  use-count
+                  (compiler-live-set-max
+                    use-count
+                    (compiler-live-use-ids-word-count ids id-count)))
+                (set!
+                  def-count
+                  (compiler-live-set-max
+                    def-count
+                    (compiler-live-var-word-count-of def-var)))))
             (set! index (+ index 1)))))
       (CompilerLiveUseDef
         (compiler-live-scratch-freeze uses use-count)
@@ -1701,11 +2487,12 @@
     (while (>= index 0)
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-        [uses : CompilerLiveI64Set
+        [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
+        [id-count : i64
           (if edge-precise?
-            (compiler-live-instr-uses-nophi instr)
-            (compiler-live-instr-uses instr))]
-        [defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
+            (compiler-live-instr-use-ids-nophi! instr)
+            (compiler-live-instr-use-ids! instr))]
+        [def-var : i64 (compiler-live-instr-def-var instr)]
         (begin
           ;; The final point is already a stored immutable set. Reuse it
           ;; rather than copying scratch once more at every block boundary.
@@ -1718,7 +2505,20 @@
           (set! at-live-out? false)
           (set!
             active-count
-            (compiler-live-scratch-step! words active-count uses defs))
+            (if (< id-count 0)
+              (compiler-live-scratch-step!
+                words
+                active-count
+                (if edge-precise?
+                  (compiler-live-instr-uses-nophi instr)
+                  (compiler-live-instr-uses instr))
+                (compiler-live-instr-defs instr))
+              (compiler-live-scratch-step-ids!
+                words
+                active-count
+                ids
+                id-count
+                def-var)))
           (set! index (- index 1)))))))
 
 (define (compiler-live-fill-instr-after-block
@@ -2487,6 +3287,7 @@
   (if (and
     (compiler-live-set-ops-ok?)
     (compiler-live-scratch-ops-ok?)
+    (compiler-live-step-ids-ok?)
     (compiler-live-use-def-ok?)
     (compiler-live-memory-use-def-ok?)
     (compiler-live-vector-mask-use-def-ok?)

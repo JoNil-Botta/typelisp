@@ -23305,9 +23305,12 @@
 ;; underivable data check that must STAY in the fast clone (partial
 ;; versioning); 11 gives the strided offset INT64_MIN (rejects), 12 scales by
 ;; -2 (rejects), 13 scales by 0 (rejects), 14 checks base+i directly, and 15
-;; gives the base an in-loop definition (rejects) -- the scale-1/step-1 and
-;; non-invariant-base forms stay out (guard economics / the invariance
-;; requirement).
+;; gives the base an in-loop definition (rejects) -- the non-invariant-base
+;; form can never prove invariance, and 14's LONE scale-1 check does not
+;; clear the pass's two-eliminable-check guard-economics gate. Variant 16 is
+;; 14's profitable twin: base+i AND base+i+1, two eliminable scale-1
+;; variable-base checks, which version through the no-division scale-1
+;; guard.
 (define (opt-bce-version-test-check-tail [variant : i64]) : compiler_ir_types.CompilerIrInstrList
   (let
     [after-check : compiler_ir_types.CompilerIrInstrList
@@ -23357,6 +23360,15 @@
                 (compiler_ir_types.CompilerIrValue.Var 15)
                 (compiler_ir_types.CompilerIrValue.Var 1)
                 (compiler_ir_types.compiler-ir-label "bce_version_ok_data"))
+              after-check)]
+          ;; 16's second check is `base + i + 1`: a SECOND eliminable
+          ;; scale-1 variable-base index, which is what clears the gate.
+          [(= variant 16)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 11)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "bce_version_ok_second"))
               after-check)]
           [else after-check]))]
     (cond
@@ -23530,6 +23542,22 @@
             (compiler_ir_types.CompilerIrValue.Var 3)
             (compiler_ast_types.AstType.I64))
           check)]
+      [(= variant 16)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              11
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            check))]
       [(or (= variant 12) (= variant 13))
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
@@ -24156,6 +24184,11 @@
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-bce-version-function
           (opt-bce-version-test-function (opt-bce-version-test-blocks 15))))]
+    [two-scale1 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 16)))]
+    [two-scale1-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks two-scale1)]
     (cond
       ;; scale-2 Mul-form variable-base load: versions through the
       ;; synthesized derived-seed quotient guard (one division by the step).
@@ -24291,19 +24324,61 @@
       ;; non-positive literal scales reject.
       [(not (= (compiler_ir_types.compiler-ir-block-list-count neg-out) 3)) 25]
       [(not (= (compiler_ir_types.compiler-ir-block-list-count zero-out) 3)) 26]
-      ;; scale-1/step-1 variable-base forms reject on guard economics:
-      ;; base+i stays checked even though the counter is a step-1 phi.
+      ;; a LONE scale-1 variable-base check fails the guard-economics gate:
+      ;; base+i stays checked even though the counter is a step-1 phi and
+      ;; the index derives, because one guard per entry cannot pay for one
+      ;; removed check per trip. Untouched -- three blocks, still checked.
       [(not
           (=
             (compiler_ir_types.compiler-ir-block-list-count base-counter-out)
             3))
         27]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              base-counter-out
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        28]
       ;; an in-loop base definition cannot prove invariance: untouched.
       [(not
           (=
             (compiler_ir_types.compiler-ir-block-list-count in-loop-base-out)
             3))
-        28]
+        29]
+      ;; TWO eliminable scale-1 variable-base checks clear the gate and
+      ;; version through the no-division guard: entry, guard, fast, slow
+      ;; loop, exit; the clone is check-free, the slow loop keeps both, and
+      ;; no Div is emitted (the scale-1 specialization needs none, unlike
+      ;; the scale > 1 quotient guard asserted above).
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function two-scale1)))
+        30]
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count two-scale1-out) 5))
+        31]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              two-scale1-out
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        32]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              two-scale1-out
+              (compiler_ir_types.compiler-ir-label "loop"))
+            2))
+        33]
+      [(not
+          (=
+            (opt-count-binop-op-blocks
+              two-scale1-out
+              (compiler_ir_types.CompilerIrBinOp.Div))
+            0))
+        34]
       [else 42])))
 
 (test

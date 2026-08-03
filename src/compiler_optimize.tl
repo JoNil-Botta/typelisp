@@ -42362,10 +42362,24 @@
 ;;     phi (invariant init, literal step > 1) -> a wrap-safe quotient guard
 ;;     over the trip range; the variable-base forms synthesize the derived
 ;;     seed in the guard (see opt-bce-version-var-base-scaled-guard and
-;;     opt-bce-version-var-base-derived-guard). Scale-1 variable-base indices
-;;     stay OUT of this pass on purpose: one guard per loop entry cannot pay
-;;     for one removed check per trip on pico-trip loops (measured on
-;;     intern_table's tail and miss-copy loops);
+;;     opt-bce-version-var-base-derived-guard);
+;;   * idx == B + counter + k with B a loop-invariant VARIABLE base (SCALE 1,
+;;     either Add operand order) -> the no-division scale-1 specialization
+;;     `B_eff >= 0 && bound-1 <= len-1-B_eff` (opt-bce-version-var-base-guard,
+;;     shared with the multi-block pass), admitted ONLY when at least TWO of
+;;     the loop's checks are eliminable. That gate is guard economics, not
+;;     soundness. One guard per loop ENTRY buys `2 * checks` instructions per
+;;     TRIP, and a measured scale-1 guard is ~12 instructions for one array
+;;     and ~17 for two, so break-even sits near 8 trips at one removed check
+;;     and 4 at two. Measured on intern_table: it-hash-words' tail loop is
+;;     one check at 3.5 trips/entry (a 7M-instruction LOSS -- it stays out
+;;     under the gate), while it-intern-slice's miss-copy loop is two checks
+;;     at 21 trips/entry (+2.8M) and stdlib's byte-buf slot copy is two
+;;     checks at a whole-buffer trip count (+5.9M). Requiring two eliminable
+;;     checks is the cheapest static proxy that separates them: it doubles
+;;     the per-trip return while the guard grows by well under 2x. The
+;;     multi-block pass admits scale 1 unconditionally because its clone
+;;     already amortizes a whole multi-block body per entry;
 ;;   * idx loop-invariant          -> `idx >= 0 && idx < len`.
 ;; The loop is VERSIONED on the conjunction: a fresh guard block on the entry
 ;; edge branches to a check-free fast clone when every condition holds and to
@@ -43137,7 +43151,10 @@
 
 ;; One Add side as the strided part: the literal-coefficient recovery first
 ;; (it sees through Add/Sub/Mul chains over the counter), then the
-;; derived-induction form for the strength-reduced shape.
+;; derived-induction form for the strength-reduced shape. Scale 1 (the plain
+;; `base + counter`) is recovered here and routed by the caller to the
+;; no-division scale-1 guard under the profitability gate; scale 0 and
+;; negative scales still reject.
 (define (opt-bce-version-strided-side
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -43160,7 +43177,7 @@
         value
         fuel)]
     [(OptBceCounterAffine.Some scale k)
-      (if (> scale 1)
+      (if (>= scale 1)
         (OptBceVarBaseStrided.Scaled scale k)
         (OptBceVarBaseStrided.No))]))
 
@@ -43295,6 +43312,11 @@
 ;; index coincide with the body's own wrapped computation). The INT64_MIN
 ;; offset rejection is shared caution with the literal affine guard, not a
 ;; soundness requirement of this construction.
+;;
+;; Scale 1 does NOT come here: both callers route it to
+;; opt-bce-version-var-base-guard, whose scale-1 specialization needs no
+;; mul and no division. The `scale <= 1` rejection below therefore stays as
+;; a defensive gate rather than becoming reachable policy.
 (define (opt-bce-version-var-base-scaled-guard
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
@@ -43412,9 +43434,109 @@
               values
               counter-seen)))])))
 
+;; Prove `base + counter + offset` stays in [0, length) for every counter in
+;; [seed, bound), with `base` loop-invariant. This is the existing literal
+;; affine guard with scale 1 and the variable `base + offset` folded in for
+;; the literal offset; the division is exact at scale 1 and needs no
+;; instruction. The conditions are
+;;
+;;   cond A: base_eff >= 0                    (base_eff = base + offset)
+;;   cond B: bound - 1 <= length - 1 - base_eff
+;;
+;; alongside the once-only primary `seed >= 0 && seed < bound`. Every emitted
+;; instruction wraps like the body's own arithmetic, and the conjunction can
+;; be true only where every index is representable and in range: with cond A
+;; and seed >= 0 the minimum index is non-negative, and cond B -- computed as
+;; `sub bound 1; sub length 1; sub ... base_eff; signed Le` -- bounds the
+;; maximum. `length - 1 - base_eff` is representable on every path where it
+;; matters: for length in [0, 2^63) and base_eff >= 0 its minimum is -2^63,
+;; and a wrapped-negative RHS (only possible for lengths at or above 2^63,
+;; where the wrap adds back exactly 2^64) leaves cond B equivalent to
+;; `base_eff + bound - 1 <= length_u64 - 1`, so even those lengths stay
+;; sound. A base_eff that overflowed negative fails cond A and keeps the
+;; checked slow path, like every conservatively-false guard here.
+(define (opt-bce-version-var-base-guard
+  [_seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [length : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match acc
+    [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+      (let
+        [eff-var : i64
+          (if (= offset 0)
+            (- 0 1)
+            (opt-bce-version-alloc-var cell))]
+        [eff : ir.CompilerIrValue
+          (if (= offset 0)
+            base
+            (ir.CompilerIrValue.Var eff-var))]
+        [eff-instrs : ir.CompilerIrInstrList
+          (if (= offset 0)
+            instrs
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                eff-var
+                (ir.CompilerIrBinOp.Add)
+                base
+                (ir.CompilerIrValue.I64 offset)
+                (ast.AstType.I64))
+              instrs))]
+        [last-counter : i64 (opt-bce-version-alloc-var cell)]
+        [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
+        [room : i64 (opt-bce-version-alloc-var cell)]
+        [with-arithmetic : OptBceVersionGuardAcc
+          (OptBceVersionGuardAcc.Some
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                room
+                (ir.CompilerIrBinOp.Sub)
+                (ir.CompilerIrValue.Var length-minus-one)
+                eff
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  length-minus-one
+                  (ir.CompilerIrBinOp.Sub)
+                  length
+                  (ir.CompilerIrValue.I64 1)
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    last-counter
+                    (ir.CompilerIrBinOp.Sub)
+                    bound
+                    (ir.CompilerIrValue.I64 1)
+                    (ast.AstType.I64))
+                  eff-instrs)))
+            values
+            counter-seen)]
+        (opt-bce-version-cond-counter-seen
+          (opt-bce-version-cond
+            cell
+            (ir.CompilerIrBinOp.Le)
+            (ir.CompilerIrValue.Var last-counter)
+            (ir.CompilerIrValue.Var room)
+            (opt-bce-version-cond
+              cell
+              (ir.CompilerIrBinOp.Ge)
+              eff
+              (ir.CompilerIrValue.I64 0)
+              with-arithmetic))))]))
+
 ;; One Add side as the strided part, the other as the invariant base. Exactly
 ;; one side may involve the counter: an in-loop base fails the
 ;; invariant-operand check.
+;;
+;; `allow-scale1` carries the loop-level profitability verdict for the plain
+;; `base + counter + k` form (see opt-bce-version-guard-conds): when it is
+;; false a scale-1 recovery reports No and the check simply stays in the
+;; fast clone, exactly as before this form was admitted. Scale > 1 ignores
+;; the flag -- its economics were settled when it landed.
 (define (opt-bce-version-var-base-side-strided
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -43430,6 +43552,7 @@
   [affine-side : ir.CompilerIrValue]
   [base-side : ir.CompilerIrValue]
   [length-value : ir.CompilerIrValue]
+  [allow-scale1 : bool]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match (opt-bce-version-strided-side
     instrs
@@ -43443,26 +43566,39 @@
     16)
     [(OptBceVarBaseStrided.No) (OptBceVersionGuardAcc.No)]
     [(OptBceVarBaseStrided.Scaled scale k2)
-      (match (opt-bce-version-k-add k0 k2)
-        [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
-        [(OptBceVersionKSum.Some offset)
-          (match (opt-bce-version-invariant-operand
-            instrs
-            phi-count
-            last
-            defs
-            base-side)
-            [(ir.CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
-            [(ir.CompilerIrMaybeValue.Some base)
-              (opt-bce-version-var-base-scaled-guard
-                seed
-                bound
-                base
-                scale
-                offset
-                length-value
-                cell
-                acc)])])]
+      (if (and (= scale 1) (not allow-scale1))
+        (OptBceVersionGuardAcc.No)
+        (match (opt-bce-version-k-add k0 k2)
+          [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
+          [(OptBceVersionKSum.Some offset)
+            (match (opt-bce-version-invariant-operand
+              instrs
+              phi-count
+              last
+              defs
+              base-side)
+              [(ir.CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
+              [(ir.CompilerIrMaybeValue.Some base)
+                (if (= scale 1)
+                  ;; No mul, no division: the scale-1 specialization the
+                  ;; multi-block pass already uses for this exact shape.
+                  (opt-bce-version-var-base-guard
+                    seed
+                    bound
+                    base
+                    offset
+                    length-value
+                    cell
+                    acc)
+                  (opt-bce-version-var-base-scaled-guard
+                    seed
+                    bound
+                    base
+                    scale
+                    offset
+                    length-value
+                    cell
+                    acc))])]))]
     [(OptBceVarBaseStrided.Derived d0 step k2)
       (match (opt-bce-version-k-add k0 k2)
         [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
@@ -43502,6 +43638,7 @@
   [cell : (__tl_dyn-array i64)]
   [index-value : ir.CompilerIrValue]
   [length-value : ir.CompilerIrValue]
+  [allow-scale1 : bool]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match (opt-bce-version-strided-peel instrs phi-count last index-value 0 8)
     [(OptBceVersionStridedCore.No) (OptBceVersionGuardAcc.No)]
@@ -43534,6 +43671,7 @@
                           lhs
                           rhs
                           length-value
+                          allow-scale1
                           acc)]
                       (match attempt
                         [(OptBceVersionGuardAcc.No)
@@ -43552,6 +43690,7 @@
                             rhs
                             lhs
                             length-value
+                            allow-scale1
                             acc)]
                         [_ attempt]))]
                   [_ (OptBceVersionGuardAcc.No)]))]
@@ -43571,6 +43710,7 @@
   [cell : (__tl_dyn-array i64)]
   [index-value : ir.CompilerIrValue]
   [length-value : ir.CompilerIrValue]
+  [allow-scale1 : bool]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match index-value
     [(ir.CompilerIrValue.I64 k)
@@ -43657,6 +43797,7 @@
                               cell
                               (ir.CompilerIrValue.Var id)
                               length-value
+                              allow-scale1
                               acc)]
                           [(OptBceCounterAffine.Some scale offset)
                             (opt-bce-version-affine-guard
@@ -43712,6 +43853,7 @@
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (__tl_dyn-array i64)]
+  [allow-scale1 : bool]
   [state : OptBceVersionDerive]) : OptBceVersionDerive
   (if (>= index last)
     state
@@ -43727,6 +43869,7 @@
       seed
       bound
       cell
+      allow-scale1
       (match (ir.compiler-ir-instr-seq-ref instrs index)
         [(ir.CompilerIrInstr.BoundsCheck index-value length-value _)
           (match (opt-bce-version-invariant-operand
@@ -43751,6 +43894,7 @@
                     cell
                     index-value
                     length-invariant
+                    allow-scale1
                     (struct-get state guard))]
                 (match derived-guard
                   [(OptBceVersionGuardAcc.No)
@@ -43973,8 +44117,28 @@
         label
         (ir.compiler-ir-instr-builder-to-seq builder)))))
 
+;; The empty derivation state every scan starts from.
+(define (opt-bce-version-derive-start) : OptBceVersionDerive
+  (OptBceVersionDerive
+    (OptBceVersionGuardAcc.Some
+      (ir.CompilerIrInstrList.Nil)
+      (ir.CompilerIrValueList.Nil)
+      false)
+    (OptBceVersionKeep.Nil)
+    0))
+
 ;; Assemble the single-block guard: derive the per-check conditions, then
 ;; finish them (seed compares + And chain).
+;;
+;; The scale-1 variable-base form is admitted only when the loop ends up with
+;; at least TWO eliminable checks (the guard-economics gate documented at the
+;; head of this pass). Deciding that needs the derived count, which is what
+;; the scan produces, so the scan runs twice: once on a THROWAWAY var counter
+;; to take the census, then for real with the verdict. The trial's condition
+;; instructions are discarded with its counter, so the emitted guard is
+;; exactly what a single scan under the chosen verdict would build, and a
+;; rejected verdict reproduces the pre-gate behaviour instruction for
+;; instruction.
 (define (opt-bce-version-guard-conds
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -43987,6 +44151,24 @@
   [bound : ir.CompilerIrValue]
   [cell : (__tl_dyn-array i64)]) : OptBceVersionGuardOut
   (let
+    [census-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [_census-seed : unit (array-set! census-cell 0 (array-ref cell 0))]
+    [census : OptBceVersionDerive
+      (opt-bce-version-derive-checks
+        instrs
+        phi-count
+        phi-count
+        last
+        defs
+        loop-label
+        pred-label
+        iphi
+        seed
+        bound
+        census-cell
+        true
+        (opt-bce-version-derive-start))]
+    [allow-scale1 : bool (>= (struct-get census derived) 2)]
     [state : OptBceVersionDerive
       (opt-bce-version-derive-checks
         instrs
@@ -44000,13 +44182,8 @@
         seed
         bound
         cell
-        (OptBceVersionDerive
-          (OptBceVersionGuardAcc.Some
-            (ir.CompilerIrInstrList.Nil)
-            (ir.CompilerIrValueList.Nil)
-            false)
-          (OptBceVersionKeep.Nil)
-          0))]
+        allow-scale1
+        (opt-bce-version-derive-start))]
     ;; Partial versioning still needs at least one REMOVED check to pay for
     ;; the clone; with none, the loop is left untouched.
     (if (= (struct-get state derived) 0)
@@ -47401,100 +47578,6 @@
       (OptBceCounterAffineBase.Some scale offset base)]
     [(OptBceCounterAffineBase.No)
       (opt-bce-mb-var-base-side body-blocks defs iphi rhs lhs)]))
-
-;; Prove `base + counter + offset` stays in [0, length) for every counter in
-;; [seed, bound), with `base` loop-invariant. This is the existing literal
-;; affine guard with scale 1 and the variable `base + offset` folded in for
-;; the literal offset; the division is exact at scale 1 and needs no
-;; instruction. The conditions are
-;;
-;;   cond A: base_eff >= 0                    (base_eff = base + offset)
-;;   cond B: bound - 1 <= length - 1 - base_eff
-;;
-;; alongside the once-only primary `seed >= 0 && seed < bound`. Every emitted
-;; instruction wraps like the body's own arithmetic, and the conjunction can
-;; be true only where every index is representable and in range: with cond A
-;; and seed >= 0 the minimum index is non-negative, and cond B -- computed as
-;; `sub bound 1; sub length 1; sub ... base_eff; signed Le` -- bounds the
-;; maximum. `length - 1 - base_eff` is representable on every path where it
-;; matters: for length in [0, 2^63) and base_eff >= 0 its minimum is -2^63,
-;; and a wrapped-negative RHS (only possible for lengths at or above 2^63,
-;; where the wrap adds back exactly 2^64) leaves cond B equivalent to
-;; `base_eff + bound - 1 <= length_u64 - 1`, so even those lengths stay
-;; sound. A base_eff that overflowed negative fails cond A and keeps the
-;; checked slow path, like every conservatively-false guard here.
-(define (opt-bce-version-var-base-guard
-  [_seed : ir.CompilerIrValue]
-  [bound : ir.CompilerIrValue]
-  [base : ir.CompilerIrValue]
-  [offset : i64]
-  [length : ir.CompilerIrValue]
-  [cell : (__tl_dyn-array i64)]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
-    [(OptBceVersionGuardAcc.Some instrs values counter-seen)
-      (let
-        [eff-var : i64
-          (if (= offset 0)
-            (- 0 1)
-            (opt-bce-version-alloc-var cell))]
-        [eff : ir.CompilerIrValue
-          (if (= offset 0)
-            base
-            (ir.CompilerIrValue.Var eff-var))]
-        [eff-instrs : ir.CompilerIrInstrList
-          (if (= offset 0)
-            instrs
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                eff-var
-                (ir.CompilerIrBinOp.Add)
-                base
-                (ir.CompilerIrValue.I64 offset)
-                (ast.AstType.I64))
-              instrs))]
-        [last-counter : i64 (opt-bce-version-alloc-var cell)]
-        [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
-        [room : i64 (opt-bce-version-alloc-var cell)]
-        [with-arithmetic : OptBceVersionGuardAcc
-          (OptBceVersionGuardAcc.Some
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                room
-                (ir.CompilerIrBinOp.Sub)
-                (ir.CompilerIrValue.Var length-minus-one)
-                eff
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.BinOp
-                  length-minus-one
-                  (ir.CompilerIrBinOp.Sub)
-                  length
-                  (ir.CompilerIrValue.I64 1)
-                  (ast.AstType.I64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.BinOp
-                    last-counter
-                    (ir.CompilerIrBinOp.Sub)
-                    bound
-                    (ir.CompilerIrValue.I64 1)
-                    (ast.AstType.I64))
-                  eff-instrs)))
-            values
-            counter-seen)]
-        (opt-bce-version-cond-counter-seen
-          (opt-bce-version-cond
-            cell
-            (ir.CompilerIrBinOp.Le)
-            (ir.CompilerIrValue.Var last-counter)
-            (ir.CompilerIrValue.Var room)
-            (opt-bce-version-cond
-              cell
-              (ir.CompilerIrBinOp.Ge)
-              eff
-              (ir.CompilerIrValue.I64 0)
-              with-arithmetic))))]))
 
 ;; Descriptor-length recognition context: the type-pool segment bases and the
 ;; per-function descriptor-handle set they classify (the load-GVN/LICM header

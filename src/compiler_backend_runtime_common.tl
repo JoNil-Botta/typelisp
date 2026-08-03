@@ -233,12 +233,12 @@ tl_startup_profile_process_entry_tick:
         "\n")]
     [ordinary-body-a : String
       (str_cat.str-cat
-        "    movq 40(%r8), %r9
-    testq $1, 48(%r9)
+        "    movq 56(%r8), %r9
+    testq $1, 48(%r8)
     jnz "
         atomic-label
         "
-    movq 16(%r8), %rax")]
+    movq 16(%r9), %rax")]
     [ordinary-body-b : String
       (str_cat.str-cat "\n    leaq " size-text "(%rax), " next-reg)]
     ;; No wrap guard: `size` is one of the fixed 8..64 stub sizes, and the bump
@@ -247,7 +247,7 @@ tl_startup_profile_process_entry_tick:
     ;; because its size argument is caller-supplied. Only the usable-end bound
     ;; below can fail, and it routes to the same slow path.
     [ordinary-body-c : String
-      (str_cat.str-cat "\n    cmpq " usable-end-offset "(%r8), " next-reg)]
+      (str_cat.str-cat "\n    cmpq " usable-end-offset "(%r9), " next-reg)]
     [ordinary-body-d : String
       (str_cat.str-cat "\n    ja " slow-label "\n    movq " next-reg)]
     [ordinary-body : String
@@ -256,7 +256,7 @@ tl_startup_profile_process_entry_tick:
         ordinary-body-b
         ordinary-body-c
         ordinary-body-d
-        ", 16(%r8)\n")]
+        ", 16(%r9)\n")]
     [ordinary-profile : String
       (compiler-backend-runtime-profile-alloc-account
         size-imm
@@ -268,8 +268,8 @@ tl_startup_profile_process_entry_tick:
 "
         atomic-label
         ":
-    movq 56(%r9), %r8
-    movq 16(%r8), %rax
+    movq 56(%r8), %r9
+    movq 16(%r9), %rax
 "
         atomic-cas-label)]
     [atomic-body-b : String
@@ -280,7 +280,7 @@ tl_startup_profile_process_entry_tick:
       (str_cat.str-cat
         "\n    cmpq "
         usable-end-offset
-        "(%r8), "
+        "(%r9), "
         next-reg
         "\n    ja "
         slow-label)]
@@ -288,7 +288,7 @@ tl_startup_profile_process_entry_tick:
       (str_cat.str-cat
         "\n    lock cmpxchgq "
         next-reg
-        ", 16(%r8)\n    jne "
+        ", 16(%r9)\n    jne "
         atomic-cas-label)]
     [atomic-body : String
       (str_cat.str-cat
@@ -402,10 +402,7 @@ tl_region_mark:
       "    testq %rax, %rax
     jz .L_tl_region_mark_zero
 .L_tl_region_mark_current:
-    movq 40(%rax), %r8
-    testq $1, 48(%r8)
-    jz .L_tl_region_mark_read
-    movq 56(%r8), %rax
+    movq 56(%rax), %rax
 .L_tl_region_mark_read:
     movq 16(%rax), %rax
     ret

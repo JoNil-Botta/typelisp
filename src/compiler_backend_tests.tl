@@ -18184,7 +18184,7 @@
       (and
         ;; tl_array_zero reads the current arena once for its virgin-arena
         ;; zero-fill skip; the remaining reads are the allocator/region paths.
-        (= (compiler_backend.compiler-backend-string-count asm "%gs:0x28") 23)
+        (= (compiler_backend.compiler-backend-string-count asm "%gs:0x28") 20)
         (=
           (compiler_backend.compiler-backend-string-count
             asm
@@ -18195,7 +18195,7 @@
           (compiler_backend.compiler-backend-string-count
             asm
             "%fs:tl_current_arena@tpoff")
-          21)
+          18)
         (= (compiler_backend.compiler-backend-string-count asm "%gs:0x28") 0)))))
 
 (define (compiler-backend-test-runtime-functions-for-target
@@ -18464,13 +18464,17 @@
     (and
       (compiler_backend.compiler-backend-string-contains?
         asm
-        "    movq %r10, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r10)\n    movq %rax, 56(%rax)\n    leaq 64(%rax), %r8\n")
+        "    movq %r10, 0(%rax)\n    movq $0, 32(%rax)\n    movq %r9, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r9)\n    leaq 64(%rax), %r8\n")
       (compiler_backend.compiler-backend-string-contains?
         asm
         "    movq 56(%r12), %rbx\n    testq %rbx, %rbx\n    jnz .L_tl_arena_destroy_head_ready\n    movq %r12, %rbx\n.L_tl_arena_destroy_head_ready:\n.L_tl_arena_destroy_retired_ready:\n    movq 32(%r12), %r12\n")
       (compiler_backend.compiler-backend-string-contains?
         asm
-        "    movq %rbx, 16(%r8)\n    movq %r8, 56(%r12)\n    movq %r8, %fs:tl_current_arena@tpoff\n")
+        "    movq %rbx, 16(%r8)\n    movq %r8, 56(%r12)\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq %r8, %fs:tl_current_arena@tpoff\n"))
       (compiler_backend.compiler-backend-string-contains?
         asm
         "    movq 56(%r10), %r8\n    testq %r8, %r8\n    jnz .L_tl_region_reset_all_head_ready\n    movq %r10, %r8\n.L_tl_region_reset_all_head_ready:\n.L_tl_region_reset_all_retired_ready:\n    movq 32(%r10), %rbx\n"))))
@@ -18483,13 +18487,17 @@
     (and
       (compiler_backend.compiler-backend-string-contains?
         asm
-        "    movq %r10, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r10)\n    movq %rax, 56(%rax)\n    movq -40(%rbp), %rdx\n    addq %rax, %rdx\n    movq %rdx, 64(%rax)\n    movq 8(%rax), %r8\n")
+        "    movq %r10, 0(%rax)\n    movq %r8, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r8)\n    movq %r8, %gs:0x28\n    movq -40(%rbp), %rdx\n    addq %rax, %rdx\n    movq %rdx, 64(%rax)\n    movq 8(%rax), %r8\n")
       (compiler_backend.compiler-backend-string-contains?
         asm
         "    movq 56(%r12), %rsi\n    testq %rsi, %rsi\n    jnz .L_tl_arena_destroy_win_head_ready\n    movq %r12, %rsi\n.L_tl_arena_destroy_win_head_ready:\n.L_tl_arena_destroy_win_retired_ready:\n    movq 32(%r12), %r12\n")
       (compiler_backend.compiler-backend-string-contains?
         asm
-        "    movq %r12, 16(%r13)\n    movq %r13, 56(%r11)\n    movq %r13, %gs:0x28\n")
+        "    movq %r12, 16(%r13)\n    movq %r13, 56(%r11)\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq %r13, %gs:0x28\n"))
       (compiler_backend.compiler-backend-string-contains?
         asm
         "    movq 56(%r12), %r14\n    testq %r14, %r14\n    jnz .L_tl_region_reset_win_all_head_ready\n    movq %r12, %r14\n.L_tl_region_reset_win_all_head_ready:\n.L_tl_region_reset_win_all_retired_ready:\n    movq 32(%r12), %r12\n"))))
@@ -28864,14 +28872,14 @@
       (and
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq 16(%r8), %rax\n")
+          "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    leaq 8(%rax), %rcx\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            ".L_tl_alloc8:\n    movq %fs:tl_current_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc8_slow\n    movq 40(%r8), %r9\n    testq $1, 48(%r9)\n    jnz .L_tl_alloc8_atomic\n    movq 16(%r8), %rcx\n    movq %rcx, %rax\n"))
+            ".L_tl_alloc8:\n    movq %fs:tl_current_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc8_slow\n    movq 40(%r8), %r9\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -28892,10 +28900,13 @@
       (and
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i0_v0_slow\n")
+          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i0_v0_slow\n    movq 56(%r8), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq 16(%r8), %rax\n    leaq 16(%rax), %r10\n")
+          "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n    leaq 16(%rax), %r8\n")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i0_v0_slow\n    movq %r8, 16(%r9)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -28903,7 +28914,11 @@
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %rax, %r10\n    addq $16, %r10\n")))]
+            "    movq %rax, %r10\n    addq $16, %r10\n"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r8, 16(%r8)\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-fast-alloc-gate-ok?) : bool
@@ -29285,44 +29300,49 @@
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    movq -576(%rbp), %rcx\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %rdx, -640(%rbp)\n"))
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %fs:tl_current_arena@tpoff, %r9\n")
+            "    movq %fs:tl_current_arena@tpoff, %r9\n    testq %r9, %r9\n    jz .L_tl_test_allocentry_i0_v20_slow\n    testq $1, 48(%r9)\n    jnz .L_tl_test_allocentry_i0_v20_slow\n    movq 56(%r9), %rcx\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    leaq 8(%rax), %rcx\n")
+            "    movq 16(%rcx), %rax\n    leaq 8(%rax), %r9\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %rcx, 16(%r9)\n")
+            "    cmpq 24(%rcx), %r9\n    ja .L_tl_test_allocentry_i0_v20_slow\n    movq %r9, 16(%rcx)\n"))
+        (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    call .L_tl_alloc8\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    movq tl_profile_alloc_live_bytes(%rip), %rcx\n")
-        (compiler_backend.compiler-backend-string-contains?
-          asm
-          "    cmpq tl_profile_alloc_peak_bytes(%rip), %rcx\n")
-        (not
+            "    call .L_tl_alloc8\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "tl_profile_alloc_live_bytes(%rip), %r10"))
-        (not
+            "    movq tl_profile_alloc_live_bytes(%rip), %r9\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "%r10, tl_profile_alloc_peak_bytes(%rip)"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            "    movq %fs:tl_current_arena@tpoff, %r8\n"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            "    leaq 8(%rax), %r8\n"))
-        (not
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            "    leaq 8(%rax), %rax\n")))]
+            "    cmpq tl_profile_alloc_peak_bytes(%rip), %r9\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "tl_profile_alloc_live_bytes(%rip), %rcx"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "%rcx, tl_profile_alloc_peak_bytes(%rip)"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %fs:tl_current_arena@tpoff, %r8\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    leaq 8(%rax), %r8\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    leaq 8(%rax), %rax\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Backend emit-shape coverage for local tuple construction/ref.

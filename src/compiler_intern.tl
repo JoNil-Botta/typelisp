@@ -1079,6 +1079,17 @@
 (define (intern-compat-state-persistent-arena [state : InternCompatState]) : i64
   (array-ref (struct-get state persistent-arena) 0))
 
+;; Test-only raw view of the physical head. Public arena handles remain the
+;; persistent root; growth is detected through the root's +56 current field.
+(define (intern-compat-state-persistent-arena-current-head
+  [state : InternCompatState]) : i64
+  (let
+    [root : i64 (intern-compat-state-persistent-arena state)]
+    (if (= root 0)
+      0
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7))))))
+
 (define (intern-compat-state-persistent-arena-floor-mark
   [state : InternCompatState]) : i64
   (array-ref (struct-get state persistent-arena-floor-mark) 0))
@@ -3431,6 +3442,8 @@
               (tl_arena_set home))
             created)))]
     [initial-arena : i64 (intern-compat-state-persistent-arena state)]
+    [initial-head : i64
+      (intern-compat-state-persistent-arena-current-head state)]
     [chunk-size : i64 4194304]
     [max-iterations : i64 24]
     [source : String
@@ -3461,10 +3474,14 @@
             (set!
               grew?
               (not
-                (= (intern-compat-state-persistent-arena state) initial-arena)))
+                (=
+                  (intern-compat-state-persistent-arena-current-head state)
+                  initial-head)))
             (set! iterations (+ iterations 1)))))
       (let
         [grown-arena : i64 (intern-compat-state-persistent-arena state)]
+        [grown-head : i64
+          (intern-compat-state-persistent-arena-current-head state)]
         [post-copy : String
           (intern-compat-state-persistent-substring state source 0 64)]
         [post-copy-restored? : bool (= (tl_arena_current) home)]
@@ -3489,14 +3506,17 @@
               [copied : String
                 (intern-compat-state-persistent-substring state source 1 64)]
               (begin
-                (set! equal-branch-head (tl_arena_current))
+                (set!
+                  equal-branch-head
+                  (intern-compat-state-persistent-arena-current-head state))
                 (unsafe
                   (tl_arena_set home))
                 copied)))]
         [ok : bool true]
         (begin
           (unless grew? (set! ok false))
-          (unless (not (= grown-arena initial-arena)) (set! ok false))
+          (unless (= grown-arena initial-arena) (set! ok false))
+          (unless (not (= grown-head initial-head)) (set! ok false))
           (unless
             (intern-private-string-eq before-text "state/pre-growth")
             (set! ok false))
@@ -3530,7 +3550,9 @@
             (set! ok false))
           (unless post-copy-restored? (set! ok false))
           (unless
-            (= equal-branch-head (intern-compat-state-persistent-arena state))
+            (=
+              equal-branch-head
+              (intern-compat-state-persistent-arena-current-head state))
             (set! ok false))
           (unless
             (= (intern-private-string-length equal-copy) 64)

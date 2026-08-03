@@ -65,6 +65,10 @@
 ;#     (string.append "level:" (string.int->string n))))
 ;# ```
 ;#
+;# Arena handles identify the stable first segment of an arena. Growth appends
+;# physical segments behind that root, so `current` and stored handles retain
+;# identity across growth and rewind. Destroying a root (or any physical
+;# segment accepted by the low-level hook) invalidates the complete chain.
 ;# Manual arena switching, rewinding, and destruction remain explicit unsafe
 ;# operations for code that can prove all invalidated handles are dead:
 ;#
@@ -139,7 +143,8 @@
 (define (make-atomic) : Arena
   (Arena (tl_arena_make_atomic)))
 
-;: Return the current active arena handle, or `0` before the first allocation.
+;: Return the stable root handle for the current active arena, or `0` before the
+;: first allocation. The value remains identical when the arena grows.
 (define (current) : Arena
   (Arena (tl_arena_current)))
 
@@ -193,7 +198,8 @@
     (unsafe
       (tl_arena_set (raw-handle arena)))))
 
-;: Destroy `arena` and any chained arena segments reachable from it.
+;: Destroy `arena` and any chained physical segments reachable from its stable
+;: root. The root handle and all allocations become invalid.
 ;:
 ;: All heap handles into that arena become invalid, so calls require
 ;: `(unsafe ...)`.

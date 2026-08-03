@@ -97,21 +97,22 @@ tl_alloc:
     movq %fs:tl_current_arena@tpoff, %r8
     testq %r8, %r8
     jz .L_tl_alloc_new_arena
-    movq 40(%r8), %r9
-    testq $1, 48(%r9)
+    movq 56(%r8), %r9
+    testq $1, 48(%r8)
     jnz .L_tl_alloc_atomic
-    movq 16(%r8), %rcx
+    movq 16(%r9), %rcx
     movq %rcx, %rax
     addq %rsi, %rcx
     jc .L_tl_alloc_abort
-    cmpq 24(%r8), %rcx
+    cmpq 24(%r9), %rcx
     ja .L_tl_alloc_new_arena
-    movq %rcx, 16(%r8)
+    movq %rcx, 16(%r9)
 "
         "")]
     [atomic-fast-asm : String
       "    ret
 .L_tl_alloc_atomic:
+    movq %r8, %r9
     movq 56(%r9), %r8
     movq 16(%r8), %rax
 .L_tl_alloc_atomic_cas:
@@ -191,7 +192,6 @@ tl_alloc:
     addq %rsi, %rcx
     movq %rcx, 16(%rax)
     movq %rax, 56(%r9)
-    movq %rax, %fs:tl_current_arena@tpoff
     movq $1, 48(%r9)
     movq %r8, %rax
 "]
@@ -223,27 +223,27 @@ tl_alloc:
     movq %rax, %rcx
     addq %rdx, %rcx
     jc .L_tl_alloc_abort
-    movq %fs:tl_current_arena@tpoff, %r8
-    movq %r8, 0(%rax)
-    movq $0, 32(%rax)
-    testq %r8, %r8
+    movq %fs:tl_current_arena@tpoff, %r9
+    testq %r9, %r9
     jz .L_tl_alloc_root_self
-    movq 40(%r8), %r10
+    movq 56(%r9), %r10
     jmp .L_tl_alloc_root_ready
 .L_tl_alloc_root_self:
-    movq %rax, %r10
+    xorq %r10, %r10
+    movq %rax, %r9
 .L_tl_alloc_root_ready:
-    movq %r10, 40(%rax)
+    movq %r10, 0(%rax)
+    movq $0, 32(%rax)
+    movq %r9, 40(%rax)
     movq $0, 48(%rax)
-    movq %rax, 56(%r10)
-    movq %rax, 56(%rax)
+    movq %rax, 56(%r9)
     leaq 64(%rax), %r8
     movq %r8, 8(%rax)
     movq %rcx, 24(%rax)
     movq %r8, %rcx
     addq %rsi, %rcx
     movq %rcx, 16(%rax)
-    movq %rax, %fs:tl_current_arena@tpoff
+    movq %r9, %fs:tl_current_arena@tpoff
     movq %r8, %rax
 "]
     [tail-asm : String "    ret
@@ -276,7 +276,8 @@ tl_alloc:
         (string.replace
           base
           ".L_tl_alloc_root_self:
-    movq %rax, %r10
+    xorq %r10, %r10
+    movq %rax, %r9
 .L_tl_alloc_root_ready:
 "
           ".L_tl_alloc_root_self:
@@ -284,7 +285,8 @@ tl_alloc:
     subq $8, %rsp
     call .L_tl_arena_debug_register_root
     addq $8, %rsp
-    movq %rax, %r10
+    xorq %r10, %r10
+    movq %rax, %r9
 .L_tl_alloc_root_ready:
 ")
         base)
@@ -333,9 +335,18 @@ tl_arena_current:
 tl_arena_set:
 "
         (string.append
-          (compiler-backend-current-arena-store "%rdi")
+          "    testq %rdi, %rdi
+    jz .L_tl_arena_set_store
+    movq 40(%rdi), %rax
+    testq %rax, %rax
+    jz .L_tl_arena_set_store
+    movq %rax, %rdi
+.L_tl_arena_set_store:
+"
           (string.append
-            "    ret
+            (compiler-backend-current-arena-store "%rdi")
+            (string.append
+              "    ret
 
     .globl tl_arena_poison_enable
 tl_arena_poison_enable:
@@ -429,12 +440,12 @@ tl_arena_destroy:
     jz .L_tl_arena_destroy_active_done
     movq 0(%rbx), %r8
 "
-            (string.append
-              (runtime_common.compiler-backend-runtime-profile-live-sub
-                "%rbx"
-                "%r10"
-                profile)
-              "    push %r8
+              (string.append
+                (runtime_common.compiler-backend-runtime-profile-live-sub
+                  "%rbx"
+                  "%r10"
+                  profile)
+                "    push %r8
     cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_arena_destroy_unmap
     movq 8(%rbx), %rdi
@@ -481,7 +492,7 @@ tl_arena_destroy:
     pop %rbx
     ret
 
-")))))))
+"))))))))
 
 (define (compiler-backend-runtime-linux-arena-debug-functions) : String
   ".L_tl_arena_debug_register_root:
@@ -630,9 +641,7 @@ tl_region_reset:
     movq %fs:tl_current_arena@tpoff, %r8
     testq %r8, %r8
     jz .L_tl_region_reset_invalid
-    movq 40(%r8), %r12
-    testq $1, 48(%r12)
-    jz .L_tl_region_reset_find
+    movq %r8, %r12
     movq 56(%r12), %r8
 .L_tl_region_reset_find:
     movq 8(%r8), %r9
@@ -647,8 +656,8 @@ tl_region_reset:
     jnz .L_tl_region_reset_find
     jmp .L_tl_region_reset_invalid
 .L_tl_region_reset_found:
-    movq 40(%r8), %r12
-    movq %fs:tl_current_arena@tpoff, %r9
+    movq %r12, %r9
+    movq 56(%r9), %r9
 .L_tl_region_reset_drop_newer:
     cmpq %r8, %r9
     je .L_tl_region_reset_restore
@@ -707,7 +716,6 @@ tl_region_reset:
 .L_tl_region_reset_reused_ready:
     movq %rbx, 16(%r8)
     movq %r8, 56(%r12)
-    movq %r8, %fs:tl_current_arena@tpoff
     pop %r12
     pop %rbx
     ret
@@ -717,9 +725,7 @@ tl_region_reset:
     xorq %rbx, %rbx
     testq %r8, %r8
     jz .L_tl_region_reset_done
-    movq 40(%r8), %r10
-    testq %r10, %r10
-    jz .L_tl_region_reset_all_loop
+    movq %r8, %r10
     movq 56(%r10), %r8
     testq %r8, %r8
     jnz .L_tl_region_reset_all_head_ready
@@ -798,13 +804,19 @@ tl_region_reset:
         (string.replace
           (string.replace
             base
-            "    movq 40(%r8), %r12
-    testq $1, 48(%r12)
+            "    movq %fs:tl_current_arena@tpoff, %r8
+    testq %r8, %r8
+    jz .L_tl_region_reset_invalid
+    movq %r8, %r12
+    movq 56(%r12), %r8
 "
-            "    movq 40(%r8), %r12
-    testq $8, 48(%r12)
+            "    movq %fs:tl_current_arena@tpoff, %r8
+    testq %r8, %r8
+    jz .L_tl_region_reset_invalid
+    testq $8, 48(%r8)
     jnz tl_arena_debug_reset_abort
-    testq $1, 48(%r12)
+    movq %r8, %r12
+    movq 56(%r12), %r8
 ")
           "    movq %fs:tl_current_arena@tpoff, %r8
     movq $0, %fs:tl_current_arena@tpoff
@@ -812,7 +824,7 @@ tl_region_reset:
           "    movq %fs:tl_current_arena@tpoff, %r8
     testq %r8, %r8
     jz .L_tl_region_reset_all_debug_guard_done
-    movq 40(%r8), %r10
+    movq %r8, %r10
     testq $8, 48(%r10)
     jnz tl_arena_debug_reset_abort
 .L_tl_region_reset_all_debug_guard_done:
@@ -886,6 +898,9 @@ tl_array_zero:
     cmpq $64, %rsi
     jb .Ltl_array_zero_fill
     movq %fs:tl_current_arena@tpoff, %r8
+    testq %r8, %r8
+    jz .Ltl_array_zero_fill
+    movq 56(%r8), %r8
     testq %r8, %r8
     jz .Ltl_array_zero_fill
     testq $5, 48(%r8)

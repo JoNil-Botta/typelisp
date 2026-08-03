@@ -98,9 +98,16 @@
       (while (= (arena-atomic-raw-load start-gate) 0)
         unit)
       (arena-atomic-worker-loop worker 0 addresses lengths)
-      (unsafe
-        (arena.tl_arena_set home))
-      42)))
+      (let
+        ;; Every worker must observe the same stable owner after the aggregate
+        ;; allocation crosses multiple physical chunks.
+        [shared-current : i64 (arena.tl_arena_current)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set home))
+          (if (= shared-current owner)
+            42
+            15))))))
 
 (define (arena-atomic-context
   [owner : i64]

@@ -395,14 +395,21 @@
     (os-exit 135)))
 
 ;: Report a source-located invalid shift with its count and operand width, then
-;: exit with the legacy shift-abort status.
-(define (shift-abort-at [site : (Ptr i64)] [count : i64] [width : i64])
+;: exit with the legacy shift-abort status.  The fourth ABI flag selects
+;: unsigned decimal rendering for unsigned count types.
+(define (shift-abort-at
+  [site : (Ptr i64)]
+  [count : i64]
+  [width : i64]
+  [unsigned-count? : bool])
   (:export-symbol "tl_shift_abort_at") : never
   (begin
     (abort-write "tl: ")
     (abort-write-site site)
     (abort-write "shift count out of range: count=")
-    (abort-write-signed-decimal count)
+    (if unsigned-count?
+      (abort-write-decimal (cast count : u64))
+      (abort-write-signed-decimal count))
     (abort-write " width=")
     (abort-write-signed-decimal width)
     (abort-write "\n")

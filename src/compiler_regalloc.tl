@@ -8510,8 +8510,8 @@
     [(ir.CompilerIrBinOp.Mod) true]
     [(ir.CompilerIrBinOp.SafeDiv) true]
     [(ir.CompilerIrBinOp.SafeMod) true]
-    [(ir.CompilerIrBinOp.Shl) true]
-    [(ir.CompilerIrBinOp.Shr) true]
+    [(ir.CompilerIrBinOp.Shl _) true]
+    [(ir.CompilerIrBinOp.Shr _) true]
     [_ false]))
 
 (define (compiler-reg-backend-caller-clobber-instr?
@@ -8697,10 +8697,23 @@
 ;; %cl register path, so it stays a clobber point (conservative).
 (define (compiler-reg-shift-const-in-range?
   [rhs : ir.CompilerIrValue]
-  [ty : ast.AstType]) : bool
+  [count-ty : ast.AstType]
+  [lhs-ty : ast.AstType]) : bool
   (match rhs
     [(ir.CompilerIrValue.I64 n)
-      (and (>= n 0) (< n (compiler-reg-clobber-shift-width ty)))]
+      (if (match count-ty
+        [(ast.AstType.I64) true]
+        [(ast.AstType.I32) true]
+        [(ast.AstType.I16) true]
+        [(ast.AstType.I8) true]
+        [_ false])
+        (and (>= n 0) (< n (compiler-reg-clobber-shift-width lhs-ty)))
+        (match count-ty
+          [(ast.AstType.U64)
+            (<
+              (cast n : u64)
+              (cast (compiler-reg-clobber-shift-width lhs-ty) : u64))]
+          [_ (and (>= n 0) (< n (compiler-reg-clobber-shift-width lhs-ty)))]))]
     [_ false]))
 
 (define (compiler-reg-clobber-binop-shift?
@@ -8708,8 +8721,10 @@
   [rhs : ir.CompilerIrValue]
   [ty : ast.AstType]) : bool
   (match op
-    [(ir.CompilerIrBinOp.Shl) (not (compiler-reg-shift-const-in-range? rhs ty))]
-    [(ir.CompilerIrBinOp.Shr) (not (compiler-reg-shift-const-in-range? rhs ty))]
+    [(ir.CompilerIrBinOp.Shl count-ty)
+      (not (compiler-reg-shift-const-in-range? rhs count-ty ty))]
+    [(ir.CompilerIrBinOp.Shr count-ty)
+      (not (compiler-reg-shift-const-in-range? rhs count-ty ty))]
     [_ false]))
 
 (define (compiler-reg-clobber-instr-kind?
@@ -26783,13 +26798,13 @@
                 (match op
                   ;; Constant shifts accumulate directly in a register-homed
                   ;; destination; a spill needs one result staging home.
-                  [(ir.CompilerIrBinOp.Shl)
+                  [(ir.CompilerIrBinOp.Shl _)
                     (if (compiler-reg-scratch-var-register-homed?
                       _assignments
                       dst)
                       0
                       1)]
-                  [(ir.CompilerIrBinOp.Shr)
+                  [(ir.CompilerIrBinOp.Shr _)
                     (if (compiler-reg-scratch-var-register-homed?
                       _assignments
                       dst)

@@ -429,31 +429,41 @@ tl_div_abort_at:
 
 .globl tl_shift_abort_at
 tl_shift_abort_at:
-    subq $136, %rsp
-    movq %rdi, 120(%rsp)
-    movq %rsi, 112(%rsp)
-    movq %rdx, 104(%rsp)
+    subq $168, %rsp
+    movq %rdi, 152(%rsp)
+    movq %rsi, 144(%rsp)
+    movq %rdx, 136(%rsp)
+    movq %rcx, 128(%rsp)
 .Lf12_entry:
     leaq .L_tl_str_l4_264904958_75213898(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
-    movq 120(%rsp), %rdi
+    movq 152(%rsp), %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write_site
     leaq .L_tl_str_l32_1951757166_1356077733(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
-    movq 112(%rsp), %rdi
+    cmpq $0, 128(%rsp)
+    je .Lf12_if_else.1
+.Lf12_if_then.0:
+    movq 144(%rsp), %r8
+    movq %r8, %rdi
+    call _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal
+    jmp .Lf12_if_merge.2
+.Lf12_if_else.1:
+    movq 144(%rsp), %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write_signed_decimal
+.Lf12_if_merge.2:
     leaq .L_tl_str_l7_56598913_2146427533(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
-    movq 104(%rsp), %rdi
+    movq 136(%rsp), %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write_signed_decimal
     leaq .L_tl_str_l1_11_11(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
     movl $129, %edi
-    addq $136, %rsp
+    addq $168, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
 
 .globl tl_panic_at

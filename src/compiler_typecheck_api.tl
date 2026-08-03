@@ -11,6 +11,7 @@
 (import compiler_diagnostic as cdiag)
 (import sym_i64_env)
 (import compiler_builtin_ids as cbi)
+(import compiler_intern as ci)
 
 (define (compiler-typecheck-context-program [ctx : tc_core.TcContext]) : ast.AstProgram
   (tc_core.tc-context-program ctx))
@@ -28,7 +29,7 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (tc_core.compiler-typecheck-reset-intern-owned-state!)))
 
-(define (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
+(define (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools-and-intern-state
   [load-state : load.CompilerLoadSessionState]
   [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
   [job-state : tc_core.TcJobState]
@@ -36,7 +37,8 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheck
+  [pools : ast.AstNodePoolContext]
+  [intern-state : ci.InternCompatState]) : tc_core.ResultCompilerTypecheck
   ;; Generate declaration families (e.g. hashmap) before macro expansion. Macro
   ;; expansion type-directs some sub-expressions (let-init / match-scrutinee
   ;; typing), which must be able to see generated functions; the later template
@@ -48,103 +50,172 @@
     (tc_core.tc-typecheck-result-with-pool-check
       (let
         [generated-result : spec.ResultGenProgramWithPaths
-          (spec.gen-normalize-program-with-paths-and-pools
+          (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
             program
             paths
             ""
-            pools)]
+            (spec.spec-owner-context-new pools intern-state))]
         (begin
           (ast.ast-node-pool-context-install! pools)
+          ;; Publish generated IDs before legacy macro/symbol consumers run.
+          (ci.intern-compat-state-install! intern-state)
           (match generated-result
             [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state
-                load-state
-                job-state
-                generated
-                generated-paths
-                pools
-                stdlib-roots
-                (typecheck-compiler-source-language-cfgs))
-                [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
-                  (begin
-                    (ast.ast-node-pool-context-capture-active! pools)
-                    (if (spec.compiler-specialize-needed? expanded)
-                      (match (spec.gen-normalize-program-with-paths-and-pools
+              (let
+                [macro-result : tc_core.ResultMacroExpand
+                  (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state-and-intern-state
+                    load-state
+                    job-state
+                    generated
+                    generated-paths
+                    pools
+                    stdlib-roots
+                    (typecheck-compiler-source-language-cfgs)
+                    intern-state)]
+                (begin
+                  (ast.ast-node-pool-context-capture-active! pools)
+                  (ci.intern-compat-state-capture-from-globals! intern-state)
+                  (match macro-result
+                    [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
+                      (if (spec.compiler-specialize-needed-with-pools
                         expanded
-                        expanded-paths
-                        (tc_core.tc-decl-path-list-last expanded-paths "")
                         pools)
-                        [(spec.ResultGenProgramWithPaths.Ok
-                            normalized
-                            normalized-paths)
+                        (let
+                          [normalized-result : spec.ResultGenProgramWithPaths
+                            (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+                              expanded
+                              expanded-paths
+                              (tc_core.tc-decl-path-list-last expanded-paths "")
+                              (spec.spec-owner-context-new pools intern-state))]
                           (begin
+                            ;; Publish explicit normalization mutations before
+                            ;; matching either result or entering legacy phases.
                             (ast.ast-node-pool-context-install! pools)
-                            (if (spec.compiler-specialize-needed? normalized)
-                              (match (csym.build-compiler-symbols-diagnostic-with-paths
-                                normalized
-                                normalized-paths)
-                                [(csym.ResultCompilerSymbolsDiagnostic.Ok _)
-                                  (begin
-                                    (ast.ast-node-pool-context-capture-active!
-                                      pools)
-                                    (match (spec.compiler-specialize-program-with-paths-and-pools
+                            (ci.intern-compat-state-install! intern-state)
+                            (match normalized-result
+                              [(spec.ResultGenProgramWithPaths.Ok
+                                  normalized
+                                  normalized-paths)
+                                (begin
+                                  (if (spec.compiler-specialize-needed-with-pools
+                                    normalized
+                                    pools)
+                                    (let
+                                      [symbol-result : csym.ResultCompilerSymbolsDiagnostic
+                                        (csym.build-compiler-symbols-diagnostic-with-paths
+                                          normalized
+                                          normalized-paths)]
+                                      (begin
+                                        (ast.ast-node-pool-context-capture-active!
+                                          pools)
+                                        (ci.intern-compat-state-capture-from-globals!
+                                          intern-state)
+                                        (match symbol-result
+                                          [(csym.ResultCompilerSymbolsDiagnostic.Ok
+                                              _)
+                                            (let
+                                              [specialized-result : spec.ResultSpecProgramWithPaths
+                                                (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
+                                                  normalized
+                                                  normalized-paths
+                                                  (tc_core.tc-decl-path-list-last
+                                                    normalized-paths
+                                                    "")
+                                                  pools
+                                                  intern-state)]
+                                              (begin
+                                                (ast.ast-node-pool-context-install!
+                                                  pools)
+                                                (ci.intern-compat-state-install!
+                                                  intern-state)
+                                                (match specialized-result
+                                                  [(spec.ResultSpecProgramWithPaths.Ok
+                                                      specialized
+                                                      specialized-paths)
+                                                    (tc_core.typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state-and-intern-state
+                                                      load-state
+                                                      prefix-cache
+                                                      job-state
+                                                      specialized
+                                                      specialized-paths
+                                                      stdlib-roots
+                                                      cache-scope
+                                                      pools
+                                                      (ci.intern-source-name-session-handle
+                                                        (ci.intern-source-name-session-from-state
+                                                          intern-state))
+                                                      intern-state)]
+                                                  [(spec.ResultSpecProgramWithPaths.Err
+                                                      diag)
+                                                    (tc_core.ResultCompilerTypecheck.Err
+                                                      (cdiag.compiler-diagnostic-list-box-single
+                                                        diag))])))]
+                                          [(csym.ResultCompilerSymbolsDiagnostic.Err
+                                              diag)
+                                            (tc_core.ResultCompilerTypecheck.Err
+                                              (cdiag.compiler-diagnostic-list-box-single
+                                                diag))])))
+                                    (tc_core.typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state-and-intern-state
+                                      load-state
+                                      prefix-cache
+                                      job-state
                                       normalized
                                       normalized-paths
-                                      (tc_core.tc-decl-path-list-last
-                                        normalized-paths
-                                        "")
-                                      pools)
-                                      [(spec.ResultSpecProgramWithPaths.Ok
-                                          specialized
-                                          specialized-paths)
-                                        (tc_core.typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
-                                          load-state
-                                          prefix-cache
-                                          job-state
-                                          specialized
-                                          specialized-paths
-                                          stdlib-roots
-                                          cache-scope
-                                          pools)]
-                                      [(spec.ResultSpecProgramWithPaths.Err
-                                          diag)
-                                        (tc_core.ResultCompilerTypecheck.Err
-                                          (cdiag.compiler-diagnostic-list-box-single
-                                            diag))]))]
-                                [(csym.ResultCompilerSymbolsDiagnostic.Err diag)
-                                  (tc_core.ResultCompilerTypecheck.Err
-                                    (cdiag.compiler-diagnostic-list-box-single
-                                      diag))])
-                              (tc_core.typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
-                                load-state
-                                prefix-cache
-                                job-state
-                                normalized
-                                normalized-paths
-                                stdlib-roots
-                                cache-scope
-                                pools)))]
-                        [(spec.ResultGenProgramWithPaths.Err diag)
-                          (tc_core.ResultCompilerTypecheck.Err
-                            (cdiag.compiler-diagnostic-list-box-single diag))])
-                      (tc_core.typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
-                        load-state
-                        prefix-cache
-                        job-state
-                        expanded
-                        expanded-paths
-                        stdlib-roots
-                        cache-scope
-                        pools)))]
-                [(tc_core.ResultMacroExpand.Err diag)
-                  (tc_core.ResultCompilerTypecheck.Err
-                    (cdiag.compiler-diagnostic-list-box-single diag))])]
+                                      stdlib-roots
+                                      cache-scope
+                                      pools
+                                      (ci.intern-source-name-session-handle
+                                        (ci.intern-source-name-session-from-state
+                                          intern-state))
+                                      intern-state)))]
+                              [(spec.ResultGenProgramWithPaths.Err diag)
+                                (tc_core.ResultCompilerTypecheck.Err
+                                  (cdiag.compiler-diagnostic-list-box-single
+                                    diag))])))
+                        (tc_core.typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state-and-intern-state
+                          load-state
+                          prefix-cache
+                          job-state
+                          expanded
+                          expanded-paths
+                          stdlib-roots
+                          cache-scope
+                          pools
+                          (ci.intern-source-name-session-handle
+                            (ci.intern-source-name-session-from-state
+                              intern-state))
+                          intern-state))]
+                    [(tc_core.ResultMacroExpand.Err diag)
+                      (tc_core.ResultCompilerTypecheck.Err
+                        (cdiag.compiler-diagnostic-list-box-single diag))])))]
             [(spec.ResultGenProgramWithPaths.Err diag)
               (tc_core.ResultCompilerTypecheck.Err
                 (cdiag.compiler-diagnostic-list-box-single diag))]))))))
 
+;; Serial/test compatibility implementation retains the historical ambient
+;; owner behavior. Production callers use the explicit intern-state entry.
 ;; Serial/test adapter for callers migrated to explicit loader state before the
 ;; prefix-cache and typecheck-job state seams existed.
+(define (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
+  [load-state : load.CompilerLoadSessionState]
+  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
+  [job-state : tc_core.TcJobState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheck
+  (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools-and-intern-state
+    load-state
+    prefix-cache
+    job-state
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools
+    (ci.intern-compat-state-capture-active)))
+
 (define (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
   [load-state : load.CompilerLoadSessionState]
   [program : ast.AstProgram]
@@ -263,6 +334,164 @@
     stdlib-roots
     pools))
 
+(define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools-and-intern-state
+  [load-state : load.CompilerLoadSessionState]
+  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
+  [job-state : tc_core.TcJobState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : ast.AstNodePoolContext]
+  [intern-state : ci.InternCompatState]) : tc_core.ResultCompilerTypecheckChecked
+  (begin
+    (tc_core.tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-typecheck-checked-result-with-pool-check
+      (let
+        [generated-result : spec.ResultGenProgramWithPaths
+          (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+            program
+            paths
+            ""
+            (spec.spec-owner-context-new pools intern-state))]
+        (begin
+          (ast.ast-node-pool-context-install! pools)
+          ;; Publish generated IDs before legacy macro/symbol consumers run.
+          (ci.intern-compat-state-install! intern-state)
+          (match generated-result
+            [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
+              (let
+                [macro-result : tc_core.ResultMacroExpand
+                  (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state-and-intern-state
+                    load-state
+                    job-state
+                    generated
+                    generated-paths
+                    pools
+                    stdlib-roots
+                    (typecheck-compiler-source-language-cfgs)
+                    intern-state)]
+                (begin
+                  (ast.ast-node-pool-context-capture-active! pools)
+                  (ci.intern-compat-state-capture-from-globals! intern-state)
+                  (match macro-result
+                    [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
+                      (if (spec.compiler-specialize-needed-with-pools
+                        expanded
+                        pools)
+                        (let
+                          [normalized-result : spec.ResultGenProgramWithPaths
+                            (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+                              expanded
+                              expanded-paths
+                              (tc_core.tc-decl-path-list-last expanded-paths "")
+                              (spec.spec-owner-context-new pools intern-state))]
+                          (begin
+                            ;; Publish explicit normalization mutations before
+                            ;; matching either result or entering legacy phases.
+                            (ast.ast-node-pool-context-install! pools)
+                            (ci.intern-compat-state-install! intern-state)
+                            (match normalized-result
+                              [(spec.ResultGenProgramWithPaths.Ok
+                                  normalized
+                                  normalized-paths)
+                                (begin
+                                  (if (spec.compiler-specialize-needed-with-pools
+                                    normalized
+                                    pools)
+                                    (let
+                                      [symbol-result : csym.ResultCompilerSymbolsDiagnostic
+                                        (csym.build-compiler-symbols-diagnostic-with-paths
+                                          normalized
+                                          normalized-paths)]
+                                      (begin
+                                        (ast.ast-node-pool-context-capture-active!
+                                          pools)
+                                        (ci.intern-compat-state-capture-from-globals!
+                                          intern-state)
+                                        (match symbol-result
+                                          [(csym.ResultCompilerSymbolsDiagnostic.Ok
+                                              _)
+                                            (let
+                                              [specialized-result : spec.ResultSpecProgramWithPaths
+                                                (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
+                                                  normalized
+                                                  normalized-paths
+                                                  (tc_core.tc-decl-path-list-last
+                                                    normalized-paths
+                                                    "")
+                                                  pools
+                                                  intern-state)]
+                                              (begin
+                                                (ast.ast-node-pool-context-install!
+                                                  pools)
+                                                (ci.intern-compat-state-install!
+                                                  intern-state)
+                                                (match specialized-result
+                                                  [(spec.ResultSpecProgramWithPaths.Ok
+                                                      specialized
+                                                      specialized-paths)
+                                                    (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
+                                                      load-state
+                                                      prefix-cache
+                                                      job-state
+                                                      specialized
+                                                      specialized-paths
+                                                      stdlib-roots
+                                                      cache-scope
+                                                      pools
+                                                      (ci.intern-source-name-session-handle
+                                                        (ci.intern-source-name-session-from-state
+                                                          intern-state))
+                                                      intern-state)]
+                                                  [(spec.ResultSpecProgramWithPaths.Err
+                                                      diag)
+                                                    (tc_core.ResultCompilerTypecheckChecked.Err
+                                                      (cdiag.compiler-diagnostic-list-box-single
+                                                        diag))])))]
+                                          [(csym.ResultCompilerSymbolsDiagnostic.Err
+                                              diag)
+                                            (tc_core.ResultCompilerTypecheckChecked.Err
+                                              (cdiag.compiler-diagnostic-list-box-single
+                                                diag))])))
+                                    (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
+                                      load-state
+                                      prefix-cache
+                                      job-state
+                                      normalized
+                                      normalized-paths
+                                      stdlib-roots
+                                      cache-scope
+                                      pools
+                                      (ci.intern-source-name-session-handle
+                                        (ci.intern-source-name-session-from-state
+                                          intern-state))
+                                      intern-state)))]
+                              [(spec.ResultGenProgramWithPaths.Err diag)
+                                (tc_core.ResultCompilerTypecheckChecked.Err
+                                  (cdiag.compiler-diagnostic-list-box-single
+                                    diag))])))
+                        (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
+                          load-state
+                          prefix-cache
+                          job-state
+                          expanded
+                          expanded-paths
+                          stdlib-roots
+                          cache-scope
+                          pools
+                          (ci.intern-source-name-session-handle
+                            (ci.intern-source-name-session-from-state
+                              intern-state))
+                          intern-state))]
+                    [(tc_core.ResultMacroExpand.Err diag)
+                      (tc_core.ResultCompilerTypecheckChecked.Err
+                        (cdiag.compiler-diagnostic-list-box-single diag))])))]
+            [(spec.ResultGenProgramWithPaths.Err diag)
+              (tc_core.ResultCompilerTypecheckChecked.Err
+                (cdiag.compiler-diagnostic-list-box-single diag))]))))))
+
+;; Serial/test compatibility adapter for the checked API.
 (define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools
   [load-state : load.CompilerLoadSessionState]
   [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
@@ -272,105 +501,16 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheckChecked
-  (begin
-    (tc_core.tc-spmd-inline-helper-stack-reset!)
-    (tc_core.tc-typecheck-checked-result-with-pool-check
-      (let
-        [generated-result : spec.ResultGenProgramWithPaths
-          (spec.gen-normalize-program-with-paths-and-pools
-            program
-            paths
-            ""
-            pools)]
-        (begin
-          (ast.ast-node-pool-context-install! pools)
-          (match generated-result
-            [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state
-                load-state
-                job-state
-                generated
-                generated-paths
-                pools
-                stdlib-roots
-                (typecheck-compiler-source-language-cfgs))
-                [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
-                  (begin
-                    (ast.ast-node-pool-context-capture-active! pools)
-                    (if (spec.compiler-specialize-needed? expanded)
-                      (match (spec.gen-normalize-program-with-paths-and-pools
-                        expanded
-                        expanded-paths
-                        (tc_core.tc-decl-path-list-last expanded-paths "")
-                        pools)
-                        [(spec.ResultGenProgramWithPaths.Ok
-                            normalized
-                            normalized-paths)
-                          (begin
-                            (ast.ast-node-pool-context-install! pools)
-                            (if (spec.compiler-specialize-needed? normalized)
-                              (match (csym.build-compiler-symbols-diagnostic-with-paths
-                                normalized
-                                normalized-paths)
-                                [(csym.ResultCompilerSymbolsDiagnostic.Ok _)
-                                  (begin
-                                    (ast.ast-node-pool-context-capture-active!
-                                      pools)
-                                    (match (spec.compiler-specialize-program-with-paths-and-pools
-                                      normalized
-                                      normalized-paths
-                                      (tc_core.tc-decl-path-list-last
-                                        normalized-paths
-                                        "")
-                                      pools)
-                                      [(spec.ResultSpecProgramWithPaths.Ok
-                                          specialized
-                                          specialized-paths)
-                                        (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
-                                          load-state
-                                          prefix-cache
-                                          job-state
-                                          specialized
-                                          specialized-paths
-                                          stdlib-roots
-                                          cache-scope
-                                          pools)]
-                                      [(spec.ResultSpecProgramWithPaths.Err
-                                          diag)
-                                        (tc_core.ResultCompilerTypecheckChecked.Err
-                                          (cdiag.compiler-diagnostic-list-box-single
-                                            diag))]))]
-                                [(csym.ResultCompilerSymbolsDiagnostic.Err diag)
-                                  (tc_core.ResultCompilerTypecheckChecked.Err
-                                    (cdiag.compiler-diagnostic-list-box-single
-                                      diag))])
-                              (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
-                                load-state
-                                prefix-cache
-                                job-state
-                                normalized
-                                normalized-paths
-                                stdlib-roots
-                                cache-scope
-                                pools)))]
-                        [(spec.ResultGenProgramWithPaths.Err diag)
-                          (tc_core.ResultCompilerTypecheckChecked.Err
-                            (cdiag.compiler-diagnostic-list-box-single diag))])
-                      (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
-                        load-state
-                        prefix-cache
-                        job-state
-                        expanded
-                        expanded-paths
-                        stdlib-roots
-                        cache-scope
-                        pools)))]
-                [(tc_core.ResultMacroExpand.Err diag)
-                  (tc_core.ResultCompilerTypecheckChecked.Err
-                    (cdiag.compiler-diagnostic-list-box-single diag))])]
-            [(spec.ResultGenProgramWithPaths.Err diag)
-              (tc_core.ResultCompilerTypecheckChecked.Err
-                (cdiag.compiler-diagnostic-list-box-single diag))]))))))
+  (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools-and-intern-state
+    load-state
+    prefix-cache
+    job-state
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools
+    (ci.intern-compat-state-capture-active)))
 
 ;; Serial/test adapter for the load-state-only surface.
 (define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-pools

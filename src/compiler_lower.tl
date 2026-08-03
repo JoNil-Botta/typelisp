@@ -60002,6 +60002,205 @@
 ;; declarations have never been checked by tc-check-decls (they are trusted
 ;; compiler output), so building them before typecheck only forced a redundant
 ;; symbols/registries/top-env construction and a shadow expression typecheck.
+(define (lower-typecheck-clone-and-lower-with-source-names-and-intern-state
+  [load-state : load.CompilerLoadSessionState]
+  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
+  [job-state : tc_core.TcJobState]
+  [entry-path : String]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [keep-plan : LowerDeclKeepPlan]
+  [escaped-names : LowerNameEnv]
+  [needs-specialization : bool]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [intern-state : ci.InternCompatState]) : ResultCompilerLower
+  (let
+    [result : ResultCompilerLower
+      (match (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
+        load-state
+        prefix-cache
+        job-state
+        program
+        paths
+        stdlib-roots
+        cache-scope
+        pools
+        source-names
+        intern-state)
+        [(tc_core.ResultCompilerTypecheckChecked.Ok
+            _
+            source-ctx
+            source-top-env
+            _)
+          (let
+            [clone-roots : clone_support.CloneNameList
+              (tc_core.tc-clone-root-collection-finish! source-ctx)]
+            [source-decl-count : i64
+              (match program
+                [(ast.AstProgram.Program decls-box)
+                  (ast.ast-decl-list-len (& (box-get decls-box)))])]
+            [checked-keep-plan : LowerDeclKeepPlan
+              (lower-decl-keep-plan-add-clone-roots
+                keep-plan
+                program
+                clone-roots)]
+            [clone-able : clone_support.CloneNameSet
+              (tc_core.tc-clone-able-set source-ctx)]
+            [_install-clone-pools : unit
+              (ast.ast-node-pool-context-install! pools)]
+            [clone-augmentation : ResultLowerCloneAugment
+              (lower-clone-handoff-augment
+                source-ctx
+                source-top-env
+                entry-path
+                program
+                clone-able
+                clone-roots
+                pools)]
+            [checked-program : ast.AstProgram
+              (match clone-augmentation
+                [(ResultLowerCloneAugment.Ok augmented _) augmented]
+                [(ResultLowerCloneAugment.Err _) program])]
+            [_install-augmented-pools : unit
+              (ast.ast-node-pool-context-install! pools)]
+            [checked-context : ResultLowerCheckedContext
+              (match clone-augmentation
+                [(ResultLowerCloneAugment.Ok _ _)
+                  (lower-extend-checked-context-with-clone-decls
+                    source-ctx
+                    source-top-env
+                    source-decl-count
+                    checked-program)]
+                [(ResultLowerCloneAugment.Err message)
+                  (ResultLowerCheckedContext.Err message)])]
+            [lower-names : LowerNameEnv
+              (match checked-program
+                [(ast.AstProgram.Program decls-box)
+                  (let
+                    [decls : ast.AstDeclList (box-get decls-box)]
+                    (if needs-specialization
+                      (lower-name-env-add-clone-decls
+                        decls
+                        paths
+                        entry-path
+                        escaped-names)
+                      (lower-name-env-from-decls
+                        decls
+                        paths
+                        entry-path
+                        LowerNameEnv.Nil)))])]
+            (begin
+              (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
+              (cfg compile-profile (compiler-lower-profile-start))
+              (match checked-context
+                [(ResultLowerCheckedContext.Ok ctx top-env)
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-finish "clone_augment_names"))
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-pools "typecheck" pools))
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-pools "pre_decls" pools))
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-program-counts
+                        "pre_decls"
+                        checked-program))
+                    (cfg compile-profile (compiler-lower-profile-start))
+                    ;; Whole-program source typecheck is complete. Apply the
+                    ;; declaration decisions retained by reachability; clone
+                    ;; helpers are appended and marked by add-clone-roots.
+                    (let
+                      [pruned-program : ast.AstProgram
+                        (lower-decl-keep-plan-apply
+                          checked-keep-plan
+                          checked-program)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-finish "prune_apply"))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-program-counts
+                            "reachable"
+                            pruned-program))
+                        (cfg compile-profile (compiler-lower-profile-start))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-string-concat-reset))
+                        (match (lower-compiler-program-checked-with-names-mode
+                          ctx
+                          top-env
+                          pruned-program
+                          (lower-decl-keep-plan-apply-paths
+                            checked-keep-plan
+                            paths)
+                          entry-path
+                          lower-names
+                          clone-roots
+                          mode)
+                          [(ResultCompilerLower.Ok ir spans)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-string-concat-finish))
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-name-finish))
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-finish "decls"))
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-ir-shape
+                                  "after_decls"
+                                  ir))
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-ir-arena "after_decls"))
+                              (ResultCompilerLower.Ok ir spans))]
+                          [(ResultCompilerLower.Err diag)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-string-concat-finish))
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-name-finish))
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-finish "decls"))
+                              (ResultCompilerLower.Err
+                                (box
+                                  (lower-diagnostic-with-path
+                                    (box-get diag)
+                                    entry-path))))]))))]
+                [(ResultLowerCheckedContext.Err message)
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-finish "clone_augment_names"))
+                    (ResultCompilerLower.Err (box (lower-diagnostic message))))])))]
+        [(tc_core.ResultCompilerTypecheckChecked.Err diag)
+          (begin
+            (tc_core.tc-clone-root-collection-abort!)
+            (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
+            (ResultCompilerLower.Err
+              (box (cdiag.compiler-diagnostic-list-first (box-get diag)))))])]
+    (begin
+      (ast.ast-node-pool-context-capture-active! pools)
+      (ci.intern-compat-state-capture-from-globals! intern-state)
+      result)))
+
+;; Serial/test compatibility adapter.  Production lower jobs pass the
+;; compile-owned intern state through the explicit entry above.
 (define (lower-typecheck-clone-and-lower-with-source-names
   [load-state : load.CompilerLoadSessionState]
   [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
@@ -60017,167 +60216,22 @@
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
-  (match (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+  (lower-typecheck-clone-and-lower-with-source-names-and-intern-state
     load-state
     prefix-cache
     job-state
+    entry-path
     program
     paths
+    keep-plan
+    escaped-names
+    needs-specialization
+    mode
     stdlib-roots
     cache-scope
     pools
-    source-names)
-    [(tc_core.ResultCompilerTypecheckChecked.Ok _ source-ctx source-top-env _)
-      (let
-        [clone-roots : clone_support.CloneNameList
-          (tc_core.tc-clone-root-collection-finish! source-ctx)]
-        [source-decl-count : i64
-          (match program
-            [(ast.AstProgram.Program decls-box)
-              (ast.ast-decl-list-len (& (box-get decls-box)))])]
-        [checked-keep-plan : LowerDeclKeepPlan
-          (lower-decl-keep-plan-add-clone-roots keep-plan program clone-roots)]
-        [clone-able : clone_support.CloneNameSet
-          (tc_core.tc-clone-able-set source-ctx)]
-        [_install-clone-pools : unit (ast.ast-node-pool-context-install! pools)]
-        [clone-augmentation : ResultLowerCloneAugment
-          (lower-clone-handoff-augment
-            source-ctx
-            source-top-env
-            entry-path
-            program
-            clone-able
-            clone-roots
-            pools)]
-        [checked-program : ast.AstProgram
-          (match clone-augmentation
-            [(ResultLowerCloneAugment.Ok augmented _) augmented]
-            [(ResultLowerCloneAugment.Err _) program])]
-        [_install-augmented-pools : unit
-          (ast.ast-node-pool-context-install! pools)]
-        [checked-context : ResultLowerCheckedContext
-          (match clone-augmentation
-            [(ResultLowerCloneAugment.Ok _ _)
-              (lower-extend-checked-context-with-clone-decls
-                source-ctx
-                source-top-env
-                source-decl-count
-                checked-program)]
-            [(ResultLowerCloneAugment.Err message)
-              (ResultLowerCheckedContext.Err message)])]
-        [lower-names : LowerNameEnv
-          (match checked-program
-            [(ast.AstProgram.Program decls-box)
-              (let
-                [decls : ast.AstDeclList (box-get decls-box)]
-                (if needs-specialization
-                  (lower-name-env-add-clone-decls
-                    decls
-                    paths
-                    entry-path
-                    escaped-names)
-                  (lower-name-env-from-decls
-                    decls
-                    paths
-                    entry-path
-                    LowerNameEnv.Nil)))])]
-        (begin
-          (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
-          (cfg compile-profile (compiler-lower-profile-start))
-          (match checked-context
-            [(ResultLowerCheckedContext.Ok ctx top-env)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-finish "clone_augment_names"))
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-pools "typecheck" pools))
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-pools "pre_decls" pools))
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-program-counts
-                    "pre_decls"
-                    checked-program))
-                (cfg compile-profile (compiler-lower-profile-start))
-                ;; Whole-program source typecheck is complete. Apply the
-                ;; declaration decisions retained by reachability; clone
-                ;; helpers are appended and marked by add-clone-roots.
-                (let
-                  [pruned-program : ast.AstProgram
-                    (lower-decl-keep-plan-apply
-                      checked-keep-plan
-                      checked-program)]
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-lower-profile-finish "prune_apply"))
-                    (cfg
-                      compile-profile
-                      (compiler-lower-profile-program-counts
-                        "reachable"
-                        pruned-program))
-                    (cfg compile-profile (compiler-lower-profile-start))
-                    (cfg
-                      compile-profile
-                      (compiler-lower-profile-string-concat-reset))
-                    (match (lower-compiler-program-checked-with-names-mode
-                      ctx
-                      top-env
-                      pruned-program
-                      (lower-decl-keep-plan-apply-paths checked-keep-plan paths)
-                      entry-path
-                      lower-names
-                      clone-roots
-                      mode)
-                      [(ResultCompilerLower.Ok ir spans)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-string-concat-finish))
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-name-finish))
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-finish "decls"))
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-ir-shape "after_decls" ir))
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-ir-arena "after_decls"))
-                          (ResultCompilerLower.Ok ir spans))]
-                      [(ResultCompilerLower.Err diag)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-string-concat-finish))
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-name-finish))
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-finish "decls"))
-                          (ResultCompilerLower.Err
-                            (box
-                              (lower-diagnostic-with-path
-                                (box-get diag)
-                                entry-path))))]))))]
-            [(ResultLowerCheckedContext.Err message)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-finish "clone_augment_names"))
-                (ResultCompilerLower.Err (box (lower-diagnostic message))))])))]
-    [(tc_core.ResultCompilerTypecheckChecked.Err diag)
-      (begin
-        (tc_core.tc-clone-root-collection-abort!)
-        (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
-        (ResultCompilerLower.Err
-          (box (cdiag.compiler-diagnostic-list-first (box-get diag)))))]))
+    source-names
+    (ci.intern-compat-state-capture-active)))
 
 (define (lower-typecheck-clone-and-lower
   [entry-path : String]
@@ -60206,7 +60260,7 @@
     pools
     (ci.intern-source-name-session-capture-active-handle)))
 
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names-and-intern-state
   [load-state : load.CompilerLoadSessionState]
   [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
   [job-state : tc_core.TcJobState]
@@ -60217,7 +60271,8 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
+  [source-names : ci.InternSourceNameSessionHandle]
+  [intern-state : ci.InternCompatState]) : ResultCompilerLower
   (begin
     (cfg compile-profile (compiler-lower-profile-name-reset))
     (cfg compile-profile (compiler-lower-profile-start))
@@ -60234,121 +60289,212 @@
                 paths
                 entry-path
                 LowerNameEnv.Nil))])]
-      (match (if needs-specialization
-        (spec.compiler-specialize-program-with-paths-and-pools
-          program
-          paths
-          entry-path
-          pools)
-        (spec.ResultSpecProgramWithPaths.Ok program paths))
-        [(spec.ResultSpecProgramWithPaths.Ok specialized specialized-paths)
-          (begin
-            (cfg compile-profile (compiler-lower-profile-finish "specialize"))
-            (cfg compile-profile (compiler-lower-profile-start))
-            (let
-              [prune-names : LowerNameEnv
-                (if needs-specialization
-                  (match specialized
-                    [(ast.AstProgram.Program decls-box)
-                      (let
-                        [decls : ast.AstDeclList (box-get decls-box)]
-                        (lower-name-env-from-decls
-                          decls
-                          specialized-paths
-                          entry-path
-                          LowerNameEnv.Nil))])
-                  names)]
-              ;; Typecheck remains complete and whole-program while lower,
-              ;; optimize, and codegen are gated on reachability. This up-front
-              ;; walk records the dense declaration selection consumed both by
-              ;; typecheck's clone-root observer and by the final linear prune.
-              (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
-                pools
-                entry-path
-                specialized
-                specialized-paths
-                prune-names
-                (clone_support.CloneNameList.Nil))
-                [(LowerPrunedProgramWithPlan.Program
-                    reach-program
-                    _reach-paths
-                    reach-keep-plan)
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-lower-profile-finish "prune"))
-                    (cfg compile-profile (compiler-lower-profile-start))
-                    ;; Capture stable retained declaration keys before optional
-                    ;; pool compaction releases the reach-program AST.
-                    (tc_core.tc-clone-root-collection-use! reach-program)
-                    (let
-                      [detach-source? : bool lower-checked-dest-pools-active]
-                      [source-compaction : ast.AstProgramCompaction
-                        (if detach-source?
-                          (ast.ast-program-compact-with-pools
-                            pools
-                            lower-checked-dest-pools-context
-                            specialized)
-                          (ast.AstProgramCompaction specialized pools))]
-                      [source-program : ast.AstProgram
-                        (match source-compaction
-                          [(ast.AstProgramCompaction out _) out])]
-                      [source-pools : ast.AstNodePoolContext
-                        (match source-compaction
-                          [(ast.AstProgramCompaction _ out-pools) out-pools])]
-                      [source-entry-path : String
-                        (if detach-source?
-                          (lower-copy-string-into-pools entry-path source-pools)
-                          entry-path)]
-                      [source-cache-scope : String
-                        (if detach-source?
-                          (lower-copy-string-into-pools
-                            cache-scope
-                            source-pools)
-                          cache-scope)]
-                      [source-paths : ast.AstDeclPathList
-                        (if detach-source?
-                          (lower-copy-paths-into-pools
+      [specialized-result : spec.ResultSpecProgramWithPaths
+        (begin
+          ;; Lower-name construction is a legacy ambient phase; publish its
+          ;; scalar interner changes before explicit specialization begins.
+          (ci.intern-compat-state-capture-from-globals! intern-state)
+          (if needs-specialization
+            (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
+              program
+              paths
+              entry-path
+              pools
+              intern-state)
+            (spec.ResultSpecProgramWithPaths.Ok program paths)))]
+      (begin
+        ;; Explicit specialization mutates owner pool/interner cells; publish
+        ;; them before matching either result or entering legacy lowering.
+        (ast.ast-node-pool-context-install! pools)
+        (ci.intern-compat-state-install! intern-state)
+        (match specialized-result
+          [(spec.ResultSpecProgramWithPaths.Ok specialized specialized-paths)
+            (begin
+              (cfg compile-profile (compiler-lower-profile-finish "specialize"))
+              (cfg compile-profile (compiler-lower-profile-start))
+              (let
+                [prune-names : LowerNameEnv
+                  (if needs-specialization
+                    (match specialized
+                      [(ast.AstProgram.Program decls-box)
+                        (let
+                          [decls : ast.AstDeclList (box-get decls-box)]
+                          (lower-name-env-from-decls
+                            decls
                             specialized-paths
-                            source-pools)
-                          specialized-paths)]
-                      [source-keep-plan : LowerDeclKeepPlan
-                        (if detach-source?
-                          (lower-decl-keep-plan-copy-into-pools
-                            reach-keep-plan
-                            source-pools)
-                          reach-keep-plan)]
-                      [escaped-names : LowerNameEnv
-                        (if (and detach-source? needs-specialization)
-                          (lower-name-env-copy-into-pools names source-pools)
-                          names)]
-                      [_clear-source-derived-caches : unit
-                        (if detach-source?
-                          (lower-clear-macro-expanded-source-caches-into-pools!
-                            source-pools)
-                          unit)]
-                      [_commit-dest : unit
-                        (lower-checked-dest-pools-commit! source-pools)]
-                      (lower-typecheck-clone-and-lower-with-source-names
-                        load-state
-                        prefix-cache
-                        job-state
-                        source-entry-path
-                        source-program
-                        source-paths
-                        source-keep-plan
-                        escaped-names
-                        needs-specialization
-                        mode
-                        stdlib-roots
-                        source-cache-scope
-                        source-pools
-                        source-names)))])))]
-        [(spec.ResultSpecProgramWithPaths.Err diag)
-          (begin
-            (cfg compile-profile (compiler-lower-profile-finish "specialize"))
-            (ResultCompilerLower.Err
-              (box (lower-diagnostic-with-path (box-get diag) entry-path))))]))))
+                            entry-path
+                            LowerNameEnv.Nil))])
+                    names)]
+                ;; Typecheck remains complete and whole-program while lower,
+                ;; optimize, and codegen are gated on reachability. This up-front
+                ;; walk records the dense declaration selection consumed both by
+                ;; typecheck's clone-root observer and by the final linear prune.
+                (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
+                  pools
+                  entry-path
+                  specialized
+                  specialized-paths
+                  prune-names
+                  (clone_support.CloneNameList.Nil))
+                  [(LowerPrunedProgramWithPlan.Program
+                      reach-program
+                      _reach-paths
+                      reach-keep-plan)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-lower-profile-finish "prune"))
+                      (cfg compile-profile (compiler-lower-profile-start))
+                      ;; Capture stable retained declaration keys before optional
+                      ;; pool compaction releases the reach-program AST.
+                      (tc_core.tc-clone-root-collection-use! reach-program)
+                      (let
+                        [detach-source? : bool lower-checked-dest-pools-active]
+                        [source-compaction : ast.AstProgramCompaction
+                          (if detach-source?
+                            (ast.ast-program-compact-with-pools
+                              pools
+                              lower-checked-dest-pools-context
+                              specialized)
+                            (ast.AstProgramCompaction specialized pools))]
+                        [source-program : ast.AstProgram
+                          (match source-compaction
+                            [(ast.AstProgramCompaction out _) out])]
+                        [source-pools : ast.AstNodePoolContext
+                          (match source-compaction
+                            [(ast.AstProgramCompaction _ out-pools) out-pools])]
+                        [source-entry-path : String
+                          (if detach-source?
+                            (lower-copy-string-into-pools
+                              entry-path
+                              source-pools)
+                            entry-path)]
+                        [source-cache-scope : String
+                          (if detach-source?
+                            (lower-copy-string-into-pools
+                              cache-scope
+                              source-pools)
+                            cache-scope)]
+                        [source-paths : ast.AstDeclPathList
+                          (if detach-source?
+                            (lower-copy-paths-into-pools
+                              specialized-paths
+                              source-pools)
+                            specialized-paths)]
+                        [source-keep-plan : LowerDeclKeepPlan
+                          (if detach-source?
+                            (lower-decl-keep-plan-copy-into-pools
+                              reach-keep-plan
+                              source-pools)
+                            reach-keep-plan)]
+                        [escaped-names : LowerNameEnv
+                          (if (and detach-source? needs-specialization)
+                            (lower-name-env-copy-into-pools names source-pools)
+                            names)]
+                        [_clear-source-derived-caches : unit
+                          (if detach-source?
+                            (lower-clear-macro-expanded-source-caches-into-pools!
+                              source-pools)
+                            unit)]
+                        [_commit-dest : unit
+                          (lower-checked-dest-pools-commit! source-pools)]
+                        [_capture-before-typecheck : unit
+                          (ci.intern-compat-state-capture-from-globals!
+                            intern-state)]
+                        (lower-typecheck-clone-and-lower-with-source-names-and-intern-state
+                          load-state
+                          prefix-cache
+                          job-state
+                          source-entry-path
+                          source-program
+                          source-paths
+                          source-keep-plan
+                          escaped-names
+                          needs-specialization
+                          mode
+                          stdlib-roots
+                          source-cache-scope
+                          source-pools
+                          source-names
+                          intern-state)))])))]
+          [(spec.ResultSpecProgramWithPaths.Err diag)
+            (begin
+              (cfg compile-profile (compiler-lower-profile-finish "specialize"))
+              (ResultCompilerLower.Err
+                (box (lower-diagnostic-with-path (box-get diag) entry-path))))])))))
+
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
+  [load-state : load.CompilerLoadSessionState]
+  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
+  [job-state : tc_core.TcJobState]
+  [entry-path : String]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [intern-state : ci.InternCompatState]) : ResultCompilerLower
+  (let
+    [prev-active : bool lower-entry-main-module-active]
+    [prev-module : String lower-entry-main-module]
+    [prev-module-id : i64 lower-entry-main-module-id]
+    [selection : LowerMaybeEntryMainModule
+      (lower-entry-main-selection-for-program entry-path program paths)]
+    (begin
+      (lower-entry-main-selection-install! selection)
+      (let
+        [result : ResultCompilerLower
+          (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names-and-intern-state
+            load-state
+            prefix-cache
+            job-state
+            entry-path
+            program
+            paths
+            mode
+            stdlib-roots
+            cache-scope
+            pools
+            source-names
+            intern-state)]
+        (begin
+          (lower-entry-main-selection-restore!
+            prev-active
+            prev-module
+            prev-module-id)
+          result)))))
+
+;; Serial/test compatibility adapter for expanded-program lowering.  The
+;; explicit production entry above threads compile-owned pool/interner state
+;; through explicit workers with deliberate bridges around legacy phases; this
+;; adapter preserves the historical surface for tests/tools.
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
+  [load-state : load.CompilerLoadSessionState]
+  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
+  [job-state : tc_core.TcJobState]
+  [entry-path : String]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
+  (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names-and-intern-state
+    load-state
+    prefix-cache
+    job-state
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    pools
+    source-names
+    (ci.intern-compat-state-capture-active)))
 
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
   [load-state : load.CompilerLoadSessionState]
@@ -60362,34 +60508,19 @@
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
-  (let
-    [prev-active : bool lower-entry-main-module-active]
-    [prev-module : String lower-entry-main-module]
-    [prev-module-id : i64 lower-entry-main-module-id]
-    [selection : LowerMaybeEntryMainModule
-      (lower-entry-main-selection-for-program entry-path program paths)]
-    (begin
-      (lower-entry-main-selection-install! selection)
-      (let
-        [result : ResultCompilerLower
-          (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
-            load-state
-            prefix-cache
-            job-state
-            entry-path
-            program
-            paths
-            mode
-            stdlib-roots
-            cache-scope
-            pools
-            source-names)]
-        (begin
-          (lower-entry-main-selection-restore!
-            prev-active
-            prev-module
-            prev-module-id)
-          result)))))
+  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
+    load-state
+    prefix-cache
+    job-state
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    pools
+    source-names
+    (ci.intern-compat-state-capture-active)))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache
   [entry-path : String]
@@ -60407,6 +60538,251 @@
     cache-scope
     (ast.ast-node-pool-context-capture-active)))
 
+(define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
+  [load-state : load.CompilerLoadSessionState]
+  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
+  [job-state : tc_core.TcJobState]
+  [entry-path : String]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [intern-state : ci.InternCompatState]) : ResultCompilerLower
+  (begin
+    (cfg compile-profile (compiler-lower-profile-start))
+    (tc_core.tc-agg-caches-reset!)
+    ;; Generate declaration families before macro expansion (see
+    ;; typecheck-compiler-program-with-paths for why).
+    (let
+      [generated-result : spec.ResultGenProgramWithPaths
+        (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+          program
+          paths
+          entry-path
+          (spec.spec-owner-context-new pools intern-state))]
+      (begin
+        ;; Publish explicit generation mutations before matching either result
+        ;; or entering the legacy macro-expansion phase.
+        (ast.ast-node-pool-context-install! pools)
+        (ci.intern-compat-state-install! intern-state)
+        (match generated-result
+          [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
+            (let
+              [detach-before-macro? : bool lower-checked-dest-pools-active]
+              [generated-compaction : ast.AstProgramCompaction
+                (if detach-before-macro?
+                  (ast.ast-program-compact-with-pools
+                    pools
+                    (compiler-lower-checked-dest-pools-current)
+                    generated)
+                  (ast.AstProgramCompaction generated pools))]
+              [macro-program : ast.AstProgram
+                (match generated-compaction
+                  [(ast.AstProgramCompaction out _) out])]
+              [macro-pools : ast.AstNodePoolContext
+                (match generated-compaction
+                  [(ast.AstProgramCompaction _ out-pools) out-pools])]
+              [macro-entry-path : String
+                (if detach-before-macro?
+                  (lower-copy-string-into-pools entry-path macro-pools)
+                  entry-path)]
+              [macro-cache-scope : String
+                (if detach-before-macro?
+                  (lower-copy-string-into-pools cache-scope macro-pools)
+                  cache-scope)]
+              [macro-paths : ast.AstDeclPathList
+                (if detach-before-macro?
+                  (lower-copy-paths-into-pools generated-paths macro-pools)
+                  generated-paths)]
+              [_clear-source-derived-caches : unit
+                (if detach-before-macro?
+                  (begin
+                    (lower-clear-macro-expanded-source-caches-into-pools!
+                      macro-pools)
+                    (load.compiler-load-session-state-program-cache-clear!
+                      load-state)
+                    (load.compiler-load-session-state-runtime-prelude-cache-clear!
+                      load-state)
+                    (tc_core.tc-prefix-snapshot-cache-clear-for-state!
+                      prefix-cache))
+                  unit)]
+              [_commit-generated-pools : unit
+                (if detach-before-macro?
+                  (lower-checked-dest-pools-commit! macro-pools)
+                  unit)]
+              [committed-macro-pools : ast.AstNodePoolContext
+                (if detach-before-macro?
+                  (compiler-lower-checked-dest-pools-current)
+                  macro-pools)]
+              [_arm-post-macro-detach : unit
+                (if detach-before-macro?
+                  (lower-checked-dest-pools-rollover-for-macro!)
+                  unit)]
+              [_macro-handoff-profile-finish : unit
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-finish "macro_handoff"))]
+              [_macro-expand-profile-start : unit
+                (cfg compile-profile (compiler-lower-profile-start))]
+              (let
+                [macro-result : tc_core.ResultMacroExpand
+                  (tc_core.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
+                    load-state
+                    macro-program
+                    macro-paths
+                    committed-macro-pools
+                    source-names
+                    job-state
+                    stdlib-roots
+                    (lower-source-language-cfgs)
+                    intern-state)]
+                (begin
+                  (ci.intern-compat-state-capture-from-globals! intern-state)
+                  (match macro-result
+                    [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-finish "macro_expand"))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-pools
+                            "macro_expand"
+                            committed-macro-pools))
+                        (let
+                          [checked-detach? : bool
+                            lower-checked-dest-pools-active]
+                          [macro-changed? : bool
+                            (tc_core.macro-expand-program-structurally-changed?)]
+                          [retain-macro-source? : bool
+                            (and checked-detach? (not macro-changed?))]
+                          [detach-load-pools? : bool
+                            (and checked-detach? macro-changed?)]
+                          [_detach-profile-decision : unit
+                            (cfg
+                              compile-profile
+                              (begin
+                                (compiler-lower-profile-counter
+                                  "macro_detach.fast_path_hits"
+                                  (if retain-macro-source?
+                                    1
+                                    0))
+                                (compiler-lower-profile-counter
+                                  "macro_detach.fast_path_misses"
+                                  (if detach-load-pools?
+                                    1
+                                    0))
+                                (compiler-lower-profile-counter
+                                  "macro_detach.change_reasons"
+                                  (tc_core.macro-expand-program-structural-change-reasons-value))))]
+                          [_finalize-profile-start : unit
+                            (if checked-detach?
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-start))
+                              unit)]
+                          [detached-compaction : ast.AstProgramCompaction
+                            (if detach-load-pools?
+                              (ast.ast-program-compact-with-pools
+                                committed-macro-pools
+                                (compiler-lower-checked-dest-pools-current)
+                                expanded)
+                              (ast.AstProgramCompaction
+                                (if retain-macro-source?
+                                  macro-program
+                                  expanded)
+                                committed-macro-pools))]
+                          [detached-program : ast.AstProgram
+                            (match detached-compaction
+                              [(ast.AstProgramCompaction out _) out])]
+                          [detached-pools : ast.AstNodePoolContext
+                            (match detached-compaction
+                              [(ast.AstProgramCompaction _ out-pools) out-pools])]
+                          [detached-entry-path : String
+                            (if detach-load-pools?
+                              (lower-copy-string-into-pools
+                                macro-entry-path
+                                detached-pools)
+                              macro-entry-path)]
+                          [detached-cache-scope : String
+                            (if detach-load-pools?
+                              (lower-copy-string-into-pools
+                                macro-cache-scope
+                                detached-pools)
+                              macro-cache-scope)]
+                          [detached-paths : ast.AstDeclPathList
+                            (if detach-load-pools?
+                              (lower-copy-paths-into-pools
+                                expanded-paths
+                                detached-pools)
+                              (if retain-macro-source?
+                                macro-paths
+                                expanded-paths))]
+                          [_clear-source-derived-caches : unit
+                            (if checked-detach?
+                              (lower-clear-macro-expanded-source-caches-into-pools!
+                                detached-pools)
+                              unit)]
+                          [_commit-detached-pools : unit
+                            (cond
+                              [detach-load-pools?
+                                (lower-checked-dest-pools-commit!
+                                  detached-pools)]
+                              [retain-macro-source?
+                                (lower-checked-dest-pools-retain-macro-source!
+                                  detached-pools)]
+                              [else unit])]
+                          [committed-pools : ast.AstNodePoolContext
+                            (if checked-detach?
+                              (compiler-lower-checked-dest-pools-current)
+                              detached-pools)]
+                          [_disable-late-detach : unit
+                            (if checked-detach?
+                              (lower-checked-dest-pools-deactivate-after-commit!)
+                              unit)]
+                          [_finalize-profile-finish : unit
+                            (if checked-detach?
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-finish "macro_finalize"))
+                              unit)]
+                          (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
+                            load-state
+                            prefix-cache
+                            job-state
+                            detached-entry-path
+                            detached-program
+                            detached-paths
+                            mode
+                            stdlib-roots
+                            detached-cache-scope
+                            committed-pools
+                            source-names
+                            intern-state)))]
+                    [(tc_core.ResultMacroExpand.Err diag)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-finish "macro_expand"))
+                        (ResultCompilerLower.Err
+                          (box
+                            (cdiag.compiler-diagnostic-copy
+                              (lower-diagnostic-with-path
+                                (box-get diag)
+                                macro-entry-path)))))]))))]
+          [(spec.ResultGenProgramWithPaths.Err diag)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-lower-profile-finish "macro_handoff"))
+              (ResultCompilerLower.Err
+                (box (lower-diagnostic-with-path (box-get diag) entry-path))))])))))
+
+;; Serial/test compatibility adapter for callers that already provide the
+;; explicit loader/prefix/job state but still rely on the active interner.
 (define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
   [load-state : load.CompilerLoadSessionState]
   [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
@@ -60419,213 +60795,19 @@
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
-  (begin
-    (cfg compile-profile (compiler-lower-profile-start))
-    (tc_core.tc-agg-caches-reset!)
-    ;; Generate declaration families before macro expansion (see
-    ;; typecheck-compiler-program-with-paths for why).
-    (match (spec.gen-normalize-program-with-paths-and-pools
-      program
-      paths
-      entry-path
-      pools)
-      [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
-        (let
-          [detach-before-macro? : bool lower-checked-dest-pools-active]
-          [generated-compaction : ast.AstProgramCompaction
-            (if detach-before-macro?
-              (ast.ast-program-compact-with-pools
-                pools
-                (compiler-lower-checked-dest-pools-current)
-                generated)
-              (ast.AstProgramCompaction generated pools))]
-          [macro-program : ast.AstProgram
-            (match generated-compaction
-              [(ast.AstProgramCompaction out _) out])]
-          [macro-pools : ast.AstNodePoolContext
-            (match generated-compaction
-              [(ast.AstProgramCompaction _ out-pools) out-pools])]
-          [macro-entry-path : String
-            (if detach-before-macro?
-              (lower-copy-string-into-pools entry-path macro-pools)
-              entry-path)]
-          [macro-cache-scope : String
-            (if detach-before-macro?
-              (lower-copy-string-into-pools cache-scope macro-pools)
-              cache-scope)]
-          [macro-paths : ast.AstDeclPathList
-            (if detach-before-macro?
-              (lower-copy-paths-into-pools generated-paths macro-pools)
-              generated-paths)]
-          [_clear-source-derived-caches : unit
-            (if detach-before-macro?
-              (begin
-                (lower-clear-macro-expanded-source-caches-into-pools!
-                  macro-pools)
-                (load.compiler-load-session-state-program-cache-clear!
-                  load-state)
-                (load.compiler-load-session-state-runtime-prelude-cache-clear!
-                  load-state)
-                (tc_core.tc-prefix-snapshot-cache-clear-for-state! prefix-cache))
-              unit)]
-          [_commit-generated-pools : unit
-            (if detach-before-macro?
-              (lower-checked-dest-pools-commit! macro-pools)
-              unit)]
-          [committed-macro-pools : ast.AstNodePoolContext
-            (if detach-before-macro?
-              (compiler-lower-checked-dest-pools-current)
-              macro-pools)]
-          [_arm-post-macro-detach : unit
-            (if detach-before-macro?
-              (lower-checked-dest-pools-rollover-for-macro!)
-              unit)]
-          [_macro-handoff-profile-finish : unit
-            (cfg
-              compile-profile
-              (compiler-lower-profile-finish "macro_handoff"))]
-          [_macro-expand-profile-start : unit
-            (cfg compile-profile (compiler-lower-profile-start))]
-          (match (tc_core.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
-            load-state
-            macro-program
-            macro-paths
-            committed-macro-pools
-            source-names
-            job-state
-            stdlib-roots
-            (lower-source-language-cfgs))
-            [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-finish "macro_expand"))
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-pools
-                    "macro_expand"
-                    committed-macro-pools))
-                (let
-                  [checked-detach? : bool lower-checked-dest-pools-active]
-                  [macro-changed? : bool
-                    (tc_core.macro-expand-program-structurally-changed?)]
-                  [retain-macro-source? : bool
-                    (and checked-detach? (not macro-changed?))]
-                  [detach-load-pools? : bool
-                    (and checked-detach? macro-changed?)]
-                  [_detach-profile-decision : unit
-                    (cfg
-                      compile-profile
-                      (begin
-                        (compiler-lower-profile-counter
-                          "macro_detach.fast_path_hits"
-                          (if retain-macro-source?
-                            1
-                            0))
-                        (compiler-lower-profile-counter
-                          "macro_detach.fast_path_misses"
-                          (if detach-load-pools?
-                            1
-                            0))
-                        (compiler-lower-profile-counter
-                          "macro_detach.change_reasons"
-                          (tc_core.macro-expand-program-structural-change-reasons-value))))]
-                  [_finalize-profile-start : unit
-                    (if checked-detach?
-                      (cfg compile-profile (compiler-lower-profile-start))
-                      unit)]
-                  [detached-compaction : ast.AstProgramCompaction
-                    (if detach-load-pools?
-                      (ast.ast-program-compact-with-pools
-                        committed-macro-pools
-                        (compiler-lower-checked-dest-pools-current)
-                        expanded)
-                      (ast.AstProgramCompaction
-                        (if retain-macro-source?
-                          macro-program
-                          expanded)
-                        committed-macro-pools))]
-                  [detached-program : ast.AstProgram
-                    (match detached-compaction
-                      [(ast.AstProgramCompaction out _) out])]
-                  [detached-pools : ast.AstNodePoolContext
-                    (match detached-compaction
-                      [(ast.AstProgramCompaction _ out-pools) out-pools])]
-                  [detached-entry-path : String
-                    (if detach-load-pools?
-                      (lower-copy-string-into-pools
-                        macro-entry-path
-                        detached-pools)
-                      macro-entry-path)]
-                  [detached-cache-scope : String
-                    (if detach-load-pools?
-                      (lower-copy-string-into-pools
-                        macro-cache-scope
-                        detached-pools)
-                      macro-cache-scope)]
-                  [detached-paths : ast.AstDeclPathList
-                    (if detach-load-pools?
-                      (lower-copy-paths-into-pools
-                        expanded-paths
-                        detached-pools)
-                      (if retain-macro-source?
-                        macro-paths
-                        expanded-paths))]
-                  [_clear-source-derived-caches : unit
-                    (if checked-detach?
-                      (lower-clear-macro-expanded-source-caches-into-pools!
-                        detached-pools)
-                      unit)]
-                  [_commit-detached-pools : unit
-                    (cond
-                      [detach-load-pools?
-                        (lower-checked-dest-pools-commit! detached-pools)]
-                      [retain-macro-source?
-                        (lower-checked-dest-pools-retain-macro-source!
-                          detached-pools)]
-                      [else unit])]
-                  [committed-pools : ast.AstNodePoolContext
-                    (if checked-detach?
-                      (compiler-lower-checked-dest-pools-current)
-                      detached-pools)]
-                  [_disable-late-detach : unit
-                    (if checked-detach?
-                      (lower-checked-dest-pools-deactivate-after-commit!)
-                      unit)]
-                  [_finalize-profile-finish : unit
-                    (if checked-detach?
-                      (cfg
-                        compile-profile
-                        (compiler-lower-profile-finish "macro_finalize"))
-                      unit)]
-                  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
-                    load-state
-                    prefix-cache
-                    job-state
-                    detached-entry-path
-                    detached-program
-                    detached-paths
-                    mode
-                    stdlib-roots
-                    detached-cache-scope
-                    committed-pools
-                    source-names)))]
-            [(tc_core.ResultMacroExpand.Err diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-lower-profile-finish "macro_expand"))
-                (ResultCompilerLower.Err
-                  (box
-                    (cdiag.compiler-diagnostic-copy
-                      (lower-diagnostic-with-path
-                        (box-get diag)
-                        macro-entry-path)))))]))]
-      [(spec.ResultGenProgramWithPaths.Err diag)
-        (begin
-          (cfg compile-profile (compiler-lower-profile-finish "macro_handoff"))
-          (ResultCompilerLower.Err
-            (box (lower-diagnostic-with-path (box-get diag) entry-path))))])))
+  (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
+    load-state
+    prefix-cache
+    job-state
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    pools
+    source-names
+    (ci.intern-compat-state-capture-active)))
 
 ;; Serial/test compatibility adapter. Driver-owned compilation uses the
 ;; explicit load-state entry above.

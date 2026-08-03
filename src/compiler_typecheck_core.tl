@@ -84571,7 +84571,7 @@
             (ResultMacroMaterializeImport.Err
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
 
-(define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
+(define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
@@ -84579,8 +84579,13 @@
   [source-names : ci.InternSourceNameSessionHandle]
   [job-state : TcJobState]
   [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
+  [cfgs : sym_i64_env.SymI64Env]
+  [intern-state : ci.InternCompatState]) : ResultMacroExpand
   (begin
+    ;; Legacy macro expansion still reads compatibility globals; bridge the
+    ;; compile-owned pool and interner state at the phase boundary.
+    (ast.ast-node-pool-context-install! pools)
+    (ci.intern-compat-state-install! intern-state)
     (macro-expand-program-structural-change-reset!)
     ;; The embedded-source flag is only set when stdlib modules actually load
     ;; from the embedded payload; a compile with an explicit stdlib root never
@@ -84632,51 +84637,86 @@
     ;; pass setup and refreshed only when a generated file import loads new
     ;; declarations mid-walk.
     (macro-live-prescan-reset!)
-    (match (macro-expand-program-pass-with-paths-and-pools
-      load-state
-      program
-      paths
-      pools
-      source-names
-      job-state
-      stdlib-roots
-      cfgs)
-      [(ResultMacroExpand.Ok expanded expanded-paths)
-        (begin
-          (cfg
-            embedded-stdlib-tlci
-            (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-          (let
-            [_profile-owners : unit
-              (macro-expand-allocation-profile-snapshot! 0)]
-            [_release-scratch : unit
-              (begin
-                (macro-expand-scratch-release!)
-                (tc-job-state-reset-file-state! job-state))]
-            (if (spec.compiler-specialize-needed? expanded)
-              (begin
-                (macro-expand-program-structural-change-note! 8)
-                (match (spec.gen-normalize-program-with-paths-and-pools
-                  expanded
-                  expanded-paths
-                  (tc-decl-path-list-last expanded-paths "")
-                  pools)
-                  [(spec.ResultGenProgramWithPaths.Ok
-                      normalized
-                      normalized-paths)
-                    (ResultMacroExpand.Ok normalized normalized-paths)]
-                  [(spec.ResultGenProgramWithPaths.Err diag)
-                    (ResultMacroExpand.Err diag)]))
-              (ResultMacroExpand.Ok expanded expanded-paths))))]
-      [(ResultMacroExpand.Err diag)
-        (begin
-          (cfg
-            embedded-stdlib-tlci
-            (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-          (macro-expand-allocation-profile-snapshot! 0)
-          (macro-expand-scratch-release!)
-          (tc-job-state-reset-file-state! job-state)
-          (ResultMacroExpand.Err diag))])))
+    (let
+      [macro-result : ResultMacroExpand
+        (macro-expand-program-pass-with-paths-and-pools
+          load-state
+          program
+          paths
+          pools
+          source-names
+          job-state
+          stdlib-roots
+          cfgs)]
+      (begin
+        ;; Publish all legacy macro mutations before inspecting Ok or Err.
+        (ast.ast-node-pool-context-capture-active! pools)
+        (ci.intern-compat-state-capture-from-globals! intern-state)
+        (match macro-result
+          [(ResultMacroExpand.Ok expanded expanded-paths)
+            (begin
+              (cfg
+                embedded-stdlib-tlci
+                (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+              (let
+                [_profile-owners : unit
+                  (macro-expand-allocation-profile-snapshot! 0)]
+                [_release-scratch : unit
+                  (begin
+                    (macro-expand-scratch-release!)
+                    (tc-job-state-reset-file-state! job-state))]
+                (if (spec.compiler-specialize-needed-with-pools expanded pools)
+                  (begin
+                    (macro-expand-program-structural-change-note! 8)
+                    (let
+                      [normalized-result : spec.ResultGenProgramWithPaths
+                        (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+                          expanded
+                          expanded-paths
+                          (tc-decl-path-list-last expanded-paths "")
+                          (spec.spec-owner-context-new pools intern-state))]
+                      (begin
+                        ;; Explicit normalization mutates owner cells directly;
+                        ;; publish them before matching either result.
+                        (ast.ast-node-pool-context-install! pools)
+                        (ci.intern-compat-state-install! intern-state)
+                        (match normalized-result
+                          [(spec.ResultGenProgramWithPaths.Ok
+                              normalized
+                              normalized-paths)
+                            (ResultMacroExpand.Ok normalized normalized-paths)]
+                          [(spec.ResultGenProgramWithPaths.Err diag)
+                            (ResultMacroExpand.Err diag)]))))
+                  (ResultMacroExpand.Ok expanded expanded-paths))))]
+          [(ResultMacroExpand.Err diag)
+            (begin
+              (cfg
+                embedded-stdlib-tlci
+                (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+              (macro-expand-allocation-profile-snapshot! 0)
+              (macro-expand-scratch-release!)
+              (tc-job-state-reset-file-state! job-state)
+              (ResultMacroExpand.Err diag))])))))
+
+(define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
+  [load-state : cload.CompilerLoadSessionState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [job-state : TcJobState]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
+    load-state
+    program
+    paths
+    pools
+    source-names
+    job-state
+    stdlib-roots
+    cfgs
+    (ci.intern-compat-state-capture-active)))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
   [load-state : cload.CompilerLoadSessionState]
@@ -84695,6 +84735,26 @@
     (tc-serial-job-state)
     stdlib-roots
     cfgs))
+
+(define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state-and-intern-state
+  [load-state : cload.CompilerLoadSessionState]
+  [job-state : TcJobState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [pools : ast.AstNodePoolContext]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [intern-state : ci.InternCompatState]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
+    load-state
+    program
+    paths
+    pools
+    (ci.intern-source-name-session-handle-from-state intern-state)
+    job-state
+    stdlib-roots
+    cfgs
+    intern-state))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state
   [load-state : cload.CompilerLoadSessionState]
@@ -84731,7 +84791,7 @@
     cfgs))
 
 ;; Serial/test compatibility adapter. Production macro-expansion jobs call the
-;; explicit load-state plus job-state entry above.
+;; explicit load-state, job-state, and intern-state entry above.
 (define (macro-expand-program-with-paths-and-pools-roots-cfg
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
@@ -84769,6 +84829,25 @@
     stdlib-roots
     cfgs))
 
+(define (macro-expand-then-build-envs-with-load-state-and-job-state-and-intern-state
+  [load-state : cload.CompilerLoadSessionState]
+  [job-state : TcJobState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [pools : ast.AstNodePoolContext]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [intern-state : ci.InternCompatState]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state-and-intern-state
+    load-state
+    job-state
+    program
+    paths
+    pools
+    stdlib-roots
+    cfgs
+    intern-state))
+
 (define (macro-expand-then-build-envs-with-load-state
   [load-state : cload.CompilerLoadSessionState]
   [program : ast.AstProgram]
@@ -84786,7 +84865,7 @@
     cfgs))
 
 ;; Serial/test compatibility adapter. Production typecheck jobs call the
-;; explicit load-state plus job-state entry above.
+;; explicit load-state, job-state, and intern-state entry above.
 (define (macro-expand-program-with-paths-and-pools
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
@@ -86914,7 +86993,7 @@
       pools
       source-names)))
 
-(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
   [job-state : TcJobState]
@@ -86923,7 +87002,11 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
+  [source-names : ci.InternSourceNameSessionHandle]
+  [intern-state : ci.InternCompatState]) : ResultCompilerTypecheckChecked
+  ;; Publish owner-generated IDs before the legacy body/typecheck state runs.
+  (ast.ast-node-pool-context-install! pools)
+  (ci.intern-compat-state-install! intern-state)
   (let
     [body-state : TcBodyState
       (tc-body-state-new-with-job-state-and-source-names job-state source-names)]
@@ -86941,15 +87024,46 @@
           pools
           source-names
           body-state))]
-    (match checked
-      [(ResultCompilerTypecheckChecked.Ok summary ctx top-env checked-paths)
-        (begin
-          (tc-body-early-exit-facts-finish! body-state)
-          (ResultCompilerTypecheckChecked.Ok summary ctx top-env checked-paths))]
-      [(ResultCompilerTypecheckChecked.Err diag)
-        (begin
-          (tc-body-early-exit-facts-abort! body-state)
-          (ResultCompilerTypecheckChecked.Err diag))])))
+    (begin
+      (ast.ast-node-pool-context-capture-active! pools)
+      (ci.intern-compat-state-capture-from-globals! intern-state)
+      (match checked
+        [(ResultCompilerTypecheckChecked.Ok summary ctx top-env checked-paths)
+          (begin
+            (tc-body-early-exit-facts-finish! body-state)
+            (ResultCompilerTypecheckChecked.Ok
+              summary
+              ctx
+              top-env
+              checked-paths))]
+        [(ResultCompilerTypecheckChecked.Err diag)
+          (begin
+            (tc-body-early-exit-facts-abort! body-state)
+            (ResultCompilerTypecheckChecked.Err diag))]))))
+
+;; Serial/test compatibility adapter. Production callers pass the explicit
+;; intern state to the entry above; this adapter snapshots the active table.
+(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+  [load-state : cload.CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
+  (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
+    load-state
+    prefix-cache
+    job-state
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools
+    source-names
+    (ci.intern-compat-state-capture-active)))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
   [load-state : cload.CompilerLoadSessionState]
@@ -86989,6 +87103,33 @@
     stdlib-roots
     cache-scope
     pools)
+    [(ResultCompilerTypecheckChecked.Ok summary _ _ _)
+      (ResultCompilerTypecheck.Ok summary)]
+    [(ResultCompilerTypecheckChecked.Err diag)
+      (ResultCompilerTypecheck.Err diag)]))
+
+(define (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state-and-intern-state
+  [load-state : cload.CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [intern-state : ci.InternCompatState]) : ResultCompilerTypecheck
+  (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
+    load-state
+    prefix-cache
+    job-state
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools
+    source-names
+    intern-state)
     [(ResultCompilerTypecheckChecked.Ok summary _ _ _)
       (ResultCompilerTypecheck.Ok summary)]
     [(ResultCompilerTypecheckChecked.Err diag)

@@ -1029,6 +1029,12 @@
     reflections
     (ci.intern-source-name-session-capture-active-handle)))
 
+(define (ctfe-env-with-reflections-and-pools-and-source-names
+  [reflections : CtfeReflectInfoList]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
+  (ctfe-env-new pools (ctfe-layout-info-list-empty) reflections source-names))
+
 (define (ctfe-env-with-reflections [reflections : CtfeReflectInfoList]) : CtfeEnv
   (ctfe-env-with-reflections-and-pools
     reflections
@@ -11263,14 +11269,17 @@
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        [lane : ast.AstExpr (ast.ast-node-get lane-box)]
+        [value : ast.AstExpr (ctfe-ast-get env value-box)]
+        [lane : ast.AstExpr (ctfe-ast-get env lane-box)]
         (match (ctfe-quote-expr value env fuel quasiquote)
           [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
             (match (ctfe-quote-expr lane env value-fuel quasiquote)
               [(ResultCtfeQuoteExpr.Ok quoted-lane _ lane-fuel)
                 (ResultCtfeQuoteExpr.Ok
-                  (ast.ast-expr-spmd-shuffle quoted-value quoted-lane)
+                  (ast.ast-expr-spmd-shuffle-with-pools
+                    (ctfe-env-pools env)
+                    quoted-value
+                    quoted-lane)
                   (ast.AstType.Expr)
                   lane-fuel)]
               [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
@@ -12727,14 +12736,16 @@
           [_ false]))]
     [(ast.AstExpr.SpmdShuffle a-value-box a-lane-box)
       (let
-        [a-value : ast.AstExpr (ast.ast-node-get a-value-box)]
-        [a-lane : ast.AstExpr (ast.ast-node-get a-lane-box)]
+        [a-value : ast.AstExpr (ctfe-ast-get env a-value-box)]
+        [a-lane : ast.AstExpr (ctfe-ast-get env a-lane-box)]
         (match b
           [(ast.AstExpr.SpmdShuffle b-value-box b-lane-box)
             (let
-              [b-value : ast.AstExpr (ast.ast-node-get b-value-box)]
-              [b-lane : ast.AstExpr (ast.ast-node-get b-lane-box)]
-              (and (ctfe-expr-eq a-value b-value) (ctfe-expr-eq a-lane b-lane)))]
+              [b-value : ast.AstExpr (ctfe-ast-get env b-value-box)]
+              [b-lane : ast.AstExpr (ctfe-ast-get env b-lane-box)]
+              (and
+                (ctfe-expr-eq-in-env env a-value b-value)
+                (ctfe-expr-eq-in-env env a-lane b-lane)))]
           [_ false]))]
     [(ast.AstExpr.SpmdProgramIndex)
       (match b

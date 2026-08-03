@@ -4074,23 +4074,20 @@
 (define (compiler-registries-struct-field-type-indexed
   [symbols : CompilerSymbols]
   [handle : i64]) : parser.ResultAstType
-  (match (compiler-symbols-decl-at-index
-    symbols
-    (compiler-registry-handle-owner-index handle))
-    [(parser.ResultAstDecl.Ok decl)
-      (match decl
+  (let
+    [decls : (__tl_dyn-array ast.AstDecl) (compiler-symbols-decls symbols)]
+    [owner-index : i64 (compiler-registry-handle-owner-index handle)]
+    [child-index : i64 (compiler-registry-handle-child-index handle)]
+    (if (or
+      (< owner-index 0)
+      (>= owner-index (compiler-symbols-decl-count symbols)))
+      (parser.ResultAstType.Err "symbols: declaration index not found")
+      (match (array-ref decls owner-index)
         [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
-          (compiler-field-type-at-index
-            fields
-            (compiler-registry-handle-child-index handle)
-            0)]
+          (compiler-field-type-at-index fields child-index 0)]
         [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
-          (compiler-field-type-at-index
-            fields
-            (compiler-registry-handle-child-index handle)
-            0)]
-        [_ (parser.ResultAstType.Err "symbols: field owner is not struct")])]
-    [(parser.ResultAstDecl.Err message) (parser.ResultAstType.Err message)]))
+          (compiler-field-type-at-index fields child-index 0)]
+        [_ (parser.ResultAstType.Err "symbols: field owner is not struct")]))))
 
 (define (compiler-symbols-decl-name-id-at-index
   [symbols : CompilerSymbols]
@@ -4769,6 +4766,80 @@
           [(parser.ResultAstType.Ok _) false]
           [(parser.ResultAstType.Err _) false]))]
     [(option_i64.None) false]))
+
+(define (compiler-registries-lifetime-field-indexed-ok?) : bool
+  (match (parser.parse-ast-source
+    "(defenum NotStruct (None))
+(defstruct Borrowed (:lifetimes owner) (value (& owner i64)))")
+    [(parser.ResultAstProgram.Ok program)
+      (match (build-compiler-symbols program)
+        [(ResultCompilerSymbols.Ok symbols)
+          (match (build-compiler-registries program)
+            [(ResultCompilerRegistries.Ok registries)
+              (let
+                [struct-index : i64 1]
+                [struct-name-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols struct-index)]
+                [field-name-id : i64
+                  (compiler-symbols-field-name-id-at-index
+                    symbols
+                    struct-index
+                    0)]
+                [module-id : i64
+                  (compiler-symbols-owner-module-id-at-index
+                    symbols
+                    struct-index)]
+                (match (compiler-registries-lookup-field-in-module-id
+                  registries
+                  module-id
+                  struct-name-id
+                  field-name-id)
+                  [(option_i64.Some handle)
+                    (and
+                      (=
+                        (compiler-registry-handle-kind handle)
+                        (compiler-symbol-kind-struct-field))
+                      (=
+                        (compiler-registry-handle-owner-index handle)
+                        struct-index)
+                      (= (compiler-registry-handle-child-index handle) 0)
+                      (match (compiler-registries-struct-field-type-indexed
+                        symbols
+                        handle)
+                        [(parser.ResultAstType.Ok
+                            (ast.AstType.Ref lifetime inner))
+                          (and
+                            (= lifetime (ci.intern "owner"))
+                            (match (ast.ty-node-get inner)
+                              [(ast.AstType.I64) true]
+                              [_ false]))]
+                        [_ false])
+                      (match (compiler-registries-struct-field-type-indexed
+                        symbols
+                        (compiler-registry-make-handle
+                          (compiler-symbol-kind-struct-field)
+                          -1
+                          0))
+                        [(parser.ResultAstType.Err message)
+                          (string.eq
+                            message
+                            "symbols: declaration index not found")]
+                        [_ false])
+                      (match (compiler-registries-struct-field-type-indexed
+                        symbols
+                        (compiler-registry-make-handle
+                          (compiler-symbol-kind-struct-field)
+                          0
+                          0))
+                        [(parser.ResultAstType.Err message)
+                          (string.eq
+                            message
+                            "symbols: field owner is not struct")]
+                        [_ false]))]
+                  [(option_i64.None) false]))]
+            [(ResultCompilerRegistries.Err _) false])]
+        [(ResultCompilerSymbols.Err _) false])]
+    [(parser.ResultAstProgram.Err _) false]))
 
 ;; A generated nominal splice at the start of a nested module must leave later
 ;; enum-variant and struct-field handles pointing at their shifted owners.
@@ -5763,6 +5834,9 @@
                       unit
                       (set! ok false))
                     (if (compiler-registries-incremental-splice-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-registries-lifetime-field-indexed-ok?)
                       unit
                       (set! ok false))
                     (if (compiler-symbols-append-splice-ok?)

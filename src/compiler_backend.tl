@@ -12590,7 +12590,13 @@
   [buf : (text_buf_borrowed.TextBufBorrowed name)]) : (text_buf_borrowed.TextBufBorrowed
     name)
   (if (> end start)
-    (text_buf_borrowed.append-slice buf (& name) start (- end start))
+    (unsafe
+      ;; The symbol scan proves 0 <= start < end <= string-length(name).
+      (text_buf_borrowed.append-slice-unchecked
+        buf
+        (& name)
+        start
+        (- end start)))
     buf))
 
 (define (compiler-backend-asm-safe-symbol [name : String]) : String
@@ -62219,7 +62225,13 @@
         (+ end 1)
         end)]
     (if (> slice-end start)
-      (text_buf_borrowed.append-slice buf (& asm) start (- slice-end start))
+      (unsafe
+        ;; Line/record scanning bounds the optional newline extension by asm.
+        (text_buf_borrowed.append-slice-unchecked
+          buf
+          (& asm)
+          start
+          (- slice-end start)))
       buf)))
 
 (define (compiler-backend-peephole-find-comma-space

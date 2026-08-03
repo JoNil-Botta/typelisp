@@ -274,6 +274,7 @@
           "1")
         "!")]
     (begin
+      (process.test-env-dense-api)
       (assert-owned-string-eq
         (process.command-executable command)
         "echo"

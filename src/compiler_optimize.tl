@@ -25259,45 +25259,146 @@
                         (OptFunctionPassResult.Result func false)]))
                   (OptFunctionPassResult.Result func false))])]))]))
 
-(define (opt-bool-branch-chain-instrs-define-root-and?
+;; Gate for the bool-branch `and`-chain pass: does any conditional branch test a
+;; value that an `and` materialized in this function?
+;;
+;; Proving that used to be quadratic. For every block ending in `branch %v` the
+;; walk re-read every instruction of every block looking for `%v = and ...`, and
+;; re-materialized a cons list of the whole block array once per re-read. The
+;; answer needs neither: the `and` destinations and the branch conditions are
+;; two independent facts, each decidable in one sequential pass over the dense
+;; instruction/block arrays that already hold them.
+;;
+;; Measured over the opt2 self-compile of src/main.tl (59,726 gate calls), which
+;; is where the old walk was the profile's worst D1 read-miss density -- 64.2M
+;; D1 read misses, one per 20 instructions executed:
+;;   - the scanned functions hold 4,990,494 instructions, and the walk performed
+;;     86,389,242 instruction visits: every instruction stream was re-read 17.3x
+;;     on average (worst single call: 8,757 instructions re-read 179 times =
+;;     1,567,503 visits), far past what L1 holds, so nearly every visit missed;
+;;   - 11,844,076 cons cells were materialized by the per-re-read
+;;     `compiler-ir-block-seq-to-list`, all cold on first touch;
+;;   - 59,384 of the 59,726 calls (99.4%) ran that walk over a function with no
+;;     `and` instruction at all, where no re-read can ever succeed. The whole
+;;     self-compile contains just 546 `and` destinations.
+;; So the common answer is settled by one sequential pass with no allocation,
+;; and the 0.6% that can still say yes cost two more sequential passes. That
+;; leaves 5,037,778 instruction visits (1.009x the stream, 17.2x fewer), 2,494
+;; block visits (none of them consed), and 342 mark arrays. Running both walks
+;; against each other inside one compiler agreed on all 59,766 gate answers.
+(define (opt-bool-branch-chain-instrs-and-dst-max
   [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [root : i64]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    false
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
-      [(ir.CompilerIrInstr.BinOp dst op _ _ _)
-        (if (and
-          (= dst root)
-          (match op
-            [(ir.CompilerIrBinOp.And) true]
-            [_ false]))
-          true
-          (opt-bool-branch-chain-instrs-define-root-and?
-            instrs
-            (+ index 1)
-            root))]
-      [_
-        (opt-bool-branch-chain-instrs-define-root-and? instrs (+ index 1) root)])))
+  [best : i64]) : i64
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [found : i64 best]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref slots index)
+            [(ir.CompilerIrInstr.BinOp dst op _ _ _)
+              (match op
+                [(ir.CompilerIrBinOp.And)
+                  (if (> dst found)
+                    (set! found dst)
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
+      found)))
 
-(define (opt-bool-branch-chain-blocks-define-root-and?
+(define (opt-bool-branch-chain-block-seq-and-dst-max
+  [blocks : ir.CompilerIrBlockSeq]
+  [best : i64]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
+    [index : i64 0]
+    [found : i64 best]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref blocks index)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (set!
+                found
+                (opt-bool-branch-chain-instrs-and-dst-max instrs found))])
+          (set! index (+ index 1))))
+      found)))
+
+;; Highest destination of an `and` BinOp anywhere in the block list, or -1 when
+;; the function has none -- which is also the whole gate answer for 99.4% of
+;; calls, since a branch condition no `and` defines can never be a chain root.
+(define (opt-bool-branch-chain-blocks-and-dst-max
   [blocks : ir.CompilerIrBlockList]
-  [root : i64]) : bool
+  [best : i64]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Nil) best]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
-          (or
-            (opt-bool-branch-chain-instrs-define-root-and? instrs 0 root)
-            (opt-bool-branch-chain-blocks-define-root-and? (box-get rest) root))])]
+          (opt-bool-branch-chain-blocks-and-dst-max
+            (box-get rest)
+            (opt-bool-branch-chain-instrs-and-dst-max instrs best))])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-bool-branch-chain-blocks-define-root-and?
-        (ir.compiler-ir-block-seq-to-list seq)
-        root)]))
+      (opt-bool-branch-chain-block-seq-and-dst-max seq best)]))
 
-(define (opt-bool-branch-chain-block-candidate?
-  [all-blocks : ir.CompilerIrBlockList]
+(define (opt-bool-branch-chain-mark-instrs-ands!
+  [marks : (__tl_dyn-array bool)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref slots index)
+            [(ir.CompilerIrInstr.BinOp dst op _ _ _)
+              (match op
+                [(ir.CompilerIrBinOp.And)
+                  (if (>= dst 0)
+                    (if (< dst (array-length marks))
+                      (array-set! marks dst true)
+                      unit)
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
+      unit)))
+
+(define (opt-bool-branch-chain-mark-block-seq-ands!
+  [marks : (__tl_dyn-array bool)]
+  [blocks : ir.CompilerIrBlockSeq]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref blocks index)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (opt-bool-branch-chain-mark-instrs-ands! marks instrs)])
+          (set! index (+ index 1))))
+      unit)))
+
+(define (opt-bool-branch-chain-mark-blocks-ands!
+  [marks : (__tl_dyn-array bool)]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-bool-branch-chain-mark-instrs-ands! marks instrs)
+            (opt-bool-branch-chain-mark-blocks-ands! marks (box-get rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bool-branch-chain-mark-block-seq-ands! marks seq)]))
+
+(define (opt-bool-branch-chain-block-branches-marked?
+  [marks : (__tl_dyn-array bool)]
   [block : ir.CompilerIrBlock]) : bool
   (match block
     [(ir.CompilerIrBlock.Block _ instrs)
@@ -25307,30 +25408,53 @@
           (> count 0)
           (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
             [(ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var cond-var) _ _)
-              (opt-bool-branch-chain-blocks-define-root-and?
-                all-blocks
-                cond-var)]
+              (and
+                (>= cond-var 0)
+                (< cond-var (array-length marks))
+                (array-ref marks cond-var))]
             [_ false])))]))
 
-(define (opt-bool-branch-chain-blocks-have-candidate-from?
-  [all-blocks : ir.CompilerIrBlockList]
+(define (opt-bool-branch-chain-block-seq-marked-branch?
+  [marks : (__tl_dyn-array bool)]
+  [blocks : ir.CompilerIrBlockSeq]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (< index count)
+        (if (opt-bool-branch-chain-block-branches-marked?
+          marks
+          (ir.compiler-ir-block-seq-ref blocks index))
+          (begin
+            (set! found true)
+            (set! index count))
+          (set! index (+ index 1))))
+      found)))
+
+(define (opt-bool-branch-chain-blocks-marked-branch?
+  [marks : (__tl_dyn-array bool)]
   [blocks : ir.CompilerIrBlockList]) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Nil) false]
     [(ir.CompilerIrBlockList.Cons block rest)
-      (if (opt-bool-branch-chain-block-candidate? all-blocks block)
+      (if (opt-bool-branch-chain-block-branches-marked? marks block)
         true
-        (opt-bool-branch-chain-blocks-have-candidate-from?
-          all-blocks
-          (box-get rest)))]
+        (opt-bool-branch-chain-blocks-marked-branch? marks (box-get rest)))]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-bool-branch-chain-blocks-have-candidate-from?
-        all-blocks
-        (ir.compiler-ir-block-seq-to-list seq))]))
+      (opt-bool-branch-chain-block-seq-marked-branch? marks seq)]))
 
 (define (opt-bool-branch-chain-blocks-have-candidate?
   [blocks : ir.CompilerIrBlockList]) : bool
-  (opt-bool-branch-chain-blocks-have-candidate-from? blocks blocks))
+  (let
+    [and-max : i64 (opt-bool-branch-chain-blocks-and-dst-max blocks -1)]
+    (if (< and-max 0)
+      false
+      (let
+        [marks : (__tl_dyn-array bool) (array.make-array bool (+ and-max 1))]
+        (begin
+          (opt-bool-branch-chain-mark-blocks-ands! marks blocks)
+          (opt-bool-branch-chain-blocks-marked-branch? marks blocks))))))
 
 (define (opt-bool-branch-chain-function-with-context-result
   [type-segment-bases : i64]

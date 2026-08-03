@@ -26,7 +26,7 @@
 ;; snapshot boundary: later appends may share spare slots, while growth copies
 ;; into a larger buffer and leaves older snapshots intact.
 (defstruct LspDiagnosticUris
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 (defstruct LspSemanticSnapshot

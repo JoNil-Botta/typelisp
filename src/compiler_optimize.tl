@@ -13285,7 +13285,7 @@
   [max-dst : i64]) : i64
   (let
     [items : opt_global_fact_vec.Vec (struct-get facts items)]
-    [slots : (& items (Array OptGlobalDenseFact))
+    [slots : (& items (__tl_dyn-array OptGlobalDenseFact))
       (opt_global_fact_vec.slots (& items))]
     [count : i64 (opt_global_fact_vec.len (& items))]
     [index : i64 0]
@@ -13322,7 +13322,7 @@
   [facts : OptGlobalCopyFacts]) : unit
   (let
     [items : opt_global_fact_vec.Vec (struct-get facts items)]
-    [slots : (& items (Array OptGlobalDenseFact))
+    [slots : (& items (__tl_dyn-array OptGlobalDenseFact))
       (opt_global_fact_vec.slots (& items))]
     [count : i64 (opt_global_fact_vec.len (& items))]
     [index : i64 0]
@@ -13440,7 +13440,7 @@
   [max-group : i64]) : i64
   (let
     [items : opt_global_fact_vec.Vec (struct-get facts items)]
-    [slots : (& items (Array OptGlobalDenseFact))
+    [slots : (& items (__tl_dyn-array OptGlobalDenseFact))
       (opt_global_fact_vec.slots (& items))]
     [count : i64 (opt_global_fact_vec.len (& items))]
     [index : i64 0]
@@ -13483,7 +13483,7 @@
   [facts : OptGlobalPackWordFacts]) : unit
   (let
     [items : opt_global_fact_vec.Vec (struct-get facts items)]
-    [slots : (& items (Array OptGlobalDenseFact))
+    [slots : (& items (__tl_dyn-array OptGlobalDenseFact))
       (opt_global_fact_vec.slots (& items))]
     [count : i64 (opt_global_fact_vec.len (& items))]
     [scan : i64 0]
@@ -13526,7 +13526,7 @@
   [use-pos : i64]) : ir.CompilerIrMaybeValue
   (let
     [items : opt_global_fact_vec.Vec (struct-get facts items)]
-    [slots : (& items (Array OptGlobalDenseFact))
+    [slots : (& items (__tl_dyn-array OptGlobalDenseFact))
       (opt_global_fact_vec.slots (& items))]
     [scan : i64 (- (opt_global_fact_vec.len (& items)) 1)]
     [result : ir.CompilerIrMaybeValue (ir.CompilerIrMaybeValue.No)]
@@ -13587,7 +13587,7 @@
   [use-pos : i64]) : ir.CompilerIrMaybeValue
   (let
     [items : opt_global_fact_vec.Vec (struct-get facts items)]
-    [slots : (& items (Array OptGlobalDenseFact))
+    [slots : (& items (__tl_dyn-array OptGlobalDenseFact))
       (opt_global_fact_vec.slots (& items))]
     [index : i64 (- (opt_global_fact_vec.len (& items)) 1)]
     [result : ir.CompilerIrMaybeValue (ir.CompilerIrMaybeValue.No)]
@@ -14304,7 +14304,7 @@
   [facts : OptGlobalExprFacts]) : unit
   (let
     [items : opt_global_fact_vec.Vec (struct-get facts items)]
-    [slots : (& items (Array OptGlobalDenseFact))
+    [slots : (& items (__tl_dyn-array OptGlobalDenseFact))
       (opt_global_fact_vec.slots (& items))]
     [count : i64 (opt_global_fact_vec.len (& items))]
     [index : i64 0]
@@ -14343,7 +14343,7 @@
   [use-pos : i64]) : ir.CompilerIrMaybeValue
   (let
     [items : opt_global_fact_vec.Vec (struct-get facts items)]
-    [slots : (& items (Array OptGlobalDenseFact))
+    [slots : (& items (__tl_dyn-array OptGlobalDenseFact))
       (opt_global_fact_vec.slots (& items))]
     [index : i64 (- (opt_global_fact_vec.len (& items)) 1)]
     [result : ir.CompilerIrMaybeValue (ir.CompilerIrMaybeValue.No)]
@@ -17486,7 +17486,7 @@
   [load-root : OptLicmRoot]) : bool
   (let
     [items : opt_licm_store_root_vec.Vec (struct-get stores items)]
-    [slots : (& items (Array OptLicmRoot))
+    [slots : (& items (__tl_dyn-array OptLicmRoot))
       (opt_licm_store_root_vec.slots (& items))]
     [index : i64 (- (opt_licm_store_root_vec.len (& items)) 1)]
     [safe? : bool true]
@@ -28767,7 +28767,8 @@
   [changes : OptGvnScopeChanges]) : unit
   (let
     [logged : opt_dense_i64_vec.Vec (struct-get changes buckets)]
-    [slots : (& logged (Array i64)) (opt_dense_i64_vec.slots (& logged))]
+    [slots : (& logged (__tl_dyn-array i64))
+      (opt_dense_i64_vec.slots (& logged))]
     [buckets : (__tl_dyn-array OptGvnBucket) (struct-get table buckets)]
     [index : i64 (- (opt_dense_i64_vec.len (& logged)) 1)]
     (while (>= index 0)
@@ -31470,7 +31471,7 @@
 (defstruct OptGlobalCellSummary
   (addr-taken opt_i64_i64_map.Map)
   (type-index opt_i64_i64_map.Map)
-  (types (Array ast.AstType))
+  (types (__tl_dyn-array ast.AstType))
   (word-cell i64))
 
 (define (opt-global-cell-summary-empty) : OptGlobalCellSummary
@@ -45090,7 +45091,7 @@
 (define (opt-late-bounds-pair-drop? [drops : OptLateBoundsPairDrop] [dst : i64]) : bool
   (let
     [items : opt_dense_i64_vec.Vec (struct-get drops items)]
-    [slots : (& items (Array i64)) (opt_dense_i64_vec.slots (& items))]
+    [slots : (& items (__tl_dyn-array i64)) (opt_dense_i64_vec.slots (& items))]
     [index : i64 (- (opt_dense_i64_vec.len (& items)) 1)]
     [found? : bool false]
     (begin
@@ -64018,7 +64019,7 @@
 (define (opt-global-cell-types-fill
   [globals : ir.CompilerIrGlobalList]
   [type-index : opt_i64_i64_map.Map (:consume)]
-  [types : (Array ast.AstType)]
+  [types : (__tl_dyn-array ast.AstType)]
   [index : i64]) : opt_i64_i64_map.Map
   (match globals
     [(ir.CompilerIrGlobalList.Nil) type-index]
@@ -64131,7 +64132,8 @@
       (opt-global-cell-summary-empty)
       (let
         [capacity : i64 (opt-function-index-capacity count)]
-        [types : (Array ast.AstType) (array.make-array ast.AstType count)]
+        [types : (__tl_dyn-array ast.AstType)
+          (array.make-array ast.AstType count)]
         [type-index : opt_i64_i64_map.Map
           (opt-global-cell-types-fill
             globals

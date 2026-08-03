@@ -1331,6 +1331,66 @@
     [item : NestedClone (make-nested s)]
     (__tl_string_length (struct-get (struct-get item used) name))))")
 
+;; Eighteen independent aggregate roots force stdlib.clone's helper handoff
+;; across the fixed 16-root chunk boundary.  Source-order field discovery
+;; prepends roots, so logical positions 0, 15, 16, and 17 are CloneChunk17,
+;; CloneChunk2, CloneChunk1, and CloneChunk0 respectively.
+(define (compiler-lower-clone-chunk-boundary-source) : String
+  "(defstruct CloneChunk0 (value String))
+(defstruct CloneChunk1 (value String))
+(defstruct CloneChunk2 (value String))
+(defstruct CloneChunk3 (value String))
+(defstruct CloneChunk4 (value String))
+(defstruct CloneChunk5 (value String))
+(defstruct CloneChunk6 (value String))
+(defstruct CloneChunk7 (value String))
+(defstruct CloneChunk8 (value String))
+(defstruct CloneChunk9 (value String))
+(defstruct CloneChunk10 (value String))
+(defstruct CloneChunk11 (value String))
+(defstruct CloneChunk12 (value String))
+(defstruct CloneChunk13 (value String))
+(defstruct CloneChunk14 (value String))
+(defstruct CloneChunk15 (value String))
+(defstruct CloneChunk16 (value String))
+(defstruct CloneChunk17 (value String))
+(define (main [s : String]) : i64
+  (begin
+    (clone
+      (tuple
+        (CloneChunk0 s)
+        (CloneChunk1 s)
+        (CloneChunk2 s)
+        (CloneChunk3 s)
+        (CloneChunk4 s)
+        (CloneChunk5 s)
+        (CloneChunk6 s)
+        (CloneChunk7 s)
+        (CloneChunk8 s)
+        (CloneChunk9 s)
+        (CloneChunk10 s)
+        (CloneChunk11 s)
+        (CloneChunk12 s)
+        (CloneChunk13 s)
+        (CloneChunk14 s)
+        (CloneChunk15 s)
+        (CloneChunk16 s)
+        (CloneChunk17 s)))
+    0))")
+
+(define (compiler-lower-clone-chunk-boundary-ok?) : bool
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-clone-chunk-boundary-source))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (lower-test-function-defined? functions ".::clone$CloneChunk17")
+            (lower-test-function-defined? functions ".::clone$CloneChunk2")
+            (lower-test-function-defined? functions ".::clone$CloneChunk1")
+            (lower-test-function-defined? functions ".::clone$CloneChunk0"))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
 ;; Nominal clone helpers are declaration macros now, so clone-producing lowering
 ;; fixtures must load the same implicit prelude as the compiler driver.
 (define (compiler-lower-clone-source-with-prelude [src : String]) : compiler_lower.ResultCompilerLower

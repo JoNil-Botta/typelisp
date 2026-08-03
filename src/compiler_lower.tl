@@ -303,7 +303,7 @@
   (symbol-ids (Array i64))
   (logical-symbols lower_i64_i64_map.Map)
   (module-paths LowerModulePathIndex)
-  (clone-roots clone_support.CloneNameList)
+  (clone-roots clone_support.CloneRootEntries)
   (module-id i64)
   (parent LowerNameParent))
 
@@ -317,7 +317,7 @@
     (make-array i64 0)
     (lower_i64_i64_map.with-capacity 8)
     (lower-module-path-index-empty)
-    (clone_support.CloneNameList.Nil)
+    (clone_support.CloneRootEntries.Empty)
     cbi.compiler-builtin-id-fix-empty
     (LowerNameParent.None)))
 
@@ -371,7 +371,7 @@
     (make-array i64 0)
     (lower_i64_i64_map.with-capacity 8)
     (lower-module-path-index-empty)
-    (clone_support.CloneNameList.Nil)
+    (clone_support.CloneRootEntries.Empty)
     cbi.compiler-builtin-id-fix-empty
     (LowerNameParent.None)))
 
@@ -2437,7 +2437,7 @@
           (make-array i64 count)
           (lower_i64_i64_map.with-capacity 64)
           (lower-module-path-index-empty)
-          (clone_support.CloneNameList.Nil)
+          (clone_support.CloneRootEntries.Empty)
           cbi.compiler-builtin-id-fix-empty
           (LowerNameParent.None))))))
 
@@ -2461,7 +2461,7 @@
           (make-array i64 count)
           (lower_i64_i64_map.with-capacity 16)
           (lower-module-path-index-empty)
-          (clone_support.CloneNameList.Nil)
+          (clone_support.CloneRootEntries.Empty)
           module-id
           (LowerNameParent.Global))))))
 
@@ -2505,7 +2505,7 @@
 
 (define (lower-name-cache-with-clone-roots
   [cache : LowerNameCache]
-  [roots : clone_support.CloneNameList]) : LowerNameCache
+  [roots : clone_support.CloneRootEntries]) : LowerNameCache
   (LowerNameCache
     (struct-get cache ids)
     (struct-get cache logical-ids)
@@ -2521,7 +2521,7 @@
   [type-key-id : i64]) : i64
   (let
     [helper-id : i64
-      (clone_support.clone-name-list-helper-id-or
+      (clone_support.clone-root-entries-helper-id-or
         (struct-get cache clone-roots)
         type-key-id
         -1)]
@@ -2541,7 +2541,7 @@
     type-key-id
     (let
       [candidate : i64
-        (clone_support.clone-name-list-unique-key-for-base-id-or
+        (clone_support.clone-root-entries-unique-key-for-base-id-or
           (struct-get cache clone-roots)
           (clone_support.clone-name-key-base-id type-key-id)
           -1)]
@@ -7798,32 +7798,45 @@
 (define (lower-clone-handoff-type-args
   [ctx : tc_core.TcContext]
   [pools : ast.AstNodePoolContext]
-  [roots : clone_support.CloneNameList]) : ast.AstExprList
-  (match roots
-    [(clone_support.CloneNameList.Nil) (ast.ast-expr-list-new)]
-    [(clone_support.CloneNameList.ConsId root-key-id _ rest)
-      (let
-        [module-id : i64
-          (if (clone_support.clone-name-key-qualified? root-key-id)
-            (clone_support.clone-name-key-module-id root-key-id)
-            cbi.compiler-builtin-id-fix-empty)]
-        (ast.ast-expr-cons
-          (ast.ast-node-pool-context-expr-push
-            pools
-            (ast.AstExpr.Literal (ast.AstLiteral.String module-id)))
-          (ast.ast-expr-cons
-            (ast.ast-node-pool-context-expr-push
-              pools
-              (ast.AstExpr.TypeLiteral
-                (ast.ast-node-pool-context-type-push
+  [roots : clone_support.CloneRootEntries]) : ast.AstExprList
+  (let
+    [index : i64 (- (clone_support.clone-root-entries-len roots) 1)]
+    [out : ast.AstExprList (ast.ast-expr-list-new)]
+    (begin
+      ;; Dense roots expose logical newest-first order; cons from the oldest
+      ;; logical entry back to index 0 to preserve the old recursive output.
+      (while (>= index 0)
+        (let
+          [root-key-id : i64
+            (clone_support.clone-root-entries-key-id-at-or roots index -1)]
+          [module-id : i64
+            (if (clone_support.clone-name-key-qualified? root-key-id)
+              (clone_support.clone-name-key-module-id root-key-id)
+              cbi.compiler-builtin-id-fix-empty)]
+          (begin
+            (set!
+              out
+              (ast.ast-expr-cons
+                (ast.ast-node-pool-context-expr-push
                   pools
-                  (tc_core.tc-resolve-type ctx (ast.AstType.Var root-key-id)))))
-            (lower-clone-handoff-type-args ctx pools (box-get rest)))))]))
+                  (ast.AstExpr.Literal (ast.AstLiteral.String module-id)))
+                (ast.ast-expr-cons
+                  (ast.ast-node-pool-context-expr-push
+                    pools
+                    (ast.AstExpr.TypeLiteral
+                      (ast.ast-node-pool-context-type-push
+                        pools
+                        (tc_core.tc-resolve-type
+                          ctx
+                          (ast.AstType.Var root-key-id)))))
+                  out)))
+            (set! index (- index 1)))))
+      out)))
 
 (define (lower-clone-handoff-request-decl
   [ctx : tc_core.TcContext]
   [pools : ast.AstNodePoolContext]
-  [roots : clone_support.CloneNameList]) : ast.AstDecl
+  [roots : clone_support.CloneRootEntries]) : ast.AstDecl
   (let
     [callee : i64
       (ast.ast-node-pool-context-expr-push
@@ -7955,7 +7968,7 @@
   [source-decls : ast.AstDeclList]
   [entry-path : String]
   [pools : ast.AstNodePoolContext]
-  [roots : clone_support.CloneNameList]) : tc_core.ResultMacroDeclExpansion
+  [roots : clone_support.CloneRootEntries]) : tc_core.ResultMacroDeclExpansion
   (let
     [request : ast.AstDecl (lower-clone-handoff-request-decl ctx pools roots)]
     [enclosing : i64 (arena.tl_arena_current)]
@@ -7995,29 +8008,36 @@
 (define (lower-clone-handoff-source-helper-root-id
   [name-id : i64]
   [module-id : i64]
-  [roots : clone_support.CloneNameList]) : i64
-  (match roots
-    [(clone_support.CloneNameList.Nil) -1]
-    [(clone_support.CloneNameList.ConsId root-key-id helper-name-id rest)
-      (let
-        [root-module-id : i64
-          (if (clone_support.clone-name-key-qualified? root-key-id)
-            (clone_support.clone-name-key-module-id root-key-id)
-            cbi.compiler-builtin-id-fix-empty)]
-        (if (and
-          (= module-id root-module-id)
-          (string.eq
-            (tc_core.tc-env-key-name-text name-id)
-            (ci.intern-str helper-name-id)))
-          root-key-id
-          (lower-clone-handoff-source-helper-root-id
-            name-id
-            module-id
-            (box-get rest))))]))
+  [roots : clone_support.CloneRootEntries]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 (clone_support.clone-root-entries-len roots)]
+    [found : i64 -1]
+    (begin
+      (while (and (< index count) (< found 0))
+        (let
+          [root-key-id : i64
+            (clone_support.clone-root-entries-key-id-at-or roots index -1)]
+          [helper-name-id : i64
+            (clone_support.clone-root-entries-helper-id-at-or roots index -1)]
+          [root-module-id : i64
+            (if (clone_support.clone-name-key-qualified? root-key-id)
+              (clone_support.clone-name-key-module-id root-key-id)
+              cbi.compiler-builtin-id-fix-empty)]
+          (begin
+            (if (and
+              (= module-id root-module-id)
+              (string.eq
+                (tc_core.tc-env-key-name-text name-id)
+                (ci.intern-str helper-name-id)))
+              (set! found root-key-id)
+              unit)
+            (set! index (+ index 1)))))
+      found)))
 
 (define (lower-clone-handoff-source-conflict-in-module
   [source-decls : ast.AstDeclList]
-  [roots : clone_support.CloneNameList]
+  [roots : clone_support.CloneRootEntries]
   [module-id : i64]) : i64
   ;; Index cursor rather than `ast-decl-list-step`; the first non-negative root
   ;; key still stops the walk. The wrapper peel stays by value -- it needs owned
@@ -8052,7 +8072,7 @@
 
 (define (lower-clone-handoff-source-conflict
   [source-decls : ast.AstDeclList]
-  [roots : clone_support.CloneNameList]) : i64
+  [roots : clone_support.CloneRootEntries]) : i64
   (lower-clone-handoff-source-conflict-in-module
     source-decls
     roots
@@ -8060,135 +8080,103 @@
 
 (define (lower-clone-handoff-generated-roots-ok?
   [generated : ast.AstDeclList]
-  [roots : clone_support.CloneNameList]) : bool
-  (match roots
-    [(clone_support.CloneNameList.Nil) true]
-    [(clone_support.CloneNameList.ConsId root-key-id helper-name-id rest)
-      (and
-        (=
-          (clone_support.clone-helper-decl-count
-            generated
-            root-key-id
-            helper-name-id)
-          1)
-        (=
-          (lower-clone-handoff-generated-origin-count
-            generated
-            root-key-id
-            helper-name-id)
-          1)
-        (lower-clone-handoff-generated-roots-ok? generated (box-get rest)))]))
+  [roots : clone_support.CloneRootEntries]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (clone_support.clone-root-entries-len roots)]
+    [ok : bool true]
+    (begin
+      (while (and (< index count) ok)
+        (let
+          [root-key-id : i64
+            (clone_support.clone-root-entries-key-id-at-or roots index -1)]
+          [helper-name-id : i64
+            (clone_support.clone-root-entries-helper-id-at-or roots index -1)]
+          (begin
+            (if (and
+              (=
+                (clone_support.clone-helper-decl-count
+                  generated
+                  root-key-id
+                  helper-name-id)
+                1)
+              (=
+                (lower-clone-handoff-generated-origin-count
+                  generated
+                  root-key-id
+                  helper-name-id)
+                1))
+              unit
+              (set! ok false))
+            (set! index (+ index 1)))))
+      ok)))
 
 ;; Expand roots in bounded chunks: the one-shot expansion's macro/CTFE working
 ;; set scales with the whole root list (hundreds of MB of interpreter churn on
 ;; a self-compile), but only one chunk's worth needs to be live at a time.
 ;; Helpers are generated per type key, so chunking preserves the output union.
-(defenum LowerCloneRootsChunk
-  (Chunk clone_support.CloneNameList clone_support.CloneNameList))
-
-(define (lower-clone-name-list-reverse
-  [xs : clone_support.CloneNameList]
-  [acc : clone_support.CloneNameList]) : clone_support.CloneNameList
-  (match xs
-    [(clone_support.CloneNameList.Nil) acc]
-    [(clone_support.CloneNameList.ConsId k h rest)
-      (lower-clone-name-list-reverse
-        (box-get rest)
-        (clone_support.CloneNameList.ConsId k h (box acc)))]))
-
-(define (lower-clone-handoff-roots-take
-  [roots : clone_support.CloneNameList]
-  [n : i64]
-  [acc : clone_support.CloneNameList]) : LowerCloneRootsChunk
-  (match roots
-    [(clone_support.CloneNameList.Nil)
-      (LowerCloneRootsChunk.Chunk
-        (clone_support.CloneNameList.Nil)
-        (lower-clone-name-list-reverse acc (clone_support.CloneNameList.Nil)))]
-    [_
-      (if (<= n 0)
-        (LowerCloneRootsChunk.Chunk
-          roots
-          (lower-clone-name-list-reverse acc (clone_support.CloneNameList.Nil)))
-        (match roots
-          [(clone_support.CloneNameList.Nil)
-            (LowerCloneRootsChunk.Chunk
-              (clone_support.CloneNameList.Nil)
-              (lower-clone-name-list-reverse
-                acc
-                (clone_support.CloneNameList.Nil)))]
-          [(clone_support.CloneNameList.ConsId k h rest)
-            (lower-clone-handoff-roots-take
-              (box-get rest)
-              (- n 1)
-              (clone_support.CloneNameList.ConsId k h (box acc)))]))]))
-
 (define (lower-clone-handoff-expand-roots
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [source-decls : ast.AstDeclList]
   [entry-path : String]
   [pools : ast.AstNodePoolContext]
-  [roots : clone_support.CloneNameList]
+  [roots : clone_support.CloneRootEntries]
   [acc : ast.AstDeclList]) : tc_core.ResultMacroDecls
-  (match roots
-    [(clone_support.CloneNameList.Nil) (tc_core.ResultMacroDecls.Ok acc)]
-    [_
-      (match (lower-clone-handoff-roots-take
-        roots
-        16
-        (clone_support.CloneNameList.Nil))
-        [(LowerCloneRootsChunk.Chunk rest chunk)
-          (match (lower-clone-handoff-expand-one
-            ctx
-            top-env
-            source-decls
-            entry-path
-            pools
-            chunk)
-            [(tc_core.ResultMacroDeclExpansion.Ok generated _)
-              (match chunk
-                [(clone_support.CloneNameList.Nil)
-                  (tc_core.ResultMacroDecls.Err
-                    (box
-                      (tc_core.tc-diag-at-start
-                        "clone: stdlib handoff produced no helpers")))]
-                [(clone_support.CloneNameList.ConsId
-                    root-key-id
-                    helper-name-id
-                    _)
-                  (if (lower-clone-handoff-generated-roots-ok? generated chunk)
-                    (begin
-                      (ast.ast-node-pool-context-capture-active! pools)
-                      (lower-clone-handoff-expand-roots
-                        ctx
-                        top-env
-                        source-decls
-                        entry-path
-                        pools
-                        rest
-                        (clone_support.clone-decl-list-append acc generated)))
-                    (tc_core.ResultMacroDecls.Err
-                      (box
-                        (tc_core.tc-diag-at-start
-                          (str_cat.str-cat
-                            "clone: stdlib handoff produced an invalid or conflicting helper for "
-                            (clone_support.clone-name-key-string root-key-id)
-                            " (helper-count="
-                            (string.int->string
-                              (clone_support.clone-helper-decl-count
-                                generated
-                                root-key-id
-                                helper-name-id))
-                            ", origin-count="
-                            (string.int->string
-                              (lower-clone-handoff-generated-origin-count
-                                generated
-                                root-key-id
-                                helper-name-id))
-                            ")")))))])]
-            [(tc_core.ResultMacroDeclExpansion.Err diag)
-              (tc_core.ResultMacroDecls.Err diag)])])]))
+  (if (clone_support.clone-root-entries-empty? roots)
+    (tc_core.ResultMacroDecls.Ok acc)
+    (let
+      [chunk : clone_support.CloneRootEntries
+        (clone_support.clone-root-entries-take roots 16)]
+      [rest : clone_support.CloneRootEntries
+        (clone_support.clone-root-entries-drop roots 16)]
+      [expanded : tc_core.ResultMacroDeclExpansion
+        (lower-clone-handoff-expand-one
+          ctx
+          top-env
+          source-decls
+          entry-path
+          pools
+          chunk)]
+      (match expanded
+        [(tc_core.ResultMacroDeclExpansion.Ok generated _)
+          (if (lower-clone-handoff-generated-roots-ok? generated chunk)
+            (begin
+              (ast.ast-node-pool-context-capture-active! pools)
+              (lower-clone-handoff-expand-roots
+                ctx
+                top-env
+                source-decls
+                entry-path
+                pools
+                rest
+                (clone_support.clone-decl-list-append acc generated)))
+            (let
+              [root-key-id : i64
+                (clone_support.clone-root-entries-key-id-at-or chunk 0 -1)]
+              [helper-name-id : i64
+                (clone_support.clone-root-entries-helper-id-at-or chunk 0 -1)]
+              [message : String
+                (str_cat.str-cat
+                  "clone: stdlib handoff produced an invalid or conflicting helper for "
+                  (clone_support.clone-name-key-string root-key-id)
+                  " (helper-count="
+                  (string.int->string
+                    (clone_support.clone-helper-decl-count
+                      generated
+                      root-key-id
+                      helper-name-id))
+                  ", origin-count="
+                  (string.int->string
+                    (lower-clone-handoff-generated-origin-count
+                      generated
+                      root-key-id
+                      helper-name-id))
+                  ")")]
+              (tc_core.ResultMacroDecls.Err
+                (box (tc_core.tc-diag-at-start message)))))]
+        [(tc_core.ResultMacroDeclExpansion.Err diag)
+          (tc_core.ResultMacroDecls.Err diag)]))))
 
 (define (lower-clone-handoff-augment
   [ctx : tc_core.TcContext]
@@ -8196,13 +8184,13 @@
   [entry-path : String]
   [program : ast.AstProgram]
   [able : clone_support.CloneNameSet]
-  [roots : clone_support.CloneNameList]
+  [roots : clone_support.CloneRootEntries]
   [pools : ast.AstNodePoolContext]) : ResultLowerCloneAugment
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
         [source-decls : ast.AstDeclList (box-get decls-box)]
-        [handoff-roots : clone_support.CloneNameList
+        [handoff-roots : clone_support.CloneRootEntries
           (clone_support.clone-stdlib-handoff-roots
             pools
             source-decls
@@ -11240,7 +11228,7 @@
 (define (lower-decl-keep-plan-add-clone-roots
   [plan : LowerDeclKeepPlan]
   [program : ast.AstProgram]
-  [clone-roots : clone_support.CloneNameList]) : LowerDeclKeepPlan
+  [clone-roots : clone_support.CloneRootEntries]) : LowerDeclKeepPlan
   ;; Clone-root discovery already computes the exact transitive nominal-type
   ;; closure required by generated helpers. Merge those type declarations into
   ;; the retained plan before source-pool compaction can release their AST.
@@ -11251,7 +11239,7 @@
         [keep : (Array i64) (struct-get plan keep)]
         [source-count : i64 (struct-get plan source-count)]
         [roots : clone_support.CloneNameSet
-          (clone_support.clone-name-list-to-set
+          (clone_support.clone-root-entries-to-set
             clone-roots
             (clone_support.clone-name-set-empty))]
         [module-id : i64 cbi.compiler-builtin-id-fix-empty]
@@ -11357,19 +11345,36 @@
           (set! index (+ index 1))))
       out)))
 
+(defenum LowerReachStateCell
+  (Occupied LowerReachState))
+
 (define (lower-reach-add-clone-root-helpers
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [roots : clone_support.CloneNameList]
+  [roots : clone_support.CloneRootEntries]
   [state : LowerReachState (:consume)]) : LowerReachState
-  (match roots
-    [(clone_support.CloneNameList.Nil) state]
-    [(clone_support.CloneNameList.ConsId _ helper-name-id rest)
-      (lower-reach-add-clone-root-helpers
-        all-functions
-        names
-        (box-get rest)
-        (lower-reach-add-source-id all-functions names state helper-name-id))]))
+  (let
+    [cell : LowerReachStateCell (LowerReachStateCell.Occupied state)]
+    [index : i64 0]
+    [count : i64 (clone_support.clone-root-entries-len roots)]
+    (begin
+      (while (< index count)
+        (match cell
+          [(LowerReachStateCell.Occupied current)
+            (set!
+              cell
+              (LowerReachStateCell.Occupied
+                (lower-reach-add-source-id
+                  all-functions
+                  names
+                  current
+                  (clone_support.clone-root-entries-helper-id-at-or
+                    roots
+                    index
+                    -1))))])
+        (set! index (+ index 1)))
+      (match cell
+        [(LowerReachStateCell.Occupied result) result]))))
 
 ;; Functions with an `(:export-symbol ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦)` declaration publish a fixed
 ;; ABI symbol and may be called only from outside TypeLisp IR (e.g. the
@@ -11474,7 +11479,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [names : LowerNameEnv]
-  [clone-roots : clone_support.CloneNameList]) : LowerPrunedProgramWithPlan
+  [clone-roots : clone_support.CloneRootEntries]) : LowerPrunedProgramWithPlan
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
@@ -11680,7 +11685,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [names : LowerNameEnv]
-  [clone-roots : clone_support.CloneNameList]) : LowerPrunedProgram
+  [clone-roots : clone_support.CloneRootEntries]) : LowerPrunedProgram
   (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
     pools
     entry-path
@@ -11703,7 +11708,7 @@
     program
     paths
     names
-    (clone_support.CloneNameList.Nil)))
+    (clone_support.CloneRootEntries.Empty)))
 
 (define (lower-test-prune-unreachable-functions
   [entry-path : String]
@@ -59020,7 +59025,7 @@
   [externs : ir.CompilerIrExternList]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameEnv]
-  [clone-roots : clone_support.CloneNameList]
+  [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultLowerDecls
   (begin
     (set! lower-active-symbols (tc_core.tc-context-symbols ctx))
@@ -59886,7 +59891,7 @@
   [paths : ast.AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
-  [clone-roots : clone_support.CloneNameList]
+  [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
     ;; Clone-root discovery and checked typechecking can probe aggregate layout
@@ -60037,7 +60042,7 @@
             source-top-env
             _)
           (let
-            [clone-roots : clone_support.CloneNameList
+            [clone-roots : clone_support.CloneRootEntries
               (tc_core.tc-clone-root-collection-finish! source-ctx)]
             [source-decl-count : i64
               (match program
@@ -60335,7 +60340,7 @@
                   specialized
                   specialized-paths
                   prune-names
-                  (clone_support.CloneNameList.Nil))
+                  (clone_support.CloneRootEntries.Empty))
                   [(LowerPrunedProgramWithPlan.Program
                       reach-program
                       _reach-paths

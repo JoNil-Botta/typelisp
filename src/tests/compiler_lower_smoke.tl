@@ -900,6 +900,9 @@
       (compiler_lower_tests.compiler-lower-clone-reachable-helpers-ok?)
       (io.panic "lower: clone reachable helpers smoke mismatch"))
     (unless
+      (compiler_lower_tests.compiler-lower-clone-chunk-boundary-ok?)
+      (io.panic "lower: clone chunk boundary smoke mismatch"))
+    (unless
       (compiler_lower_tests.compiler-lower-error-ok?
         (compiler_lower_tests.compiler-lower-clone-unsupported-source)
         "typecheck: clone unsupported type (-> i64 i64)")

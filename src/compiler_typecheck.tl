@@ -703,6 +703,7 @@
 (define (compiler-typecheck-clone-tests-ok?) : bool
   (and
     (clone_support.clone-name-set-smoke-ok?)
+    (clone_support.clone-root-entries-smoke-ok?)
     (compiler-typecheck-ok? (compiler-typecheck-clone-aggregate-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-clone-function-source)

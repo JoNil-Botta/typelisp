@@ -195,7 +195,7 @@
             (box (cdiag.compiler-diagnostic-list-first (box-get diag)))))]
       [(tc.ResultCompilerTypecheckChecked.Ok summary ctx _ _)
         (let
-          [_finish-clone-roots : clone.CloneNameList
+          [_finish-clone-roots : clone.CloneRootEntries
             (tc.tc-clone-root-collection-finish! ctx)]
           (match summary
             [(tc.CompilerTypecheckSummary values functions externs)

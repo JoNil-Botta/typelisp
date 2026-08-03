@@ -1071,6 +1071,9 @@ fi
 # 98566144 physical payload bytes. #6108's retained semantic-index snapshots
 # crossed it from 47 to 48; the authoritative Windows probe measured 3086935
 # used nodes and 100663296 physical payload bytes.
+# #5932's dense clone-root storage and tests crossed ast_expr_pool.macro_expand
+# from 48 to 49 segments; the authoritative Windows probe measured 3,147,102
+# used nodes and 102,760,448 physical payload bytes.
 # All four sit within a few percent of their next step, so expect these to move.
 # #5701 landed while
 # this was in review and consumed 4177 of the expr macro_expand headroom without
@@ -1121,7 +1124,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, so its macro-walk type footprint is part of the
     # intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 49 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 29 65536 32 \

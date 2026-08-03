@@ -25919,16 +25919,17 @@
     (opt-gep-offset-test-tail)))
 
 (define (opt-gep-offset-test-extras [variant : i64]) : compiler_ir_types.CompilerIrInstrList
-  (if (= variant 7)
-    ;; the dead cast a removed BoundsCheck leaves behind
-    (compiler_ir_types.compiler-ir-instr-cons
-      (compiler_ir_types.CompilerIrInstr.Cast
-        16
-        (compiler_ir_types.CompilerIrValue.Var 12)
-        (compiler_ast_types.AstType.I64)
-        (compiler_ast_types.AstType.U64))
-      (opt-gep-offset-test-tail))
-    (if (= variant 1)
+  (cond
+    [(= variant 7)
+      ;; the dead cast a removed BoundsCheck leaves behind
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Cast
+          16
+          (compiler_ir_types.CompilerIrValue.Var 12)
+          (compiler_ast_types.AstType.I64)
+          (compiler_ast_types.AstType.U64))
+        (opt-gep-offset-test-tail))]
+    [(= variant 1)
       ;; a plain arithmetic consumer of the Add: not an address use
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -25937,18 +25938,18 @@
           (compiler_ir_types.CompilerIrValue.Var 12)
           (compiler_ir_types.CompilerIrValue.I64 7)
           (compiler_ast_types.AstType.I64))
-        (opt-gep-offset-test-consume 16))
-      (if (or (= variant 2) (= variant 4))
-        ;; a second in-loop reader of the invariant addend
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.BinOp
-            17
-            (compiler_ir_types.CompilerIrBinOp.Mul)
-            (compiler_ir_types.CompilerIrValue.Var 3)
-            (compiler_ir_types.CompilerIrValue.I64 3)
-            (compiler_ast_types.AstType.I64))
-          (opt-gep-offset-test-consume 17))
-        (opt-gep-offset-test-tail)))))
+        (opt-gep-offset-test-consume 16))]
+    [(or (= variant 2) (= variant 4))
+      ;; a second in-loop reader of the invariant addend
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          17
+          (compiler_ir_types.CompilerIrBinOp.Mul)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 3)
+          (compiler_ast_types.AstType.I64))
+        (opt-gep-offset-test-consume 17))]
+    [else (opt-gep-offset-test-tail)]))
 
 ;; Variant 6 adds a second Add/Gep on the SAME base at a different invariant
 ;; offset: the derived-base cache has to key on the offset as well as the base.

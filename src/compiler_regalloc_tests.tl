@@ -186,7 +186,7 @@
 ;; (combine (merge (remat-discounted weights)) (merge (raw weights))).
 (define (compiler-reg-edge-copy-plan-for-region
   [func : ir.CompilerIrFunction]
-  [region-labels : reg.CompilerRegLabelList]
+  [region-labels : reg.CompilerRegLabelSeq]
   [stack-var : i64]
   [region-var : i64]
   [ty : ast.AstType]) : reg.CompilerRegEdgeCopyPlan
@@ -1493,7 +1493,7 @@
   test
   (define (compiler-reg-indirect-call-arg-prefs-ok?) : bool
     (let
-      [pool : reg.CompilerRegIdList
+      [pool : reg.CompilerRegIdSeq
         (reg.compiler-reg-greedy-integer-pool-for-abi
           cabi.CompilerRegTargetAbi.Linux)]
       [prefs : (__tl_dyn-array i64)
@@ -1506,10 +1506,10 @@
         (= (array-ref prefs 0) -1)
         (=
           (array-ref prefs 1)
-          (reg.compiler-reg-id-list-index-of pool cabi.compiler-reg-id-rsi 0))
+          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rsi 0))
         (=
           (array-ref prefs 2)
-          (reg.compiler-reg-id-list-index-of pool cabi.compiler-reg-id-rdx 0))))))
+          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rdx 0))))))
 
 (cfg
   test
@@ -1733,7 +1733,7 @@
   test
   (define (compiler-reg-win64-arg-result-prefs-ok?) : bool
     (let
-      [pool : reg.CompilerRegIdList
+      [pool : reg.CompilerRegIdSeq
         (reg.compiler-reg-greedy-integer-pool-for-abi
           cabi.CompilerRegTargetAbi.Windows)]
       [prefs : (__tl_dyn-array i64)
@@ -1745,20 +1745,20 @@
       (and
         (=
           (array-ref prefs 0)
-          (reg.compiler-reg-id-list-index-of pool cabi.compiler-reg-id-rcx 0))
+          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rcx 0))
         (=
           (array-ref prefs 1)
-          (reg.compiler-reg-id-list-index-of pool cabi.compiler-reg-id-rdx 0))
+          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rdx 0))
         (=
           (array-ref prefs 2)
-          (reg.compiler-reg-id-list-index-of pool cabi.compiler-reg-id-r8 0))
+          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-r8 0))
         (=
           (array-ref prefs 3)
-          (reg.compiler-reg-id-list-index-of pool cabi.compiler-reg-id-r9 0))
+          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-r9 0))
         (= (array-ref prefs 4) -1)
         (=
           (array-ref prefs 5)
-          (reg.compiler-reg-id-list-index-of pool cabi.compiler-reg-id-rax 0))))))
+          (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rax 0))))))
 
 (cfg
   test
@@ -3674,10 +3674,10 @@
   (define (compiler-reg-edge-copy-linear-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-edge-copy-linear-function)]
-      [region : reg.CompilerRegLabelList
-        (reg.CompilerRegLabelList.Cons
+      [region : reg.CompilerRegLabelSeq
+        (reg.compiler-reg-label-seq-prepend
           (ir.compiler-ir-label "hot")
-          (box reg.CompilerRegLabelList.Nil))]
+          (reg.compiler-reg-label-seq-empty))]
       (match (compiler-reg-edge-copy-plan-for-region
         func
         region
@@ -3760,10 +3760,10 @@
   (define (compiler-reg-edge-copy-backedge-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-edge-copy-backedge-function)]
-      [region : reg.CompilerRegLabelList
-        (reg.CompilerRegLabelList.Cons
+      [region : reg.CompilerRegLabelSeq
+        (reg.compiler-reg-label-seq-prepend
           (ir.compiler-ir-label "body")
-          (box reg.CompilerRegLabelList.Nil))]
+          (reg.compiler-reg-label-seq-empty))]
       (match (compiler-reg-edge-copy-plan-for-region
         func
         region
@@ -3850,10 +3850,10 @@
   test
   (define (compiler-reg-edge-copy-critical-refusal-ok?) : bool
     (let
-      [region : reg.CompilerRegLabelList
-        (reg.CompilerRegLabelList.Cons
+      [region : reg.CompilerRegLabelSeq
+        (reg.compiler-reg-label-seq-prepend
           (ir.compiler-ir-label "hot")
-          (box reg.CompilerRegLabelList.Nil))]
+          (reg.compiler-reg-label-seq-empty))]
       (match (compiler-reg-edge-copy-plan-for-region
         (compiler-reg-edge-copy-critical-function)
         region
@@ -4540,31 +4540,31 @@
   test
   (define (compiler-reg-loop-split-rcx-rdx-candidates-ok?) : bool
     (let
-      [safe : reg.CompilerRegIdList
+      [safe : reg.CompilerRegIdSeq
         (reg.compiler-reg-loop-split-candidate-regs true true true)]
-      [unsafe : reg.CompilerRegIdList
+      [unsafe : reg.CompilerRegIdSeq
         (reg.compiler-reg-loop-split-candidate-regs true false false)]
-      [call-region : reg.CompilerRegIdList
+      [call-region : reg.CompilerRegIdSeq
         (reg.compiler-reg-loop-split-candidate-regs false true true)]
       (and
-        (reg.compiler-reg-id-list-contains? safe cabi.compiler-reg-id-rcx)
-        (reg.compiler-reg-id-list-contains? safe cabi.compiler-reg-id-rdx)
+        (reg.compiler-reg-id-seq-contains? safe cabi.compiler-reg-id-rcx)
+        (reg.compiler-reg-id-seq-contains? safe cabi.compiler-reg-id-rdx)
         (not
-          (reg.compiler-reg-id-list-contains? unsafe cabi.compiler-reg-id-rcx))
+          (reg.compiler-reg-id-seq-contains? unsafe cabi.compiler-reg-id-rcx))
         (not
-          (reg.compiler-reg-id-list-contains? unsafe cabi.compiler-reg-id-rdx))
-        (reg.compiler-reg-id-list-contains? unsafe cabi.compiler-reg-id-r8)
-        (reg.compiler-reg-id-list-contains? unsafe cabi.compiler-reg-id-rdi)
+          (reg.compiler-reg-id-seq-contains? unsafe cabi.compiler-reg-id-rdx))
+        (reg.compiler-reg-id-seq-contains? unsafe cabi.compiler-reg-id-r8)
+        (reg.compiler-reg-id-seq-contains? unsafe cabi.compiler-reg-id-rdi)
         (not
-          (reg.compiler-reg-id-list-contains?
+          (reg.compiler-reg-id-seq-contains?
             call-region
             cabi.compiler-reg-id-r8))
         (not
-          (reg.compiler-reg-id-list-contains?
+          (reg.compiler-reg-id-seq-contains?
             call-region
             cabi.compiler-reg-id-rcx))
         (not
-          (reg.compiler-reg-id-list-contains?
+          (reg.compiler-reg-id-seq-contains?
             call-region
             cabi.compiler-reg-id-rdx))))))
 
@@ -4574,7 +4574,7 @@
     (let
       [func : ir.CompilerIrFunction
         (compiler-reg-loop-split-clobber-scan-function)]
-      [full-window : reg.CompilerRegIdList
+      [full-window : reg.CompilerRegIdSeq
         (reg.compiler-reg-loop-split-candidate-regs
           true
           (reg.compiler-reg-loop-split-region-rcx-safe?
@@ -4617,17 +4617,15 @@
             0
             4))
         (not
-          (reg.compiler-reg-id-list-contains?
+          (reg.compiler-reg-id-seq-contains?
             full-window
             cabi.compiler-reg-id-rcx))
         (not
-          (reg.compiler-reg-id-list-contains?
+          (reg.compiler-reg-id-seq-contains?
             full-window
             cabi.compiler-reg-id-rdx))
-        (reg.compiler-reg-id-list-contains? full-window cabi.compiler-reg-id-r8)
-        (reg.compiler-reg-id-list-contains?
-          full-window
-          cabi.compiler-reg-id-rdi)))))
+        (reg.compiler-reg-id-seq-contains? full-window cabi.compiler-reg-id-r8)
+        (reg.compiler-reg-id-seq-contains? full-window cabi.compiler-reg-id-rdi)))))
 
 (cfg
   test
@@ -4760,7 +4758,7 @@
     [intervals : reg.CompilerRegIntervalSeq]
     [candidate-start : i64]
     [candidate-end : i64]
-    [regs : reg.CompilerRegIdList]) : i64
+    [regs : reg.CompilerRegIdSeq]) : i64
     (let
       [index : reg.CompilerRegIntervalIndex
         (reg.compiler-reg-interval-index-build intervals 2)]
@@ -4899,18 +4897,18 @@
   test
   (define (compiler-reg-xmm-physical-ownership-ok?) : bool
     (let
-      [vector-pool : reg.CompilerRegIdList
-        (reg.compiler-reg-id-cons
+      [vector-pool : reg.CompilerRegIdSeq
+        (reg.compiler-reg-id-seq-prepend
           (cabi.compiler-abi-vector-register-id 6)
-          (reg.compiler-reg-id-cons
+          (reg.compiler-reg-id-seq-prepend
             (cabi.compiler-abi-vector-register-id 7)
-            reg.CompilerRegIdList.Nil))]
-      [scalar-spelled-pool : reg.CompilerRegIdList
-        (reg.compiler-reg-id-cons
+            (reg.compiler-reg-id-seq-empty)))]
+      [scalar-spelled-pool : reg.CompilerRegIdSeq
+        (reg.compiler-reg-id-seq-prepend
           (cabi.compiler-abi-xmm-register-id 6)
-          (reg.compiler-reg-id-cons
+          (reg.compiler-reg-id-seq-prepend
             (cabi.compiler-abi-xmm-register-id 7)
-            reg.CompilerRegIdList.Nil))]
+            (reg.compiler-reg-id-seq-empty)))]
       [overlap : reg.CompilerRegIntervalSeq
         (compiler-reg-xmm-ownership-intervals 0 8 2 6)]
       [boundary-reuse : reg.CompilerRegIntervalSeq
@@ -5042,10 +5040,10 @@
   (define (compiler-reg-liveness-handle-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-edge-copy-linear-function)]
-      [region : reg.CompilerRegLabelList
-        (reg.CompilerRegLabelList.Cons
+      [region : reg.CompilerRegLabelSeq
+        (reg.compiler-reg-label-seq-prepend
           (ir.compiler-ir-label "hot")
-          (box reg.CompilerRegLabelList.Nil))]
+          (reg.compiler-reg-label-seq-empty))]
       (begin
         (reg.compiler-reg-liveness-census-reset!)
         (let
@@ -5656,6 +5654,70 @@
     (test.assert-true
       (compiler-reg-dense-interval-seq-ok?)
       "dense interval growth preserves order and merge overlap boundaries")))
+
+(cfg
+  test
+  (define (compiler-reg-dense-id-label-seqs-ok?) : bool
+    (let
+      [ids : reg.CompilerRegIdSeq (reg.compiler-reg-id-seq-with-capacity 4)]
+      [id-snapshot : reg.CompilerRegIdSeq (reg.compiler-reg-id-seq-empty)]
+      [id-prepended : reg.CompilerRegIdSeq (reg.compiler-reg-id-seq-empty)]
+      [labels : reg.CompilerRegLabelSeq
+        (reg.compiler-reg-label-seq-with-capacity 4)]
+      [label-snapshot : reg.CompilerRegLabelSeq
+        (reg.compiler-reg-label-seq-empty)]
+      [entry-label : i64 (ir.compiler-ir-label "dense_seq_entry")]
+      [body-label : i64 (ir.compiler-ir-label "dense_seq_body")]
+      (begin
+        (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r12))
+        (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r13))
+        ;; A retained snapshot has an exact logical length and prefix even while
+        ;; the continuing builder fills its spare suffix.
+        (set! id-snapshot (clone ids))
+        (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r12))
+        (set!
+          id-prepended
+          (reg.compiler-reg-id-seq-prepend cabi.compiler-reg-id-rbx id-snapshot))
+        (set! labels (reg.compiler-reg-label-seq-push labels entry-label))
+        (set! labels (reg.compiler-reg-label-seq-push labels body-label))
+        (set! label-snapshot (clone labels))
+        (set! labels (reg.compiler-reg-label-seq-push labels entry-label))
+        (and
+          (= (reg.compiler-reg-id-seq-count id-snapshot) 2)
+          (=
+            (reg.compiler-reg-id-seq-ref id-snapshot 0)
+            cabi.compiler-reg-id-r12)
+          (=
+            (reg.compiler-reg-id-seq-ref id-snapshot 1)
+            cabi.compiler-reg-id-r13)
+          (= (reg.compiler-reg-id-seq-count ids) 3)
+          ;; Duplicate register IDs remain ordered rather than being setified.
+          (= (reg.compiler-reg-id-seq-ref ids 2) cabi.compiler-reg-id-r12)
+          (reg.compiler-reg-id-seq-contains? ids cabi.compiler-reg-id-r13)
+          (= (reg.compiler-reg-id-seq-count id-prepended) 3)
+          (=
+            (reg.compiler-reg-id-seq-ref id-prepended 0)
+            cabi.compiler-reg-id-rbx)
+          (=
+            (reg.compiler-reg-id-seq-ref id-prepended 1)
+            cabi.compiler-reg-id-r12)
+          (=
+            (reg.compiler-reg-id-seq-ref id-prepended 2)
+            cabi.compiler-reg-id-r13)
+          (= (reg.compiler-reg-label-seq-count label-snapshot) 2)
+          (= (reg.compiler-reg-label-seq-ref label-snapshot 0) entry-label)
+          (= (reg.compiler-reg-label-seq-ref label-snapshot 1) body-label)
+          (= (reg.compiler-reg-label-seq-count labels) 3)
+          (= (reg.compiler-reg-label-seq-ref labels 2) entry-label)
+          (reg.compiler-reg-label-seq-contains? labels body-label))))))
+
+(cfg
+  test
+  (test
+    regalloc-dense-register-and-label-sequences
+    (test.assert-true
+      (compiler-reg-dense-id-label-seqs-ok?)
+      "dense register and label sequences preserve snapshots, order, and duplicates")))
 
 (cfg
   test

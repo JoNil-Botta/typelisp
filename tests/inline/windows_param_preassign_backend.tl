@@ -150,7 +150,7 @@
           [(regalloc.CompilerRegMaybeLocation.Some location)
             (match location
               [(regalloc.CompilerRegLocation.Register r)
-                (regalloc.compiler-reg-id-list-contains?
+                (regalloc.compiler-reg-id-seq-contains?
                   (regalloc.compiler-reg-win64-callee-saved-integer-registers)
                   r)]
               [_ false])]

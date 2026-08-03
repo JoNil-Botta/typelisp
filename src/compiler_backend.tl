@@ -2490,7 +2490,7 @@
     [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
       (match location
         [(compiler_regalloc.CompilerRegLocation.Register home)
-          (if (compiler_regalloc.compiler-reg-id-list-contains?
+          (if (compiler_regalloc.compiler-reg-id-seq-contains?
             (compiler_regalloc.compiler-reg-mask-registers)
             home)
             (ResultBackendReg.Ok
@@ -11666,7 +11666,7 @@
 ;; membership predicate all derive from this list, so the set lives in one place
 ;; instead of being hardcoded in 4-5 spots. Behavior-identical: same registers,
 ;; same order, same indices (r12=0 .. rbx=4).
-(define compiler-backend-scavenge-callee-list : compiler_regalloc.CompilerRegIdList
+(define compiler-backend-scavenge-callee-list : compiler_regalloc.CompilerRegIdSeq
   (compiler_regalloc.compiler-reg-sysv-integer-registers))
 
 ;; Emergency spill: when the scavenge finds NO free candidate (all pool registers
@@ -17496,24 +17496,24 @@
 ;; is free. For divmod magic, selecting %rbx becomes a frame-home hoist initialized
 ;; through %rbx; the register is then free for the one dividend copy at each site.
 (define (compiler-backend-const-hoist-candidate-regs
-  [target : CompilerBackendTarget]) : compiler_regalloc.CompilerRegIdList
-  (compiler_regalloc.compiler-reg-id-cons
+  [target : CompilerBackendTarget]) : compiler_regalloc.CompilerRegIdSeq
+  (compiler_regalloc.compiler-reg-id-seq-prepend
     compiler_abi.compiler-reg-id-r8
-    (compiler_regalloc.compiler-reg-id-cons
+    (compiler_regalloc.compiler-reg-id-seq-prepend
       compiler_abi.compiler-reg-id-r9
       (match target
         [(CompilerBackendTarget.Windows)
-          (compiler_regalloc.compiler-reg-id-cons
+          (compiler_regalloc.compiler-reg-id-seq-prepend
             compiler_abi.compiler-reg-id-rbx
-            compiler_regalloc.CompilerRegIdList.Nil)]
+            (compiler_regalloc.compiler-reg-id-seq-empty))]
         [(CompilerBackendTarget.Linux)
-          (compiler_regalloc.compiler-reg-id-cons
+          (compiler_regalloc.compiler-reg-id-seq-prepend
             compiler_abi.compiler-reg-id-rsi
-            (compiler_regalloc.compiler-reg-id-cons
+            (compiler_regalloc.compiler-reg-id-seq-prepend
               compiler_abi.compiler-reg-id-rdi
-              (compiler_regalloc.compiler-reg-id-cons
+              (compiler_regalloc.compiler-reg-id-seq-prepend
                 compiler_abi.compiler-reg-id-rbx
-                compiler_regalloc.CompilerRegIdList.Nil)))]))))
+                (compiler_regalloc.compiler-reg-id-seq-empty))))]))))
 
 (define (compiler-backend-const-hoist-uses-reg-id-from? [reg : i64] [i : i64]) : bool
   (if (>= i compiler-backend-const-hoist-site-count)
@@ -18093,49 +18093,42 @@
 ;; Filter the candidate list: drop registers already reserved by an earlier
 ;; hoist whose synthetic span overlaps [lo, hi].
 (define (compiler-backend-const-hoist-free-candidates
-  [cands : compiler_regalloc.CompilerRegIdList]
+  [cands : compiler_regalloc.CompilerRegIdSeq]
   [synth-regs : (Array i64)]
   [synth-lo : (Array i64)]
   [synth-hi : (Array i64)]
   [synth-count : i64]
   [lo : i64]
-  [hi : i64]) : compiler_regalloc.CompilerRegIdList
-  (match cands
-    [(compiler_regalloc.CompilerRegIdList.Nil)
-      compiler_regalloc.CompilerRegIdList.Nil]
-    [(compiler_regalloc.CompilerRegIdList.Cons reg rest)
-      (let
-        [i : i64 0]
-        [taken : bool false]
-        (begin
-          (while (and (< i synth-count) (not taken))
-            (begin
-              (if (and
-                (= (array-ref synth-regs i) reg)
-                (<= (array-ref synth-lo i) hi)
-                (>= (array-ref synth-hi i) lo))
-                (set! taken true)
-                unit)
-              (set! i (+ i 1))))
-          (if taken
-            (compiler-backend-const-hoist-free-candidates
-              (box-get rest)
-              synth-regs
-              synth-lo
-              synth-hi
-              synth-count
-              lo
-              hi)
-            (compiler_regalloc.compiler-reg-id-cons
-              reg
-              (compiler-backend-const-hoist-free-candidates
-                (box-get rest)
-                synth-regs
-                synth-lo
-                synth-hi
-                synth-count
-                lo
-                hi)))))]))
+  [hi : i64]) : compiler_regalloc.CompilerRegIdSeq
+  (let
+    [candidate-index : i64 0]
+    [out : compiler_regalloc.CompilerRegIdSeq
+      (compiler_regalloc.compiler-reg-id-seq-with-capacity
+        (compiler_regalloc.compiler-reg-id-seq-count cands))]
+    (begin
+      (while (<
+        candidate-index
+        (compiler_regalloc.compiler-reg-id-seq-count cands))
+        (let
+          [reg : i64
+            (compiler_regalloc.compiler-reg-id-seq-ref cands candidate-index)]
+          [synth-index : i64 0]
+          [taken : bool false]
+          (begin
+            (while (and (< synth-index synth-count) (not taken))
+              (begin
+                (if (and
+                  (= (array-ref synth-regs synth-index) reg)
+                  (<= (array-ref synth-lo synth-index) hi)
+                  (>= (array-ref synth-hi synth-index) lo))
+                  (set! taken true)
+                  unit)
+                (set! synth-index (+ synth-index 1))))
+            (if taken
+              unit
+              (set! out (compiler_regalloc.compiler-reg-id-seq-push out reg)))
+            (set! candidate-index (+ candidate-index 1)))))
+      out)))
 
 ;; Cheap prescan: any constant-home candidate anywhere in the function?
 (define (compiler-backend-const-hoist-any-constant?
@@ -49591,7 +49584,7 @@
 (define (compiler-backend-callee-saved-reg? [reg : i64]) : bool
   (or
     (>=
-      (compiler_regalloc.compiler-reg-id-list-index-of
+      (compiler_regalloc.compiler-reg-id-seq-index-of
         compiler-backend-scavenge-callee-list
         reg
         0)

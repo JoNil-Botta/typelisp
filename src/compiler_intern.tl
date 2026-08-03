@@ -1019,6 +1019,54 @@
         persistent-arena-floor-mark
         structural-table-cell))))
 
+;; Capture the currently installed compatibility table as a serial/test view.
+;; The arrays (including the persistent structural table and arena) are shared
+;; with the active table; only scalar cells are fresh.  This deliberately does
+;; not allocate a new persistent arena or copy the intern pool.  The view is a
+;; serial/test compatibility boundary: explicit state operations may mutate its
+;; scalar cells and `intern-compat-state-install!` then republishes those cells.
+(define (intern-compat-state-capture-active) : InternCompatState
+  (let
+    [table-id : (__tl_dyn-array i64) (make-array i64 1)]
+    [pool-count : (__tl_dyn-array i64) (make-array i64 1)]
+    [generated-next-id : (__tl_dyn-array i64) (make-array i64 1)]
+    [map-ready : (__tl_dyn-array bool) (make-array bool 1)]
+    [reset-generation : (__tl_dyn-array i64) (make-array i64 1)]
+    [persistent-arena : (__tl_dyn-array i64) (make-array i64 1)]
+    [persistent-arena-floor-mark : (__tl_dyn-array i64) (make-array i64 1)]
+    (begin
+      (array-set! table-id 0 intern-active-table-id-value)
+      (array-set! pool-count 0 intern-pool-count)
+      (array-set! generated-next-id 0 intern-generated-next-id)
+      (array-set! map-ready 0 intern-map-ready)
+      (array-set! reset-generation 0 intern-reset-generation)
+      (array-set! persistent-arena 0 intern-persistent-arena)
+      (array-set!
+        persistent-arena-floor-mark
+        0
+        intern-persistent-arena-floor-mark)
+      (InternCompatState
+        table-id
+        intern-pool-slots
+        intern-pool-qualified-slots
+        intern-pool-last-slash-slots
+        intern-pool-first-dot-slots
+        intern-pool-leading-dot-id-slots
+        intern-pool-dotted-prefix-id-slots
+        intern-pool-module-id-slots
+        intern-pool-base-id-slots
+        pool-count
+        generated-next-id
+        intern-map-id-slots
+        intern-map-hash-slots
+        intern-generated-map-id-slots
+        intern-generated-map-hash-slots
+        map-ready
+        reset-generation
+        persistent-arena
+        persistent-arena-floor-mark
+        intern-structural-table-cell))))
+
 (define (intern-compat-state-pool-len [state : InternCompatState]) : i64
   (array-ref (struct-get state pool-count) 0))
 
@@ -1231,7 +1279,11 @@
   (let
     [prev-arena : i64 (tl_arena_current)]
     (if (= prev-arena (intern-compat-state-persistent-arena state))
-      (intern-substring text start len)
+      (let
+        [copied : String (intern-substring text start len)]
+        (begin
+          (array-set! (struct-get state persistent-arena) 0 (tl_arena_current))
+          copied))
       (let
         [out : String
           (begin
@@ -1240,6 +1292,10 @@
             (let
               [copied : String (intern-substring text start len)]
               (begin
+                (array-set!
+                  (struct-get state persistent-arena)
+                  0
+                  (tl_arena_current))
                 (unsafe
                   (tl_arena_set prev-arena))
                 copied)))]
@@ -1886,6 +1942,65 @@
         (set! intern-generated-next-id (- id 1))
         id))))
 
+;; State-owned generated allocation.  Generated ids share the same high-end
+;; lane as the compatibility allocator, but all metadata and the monotonic
+;; counter live in the supplied state; no active-table installation is needed.
+(define (intern-compat-state-generated-name
+  [state : InternCompatState]
+  [name : String]) : i64
+  (begin
+    (if (array-ref (struct-get state map-ready) 0)
+      unit
+      (intern-compat-state-reset! state))
+    (cfg compile-profile (intern-profile-note-generated))
+    (let
+      [next-id : i64 (array-ref (struct-get state generated-next-id) 0)]
+      (if (< next-id (intern-compat-state-pool-len state))
+        (tl_oob_abort)
+        (let
+          [persistent-name : String
+            (intern-compat-state-persistent-copy state name)]
+          (begin
+            (array-set! (struct-get state pool-slots) next-id persistent-name)
+            (array-set! (struct-get state pool-qualified-slots) next-id false)
+            (array-set!
+              (struct-get state pool-last-slash-slots)
+              next-id
+              (cast -1 : i32))
+            (array-set!
+              (struct-get state pool-first-dot-slots)
+              next-id
+              (cast -1 : i32))
+            (array-set!
+              (struct-get state pool-leading-dot-id-slots)
+              next-id
+              (intern-id-slot-encode -1))
+            (array-set!
+              (struct-get state pool-dotted-prefix-id-slots)
+              next-id
+              (intern-id-slot-encode -1))
+            (array-set!
+              (struct-get state pool-module-id-slots)
+              next-id
+              (intern-id-slot-encode -1))
+            (array-set!
+              (struct-get state pool-base-id-slots)
+              next-id
+              (intern-id-slot-encode next-id))
+            (array-set! (struct-get state generated-next-id) 0 (- next-id 1))
+            next-id))))))
+
+(define (intern-compat-state-generated-id-active?
+  [state : InternCompatState]
+  [id : i64]) : bool
+  (and
+    (>= id (intern-compat-state-pool-len state))
+    (> id (array-ref (struct-get state generated-next-id) 0))
+    (< id (intern-capacity))))
+
+(define (intern-compat-state-generated-count [state : InternCompatState]) : i64
+  (- (- (intern-capacity) 1) (array-ref (struct-get state generated-next-id) 0)))
+
 (define (intern-generated-id-active? [id : i64]) : bool
   (and
     (>= id intern-pool-count)
@@ -1898,6 +2013,119 @@
 ;; treating an id from the producing generation as portable.
 (define (intern-generated-count) : i64
   (- (- (intern-capacity) 1) intern-generated-next-id))
+
+;; Explicit structural identities mirror the active compatibility helpers while
+;; selecting the owner/session table from the argument.  Structural ids are
+;; never inserted into the source string interner.
+(define (intern-compat-state-structural-prefix [state : InternCompatState]) : i64
+  (+
+    (intern-structural-key-base)
+    (*
+      (struct-get (array-ref (struct-get state structural-table-cell) 0) owner)
+      (intern-structural-key-owner-stride))))
+
+(define (intern-compat-state-structural-count [state : InternCompatState]) : i64
+  (struct-get (array-ref (struct-get state structural-table-cell) 0) len))
+
+(define (intern-compat-state-composite-pair-id
+  [state : InternCompatState]
+  [left-id : i64]
+  [right-id : i64]) : i64
+  (intern-structural-table-intern
+    (struct-get state structural-table-cell)
+    (intern-compat-state-persistent-arena state)
+    (intern-structural-kind-pair)
+    left-id
+    0
+    right-id))
+
+(define (intern-compat-state-composite-triple-id
+  [state : InternCompatState]
+  [left-id : i64]
+  [middle-id : i64]
+  [right-id : i64]) : i64
+  (intern-structural-table-intern
+    (struct-get state structural-table-cell)
+    (intern-compat-state-persistent-arena state)
+    (intern-structural-kind-triple)
+    left-id
+    middle-id
+    right-id))
+
+(define (intern-compat-state-composite-pair-id?
+  [state : InternCompatState]
+  [id : i64]) : bool
+  (let
+    [table : InternStructuralTable
+      (array-ref (struct-get state structural-table-cell) 0)]
+    [prefix : i64 (intern-compat-state-structural-prefix state)]
+    (and (> id prefix) (<= id (+ prefix (struct-get table len))))))
+
+(define (intern-compat-state-composite-triple-id?
+  [state : InternCompatState]
+  [id : i64]) : bool
+  (let
+    [table : InternStructuralTable
+      (array-ref (struct-get state structural-table-cell) 0)]
+    [prefix : i64
+      (+
+        (intern-compat-state-structural-prefix state)
+        (intern-structural-key-kind-stride))]
+    (and (> id prefix) (<= id (+ prefix (struct-get table len))))))
+
+(define (intern-compat-state-composite-left-id-unchecked
+  [state : InternCompatState]
+  [id : i64]) : i64
+  (array-ref
+    (struct-get (array-ref (struct-get state structural-table-cell) 0) lefts)
+    (- (bit-and id (intern-structural-key-index-mask)) 1)))
+
+(define (intern-compat-state-composite-middle-id-unchecked
+  [state : InternCompatState]
+  [id : i64]) : i64
+  (array-ref
+    (struct-get (array-ref (struct-get state structural-table-cell) 0) middles)
+    (- (bit-and id (intern-structural-key-index-mask)) 1)))
+
+(define (intern-compat-state-composite-right-id-unchecked
+  [state : InternCompatState]
+  [id : i64]) : i64
+  (array-ref
+    (struct-get (array-ref (struct-get state structural-table-cell) 0) rights)
+    (- (bit-and id (intern-structural-key-index-mask)) 1)))
+
+(define (intern-compat-state-composite-rendered-name
+  [state : InternCompatState]
+  [id : i64]) : String
+  (if (or
+    (intern-compat-state-composite-pair-id? state id)
+    (intern-compat-state-composite-triple-id? state id))
+    (array-ref
+      (struct-get
+        (array-ref (struct-get state structural-table-cell) 0)
+        rendered-names)
+      (- (bit-and id (intern-structural-key-index-mask)) 1))
+    ""))
+
+(define (intern-compat-state-composite-rendered-name-record!
+  [state : InternCompatState]
+  [id : i64]
+  [name : String]) : String
+  (let
+    [cached : String (intern-compat-state-composite-rendered-name state id)]
+    (if (> (__tl_string_length cached) 0)
+      cached
+      (let
+        [persistent : String (intern-compat-state-persistent-copy state name)]
+        [index : i64 (- (bit-and id (intern-structural-key-index-mask)) 1)]
+        (begin
+          (array-set!
+            (struct-get
+              (array-ref (struct-get state structural-table-cell) 0)
+              rendered-names)
+            index
+            persistent)
+          persistent)))))
 
 (define (intern-generated-id-at-allocation-index [index : i64]) : i64
   (if (or (< index 0) (>= index (intern-generated-count)))
@@ -2662,6 +2890,23 @@
                   (ptr-cast (array-data cell) : (Ptr InternSourceNameSession))))
               : i64)))))))
 
+(define (intern-source-name-session-handle-from-state
+  [state : InternCompatState]) : InternSourceNameSessionHandle
+  ;; The owner-local CTFE view must keep its handle cell in the caller's
+  ;; current arena; unlike the active compatibility handle it must not retain
+  ;; a persistent-arena allocation for every explicit compile job.
+  (let
+    [cell : (__tl_dyn-array InternSourceNameSession)
+      (make-array InternSourceNameSession 1)]
+    (begin
+      (array-set! cell 0 (intern-source-name-session-from-state state))
+      (InternSourceNameSessionHandle
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (array-data cell) : (Ptr InternSourceNameSession))))
+          : i64)))))
+
 (define (intern-source-name-session-handle-session
   [handle : InternSourceNameSessionHandle]) : InternSourceNameSession
   (unsafe
@@ -3156,6 +3401,156 @@
         (intern-reset!)
         ok))))
 
+(define (intern-state-arena-growth-source
+  [chunk-size : i64]
+  [max-iterations : i64]) : String
+  (let
+    [source-length : i64 (+ chunk-size max-iterations)]
+    [buf : (__tl_dyn-array u8) (make-array u8 source-length)]
+    [i : i64 0]
+    (begin
+      (while (< i source-length)
+        (begin
+          (array-set! buf i (cast (bit-and i 255) : u8))
+          (set! i (+ i 1))))
+      (unsafe
+        (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) source-length)))))
+
+(define (intern-compat-state-persistent-arena-growth-tests-ok?) : bool
+  (let
+    [home : i64 (tl_arena_current)]
+    [scratch : i64 (tl_arena_make)]
+    [state : InternCompatState
+      (begin
+        (unsafe
+          (tl_arena_set scratch))
+        (let
+          [created : InternCompatState (intern-compat-state-new)]
+          (begin
+            (unsafe
+              (tl_arena_set home))
+            created)))]
+    [initial-arena : i64 (intern-compat-state-persistent-arena state)]
+    [chunk-size : i64 4194304]
+    [max-iterations : i64 24]
+    [source : String
+      (begin
+        (unsafe
+          (tl_arena_set scratch))
+        (let
+          [built : String
+            (intern-state-arena-growth-source chunk-size max-iterations)]
+          (begin
+            (unsafe
+              (tl_arena_set home))
+            built)))]
+    [before-id : i64 (intern-compat-state-intern state "state/pre-growth")]
+    [before-text : String (intern-compat-state-str state before-id)]
+    [iterations : i64 0]
+    [grew? : bool false]
+    (begin
+      (while (and (not grew?) (< iterations max-iterations))
+        (let
+          [_copied : String
+            (intern-compat-state-persistent-substring
+              state
+              source
+              iterations
+              chunk-size)]
+          (begin
+            (set!
+              grew?
+              (not
+                (= (intern-compat-state-persistent-arena state) initial-arena)))
+            (set! iterations (+ iterations 1)))))
+      (let
+        [grown-arena : i64 (intern-compat-state-persistent-arena state)]
+        [post-copy : String
+          (intern-compat-state-persistent-substring state source 0 64)]
+        [post-copy-restored? : bool (= (tl_arena_current) home)]
+        [post-id : i64 (intern-compat-state-intern state "state/post-growth")]
+        [generated-id : i64
+          (intern-compat-state-generated-name
+            state
+            "state/generated-after-growth")]
+        [structural-id : i64
+          (intern-compat-state-composite-pair-id state before-id post-id)]
+        [rendered-name : String
+          (intern-compat-state-composite-rendered-name-record!
+            state
+            structural-id
+            "state/pre-growth+state/post-growth")]
+        [equal-branch-head : i64 -1]
+        [equal-copy : String
+          (begin
+            (unsafe
+              (tl_arena_set (intern-compat-state-persistent-arena state)))
+            (let
+              [copied : String
+                (intern-compat-state-persistent-substring state source 1 64)]
+              (begin
+                (set! equal-branch-head (tl_arena_current))
+                (unsafe
+                  (tl_arena_set home))
+                copied)))]
+        [ok : bool true]
+        (begin
+          (unless grew? (set! ok false))
+          (unless (not (= grown-arena initial-arena)) (set! ok false))
+          (unless
+            (intern-private-string-eq before-text "state/pre-growth")
+            (set! ok false))
+          (unless
+            (intern-private-string-eq
+              (intern-compat-state-str state before-id)
+              "state/pre-growth")
+            (set! ok false))
+          (unless
+            (intern-private-string-eq
+              (intern-compat-state-str state post-id)
+              "state/post-growth")
+            (set! ok false))
+          (unless
+            (intern-private-string-eq
+              (intern-compat-state-str state generated-id)
+              "state/generated-after-growth")
+            (set! ok false))
+          (unless
+            (intern-private-string-eq
+              rendered-name
+              "state/pre-growth+state/post-growth")
+            (set! ok false))
+          (unless
+            (= (intern-private-string-length post-copy) 64)
+            (set! ok false))
+          (unless
+            (=
+              (intern-private-string-ref post-copy 0)
+              (intern-private-string-ref source 0))
+            (set! ok false))
+          (unless post-copy-restored? (set! ok false))
+          (unless
+            (= equal-branch-head (intern-compat-state-persistent-arena state))
+            (set! ok false))
+          (unless
+            (= (intern-private-string-length equal-copy) 64)
+            (set! ok false))
+          (unless
+            (=
+              (intern-private-string-ref equal-copy 0)
+              (intern-private-string-ref source 1))
+            (set! ok false))
+          (unless (= (tl_arena_current) home) (set! ok false))
+          (intern-compat-state-reset! state)
+          (let
+            [state-arena : i64 (intern-compat-state-persistent-arena state)]
+            (begin
+              (unsafe
+                (tl_arena_set home)
+                (tl_arena_destroy state-arena)
+                (tl_arena_destroy scratch))
+              ok)))))))
+
 (define (intern-reset-to-tests-ok?) : bool
   (begin
     (intern-reset!)
@@ -3424,6 +3819,9 @@
         (unless (intern-slice-tests-ok?) (set! ok false))
         (unless (intern-generated-name-tests-ok?) (set! ok false))
         (unless (intern-persistent-arena-tests-ok?) (set! ok false))
+        (unless
+          (intern-compat-state-persistent-arena-growth-tests-ok?)
+          (set! ok false))
         (unless (intern-reset-to-tests-ok?) (set! ok false))
         (unless (intern-persistent-floor-reset-tests-ok?) (set! ok false))
         (unless (intern-source-name-session-tests-ok?) (set! ok false))

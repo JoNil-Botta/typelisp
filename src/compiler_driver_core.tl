@@ -3448,7 +3448,7 @@
                     0))
                 (compiler_lower.compiler-lower-checked-dest-pools-clear!))]
             [lowered : compiler_lower.ResultCompilerLower
-              (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
+              (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
                 (struct-get state load-session)
                 (struct-get state typecheck-prefix-cache)
                 (struct-get state typecheck-state)
@@ -3464,7 +3464,8 @@
                   stdlib-roots
                   cfgs)
                 pools
-                source-names)]
+                source-names
+                (compiler-driver-state-owned-interns state))]
             [dest-committed? : bool
               (compiler_lower.compiler-lower-checked-dest-pools-committed?)]
             [frontend-released? : bool
@@ -3682,7 +3683,7 @@
                   0)
                 (compiler_lower.compiler-lower-checked-dest-pools-clear!))]
             [lowered : compiler_lower.ResultCompilerLower
-              (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
+              (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
                 (struct-get state load-session)
                 (struct-get state typecheck-prefix-cache)
                 (struct-get state typecheck-state)
@@ -3698,7 +3699,8 @@
                   stdlib-roots
                   cfgs)
                 pools
-                source-names)]
+                source-names
+                (compiler-driver-state-owned-interns state))]
             [dest-committed? : bool
               (compiler_lower.compiler-lower-checked-dest-pools-committed?)]
             [result-pools : compiler_ast_types.AstNodePoolContext

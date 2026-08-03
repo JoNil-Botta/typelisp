@@ -77,6 +77,63 @@
       (ci.intern-str name-id)
       "<structural-nominal>")))
 
+;; Explicit display boundary for specialization/normalization.  Unlike the
+;; legacy helper above, every source/generated/structural lookup is resolved
+;; through the supplied intern owner and therefore remains valid while another
+;; compatibility table is installed by a caller or test harness.
+(define (ast-nominal-name-id-display-with-intern-state
+  [state : ci.InternCompatState]
+  [name-id : i64]) : String
+  (if (or
+    (ci.intern-compat-state-composite-pair-id? state name-id)
+    (ci.intern-compat-state-composite-triple-id? state name-id))
+    (let
+      [cached : String
+        (ci.intern-compat-state-composite-rendered-name state name-id)]
+      (if (> (string.string-length cached) 0)
+        cached
+        (ci.intern-compat-state-composite-rendered-name-record!
+          state
+          name-id
+          (if (ci.intern-compat-state-composite-triple-id? state name-id)
+            (string.append
+              (ci.intern-compat-state-str
+                state
+                (ci.intern-compat-state-composite-left-id-unchecked
+                  state
+                  name-id))
+              (string.append
+                "/"
+                (string.append
+                  (ci.intern-compat-state-str
+                    state
+                    (ci.intern-compat-state-composite-middle-id-unchecked
+                      state
+                      name-id))
+                  (string.append
+                    "."
+                    (ci.intern-compat-state-str
+                      state
+                      (ci.intern-compat-state-composite-right-id-unchecked
+                        state
+                        name-id))))))
+            (string.append
+              (ci.intern-compat-state-str
+                state
+                (ci.intern-compat-state-composite-left-id-unchecked
+                  state
+                  name-id))
+              (string.append
+                "/"
+                (ci.intern-compat-state-str
+                  state
+                  (ci.intern-compat-state-composite-right-id-unchecked
+                    state
+                    name-id))))))))
+    (if (ci.intern-renderable-id? name-id)
+      (ci.intern-compat-state-str state name-id)
+      "<structural-nominal>")))
+
 (defstruct AstSourceSpan
   (start-line i32)
   (start-col i32)
@@ -5428,6 +5485,13 @@
   (ast-node-pool-context-expr-push
     pools
     (AstExpr.MakeArray (ast-node-pool-context-type-push pools elem) size)))
+
+(define (ast-expr-type-literal-with-pools
+  [pools : AstNodePoolContext]
+  [ty : AstType]) : i64
+  (let
+    [ty-id : i64 (ast-node-pool-context-type-push pools ty)]
+    (ast-node-pool-context-expr-push pools (AstExpr.TypeLiteral ty-id))))
 
 (define (ast-expr-dyn-array-with-pools
   [pools : AstNodePoolContext]

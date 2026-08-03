@@ -551,8 +551,12 @@ check_shift_pin() {
 check_hashmap_get_leaf_caller_saved() {
     _asm=$(compile_gate hashmap_get_leaf_caller_saved benchmarks/hashmap_get/bench.tl)
     _body=$(function_body "$_asm" _tl_bench_stdlib_hashmap_generated_i64_i64_get_value_or)
+    # The slot-array data pointer loads straight into %r8 with one memory
+    # load. The scalar read path (stdlib/hashmap.tl find-index) no longer
+    # routes it through a register-to-register move; the leaf, no-spill, and
+    # computed-addressing properties below are the gate's real subject.
     assert_regex_count_eq "$_body" \
-        '^[[:space:]]+movq %r[a-z0-9]+, %r8$' 1 \
+        '^[[:space:]]+movq \(%r[a-z0-9]+\), %r8$' 1 \
         hashmap-get-leaf-caller-saved
     assert_contains "$_body" 'leaq (%r8,' hashmap-get-leaf-caller-saved
     assert_not_matches "$_body" \

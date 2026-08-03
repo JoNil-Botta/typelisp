@@ -1,3 +1,5 @@
+;; An imported scalar-only struct is structurally Copyable, so a qualified
+;; consuming call leaves the local source usable.
 (import consume.parameters.helper)
 
 (define (main) : i64

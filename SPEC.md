@@ -3330,42 +3330,60 @@ function as a match over the active variant. It cleans only that variant's
 payload, in reverse payload declaration order, using field-style `(:cleanup
 ...)` and `(:owned)` payload metadata.
 
-#### 4.7.2 Move-only aggregate handle semantics
+#### 4.7.2 Structural move/copy aggregate semantics
 
-Aggregate handles are move-only in v1.
+By-value ownership is classified per type. A use of a `Copyable` value
+duplicates that value and leaves the source initialized; a use of a `MoveOnly`
+value transfers ownership and marks the source place moved. The classifier is
+context-aware: named aggregate fields and payloads are resolved in their
+declaration-owning module, and lifetime arguments are substituted at the use
+site. Invalid or unresolved types are conservatively `MoveOnly`.
 
-**Copyable v1 types.** A use of a copyable value duplicates the value and
-leaves the source initialized. Copyable types are:
+**Copyable v1 leaves.** The following types are copyable:
 
 - Scalar primitives: all integer widths, `f64`, backend-accepted `f32`
   positions, `bool`, `char`, and `unit`.
 - The compiler-internal `never` type, which has no runtime value to move.
+- `Expr` and `ExprList`, which are compile-time-only values.
 - Raw pointers `(Ptr T)` and `(MutPtr T)`; copying a pointer copies only the
   address and carries no ownership guarantee.
-- Named top-level function values and non-capturing function pointers.
+- Named top-level function values and `AstType.Func` function values.
+- Shared references. A shared reference `(& r T)` is copyable regardless of
+  the referent's class; the borrow and aliasing rules remain those in section
+  3.10. Mutable references `(&mut r T)` are move-only.
 
-Safe reference values and their copy/aliasing rules are specified by section
-3.10, not by this section.
+**Copyable aggregate forms.** Copyability is recursive and checks every part:
 
-**Move-only v1 types.** A by-value use of a move-only value transfers
-ownership and marks the source place moved. Move-only types are:
+- A fixed array `(Array T N)` is copyable iff `T` is copyable. This includes
+  zero-length arrays: `N = 0` does not skip checking `T`.
+- A tuple `(Tuple T1 ... Tn)` is copyable iff every slot is copyable. An empty
+  tuple is therefore copyable.
+- A default-layout or `repr-c` struct is copyable iff every field is copyable.
+- An enum is copyable iff every payload in every variant is copyable. Nullary
+  variants contribute no payload and are vacuously copyable.
 
-- `String`.
-- `ByteBuf`.
-- Compatibility dynamic arrays `(Array T)`.
-- Boxes `(Box T)`.
-- Fixed arrays `(Array T N)`.
-- Tuples `(Tuple ...)`.
-- Default-layout structs and enums.
-- Cleanup-owning structs (section 4.7.1).
-- Capturing closure values. A closure that captures only copyable values may
-  be classified copyable in a future revision; the v1 checker treats capturing
-  closures conservatively as move-only unless it can prove all captures are
-  copyable.
+Nested aggregates and lifetime-parameterized `StructArgs`/`EnumArgs` use the
+same rules after substituting their lifetime arguments. A cycle encountered
+while classifying a nominal aggregate is conservatively `MoveOnly`; malformed
+recursive layouts are still rejected by layout checking. Cleanup metadata has
+precedence: a cleanup-owning struct or enum is always `MoveOnly`, even when
+all of its fields or payloads would otherwise be copyable.
 
-A region wrapper `(in r T)` preserves the copy/move class of `T`; the region
-tag only constrains where the value may escape. Type aliases preserve the
-aliased type's class.
+**Move-only leaves and poison.** The following are move-only regardless of
+their element or referent types: `String`, `ByteBuf`, borrowed `str`/`bytes`
+values, compatibility dynamic arrays `(Array T)`, `Slice`, `(Box T)`, and
+mutable references. An aggregate containing any such value is move-only, as
+are unresolved/invalid type variables. Capturing closure values remain
+conservatively move-only; the `AstType.Func` representation does not yet
+carry capture information (tracked separately by #6243).
+
+Region wrappers `(in r T)` and `Consume` wrappers preserve the underlying
+copy/move class; the region tag only constrains where the value may escape.
+TypeLisp has no explicit source type-alias declarations (section 3.6), but
+any internal or name-resolution aliasing is resolved before classification and
+therefore preserves the resolved underlying class. The classifier's recursive
+result describes source-level ownership, not whether the backend transports a
+value in registers or through a pointer-sized handle.
 
 **Move sites.** The checker treats these by-value positions as moves for
 move-only values and as copies for copyable values:
@@ -3499,7 +3517,7 @@ the owned/borrowed text distinction are specified in section 3.11.
     (+ x y)))
 ```
 
-```lisp test=ignore name=move-reject-aggregate-reuse reason="negative move-only aggregate example"
+```lisp test=ignore name=move-reject-aggregate-reuse reason="negative non-copyable aggregate example"
 (import stdlib.string)
 
 (define (bad-string-reuse [s : String]) : i64
@@ -6084,10 +6102,12 @@ first-class arena values whose invalidation requires checker-enforced safety
 proofs. Reference types (`(& arena T)`, `(&mut arena T)`) and borrow
 expressions (`(& place)`, `(& arena place)`) follow the borrowed `str`
 contract in section 3.11 and the lifetime-owner model below.
-Aggregate handles are move-only source values under section 4.7.2. The
-`(with ...)` form (§5.19) is explicit cleanup for non-memory resources, not a
-destructor or heap reclamation mechanism. Raw pointers (section 7.4) are the
-explicit low-level exception and carry no safety guarantees.
+Aggregate handles use the structural Copyable/MoveOnly classification in
+section 4.7.2. A copyable aggregate may be used by value without moving its
+source; a non-copyable aggregate transfers ownership. The `(with ...)` form
+(§5.19) is explicit cleanup for non-memory resources, not a destructor or
+heap reclamation mechanism. Raw pointers (section 7.4) are the explicit
+low-level exception and carry no safety guarantees.
 
 ### 7.1 Stack
 
@@ -6549,7 +6569,10 @@ and not a general manual memory management feature.
 - The IR/ABI may represent `String`, dynamic-buffer, tuple, struct, enum, fixed
   array, and closure values as pointer-sized handles. Bit-copying such a handle
   can alias the same backing storage; representation alone is not a
-  source-level copy or mutation permission. The checker therefore treats
+  source-level copy or mutation permission. The source checker first applies
+  the structural Copyable/MoveOnly rules in section 4.7.2 (including every
+  array element, tuple slot, struct field, and enum payload), then applies the
+  ownership rules to non-copyable values. The checker therefore treats
   storage reached through a memory-class struct, enum, or fixed-array by-value
   parameter as read-only, including through same-storage local and match
   aliases. Register-class aggregates are transported as values. Shallow handle
@@ -6641,8 +6664,9 @@ in documentation passes.
   (`TypeInfo.Slice`, `type-kind`, and `type-key`) plus the internal two-word
   ABI and 16/8 layout are covered. C externs continue to use explicit raw
   pointer-plus-length contracts rather than Slice parameters.
-- Move-only aggregates with use-after-move, path-move, and
-  move-while-borrowed diagnostics; immutable/mutable borrow exclusivity;
+- Structural aggregate Copyable/MoveOnly classification, with use-after-move,
+  path-move, and move-while-borrowed diagnostics for non-copyable values;
+  immutable/mutable borrow exclusivity;
   two-phase mutable call borrows; conservative non-lexical last-use
   shortening (straight-line sequences, path-sensitive joins, conservative
   loop facts).

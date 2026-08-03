@@ -1,3 +1,5 @@
+;; A macro-generated scalar-only struct is structurally Copyable, so the
+;; generated consuming call does not move the source.
 (defmacro (generated-consumer-module) : Module
   `(begin
     (module generated.consume.safety)

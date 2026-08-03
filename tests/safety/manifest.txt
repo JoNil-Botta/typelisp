@@ -81,7 +81,8 @@ slice_view_arity_reject|check-fail|tests/safety/slice_view_arity_reject.tl|-|sli
 slice_view_shadow_check_ok|check-ok|tests/safety/slice_view_shadow_check_ok.tl|-|-
 
 # Slice provenance, exclusivity, nested-child liveness, and NLL release.
-slice_view_shared_move_live_reject|check-fail|tests/safety/slice_view_shared_move_live_reject.tl|-|cannot move borrowed place `items`
+slice_view_shared_copy_live_ok|check-ok|tests/safety/slice_view_shared_copy_live_ok.tl|-|-
+slice_view_shared_noncopy_array_move_live_reject|check-fail|tests/safety/slice_view_shared_noncopy_array_move_live_reject.tl|-|cannot move borrowed place `items`
 slice_view_shared_dynarray_move_live_reject|check-fail|tests/safety/slice_view_shared_dynarray_move_live_reject.tl|-|cannot move borrowed place `items`
 slice_view_shared_write_live_reject|check-fail|tests/safety/slice_view_shared_write_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 slice_view_shared_dynarray_push_reject|check-fail|tests/safety/slice_view_shared_dynarray_push_reject.tl|-|cannot assign to borrowed place `items`
@@ -304,7 +305,7 @@ sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.
 sync_mutex_guard_return_reject|check-fail|tests/safety/sync_mutex_guard_return_reject.tl|-|cleanup-required resource would escape with scope
 sync_mutex_guard_capture_reject|check-fail|tests/safety/sync_mutex_guard_capture_reject.tl|-|lambda cannot capture cleanup-required resource; resource value would escape
 sync_mutex_guard_store_reject|check-fail|tests/safety/sync_mutex_guard_store_reject.tl|-|struct Bad field guard stores cleanup-owning type stdlib.sync.mutex.generated.i64/Guard without :owned
-sync_channel_i64_pair_use_after_send_reject|check-fail|tests/safety/sync_channel_i64_pair_use_after_send_reject.tl|-|use of moved value `msg`
+sync_channel_i64_pair_reuse_after_send_ok|check-ok|tests/safety/sync_channel_i64_pair_reuse_after_send_ok.tl|-|-
 sync_channel_send_raw_pointer_reject|check-fail|tests/safety/sync_channel_send_raw_pointer_reject.tl|-|raw pointers cannot cross thread boundaries in safe code
 sync_channel_string_atomic_send_ok|check-ok|tests/safety/sync_channel_string_atomic_send_ok.tl|-|-
 sync_channel_string_default_arena_reject|check-fail|tests/safety/sync_channel_string_default_arena_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
@@ -372,12 +373,12 @@ consume_parameter_comptime_reject|check-fail|tests/safety/consume_parameter_comp
 consume_parameter_projection_use_after_move_reject|check-fail|tests/safety/consume_parameter_projection_use_after_move_reject.tl|-|use of moved value `pair.text`
 consume_parameter_mut_reference_reject|check-fail|tests/safety/consume_parameter_mut_reference_reject.tl|-|parse: :consume requires a non-reference parameter type
 consume_parameter_function_reference_reject|check-fail|tests/safety/consume_parameter_function_reference_reject.tl|-|parse: :consume requires a non-reference parameter type
-consume_parameter_plain_struct_read_reject|check-fail|tests/safety/consume_parameter_plain_struct_read_reject.tl|-|use of moved value `payload`
-consume_parameter_plain_struct_mutation_reject|check-fail|tests/safety/consume_parameter_plain_struct_mutation_reject.tl|-|use of moved value `payload`
-consume_parameter_plain_struct_twice_reject|check-fail|tests/safety/consume_parameter_plain_struct_twice_reject.tl|-|use of moved value `payload`
-consume_parameter_mut_borrow_live_reject|check-fail|tests/safety/consume_parameter_mut_borrow_live_reject.tl|-|cannot move borrowed place `payload`
-consume_parameter_qualified_struct_reject|check-fail|tests/safety/consume_parameter_qualified_struct_reject.tl|tests/safety/consume_parameter_qualified_struct_reject_helper.tl|use of moved value `payload`
-consume_parameter_generated_struct_reject|check-fail|tests/safety/consume_parameter_generated_struct_reject.tl|-|use of moved value `payload`
+consume_parameter_plain_struct_read_ok|check-ok|tests/safety/consume_parameter_plain_struct_read_ok.tl|-|-
+consume_parameter_plain_struct_mutation_ok|check-ok|tests/safety/consume_parameter_plain_struct_mutation_ok.tl|-|-
+consume_parameter_plain_struct_twice_ok|check-ok|tests/safety/consume_parameter_plain_struct_twice_ok.tl|-|-
+consume_parameter_mut_borrow_copy_ok|check-ok|tests/safety/consume_parameter_mut_borrow_copy_ok.tl|-|-
+consume_parameter_qualified_struct_ok|check-ok|tests/safety/consume_parameter_qualified_struct_ok.tl|tests/safety/consume_parameter_qualified_struct_ok_helper.tl|-
+consume_parameter_generated_struct_ok|check-ok|tests/safety/consume_parameter_generated_struct_ok.tl|-|-
 consume_parameter_unknown_metadata_reject|check-fail|tests/safety/consume_parameter_unknown_metadata_reject.tl|-|parse: unknown parameter metadata :unknown
 consume_parameter_duplicate_metadata_reject|check-fail|tests/safety/consume_parameter_duplicate_metadata_reject.tl|-|parse: duplicate parameter metadata
 consume_parameter_function_metadata_arity_reject|check-fail|tests/safety/consume_parameter_function_metadata_arity_reject.tl|-|parse: (:consume T) expects exactly one type

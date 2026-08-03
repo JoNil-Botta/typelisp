@@ -1,3 +1,5 @@
+;; A scalar-only struct argument may be copied while a two-phase mutable
+;; borrow is live; the copy does not invalidate the borrowed source.
 (defstruct Payload
   (value i64))
 

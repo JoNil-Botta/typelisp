@@ -2806,131 +2806,137 @@
             (array-set! starts var point)
             (array-set! ends var point)))))))
 
-(define (compiler-reg-extend-segment-set-word-bits!
+;; Note the CONTIGUOUS pair of points `point` and `next` (always `point + 1`)
+;; into the per-var segment in one step. This is exactly
+;; `(note-point! .. point)` followed by `(note-point! .. next)`:
+;;   * no open segment      -> the pair opens one segment [point, next];
+;;   * `point <= end + 1`   -> the first call can only raise `end` to `point`,
+;;                             which leaves `next <= end' + 1` true, so the
+;;                             second call raises `end` to `max(end, next)`;
+;;   * `point > end + 1`    -> the first call flushes and reopens at `point`,
+;;                             after which the second raises `end` to `next`.
+;; Fusing them halves the per-live-value segment bookkeeping on the hot
+;; live-after bridge, where every value is noted at `point` and again at
+;; `point + 1`.
+(define (compiler-reg-segment-note-span!
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
+  [var : i64]
+  [point : i64]
+  [next : i64]) : unit
+  (if (or (< var 0) (>= var (array-length starts)))
+    unit
+    (if (< (array-ref starts var) 0)
+      (begin
+        (array-set! starts var point)
+        (array-set! ends var next))
+      (let
+        [end : i64 (array-ref ends var)]
+        (if (<= point (+ end 1))
+          (if (> next end)
+            (array-set! ends var next)
+            unit)
+          (begin
+            (compiler-reg-segment-flush-var! segments starts ends var)
+            (array-set! starts var point)
+            (array-set! ends var next)))))))
+
+;; One pass over the three per-instruction live sets, replacing the four
+;; separate word walks this used to be (defs@point, uses@point,
+;; live-after@point, live-after@point+1).
+;;
+;; Equivalence: every step below reads and writes only the slot of the variable
+;; it is handling, and the coarse `starts`/`ends` arrays are always distinct
+;; from the segment `segment-starts`/`segment-ends` arrays, so operations on
+;; different variables -- and the coarse-vs-segment operations for one variable
+;; -- commute. The per-variable order is therefore all that matters, and it is
+;; preserved:
+;;   * defs and uses apply the SAME idempotent pair (extend the coarse interval
+;;     to `point`, note `point` in the segment), so a variable that is both a
+;;     def and a use gets one application instead of two identical ones;
+;;   * live-after still notes `point` before `point + 1` (fused into
+;;     `compiler-reg-segment-note-span!`) and still extends the coarse interval
+;;     to `point + 1`.
+;;
+;; Bridging live-after into the SEGMENT at `point` (LLVM SlotIndex semantics: a
+;; value live-OUT of this instruction is live AT it) makes a pass-through value
+;; one continuous segment instead of degenerate single-point segments that
+;; wrongly fail the half-open overlap test. A value whose LAST use is here is
+;; NOT in live-after, so it still ends at `point`, preserving the def/use touch
+;; that lets a copy/two-address result coalesce. Defs are marked at `point`
+;; first, so this never extends a def back.
+(define (compiler-reg-extend-segment-sets!
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
   [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
   [segment-starts : (__tl_dyn-array i64)]
   [segment-ends : (__tl_dyn-array i64)]
-  [bits : i64]
-  [var : i64]
-  [point : i64]) : unit
-  (if (= bits 0)
-    unit
-    (let
-      [index : i64 (compiler-reg-low-bit-index32 bits)]
-      [item-var : i64 (+ var index)]
-      (begin
-        (compiler-reg-extend-interval starts ends item-var point)
-        (compiler-reg-segment-note-point!
-          segments
-          segment-starts
-          segment-ends
-          item-var
-          point)
-        (compiler-reg-extend-segment-set-word-bits!
-          starts
-          ends
-          segments
-          segment-starts
-          segment-ends
-          (bit-and bits (- bits 1))
-          var
-          point)))))
-
-(define (compiler-reg-extend-segment-set-words!
-  [starts : (__tl_dyn-array i64)]
-  [ends : (__tl_dyn-array i64)]
-  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
-  [segment-starts : (__tl_dyn-array i64)]
-  [segment-ends : (__tl_dyn-array i64)]
-  [set : live.CompilerLiveI64Set]
-  [word-index : i64]
+  [defs : live.CompilerLiveI64Set]
+  [uses : live.CompilerLiveI64Set]
+  [live-after : live.CompilerLiveI64Set]
   [point : i64]) : unit
   (let
-    [index : i64 word-index]
-    [word-count : i64 (live.compiler-live-set-word-count set)]
+    [defs-words : i64 (live.compiler-live-set-word-count defs)]
+    [uses-words : i64 (live.compiler-live-set-word-count uses)]
+    [after-words : i64 (live.compiler-live-set-word-count live-after)]
+    [word-count : i64
+      (if (>= defs-words uses-words)
+        (if (>= defs-words after-words)
+          defs-words
+          after-words)
+        (if (>= uses-words after-words)
+          uses-words
+          after-words))]
+    [next : i64 (+ point 1)]
+    [index : i64 0]
     (while (< index word-count)
       (begin
-        ;; Empty words are the common case in a sparse live set, and
-        ;; `compiler-reg-extend-segment-set-word-bits!` does nothing for them --
-        ;; it tests `bits` against zero before anything else. Testing here
-        ;; instead skips setting up an eight-argument call per empty word;
-        ;; behaviour is unchanged because the callee was already a no-op.
         (let
-          [bits : i64 (live.compiler-live-set-word-at-bounded set index)]
-          (if (= bits 0)
-            unit
-            (compiler-reg-extend-segment-set-word-bits!
-              starts
-              ends
-              segments
-              segment-starts
-              segment-ends
-              bits
-              (* index (live.compiler-live-set-word-bits))
-              point)))
-        (set! index (+ index 1))))))
-
-;; Note a live point into the per-var SEGMENTS only, WITHOUT
-;; touching the coarse [start,end] interval. Bridges pass-through liveness so a
-;; value live ACROSS an instruction is one continuous segment. Coarse already
-;; spans this interior point (min..max), so leaving it untouched keeps the
-;; linear-scan placement byte-identical -- only segment-precise interference
-;; (consumed by coalescing) is corrected.
-(define (compiler-reg-segment-note-set-word-bits!
-  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
-  [segment-starts : (__tl_dyn-array i64)]
-  [segment-ends : (__tl_dyn-array i64)]
-  [bits : i64]
-  [var : i64]
-  [point : i64]) : unit
-  (if (= bits 0)
-    unit
-    (let
-      [index : i64 (compiler-reg-low-bit-index32 bits)]
-      [item-var : i64 (+ var index)]
-      (begin
-        (compiler-reg-segment-note-point!
-          segments
-          segment-starts
-          segment-ends
-          item-var
-          point)
-        (compiler-reg-segment-note-set-word-bits!
-          segments
-          segment-starts
-          segment-ends
-          (bit-and bits (- bits 1))
-          var
-          point)))))
-
-(define (compiler-reg-segment-note-set-words!
-  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
-  [segment-starts : (__tl_dyn-array i64)]
-  [segment-ends : (__tl_dyn-array i64)]
-  [set : live.CompilerLiveI64Set]
-  [word-index : i64]
-  [point : i64]) : unit
-  (let
-    [index : i64 word-index]
-    [word-count : i64 (live.compiler-live-set-word-count set)]
-    (while (< index word-count)
-      (begin
-        ;; Same as `compiler-reg-extend-segment-set-words!`: the callee returns
-        ;; immediately for an empty word, so testing here skips the call setup
-        ;; for the common case without changing what happens.
-        (let
-          [bits : i64 (live.compiler-live-set-word-at-bounded set index)]
-          (if (= bits 0)
-            unit
-            (compiler-reg-segment-note-set-word-bits!
-              segments
-              segment-starts
-              segment-ends
-              bits
-              (* index (live.compiler-live-set-word-bits))
-              point)))
+          [base : i64 (* index (live.compiler-live-set-word-bits))]
+          ;; `compiler-live-set-word-at-bounded` is an unchecked read, so each
+          ;; set is only touched inside its own word range; a shorter set
+          ;; contributes no bits for the trailing words, exactly as its own
+          ;; walk did.
+          [touched : i64
+            (bit-or
+              (if (< index defs-words)
+                (live.compiler-live-set-word-at-bounded defs index)
+                0)
+              (if (< index uses-words)
+                (live.compiler-live-set-word-at-bounded uses index)
+                0))]
+          [after-bits : i64
+            (if (< index after-words)
+              (live.compiler-live-set-word-at-bounded live-after index)
+              0)]
+          (begin
+            (while (not (= touched 0))
+              (let
+                [item-var : i64 (+ base (compiler-reg-low-bit-index32 touched))]
+                (begin
+                  (compiler-reg-extend-interval starts ends item-var point)
+                  (compiler-reg-segment-note-point!
+                    segments
+                    segment-starts
+                    segment-ends
+                    item-var
+                    point)
+                  (set! touched (bit-and touched (- touched 1))))))
+            (while (not (= after-bits 0))
+              (let
+                [item-var : i64
+                  (+ base (compiler-reg-low-bit-index32 after-bits))]
+                (begin
+                  (compiler-reg-segment-note-span!
+                    segments
+                    segment-starts
+                    segment-ends
+                    item-var
+                    point
+                    next)
+                  (compiler-reg-extend-interval starts ends item-var next)
+                  (set! after-bits (bit-and after-bits (- after-bits 1))))))))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-extend-segment-instr!
@@ -2942,48 +2948,16 @@
   [live-after : live.CompilerLiveI64Set]
   [point : i64]
   [instr : ir.CompilerIrInstr]) : unit
-  (begin
-    (compiler-reg-extend-segment-set-words!
-      starts
-      ends
-      segments
-      segment-starts
-      segment-ends
-      (live.compiler-live-instr-defs instr)
-      0
-      point)
-    (compiler-reg-extend-segment-set-words!
-      starts
-      ends
-      segments
-      segment-starts
-      segment-ends
-      (live.compiler-live-instr-uses instr)
-      0
-      point)
-    ;; Bridge live-after values into the SEGMENT at `point` (LLVM
-    ;; SlotIndex semantics: a value live-OUT of this instruction is live AT it),
-    ;; making a pass-through value one continuous segment instead of degenerate
-    ;; single-point segments that wrongly fail the half-open overlap test. A value
-    ;; whose LAST use is here is NOT in live-after, so it still ends at `point`,
-    ;; preserving the def/use touch that lets a copy/two-address result coalesce.
-    ;; Defs are already marked at `point` above, so this never extends a def back.
-    (compiler-reg-segment-note-set-words!
-      segments
-      segment-starts
-      segment-ends
-      live-after
-      0
-      point)
-    (compiler-reg-extend-segment-set-words!
-      starts
-      ends
-      segments
-      segment-starts
-      segment-ends
-      live-after
-      0
-      (+ point 1))))
+  (compiler-reg-extend-segment-sets!
+    starts
+    ends
+    segments
+    segment-starts
+    segment-ends
+    (live.compiler-live-instr-defs instr)
+    (live.compiler-live-instr-uses instr)
+    live-after
+    point))
 
 (define (compiler-reg-extend-set-words
   [starts : (__tl_dyn-array i64)]
@@ -3360,44 +3334,18 @@
   [live-after : live.CompilerLiveI64Set]
   [point : i64]
   [instr : ir.CompilerIrInstr]) : unit
-  (begin
-    (compiler-reg-extend-segment-set-words!
-      starts
-      ends
-      segments
-      segment-starts
-      segment-ends
-      (live.compiler-live-instr-defs instr)
-      0
-      point)
+  (compiler-reg-extend-segment-sets!
+    starts
+    ends
+    segments
+    segment-starts
+    segment-ends
+    (live.compiler-live-instr-defs instr)
     (match instr
-      [(ir.CompilerIrInstr.Phi _ _ _) unit]
-      [_
-        (compiler-reg-extend-segment-set-words!
-          starts
-          ends
-          segments
-          segment-starts
-          segment-ends
-          (live.compiler-live-instr-uses instr)
-          0
-          point)])
-    (compiler-reg-segment-note-set-words!
-      segments
-      segment-starts
-      segment-ends
-      live-after
-      0
-      point)
-    (compiler-reg-extend-segment-set-words!
-      starts
-      ends
-      segments
-      segment-starts
-      segment-ends
-      live-after
-      0
-      (+ point 1))))
+      [(ir.CompilerIrInstr.Phi _ _ _) (live.compiler-live-set-empty)]
+      [_ (live.compiler-live-instr-uses instr)])
+    live-after
+    point))
 
 (define (compiler-reg-live-interval-selection-ep-instr-seq
   [instrs : ir.CompilerIrInstrSeq]

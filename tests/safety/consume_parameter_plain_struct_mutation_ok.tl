@@ -1,3 +1,5 @@
+;; A scalar-only struct remains an owned, mutable place after a consuming call
+;; because its structural Copy classification leaves the source initialized.
 (defstruct Payload
   (value i64))
 
@@ -9,4 +11,5 @@
     [payload : Payload (Payload 1)]
     (begin
       (consume payload)
-      (consume payload))))
+      (set! payload.value 2)
+      0)))

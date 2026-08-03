@@ -1,3 +1,5 @@
+;; A scalar-only channel message is structurally Copyable, so the source
+;; remains usable after the send.
 (import stdlib.sync)
 
 (define (main) : i64

@@ -1,3 +1,5 @@
+;; A scalar-only struct is structurally Copyable, so a consuming call does
+;; not invalidate a later read of the source.
 (defstruct Payload
   (value i64))
 
@@ -9,5 +11,4 @@
     [payload : Payload (Payload 1)]
     (begin
       (consume payload)
-      (set! payload.value 2)
-      0)))
+      (struct-get payload value))))

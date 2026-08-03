@@ -1,3 +1,5 @@
+;; A scalar-only struct may be passed to a consuming parameter twice because
+;; each by-value use copies the structurally Copyable source.
 (defstruct Payload
   (value i64))
 
@@ -9,4 +11,4 @@
     [payload : Payload (Payload 1)]
     (begin
       (consume payload)
-      (struct-get payload value))))
+      (consume payload))))

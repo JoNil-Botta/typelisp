@@ -26360,6 +26360,598 @@
     42
     "invariant-offset Gep splitting hoists one derived base per (base, type), gates on all-uses and register pressure, synthesizes a missing preheader, and is idempotent"))
 
+;; --- monotone-flag loop-exit conversion self-tests ----------------------------
+;; One `(while (and (< i n) ok) ... (set! ok false))` loop in the shape
+;; `it-slice-eq?` reaches the pass with, with the variant selector perturbing
+;; exactly one condition at a time:
+;;   0  the plain shape: the flag only ever clears, gates the loop, and dies at
+;;      the exit phi -- this converts, and is the enabled control every negative
+;;      variant below is one edit away from
+;;   1  the gate reads `not flag` instead of the flag (it-map-insert-from's
+;;      shape: the flag is consumed by a merge), so no branch tests a closure
+;;      var and C3 rejects
+;;   2  the loop counter is read after the loop (ls-scan-symbol-end's shape:
+;;      a scan returning its counter), so C8 rejects
+;;   3  the flag itself is returned rather than reaching an exit phi
+;;      (pl-ranges-eq?'s shape), so C4 rejects
+;;   4  a call sits on the path the redirect would skip (pl-run-chunk's shape),
+;;      so C6 rejects
+;;   5  the gate's exit arm has a second predecessor (gd-dijkstra's shape), so
+;;      C7 rejects
+;;   6  `(set! ok true)` from a false seed, resolved through an intermediate phi
+;;      and a Mov: K = false, C = true, and the gate's arms are swapped
+;; Variants 1-5 each keep every other condition satisfied, so a variant that
+;; stopped rejecting would convert rather than silently pass.
+(define (opt-flag-exit-test-entry-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Jump
+      (compiler_ir_types.compiler-ir-label "loop"))
+    (compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-flag-exit-test-seed [variant : i64]) : compiler_ir_types.CompilerIrValue
+  (if (= variant 6)
+    (compiler_ir_types.CompilerIrValue.Bool false)
+    (compiler_ir_types.CompilerIrValue.Bool true)))
+
+(define (opt-flag-exit-test-loop-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      10
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 14)
+          (compiler_ir_types.compiler-ir-label "latch")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        11
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (opt-flag-exit-test-seed variant)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 13)
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          12
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ir_types.compiler-ir-label "gate")
+            (compiler_ir_types.compiler-ir-label "done_full"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+;; Variant 1 routes the flag through a `not` on the way to the branch, so no
+;; branch condition is a closure var at all.
+(define (opt-flag-exit-test-gate-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (= variant 1)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.UnOp
+        18
+        (compiler_ir_types.CompilerIrUnOp.Not)
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 18)
+          (compiler_ir_types.compiler-ir-label "done_early")
+          (compiler_ir_types.compiler-ir-label "body"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (if (= variant 6)
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label "done_early")
+          (compiler_ir_types.compiler-ir-label "body"))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-label "done_early")))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-flag-exit-test-body-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      15
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 10)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        16
+        (compiler_ir_types.CompilerIrValue.Var 15)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          17
+          (compiler_ir_types.CompilerIrBinOp.Eq)
+          (compiler_ir_types.CompilerIrValue.Var 16)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 17)
+            (compiler_ir_types.compiler-ir-label "match")
+            (compiler_ir_types.compiler-ir-label "mismatch"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+;; Variant 4 puts a call on the block the redirect would jump past.
+(define (opt-flag-exit-test-latch-tail [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      14
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 10)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (if (= variant 4)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Call
+          19
+          cbi.compiler-builtin-id-tl-abort-label
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ast_types.AstType.Unit))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+;; Variant 6 clears to `true` and resolves the flag through an extra phi and a
+;; Mov, which is the transitive leg of the closure walk.
+(define (opt-flag-exit-test-latch-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (= variant 6)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        18
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ir_types.compiler-ir-label "mismatch")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.compiler-ir-label "match")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          13
+          (compiler_ir_types.CompilerIrValue.Var 18)
+          (compiler_ast_types.AstType.Bool))
+        (opt-flag-exit-test-latch-tail variant)))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        13
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Bool false)
+          (compiler_ir_types.compiler-ir-label "mismatch")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.compiler-ir-label "match")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.Bool))
+      (opt-flag-exit-test-latch-tail variant))))
+
+;; Variant 5 sends the counter-exhausted exit through the gate's arm instead of
+;; straight to the merge, so that arm acquires a second predecessor.
+(define (opt-flag-exit-test-done-full-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Jump
+      (if (= variant 5)
+        (compiler_ir_types.compiler-ir-label "done_early")
+        (compiler_ir_types.compiler-ir-label "exit")))
+    (compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-flag-exit-test-exit-phi [variant : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Phi
+    20
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.Var 11)
+      (compiler_ir_types.compiler-ir-label "done_early")
+      (if (= variant 5)
+        (compiler_ir_types.CompilerIrPhiInputList.Nil)
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label "done_full")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+    (compiler_ast_types.AstType.Bool)))
+
+;; Variant 2 reads the loop counter after the loop; variant 3 returns the flag
+;; itself instead of letting the exit phi carry it out.
+(define (opt-flag-exit-test-exit-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (= variant 3)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var 11)))
+      (compiler_ir_types.CompilerIrInstrList.Nil))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-flag-exit-test-exit-phi variant)
+      (if (= variant 2)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            21
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              22
+              (compiler_ir_types.CompilerIrBinOp.And)
+              (compiler_ir_types.CompilerIrValue.Var 20)
+              (compiler_ir_types.CompilerIrValue.Var 21)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 22)))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 20)))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-flag-exit-test-jump-block [label : String] [target : String]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label label)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label target))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-flag-exit-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-flag-exit-test-entry-instrs))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-flag-exit-test-loop-instrs variant))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "gate")
+          (opt-flag-exit-test-gate-instrs variant))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-flag-exit-test-body-instrs))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-flag-exit-test-jump-block "match" "latch")
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-flag-exit-test-jump-block "mismatch" "latch")
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (opt-flag-exit-test-latch-instrs variant))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-flag-exit-test-jump-block "done_early" "exit")
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.compiler-ir-block
+                      (compiler_ir_types.compiler-ir-label "done_full")
+                      (opt-flag-exit-test-done-full-instrs variant))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.compiler-ir-block
+                        (compiler_ir_types.compiler-ir-label "exit")
+                        (opt-flag-exit-test-exit-instrs variant))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))
+
+(define (opt-flag-exit-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "base"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "n"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "want"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+(define (opt-flag-exit-test-function [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "flag_exit")
+    (opt-flag-exit-test-params)
+    (compiler_ast_types.AstType.Bool)
+    23
+    (opt-flag-exit-test-blocks variant)))
+
+(define (opt-flag-exit-test-run [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-flag-exit-function
+    (opt-flag-exit-test-function variant)))
+
+;; --- shape probes -------------------------------------------------------------
+(define (opt-flag-exit-test-last-instr
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : compiler_optimize.OptFlagExitMaybeInstr
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_optimize.OptFlagExitMaybeInstr.No)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            (if (= count 0)
+              (compiler_optimize.OptFlagExitMaybeInstr.No)
+              (compiler_optimize.OptFlagExitMaybeInstr.Some
+                (compiler_ir_types.compiler-ir-instr-seq-ref instrs (- count 1)))))])]))
+
+;; The label a block's terminating Jump targets; -1 when it does not end in one.
+(define (opt-flag-exit-test-jump-target
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (match (opt-flag-exit-test-last-instr blocks label)
+    [(compiler_optimize.OptFlagExitMaybeInstr.No) (- 0 1)]
+    [(compiler_optimize.OptFlagExitMaybeInstr.Some instr)
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.Jump target) target]
+        [_ (- 0 1)])]))
+
+(define (opt-flag-exit-test-jumps-to?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [target : String]) : bool
+  (=
+    (opt-flag-exit-test-jump-target blocks label)
+    (compiler_ir_types.compiler-ir-label target)))
+
+(define (opt-flag-exit-test-phi-in-instrs
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [pos : i64]
+  [dst : i64]) : compiler_ir_types.CompilerIrPhiInputList
+  (if (>= pos (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    (compiler_ir_types.CompilerIrPhiInputList.Nil)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs pos)
+      [(compiler_ir_types.CompilerIrInstr.Phi found inputs _)
+        (if (= found dst)
+          inputs
+          (opt-flag-exit-test-phi-in-instrs instrs (+ pos 1) dst))]
+      [_ (opt-flag-exit-test-phi-in-instrs instrs (+ pos 1) dst)])))
+
+(define (opt-flag-exit-test-phi-inputs
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [dst : i64]) : compiler_ir_types.CompilerIrPhiInputList
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.CompilerIrPhiInputList.Nil)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-flag-exit-test-phi-in-instrs instrs 0 dst)])]))
+
+;; 1 when the phi input on `pred` is the literal `true`, 0 when it is `false`,
+;; -1 for anything else (including a missing input).
+(define (opt-flag-exit-test-phi-bool
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [dst : i64]
+  [pred : String]) : i64
+  (match (compiler_optimize.opt-thread-phi-input-value
+    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (compiler_ir_types.compiler-ir-label pred))
+    [(compiler_ir_types.CompilerIrMaybeValue.No) (- 0 1)]
+    [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+      (match value
+        [(compiler_ir_types.CompilerIrValue.Bool literal)
+          (if literal
+            1
+            0)]
+        [_ (- 0 1)])]))
+
+(define (opt-flag-exit-test-phi-input-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [dst : i64]) : i64
+  (compiler_ir_types.compiler-ir-phi-input-list-count
+    (opt-flag-exit-test-phi-inputs blocks label dst)))
+
+;; 1 when the block's first instruction is `dst = mov <literal>`, 0 otherwise.
+(define (opt-flag-exit-test-mov-bool
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [dst : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-flag-exit-test-mov-scan instrs 0 dst)])]))
+
+(define (opt-flag-exit-test-mov-scan
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [pos : i64]
+  [dst : i64]) : i64
+  (if (>= pos (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    (- 0 1)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs pos)
+      [(compiler_ir_types.CompilerIrInstr.Mov found src _)
+        (if (= found dst)
+          (match src
+            [(compiler_ir_types.CompilerIrValue.Bool literal)
+              (if literal
+                1
+                0)]
+            [_ (- 0 1)])
+          (opt-flag-exit-test-mov-scan instrs (+ pos 1) dst))]
+      [_ (opt-flag-exit-test-mov-scan instrs (+ pos 1) dst)])))
+
+;; Predecessors of `label`, counted straight off the terminators so the probe
+;; does not depend on the pass's own CFG machinery.
+(define (opt-flag-exit-test-targets-label?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [label : i64]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Jump target) (= target label)]
+    [(compiler_ir_types.CompilerIrInstr.Branch _ true-label false-label)
+      (or (= true-label label) (= false-label label))]
+    [_ false]))
+
+(define (opt-flag-exit-test-pred-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (opt-flag-exit-test-pred-count-from
+    blocks
+    (compiler_ir_types.compiler-ir-label label)))
+
+(define (opt-flag-exit-test-pred-count-from
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (+
+        (match block
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+            (let
+              [count : i64
+                (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+              (if (= count 0)
+                0
+                (if (opt-flag-exit-test-targets-label?
+                  (compiler_ir_types.compiler-ir-instr-seq-ref
+                    instrs
+                    (- count 1))
+                  label)
+                  1
+                  0)))])
+        (opt-flag-exit-test-pred-count-from (box-get rest) label))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-flag-exit-test-pred-count-from
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        label)]))
+
+(define (opt-flag-exit-test-unchanged? [variant : i64]) : bool
+  (compiler_optimize.opt-block-list-eq
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-function-blocks (opt-flag-exit-test-run variant))
+    (opt-flag-exit-test-blocks variant)))
+
+;; The negative control for every rejecting variant: the pass's own entry verify
+;; also returns the input untouched, so a fixture that the verifier rejected
+;; would "pass" its rejection assertion for the wrong reason.
+(define (opt-flag-exit-test-input-verifies? [variant : i64]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function
+      (opt-flag-exit-test-function variant))))
+
+(define (opt-flag-exit-test-rejects? [variant : i64]) : bool
+  (and
+    (opt-flag-exit-test-input-verifies? variant)
+    (opt-flag-exit-test-unchanged? variant)))
+
+(define (compiler-optimize-flag-exit-self-test) : i64
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [converted : compiler_ir_types.CompilerIrFunction
+      (opt-flag-exit-test-run 0)]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks converted)]
+    [twice : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-flag-exit-function converted))]
+    [set-true : compiler_ir_types.CompilerIrFunction (opt-flag-exit-test-run 6)]
+    [set-true-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks set-true)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function converted)))
+        1]
+      ;; the gate stopped testing the flag
+      [(not (opt-flag-exit-test-jumps-to? blocks "gate" "body")) 2]
+      ;; and the clear site leaves the loop directly
+      [(not (opt-flag-exit-test-jumps-to? blocks "mismatch" "done_early")) 3]
+      ;; the clear edge is gone from the latch phi
+      [(not (= (opt-flag-exit-test-phi-input-count blocks "latch" 13) 1)) 4]
+      ;; the exit phi carries the answer as literals: cleared on the gate's arm,
+      ;; still set on the counter-exhausted arm
+      [(not (= (opt-flag-exit-test-phi-bool blocks "exit" 20 "done_early") 0))
+        5]
+      [(not (= (opt-flag-exit-test-phi-bool blocks "exit" 20 "done_full") 1)) 6]
+      ;; no exit gained a predecessor
+      [(not
+          (=
+            (opt-flag-exit-test-pred-count blocks "exit")
+            (opt-flag-exit-test-pred-count (opt-flag-exit-test-blocks 0) "exit")))
+        7]
+      [(not (= (opt-flag-exit-test-pred-count blocks "done_early") 1)) 8]
+      ;; the flag's own definitions are pinned to the continuing constant, so
+      ;; the phi <-> phi cycle is broken and DCE can retire them
+      [(not (= (opt-flag-exit-test-phi-bool blocks "loop" 11 "entry") 1)) 9]
+      [(not (= (opt-flag-exit-test-phi-bool blocks "loop" 11 "latch") 1)) 10]
+      [(not (= (opt-flag-exit-test-phi-bool blocks "latch" 13 "match") 1)) 11]
+      ;; idempotence: the next pipeline iteration finds nothing left to convert
+      [(not (compiler_optimize.opt-block-list-eq bases blocks twice)) 12]
+      ;; C3: the flag reaches the branch through a `not`, so no branch tests it
+      [(not (opt-flag-exit-test-rejects? 1)) 13]
+      ;; C8: the loop counter is read after the loop
+      [(not (opt-flag-exit-test-rejects? 2)) 14]
+      ;; C4: the flag itself is returned
+      [(not (opt-flag-exit-test-rejects? 3)) 15]
+      ;; C6: a call sits on the path the redirect skips
+      [(not (opt-flag-exit-test-rejects? 4)) 16]
+      ;; C7: the gate's exit arm has a second predecessor
+      [(not (opt-flag-exit-test-rejects? 5)) 17]
+      ;; a false seed cleared to `true` through a phi and a Mov converts the
+      ;; same way, with the gate's arms the other way round
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function set-true)))
+        18]
+      [(not (opt-flag-exit-test-jumps-to? set-true-blocks "gate" "body")) 19]
+      [(not
+          (opt-flag-exit-test-jumps-to? set-true-blocks "mismatch" "done_early"))
+        20]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-bool set-true-blocks "exit" 20 "done_early")
+            1))
+        21]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-bool set-true-blocks "exit" 20 "done_full")
+            0))
+        22]
+      [(not (= (opt-flag-exit-test-mov-bool set-true-blocks "latch" 13) 0)) 23]
+      [(not
+          (= (opt-flag-exit-test-phi-bool set-true-blocks "latch" 18 "match") 0))
+        24]
+      [else 42])))
+
+(test
+  flag-exit-monotone-loop-exit
+  (test.assert-i64-eq
+    (compiler-optimize-flag-exit-self-test)
+    42
+    "a loop-carried bool that only clears becomes a direct exit jump at the clear site, adds no exit predecessor, and rejects every shape that could observe the retired flag"))
+
 (define (opt-gep-split-test-gep-count-from
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]

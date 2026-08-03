@@ -1716,7 +1716,7 @@
       (ast-type-node-pool-state-push-raw pool node)
       (let
         [mask : i64 (- dedup-cap 1)]
-        [idx : i64 (bit-and (ty-node-hash-value node) mask)]
+        [idx : i64 (ty-node-dedup-slot-index (ty-node-hash-value node) mask)]
         (ast-type-node-pool-state-push-dedup
           pool
           node
@@ -1835,10 +1835,12 @@
 ;; equality (child ids included) exact structural equality. A cli.tl compile
 ;; previously pushed >8M nodes for a few thousand distinct types; hash-consing
 ;; collapses the pool by orders of magnitude, shrinking both the node-slot
-;; footprint and the pre-sized pool itself. The dedup table is a fixed
+;; footprint and the pre-sized pool itself. The dedup table is a growable
 ;; open-addressing map from node hash to id (+1; 0 = empty), cleared on pool
-;; truncate/reset. If it ever passes half load, pushes fall back to plain
-;; appends -- only deduplication, never correctness, degrades.
+;; truncate/reset. Passing half load doubles the table and rehashes
+;; (`ty-node-dedup-grow!`) instead of degrading: a table that stopped indexing
+;; left equal types with distinct ids, which both balloons the pool and busts
+;; every id-keyed downstream cache.
 ;;
 ;; Equality is explicit field-wise matching, NOT a byte compare of the slots:
 ;; enum slot tails beyond a variant's payload are uninitialized, so a byte
@@ -1851,13 +1853,26 @@
 (define ty-node-dedup-count : i64
   0)
 
+;; Upper bound on the doubling above: 2^24 slots indexes 8.4M distinct type
+;; nodes for 128 MiB of table. No self-host workload comes within an order of
+;; magnitude of it; it exists so a pathological input degrades to the old
+;; plain-append behaviour rather than to an unbounded table.
+(define ty-node-dedup-max-capacity : i64
+  16777216)
+
+;; Clearing empties the index but KEEPS whatever capacity the table has grown
+;; to: the workload that forced the growth is about to be re-indexed, so
+;; shrinking would only re-pay the rehash. Read the extent off the array rather
+;; than the capacity global so a grown table can never be half-cleared.
 (define (ty-node-dedup-clear!) : unit
   (let
+    [slots : (__tl_dyn-array i64) ty-node-dedup-slots]
+    [capacity : i64 (array-length slots)]
     [i : i64 0]
     (begin
-      (while (< i ty-node-dedup-capacity)
+      (while (< i capacity)
         (begin
-          (array-set! ty-node-dedup-slots i 0)
+          (array-set! slots i 0)
           (set! i (+ i 1))))
       (set! ty-node-dedup-count 0))))
 
@@ -1890,6 +1905,31 @@
 
 (define (ty-type-list-hash [items : AstTypeList] [seed : i64]) : i64
   (ty-type-list-hash-at (& items) (ast-type-list-len (& items)) seed 0))
+
+;; Map a node hash onto a dedup slot. `ty-node-hash-value` is deliberately left
+;; alone (its values are also the file's documented, test-pinned hash contract);
+;; what it is NOT is a table index. Whole families of nodes hash to
+;; `constant + id` -- `(AstType.Var name)` is `4062 + name`, `(AstType.Box
+;; inner)` is `3014 + inner`, and so on for Struct/Enum/DynArray/Ptr/MutPtr/
+;; Consume -- so masking the raw hash piles every one of them into the same few
+;; thousand low slots while the rest of the table stays empty. Measured on an
+;; opt1 self-compile: 22.4K live entries in a 131,072-slot table took 56.5M
+;; probe steps for 1.93M pushes (29.3 per push, worst chain 1880) because those
+;; entries occupy a ~24K-slot window at ~90% local load.
+;;
+;; A Fibonacci/Knuth multiply spreads them: consecutive ids step through the
+;; table by a fixed odd stride instead of landing next to each other, and two
+;; families whose hashes differ by a constant get pseudo-random relative
+;; offsets. `ty-node-hash-value` is normalized below 2^31 and the multiplier is
+;; below 2^32, so the product stays under 2^63 and never overflows i64.
+;;
+;; This cannot change which id a node gets. Slot choice only affects the ORDER
+;; slots are visited; dedup equality is exact structural equality and probing
+;; stops only at an empty slot, so a node still resolves to the id of its first
+;; structurally-equal predecessor, or is appended. Ids -- and therefore the
+;; generated assembly -- are identical either way.
+(define (ty-node-dedup-slot-index [hash : i64] [mask : i64]) : i64
+  (bit-and (* hash 2654435761) mask))
 
 (define (ty-node-hash-value [node : AstType]) : i64
   (match node
@@ -2143,31 +2183,114 @@
 (define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
   (ty-node-shallow-value-eq? (ty-node-get a-id) b))
 
+;; Double the dedup table and reinsert every live entry, keeping the index
+;; effective for the whole compile instead of switching itself off at half load.
+;;
+;; ARENA OWNERSHIP: the slots array is POOL STATE -- `ty-node-pool-state-capture`
+;; hands it to every `AstTypeNodePoolState` and an install points the globals
+;; straight back at it -- so it lives in the arena that owns the pool
+;; (`node-pool-base-arena`), exactly like the segment tables and the persisted
+;; node payloads (see `ty-node-push-raw`). Allocating it in "whatever arena is
+;; current" would put a table that outlives every transient scratch arena inside
+;; one of them: a grow that fired during lowering or macro expansion would be
+;; freed under the pool. The base-arena head is republished afterwards for the
+;; same reason `ty-node-push-raw` republishes it -- keeping the pre-allocation
+;; handle restarts the next base allocation on a filled segment and grows a
+;; sibling chain that destroy-from-head never reaches.
+;;
+;; The reinsert needs no equality check: every entry already survived an
+;; equality probe when it was inserted, so the entries are pairwise distinct and
+;; the first free slot on the new probe path is the right one. Growth is decided
+;; purely by count against capacity, so it fires at the same push on every run.
+(define (ty-node-dedup-grow!) : unit
+  (let
+    [old-slots : (__tl_dyn-array i64) ty-node-dedup-slots]
+    [old-capacity : i64 (array-length old-slots)]
+    [new-capacity : i64 (* old-capacity 2)]
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [base-arena : i64 node-pool-base-arena]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set base-arena))]
+    [new-slots : (__tl_dyn-array i64) (array.make-array i64 new-capacity)]
+    [head-arena : i64 (arena.tl_arena_current)]
+    [_restore-arena : unit
+      (node-pool-restore-arena-after-base-alloc!
+        prev-arena
+        base-arena
+        head-arena)]
+    [mask : i64 (- new-capacity 1)]
+    [i : i64 0]
+    (begin
+      (set! node-pool-base-arena head-arena)
+      (if (= head-arena base-arena)
+        unit
+        ;; The table allocation grew the base arena shared by both pools; the
+        ;; expression half publishes that mutable head to driver retirement.
+        (ast-node-pool-active-context-capture-expr!))
+      (while (< i old-capacity)
+        (let
+          [slot : i64 (array-ref old-slots i)]
+          (begin
+            (if (= slot 0)
+              unit
+              (let
+                [idx : i64
+                  (ty-node-dedup-slot-index
+                    (ty-node-hash-value (ty-node-get (- slot 1)))
+                    mask)]
+                (begin
+                  (while (not (= (array-ref new-slots idx) 0))
+                    (set! idx (bit-and (+ idx 1) mask)))
+                  (array-set! new-slots idx slot))))
+            (set! i (+ i 1)))))
+      (set! ty-node-dedup-slots new-slots)
+      (set! ty-node-dedup-capacity new-capacity)
+      ;; The pool state carries the slots array by reference, so the context
+      ;; cell has to learn about the replacement here: the push that follows may
+      ;; resolve to an existing id and never reach `ty-node-push-raw`'s capture.
+      (ast-node-pool-active-context-capture-type!))))
+
+;; Probe the dedup table for `node`, appending it only on a miss. Split out of
+;; `ty-node-push-active` so the loaded-table check there stays a single compare
+;; on the hot path.
+(define (ty-node-dedup-probe-push [node : AstType]) : i64
+  (let
+    [mask : i64 (- ty-node-dedup-capacity 1)]
+    [idx : i64 (ty-node-dedup-slot-index (ty-node-hash-value node) mask)]
+    [result : i64 (- 0 1)]
+    (begin
+      (while (< result 0)
+        (let
+          [slot : i64 (array-ref ty-node-dedup-slots idx)]
+          (if (= slot 0)
+            (let
+              [id : i64 (ty-node-push-raw node)]
+              (begin
+                (array-set! ty-node-dedup-slots idx (+ id 1))
+                (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
+                (set! result id)))
+            (if (ty-node-shallow-eq? (- slot 1) node)
+              (set! result (- slot 1))
+              (set! idx (bit-and (+ idx 1) mask))))))
+      result)))
+
+;; Half load reached: grow and keep deduplicating. Only a table already at the
+;; 2^24-slot bound falls back to a plain append.
+(define (ty-node-push-loaded [node : AstType]) : i64
+  (if (>= ty-node-dedup-capacity ty-node-dedup-max-capacity)
+    (ty-node-push-raw node)
+    (begin
+      (ty-node-dedup-grow!)
+      (ty-node-dedup-probe-push node))))
+
 ;: Append `node` to the active pool, returning an existing id when an identical node
 ;: was already pushed. The table is probed before appending so the common
 ;: duplicate path does not churn the pool count or temporarily force growth.
 (define (ty-node-push-active [node : AstType]) : i64
   (if (>= (* ty-node-dedup-count 2) ty-node-dedup-capacity)
-    (ty-node-push-raw node)
-    (let
-      [mask : i64 (- ty-node-dedup-capacity 1)]
-      [idx : i64 (bit-and (ty-node-hash-value node) mask)]
-      [result : i64 (- 0 1)]
-      (begin
-        (while (< result 0)
-          (let
-            [slot : i64 (array-ref ty-node-dedup-slots idx)]
-            (if (= slot 0)
-              (let
-                [id : i64 (ty-node-push-raw node)]
-                (begin
-                  (array-set! ty-node-dedup-slots idx (+ id 1))
-                  (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
-                  (set! result id)))
-              (if (ty-node-shallow-eq? (- slot 1) node)
-                (set! result (- slot 1))
-                (set! idx (bit-and (+ idx 1) mask))))))
-        result))))
+    (ty-node-push-loaded node)
+    (ty-node-dedup-probe-push node)))
 
 ;: Append `node` to the selected type pool.
 (define (ty-node-push [node : AstType]) : i64

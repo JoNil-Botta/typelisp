@@ -367,7 +367,10 @@
   (Ptr i64)
   (MutPtr i64)
   ;; Static callable-parameter effect. Legal only inside Func argument lists.
-  (Consume i64))
+  (Consume i64)
+  ;; Borrowed, unsized contiguous view. Source syntax and runtime semantics are
+  ;; intentionally added in a later packet; this node is kept internal here.
+  (Slice i64))
 
 (defstruct AstTypeList
   (slots (__tl_dyn-array i64))
@@ -1428,6 +1431,7 @@
         name
         (box (ty-node-persist-lifetimes (box-get lifetimes))))]
     [(AstType.Consume inner) (AstType.Consume inner)]
+    [(AstType.Slice elem) (AstType.Slice elem)]
     [_ node]))
 
 ;; State-owned type node pools mirror the global type-node backing store while
@@ -1972,7 +1976,8 @@
       (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 32 name))]
     [(AstType.Ptr inner) (hash.combine 33 inner)]
     [(AstType.MutPtr inner) (hash.combine 34 inner)]
-    [(AstType.Consume inner) (hash.combine 36 inner)]))
+    [(AstType.Consume inner) (hash.combine 36 inner)]
+    [(AstType.Slice elem) (hash.combine 37 elem)]))
 
 (define (ty-lifetime-list-eq-at?
   [a : (& a AstLifetimeList)]
@@ -2178,6 +2183,10 @@
     [(AstType.Consume a-inner)
       (match b
         [(AstType.Consume b-inner) (= a-inner b-inner)]
+        [_ false])]
+    [(AstType.Slice a-elem)
+      (match b
+        [(AstType.Slice b-elem) (= a-elem b-elem)]
         [_ false])]))
 
 (define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
@@ -3381,6 +3390,9 @@
 (define (ast-ty-dyn-array [elem : AstType]) : AstType
   (AstType.DynArray (ast-node-pool-reader-type-push elem)))
 
+(define (ast-ty-slice [elem : AstType]) : AstType
+  (AstType.Slice (ast-node-pool-reader-type-push elem)))
+
 (define (ast-ty-box [elem : AstType]) : AstType
   (AstType.Box (ast-node-pool-reader-type-push elem)))
 
@@ -3436,6 +3448,9 @@
   [pools : AstNodePoolContext]
   [elem : AstType]) : AstType
   (AstType.DynArray (ast-node-pool-context-type-push pools elem)))
+
+(define (ast-ty-slice-with-pools [pools : AstNodePoolContext] [elem : AstType]) : AstType
+  (AstType.Slice (ast-node-pool-context-type-push pools elem)))
 
 (define (ast-ty-box-with-pools [pools : AstNodePoolContext] [elem : AstType]) : AstType
   (AstType.Box (ast-node-pool-context-type-push pools elem)))
@@ -7075,7 +7090,9 @@
     [(AstType.MutPtr elem)
       (AstType.MutPtr (ast-compaction-remap-type-id remap elem))]
     [(AstType.Consume inner)
-      (AstType.Consume (ast-compaction-remap-type-id remap inner))]))
+      (AstType.Consume (ast-compaction-remap-type-id remap inner))]
+    [(AstType.Slice elem)
+      (AstType.Slice (ast-compaction-remap-type-id remap elem))]))
 
 (define (ast-compaction-remap-type-id
   [remap : AstProgramCompactionRemap]
@@ -8320,7 +8337,8 @@
     [(AstType.EnumArgs _ _) 32]
     [(AstType.StructArgs _ _) 33]
     [(AstType.VarArgs _ _) 34]
-    [(AstType.Consume _) 36]))
+    [(AstType.Consume _) 36]
+    [(AstType.Slice _) 37]))
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr
@@ -8709,6 +8727,13 @@
           (ast-type-eq?
             (ast-node-pool-reader-type-get a-inner)
             (ast-node-pool-reader-type-get b-inner))]
+        [_ false])]
+    [(AstType.Slice a-elem)
+      (match b
+        [(AstType.Slice b-elem)
+          (ast-type-eq?
+            (ast-node-pool-reader-type-get a-elem)
+            (ast-node-pool-reader-type-get b-elem))]
         [_ false])]))
 
 (define (ast-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool
@@ -8986,6 +9011,14 @@
             seg-bases
             (ast-type-segment-bases-get seg-bases a-inner)
             (ast-type-segment-bases-get seg-bases b-inner))]
+        [_ false])]
+    [(AstType.Slice a-elem)
+      (match b
+        [(AstType.Slice b-elem)
+          (ast-type-eq-with-seg-bases?
+            seg-bases
+            (ast-type-segment-bases-get seg-bases a-elem)
+            (ast-type-segment-bases-get seg-bases b-elem))]
         [_ false])]))
 
 (define (ast-extern-link-input-eq?
@@ -9327,6 +9360,16 @@
       [second-bytes-len : i64 (ty-node-pool-len)]
       [str-ty : i64 (ty-node-push (AstType.Str))]
       [str-len : i64 (ty-node-pool-len)]
+      [first-slice : i64 (ty-node-push (ast-ty-slice (AstType.I64)))]
+      [slice-len : i64 (ty-node-pool-len)]
+      [second-slice : i64 (ty-node-push (ast-ty-slice (AstType.I64)))]
+      [second-slice-len : i64 (ty-node-pool-len)]
+      [first-dyn-array : i64 (ty-node-push (ast-ty-dyn-array (AstType.I64)))]
+      [dyn-array-len : i64 (ty-node-pool-len)]
+      [nested-slice : i64
+        (ty-node-push (ast-ty-slice (ast-ty-slice (AstType.I64))))]
+      [nested-slice-again : i64
+        (ty-node-push (ast-ty-slice (ast-ty-slice (AstType.I64))))]
       [ok : bool
         (and
           (= first-i64 second-i64)
@@ -9339,7 +9382,18 @@
           (= bytes-len 3)
           (= second-bytes-len 3)
           (not (= first-bytes str-ty))
-          (= str-len 4))]
+          (= str-len 4)
+          (= first-slice second-slice)
+          (= slice-len 5)
+          (= second-slice-len 5)
+          (not (= first-slice first-dyn-array))
+          (= dyn-array-len 6)
+          (= nested-slice nested-slice-again)
+          (= (ast-type-tag (ty-node-get first-slice)) 37)
+          (not
+            (=
+              (ty-node-hash-value (ty-node-get first-slice))
+              (ty-node-hash-value (ty-node-get first-dyn-array)))))]
       (begin
         (ty-node-pool-reset!)
         ok))))

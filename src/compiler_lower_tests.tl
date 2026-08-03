@@ -1,5 +1,6 @@
 ;; compiler_lower_tests.tl - Selfhost lowering fixtures split from production.
 (import compiler_lower)
+(import stdlib.array)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_builtin_ids as cbi)
@@ -12,6 +13,7 @@
 (import compiler_symbols)
 (import compiler_typecheck_api)
 (import compiler_load)
+(import compiler_ctfe)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
 (import stdlib.string)
@@ -729,6 +731,51 @@
   "(define (get [a : (Array i64 3)] [i : i64]) : i64 (array-ref a i))
 (define (put [a : (Array i64 3) (:consume)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
+
+;; A direct fixed-array borrow must be packed into the two-word Slice ABI at a
+;; typed call boundary.  The forwarding call receives an already-Slice value,
+;; so it must remain a direct pass-through with no second Pack.
+(define (compiler-lower-slice-whole-array-pack-source) : String
+  "(define (slice-id [s : (& s (Slice i64))]) : (& s (Slice i64))
+  s)
+(define (slice-forward [s : (& s (Slice i64))]) : i64
+  (length (slice-id s)))
+(define (slice-from-array-ref [a : (& a (Array i64 3))]) : i64
+  (length (slice-id a)))
+(define (main) : i64
+  (let
+    [items : (Array i64 3) (array 10 20 30)]
+    (+
+      (slice-forward (slice-id (& items)))
+      (+ (slice-from-array-ref (& items)) 39))))")
+
+(define (compiler-lower-slice-whole-array-pack-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-slice-whole-array-pack-source))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (let
+        [pools : compiler_ast_types.AstNodePoolContext
+          (compiler_ast_types.ast-node-pool-context-capture-active)]
+        (match program
+          [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+            (and
+              (= (lower-test-function-pack-count functions "main") 1)
+              (=
+                (lower-test-function-pack-shape-count functions "main" pools)
+                1)
+              (=
+                (lower-test-function-pack-count
+                  functions
+                  "slice-from-array-ref")
+                1)
+              (=
+                (lower-test-function-pack-shape-count
+                  functions
+                  "slice-from-array-ref"
+                  pools)
+                1)
+              (= (lower-test-function-pack-count functions "slice-forward") 0))]))]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-mut-ref-array-access-source) : String
   "(define (len [a : (& a (Array i64))]) : i64 (array-length a))
@@ -2468,6 +2515,54 @@
     [(compiler_ir_types.CompilerIrInstr.Return _) 1]
     [_ 0]))
 
+(define (lower-test-shared-slice-ref-type?
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [ty : compiler_ast_types.AstType]) : bool
+  (match ty
+    [(compiler_ast_types.AstType.Ref _ referent-id)
+      (match (compiler_ast_types.ast-node-pool-context-type-get
+        pools
+        referent-id)
+        [(compiler_ast_types.AstType.Slice elem-id)
+          (match (compiler_ast_types.ast-node-pool-context-type-get
+            pools
+            elem-id)
+            [(compiler_ast_types.AstType.I64) true]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+(define (lower-test-pack-values-shape?
+  [values : compiler_ir_types.CompilerIrValueList]) : bool
+  (if (= (compiler_ir_types.compiler-ir-value-list-count values) 2)
+    (let
+      [slots : (Array compiler_ir_types.CompilerIrValue)
+        (array.make-array compiler_ir_types.CompilerIrValue 2)]
+      (begin
+        (compiler_ir_types.compiler-ir-value-list-fill-array values slots 0)
+        (match (array-ref slots 1)
+          [(compiler_ir_types.CompilerIrValue.I64 length) (= length 3)]
+          [_ false])))
+    false))
+
+(define (lower-test-instr-pack-count
+  [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Pack _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instr-pack-shape-count
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [pools : compiler_ast_types.AstNodePoolContext]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Pack _ values ty)
+      (if (and
+        (lower-test-pack-values-shape? values)
+        (lower-test-shared-slice-ref-type? pools ty))
+        1
+        0)]
+    [_ 0]))
+
 (define (lower-test-instr-call-count
   [instr : compiler_ir_types.CompilerIrInstr]
   [name : String]) : i64
@@ -3118,6 +3213,43 @@
           (set!
             acc
             (+ acc (lower-test-instr-return-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-pack-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array compiler_ir_types.CompilerIrInstr)
+      (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-pack-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-pack-shape-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [pools : compiler_ast_types.AstNodePoolContext]) : i64
+  (let
+    [slots : (Array compiler_ir_types.CompilerIrInstr)
+      (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-pack-shape-count (array-ref slots index) pools)))
           (set! index (+ index 1))))
       acc)))
 
@@ -3818,6 +3950,36 @@
       (lower-test-blocks-return-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
 
+(define (lower-test-blocks-pack-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (lower-test-instr-seq-pack-count instrs)
+            (lower-test-blocks-pack-count (box-get rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (lower-test-blocks-pack-count
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (lower-test-blocks-pack-shape-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [pools : compiler_ast_types.AstNodePoolContext]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (lower-test-instr-seq-pack-shape-count instrs pools)
+            (lower-test-blocks-pack-shape-count (box-get rest) pools))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (lower-test-blocks-pack-shape-count
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        pools)]))
+
 (define (lower-test-blocks-call-count
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [name : String]) : i64
@@ -4419,6 +4581,40 @@
       (lower-test-function-return-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
         name)]))
+
+(define (lower-test-function-pack-count
+  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
+          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
+            (lower-test-blocks-pack-count blocks)
+            (lower-test-function-pack-count (box-get rest) name))])]
+    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
+      (lower-test-function-pack-count
+        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
+        name)]))
+
+(define (lower-test-function-pack-shape-count
+  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [name : String]
+  [pools : compiler_ast_types.AstNodePoolContext]) : i64
+  (match funcs
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
+          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
+            (lower-test-blocks-pack-shape-count blocks pools)
+            (lower-test-function-pack-shape-count (box-get rest) name pools))])]
+    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
+      (lower-test-function-pack-shape-count
+        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
+        name
+        pools)]))
 
 (define (lower-test-functions-call-count
   [funcs : compiler_ir_types.CompilerIrFunctionList]
@@ -12642,11 +12838,119 @@
     (compiler-lower-scalar-shift-count-types-ok?)
     "scalar lowering preserves independent u8/u64 shift count payloads"))
 
+;; Structural borrowed-slice references use two integer words end-to-end while
+;; ordinary references retain their one-word pointer representation.  Build the
+;; types directly in a private pool so this test does not depend on public Slice
+;; syntax (which is intentionally opened in a later packet).
+(define (compiler-lower-slice-reference-layout-ok?) : bool
+  (let
+    [active-before : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 16)]
+    [elem-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.I64))]
+    [slice-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.Slice elem-id))]
+    [region-slice-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.Region 7 slice-id))]
+    [nested-ref-element-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.Ref 1 elem-id))]
+    [nested-slice-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.Slice nested-ref-element-id))]
+    [ordinary-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.I64))]
+    [ref : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Ref 1 slice-id)]
+    [mut-ref : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.MutRef 1 region-slice-id)]
+    [ordinary-ref : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Ref 1 ordinary-id)]
+    [nested-ref : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Ref 1 nested-slice-id)]
+    [bare-slice : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Slice elem-id)]
+    [ctx : compiler_typecheck_core.TcContext
+      (compiler_typecheck_core.tc-context-new
+        (compiler_ast_types.ast-program (compiler_ast_types.ast-decl-list-new))
+        (compiler_symbols.compiler-symbols-empty)
+        (compiler_symbols.compiler-registries-empty)
+        ""
+        0
+        pools)]
+    [layouts : compiler_ctfe.CtfeLayoutInfoList
+      (compiler_ctfe.ctfe-layout-info-list-empty)]
+    [ok : bool false]
+    (begin
+      (compiler_ast_types.ast-node-pool-context-install! pools)
+      (set!
+        ok
+        (and
+          (= (compiler_lower.lower-type-size ctx ref) 16)
+          (= (compiler_lower.lower-type-align ctx ref) 8)
+          (compiler_lower.lower-type-register-resident? ctx ref)
+          (= (compiler_lower.lower-type-register-words ctx ref) 2)
+          (compiler_typecheck_core.tc-type-eq
+            (compiler_lower.lower-register-word-type ctx ref 0)
+            (compiler_ast_types.AstType.U64))
+          (compiler_typecheck_core.tc-type-eq
+            (compiler_lower.lower-register-word-type ctx ref 1)
+            (compiler_ast_types.AstType.I64))
+          (= (compiler_lower.lower-type-size ctx mut-ref) 16)
+          (= (compiler_lower.lower-type-align ctx mut-ref) 8)
+          (compiler_lower.lower-type-register-resident? ctx mut-ref)
+          (= (compiler_lower.lower-type-register-words ctx mut-ref) 2)
+          (= (compiler_lower.lower-type-size ctx ordinary-ref) 8)
+          (not (compiler_lower.lower-type-register-resident? ctx ordinary-ref))
+          (= (compiler_lower.lower-type-register-words ctx ordinary-ref) 0)
+          (= (compiler_lower.lower-type-size ctx bare-slice) 0)
+          (not (compiler_lower.lower-type-register-resident? ctx bare-slice))
+          (compiler_lower.lower-supported-reference-type? ctx ref)
+          (compiler_lower.lower-supported-reference-type? ctx mut-ref)
+          (not (compiler_lower.lower-supported-reference-type? ctx bare-slice))
+          (not (compiler_lower.lower-supported-reference-type? ctx nested-ref))
+          (= (compiler_ctfe.ctfe-type-size-with-pools pools layouts ref) 16)
+          (= (compiler_ctfe.ctfe-type-align-with-pools pools layouts mut-ref) 8)
+          (=
+            (compiler_ctfe.ctfe-type-size-with-pools pools layouts ordinary-ref)
+            8)
+          (=
+            (compiler_ctfe.ctfe-type-size-with-pools pools layouts bare-slice)
+            -1)
+          (match (compiler_typecheck_core.tc-inline-aggregate-type-layout
+            ctx
+            ref)
+            [(compiler_typecheck_core.ResultTcLayoutInfo.Ok info)
+              (and
+                (= (compiler_typecheck_core.tc-layout-info-size info) 16)
+                (= (compiler_typecheck_core.tc-layout-info-align info) 8))]
+            [(compiler_typecheck_core.ResultTcLayoutInfo.Err _) false])))
+      (compiler_ast_types.ast-node-pool-context-install! active-before)
+      ok)))
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
     (begin
       (if (compiler-lower-name-env-dense-snapshots-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-slice-reference-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-slice-whole-array-pack-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-boxed-helper-lists-ok?)

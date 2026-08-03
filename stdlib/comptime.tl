@@ -126,7 +126,8 @@
   (Tuple TypeInfoList)
   (Struct String TypeFieldList)
   (Enum String TypeVariantList)
-  (Opaque String))
+  (Opaque String)
+  (Slice (Box TypeInfo)))
 
 ;: Build a bool literal expression during macro CTFE.
 (define (expr-bool [value : bool]) : Expr

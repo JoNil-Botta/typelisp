@@ -720,6 +720,24 @@
   (Ok ast.AstType)
   (Err String))
 
+;; Core Slice subview calls are recognized as a small call-local operation,
+;; rather than an additional AST node.  Keeping the classifier in one place
+;; lets typechecking, move checking, and borrow checking agree on both
+;; spellings and on the ordinary-name shadowing rule.
+(defenum TcSliceViewCallKind
+  (None)
+  (Shared)
+  (Mutable))
+
+;; Source shape accepted by the Slice subview builtins.  `Direct` is a genuine
+;; Array/DynArray place; `Borrow` carries the source reference lifetime,
+;; mutability, and its immediate referent.  Bare Slice values never appear in
+;; this enum because they have no owning/value representation.
+(defenum TcSliceViewSourceInfo
+  (Invalid)
+  (Direct ast.AstType)
+  (Borrow i64 bool ast.AstType))
+
 (define tc-poison-type-name-id : i64
   -1000000007)
 (define tc-poison-observed : bool
@@ -11003,6 +11021,8 @@
         ")")]
     [(ast.AstType.DynArray elem)
       (str_cat.str-cat "(Array " (tc-type-render (ast.ty-node-get elem)) ")")]
+    [(ast.AstType.Slice elem)
+      (str_cat.str-cat "(Slice " (tc-type-render (ast.ty-node-get elem)) ")")]
     [(ast.AstType.Box elem)
       (str_cat.str-cat "(Box " (tc-type-render (ast.ty-node-get elem)) ")")]
     [(ast.AstType.Ptr elem)
@@ -12054,7 +12074,12 @@
                 (tc-stdlib-variant-spec-cons
                   cbi.compiler-builtin-id-comptime-type-info-opaque-variant
                   (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
-                  (tc-stdlib-variant-spec-nil))))))))))
+                  (tc-stdlib-variant-spec-cons
+                    cbi.compiler-builtin-id-comptime-type-info-slice-variant
+                    (tc-stdlib-type-spec-list1
+                      (TcStdlibTypeSpec.BoxName
+                        cbi.compiler-builtin-id-fix-TypeInfo))
+                    (tc-stdlib-variant-spec-nil)))))))))))
 
 (define (tc-stdlib-comptime-surface-step
   [current : ResultTcUnit]
@@ -14835,6 +14860,8 @@
       (tc-type-contains-region-tag? (ast.ty-node-get elem))]
     [(ast.AstType.DynArray elem)
       (tc-type-contains-region-tag? (ast.ty-node-get elem))]
+    [(ast.AstType.Slice elem)
+      (tc-type-contains-region-tag? (ast.ty-node-get elem))]
     [(ast.AstType.Box elem)
       (tc-type-contains-region-tag? (ast.ty-node-get elem))]
     [(ast.AstType.Ptr elem)
@@ -14877,6 +14904,8 @@
         (ast.ast-ty-array (tc-type-without-regions (ast.ty-node-get elem)) len)]
       [(ast.AstType.DynArray elem)
         (ast.ast-ty-dyn-array (tc-type-without-regions (ast.ty-node-get elem)))]
+      [(ast.AstType.Slice elem)
+        (ast.ast-ty-slice (tc-type-without-regions (ast.ty-node-get elem)))]
       [(ast.AstType.Box elem)
         (ast.ast-ty-box (tc-type-without-regions (ast.ty-node-get elem)))]
       [(ast.AstType.Ptr elem)
@@ -14930,6 +14959,8 @@
       (tc-type-contains-region (ast.ty-node-get elem) region)]
     [(ast.AstType.DynArray elem)
       (tc-type-contains-region (ast.ty-node-get elem) region)]
+    [(ast.AstType.Slice elem)
+      (tc-type-contains-region (ast.ty-node-get elem) region)]
     [(ast.AstType.Box elem)
       (tc-type-contains-region (ast.ty-node-get elem) region)]
     [(ast.AstType.Ptr elem)
@@ -14981,6 +15012,8 @@
     [(ast.AstType.Array elem _)
       (tc-type-contains-any-region (ast.ty-node-get elem))]
     [(ast.AstType.DynArray elem)
+      (tc-type-contains-any-region (ast.ty-node-get elem))]
+    [(ast.AstType.Slice elem)
       (tc-type-contains-any-region (ast.ty-node-get elem))]
     [(ast.AstType.Box elem)
       (tc-type-contains-any-region (ast.ty-node-get elem))]
@@ -15039,6 +15072,8 @@
       (tc-type-contains-reference? (ast.ty-node-get elem))]
     [(ast.AstType.DynArray elem)
       (tc-type-contains-reference? (ast.ty-node-get elem))]
+    [(ast.AstType.Slice elem)
+      (tc-type-contains-reference? (ast.ty-node-get elem))]
     [(ast.AstType.Box elem)
       (tc-type-contains-reference? (ast.ty-node-get elem))]
     [(ast.AstType.Ptr elem)
@@ -15068,6 +15103,8 @@
     [(ast.AstType.Array elem _)
       (tc-type-contains-mut-reference? (ast.ty-node-get elem))]
     [(ast.AstType.DynArray elem)
+      (tc-type-contains-mut-reference? (ast.ty-node-get elem))]
+    [(ast.AstType.Slice elem)
       (tc-type-contains-mut-reference? (ast.ty-node-get elem))]
     [(ast.AstType.Box elem)
       (tc-type-contains-mut-reference? (ast.ty-node-get elem))]
@@ -15166,6 +15203,11 @@
         (ast.ast-type-segment-bases-get type-bases elem)
         out)]
     [(ast.AstType.DynArray elem)
+      (tc-signature-input-lifetimes-into
+        type-bases
+        (ast.ast-type-segment-bases-get type-bases elem)
+        out)]
+    [(ast.AstType.Slice elem)
       (tc-signature-input-lifetimes-into
         type-bases
         (ast.ast-type-segment-bases-get type-bases elem)
@@ -15378,6 +15420,17 @@
               (ast.ast-ty-dyn-array (struct-get inner ty))
               (struct-get inner next-index)))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(ast.AstType.Slice elem)
+      (match (tc-elide-input-type
+        type-bases
+        (ast.ast-type-segment-bases-get type-bases elem)
+        index)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType
+              (ast.ast-ty-slice (struct-get inner ty))
+              (struct-get inner next-index)))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Box elem)
       (match (tc-elide-input-type
         type-bases
@@ -15497,6 +15550,15 @@
         [(ResultTcElidedType.Ok inner)
           (ResultTcElidedType.Ok
             (TcElidedType (ast.ast-ty-dyn-array (struct-get inner ty)) 0))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(ast.AstType.Slice elem)
+      (match (tc-elide-output-type
+        type-bases
+        (ast.ast-type-segment-bases-get type-bases elem)
+        lifetime)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType (ast.ast-ty-slice (struct-get inner ty)) 0))]
         [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
     [(ast.AstType.Box elem)
       (match (tc-elide-output-type
@@ -15701,6 +15763,8 @@
       (tc-type-collect-reference-lifetimes-into (ast.ty-node-get elem) out)]
     [(ast.AstType.DynArray elem)
       (tc-type-collect-reference-lifetimes-into (ast.ty-node-get elem) out)]
+    [(ast.AstType.Slice elem)
+      (tc-type-collect-reference-lifetimes-into (ast.ty-node-get elem) out)]
     [(ast.AstType.Box elem)
       (tc-type-collect-reference-lifetimes-into (ast.ty-node-get elem) out)]
     [(ast.AstType.Ptr elem)
@@ -15808,6 +15872,8 @@
       (tc-type-collect-regions-into (ast.ty-node-get elem) out)]
     [(ast.AstType.DynArray elem)
       (tc-type-collect-regions-into (ast.ty-node-get elem) out)]
+    [(ast.AstType.Slice elem)
+      (tc-type-collect-regions-into (ast.ty-node-get elem) out)]
     [(ast.AstType.Box elem)
       (tc-type-collect-regions-into (ast.ty-node-get elem) out)]
     [(ast.AstType.Ptr elem)
@@ -15882,6 +15948,7 @@
   (match (tc-type-strip-region ty)
     [(ast.AstType.String) true]
     [(ast.AstType.DynArray _) true]
+    [(ast.AstType.Slice _) false]
     [(ast.AstType.Box _) true]
     [(ast.AstType.Tuple _) true]
     [(ast.AstType.Struct _) true]
@@ -16146,6 +16213,7 @@
     [(ast.AstType.Tuple elems) (tc-type-list-needs-resolution? (box-get elems))]
     [(ast.AstType.Array elem _) (tc-type-needs-resolution-id? elem)]
     [(ast.AstType.DynArray elem) (tc-type-needs-resolution-id? elem)]
+    [(ast.AstType.Slice elem) (tc-type-needs-resolution-id? elem)]
     [(ast.AstType.Box elem) (tc-type-needs-resolution-id? elem)]
     [(ast.AstType.Ptr elem) (tc-type-needs-resolution-id? elem)]
     [(ast.AstType.MutPtr elem) (tc-type-needs-resolution-id? elem)]
@@ -19706,6 +19774,8 @@
         (ast.ast-ty-array (tc-resolve-type ctx (ast.ty-node-get elem)) len)]
       [(ast.AstType.DynArray elem)
         (ast.ast-ty-dyn-array (tc-resolve-type ctx (ast.ty-node-get elem)))]
+      [(ast.AstType.Slice elem)
+        (ast.ast-ty-slice (tc-resolve-type ctx (ast.ty-node-get elem)))]
       [(ast.AstType.Box elem)
         (ast.ast-ty-box (tc-resolve-type ctx (ast.ty-node-get elem)))]
       [(ast.AstType.Ptr elem)
@@ -19878,6 +19948,9 @@
         len)]
     [(ast.AstType.DynArray elem)
       (ast.ast-ty-dyn-array
+        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem)))]
+    [(ast.AstType.Slice elem)
+      (ast.ast-ty-slice
         (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem)))]
     [(ast.AstType.Box elem)
       (ast.ast-ty-box
@@ -20272,6 +20345,9 @@
               (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
             [(ast.AstType.DynArray elem)
               (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
+            [(ast.AstType.Slice _)
+              (ResultTcUnit.Err
+                "typecheck: bare Slice type is unsized; borrow it")]
             [(ast.AstType.Box elem)
               (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
             [(ast.AstType.Ptr elem)
@@ -20284,6 +20360,12 @@
                 (match (tc-resolve-type ctx (ast.ty-node-get inner))
                   [(ast.AstType.Str) ResultTcUnit.Ok]
                   [(ast.AstType.Bytes) ResultTcUnit.Ok]
+                  ;; Slice has no owning/value representation.  It is legal
+                  ;; only as the immediate referent of a borrow; validate the
+                  ;; element recursively so nested/unsized elements remain
+                  ;; rejected by the normal source policy.
+                  [(ast.AstType.Slice elem)
+                    (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
                   [_ (tc-source-type-policy-ok ctx (ast.ty-node-get inner))]))]
             [(ast.AstType.MutRef lifetime inner)
               (if (tc-elided-lifetime? lifetime)
@@ -20292,6 +20374,8 @@
                   [(ast.AstType.Str)
                     (ResultTcUnit.Err (tc-source-str-mut-ref-policy-message))]
                   [(ast.AstType.Bytes) ResultTcUnit.Ok]
+                  [(ast.AstType.Slice elem)
+                    (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
                   [_ (tc-source-type-policy-ok ctx (ast.ty-node-get inner))]))]
             [(ast.AstType.Region _ inner)
               (tc-source-type-policy-ok ctx (ast.ty-node-get inner))]
@@ -22350,6 +22434,11 @@
         [(ast.AstType.DynArray b-elem)
           (tc-type-eq (ast.ty-node-get a-elem) (ast.ty-node-get b-elem))]
         [_ false])]
+    [(ast.AstType.Slice a-elem)
+      (match b
+        [(ast.AstType.Slice b-elem)
+          (tc-type-eq (ast.ty-node-get a-elem) (ast.ty-node-get b-elem))]
+        [_ false])]
     [(ast.AstType.Box a-elem)
       (match b
         [(ast.AstType.Box b-elem)
@@ -22797,6 +22886,7 @@
     [(ast.AstType.Tuple _) (TcMoveKind.MoveOnly)]
     [(ast.AstType.Array _ _) (TcMoveKind.MoveOnly)]
     [(ast.AstType.DynArray _) (TcMoveKind.MoveOnly)]
+    [(ast.AstType.Slice _) (TcMoveKind.MoveOnly)]
     [(ast.AstType.Box _) (TcMoveKind.MoveOnly)]
     [(ast.AstType.MutRef _ _) (TcMoveKind.MoveOnly)]
     [(ast.AstType.Enum _) (TcMoveKind.MoveOnly)]
@@ -29983,6 +30073,8 @@
     [(ast.AstType.DynArray elem)
       (ast.ast-ty-dyn-array
         (tc-lifetime-subst-type subst (ast.ty-node-get elem)))]
+    [(ast.AstType.Slice elem)
+      (ast.ast-ty-slice (tc-lifetime-subst-type subst (ast.ty-node-get elem)))]
     [(ast.AstType.Box elem)
       (ast.ast-ty-box (tc-lifetime-subst-type subst (ast.ty-node-get elem)))]
     [(ast.AstType.Ptr elem)
@@ -30079,12 +30171,44 @@
               formal-lifetime
               actual-lifetime)
               [(ResultTcLifetimeSubst.Ok next-subst)
-                (tc-infer-lifetime-subst-from-type
-                  ctx
-                  params
-                  next-subst
-                  (ast.ty-node-get formal-inner)
-                  (ast.ty-node-get actual-inner))]
+                (let
+                  [formal-inner-ty : ast.AstType
+                    (tc-type-strip-region
+                      (tc-resolve-type
+                        ctx
+                        (tc-context-type-get ctx formal-inner)))]
+                  [actual-inner-ty : ast.AstType
+                    (tc-type-strip-region
+                      (tc-resolve-type
+                        ctx
+                        (tc-context-type-get ctx actual-inner)))]
+                  (match formal-inner-ty
+                    [(ast.AstType.Slice formal-elem)
+                      (match actual-inner-ty
+                        [(ast.AstType.Slice actual-elem)
+                          (tc-infer-lifetime-subst-from-type
+                            ctx
+                            params
+                            next-subst
+                            (ast.ty-node-get formal-elem)
+                            (ast.ty-node-get actual-elem))]
+                        [(ast.AstType.Array actual-elem _)
+                          (tc-infer-lifetime-subst-from-type
+                            ctx
+                            params
+                            next-subst
+                            (ast.ty-node-get formal-elem)
+                            (ast.ty-node-get actual-elem))]
+                        [_
+                          (ResultTcLifetimeSubst.Err
+                            (tc-call-lifetime-subst-mismatch-message))])]
+                    [_
+                      (tc-infer-lifetime-subst-from-type
+                        ctx
+                        params
+                        next-subst
+                        (ast.ty-node-get formal-inner)
+                        (ast.ty-node-get actual-inner))]))]
               [(ResultTcLifetimeSubst.Err message)
                 (ResultTcLifetimeSubst.Err message)])]
           [_
@@ -30099,12 +30223,44 @@
               formal-lifetime
               actual-lifetime)
               [(ResultTcLifetimeSubst.Ok next-subst)
-                (tc-infer-lifetime-subst-from-type
-                  ctx
-                  params
-                  next-subst
-                  (ast.ty-node-get formal-inner)
-                  (ast.ty-node-get actual-inner))]
+                (let
+                  [formal-inner-ty : ast.AstType
+                    (tc-type-strip-region
+                      (tc-resolve-type
+                        ctx
+                        (tc-context-type-get ctx formal-inner)))]
+                  [actual-inner-ty : ast.AstType
+                    (tc-type-strip-region
+                      (tc-resolve-type
+                        ctx
+                        (tc-context-type-get ctx actual-inner)))]
+                  (match formal-inner-ty
+                    [(ast.AstType.Slice formal-elem)
+                      (match actual-inner-ty
+                        [(ast.AstType.Slice actual-elem)
+                          (tc-infer-lifetime-subst-from-type
+                            ctx
+                            params
+                            next-subst
+                            (ast.ty-node-get formal-elem)
+                            (ast.ty-node-get actual-elem))]
+                        [(ast.AstType.Array actual-elem _)
+                          (tc-infer-lifetime-subst-from-type
+                            ctx
+                            params
+                            next-subst
+                            (ast.ty-node-get formal-elem)
+                            (ast.ty-node-get actual-elem))]
+                        [_
+                          (ResultTcLifetimeSubst.Err
+                            (tc-call-lifetime-subst-mismatch-message))])]
+                    [_
+                      (tc-infer-lifetime-subst-from-type
+                        ctx
+                        params
+                        next-subst
+                        (ast.ty-node-get formal-inner)
+                        (ast.ty-node-get actual-inner))]))]
               [(ResultTcLifetimeSubst.Err message)
                 (ResultTcLifetimeSubst.Err message)])]
           [_
@@ -30168,6 +30324,18 @@
       [(ast.AstType.DynArray formal-elem)
         (match got
           [(ast.AstType.DynArray actual-elem)
+            (tc-infer-lifetime-subst-from-type
+              ctx
+              params
+              subst
+              (ast.ty-node-get formal-elem)
+              (ast.ty-node-get actual-elem))]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
+      [(ast.AstType.Slice formal-elem)
+        (match got
+          [(ast.AstType.Slice actual-elem)
             (tc-infer-lifetime-subst-from-type
               ctx
               params
@@ -30249,6 +30417,67 @@
         [(ast.AstType.Ref _ _) true]
         [_ false])]
     [_ false]))
+
+;; A Slice is an unsized view, so only a borrowed Slice referent is a legal
+;; call formal.  Keep this predicate deliberately shallow: Slice nested inside
+;; another owning/container type must not activate call unsizing.
+(define (tc-call-slice-ref-formal? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(ast.AstType.Ref _ inner)
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx inner)))
+        [(ast.AstType.Slice _) true]
+        [_ false])]
+    [(ast.AstType.MutRef _ inner)
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx inner)))
+        [(ast.AstType.Slice _) true]
+        [_ false])]
+    [_ false]))
+
+;; Closed, call-local whole-array unsizing.  This is intentionally separate
+;; from tc-type-compatible?/tc-match-inferred-type-for-expected: a fixed Array
+;; reference can become a Slice reference only at a typed call boundary, with
+;; exact element type and matching mutability.
+(define (tc-call-array-ref-to-slice-ref-compatible?
+  [ctx : TcContext]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : bool
+  (let
+    [want : ast.AstType (tc-type-strip-region (tc-resolve-type ctx expected))]
+    [got : ast.AstType (tc-type-strip-region (tc-resolve-type ctx actual))]
+    (match want
+      [(ast.AstType.Ref _ want-inner)
+        (match got
+          [(ast.AstType.Ref _ got-inner)
+            (match (tc-type-strip-region
+              (tc-resolve-type ctx (tc-context-type-get ctx want-inner)))
+              [(ast.AstType.Slice want-elem)
+                (match (tc-type-strip-region
+                  (tc-resolve-type ctx (tc-context-type-get ctx got-inner)))
+                  [(ast.AstType.Array got-elem _)
+                    (tc-type-eq
+                      (tc-resolve-type ctx (ast.ty-node-get want-elem))
+                      (tc-resolve-type ctx (ast.ty-node-get got-elem)))]
+                  [_ false])]
+              [_ false])]
+          [_ false])]
+      [(ast.AstType.MutRef _ want-inner)
+        (match got
+          [(ast.AstType.MutRef _ got-inner)
+            (match (tc-type-strip-region
+              (tc-resolve-type ctx (tc-context-type-get ctx want-inner)))
+              [(ast.AstType.Slice want-elem)
+                (match (tc-type-strip-region
+                  (tc-resolve-type ctx (tc-context-type-get ctx got-inner)))
+                  [(ast.AstType.Array got-elem _)
+                    (tc-type-eq
+                      (tc-resolve-type ctx (ast.ty-node-get want-elem))
+                      (tc-resolve-type ctx (ast.ty-node-get got-elem)))]
+                  [_ false])]
+              [_ false])]
+          [_ false])]
+      [_ false])))
 
 (define (tc-call-mutable-ref-formal? [ctx : TcContext] [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -30409,33 +30638,37 @@
   [env : TcTypeEnv]
   [arg : ast.AstExpr]
   [want : ast.AstType]) : ResultTcType
-  (if (tc-call-immutable-ref-formal? ctx want)
-    (match (ast.ast-expr-unspan arg)
-      [(ast.AstExpr.Var name)
-        (if (tc-dotted-local-field-name-id? env name)
+  ;; Slice formals require an already-borrowed argument.  Do not run the
+  ;; ordinary immutable-reference auto-borrow path for them.
+  (if (tc-call-slice-ref-formal? ctx want)
+    (tc-call-arg-expr-type ctx env arg)
+    (if (tc-call-immutable-ref-formal? ctx want)
+      (match (ast.ast-expr-unspan arg)
+        [(ast.AstExpr.Var name)
+          (if (tc-dotted-local-field-name-id? env name)
+            (match (tc-call-arg-expr-type ctx env arg)
+              [(ResultTcType.Ok got)
+                (if (tc-call-actual-immutable-reference? ctx got)
+                  (ResultTcType.Ok got)
+                  (tc-call-auto-borrow-type ctx env arg))]
+              [(ResultTcType.Err message) (ResultTcType.Err message)])
+            (match (tc-lookup-visible-id ctx env name)
+              [(ResultTcType.Ok got)
+                (tc-call-effective-var-arg-type ctx name got)]
+              [(ResultTcType.Err message) (ResultTcType.Err message)]))]
+        [_
           (match (tc-call-arg-expr-type ctx env arg)
             [(ResultTcType.Ok got)
               (if (tc-call-actual-immutable-reference? ctx got)
                 (ResultTcType.Ok got)
-                (tc-call-auto-borrow-type ctx env arg))]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])
-          (match (tc-lookup-visible-id ctx env name)
-            [(ResultTcType.Ok got)
-              (tc-call-effective-var-arg-type ctx name got)]
-            [(ResultTcType.Err message) (ResultTcType.Err message)]))]
-      [_
-        (match (tc-call-arg-expr-type ctx env arg)
-          [(ResultTcType.Ok got)
-            (if (tc-call-actual-immutable-reference? ctx got)
-              (ResultTcType.Ok got)
-              (match (tc-call-auto-borrow-type ctx env arg)
-                [(ResultTcType.Ok borrowed) (ResultTcType.Ok borrowed)]
-                [(ResultTcType.Err message)
-                  (if (tc-call-string-temporary-ref-compatible? ctx want got)
-                    (ResultTcType.Ok want)
-                    (ResultTcType.Err message))]))]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])])
-    (tc-expr-with-expected-or-actual-call-arg ctx env arg want)))
+                (match (tc-call-auto-borrow-type ctx env arg)
+                  [(ResultTcType.Ok borrowed) (ResultTcType.Ok borrowed)]
+                  [(ResultTcType.Err message)
+                    (if (tc-call-string-temporary-ref-compatible? ctx want got)
+                      (ResultTcType.Ok want)
+                      (ResultTcType.Err message))]))]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])])
+      (tc-expr-with-expected-or-actual-call-arg ctx env arg want))))
 
 (define (tc-call-effective-var-arg-expr
   [ctx : TcContext]
@@ -30454,12 +30687,28 @@
   [env : TcTypeEnv]
   [arg : ast.AstExpr]
   [want : ast.AstType]) : ResultTcExpr
-  (if (tc-call-immutable-ref-formal? ctx want)
-    (if (tc-call-explicit-borrow-expr? arg)
-      (ResultTcExpr.Ok arg)
-      (match (ast.ast-expr-unspan arg)
-        [(ast.AstExpr.Var name)
-          (if (tc-dotted-local-field-name-id? env name)
+  (if (tc-call-slice-ref-formal? ctx want)
+    (ResultTcExpr.Ok arg)
+    (if (tc-call-immutable-ref-formal? ctx want)
+      (if (tc-call-explicit-borrow-expr? arg)
+        (ResultTcExpr.Ok arg)
+        (match (ast.ast-expr-unspan arg)
+          [(ast.AstExpr.Var name)
+            (if (tc-dotted-local-field-name-id? env name)
+              (match (tc-call-arg-expr-type ctx env arg)
+                [(ResultTcType.Ok got)
+                  (if (tc-call-actual-immutable-reference? ctx got)
+                    (ResultTcExpr.Ok arg)
+                    (match (tc-call-auto-borrow-type ctx env arg)
+                      [(ResultTcType.Ok _)
+                        (ResultTcExpr.Ok (tc-call-auto-borrow-expr arg))]
+                      [(ResultTcType.Err message) (ResultTcExpr.Err message)]))]
+                [(ResultTcType.Err message) (ResultTcExpr.Err message)])
+              (match (tc-lookup-visible-id ctx env name)
+                [(ResultTcType.Ok got)
+                  (tc-call-effective-var-arg-expr ctx name got arg)]
+                [(ResultTcType.Err message) (ResultTcExpr.Err message)]))]
+          [_
             (match (tc-call-arg-expr-type ctx env arg)
               [(ResultTcType.Ok got)
                 (if (tc-call-actual-immutable-reference? ctx got)
@@ -30467,26 +30716,15 @@
                   (match (tc-call-auto-borrow-type ctx env arg)
                     [(ResultTcType.Ok _)
                       (ResultTcExpr.Ok (tc-call-auto-borrow-expr arg))]
-                    [(ResultTcType.Err message) (ResultTcExpr.Err message)]))]
-              [(ResultTcType.Err message) (ResultTcExpr.Err message)])
-            (match (tc-lookup-visible-id ctx env name)
-              [(ResultTcType.Ok got)
-                (tc-call-effective-var-arg-expr ctx name got arg)]
-              [(ResultTcType.Err message) (ResultTcExpr.Err message)]))]
-        [_
-          (match (tc-call-arg-expr-type ctx env arg)
-            [(ResultTcType.Ok got)
-              (if (tc-call-actual-immutable-reference? ctx got)
-                (ResultTcExpr.Ok arg)
-                (match (tc-call-auto-borrow-type ctx env arg)
-                  [(ResultTcType.Ok _)
-                    (ResultTcExpr.Ok (tc-call-auto-borrow-expr arg))]
-                  [(ResultTcType.Err message)
-                    (if (tc-call-string-temporary-ref-compatible? ctx want got)
-                      (ResultTcExpr.Ok arg)
-                      (ResultTcExpr.Err message))]))]
-            [(ResultTcType.Err message) (ResultTcExpr.Err message)])]))
-    (ResultTcExpr.Ok arg)))
+                    [(ResultTcType.Err message)
+                      (if (tc-call-string-temporary-ref-compatible?
+                        ctx
+                        want
+                        got)
+                        (ResultTcExpr.Ok arg)
+                        (ResultTcExpr.Err message))]))]
+              [(ResultTcType.Err message) (ResultTcExpr.Err message)])]))
+      (ResultTcExpr.Ok arg))))
 
 (define (tc-infer-call-lifetime-subst
   [ctx : TcContext]
@@ -32197,6 +32435,7 @@
           (tc-thread-transfer-owned-heap-reject))]
       [(ast.AstType.Str) (tc-thread-transfer-reference-reject)]
       [(ast.AstType.Bytes) (tc-thread-transfer-reference-reject)]
+      [(ast.AstType.Slice _) (tc-thread-transfer-reference-reject)]
       [(ast.AstType.DynArray elem)
         (if owner-proof
           (tc-thread-transfer-aggregate-class
@@ -32831,6 +33070,20 @@
         c-abi-args)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
+;; Call-only compatibility extension.  Keep ordinary inferred-type matching
+;; unchanged, then admit precisely the closed whole-array reference unsize.
+(define (tc-match-call-type-for-expected
+  [ctx : TcContext]
+  [actual : ast.AstType]
+  [expected : ast.AstType]) : TcInferredTypeMatch
+  (match (tc-match-inferred-type-for-expected ctx actual expected)
+    [(TcInferredTypeMatch.Compatible matched)
+      (TcInferredTypeMatch.Compatible matched)]
+    [(TcInferredTypeMatch.Mismatch mismatched)
+      (if (tc-call-array-ref-to-slice-ref-compatible? ctx expected actual)
+        (TcInferredTypeMatch.Compatible actual)
+        (TcInferredTypeMatch.Mismatch mismatched))]))
+
 (define (tc-check-call-args-with-message-at
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -32872,7 +33125,7 @@
                 [(ResultTcType.Ok got)
                   (let
                     [matched-got : TcInferredTypeMatch
-                      (tc-match-inferred-type-for-expected ctx got want)]
+                      (tc-match-call-type-for-expected ctx got want)]
                     [expect-result : ResultTcUnit
                       (match matched-got
                         [(TcInferredTypeMatch.Compatible _) ResultTcUnit.Ok]
@@ -33636,7 +33889,8 @@
       (tc-type-eq (tc-type-strip-region arg-ty) (ast.AstType.Expr))
       (tc-source-value-bound-id? ctx env name-id))
       (ResultTcType.Ok (ast.AstType.I64))
-      (ResultTcType.Err "typecheck: array-length requires dynamic array"))
+      (ResultTcType.Err
+        "typecheck: array-length requires dynamic array or borrowed Slice"))
     (tc-length-string-call ctx env name-id func args arg-ty)))
 
 (define (tc-array-length-array-call
@@ -33669,12 +33923,22 @@
       (ResultTcArrayReceiver.Ok
         (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
     [(ast.AstType.Ref _ referent-ty)
-      (tc-array-length-receiver ctx (ast.ty-node-get referent-ty))]
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
+        [(ast.AstType.Slice elem-ty)
+          (ResultTcArrayReceiver.Ok
+            (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
+        [_ (tc-array-length-receiver ctx (ast.ty-node-get referent-ty))])]
     [(ast.AstType.MutRef _ referent-ty)
-      (tc-array-length-receiver ctx (ast.ty-node-get referent-ty))]
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
+        [(ast.AstType.Slice elem-ty)
+          (ResultTcArrayReceiver.Ok
+            (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
+        [_ (tc-array-length-receiver ctx (ast.ty-node-get referent-ty))])]
     [_
       (ResultTcArrayReceiver.Err
-        "typecheck: array-length requires dynamic array")]))
+        "typecheck: array-length requires dynamic array or borrowed Slice")]))
 
 ;; Runtime `array-length` remains dynamic-array-only. Macro helper environments
 ;; bind `array-length` for Expr operands so CTFE can validate fixed-array type
@@ -34170,6 +34434,227 @@
     (tc-tls-current-arena-read-call args)
     (tc-tls-current-arena-set-call ctx env args)))
 
+(define (tc-slice-view-call-kind-name
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [name : String]) : TcSliceViewCallKind
+  ;; Source-level definitions (including imported stdlib wrappers) shadow the
+  ;; unqualified core spellings.  Keep this check identical to the other
+  ;; source builtins: private/compiler names use their own policy, while these
+  ;; public compatibility operations consult the authoritative source-value
+  ;; membership table.
+  (if (tc-source-value-bound-id? ctx env name-id)
+    (TcSliceViewCallKind.None)
+    (cond
+      [(string.eq name "slice-view") TcSliceViewCallKind.Shared]
+      [(string.eq name "slice-mut-view") TcSliceViewCallKind.Mutable]
+      [else TcSliceViewCallKind.None])))
+
+(define (tc-slice-view-call-kind
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]) : TcSliceViewCallKind
+  (match (ast.ast-expr-unspan func)
+    [(ast.AstExpr.Var raw-name)
+      (let
+        [raw-text : String (tc-hygiene-name-text-id raw-name)]
+        [hygiene-global : bool (tc-hygiene-global-name-id? raw-name)]
+        [name : String
+          (if (and hygiene-global (not (macro-hygiene-global-id? raw-name)))
+            (tc-hygiene-global-call-name raw-text)
+            raw-text)]
+        [name-id : i64 (tc-builtin-call-name-id raw-name hygiene-global)]
+        (tc-slice-view-call-kind-name ctx env name-id name))]
+    [_ (TcSliceViewCallKind.None)]))
+
+(define (tc-slice-view-call-spelling? [func : ast.AstExpr]) : bool
+  ;; Borrow gating runs before a complete type environment is available.  It
+  ;; therefore recognizes the raw spelling conservatively; the real
+  ;; classifier above still performs shadowing checks before interception.
+  (match (ast.ast-expr-unspan func)
+    [(ast.AstExpr.Var raw-name)
+      (let
+        [raw-text : String (tc-hygiene-name-text-id raw-name)]
+        [name : String
+          (if (tc-hygiene-global-name-id? raw-name)
+            (tc-hygiene-global-call-name raw-text)
+            raw-text)]
+        (or (string.eq name "slice-view") (string.eq name "slice-mut-view")))]
+    [_ false]))
+
+(define (tc-slice-view-source-info [ctx : TcContext] [source-ty : ast.AstType]) : TcSliceViewSourceInfo
+  (match (tc-type-strip-region (tc-resolve-type ctx source-ty))
+    [(ast.AstType.Array _ _)
+      (TcSliceViewSourceInfo.Direct
+        (tc-type-strip-region (tc-resolve-type ctx source-ty)))]
+    [(ast.AstType.DynArray _)
+      (TcSliceViewSourceInfo.Direct
+        (tc-type-strip-region (tc-resolve-type ctx source-ty)))]
+    [(ast.AstType.Ref lifetime referent-id)
+      (let
+        [referent : ast.AstType
+          (tc-type-strip-region
+            (tc-resolve-type ctx (tc-context-type-get ctx referent-id)))]
+        (match referent
+          [(ast.AstType.Array _ _)
+            (TcSliceViewSourceInfo.Borrow lifetime false referent)]
+          [(ast.AstType.DynArray _)
+            (TcSliceViewSourceInfo.Borrow lifetime false referent)]
+          [(ast.AstType.Slice _)
+            (TcSliceViewSourceInfo.Borrow lifetime false referent)]
+          [_ (TcSliceViewSourceInfo.Invalid)]))]
+    [(ast.AstType.MutRef lifetime referent-id)
+      (let
+        [referent : ast.AstType
+          (tc-type-strip-region
+            (tc-resolve-type ctx (tc-context-type-get ctx referent-id)))]
+        (match referent
+          [(ast.AstType.Array _ _)
+            (TcSliceViewSourceInfo.Borrow lifetime true referent)]
+          [(ast.AstType.DynArray _)
+            (TcSliceViewSourceInfo.Borrow lifetime true referent)]
+          [(ast.AstType.Slice _)
+            (TcSliceViewSourceInfo.Borrow lifetime true referent)]
+          [_ (TcSliceViewSourceInfo.Invalid)]))]
+    [_ (TcSliceViewSourceInfo.Invalid)]))
+
+(define (tc-slice-view-source-element
+  [ctx : TcContext]
+  [source : TcSliceViewSourceInfo]) : ast.AstType
+  (match source
+    [(TcSliceViewSourceInfo.Direct direct-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx direct-ty))
+        [(ast.AstType.Array elem _)
+          (tc-borrow-referent-type (ast.ty-node-get elem))]
+        [(ast.AstType.DynArray elem)
+          (tc-borrow-referent-type (ast.ty-node-get elem))]
+        [_ (ast.AstType.Unit)])]
+    [(TcSliceViewSourceInfo.Borrow _ _ referent)
+      (match (tc-type-strip-region (tc-resolve-type ctx referent))
+        [(ast.AstType.Array elem _)
+          (tc-borrow-referent-type (ast.ty-node-get elem))]
+        [(ast.AstType.DynArray elem)
+          (tc-borrow-referent-type (ast.ty-node-get elem))]
+        [(ast.AstType.Slice elem)
+          (tc-borrow-referent-type (ast.ty-node-get elem))]
+        [_ (ast.AstType.Unit)])]
+    [_ (ast.AstType.Unit)]))
+
+(define (tc-slice-view-result-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [kind : TcSliceViewCallKind]
+  [source : ast.AstExpr]
+  [source-ty : ast.AstType]) : ResultTcType
+  (let
+    [source-info : TcSliceViewSourceInfo
+      (tc-slice-view-source-info ctx source-ty)]
+    (match source-info
+      [(TcSliceViewSourceInfo.Invalid)
+        (ResultTcType.Err
+          (tc-locate-error-at-expr
+            source
+            "typecheck: slice-view source must be a fixed array, dynamic array, or borrowed reference to one"))]
+      [(TcSliceViewSourceInfo.Direct _)
+        (begin
+          (when
+            (= kind TcSliceViewCallKind.Mutable)
+            (match (tc-mut-borrow-non-call-place-ok ctx env source)
+              [(ResultTcUnit.Ok) unit]
+              [(ResultTcUnit.Err message)
+                (return
+                  (ResultTcType.Err (tc-locate-error-at-expr source message)))]))
+          (match (tc-borrow-place ctx (tc-context-expr-bases ctx) env source)
+            [(ResultTcBorrowPlace.Ok place)
+              (match place
+                [(TcBorrowPlace lifetime _)
+                  (ResultTcType.Ok
+                    (if (= kind TcSliceViewCallKind.Mutable)
+                      (ast.ast-ty-mut-ref-with-pools
+                        (tc-context-pools ctx)
+                        lifetime
+                        (ast.ast-ty-slice-with-pools
+                          (tc-context-pools ctx)
+                          (tc-slice-view-source-element ctx source-info)))
+                      (ast.ast-ty-ref-with-pools
+                        (tc-context-pools ctx)
+                        lifetime
+                        (ast.ast-ty-slice-with-pools
+                          (tc-context-pools ctx)
+                          (tc-slice-view-source-element ctx source-info)))))])]
+            [(ResultTcBorrowPlace.Err message)
+              (ResultTcType.Err (tc-locate-error-at-expr source message))]))]
+      [(TcSliceViewSourceInfo.Borrow lifetime source-mutable _)
+        (if (and (= kind TcSliceViewCallKind.Mutable) (not source-mutable))
+          (ResultTcType.Err
+            (tc-locate-error-at-expr
+              source
+              "typecheck: slice-mut-view requires a mutable borrowed source"))
+          (ResultTcType.Ok
+            (if (= kind TcSliceViewCallKind.Mutable)
+              (ast.ast-ty-mut-ref-with-pools
+                (tc-context-pools ctx)
+                lifetime
+                (ast.ast-ty-slice-with-pools
+                  (tc-context-pools ctx)
+                  (tc-slice-view-source-element ctx source-info)))
+              (ast.ast-ty-ref-with-pools
+                (tc-context-pools ctx)
+                lifetime
+                (ast.ast-ty-slice-with-pools
+                  (tc-context-pools ctx)
+                  (tc-slice-view-source-element ctx source-info))))))])))
+
+(define (tc-slice-view-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [kind : TcSliceViewCallKind]
+  [args : ast.AstExprList]) : ResultTcType
+  (if (= (struct-get (& args) len) 3)
+    (let
+      [source : ast.AstExpr
+        (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
+      [start : ast.AstExpr
+        (ast.ast-node-get (ast.ast-expr-list-get (& args) 1 0))]
+      [len : ast.AstExpr
+        (ast.ast-node-get (ast.ast-expr-list-get (& args) 2 0))]
+      (match (tc-expr ctx env source)
+        [(ResultTcType.Ok source-ty)
+          (match (tc-slice-view-result-type ctx env kind source source-ty)
+            [(ResultTcType.Ok result-ty)
+              (match (tc-expr ctx env start)
+                [(ResultTcType.Ok start-ty)
+                  (if (tc-integer-type? start-ty)
+                    (match (tc-expr ctx env len)
+                      [(ResultTcType.Ok len-ty)
+                        (if (tc-integer-type? len-ty)
+                          (ResultTcType.Ok result-ty)
+                          (ResultTcType.Err
+                            (tc-locate-error-at-expr
+                              len
+                              (tc-call-argument-expected-text-message
+                                ctx
+                                func
+                                2
+                                len-ty
+                                "integer"))))]
+                      [(ResultTcType.Err message) (ResultTcType.Err message)])
+                    (ResultTcType.Err
+                      (tc-locate-error-at-expr
+                        start
+                        (tc-call-argument-expected-text-message
+                          ctx
+                          func
+                          1
+                          start-ty
+                          "integer"))))]
+                [(ResultTcType.Err message) (ResultTcType.Err message)])]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err (tc-call-fixed-arity-message func args 3))))
+
 (define (tc-call-or-array-length-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -34198,6 +34683,8 @@
             (let
               [arena-call-kind : i64
                 (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
+              [slice-call-kind : TcSliceViewCallKind
+                (tc-slice-view-call-kind-name ctx env name-id name)]
               (cond
                 [(and
                     (tc-layout-query-name? name)
@@ -34210,6 +34697,8 @@
                     func
                     args
                     (ast.AstType.I64))]
+                [(not (= slice-call-kind TcSliceViewCallKind.None))
+                  (tc-slice-view-call ctx env func slice-call-kind args)]
                 [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
                   (tc-array-length-call ctx env name-id func args)]
                 [(and
@@ -43901,6 +44390,19 @@
           (ResultTcInlineAggregateLayout.Err
             (string.append "typecheck: unknown aggregate " name))]))))
 
+;; Borrowed slices are represented physically as a data pointer plus a signed
+;; length.  Their referent is stored in the type pool, so inspect that node
+;; here rather than treating every Ref/MutRef as the historical one-word
+;; pointer.  Region wrappers on either the reference itself (stripped by the
+;; caller) or its immediate referent do not change the representation.
+(define (tc-inline-aggregate-reference-to-slice?
+  [ctx : TcContext]
+  [inner : i64]) : bool
+  (match (tc-type-strip-region
+    (tc-resolve-type ctx (tc-context-type-get ctx inner)))
+    [(ast.AstType.Slice _) true]
+    [_ false]))
+
 (define (tc-inline-aggregate-type-layout-with-stack
   [ctx : TcContext]
   [ty : ast.AstType]
@@ -43942,16 +44444,23 @@
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(ast.AstType.DynArray _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
+    [(ast.AstType.Slice _)
+      (ResultTcLayoutInfo.Err
+        "typecheck: slice has no by-value layout; use a borrowed slice reference")]
     [(ast.AstType.Box _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(ast.AstType.Ptr _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(ast.AstType.MutPtr _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
-    [(ast.AstType.Ref _ _)
-      (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
-    [(ast.AstType.MutRef _ _)
-      (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
+    [(ast.AstType.Ref _ inner)
+      (if (tc-inline-aggregate-reference-to-slice? ctx inner)
+        (ResultTcLayoutInfo.Ok (tc-inline-aggregate-layout-info 16 8))
+        (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info)))]
+    [(ast.AstType.MutRef _ inner)
+      (if (tc-inline-aggregate-reference-to-slice? ctx inner)
+        (ResultTcLayoutInfo.Ok (tc-inline-aggregate-layout-info 16 8))
+        (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info)))]
     [(ast.AstType.Region _ inner)
       (tc-inline-aggregate-type-layout-with-stack
         ctx
@@ -45626,6 +46135,11 @@
               lifetime
               (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
         [(ast.AstType.DynArray elem-ty)
+          (ResultTcBorrowPlace.Ok
+            (TcBorrowPlace
+              lifetime
+              (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
+        [(ast.AstType.Slice elem-ty)
           (ResultTcBorrowPlace.Ok
             (TcBorrowPlace
               lifetime
@@ -50083,9 +50597,19 @@
       (ResultTcArrayReceiver.Ok
         (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
     [(ast.AstType.Ref _ referent-ty)
-      (tc-array-readable-receiver ctx (ast.ty-node-get referent-ty))]
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
+        [(ast.AstType.Slice elem-ty)
+          (ResultTcArrayReceiver.Ok
+            (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
+        [_ (tc-array-readable-receiver ctx (ast.ty-node-get referent-ty))])]
     [(ast.AstType.MutRef _ referent-ty)
-      (tc-array-readable-receiver ctx (ast.ty-node-get referent-ty))]
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
+        [(ast.AstType.Slice elem-ty)
+          (ResultTcArrayReceiver.Ok
+            (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
+        [_ (tc-array-readable-receiver ctx (ast.ty-node-get referent-ty))])]
     [_ (ResultTcArrayReceiver.Err "typecheck: array-ref requires array type")]))
 
 (define (tc-array-set-receiver [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcArrayReceiver
@@ -50096,9 +50620,19 @@
     [(ast.AstType.DynArray elem-ty)
       (ResultTcArrayReceiver.Ok
         (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
+    [(ast.AstType.Slice _)
+      (ResultTcArrayReceiver.Err
+        "typecheck: array-set! requires mutable array access")]
     [(ast.AstType.MutRef _ referent-ty)
-      (tc-array-set-receiver ctx (ast.ty-node-get referent-ty))]
-    [(ast.AstType.Ref _ _)
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
+        [(ast.AstType.Slice elem-ty)
+          (ResultTcArrayReceiver.Ok
+            (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
+        [_ (tc-array-set-receiver ctx (ast.ty-node-get referent-ty))])]
+    [(ast.AstType.Ref _ referent-ty)
+      ;; Shared borrows, including shared Slice borrows, are readable but
+      ;; never writable.  Preserve the focused mutable-access diagnostic.
       (ResultTcArrayReceiver.Err
         "typecheck: array-set! requires mutable array access")]
     [_ (ResultTcArrayReceiver.Err "typecheck: array-set! requires array type")]))
@@ -51232,6 +51766,54 @@
       "typecheck: extern ABI c does not support "
       (string.append position (string.append " type " (tc-type-render ty))))))
 
+;; A public Slice reference is a two-word (pointer, length) value in the
+;; language ABI, but native externals do not have a corresponding direct
+;; reference form. Keep this guard deliberately narrow: only an immediate
+;; Ref/MutRef whose resolved referent is Slice is rejected. Callers can expose
+;; the native ABI explicitly as a pointer plus length, or wrap those fields in
+;; an ordinary repr-c aggregate.
+(define (tc-extern-native-slice-ref-type? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(ast.AstType.Ref _ inner)
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx inner)))
+        [(ast.AstType.Slice _) true]
+        [_ false])]
+    [(ast.AstType.MutRef _ inner)
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx inner)))
+        [(ast.AstType.Slice _) true]
+        [_ false])]
+    [_ false]))
+
+(define (tc-extern-native-slice-ref-unsupported-message) : String
+  "typecheck: extern/native Slice references are unsupported; use pointer+length")
+
+(define (tc-check-extern-native-slice-ref-args-at
+  [ctx : TcContext]
+  [args : (& args ast.AstTypeList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast.ast-type-list-len args))
+    ResultTcUnit.Ok
+    (let
+      [head : ast.AstType
+        (ast.ty-node-get
+          (ast.ast-type-list-get args index (ast.ast-type-id-fallback)))]
+      (if (tc-extern-native-slice-ref-type? ctx head)
+        (ResultTcUnit.Err (tc-extern-native-slice-ref-unsupported-message))
+        (tc-check-extern-native-slice-ref-args-at ctx args (+ index 1))))))
+
+(define (tc-check-extern-native-slice-ref [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(ast.AstType.Func args ret)
+      (match (tc-check-extern-native-slice-ref-args-at ctx (box-get args) 0)
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
+        [(ResultTcUnit.Ok)
+          (if (tc-extern-native-slice-ref-type? ctx (ast.ty-node-get ret))
+            (ResultTcUnit.Err (tc-extern-native-slice-ref-unsupported-message))
+            ResultTcUnit.Ok)])]
+    [_ ResultTcUnit.Ok]))
+
 (define (tc-check-extern-arg-abi [ctx : TcContext] [args : ast.AstTypeList]) : ResultTcUnit
   (tc-check-extern-arg-abi-at ctx (& args) 0))
 
@@ -51294,16 +51876,19 @@
         [resolved : ast.AstType (tc-resolve-type ctx ty)]
         (match kind
           [(ast.AstExternKind.Function)
-            (if (and
-              (ast.ast-extern-abi-c? abi)
-              (or explicit-abi (ast.ast-extern-abi-c-varargs? abi)))
-              (match (tc-check-extern-c-abi ctx resolved)
-                [(ResultTcUnit.Ok)
-                  (if (ast.ast-extern-abi-c-varargs? abi)
-                    (tc-check-extern-varargs-tail-type ctx abi)
-                    ResultTcUnit.Ok)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])
-              ResultTcUnit.Ok)]
+            (match (tc-check-extern-native-slice-ref ctx resolved)
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
+              [(ResultTcUnit.Ok)
+                (if (and
+                  (ast.ast-extern-abi-c? abi)
+                  (or explicit-abi (ast.ast-extern-abi-c-varargs? abi)))
+                  (match (tc-check-extern-c-abi ctx resolved)
+                    [(ResultTcUnit.Ok)
+                      (if (ast.ast-extern-abi-c-varargs? abi)
+                        (tc-check-extern-varargs-tail-type ctx abi)
+                        ResultTcUnit.Ok)]
+                    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])
+                  ResultTcUnit.Ok)])]
           [(ast.AstExternKind.Value)
             (if (ast.ast-extern-abi-c-varargs? abi)
               (ResultTcUnit.Err
@@ -53484,6 +54069,10 @@
       (tc-generated-type-list-dependent-construct? ctx (box-get elems))]
     [(ast.AstType.Array _ _) true]
     [(ast.AstType.DynArray elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
+    [(ast.AstType.Slice elem)
       (tc-generated-type-dependent-construct?
         ctx
         (tc-context-type-get ctx elem))]
@@ -58629,6 +59218,85 @@
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [_ (tc-move-check-expr ctx expr-bases env locals loop-carried moved place)]))
 
+(define (tc-move-check-slice-view-call
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [call-expr : ast.AstExpr]
+  [kind : TcSliceViewCallKind]
+  [args : ast.AstExprList]) : TcMoveResult
+  (if (= (struct-get (& args) len) 3)
+    (let
+      [source : ast.AstExpr
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get (& args) 0 0))]
+      [start : ast.AstExpr
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get (& args) 1 0))]
+      [len : ast.AstExpr
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get (& args) 2 0))]
+      ;; Mutable direct owners are still places, so preserve the existing
+      ;; by-value-parameter storage guard.  Reference sources (including
+      ;; nested subview results) do not consume or rebind their source.
+      [write-check : ResultTcUnit
+        (if (= kind TcSliceViewCallKind.Mutable)
+          (match (tc-expr ctx env source)
+            [(ResultTcType.Ok source-ty)
+              (match (tc-slice-view-source-info ctx source-ty)
+                [(TcSliceViewSourceInfo.Direct _)
+                  (tc-param-storage-check-write
+                    ctx
+                    expr-bases
+                    env
+                    moved
+                    source
+                    "mutably borrow")]
+                [_ ResultTcUnit.Ok])]
+            [(ResultTcType.Err _) ResultTcUnit.Ok])
+          ResultTcUnit.Ok)]
+      (match write-check
+        [(ResultTcUnit.Err message) (TcMoveResult.Err message)]
+        [(ResultTcUnit.Ok)
+          (match (tc-move-check-expr
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            source)
+            [(TcMoveResult.Ok moved1)
+              (match (tc-move-check-expr
+                ctx
+                expr-bases
+                env
+                locals
+                loop-carried
+                moved1
+                start)
+                [(TcMoveResult.Ok moved2)
+                  (tc-move-check-expr
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    loop-carried
+                    moved2
+                    len)]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])]))
+    (TcMoveResult.Err
+      (tc-locate-error-at-expr
+        call-expr
+        "typecheck: slice-view expects exactly three arguments"))))
+
 (define (tc-move-check-expr
   [ctx : TcContext]
   [expr-bases : i64]
@@ -58703,45 +59371,60 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (match (tc-move-check-expr-id
-          ctx
-          expr-bases
-          env
-          locals
-          loop-carried
-          moved
-          func-box)
-          [(TcMoveResult.Ok moved1)
-            (match (tc-move-call-param-types-id-with-facts
-              "move.call_func"
-              ctx
-              env
-              func-box)
-              [(ResultTcTypeList.Ok params)
-                (match (tc-call-extern-abi ctx func)
-                  [(TcMaybeExternAbi.Some abi)
-                    (if (tc-call-dynamic-c-varargs-abi? abi)
-                      (match (tc-call-extern-varargs-params
-                        ctx
-                        env
-                        func
-                        args
-                        params
-                        abi)
-                        [(ResultTcTypeList.Ok expanded-params)
-                          (tc-move-check-call-args-with-types
-                            ctx
-                            expr-bases
-                            env
-                            locals
-                            loop-carried
-                            moved1
-                            expr
-                            func
-                            args
-                            expanded-params)]
-                        [(ResultTcTypeList.Err message)
-                          (TcMoveResult.Err message)])
+        [slice-kind : TcSliceViewCallKind
+          (tc-slice-view-call-kind ctx env func)]
+        (if (= slice-kind TcSliceViewCallKind.None)
+          (match (tc-move-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            func-box)
+            [(TcMoveResult.Ok moved1)
+              (match (tc-move-call-param-types-id-with-facts
+                "move.call_func"
+                ctx
+                env
+                func-box)
+                [(ResultTcTypeList.Ok params)
+                  (match (tc-call-extern-abi ctx func)
+                    [(TcMaybeExternAbi.Some abi)
+                      (if (tc-call-dynamic-c-varargs-abi? abi)
+                        (match (tc-call-extern-varargs-params
+                          ctx
+                          env
+                          func
+                          args
+                          params
+                          abi)
+                          [(ResultTcTypeList.Ok expanded-params)
+                            (tc-move-check-call-args-with-types
+                              ctx
+                              expr-bases
+                              env
+                              locals
+                              loop-carried
+                              moved1
+                              expr
+                              func
+                              args
+                              expanded-params)]
+                          [(ResultTcTypeList.Err message)
+                            (TcMoveResult.Err message)])
+                        (tc-move-check-call-args-with-types
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          loop-carried
+                          moved1
+                          expr
+                          func
+                          args
+                          params))]
+                    [(TcMaybeExternAbi.No)
                       (tc-move-check-call-args-with-types
                         ctx
                         expr-bases
@@ -58752,41 +59435,39 @@
                         expr
                         func
                         args
-                        params))]
-                  [(TcMaybeExternAbi.No)
-                    (tc-move-check-call-args-with-types
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      loop-carried
-                      moved1
-                      expr
-                      func
-                      args
-                      params)])]
-              [(ResultTcTypeList.Err _)
-                (match (tc-move-check-exprs
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  loop-carried
-                  moved1
-                  args)
-                  [(TcMoveResult.Ok moved-args)
-                    (tc-move-check-safe-arena-call-effects
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      loop-carried
-                      moved-args
-                      func
-                      args
-                      expr)]
-                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])])]
-          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+                        params)])]
+                [(ResultTcTypeList.Err _)
+                  (match (tc-move-check-exprs
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    loop-carried
+                    moved1
+                    args)
+                    [(TcMoveResult.Ok moved-args)
+                      (tc-move-check-safe-arena-call-effects
+                        ctx
+                        expr-bases
+                        env
+                        locals
+                        loop-carried
+                        moved-args
+                        func
+                        args
+                        expr)]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])
+          (tc-move-check-slice-view-call
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            expr
+            slice-kind
+            args)))]
     [(ast.AstExpr.BracketClause items)
       (tc-move-check-exprs ctx expr-bases env locals loop-carried moved items)]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
@@ -60773,7 +61454,18 @@
                   (tc-env-key-name-text lending-binding-id)
                   TcStringList.Nil)
                   out
-                  (tc-borrow-check-remove-borrow-path out path))]
+                  (if (tc-borrow-check-lifetime-used-in-exprs?
+                    expr-bases
+                    ctx
+                    env
+                    locals
+                    exprs
+                    (tc-borrow-check-path-lifetime ctx env path))
+                    (tc-moved-remove-path-kind
+                      out
+                      path
+                      (TcMovedPathKind.BorrowLending lending-binding-id))
+                    (tc-borrow-check-remove-borrow-path out path)))]
               [(TcMaybeNameId.No)
                 (if (tc-borrow-check-lifetime-used-in-exprs?
                   expr-bases
@@ -64010,6 +64702,62 @@
     borrowed
     (ast.ast-expr-segment-bases-get expr-bases expr-id)))
 
+(define (tc-borrow-check-slice-view-call
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [call-expr : ast.AstExpr]
+  [kind : TcSliceViewCallKind]
+  [args : ast.AstExprList]) : TcBorrowCheckResult
+  (if (= (struct-get (& args) len) 3)
+    (let
+      [source : ast.AstExpr
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get (& args) 0 0))]
+      [start : ast.AstExpr
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get (& args) 1 0))]
+      [len : ast.AstExpr
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get (& args) 2 0))]
+      ;; Evaluate the source first.  A direct place receives the same normal
+      ;; shared/mutable borrow fact as an explicit `&`/`&mut`; nested view
+      ;; calls and explicit borrow rvalues have no direct path, so their
+      ;; recursive facts are intentionally retained unchanged.
+      (match (tc-borrow-check-expr ctx expr-bases env locals borrowed source)
+        [(TcBorrowCheckResult.Ok borrowed1)
+          (match (tc-borrow-check-add-place-with-mutability
+            expr-bases
+            locals
+            borrowed1
+            (= kind TcSliceViewCallKind.Mutable)
+            source
+            call-expr)
+            [(TcBorrowCheckResult.Ok borrowed2)
+              (match (tc-borrow-check-expr
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed2
+                start)
+                [(TcBorrowCheckResult.Ok borrowed3)
+                  (tc-borrow-check-expr ctx expr-bases env locals borrowed3 len)]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
+    (TcBorrowCheckResult.Err
+      (tc-locate-error-at-expr
+        call-expr
+        "typecheck: slice-view expects exactly three arguments"))))
+
 (define (tc-borrow-check-expr
   [ctx : TcContext]
   [expr-bases : i64]
@@ -64057,46 +64805,61 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (match (tc-borrow-check-expr-id
-          ctx
-          expr-bases
-          env
-          locals
-          borrowed
-          func-box)
-          [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-borrow-call-info-id-with-facts
-              "borrow.call_func"
-              ctx
-              expr-bases
-              env
-              func-box
-              args)
-              [(ResultTcBorrowCallInfo.Ok params return-lifetimes)
-                (match (tc-call-extern-abi ctx func)
-                  [(TcMaybeExternAbi.Some abi)
-                    (if (tc-call-dynamic-c-varargs-abi? abi)
-                      (match (tc-call-extern-varargs-params
-                        ctx
-                        env
-                        func
-                        args
-                        params
-                        abi)
-                        [(ResultTcTypeList.Ok expanded-params)
-                          (tc-borrow-check-call-args-with-types
-                            ctx
-                            expr-bases
-                            env
-                            locals
-                            borrowed1
-                            expr
-                            func
-                            args
-                            expanded-params
-                            (TcBorrowCallReturnLifetimes.Fallback))]
-                        [(ResultTcTypeList.Err message)
-                          (TcBorrowCheckResult.Err message)])
+        [slice-kind : TcSliceViewCallKind
+          (tc-slice-view-call-kind ctx env func)]
+        (if (= slice-kind TcSliceViewCallKind.None)
+          (match (tc-borrow-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            func-box)
+            [(TcBorrowCheckResult.Ok borrowed1)
+              (match (tc-borrow-call-info-id-with-facts
+                "borrow.call_func"
+                ctx
+                expr-bases
+                env
+                func-box
+                args)
+                [(ResultTcBorrowCallInfo.Ok params return-lifetimes)
+                  (match (tc-call-extern-abi ctx func)
+                    [(TcMaybeExternAbi.Some abi)
+                      (if (tc-call-dynamic-c-varargs-abi? abi)
+                        (match (tc-call-extern-varargs-params
+                          ctx
+                          env
+                          func
+                          args
+                          params
+                          abi)
+                          [(ResultTcTypeList.Ok expanded-params)
+                            (tc-borrow-check-call-args-with-types
+                              ctx
+                              expr-bases
+                              env
+                              locals
+                              borrowed1
+                              expr
+                              func
+                              args
+                              expanded-params
+                              (TcBorrowCallReturnLifetimes.Fallback))]
+                          [(ResultTcTypeList.Err message)
+                            (TcBorrowCheckResult.Err message)])
+                        (tc-borrow-check-call-args-with-types
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          borrowed1
+                          expr
+                          func
+                          args
+                          params
+                          return-lifetimes))]
+                    [(TcMaybeExternAbi.No)
                       (tc-borrow-check-call-args-with-types
                         ctx
                         expr-bases
@@ -64107,41 +64870,39 @@
                         func
                         args
                         params
-                        return-lifetimes))]
-                  [(TcMaybeExternAbi.No)
-                    (tc-borrow-check-call-args-with-types
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      borrowed1
-                      expr
-                      func
-                      args
-                      params
-                      return-lifetimes)])]
-              [(ResultTcBorrowCallInfo.Err _)
-                (match (tc-borrow-check-read-exprs
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  (tc-moved-clone borrowed1)
-                  args)
-                  [(TcBorrowCheckResult.Ok _)
-                    (tc-borrow-check-after-call-effects
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      borrowed1
-                      expr
-                      func
-                      args
-                      (TcBorrowCallReturnLifetimes.Fallback))]
-                  [(TcBorrowCheckResult.Err message)
-                    (TcBorrowCheckResult.Err message)])])]
-          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
+                        return-lifetimes)])]
+                [(ResultTcBorrowCallInfo.Err _)
+                  (match (tc-borrow-check-read-exprs
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    (tc-moved-clone borrowed1)
+                    args)
+                    [(TcBorrowCheckResult.Ok _)
+                      (tc-borrow-check-after-call-effects
+                        ctx
+                        expr-bases
+                        env
+                        locals
+                        borrowed1
+                        expr
+                        func
+                        args
+                        (TcBorrowCallReturnLifetimes.Fallback))]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)])])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])
+          (tc-borrow-check-slice-view-call
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            expr
+            slice-kind
+            args)))]
     [(ast.AstExpr.BracketClause items)
       (tc-borrow-check-exprs ctx expr-bases env locals borrowed items)]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
@@ -65404,6 +66165,8 @@
     [(ast.AstExpr.Call func-box args)
       (or
         (tc-borrow-gate-call-has-region? ctx func-box)
+        (tc-slice-view-call-spelling?
+          (ast.ast-expr-segment-bases-get expr-bases func-box))
         (tc-borrow-gate-expr-relevant?
           ctx
           expr-bases
@@ -70183,6 +70946,8 @@
         elem
         span
         origin)]
+    [(ast.AstType.Slice elem)
+      (macro-type-unary-sexpr-id (ci.intern "Slice") elem span origin)]
     [(ast.AstType.Array elem count)
       (match (macro-type-to-spanned-sexpr (ast.ty-node-get elem) span origin)
         [(ResultMacroSexpr.Ok selem)
@@ -73679,6 +74444,9 @@
     [(ast.AstType.DynArray elem)
       (ast.ast-ty-dyn-array
         (macro-hygiene-type (ast.ty-node-get elem) env macro-name))]
+    [(ast.AstType.Slice elem)
+      (ast.ast-ty-slice
+        (macro-hygiene-type (ast.ty-node-get elem) env macro-name))]
     [(ast.AstType.Box elem)
       (ast.ast-ty-box
         (macro-hygiene-type (ast.ty-node-get elem) env macro-name))]
@@ -76851,6 +77619,9 @@
     [(ast.AstType.DynArray elem)
       (ast.ast-ty-dyn-array
         (macro-type-arg-module-qualify ctx (ast.ty-node-get elem)))]
+    [(ast.AstType.Slice elem)
+      (ast.ast-ty-slice
+        (macro-type-arg-module-qualify ctx (ast.ty-node-get elem)))]
     [(ast.AstType.Box elem)
       (ast.ast-ty-box
         (macro-type-arg-module-qualify ctx (ast.ty-node-get elem)))]
@@ -76929,6 +77700,15 @@
           reflected))
       resolved)))
 
+(define (macro-type-arg-source-policy-ok [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
+  (match (tc-resolve-type ctx ty)
+    [(ast.AstType.Slice elem)
+      ;; A top-level Slice is a compile-time type operand, not a runtime
+      ;; storage declaration.  Keep the runtime policy for every nested shape
+      ;; while validating the element recursively.
+      (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
+    [_ (tc-source-type-policy-ok ctx ty)]))
+
 (define (macro-type-arg
   [ctx : TcContext]
   [decls : ast.AstDeclList]
@@ -76941,7 +77721,7 @@
       (ctfe_support.ctfe-env-empty-with-pools (tc-context-pools ctx))
       (ctfe_support.ctfe-fuel-limit))
       [(ctfe_support.ResultCtfeQuoteType.Ok ty _)
-        (match (tc-source-type-policy-ok ctx ty)
+        (match (macro-type-arg-source-policy-ok ctx ty)
           [(ResultTcUnit.Ok)
             (ResultMacroTypeArg.Ok (macro-type-arg-resolve ctx decls ty))]
           [(ResultTcUnit.Err message)

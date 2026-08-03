@@ -819,8 +819,9 @@
 ;; `(Ptr T)`/`(MutPtr T)` selected by `flag`, 1 is `(Box T)`, 2 is the unsized
 ;; `(Array T)`, 3 is `(Array T N)` with `flag` as the count, and 4 is
 ;; `(& r T)`/`(&mut r T)` with `flag` selecting mutability and the lifetime name
-;; arriving as caller bytes. The lifetime name is interned through the same
-;; source-slice path template variable names use. Refs #5605.
+;; arriving as caller bytes, and 5 is `(Slice T)`. The lifetime name is
+;; interned through the same source-slice path template variable names use.
+;; Refs #5605.
 (define (compiler-comptime-host-type-wrap-step!
   [kind : i64]
   [flag : i64]
@@ -835,38 +836,46 @@
         (let
           [pools : ast.AstNodePoolContext
             (array-ref compiler-comptime-host-pools 0)]
-          (if (and (= kind 4) (or (<= name-ptr 0) (< name-len 0)))
+          (if (or (< kind 0) (> kind 5))
             tlci.tlci-host-callback-status-bad-request
-            (let
-              [region : i64
-                (if (= kind 4)
-                  (let
-                    [name : String
-                      (unsafe
-                        (string-from-bytes
-                          (int->ptr name-ptr : (Ptr u8))
-                          name-len))]
-                    (ci.intern-source-slice name 0 (string.string-length name)))
-                  0)]
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 1))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.Type
-                    (cond
-                      [(= kind 0)
-                        (if (= flag 0)
-                          (ast.ast-ty-ptr-with-pools pools inner)
-                          (ast.ast-ty-mut-ptr-with-pools pools inner))]
-                      [(= kind 1) (ast.ast-ty-box-with-pools pools inner)]
-                      [(= kind 2) (ast.ast-ty-dyn-array-with-pools pools inner)]
-                      [(= kind 3)
-                        (ast.ast-ty-array-with-pools pools inner flag)]
-                      [else
-                        (if (= flag 0)
-                          (ast.ast-ty-ref-with-pools pools region inner)
-                          (ast.ast-ty-mut-ref-with-pools pools region inner))])))))))]
+            (if (and (= kind 4) (or (<= name-ptr 0) (< name-len 0)))
+              tlci.tlci-host-callback-status-bad-request
+              (let
+                [region : i64
+                  (if (= kind 4)
+                    (let
+                      [name : String
+                        (unsafe
+                          (string-from-bytes
+                            (int->ptr name-ptr : (Ptr u8))
+                            name-len))]
+                      (ci.intern-source-slice
+                        name
+                        0
+                        (string.string-length name)))
+                    0)]
+                (begin
+                  (set!
+                    compiler-comptime-host-stack-len
+                    (- compiler-comptime-host-stack-len 1))
+                  (compiler-comptime-host-push!
+                    (ctfe_support.CompilerCtfeValue.Type
+                      (cond
+                        [(= kind 0)
+                          (if (= flag 0)
+                            (ast.ast-ty-ptr-with-pools pools inner)
+                            (ast.ast-ty-mut-ptr-with-pools pools inner))]
+                        [(= kind 1) (ast.ast-ty-box-with-pools pools inner)]
+                        [(= kind 2)
+                          (ast.ast-ty-dyn-array-with-pools pools inner)]
+                        [(= kind 3)
+                          (ast.ast-ty-array-with-pools pools inner flag)]
+                        [(= kind 4)
+                          (if (= flag 0)
+                            (ast.ast-ty-ref-with-pools pools region inner)
+                            (ast.ast-ty-mut-ref-with-pools pools region inner))]
+                        [(= kind 5) (ast.ast-ty-slice-with-pools pools inner)]
+                        [else inner]))))))))]
       [_ tlci.tlci-host-callback-status-bad-request])))
 
 ;; Replace the type value at the top of the session stack with one reflected
@@ -5110,6 +5119,14 @@
                     (compiler-comptime-host-push!
                       (ctfe_support.CompilerCtfeValue.Type
                         (ctfe_support.ctfe-ty-get env elem))))]
+                [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Slice elem))
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 1))
+                    (compiler-comptime-host-push!
+                      (ctfe_support.CompilerCtfeValue.Type
+                        (ctfe_support.ctfe-ty-get env elem))))]
                 [_ tlci.tlci-host-callback-status-bad-request])))]
         (begin
           (when
@@ -5643,6 +5660,28 @@
       compiler-comptime-host-session-status
       (let
         [result : i64 (compiler-comptime-host-type-wrap-step! 3 arg-a 0 0)]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+(define (compiler-comptime-host-callback-type-slice
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64 (compiler-comptime-host-type-wrap-step! 5 0 0 0)]
         (begin
           (when
             (not (= result tlci.tlci-host-callback-status-ok))
@@ -7431,6 +7470,10 @@
         (&mut registry)
         tlci.tlci-host-callback-name-type-array
         compiler-comptime-host-callback-type-array)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci.tlci-host-callback-name-type-slice
+        compiler-comptime-host-callback-type-slice)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         tlci.tlci-host-callback-name-type-ref

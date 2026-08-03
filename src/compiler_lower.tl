@@ -1251,6 +1251,18 @@
 (defenum LowerStringFields
   (Fields LowerState ir.CompilerIrValue ir.CompilerIrValue))
 
+;; The checked `slice-view` intrinsics lower to the same two-word borrowed
+;; representation as an ordinary Slice reference.  Keep the source fields in a
+;; small result enum so the call path can evaluate the source exactly once,
+;; then lower start and length left-to-right without allocating a runtime
+;; helper object.
+(defenum LowerSliceViewSourceFields
+  (Fields LowerState ir.CompilerIrValue ir.CompilerIrValue ast.AstType))
+
+(defenum ResultLowerSliceViewSourceFields
+  (Ok LowerSliceViewSourceFields)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
 (defenum LowerMaybeStringConcatCall
   (No)
   (Some i64 i64))
@@ -9897,6 +9909,8 @@
       (lower-used-types-add-type-id pools used module elem)]
     [(ast.AstType.DynArray elem)
       (lower-used-types-add-type-id pools used module elem)]
+    [(ast.AstType.Slice elem)
+      (lower-used-types-add-type-id pools used module elem)]
     [(ast.AstType.Box elem)
       (lower-used-types-add-type-id pools used module elem)]
     [(ast.AstType.Region _ inner)
@@ -12412,6 +12426,17 @@
           (tc_core.tc-layout-info-align info)]
         [(tc_core.ResultTcLayoutInfo.Err _) fallback])]))
 
+;; A borrowed Slice is a structural fat reference: two integer-class words
+;; (data pointer, signed length).  The referent is a type-pool id and may have
+;; Region wrappers, which are transparent for this physical classification.
+;; Do not recurse through owning containers; only an immediate Slice referent
+;; receives the fat-reference representation.
+(define (lower-reference-to-slice? [ctx : tc_core.TcContext] [inner : i64]) : bool
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))
+    [(ast.AstType.Slice _) true]
+    [_ false]))
+
 (define (lower-type-size [ctx : tc_core.TcContext] [ty : ast.AstType]) : i64
   (match (tc_core.tc-resolve-type ctx ty)
     [(ast.AstType.I64) 8]
@@ -12434,11 +12459,18 @@
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array _ _) (lower-inline-layout-size-or ctx ty 8)]
     [(ast.AstType.DynArray _) 8]
+    [(ast.AstType.Slice _) 0]
     [(ast.AstType.Box _) 8]
     [(ast.AstType.Ptr _) 8]
     [(ast.AstType.MutPtr _) 8]
-    [(ast.AstType.Ref _ _) 8]
-    [(ast.AstType.MutRef _ _) 8]
+    [(ast.AstType.Ref _ inner)
+      (if (lower-reference-to-slice? ctx inner)
+        16
+        8)]
+    [(ast.AstType.MutRef _ inner)
+      (if (lower-reference-to-slice? ctx inner)
+        16
+        8)]
     [(ast.AstType.Region _ inner)
       (lower-type-size ctx (tc_core.tc-context-type-get ctx inner))]
     [(ast.AstType.Enum name)
@@ -12482,6 +12514,7 @@
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array _ _) (lower-inline-layout-align-or ctx ty 8)]
     [(ast.AstType.DynArray _) 8]
+    [(ast.AstType.Slice _) 0]
     [(ast.AstType.Box _) 8]
     [(ast.AstType.Ptr _) 8]
     [(ast.AstType.MutPtr _) 8]
@@ -12987,6 +13020,8 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+    [(ast.AstType.Ref _ inner) (lower-reference-to-slice? ctx inner)]
+    [(ast.AstType.MutRef _ inner) (lower-reference-to-slice? ctx inner)]
     [(ast.AstType.Struct name)
       (> (tc_core.tc-inline-aggregate-regwords-cached ctx name) 0)]
     [(ast.AstType.StructArgs name _)
@@ -13018,6 +13053,14 @@
 ;; chunk whose rewind leaked into later lowering).
 (define (lower-type-register-words [ctx : tc_core.TcContext] [ty : ast.AstType]) : i64
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+    [(ast.AstType.Ref _ inner)
+      (if (lower-reference-to-slice? ctx inner)
+        2
+        0)]
+    [(ast.AstType.MutRef _ inner)
+      (if (lower-reference-to-slice? ctx inner)
+        2
+        0)]
     [(ast.AstType.Struct name)
       (tc_core.tc-inline-aggregate-regwords-cached ctx name)]
     [(ast.AstType.StructArgs name _)
@@ -13135,6 +13178,18 @@
   [ty : ast.AstType]
   [word-index : i64]) : ast.AstType
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+    [(ast.AstType.Ref _ inner)
+      (if (lower-reference-to-slice? ctx inner)
+        (if (= word-index 0)
+          (ast.AstType.U64)
+          (ast.AstType.I64))
+        (ast.AstType.I64))]
+    [(ast.AstType.MutRef _ inner)
+      (if (lower-reference-to-slice? ctx inner)
+        (if (= word-index 0)
+          (ast.AstType.U64)
+          (ast.AstType.I64))
+        (ast.AstType.I64))]
     [(ast.AstType.Struct name)
       (match (tc_core.tc-inline-aggregate-layout-for-id ctx name)
         [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
@@ -14594,6 +14649,14 @@
       (not
         (tc_core.tc-type-contains-reference?
           (tc_core.tc-context-type-get ctx elem-ty)))]
+    ;; A Slice is supported only when it is the immediate referent of a
+    ;; borrowed reference; bare Slice remains unsized and has no by-value
+    ;; borrow layout.  As with fixed/dynamic arrays, the element itself must
+    ;; not contain references.
+    [(ast.AstType.Slice elem-ty)
+      (not
+        (tc_core.tc-type-contains-reference?
+          (tc_core.tc-context-type-get ctx elem-ty)))]
     [(ast.AstType.Struct name)
       (lower-supported-reference-struct-args-with-stack?
         ctx
@@ -14828,72 +14891,77 @@
         (tc_core.tc-canonicalize-inferred-type
           ctx
           (tc_core.tc-resolve-type ctx ty)))]
-    (if (not (tc_core.tc-type-contains-reference? resolved))
-      true
-      (match resolved
-        [(ast.AstType.Ref _ inner)
-          (lower-supported-reference-referent-type?
-            ctx
-            (tc_core.tc-context-type-get ctx inner))]
-        [(ast.AstType.MutRef _ inner)
-          (lower-supported-reference-referent-type?
-            ctx
-            (tc_core.tc-context-type-get ctx inner))]
-        [(ast.AstType.Tuple elems)
-          (lower-supported-reference-type-list-with-stack?
-            ctx
-            (box-get elems)
-            stack)]
-        [(ast.AstType.Array elem _)
-          (lower-supported-reference-type-with-stack?
-            ctx
-            (tc_core.tc-context-type-get ctx elem)
-            stack)]
-        [(ast.AstType.Box elem)
-          (lower-supported-reference-type-with-stack?
-            ctx
-            (tc_core.tc-context-type-get ctx elem)
-            stack)]
-        [(ast.AstType.Func params ret)
-          (and
-            (lower-supported-reference-type-list-with-stack?
-              ctx
-              (box-get params)
-              stack)
-            (lower-supported-reference-type-with-stack?
-              ctx
-              (tc_core.tc-context-type-get ctx ret)
-              stack))]
-        [(ast.AstType.Struct name)
-          (lower-supported-reference-struct-args-with-stack?
-            ctx
-            name
-            (ast.ast-lifetime-list-new)
-            stack)]
-        [(ast.AstType.StructArgs name lifetimes)
-          (lower-supported-reference-struct-args-with-stack?
-            ctx
-            name
-            (box-get lifetimes)
-            stack)]
-        [(ast.AstType.Enum name)
-          (lower-supported-reference-enum-args-with-stack?
-            ctx
-            name
-            (ast.ast-lifetime-list-new)
-            stack)]
-        [(ast.AstType.EnumArgs name lifetimes)
-          (lower-supported-reference-enum-args-with-stack?
-            ctx
-            name
-            (box-get lifetimes)
-            stack)]
-        [(ast.AstType.Region _ inner)
-          (lower-supported-reference-type-with-stack?
-            ctx
-            (tc_core.tc-context-type-get ctx inner)
-            stack)]
-        [_ false]))))
+    (match resolved
+      ;; Bare Slice is unsized and is never a directly lowerable value.  The
+      ;; Slice arm below is reached only through Ref/MutRef's referent helper.
+      [(ast.AstType.Slice _) false]
+      [_
+        (if (not (tc_core.tc-type-contains-reference? resolved))
+          true
+          (match resolved
+            [(ast.AstType.Ref _ inner)
+              (lower-supported-reference-referent-type?
+                ctx
+                (tc_core.tc-context-type-get ctx inner))]
+            [(ast.AstType.MutRef _ inner)
+              (lower-supported-reference-referent-type?
+                ctx
+                (tc_core.tc-context-type-get ctx inner))]
+            [(ast.AstType.Tuple elems)
+              (lower-supported-reference-type-list-with-stack?
+                ctx
+                (box-get elems)
+                stack)]
+            [(ast.AstType.Array elem _)
+              (lower-supported-reference-type-with-stack?
+                ctx
+                (tc_core.tc-context-type-get ctx elem)
+                stack)]
+            [(ast.AstType.Box elem)
+              (lower-supported-reference-type-with-stack?
+                ctx
+                (tc_core.tc-context-type-get ctx elem)
+                stack)]
+            [(ast.AstType.Func params ret)
+              (and
+                (lower-supported-reference-type-list-with-stack?
+                  ctx
+                  (box-get params)
+                  stack)
+                (lower-supported-reference-type-with-stack?
+                  ctx
+                  (tc_core.tc-context-type-get ctx ret)
+                  stack))]
+            [(ast.AstType.Struct name)
+              (lower-supported-reference-struct-args-with-stack?
+                ctx
+                name
+                (ast.ast-lifetime-list-new)
+                stack)]
+            [(ast.AstType.StructArgs name lifetimes)
+              (lower-supported-reference-struct-args-with-stack?
+                ctx
+                name
+                (box-get lifetimes)
+                stack)]
+            [(ast.AstType.Enum name)
+              (lower-supported-reference-enum-args-with-stack?
+                ctx
+                name
+                (ast.ast-lifetime-list-new)
+                stack)]
+            [(ast.AstType.EnumArgs name lifetimes)
+              (lower-supported-reference-enum-args-with-stack?
+                ctx
+                name
+                (box-get lifetimes)
+                stack)]
+            [(ast.AstType.Region _ inner)
+              (lower-supported-reference-type-with-stack?
+                ctx
+                (tc_core.tc-context-type-get ctx inner)
+                stack)]
+            [_ false]))])))
 
 (define (lower-supported-reference-type?
   [ctx : tc_core.TcContext]
@@ -15405,6 +15473,52 @@
             [_ arr-ty])]
         (match (tc_core.tc-type-strip-region
           (tc_core.tc-resolve-type ctx container-ty))
+          [(ast.AstType.Slice elem-ty)
+            (match (lower-expr ctx state env type-env arr)
+              [(ResultLowerExpr.Ok arr-lowered)
+                (match arr-lowered
+                  [(LowerExpr.Expr arr-state arr-value _)
+                    (match (lower-index-result-type-or-check
+                      ctx
+                      env
+                      type-env
+                      (lower-state-type-cache arr-state)
+                      index)
+                      [(tc_core.ResultTcType.Ok idx-ty)
+                        (match (lower-expr-expected
+                          ctx
+                          arr-state
+                          env
+                          type-env
+                          index
+                          idx-ty
+                          index)
+                          [(ResultLowerExpr.Ok idx-lowered)
+                            (match idx-lowered
+                              [(LowerExpr.Expr idx-state idx-value idx-value-ty)
+                                (match (lower-slice-element-addr
+                                  ctx
+                                  idx-state
+                                  arr-value
+                                  arr-ty
+                                  idx-value
+                                  idx-value-ty
+                                  (tc_core.tc-type-without-regions
+                                    (tc_core.tc-context-type-get ctx elem-ty)))
+                                  [(LowerExpr.Expr addr-state elem-ptr _)
+                                    (ResultLowerExpr.Ok
+                                      (LowerExpr.Expr
+                                        (lower-state-record-latest-bounds-check-at-expr
+                                          addr-state
+                                          origin)
+                                        elem-ptr
+                                        result-ty))])])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)])]
+                      [(tc_core.ResultTcType.Err message)
+                        (ResultLowerExpr.Err
+                          (box (lower-diagnostic-at-expr index message)))])])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
           [(ast.AstType.DynArray elem-ty)
             (match (lower-expr ctx state env type-env arr)
               [(ResultLowerExpr.Ok arr-lowered)
@@ -21230,6 +21344,123 @@
         (tc_core.TcMaybeNameId.No))]
     [_ (tc_core.TcMaybeNameId.No)]))
 
+;; Pack a borrowed fixed-array reference into the structural Slice ABI group.
+;; The source expression is lowered exactly once; word0 is its data pointer and
+;; word1 is the compile-time fixed length.  This helper is called only after
+;; the typechecker has accepted the closed call-only unsize predicate.
+(define (lower-call-array-ref-to-slice-pack
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [arg : ast.AstExpr]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : ResultLowerExpr
+  (let
+    [actual-resolved : ast.AstType
+      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx actual))]
+    [array-len : i64
+      (match actual-resolved
+        [(ast.AstType.Ref _ inner)
+          (match (tc_core.tc-type-strip-region
+            (tc_core.tc-resolve-type
+              ctx
+              (tc_core.tc-context-type-get ctx inner)))
+            [(ast.AstType.Array _ count) count]
+            [_ -1])]
+        [(ast.AstType.MutRef _ inner)
+          (match (tc_core.tc-type-strip-region
+            (tc_core.tc-resolve-type
+              ctx
+              (tc_core.tc-context-type-get ctx inner)))
+            [(ast.AstType.Array _ count) count]
+            [_ -1])]
+        [_ -1])]
+    (if (< array-len 0)
+      (ResultLowerExpr.Err
+        (box
+          (lower-diagnostic-at-expr
+            arg
+            "lower: Slice unsize requires fixed-array reference")))
+      (match (lower-expr-expected
+        ctx
+        state
+        env
+        type-env
+        arg
+        (tc_core.tc-type-without-regions actual)
+        arg)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr arg-state value value-ty)
+              (match (lower-emit-cast
+                arg-state
+                value
+                value-ty
+                (ast.AstType.U64))
+                [(LowerExpr.Expr cast-state ptr _)
+                  (ResultLowerExpr.Ok
+                    (lower-emit-pack
+                      cast-state
+                      (ir.compiler-ir-value-cons
+                        ptr
+                        (ir.compiler-ir-value-cons
+                          (ir.CompilerIrValue.I64 array-len)
+                          ir.CompilerIrValueList.Nil))
+                      (tc_core.tc-type-without-regions expected)))])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))))
+
+(define (lower-call-arg-normal-basic
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [arg : ast.AstExpr]
+  [effective-arg : ast.AstExpr]
+  [arg-ty : ast.AstType]) : ResultLowerCallArg
+  (match (lower-expr-expected ctx state env type-env effective-arg arg-ty arg)
+    [(ResultLowerExpr.Ok lowered)
+      (match lowered
+        [(LowerExpr.Expr arg-state value _)
+          (ResultLowerCallArg.Ok
+            (LowerCallArg.Arg arg-state value (LowerMaybeArgWriteback.No)))])]
+    [(ResultLowerExpr.Err message) (ResultLowerCallArg.Err message)]))
+
+;; The type fact recorded for an explicit borrow can be contextualized to the
+;; Slice formal by the time lowering runs, so it no longer describes the
+;; borrowed place's fixed-array referent. Recover that provenance only on the
+;; Slice-formal path. Other argument forms retain the ordinary fact lookup,
+;; which is needed for variables that already hold an Array or Slice reference.
+(define (lower-call-slice-formal-actual-type
+  [ctx : tc_core.TcContext]
+  [type-env : tc_core.TcTypeEnv]
+  [effective-arg : ast.AstExpr]) : tc_core.ResultTcType
+  (match (ast.ast-expr-unspan effective-arg)
+    [(ast.AstExpr.Borrow mutable _ place-box)
+      (let
+        [place-expr : ast.AstExpr (lower-context-expr-get ctx place-box)]
+        (match (tc_core.tc-borrow-place
+          ctx
+          (tc_core.tc-context-expr-bases ctx)
+          type-env
+          place-expr)
+          [(tc_core.ResultTcBorrowPlace.Ok place)
+            (match place
+              [(tc_core.TcBorrowPlace lifetime referent-ty)
+                (tc_core.ResultTcType.Ok
+                  (if mutable
+                    (ast.ast-ty-mut-ref-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      lifetime
+                      referent-ty)
+                    (ast.ast-ty-ref-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      lifetime
+                      referent-ty)))])]
+          [(tc_core.ResultTcBorrowPlace.Err message)
+            (tc_core.ResultTcType.Err message)]))]
+    [_ (tc_core.tc-call-arg-expr-type ctx type-env effective-arg)]))
+
 (define (lower-call-arg-normal-as
   [ctx : tc_core.TcContext]
   [state : LowerState (:consume)]
@@ -21238,20 +21469,58 @@
   [arg : ast.AstExpr]
   [effective-arg : ast.AstExpr]
   [arg-ty : ast.AstType]) : ResultLowerCallArg
-  (match (lower-expr-expected
-    ctx
-    (lower-disarm-move-aware-resource-expr state env effective-arg)
-    env
-    type-env
-    effective-arg
-    arg-ty
-    arg)
-    [(ResultLowerExpr.Ok lowered)
-      (match lowered
-        [(LowerExpr.Expr arg-state value _)
-          (ResultLowerCallArg.Ok
-            (LowerCallArg.Arg arg-state value (LowerMaybeArgWriteback.No)))])]
-    [(ResultLowerExpr.Err message) (ResultLowerCallArg.Err message)]))
+  (let
+    [disarmed-state : LowerState
+      (lower-disarm-move-aware-resource-expr state env effective-arg)]
+    (if (tc_core.tc-call-slice-ref-formal? ctx arg-ty)
+      (match (lower-call-slice-formal-actual-type ctx type-env effective-arg)
+        [(tc_core.ResultTcType.Ok actual-ty)
+          (if (tc_core.tc-call-array-ref-to-slice-ref-compatible?
+            ctx
+            arg-ty
+            actual-ty)
+            (match (lower-call-array-ref-to-slice-pack
+              ctx
+              disarmed-state
+              env
+              type-env
+              effective-arg
+              arg-ty
+              actual-ty)
+              [(ResultLowerExpr.Ok packed)
+                (match packed
+                  [(LowerExpr.Expr packed-state value _)
+                    (ResultLowerCallArg.Ok
+                      (LowerCallArg.Arg
+                        packed-state
+                        value
+                        (LowerMaybeArgWriteback.No)))])]
+              [(ResultLowerExpr.Err message) (ResultLowerCallArg.Err message)])
+            (lower-call-arg-normal-basic
+              ctx
+              disarmed-state
+              env
+              type-env
+              arg
+              effective-arg
+              arg-ty))]
+        [(tc_core.ResultTcType.Err _)
+          (lower-call-arg-normal-basic
+            ctx
+            disarmed-state
+            env
+            type-env
+            arg
+            effective-arg
+            arg-ty)])
+      (lower-call-arg-normal-basic
+        ctx
+        disarmed-state
+        env
+        type-env
+        arg
+        effective-arg
+        arg-ty))))
 
 (define (lower-call-arg-mut-borrow-var-as
   [ctx : tc_core.TcContext]
@@ -21570,12 +21839,14 @@
           [(tc_core.ResultTcExpr.Err message)
             (ResultLowerArgs.Err (box (lower-diagnostic-at-expr arg message)))])))))
 
-(define (lower-call-type-list-has-mut-ref-formal?
+;; Mutable-reference formals need call-aware lowering for writebacks, while
+;; borrowed Slice formals need it for the closed call-local unsize path.
+(define (lower-call-type-list-needs-call-aware-args?
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]) : bool
-  (lower-call-type-list-has-mut-ref-formal-at? ctx (& types) 0))
+  (lower-call-type-list-needs-call-aware-args-at? ctx (& types) 0))
 
-(define (lower-call-type-list-has-mut-ref-formal-at?
+(define (lower-call-type-list-needs-call-aware-args-at?
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : bool
@@ -21588,7 +21859,13 @@
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
       (match (tc_core.tc-type-strip-region head)
         [(ast.AstType.MutRef _ _) true]
-        [_ (lower-call-type-list-has-mut-ref-formal-at? ctx types (+ index 1))]))))
+        [_
+          (if (tc_core.tc-call-slice-ref-formal? ctx head)
+            true
+            (lower-call-type-list-needs-call-aware-args-at?
+              ctx
+              types
+              (+ index 1)))]))))
 
 (define (lower-call-args-as-needed
   [ctx : tc_core.TcContext]
@@ -21597,7 +21874,7 @@
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]
   [types : ast.AstTypeList]) : ResultLowerCallArgs
-  (if (lower-call-type-list-has-mut-ref-formal? ctx types)
+  (if (lower-call-type-list-needs-call-aware-args? ctx types)
     (lower-call-args-as ctx state env type-env args types)
     (match (lower-args-as ctx state env type-env args types)
       [(ResultLowerArgs.Ok args-state values)
@@ -26518,6 +26795,411 @@
                   "lower: string-ref requires String"))))])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
+(define (lower-slice-view-static-source-fields
+  [state : LowerState]
+  [source-value : ir.CompilerIrValue]
+  [source-ty : ast.AstType]
+  [elem-ty : ast.AstType]
+  [count : i64]) : ResultLowerSliceViewSourceFields
+  ;; Fixed arrays and references to fixed arrays are represented as a raw
+  ;; pointer to their inline storage.  Cast that pointer to the ABI's U64 word
+  ;; and carry the compile-time element count as an I64 value.
+  (match (lower-cast-value state source-value source-ty (ast.AstType.U64))
+    [(LowerExpr.Expr ptr-state ptr _)
+      (ResultLowerSliceViewSourceFields.Ok
+        (LowerSliceViewSourceFields.Fields
+          ptr-state
+          ptr
+          (ir.CompilerIrValue.I64 count)
+          elem-ty))]))
+
+(define (lower-slice-view-dynamic-source-fields
+  [state : LowerState]
+  [source-value : ir.CompilerIrValue]
+  [elem-ty : ast.AstType]) : ResultLowerSliceViewSourceFields
+  ;; Dynamic arrays (and references to them) point at a two-word descriptor:
+  ;; data pointer at byte offset 0, signed length at byte offset 8.
+  (match (lower-load-at-offset state source-value 0 (ast.AstType.U64))
+    [(LowerExpr.Expr ptr-state ptr _)
+      (match (lower-load-at-offset ptr-state source-value 8 (ast.AstType.I64))
+        [(LowerExpr.Expr len-state len _)
+          (ResultLowerSliceViewSourceFields.Ok
+            (LowerSliceViewSourceFields.Fields len-state ptr len elem-ty))])]))
+
+(define (lower-slice-view-reference-slice-fields
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [source-value : ir.CompilerIrValue]
+  [source-ty : ast.AstType]
+  [elem-ty : ast.AstType]) : ResultLowerSliceViewSourceFields
+  ;; A borrowed Slice is already a two-word register group.  Extracting both
+  ;; words preserves the source value without touching a descriptor.
+  (match (lower-emit-word
+    state
+    source-value
+    0
+    (lower-register-word-type ctx source-ty 0))
+    [(LowerExpr.Expr ptr-state ptr _)
+      (match (lower-emit-word
+        ptr-state
+        source-value
+        1
+        (lower-register-word-type ctx source-ty 1))
+        [(LowerExpr.Expr len-state len _)
+          (ResultLowerSliceViewSourceFields.Ok
+            (LowerSliceViewSourceFields.Fields len-state ptr len elem-ty))])]))
+
+(define (lower-slice-view-invalid-source [source : ast.AstExpr]) : ResultLowerSliceViewSourceFields
+  (ResultLowerSliceViewSourceFields.Err
+    (box
+      (lower-diagnostic-at-expr
+        source
+        "lower: slice-view source must be a fixed array, dynamic array, or borrowed reference to one"))))
+
+(define (lower-slice-view-referent-fields
+  [ctx : tc_core.TcContext]
+  [source-state : LowerState]
+  [source-value : ir.CompilerIrValue]
+  [source-ty : ast.AstType]
+  [referent : ast.AstType]
+  [source : ast.AstExpr]) : ResultLowerSliceViewSourceFields
+  (match referent
+    [(ast.AstType.Array elem count)
+      (lower-slice-view-static-source-fields
+        source-state
+        source-value
+        source-ty
+        (tc_core.tc-context-type-get ctx elem)
+        count)]
+    [(ast.AstType.DynArray elem)
+      (lower-slice-view-dynamic-source-fields
+        source-state
+        source-value
+        (tc_core.tc-context-type-get ctx elem))]
+    [(ast.AstType.Slice elem)
+      (lower-slice-view-reference-slice-fields
+        ctx
+        source-state
+        source-value
+        source-ty
+        (tc_core.tc-context-type-get ctx elem))]
+    [_ (lower-slice-view-invalid-source source)]))
+
+(define (lower-slice-view-source-fields
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [source : ast.AstExpr]) : ResultLowerSliceViewSourceFields
+  (match (lower-expr ctx state env type-env source)
+    [(ResultLowerExpr.Ok lowered)
+      (match lowered
+        [(LowerExpr.Expr source-state source-value source-ty)
+          (let
+            [resolved : ast.AstType
+              (tc_core.tc-type-strip-region
+                (tc_core.tc-resolve-type ctx source-ty))]
+            (match resolved
+              [(ast.AstType.Array elem count)
+                (lower-slice-view-static-source-fields
+                  source-state
+                  source-value
+                  source-ty
+                  (tc_core.tc-context-type-get ctx elem)
+                  count)]
+              [(ast.AstType.DynArray elem)
+                (lower-slice-view-dynamic-source-fields
+                  source-state
+                  source-value
+                  (tc_core.tc-context-type-get ctx elem))]
+              [(ast.AstType.Ref _ inner)
+                (lower-slice-view-referent-fields
+                  ctx
+                  source-state
+                  source-value
+                  source-ty
+                  (tc_core.tc-type-strip-region
+                    (tc_core.tc-resolve-type
+                      ctx
+                      (tc_core.tc-context-type-get ctx inner)))
+                  source)]
+              [(ast.AstType.MutRef _ inner)
+                (lower-slice-view-referent-fields
+                  ctx
+                  source-state
+                  source-value
+                  source-ty
+                  (tc_core.tc-type-strip-region
+                    (tc_core.tc-resolve-type
+                      ctx
+                      (tc_core.tc-context-type-get ctx inner)))
+                  source)]
+              [_ (lower-slice-view-invalid-source source)]))])]
+    [(ResultLowerExpr.Err message)
+      (ResultLowerSliceViewSourceFields.Err message)]))
+
+(define (lower-slice-view-pack
+  [state : LowerState]
+  [ptr : ir.CompilerIrValue]
+  [len-value : ir.CompilerIrValue]
+  [result-ty : ast.AstType]) : LowerExpr
+  (lower-emit-pack
+    state
+    (ir.compiler-ir-value-cons
+      ptr
+      (ir.compiler-ir-value-cons len-value ir.CompilerIrValueList.Nil))
+    result-ty))
+
+(define (lower-slice-view-finish-after-len-check
+  [ctx : tc_core.TcContext]
+  [state : LowerState (:consume)]
+  [src-ptr : ir.CompilerIrValue]
+  [start-value : ir.CompilerIrValue]
+  [len-value : ir.CompilerIrValue]
+  [len-ok-var : i64]
+  [fail-label : i64]
+  [copy-label : i64]
+  [elem-ty : ast.AstType]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (let
+    [fail-start : LowerState
+      (lower-state-finish-block
+        (lower-state-emit
+          state
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var len-ok-var)
+            copy-label
+            fail-label))
+        fail-label)]
+    [copy-start : LowerState
+      (lower-state-finish-block
+        (lower-state-emit
+          (lower-oob-abort fail-start)
+          (ir.CompilerIrInstr.Jump copy-label))
+        copy-label)]
+    [checked-start : LowerState
+      (lower-state-record-latest-bounds-check-named-at-expr
+        copy-start
+        "slice_view_ok"
+        origin)]
+    (if (= (lower-type-size ctx elem-ty) 0)
+      (ResultLowerExpr.Ok
+        (lower-slice-view-pack checked-start src-ptr len-value result-ty))
+      (match (lower-emit-elem-addr-gep
+        ctx
+        checked-start
+        src-ptr
+        start-value
+        elem-ty)
+        [(LowerExpr.Expr ptr-state ptr _)
+          (ResultLowerExpr.Ok
+            (lower-slice-view-pack ptr-state ptr len-value result-ty))]))))
+
+(define (lower-slice-view-check-len
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [src-ptr : ir.CompilerIrValue]
+  [src-len : ir.CompilerIrValue]
+  [start-value : ir.CompilerIrValue]
+  [len-value : ir.CompilerIrValue]
+  [fail-label : i64]
+  [copy-label : i64]
+  [elem-ty : ast.AstType]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  ;; Once start <= source length holds, subtract in signed space and compare
+  ;; the requested length as unsigned.  This avoids overflow from `start+len`
+  ;; while still rejecting negative inputs through the unsigned comparisons.
+  (match (lower-emit-binop
+    state
+    ir.CompilerIrBinOp.Sub
+    src-len
+    start-value
+    (ast.AstType.I64))
+    [(LowerExpr.Expr rem-state remaining _)
+      (match (lower-cast-value
+        rem-state
+        remaining
+        (ast.AstType.I64)
+        (ast.AstType.U64))
+        [(LowerExpr.Expr rem-u-state remaining-u _)
+          (match (lower-cast-value
+            rem-u-state
+            len-value
+            (ast.AstType.I64)
+            (ast.AstType.U64))
+            [(LowerExpr.Expr len-u-state len-u _)
+              (match (lower-state-alloc-var len-u-state)
+                [(LowerAlloc.Alloc len-ok-alloc len-ok-var)
+                  (lower-slice-view-finish-after-len-check
+                    ctx
+                    (lower-state-emit
+                      len-ok-alloc
+                      (ir.CompilerIrInstr.BinOp
+                        len-ok-var
+                        ir.CompilerIrBinOp.Le
+                        len-u
+                        remaining-u
+                        (ast.AstType.U64)))
+                    src-ptr
+                    start-value
+                    len-value
+                    len-ok-var
+                    fail-label
+                    copy-label
+                    elem-ty
+                    result-ty
+                    origin)])])])]))
+
+(define (lower-slice-view-bounds-checked
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [src-ptr : ir.CompilerIrValue]
+  [src-len : ir.CompilerIrValue]
+  [start-value : ir.CompilerIrValue]
+  [len-value : ir.CompilerIrValue]
+  [elem-ty : ast.AstType]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-cast-value
+    state
+    start-value
+    (ast.AstType.I64)
+    (ast.AstType.U64))
+    [(LowerExpr.Expr start-u-state start-u _)
+      (match (lower-cast-value
+        start-u-state
+        src-len
+        (ast.AstType.I64)
+        (ast.AstType.U64))
+        [(LowerExpr.Expr src-len-u-state src-len-u _)
+          (match (lower-state-alloc-var src-len-u-state)
+            [(LowerAlloc.Alloc start-ok-alloc start-ok-var)
+              (let
+                [start-ok-state : LowerState
+                  (lower-state-emit
+                    start-ok-alloc
+                    (ir.CompilerIrInstr.BinOp
+                      start-ok-var
+                      ir.CompilerIrBinOp.Le
+                      start-u
+                      src-len-u
+                      (ast.AstType.U64)))]
+                (match (lower-state-fresh-label
+                  start-ok-state
+                  "slice_view_start_ok")
+                  [(LowerLabel.Label rem-label-state rem-label)
+                    (match (lower-state-fresh-label
+                      rem-label-state
+                      "slice_view_bounds_fail")
+                      [(LowerLabel.Label fail-label-state fail-label)
+                        (match (lower-state-fresh-label
+                          fail-label-state
+                          "slice_view_ok")
+                          [(LowerLabel.Label copy-label-state copy-label)
+                            (let
+                              [rem-start : LowerState
+                                (lower-state-finish-block
+                                  (lower-state-emit
+                                    copy-label-state
+                                    (ir.CompilerIrInstr.Branch
+                                      (ir.CompilerIrValue.Var start-ok-var)
+                                      rem-label
+                                      fail-label))
+                                  rem-label)]
+                              (lower-slice-view-check-len
+                                ctx
+                                rem-start
+                                src-ptr
+                                src-len
+                                start-value
+                                len-value
+                                fail-label
+                                copy-label
+                                elem-ty
+                                result-ty
+                                origin))])])]))])])]))
+
+(define (lower-slice-view-call
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [args : ast.AstExprList]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (if (= (struct-get (& args) len) 3)
+    (let
+      [source : ast.AstExpr
+        (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+      [start : ast.AstExpr
+        (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))]
+      [len : ast.AstExpr
+        (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 2 0))]
+      (match (lower-slice-view-source-fields ctx state env type-env source)
+        [(ResultLowerSliceViewSourceFields.Ok fields)
+          (match fields
+            [(LowerSliceViewSourceFields.Fields
+                source-state
+                src-ptr
+                src-len
+                elem-ty)
+              (match (lower-integer-expr-with-expected-or-actual
+                ctx
+                source-state
+                env
+                type-env
+                start
+                (ast.AstType.I64)
+                "lower: slice-view start must be integer")
+                [(ResultLowerExpr.Ok lowered-start)
+                  (match lowered-start
+                    [(LowerExpr.Expr start-state start-raw start-ty)
+                      (match (lower-cast-value
+                        start-state
+                        start-raw
+                        start-ty
+                        (ast.AstType.I64))
+                        [(LowerExpr.Expr start-i-state start-value _)
+                          (match (lower-integer-expr-with-expected-or-actual
+                            ctx
+                            start-i-state
+                            env
+                            type-env
+                            len
+                            (ast.AstType.I64)
+                            "lower: slice-view length must be integer")
+                            [(ResultLowerExpr.Ok lowered-len)
+                              (match lowered-len
+                                [(LowerExpr.Expr len-state len-raw len-ty)
+                                  (match (lower-cast-value
+                                    len-state
+                                    len-raw
+                                    len-ty
+                                    (ast.AstType.I64))
+                                    [(LowerExpr.Expr len-i-state len-value _)
+                                      (lower-slice-view-bounds-checked
+                                        ctx
+                                        len-i-state
+                                        src-ptr
+                                        src-len
+                                        start-value
+                                        len-value
+                                        elem-ty
+                                        result-ty
+                                        origin)])])]
+                            [(ResultLowerExpr.Err message)
+                              (ResultLowerExpr.Err message)])])])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+        [(ResultLowerSliceViewSourceFields.Err message)
+          (ResultLowerExpr.Err message)]))
+    (ResultLowerExpr.Err
+      (box
+        (lower-diagnostic-at-expr
+          origin
+          "lower: slice-view expects exactly three arguments")))))
+
 (define (lower-substring-call-runtime
   [state : LowerState]
   [src-ptr : ir.CompilerIrValue]
@@ -30650,6 +31332,19 @@
                                   (string.append
                                     name
                                     " is compile-time only; wrap it in (comptime ...)")))))]
+                        [(and
+                            builtin-available
+                            (or
+                              (string.eq name "slice-view")
+                              (string.eq name "slice-mut-view")))
+                          (lower-slice-view-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            result-ty
+                            origin)]
                         [(tc_core.tc-string-ref-helper-call-id?
                             ctx
                             type-env
@@ -30937,8 +31632,9 @@
 ;; A dynamic-array value is a pointer to inline fat storage `{data_ptr, length}`
 ;; with the i64 length at byte offset 8. `Gep` scales the index by the element
 ;; size, so index 1 with element type i64 addresses that length field, which a
-;; typed `Load` then reads. Dynamic-array calls plus core/private string-length
-;; calls are intercepted; other `length` arguments fall back to a direct call.
+;; typed `Load` then reads. Dynamic-array and borrowed-Slice calls plus
+;; core/private string-length calls are intercepted; other `length` arguments
+;; fall back to a direct call.
 (define (lower-array-length
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -31049,31 +31745,69 @@
   (match (lower-expr ctx state env type-env arr)
     [(ResultLowerExpr.Ok lowered)
       (match lowered
-        [(LowerExpr.Expr arr-state arr-value _)
-          (match (lower-state-alloc-var arr-state)
-            [(LowerAlloc.Alloc gep-alloc gep-var)
-              (let
-                [gep-state : LowerState
-                  (lower-state-emit
-                    gep-alloc
-                    (ir.CompilerIrInstr.Gep
-                      gep-var
-                      arr-value
-                      (ir.CompilerIrValue.I64 1)
-                      (ast.AstType.I64)))]
-                (match (lower-state-alloc-var gep-state)
-                  [(LowerAlloc.Alloc load-alloc load-var)
-                    (ResultLowerExpr.Ok
-                      (LowerExpr.Expr
-                        (lower-state-emit
-                          load-alloc
-                          (ir.CompilerIrInstr.Load
-                            load-var
-                            (ir.CompilerIrValue.Var gep-var)
-                            (ast.AstType.I64)))
-                        (ir.CompilerIrValue.Var load-var)
-                        (ast.AstType.I64)))]))])])]
+        [(LowerExpr.Expr arr-state arr-value arr-ty)
+          (let
+            [resolved : ast.AstType
+              (tc_core.tc-type-strip-region
+                (tc_core.tc-resolve-type ctx arr-ty))]
+            (match resolved
+              [(ast.AstType.Ref _ inner)
+                (if (lower-reference-to-slice? ctx inner)
+                  (match (lower-emit-word
+                    arr-state
+                    arr-value
+                    1
+                    (lower-register-word-type ctx arr-ty 1))
+                    [(LowerExpr.Expr length-state length-value _)
+                      (ResultLowerExpr.Ok
+                        (LowerExpr.Expr
+                          length-state
+                          length-value
+                          (ast.AstType.I64)))])
+                  (lower-array-length-load-descriptor arr-state arr-value))]
+              [(ast.AstType.MutRef _ inner)
+                (if (lower-reference-to-slice? ctx inner)
+                  (match (lower-emit-word
+                    arr-state
+                    arr-value
+                    1
+                    (lower-register-word-type ctx arr-ty 1))
+                    [(LowerExpr.Expr length-state length-value _)
+                      (ResultLowerExpr.Ok
+                        (LowerExpr.Expr
+                          length-state
+                          length-value
+                          (ast.AstType.I64)))])
+                  (lower-array-length-load-descriptor arr-state arr-value))]
+              [_ (lower-array-length-load-descriptor arr-state arr-value)]))])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+
+(define (lower-array-length-load-descriptor
+  [state : LowerState]
+  [arr-value : ir.CompilerIrValue]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc gep-alloc gep-var)
+      (let
+        [gep-state : LowerState
+          (lower-state-emit
+            gep-alloc
+            (ir.CompilerIrInstr.Gep
+              gep-var
+              arr-value
+              (ir.CompilerIrValue.I64 1)
+              (ast.AstType.I64)))]
+        (match (lower-state-alloc-var gep-state)
+          [(LowerAlloc.Alloc load-alloc load-var)
+            (ResultLowerExpr.Ok
+              (LowerExpr.Expr
+                (lower-state-emit
+                  load-alloc
+                  (ir.CompilerIrInstr.Load
+                    load-var
+                    (ir.CompilerIrValue.Var gep-var)
+                    (ast.AstType.I64)))
+                (ir.CompilerIrValue.Var load-var)
+                (ast.AstType.I64)))]))]))
 
 (define (lower-string-data
   [ctx : tc_core.TcContext]
@@ -31544,6 +32278,46 @@
                         ctx
                         (lower-emit-bounds-check s5 idx-u len-u)
                         arr-value
+                        idx-off
+                        elem-ty)])])])])]))
+
+;; Compute a checked element address for a borrowed Slice register group.
+;; Word0 is the data pointer and word1 is the signed length, so this path
+;; never loads a dynamic-array descriptor.
+(define (lower-slice-element-addr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [slice-value : ir.CompilerIrValue]
+  [slice-ty : ast.AstType]
+  [idx-value : ir.CompilerIrValue]
+  [idx-ty : ast.AstType]
+  [elem-ty : ast.AstType]) : LowerExpr
+  (match (lower-emit-word
+    state
+    slice-value
+    0
+    (lower-register-word-type ctx slice-ty 0))
+    [(LowerExpr.Expr s0 data-ptr _)
+      (match (lower-emit-word
+        s0
+        slice-value
+        1
+        (lower-register-word-type ctx slice-ty 1))
+        [(LowerExpr.Expr s1 length-i64 _)
+          (match (lower-emit-cast s1 idx-value idx-ty (ast.AstType.U64))
+            [(LowerExpr.Expr s2 idx-u _)
+              (match (lower-emit-cast s2 idx-value idx-ty (ast.AstType.I64))
+                [(LowerExpr.Expr s3 idx-off _)
+                  (match (lower-emit-cast
+                    s3
+                    length-i64
+                    (ast.AstType.I64)
+                    (ast.AstType.U64))
+                    [(LowerExpr.Expr s4 length-u _)
+                      (lower-emit-elem-addr-gep
+                        ctx
+                        (lower-emit-bounds-check s4 idx-u length-u)
+                        data-ptr
                         idx-off
                         elem-ty)])])])])]))
 
@@ -33488,6 +34262,62 @@
                                                 index)
                                               elem-ptr
                                               elem-ir-ty)])]
+                                      [(ast.AstType.Ref _ inner)
+                                        (if (lower-reference-to-slice?
+                                          ctx
+                                          inner)
+                                          (match (lower-slice-element-addr
+                                            ctx
+                                            idx-state
+                                            arr-value
+                                            container-ty
+                                            idx-value
+                                            idx-value-ty
+                                            elem-ir-ty)
+                                            [(LowerExpr.Expr
+                                                addr-state
+                                                elem-ptr
+                                                _)
+                                              (lower-array-elem-ref-result
+                                                ctx
+                                                (lower-state-record-latest-bounds-check-at-expr
+                                                  addr-state
+                                                  index)
+                                                elem-ptr
+                                                elem-ir-ty)])
+                                          (ResultLowerExpr.Err
+                                            (box
+                                              (lower-diagnostic-at-expr
+                                                arr
+                                                "lower: array-ref requires array type"))))]
+                                      [(ast.AstType.MutRef _ inner)
+                                        (if (lower-reference-to-slice?
+                                          ctx
+                                          inner)
+                                          (match (lower-slice-element-addr
+                                            ctx
+                                            idx-state
+                                            arr-value
+                                            container-ty
+                                            idx-value
+                                            idx-value-ty
+                                            elem-ir-ty)
+                                            [(LowerExpr.Expr
+                                                addr-state
+                                                elem-ptr
+                                                _)
+                                              (lower-array-elem-ref-result
+                                                ctx
+                                                (lower-state-record-latest-bounds-check-at-expr
+                                                  addr-state
+                                                  index)
+                                                elem-ptr
+                                                elem-ir-ty)])
+                                          (ResultLowerExpr.Err
+                                            (box
+                                              (lower-diagnostic-at-expr
+                                                arr
+                                                "lower: array-ref requires array type"))))]
                                       [(ast.AstType.Array _ elem-count)
                                         (match (lower-fixed-array-element-addr
                                           ctx
@@ -33628,6 +34458,48 @@
                   elem-ir-ty)
                 ir.CompilerIrValue.Unit
                 (ast.AstType.Unit))))])]
+    [(ast.AstType.Ref _ inner)
+      (ResultLowerExpr.Err
+        (box
+          (lower-diagnostic-at-expr
+            arr
+            "lower: array-set! requires mutable array access")))]
+    [(ast.AstType.MutRef _ inner)
+      (if (lower-reference-to-slice? ctx inner)
+        (match (lower-slice-element-addr
+          ctx
+          state
+          arr-value
+          container-ty
+          idx-value
+          idx-ty
+          elem-ir-ty)
+          [(LowerExpr.Expr addr-state elem-ptr _)
+            (if (= (lower-type-size ctx elem-ir-ty) 0)
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr
+                  (lower-state-record-latest-bounds-check-at-expr
+                    addr-state
+                    origin)
+                  ir.CompilerIrValue.Unit
+                  (ast.AstType.Unit)))
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr
+                  (lower-array-elem-store-state
+                    ctx
+                    (lower-state-record-latest-bounds-check-at-expr
+                      addr-state
+                      origin)
+                    elem-ptr
+                    value-ir
+                    elem-ir-ty)
+                  ir.CompilerIrValue.Unit
+                  (ast.AstType.Unit))))])
+        (ResultLowerExpr.Err
+          (box
+            (lower-diagnostic-at-expr
+              arr
+              "lower: array-set! requires array type"))))]
     [_
       (ResultLowerExpr.Err
         (box
@@ -33688,6 +34560,39 @@
               value
               elem-ir-ty
               value)])]
+      [(ast.AstType.Ref _ inner)
+        (LowerMaybeDirectStore.Err
+          (box
+            (lower-diagnostic-at-expr
+              arr
+              "lower: array-set! requires mutable array access")))]
+      [(ast.AstType.MutRef _ inner)
+        (if (lower-reference-to-slice? ctx inner)
+          (match (lower-slice-element-addr
+            ctx
+            state
+            arr-value
+            container-ty
+            idx-value
+            idx-ty
+            elem-ir-ty)
+            [(LowerExpr.Expr addr-state elem-ptr _)
+              (lower-direct-store-rhs-into
+                ctx
+                (lower-state-record-latest-bounds-check-at-expr
+                  addr-state
+                  origin)
+                env
+                type-env
+                elem-ptr
+                value
+                elem-ir-ty
+                value)])
+          (LowerMaybeDirectStore.Err
+            (box
+              (lower-diagnostic-at-expr
+                arr
+                "lower: array-set! requires array type"))))]
       [_
         (LowerMaybeDirectStore.Err
           (box

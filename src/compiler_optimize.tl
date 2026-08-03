@@ -4838,6 +4838,14 @@
             (ast.ast-type-segment-bases-get type-segment-bases a-item)
             (ast.ast-type-segment-bases-get type-segment-bases b-item))]
         [_ false])]
+    [(ast.AstType.Slice a-item)
+      (match b
+        [(ast.AstType.Slice b-item)
+          (opt-type-eq
+            type-segment-bases
+            (ast.ast-type-segment-bases-get type-segment-bases a-item)
+            (ast.ast-type-segment-bases-get type-segment-bases b-item))]
+        [_ false])]
     [(ast.AstType.Box a-item)
       (match b
         [(ast.AstType.Box b-item)
@@ -5067,6 +5075,12 @@
     [(ast.AstType.DynArray item)
       (hash.combine
         22
+        (opt-type-hash
+          type-segment-bases
+          (ast.ast-type-segment-bases-get type-segment-bases item)))]
+    [(ast.AstType.Slice item)
+      (hash.combine
+        37
         (opt-type-hash
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases item)))]
@@ -52295,6 +52309,7 @@
     [(ast.AstType.Str) 8]
     [(ast.AstType.Bytes) 8]
     [(ast.AstType.DynArray _) 8]
+    [(ast.AstType.Slice _) 0]
     [(ast.AstType.Array _ _) 8]
     [(ast.AstType.Func _ _) 8]
     [(ast.AstType.Tuple _) 8]
@@ -66226,6 +66241,16 @@
 (defenum OptScratchScopeReport
   (Report i64 i64 OptScratchBlockerReason))
 
+;; Physical-layout mirror used by optimizer analyses that do have the type
+;; segment pool available.  A borrowed Slice reference is the only fat Ref;
+;; Region wrappers around its immediate referent are transparent.
+(define (opt-reference-to-slice? [type-segment-bases : i64] [inner : i64]) : bool
+  (match (ast.ast-type-segment-bases-get type-segment-bases inner)
+    [(ast.AstType.Region _ nested)
+      (opt-reference-to-slice? type-segment-bases nested)]
+    [(ast.AstType.Slice _) true]
+    [_ false]))
+
 (define (opt-scratch-alloc-type-size
   [type-segment-bases : i64]
   [ty : ast.AstType]) : i64
@@ -66250,11 +66275,18 @@
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array _ _) 8]
     [(ast.AstType.DynArray _) 8]
+    [(ast.AstType.Slice _) 0]
     [(ast.AstType.Box _) 8]
     [(ast.AstType.Ptr _) 8]
     [(ast.AstType.MutPtr _) 8]
-    [(ast.AstType.Ref _ _) 8]
-    [(ast.AstType.MutRef _ _) 8]
+    [(ast.AstType.Ref _ inner)
+      (if (opt-reference-to-slice? type-segment-bases inner)
+        16
+        8)]
+    [(ast.AstType.MutRef _ inner)
+      (if (opt-reference-to-slice? type-segment-bases inner)
+        16
+        8)]
     [(ast.AstType.Region _ inner)
       (opt-scratch-alloc-type-size
         type-segment-bases
@@ -67895,11 +67927,18 @@
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array _ _) 8]
     [(ast.AstType.DynArray _) 8]
+    [(ast.AstType.Slice _) 0]
     [(ast.AstType.Box _) 8]
     [(ast.AstType.Ptr _) 8]
     [(ast.AstType.MutPtr _) 8]
-    [(ast.AstType.Ref _ _) 8]
-    [(ast.AstType.MutRef _ _) 8]
+    [(ast.AstType.Ref _ inner)
+      (if (opt-reference-to-slice? type-segment-bases inner)
+        16
+        8)]
+    [(ast.AstType.MutRef _ inner)
+      (if (opt-reference-to-slice? type-segment-bases inner)
+        16
+        8)]
     [(ast.AstType.Region _ inner)
       (opt-load-loc-type-size
         type-segment-bases

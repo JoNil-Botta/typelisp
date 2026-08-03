@@ -10,9 +10,11 @@
 ;: Emit a generated borrowed slice module for element type `T`.
 (defmacro (slice [T : type]) : Module
   (let
-    [module-name : comptime.Expr
-      (comptime.expr-var
-        (comptime.string-append "stdlib.vector_slice.generated." (type-key T)))]
+    [module-name-text : String
+      (comptime.string-append "stdlib.vector_slice.generated." (type-key T))]
+    [module-name : comptime.Expr (comptime.expr-var module-name-text)]
+    [slice-type-name : comptime.Expr
+      (comptime.expr-var (comptime.string-append module-name-text ".Slice"))]
     [vec-module-name : String
       (comptime.string-append "stdlib.vector.generated." (type-key T))]
     [vec-type-name : comptime.Expr
@@ -45,12 +47,13 @@
                 false
                 (<= len (- source-len start)))
               false))))
-      (define (all-vec [v : (& source ,vec-type-name)]) : (Slice source)
+      (define (all-vec [v : (& source ,vec-type-name)]) : (,slice-type-name
+          source)
         (Slice (vec.slots v) 0 (vec.len v)))
       (define (from-vec
         [v : (& source ,vec-type-name)]
         [start : i64]
-        [len : i64]) : (Slice source)
+        [len : i64]) : (,slice-type-name source)
         (if (range-valid? (vec.len v) start len)
           (Slice (vec.slots v) start len)
           (Slice (vec.slots v) 0 0)))
@@ -64,15 +67,18 @@
         (if (range-valid? (vec.len-mut v) start len)
           (MutSlice (vec.slots-mut v) start len)
           (MutSlice (vec.slots-mut v) 0 0)))
-      (define (len [slice : (Slice source)]) : i64
+      (define (len [slice : (,slice-type-name source)]) : i64
         (struct-get slice len))
       (define (mut-len [slice : (MutSlice source)]) : i64
         (struct-get slice len))
-      (define (is-empty? [slice : (Slice source)]) : bool
+      (define (is-empty? [slice : (,slice-type-name source)]) : bool
         (<= (len slice) 0))
       (define (mut-is-empty? [slice : (MutSlice source)]) : bool
         (<= (mut-len slice) 0))
-      (define (get [slice : (Slice source)] [index : i64] [fallback : ,T]) : ,T
+      (define (get
+        [slice : (,slice-type-name source)]
+        [index : i64]
+        [fallback : ,T]) : ,T
         (if (if (>= index 0)
           (< index (len slice))
           false)
@@ -99,7 +105,7 @@
         (:lifetimes source)
         (Done (Iter source))
         (Item ,T (Iter source)))
-      (define (iterator [slice : (Slice source)]) : (Iter source)
+      (define (iterator [slice : (,slice-type-name source)]) : (Iter source)
         (Iter
           (struct-get slice slots)
           (struct-get slice start)
@@ -141,15 +147,17 @@
         (match result
           [(IterNext.Item _ next-state) next-state]
           [(IterNext.Done next-state) next-state]))
-      (define (sub-slice [slice : (Slice source)] [start : i64] [count : i64]) : (Slice
-          source)
+      (define (sub-slice
+        [slice : (,slice-type-name source)]
+        [start : i64]
+        [count : i64]) : (,slice-type-name source)
         (if (range-valid? (len slice) start count)
           (Slice
             (struct-get slice slots)
             (+ (struct-get slice start) start)
             count)
           (Slice (struct-get slice slots) (struct-get slice start) 0)))
-      (define (to-vec [slice : (Slice source)]) : ,vec-type-name
+      (define (to-vec [slice : (,slice-type-name source)]) : ,vec-type-name
         (let
           [n : i64 (len slice)]
           [out : ,vec-type-name (vec.with-capacity n)]

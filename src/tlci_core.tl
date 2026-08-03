@@ -857,6 +857,8 @@
   "type-array")
 (define tlci-host-callback-name-type-ref : String
   "type-ref")
+(define tlci-host-callback-name-type-slice : String
+  "type-slice")
 
 ;; A computed struct field name is a stack value rather than caller bytes:
 ;; pop the name after the target expression and push the resulting field

@@ -2437,6 +2437,13 @@
           (compiler-ir-clone-type
             pools
             (ast.ast-node-pool-context-type-get pools elem))))]
+    [(ast.AstType.Slice elem)
+      (ast.AstType.Slice
+        (ast.ast-node-pool-context-type-push
+          pools
+          (compiler-ir-clone-type
+            pools
+            (ast.ast-node-pool-context-type-get pools elem))))]
     [(ast.AstType.Box elem)
       (ast.AstType.Box
         (ast.ast-node-pool-context-type-push
@@ -3363,6 +3370,13 @@
     [(ast.AstType.DynArray elem)
       (str_cat.str-cat
         "(Array "
+        (compiler-ir-type-render
+          type-segment-bases
+          (ast.ast-type-segment-bases-get type-segment-bases elem))
+        ")")]
+    [(ast.AstType.Slice elem)
+      (str_cat.str-cat
+        "(Slice "
         (compiler-ir-type-render
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases elem))
@@ -6346,6 +6360,13 @@
     [(ast.AstType.DynArray elem)
       (str_cat.str-cat
         "(Array "
+        (compiler-ir-type-name
+          type-segment-bases
+          (ast.ast-type-segment-bases-get type-segment-bases elem))
+        ")")]
+    [(ast.AstType.Slice elem)
+      (str_cat.str-cat
+        "(Slice "
         (compiler-ir-type-name
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases elem))

@@ -39,8 +39,19 @@ cp "$ROOT/tests/bootstrap_ctfe_while_probe.tl" \
 
 # GNU sed is present on both supported bootstrap hosts (Linux and Git Bash).
 # Word boundaries keep compiler-internal names such as AstExpr.Var and
-# AstPattern.Variant unchanged.
-find "$OUT/src" "$OUT/stdlib" "$OUT/bootstrap" "$OUT/tests" \
+# AstPattern.Variant unchanged. A seed that already accepts the short
+# qualified spelling may set this mode to 0; that keeps its name ABI while
+# still applying the old-shape TypeInfo enum bridge below.
+LEGACY_SHORT_VARIANTS=${COMPTIME_SHORT_VARIANT_SEED_BRIDGE_LEGACY:-1}
+case "$LEGACY_SHORT_VARIANTS" in
+    0 | 1) ;;
+    *)
+        echo "comptime short-variant seed bridge mode must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
+if [ "$LEGACY_SHORT_VARIANTS" = 1 ]; then
+  find "$OUT/src" "$OUT/stdlib" "$OUT/bootstrap" "$OUT/tests" \
     -type f -name '*.tl' -exec sed -i \
     -e 's/\<Expr\.Bool\>/ExprBool/g' \
     -e 's/\<Expr\.Int\>/ExprInt/g' \
@@ -64,50 +75,72 @@ find "$OUT/src" "$OUT/stdlib" "$OUT/bootstrap" "$OUT/tests" \
     -e 's/\<TypeInfo\.Struct\>/TypeInfoStruct/g' \
     -e 's/\<TypeInfo\.Enum\>/TypeInfoEnum/g' \
     -e 's/\<TypeInfo\.Opaque\>/TypeInfoOpaque/g' \
+    -e 's/\<TypeInfo\.Slice\>/TypeInfoSlice/g' \
     {} +
+fi
 
 COMPTIME="$OUT/stdlib/comptime.tl"
-sed -i \
-    -e 's/^  (Bool bool)$/  (ExprBool bool)/' \
-    -e 's/^  (Int i64)$/  (ExprInt i64)/' \
-    -e 's/^  (Var String)$/  (ExprVar String)/' \
-    -e 's/^  (Splice (Box Expr))$/  (ExprSplice (Box Expr))/' \
-    -e 's/^  (If (Box Expr) (Box Expr) (Box Expr))$/  (ExprIf (Box Expr) (Box Expr) (Box Expr))/' \
-    -e 's/^  (Call (Box Expr) ExprList)$/  (ExprCall (Box Expr) ExprList)/' \
-    -e 's/^  (Begin ExprList)$/  (ExprBegin ExprList)/' \
-    -e 's/^  (Quote (Box Expr))$/  (ExprQuote (Box Expr))/' \
-    -e 's/^  (Quasiquote (Box Expr))$/  (ExprQuasiquote (Box Expr))/' \
-    -e 's/^  (Unquote (Box Expr))$/  (ExprUnquote (Box Expr))/' \
-    -e 's/^  (UnquoteSplicing (Box Expr)))$/  (ExprUnquoteSplicing (Box Expr)))/' \
-    -e 's/^  (Wildcard)$/  (PatternWildcard)/' \
-    -e 's/^  (Binding String)$/  (PatternBinding String)/' \
-    -e 's/^  (Variant String PatternList))$/  (PatternVariant String PatternList))/' \
-    -e 's/^  (Builtin String)$/  (TypeInfoBuiltin String)/' \
-    -e 's/^  (Array (Box TypeInfo) i64)$/  (TypeInfoArray (Box TypeInfo) i64)/' \
-    -e 's/^  (DynArray (Box TypeInfo))$/  (TypeInfoDynArray (Box TypeInfo))/' \
-    -e 's/^  (Function TypeInfoList (Box TypeInfo))$/  (TypeInfoFunction TypeInfoList (Box TypeInfo))/' \
-    -e 's/^  (Tuple TypeInfoList)$/  (TypeInfoTuple TypeInfoList)/' \
-    -e 's/^  (Struct String TypeFieldList)$/  (TypeInfoStruct String TypeFieldList)/' \
-    -e 's/^  (Enum String TypeVariantList)$/  (TypeInfoEnum String TypeVariantList)/' \
-    -e 's/^  (Opaque String))$/  (TypeInfoOpaque String))/' \
-    "$COMPTIME"
+if [ "$LEGACY_SHORT_VARIANTS" = 1 ]; then
+  sed -i \
+      -e 's/^  (Bool bool)$/  (ExprBool bool)/' \
+      -e 's/^  (Int i64)$/  (ExprInt i64)/' \
+      -e 's/^  (Var String)$/  (ExprVar String)/' \
+      -e 's/^  (Splice (Box Expr))$/  (ExprSplice (Box Expr))/' \
+      -e 's/^  (If (Box Expr) (Box Expr) (Box Expr))$/  (ExprIf (Box Expr) (Box Expr) (Box Expr))/' \
+      -e 's/^  (Call (Box Expr) ExprList)$/  (ExprCall (Box Expr) ExprList)/' \
+      -e 's/^  (Begin ExprList)$/  (ExprBegin ExprList)/' \
+      -e 's/^  (Quote (Box Expr))$/  (ExprQuote (Box Expr))/' \
+      -e 's/^  (Quasiquote (Box Expr))$/  (ExprQuasiquote (Box Expr))/' \
+      -e 's/^  (Unquote (Box Expr))$/  (ExprUnquote (Box Expr))/' \
+      -e 's/^  (UnquoteSplicing (Box Expr)))$/  (ExprUnquoteSplicing (Box Expr)))/' \
+      -e 's/^  (Wildcard)$/  (PatternWildcard)/' \
+      -e 's/^  (Binding String)$/  (PatternBinding String)/' \
+      -e 's/^  (Variant String PatternList))$/  (PatternVariant String PatternList))/' \
+      -e 's/^  (Builtin String)$/  (TypeInfoBuiltin String)/' \
+      -e 's/^  (Array (Box TypeInfo) i64)$/  (TypeInfoArray (Box TypeInfo) i64)/' \
+      -e 's/^  (DynArray (Box TypeInfo))$/  (TypeInfoDynArray (Box TypeInfo))/' \
+      -e 's/^  (Function TypeInfoList (Box TypeInfo))$/  (TypeInfoFunction TypeInfoList (Box TypeInfo))/' \
+      -e 's/^  (Tuple TypeInfoList)$/  (TypeInfoTuple TypeInfoList)/' \
+      -e 's/^  (Struct String TypeFieldList)$/  (TypeInfoStruct String TypeFieldList)/' \
+      -e 's/^  (Enum String TypeVariantList)$/  (TypeInfoEnum String TypeVariantList)/' \
+      -e '/^  (Slice (Box TypeInfo)))$/d' \
+      -e 's/^  (Opaque String)$/  (TypeInfoOpaque String))/' \
+      "$COMPTIME"
+else
+  sed -i \
+      -e '/^  (Slice (Box TypeInfo)))$/d' \
+      -e 's/^  (Opaque String)$/  (Opaque String))/' \
+      "$COMPTIME"
+fi
 
-grep -qF '(ExprBool bool)' "$COMPTIME" || {
+if [ "$LEGACY_SHORT_VARIANTS" = 1 ]; then
+  grep -qF '(ExprBool bool)' "$COMPTIME" || {
     echo "seed bridge did not restore the legacy Expr declaration" >&2
     exit 1
-}
-grep -qF '(ExprUnquoteSplicing (Box Expr)))' "$COMPTIME" || {
+  }
+  grep -qF '(ExprUnquoteSplicing (Box Expr)))' "$COMPTIME" || {
     echo "seed bridge did not restore the final legacy Expr variant" >&2
     exit 1
-}
-grep -qF '(PatternVariant String PatternList))' "$COMPTIME" || {
+  }
+  grep -qF '(PatternVariant String PatternList))' "$COMPTIME" || {
     echo "seed bridge did not restore the final legacy Pattern variant" >&2
     exit 1
-}
-grep -qF '(TypeInfoOpaque String))' "$COMPTIME" || {
-    echo "seed bridge did not restore the final legacy TypeInfo variant" >&2
+  }
+  grep -qF '(TypeInfoOpaque String))' "$COMPTIME" || {
+    echo "seed bridge did not restore the final legacy TypeInfo Opaque variant" >&2
     exit 1
-}
+  }
+else
+  grep -qF '(Opaque String))' "$COMPTIME" || {
+    echo "seed bridge did not restore the final short TypeInfo Opaque variant" >&2
+    exit 1
+  }
+fi
+if grep -qF '(TypeInfoSlice' "$COMPTIME" || \
+    grep -qF '(Slice (Box TypeInfo))' "$COMPTIME"; then
+    echo "seed bridge retained the new TypeInfo Slice variant" >&2
+    exit 1
+fi
 grep -qF '(compiler-builtin-resolve-name insert-missing "Var")' \
     "$OUT/src/compiler_builtin_ids.tl" || {
     echo "seed bridge changed the new short-name compiler ABI" >&2

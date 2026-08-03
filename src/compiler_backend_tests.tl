@@ -6083,6 +6083,202 @@
 (define (compiler-backend-register-group-test-type) : compiler_ast_types.AstType
   (compiler_ast_types.AstType.Struct (ci.intern "BackendGroupTest")))
 
+;; Structural borrowed-slice ABI classification must not depend on a nominal
+;; aggregate map entry.  The private type pool below has no Pack-producing
+;; function, so the empty program index exercises the structural short-circuit
+;; in both the backend and register allocator classifiers.
+(define (compiler-backend-slice-reference-abi-classifiers-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 16)]
+    [elem-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.I64))]
+    [slice-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.Slice elem-id))]
+    [region-slice-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.Region 9 slice-id))]
+    [ordinary-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.I64))]
+    [ref : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Ref 1 slice-id)]
+    [mut-ref : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.MutRef 1 region-slice-id)]
+    [ordinary-ref : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Ref 1 ordinary-id)]
+    [bare-slice : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Slice elem-id)]
+    [bases : i64
+      (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)]
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        bases
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    (and
+      (= (compiler_backend.compiler-backend-type-size bases ref) 16)
+      (= (compiler_backend.compiler-backend-type-size bases mut-ref) 16)
+      (= (compiler_backend.compiler-backend-type-size bases ordinary-ref) 8)
+      (= (compiler_backend.compiler-backend-type-size bases bare-slice) 0)
+      (= (compiler_backend.compiler-backend-group-word-count bases index ref) 2)
+      (=
+        (compiler_backend.compiler-backend-group-word-count bases index mut-ref)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-count
+          bases
+          index
+          ordinary-ref)
+        1)
+      (=
+        (compiler_backend.compiler-backend-group-word-count
+          bases
+          index
+          bare-slice)
+        1)
+      (compiler_backend.compiler-backend-group-type? bases index ref)
+      (compiler_backend.compiler-backend-group-type? bases index mut-ref)
+      (not
+        (compiler_backend.compiler-backend-group-type? bases index ordinary-ref))
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          ref)
+        0)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          mut-ref)
+        0)
+      (compiler_regalloc.compiler-reg-type-register-group? bases ref)
+      (compiler_regalloc.compiler-reg-type-register-group? bases mut-ref)
+      (not
+        (compiler_regalloc.compiler-reg-type-register-group? bases ordinary-ref))
+      (not
+        (compiler_regalloc.compiler-reg-type-register-group? bases bare-slice))
+      (not
+        (compiler_regalloc.compiler-reg-type-register-group-has-sse? bases ref))
+      (not
+        (compiler_regalloc.compiler-reg-type-register-group-word-sse?
+          bases
+          ref
+          0))
+      (not
+        (compiler_regalloc.compiler-reg-type-register-group-word-sse?
+          bases
+          ref
+          1)))))
+
+;; Emitted-source witness for the internal borrowed-slice ABI.  A borrowed
+;; Slice reference is two integer words (data pointer then signed length), so
+;; the identity function must capture both incoming words and return both in
+;; the target's integer return registers.  Keep this at opt0: the stable
+;; spill/reload shape makes an accidental one-word ordinary-reference lowering
+;; fail the check instead of merely matching a register name somewhere else.
+(define (compiler-backend-slice-reference-abi-source) : String
+  "(define (slice-abi-id [view : (& abi (Slice i64))]) : (& abi (Slice i64))
+  view)
+(define (main) : i64
+  (let
+    [items : (Array i64 3) (array 10 20 3)]
+    (if (= (length (slice-abi-id (& items))) 3)
+      42
+      1)))")
+
+(define (compiler-backend-slice-reference-abi-linux-body-ok? [body : String]) : bool
+  (let
+    [incoming0 : i64
+      (compiler_backend.compiler-backend-string-find-from
+        body
+        "    movq %rdi, 24(%rsp)\n"
+        0)]
+    [incoming1 : i64
+      (compiler_backend.compiler-backend-string-find-from
+        body
+        "    movq %rsi, 16(%rsp)\n"
+        0)]
+    [outgoing0 : i64
+      (compiler_backend.compiler-backend-string-find-from
+        body
+        "    movq 24(%rsp), %rax\n"
+        0)]
+    [outgoing1 : i64
+      (compiler_backend.compiler-backend-string-find-from
+        body
+        "    movq 16(%rsp), %rdx\n"
+        0)]
+    (and
+      (> (string.string-length body) 0)
+      (>= incoming0 0)
+      (>= incoming1 0)
+      (>= outgoing0 0)
+      (>= outgoing1 0)
+      (< incoming0 incoming1)
+      (< incoming1 outgoing0)
+      (< outgoing0 outgoing1))))
+
+(define (compiler-backend-slice-reference-abi-windows-body-ok? [body : String]) : bool
+  (let
+    [incoming0 : i64
+      (compiler_backend.compiler-backend-string-find-from
+        body
+        "    movq %rcx, 24(%rsp)\n"
+        0)]
+    [incoming1 : i64
+      (compiler_backend.compiler-backend-string-find-from
+        body
+        "    movq %rdx, 16(%rsp)\n"
+        0)]
+    [outgoing0 : i64
+      (compiler_backend.compiler-backend-string-find-from
+        body
+        "    movq 24(%rsp), %rax\n"
+        0)]
+    [outgoing1 : i64
+      (compiler_backend.compiler-backend-string-find-from
+        body
+        "    movq 16(%rsp), %rdx\n"
+        0)]
+    (and
+      (> (string.string-length body) 0)
+      (>= incoming0 0)
+      (>= incoming1 0)
+      (>= outgoing0 0)
+      (>= outgoing1 0)
+      (< incoming0 incoming1)
+      (< incoming1 outgoing0)
+      (< outgoing0 outgoing1))))
+
+(define (compiler-backend-slice-reference-abi-registers-target-ok?
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (match (compiler_backend.compiler-backend-emit-source-for-target
+    (compiler-backend-slice-reference-abi-source)
+    target)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_slice_abi_id")]
+        (if (compiler_backend.compiler-backend-target-windows? target)
+          (compiler-backend-slice-reference-abi-windows-body-ok? body)
+          (compiler-backend-slice-reference-abi-linux-body-ok? body)))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-slice-reference-abi-registers-ok?) : bool
+  (and
+    (compiler-backend-slice-reference-abi-registers-target-ok?
+      compiler_backend.CompilerBackendTarget.Linux)
+    (compiler-backend-slice-reference-abi-registers-target-ok?
+      compiler_backend.CompilerBackendTarget.Windows)))
+
 (define (compiler-backend-register-group-test-index) : compiler_backend.CompilerBackendProgramIndex
   (let
     [ty : compiler_ast_types.AstType
@@ -36276,6 +36472,8 @@
         (compiler-backend-implicit-main-ok?))
       (and
         (compiler-backend-aggregate-ok?)
+        (compiler-backend-slice-reference-abi-classifiers-ok?)
+        (compiler-backend-slice-reference-abi-registers-ok?)
         (compiler-backend-pack-immediate-word-shape-ok?)
         (compiler-backend-descriptor-pair-ok?)
         (compiler-backend-object-windows-stack-probe-ok?)

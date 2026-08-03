@@ -309,6 +309,29 @@ type. Its internal spelling `__tl_dyn-array` names the same compatibility
 buffer and is accepted unconditionally in compiler and stdlib sources; it is
 not a public source type in either form.
 
+**Borrowed Slice referent:** `(Slice T)`
+- `Slice` is an unsized borrowed referent. A bare `(Slice T)` is rejected in
+  runtime by-value positions: parameters, returns, locals, globals, fields,
+  enum payloads, tuple elements, array elements, and nested unsized positions.
+- The legal runtime forms are an immutable reference
+  `(& lifetime (Slice T))` and an exclusive mutable reference
+  `(&mut lifetime (Slice T))` (with the lifetime elided in ordinary function
+  signatures). A `Slice` element must otherwise be a valid sized runtime type;
+  another unsized `Slice` cannot be nested as an element.
+- A borrowed Slice reference is allocation-free and drop-free. Its runtime
+  value is a pair consisting of a data pointer followed by a non-negative
+  signed `i64` length, with size 16 bytes and alignment 8. It is a view into
+  storage owned elsewhere and does not extend that storage's lifetime.
+- Shared Slice references are copyable aliases. Mutable Slice references are
+  exclusive, non-copying handles; the ordinary borrow checker enforces their
+  ownership, provenance, and non-lexical last-use rules.
+- Source and generated declarations preserve `Slice` structurally and
+  deterministically. Surface AST/TLCI images, cache and hash identities, and
+  textual IR retain the Slice shape and recursively composed element type; a
+  Slice is never flattened into an opaque handle or an unrelated C ABI record.
+  For example, textual IR renders a borrowed signature as
+  `(& lifetime (Slice i64))`.
+
 **Owned string:** `String`
 - `String` is an owned, immutable byte-string handle. The handle is a
   pointer-sized aggregate value whose pointed-to inline storage is a
@@ -1121,12 +1144,16 @@ allocation state, backend object records, or any representation that
 optimizer/backend work needs freedom to change.
 
 `TypeInfo` is the public, stable reflection value form of section 5.17. It
-may represent builtin types, arrays, functions, tuples, structs, enums, and
-the reserved/partial shapes that `type-kind` can classify. It exposes
-language metadata such as nominal identity, fields, variants, payloads,
+may represent builtin types, arrays, functions, tuples, structs, enums, Slice
+shapes, and the reserved/partial shapes that `type-kind` can classify. It
+exposes language metadata such as nominal identity, fields, variants, payloads,
 parameters, and opaque `type-key` identity. It must not expose runtime type
 objects, method tables, optimizer facts, layout internals beyond the explicit
 layout-query surface, or compiler symbol-table handles.
+
+The well-known reflection enum includes `TypeInfo.Slice (Box TypeInfo)`. Its
+payload is the recursively reflected element type; it does not turn the
+unsized referent into a runtime value or owner.
 
 `ExprList`, `ExprClauseList`, `ExprBindingClauseList`, `PatternList`,
 `MatchArmList`, and reflection sequences are dense, length-indexed sequence
@@ -1205,10 +1232,14 @@ The names following `:kind` are unquoted grammar names corresponding
 one-to-one with the stable strings returned by `type-kind` in section 5.17.
 The list must be non-empty and contain no duplicate names. A concrete type
 satisfies the constraint when its `type-kind` result is one of the listed
-names. Shape names such as `array`, `tuple`, `struct`, and `enum` use the same
-namespace as scalar names; reserved/partial names such as `ptr`, `ref`, and
+names. Shape names such as `array`, `tuple`, `struct`, `enum`, and `slice` use
+the same namespace as scalar names; reserved/partial names such as `ptr`, `ref`,
 `type-var` may be named explicitly but gain no reflection operations beyond
 those specified in section 5.17.
+
+A top-level `(Slice T)` is also a valid compile-time `type` operand and can
+satisfy `(:kind slice)`. This compile-time shape does not relax the runtime
+bare-Slice by-value rejection in section 3.2.
 
 This initial vocabulary is intentionally shallow. `(:kind struct enum)` says
 only that the top-level concrete type is a struct or enum. It does not prove
@@ -1545,6 +1576,26 @@ Borrow expressions:
   wrapper `(in arena T)`, the reference type is `(& arena T)`, not
   `(& arena (in arena T))`; for `(in arena String)`, the reference type is
   `(& arena str)`.
+
+**Fixed-array Slice unsizing at typed calls.** At an exact typed TypeLisp call
+boundary, an explicit fixed-array borrow may unsize to a Slice formal while
+preserving mutability: `(& array)` can satisfy `(& lifetime (Slice T))`, and
+`(&mut array)` can satisfy `(&mut lifetime (Slice T))`. The conversion is only
+for a fixed-array borrow at that boundary; there is no bare-array auto-borrow,
+and no cross-mutability strengthening or weakening.
+
+**Checked Slice subviews.** `slice-view source start len` and
+`slice-mut-view source start len` accept a fixed array, a compatibility dynamic
+array, a suitable reference to either, or an existing borrowed Slice view.
+The source, `start`, and `len` expressions are evaluated exactly once from
+left to right. The result is a no-copy borrowed Slice view whose lifetime and
+provenance remain tied to the originating owner; nested child views therefore
+keep the originating borrow live. Shared views remain shared, mutable views
+remain exclusive and non-copying, and the ordinary non-lexical last-use release
+rules apply. `start` and `len` must be non-negative, `start` must not exceed the
+source length, and `len` must fit in the remaining range without signed
+overflow; invalid ranges call `tl_oob_abort`. Zero-length views and views of
+zero-sized elements are valid, and zero-sized elements have a zero data stride.
 
 **Borrowable places.** The checker accepts borrows of places whose
 owner/provenance is statically known:
@@ -2460,9 +2511,12 @@ escaped consistently. Ordinary TypeLisp declarations use module-prefixed
 Extern signatures may use backend-supported scalar values, `unit`, function
 pointers, raw pointers, and pointer-sized TypeLisp runtime handles such as
 `String`, compatibility dynamic arrays, structs, and enums. Tuple values, fixed
-arrays, references, regions, and unsupported aggregate forms are rejected for
-extern parameters and returns; pass a raw pointer when a foreign API needs
-aggregate storage.
+arrays, references (including shared or mutable borrowed Slice references),
+regions, and unsupported aggregate forms are rejected for extern parameters and
+returns. A C-facing Slice contract must instead use an explicit `(Ptr T)` or
+`(MutPtr T)` plus a scalar length; obtaining storage from an owner with
+`array-data` or pointer casts is an `unsafe` operation. There is no `array-data`
+operation that extracts storage from a borrowed Slice itself.
 
 Raw pointer signatures do not make the pointer safe: nullability, validity,
 aliasing, lifetime, mutability, and target ABI correctness remain the caller and
@@ -4766,7 +4820,7 @@ Primitive names and signatures are fixed as follows:
 | `(enum-variant-name type-expr index-expr)` | `String` | Zero-based variant constructor name. |
 | `(enum-variant-payload-count type-expr index-expr)` | `i64` | Number of payload fields for that variant. |
 | `(enum-variant-payload-type type-expr variant-index-expr payload-index-expr)` | `type` | Zero-based payload type. |
-| `(array-element-type type-expr)` | `type` | Requires fixed or compatibility dynamic array. |
+| `(array-element-type type-expr)` | `type` | Requires a fixed array, compatibility dynamic array, or Slice shape; returns its element type. |
 | `(box-element-type type-expr)` | `type` | Requires `Box`; returns its element type. |
 | `(reference-element-type type-expr)` | `type` | Requires `(& region T)` or `(&mut region T)`; returns `T` with the operand's resolved lifetime substitutions. |
 | `(array-length type-expr)` | `i64` | Requires fixed array. Compatibility dynamic arrays reject this. |
@@ -4789,7 +4843,8 @@ diagnostic names the primitive and the expected kind, for example
 
 - Builtins: `i64`, `i32`, `i16`, `i8`, `u64`, `u32`, `u16`, `u8`, `f64`,
   `f32`, `bool`, `char`, `string`, `unit`, `never`.
-- Shapes: `array`, `dyn-array`, `box`, `function`, `tuple`, `struct`, `enum`.
+- Shapes: `array`, `dyn-array`, `box`, `function`, `tuple`, `struct`, `enum`,
+  `slice`.
 - Reserved/partial shapes: `str`, `ptr`, `mut-ptr`, `ref`, `mut-ref`,
   `region`, `type-var`.
 
@@ -4830,6 +4885,7 @@ names, and recursive subkeys cannot collide. Conceptually, the rules are:
 - Builtins key by their stable lowercase kind string.
 - Fixed arrays key as `(array length element-key)`.
 - Compatibility dynamic arrays key as `(dyn-array element-key)`.
+- Borrowed Slice shapes key as `(slice element-key)`.
 - Functions key as `(function param-count param-key... return-key)`.
 - Nominal structs/enums key as `(nominal kind module-identity type-name)`.
 - Pointer/reference/region keys include mutability and the referenced/pointee
@@ -5511,15 +5567,23 @@ signaling-NaN payload behavior are outside the initial contract. The
 implementations allocate no storage and reference no runtime, libc, libm, CRT,
 x87 transcendental, or FMA facility.
 
-**Fixed-array element operations.** The public `Array` type is the fixed
-`(Array T N)` form. The core element operations are:
+**Array and borrowed-Slice element operations.** The public `Array` type is the
+fixed `(Array T N)` form. Core element operations also accept the immediate
+borrowed Slice reference forms described in section 3.2:
 
 | Builtin | Signature | Description |
 |---------|-----------|-------------|
-| `length` | `(Array T N) → i64` / `String → i64` | Fixed-array element count; string byte length |
-| `array-length` | `(Array T N) → i64` | Alias for array `length` |
-| `array-ref` | `(Array T N) i64 → T` | Bounds-checked read through an owned array or an immutable or mutable reference receiver |
-| `array-set!` | `(Array T N) i64 T → unit` | Bounds-checked write through an owned array or mutable reference receiver |
+| `length` | `(Array T N) → i64` / `(Array T) → i64` / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` / `String → i64` | Fixed/dynamic-array count, borrowed Slice length, or string byte length |
+| `array-length` | `(Array T N) → i64` / `(Array T) → i64` / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` | Alias for array `length`, including borrowed Slice length |
+| `array-ref` | `(Array T N) i64 → T` / `(& r (Slice T)) i64 → T` / `(&mut r (Slice T)) i64 → T` | Bounds-checked read through an owned array, an immutable or mutable array reference, or a borrowed Slice receiver |
+| `array-set!` | `(Array T N) i64 T → unit` / `(&mut r (Slice T)) i64 T → unit` | Bounds-checked write through an owned array, mutable array reference, or mutable Slice receiver; shared Slice writes are rejected |
+| `slice-view` | `source i64 i64 → (& r (Slice T))` | Checked, allocation-free view over a fixed array, compatibility dynamic array, suitable reference, or borrowed Slice; source and indices evaluate once left-to-right |
+| `slice-mut-view` | `source i64 i64 → (&mut r (Slice T))` | Checked, allocation-free exclusive view over a mutable fixed/dynamic array, suitable mutable reference, or mutable Slice; no shared-to-mutable strengthening |
+
+An `array-ref` element borrowed from a Slice retains that Slice's lifetime and
+provenance. A subview likewise remains tied to the originating owner; creating
+one does not allocate or copy elements, and nested views keep the parent borrow
+live until their last use.
 
 **Core string primitives.** The following string operations are
 compiler-owned:
@@ -5538,9 +5602,11 @@ while allocating operations return owned `String`.
 **Bounds checks and traps.** `array-ref`, `array-set!`, the imported
 `string-ref`, and `substring` / `string-slice` / `substring-view` perform
 runtime bounds checks. An out-of-bounds access calls the `tl_oob_abort`
-runtime trap, which writes to stderr and exits with code 134. Slice ranges
-are checked with unsigned arithmetic, so a negative `start` / `len` wraps to
-a huge value and traps.
+runtime trap, which writes to stderr and exits with code 134. Slice views also
+reject a negative `start` or `len`, `start` greater than the source length, and
+`len` greater than the remaining range; the checks are ordered to avoid signed
+overflow. Zero-length and zero-sized-element views are valid. Every invalid
+Slice range takes the same `tl_oob_abort` path.
 
 **String inspection (`stdlib.string`).** Public string inspection and
 parsing helpers are stdlib definitions, unbound until the module is
@@ -5587,7 +5653,9 @@ contracts:
   initialized source values.
 - `array-data` returns a raw `(MutPtr T)` to element storage, requires an
   enclosing `(unsafe ...)` expression, and exists only for runtime, FFI, and
-  internal compatibility code that must pass raw storage pointers.
+  internal compatibility code that must pass raw storage pointers. It operates
+  on array owner storage and does not accept a borrowed Slice receiver or
+  extract a Slice's pointer/length pair.
 
 ### 6.2 Runtime functions (emitted by the backend)
 
@@ -6551,6 +6619,12 @@ in documentation passes.
   by value, fixed arrays, owned `String` with borrowed `str` views,
   `ByteBuf` with borrowed `bytes` views, `(Box T)`, references, and
   lifetime-parameterized aggregates.
+- Borrowed `Slice` references with checked shared/mutable `slice-view` and
+  `slice-mut-view` subviews, explicit fixed-array whole-view unsizing at typed
+  call boundaries, and allocation-free pointer/length handling; reflection
+  (`TypeInfo.Slice`, `type-kind`, and `type-key`) plus the internal two-word
+  ABI and 16/8 layout are covered. C externs continue to use explicit raw
+  pointer-plus-length contracts rather than Slice parameters.
 - Move-only aggregates with use-after-move, path-move, and
   move-while-borrowed diagnostics; immutable/mutable borrow exclusivity;
   two-phase mutable call borrows; conservative non-lexical last-use
@@ -6999,6 +7073,11 @@ until runtime aggregate reflection is available.
 - Scalar `f64` and `f32` both use the float (`%xmm`) registers: `f64` moves with
   `movsd`, `f32` with single-precision `movss`.
 - Return value: `%rax` (integer), `%xmm0` (float, `f64` or `f32`).
+- Internal TypeLisp borrowed Slice references use two consecutive integer
+  argument words, data pointer then signed `i64` length. A first Slice occupies
+  `%rdi`/`%rsi`; a Slice return uses `%rax`/`%rdx` in that order. This is an
+  internal TypeLisp rule only and does not authorize borrowed Slice parameters
+  in C `extern` declarations.
 - Callee-saved: `%rbx`, `%rbp`, `%r12-%r15`.
 - Stack aligned to 16 bytes before `call`.
 
@@ -7016,6 +7095,11 @@ until runtime aggregate reflection is available.
 - Scalar `f64` and `f32` both use the float (`%xmm`) registers: `f64` moves with
   `movsd`, `f32` with single-precision `movss`.
 - Return value: `%rax` (integer), `%xmm0` (float, `f64` or `f32`).
+- Internal TypeLisp borrowed Slice references use two consecutive integer
+  argument words, data pointer then signed `i64` length. A first Slice occupies
+  `%rcx`/`%rdx`; a Slice return uses `%rax`/`%rdx` in that order. This is an
+  internal TypeLisp rule only and does not authorize borrowed Slice parameters
+  in C `extern` declarations.
 - Callers reserve 32 bytes of shadow space before each call.
 - The CRT owns process startup; Windows output emits `main` and no Linux
   `_tl_start` wrapper.
@@ -7034,7 +7118,9 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 | `i32`/`u32`/`f32` | 4 | 4 |
 | `i64`/`u64`/`f64`/func ptr | 8 | 8 |
 | `(Ptr T)` / `(MutPtr T)` | 8 | 8 |
-| `String`/`DynArray`/`Box`/reference-like handles | 8 | 8 |
+| `String`/`DynArray`/`Box`/ordinary references | 8 | 8 |
+| Bare `(Slice T)` | unsized (no by-value layout) | — |
+| `(& r (Slice T))` / `(&mut r (Slice T))` | 16 | 8 |
 | Struct values | declaration-dependent | declaration-dependent |
 | Enum values | declaration-dependent | declaration-dependent |
 
@@ -7044,6 +7130,9 @@ storage. Target C ABI call/return lowering is a separate backend contract.
   laid out from offset 8 using natural alignment for each payload position.
 - `String` and compatibility dynamic-array source values are handle-sized in
   this layout; their backing storage is larger implementation-owned data.
+- Ordinary references remain one pointer word (8/8). A borrowed Slice
+  reference is two words, pointer first and signed `i64` length second (16/8),
+  while bare `(Slice T)` has no runtime by-value layout.
 - An implementation may carry aggregate values through pointer-shaped heap
   handles in positions not covered by layout queries. That carriage is an
   implementation detail and not part of the source layout contract.
@@ -7227,7 +7316,7 @@ macro-type-kind ::= "i64" | "i32" | "i16" | "i8"
                   | "f64" | "f32" | "bool" | "char"
                   | "string" | "unit" | "never"
                   | "array" | "dyn-array" | "box" | "function" | "tuple"
-                  | "struct" | "enum" | "str" | "ptr" | "mut-ptr"
+                  | "struct" | "enum" | "slice" | "str" | "ptr" | "mut-ptr"
                   | "ref" | "mut-ref" | "region" | "type-var"
 macro-result-type ::= type
                     | "module"                      ; declaration-emitting macro

@@ -54,9 +54,11 @@ bootstrap_seed_ctfe_macro_builders_legacy_stdlib() {
 }
 
 # Print a temporary source-mirror path when the published seed still pins the
-# prefixed stdlib.comptime variants.  An empty result means the seed already
-# accepts the short qualified surface.  Unexpected probe failures stay fatal;
-# only the exact old well-known-contract diagnostic enables the bridge.
+# prefixed stdlib.comptime variants or cannot yet accept the appended TypeInfo
+# Slice variant. An empty result means the seed already accepts the short
+# qualified surface and the current comptime enum ABI. Unexpected probe
+# failures stay fatal; only these exact old well-known-contract diagnostics
+# enable the bridge.
 bootstrap_seed_comptime_short_variant_bridge_root() {
     root=$1
     compiler=$2
@@ -75,8 +77,9 @@ bootstrap_seed_comptime_short_variant_bridge_root() {
         return 0
     fi
 
-    if ! grep -qF \
-        'expected variant ExprBool at index 0' \
+    if ! grep -qF 'expected variant ExprBool at index 0' "$stderr" && \
+        ! grep -qF \
+        'stdlib well-known type mismatch for stdlib.comptime.TypeInfo: unexpected extra variant' \
         "$stderr"; then
         echo "published-seed short comptime variant probe failed unexpectedly" >&2
         sed 's/^/  /' "$stdout" >&2 || true
@@ -85,8 +88,16 @@ bootstrap_seed_comptime_short_variant_bridge_root() {
     fi
 
     bridge_root="$workdir/comptime-short-variant-seed-bridge/source"
-    "$root/scripts/prepare-comptime-short-variant-seed-bridge.sh" \
-        "$bridge_root" >&2
+    if grep -qF \
+        'stdlib well-known type mismatch for stdlib.comptime.TypeInfo: unexpected extra variant' \
+        "$stderr"; then
+        COMPTIME_SHORT_VARIANT_SEED_BRIDGE_LEGACY=0 \
+            "$root/scripts/prepare-comptime-short-variant-seed-bridge.sh" \
+            "$bridge_root" >&2
+    else
+        "$root/scripts/prepare-comptime-short-variant-seed-bridge.sh" \
+            "$bridge_root" >&2
+    fi
     printf '%s\n' "$bridge_root"
 }
 

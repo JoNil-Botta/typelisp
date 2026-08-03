@@ -687,6 +687,46 @@
           (and (= dst 8) (= lhs 7))]
         [_ false]))))
 
+(define (compiler-ir-smoke-slice-type-render-clone-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [lifetime : i64 (ci.intern "ir-slice")]
+    [slice : ast.AstType (ast.ast-ty-slice-with-pools pools ast.AstType.I64)]
+    [borrowed : ast.AstType (ast.ast-ty-ref-with-pools pools lifetime slice)]
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    [clone : ast.AstType
+      (compiler_ir_types.compiler-ir-clone-type pools borrowed)]
+    [render-original : String
+      (compiler_ir_types.compiler-ir-type-render bases borrowed)]
+    [render-original-again : String
+      (compiler_ir_types.compiler-ir-type-render bases borrowed)]
+    [name-original : String
+      (compiler_ir_types.compiler-ir-type-name bases borrowed)]
+    [name-original-again : String
+      (compiler_ir_types.compiler-ir-type-name bases borrowed)]
+    [render-clone : String
+      (compiler_ir_types.compiler-ir-type-render bases clone)]
+    [name-clone : String (compiler_ir_types.compiler-ir-type-name bases clone)]
+    (and
+      (string.eq render-original "(& ir-slice (Slice i64))")
+      (string.eq render-original-again render-original)
+      (string.eq name-original "(& ir-slice (Slice i64))")
+      (string.eq name-original-again name-original)
+      (string.eq render-clone render-original)
+      (string.eq name-clone name-original)
+      (match clone
+        [(ast.AstType.Ref cloned-lifetime cloned-inner)
+          (and
+            (= cloned-lifetime lifetime)
+            (match (ast.ast-node-pool-context-type-get pools cloned-inner)
+              [(ast.AstType.Slice cloned-elem)
+                (match (ast.ast-node-pool-context-type-get pools cloned-elem)
+                  [(ast.AstType.I64) true]
+                  [_ false])]
+              [_ false]))]
+        [_ false]))))
+
 (define (main) : i64
   (begin
     (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
@@ -696,4 +736,5 @@
     (unless (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) (return 5))
     (unless (compiler-ir-smoke-access-helpers-ok?) (return 6))
     (unless (compiler-ir-smoke-runtime-effect-self-test-ok?) (return 7))
+    (unless (compiler-ir-smoke-slice-type-render-clone-ok?) (return 8))
     (compiler_ir_types.compiler-ir-effect-self-test)))

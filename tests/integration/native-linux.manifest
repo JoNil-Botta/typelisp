@@ -12,6 +12,9 @@ array_compat_aliases|tests/integration/array_compat_aliases.tl|42|-|-|-
 dynamic_array_literal|tests/integration/dynamic_array_literal.tl|42|-|-|-
 array_qualified_macros|tests/integration/array_qualified_macros.tl|42|-|-|-
 array_stride_24byte|tests/integration/array_stride_24byte.tl|42|-|-|-
+slice_whole_array|tests/integration/slice_whole_array.tl|42|-|-|-
+slice_views|tests/integration/slice_views.tl|42|-|-|stdlib/array.tl
+slice_generated_decl|tests/integration/slice_generated_decl.tl|42|-|-|-
 ptr_offset_inline_aggregate_stride|tests/integration/ptr_offset_inline_aggregate_stride.tl|42|-|-|-
 ptr_addr_of_places|tests/integration/ptr_addr_of_places.tl|0|-|-|-
 ptr_aggregate_copy|tests/integration/ptr_aggregate_copy.tl|0|-|-|stdlib/array.tl
@@ -55,6 +58,7 @@ c_abi_sysv_two_register_return|tests/integration/c_abi_sysv_two_register_return.
 c_abi_sysv_memory_aggregate|tests/integration/c_abi_sysv_memory_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_memory_aggregate/baseline.c
 c_abi_sysv_tag_only_enum|tests/integration/c_abi_sysv_tag_only_enum.tl|42|-|-|benchmarks/c_abi_sysv_tag_only_enum/baseline.c
 c_abi_sysv_enum_aggregate|tests/integration/c_abi_sysv_enum_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_enum_aggregate/baseline.c
+c_abi_slice_ptr_len|tests/integration/c_abi_slice_ptr_len.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 arena_pool_context_escape|tests/integration/arena_pool_context_escape.tl|42|-|-|stdlib/arena.tl stdlib/array.tl stdlib/string.tl
 arena_lazy_singleton_raw_addr_escape|tests/integration/arena_lazy_singleton_raw_addr_escape.tl|42|-|-|stdlib/arena.tl stdlib/array.tl stdlib/string.tl

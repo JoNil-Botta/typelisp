@@ -22,6 +22,14 @@ without copying. Mutable binary storage is the owned `ByteBuf` plus
 between text, arrays, and byte buffers are explicit copy or borrow
 boundaries.
 
+Borrowed `(Slice T)` views are likewise allocation-free and never own or extend
+the backing storage. A view carries the originating owner's provenance and
+lifetime. Shared Slice views are copyable aliases; mutable Slice views are
+exclusive and non-copying. `slice-view`/`slice-mut-view` subviews retain the
+original owner borrow, so nested children keep that owner live until their last
+use; conservative non-lexical last-use analysis then releases the borrow when
+no child remains.
+
 `(Box T)` is a safe, move-only, arena-owned indirection handle: `(box expr)`
 allocates in the active arena, `(box-get b)` projects the value, `(box-take
 b)` consumes the box, and `(set! (box-get b) value)` mutates boxed storage.

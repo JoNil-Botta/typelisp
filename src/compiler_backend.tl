@@ -34288,6 +34288,20 @@
     ;; copies so the occupant survives the edge marshalling. Homes are
     ;; frame-relative at emission, so the transient %rsp shift cannot skew the
     ;; operands, and the FPO audit tracks push/pop deltas.
+    ;;
+    ;; A function-wide "is this register a plan home at all?" test does NOT
+    ;; un-bracket this: the allocator homes short-lived temporaries in %r8 (the
+    ;; preferred staging fallback) in essentially every function that also has a
+    ;; spilled phi dst, so the mask is set even though nothing is live in %r8
+    ;; across the edge. Measured: 0 of 2044 sites in the benchmark corpus plus
+    ;; stage2.s un-bracket that way. What the test actually needs is per-EDGE
+    ;; liveness, and only for BACK edges -- on a forward edge every var live at
+    ;; the target's entry has an interval covering this point already (its def
+    ;; dominates the edge and its use is ahead), so the occupancy query the
+    ;; scavenge already runs is sufficient there; only a loop carry whose next use
+    ;; is in the next iteration reads free here while having to survive the jump.
+    ;; Distinguishing the two needs the target label's point, which this emitter
+    ;; is not yet given.
     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
       type-segment-bases
       assignments

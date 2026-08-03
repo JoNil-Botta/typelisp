@@ -229,8 +229,10 @@ print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-
 register_scalar_homes|tests/integration/register_scalar_homes.tl|42|-|-|-
 rem_zero_trap|tests/integration/rem_zero_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/linux/rem_zero_trap/rem_zero_trap.tl:3:5: integer division or remainder error: dividend=1 divisor=0\n
 short_circuit|tests/integration/short_circuit.tl|42|-|-|-
-shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/linux/shl_count_width_trap/shl_count_width_trap.tl:3:5: shift count out of range: count=64 width=64\n
-shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/linux/shl_neg_count_trap/shl_neg_count_trap.tl:3:5: shift count out of range: count=-1 width=64\n
+shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/linux/shl_count_width_trap/shl_count_width_trap.tl:3:5: shift count out of range: count=64 width=32\n
+shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/linux/shl_neg_count_trap/shl_neg_count_trap.tl:3:5: shift count out of range: count=-1 width=32\n
+shr_u64_high_count_trap|tests/integration/shr_u64_high_count_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/linux/shr_u64_high_count_trap/shr_u64_high_count_trap.tl:3:5: shift count out of range: count=18446744073709551615 width=64\n
+valid_scalar_shift_matrix|tests/integration/valid_scalar_shift_matrix.tl|42|-|-|-
 runtime_panic_site_trap|tests/integration/runtime_panic_site_trap.tl|134|-|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/linux/runtime_panic_site_trap/runtime_panic_site_trap.tl:4:4: panic: boom\n
 spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|spmd_vec_support.tl
 spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|spmd_vec_support.tl

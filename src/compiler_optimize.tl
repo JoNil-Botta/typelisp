@@ -899,8 +899,8 @@
     [(ir.CompilerIrBinOp.BitAnd) lhs-ty]
     [(ir.CompilerIrBinOp.BitOr) lhs-ty]
     [(ir.CompilerIrBinOp.BitXor) lhs-ty]
-    [(ir.CompilerIrBinOp.Shl) lhs-ty]
-    [(ir.CompilerIrBinOp.Shr) lhs-ty]
+    [(ir.CompilerIrBinOp.Shl _) lhs-ty]
+    [(ir.CompilerIrBinOp.Shr _) lhs-ty]
     [_ result-ty]))
 
 (define (opt-signed-min [ty : ast.AstType]) : i64
@@ -1031,11 +1031,11 @@
     [(option_i64.Some count)
       (if (opt-shift-count-valid? count rhs-ty (opt-int-width ty))
         (match op
-          [(ir.CompilerIrBinOp.Shl)
+          [(ir.CompilerIrBinOp.Shl _)
             (ir.CompilerIrMaybeValue.Some
               (ir.CompilerIrValue.I64
                 (opt-normalize-int-to-i64 (opt-fold-shl-value a count ty) ty)))]
-          [(ir.CompilerIrBinOp.Shr)
+          [(ir.CompilerIrBinOp.Shr _)
             (ir.CompilerIrMaybeValue.Some
               (ir.CompilerIrValue.I64
                 (opt-normalize-int-to-i64 (opt-fold-shr-value a count ty) ty)))]
@@ -1052,8 +1052,8 @@
   (match (opt-normalize-scalar-to-i64 lhs operand-ty)
     [(option_i64.Some a)
       (match op
-        [(ir.CompilerIrBinOp.Shl) (opt-fold-shift op a rhs rhs-ty operand-ty)]
-        [(ir.CompilerIrBinOp.Shr) (opt-fold-shift op a rhs rhs-ty operand-ty)]
+        [(ir.CompilerIrBinOp.Shl _) (opt-fold-shift op a rhs rhs-ty operand-ty)]
+        [(ir.CompilerIrBinOp.Shr _) (opt-fold-shift op a rhs rhs-ty operand-ty)]
         [_
           (match (opt-normalize-scalar-to-i64 rhs operand-ty)
             [(option_i64.Some b)
@@ -1486,11 +1486,12 @@
     [(ir.CompilerIrInstr.BinOp dst op l r ty)
       (let
         [result-ty : ast.AstType (ir.compiler-ir-binop-result-type op ty)]
+        [rhs-operand-ty : ast.AstType (ir.compiler-ir-binop-rhs-type op ty)]
         (match (opt-fold-binop
           type-segment-bases
           op
           (opt-resolve-known env l ty)
-          (opt-resolve-known env r ty)
+          (opt-resolve-known env r rhs-operand-ty)
           ty)
           [(ir.CompilerIrMaybeValue.Some folded)
             (OptInstrResult.Result
@@ -2021,8 +2022,8 @@
   (match op
     [(ir.CompilerIrBinOp.Div) true]
     [(ir.CompilerIrBinOp.Mod) true]
-    [(ir.CompilerIrBinOp.Shl) true]
-    [(ir.CompilerIrBinOp.Shr) true]
+    [(ir.CompilerIrBinOp.Shl _) true]
+    [(ir.CompilerIrBinOp.Shr _) true]
     [_ false]))
 
 (define (opt-instr-alloc-dst? [instr : ir.CompilerIrInstr] [dst : i64]) : bool
@@ -4483,10 +4484,28 @@
     [(ir.CompilerIrBinOp.BitAnd) 15]
     [(ir.CompilerIrBinOp.BitOr) 16]
     [(ir.CompilerIrBinOp.BitXor) 17]
-    [(ir.CompilerIrBinOp.Shl) 18]
-    [(ir.CompilerIrBinOp.Shr) 19]
+    [(ir.CompilerIrBinOp.Shl rhs-ty)
+      (+ 100 (* 2 (opt-shift-count-type-tag rhs-ty)))]
+    [(ir.CompilerIrBinOp.Shr rhs-ty)
+      (+ 101 (* 2 (opt-shift-count-type-tag rhs-ty)))]
     [(ir.CompilerIrBinOp.BitTestEq) 20]
     [(ir.CompilerIrBinOp.BitTestNe) 21]))
+
+;; Primitive count-type tags keep CSE/GVN from merging shifts whose trap
+;; diagnostics differ by signedness or width.  Shift RHS types are guaranteed
+;; integer by type checking; retain a deterministic fallback for malformed
+;; hand-authored IR fixtures.
+(define (opt-shift-count-type-tag [ty : ast.AstType]) : i64
+  (match ty
+    [(ast.AstType.I8) 0]
+    [(ast.AstType.U8) 1]
+    [(ast.AstType.I16) 2]
+    [(ast.AstType.U16) 3]
+    [(ast.AstType.I32) 4]
+    [(ast.AstType.U32) 5]
+    [(ast.AstType.I64) 6]
+    [(ast.AstType.U64) 7]
+    [_ 8]))
 
 (define (opt-binop-eq [a : ir.CompilerIrBinOp] [b : ir.CompilerIrBinOp]) : bool
   (= (opt-binop-tag a) (opt-binop-tag b)))
@@ -26296,7 +26315,7 @@
           type-segment-bases
           op
           (opt-sccp-value state lhs ty)
-          (opt-sccp-value state rhs ty)
+          (opt-sccp-value state rhs (ir.compiler-ir-binop-rhs-type op ty))
           ty))]
     [(ir.CompilerIrInstr.UnOp dst op value ty)
       (opt-sccp-state-bind
@@ -40375,7 +40394,7 @@
                               shift
                               (- fuel 1)))
                           false))]
-                    [(ir.CompilerIrBinOp.Shl)
+                    [(ir.CompilerIrBinOp.Shl _)
                       ;; The count must be a multiple of 8 below the i64 width:
                       ;; k in {8..56}. k >= 64 (e.g. `shl 0, 64` on a neutral
                       ;; seed, which otherwise analyzes fine at shift 8) would
@@ -49918,8 +49937,8 @@
     [(ir.CompilerIrBinOp.SafeDiv) false]
     [(ir.CompilerIrBinOp.SafeMod) false]
     ;; Scalar shifts have language-level abort checks for invalid counts.
-    [(ir.CompilerIrBinOp.Shl) false]
-    [(ir.CompilerIrBinOp.Shr) false]
+    [(ir.CompilerIrBinOp.Shl _) false]
+    [(ir.CompilerIrBinOp.Shr _) false]
     [_ true]))
 
 ;; `Global`/`RuntimeGlobal` operands are implicit mutable reads, not stable
@@ -64958,8 +64977,8 @@
       (match op
         [(ir.CompilerIrBinOp.Div) true]
         [(ir.CompilerIrBinOp.Mod) true]
-        [(ir.CompilerIrBinOp.Shl) true]
-        [(ir.CompilerIrBinOp.Shr) true]
+        [(ir.CompilerIrBinOp.Shl _) true]
+        [(ir.CompilerIrBinOp.Shr _) true]
         [_ false])]
     [(ir.CompilerIrInstr.Call _ name _ _)
       (let

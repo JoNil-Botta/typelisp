@@ -1093,7 +1093,7 @@
           (ir.compiler-ir-instr-cons
             (ir.CompilerIrInstr.BinOp
               2
-              (ir.CompilerIrBinOp.Shr)
+              (ir.CompilerIrBinOp.Shr (ast.AstType.I64))
               (ir.CompilerIrValue.Var 0)
               (ir.CompilerIrValue.I64 3)
               (reg.compiler-reg-i64-ty))
@@ -1131,7 +1131,7 @@
           (ir.compiler-ir-instr-cons
             (ir.CompilerIrInstr.BinOp
               2
-              (ir.CompilerIrBinOp.Shr)
+              (ir.CompilerIrBinOp.Shr (ast.AstType.I64))
               (ir.CompilerIrValue.Var 0)
               (ir.CompilerIrValue.Var 1)
               (reg.compiler-reg-i64-ty))
@@ -1354,7 +1354,7 @@
             (ir.compiler-ir-instr-cons
               (ir.CompilerIrInstr.BinOp
                 5
-                (ir.CompilerIrBinOp.Shl)
+                (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
                 (ir.CompilerIrValue.Var 4)
                 (ir.CompilerIrValue.Var 1)
                 (reg.compiler-reg-i64-ty))
@@ -4513,7 +4513,7 @@
               (ir.compiler-ir-instr-cons
                 (ir.CompilerIrInstr.BinOp
                   2
-                  (ir.CompilerIrBinOp.Shl)
+                  (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
                   (ir.CompilerIrValue.Var 0)
                   (ir.CompilerIrValue.Var 1)
                   (reg.compiler-reg-i64-ty))

@@ -3329,11 +3329,20 @@
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
           22
-          (compiler_ir_types.CompilerIrBinOp.Shr)
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.U8))
           (compiler_ir_types.CompilerIrValue.Var 20)
           (compiler_ir_types.CompilerIrValue.Var 21)
           (compiler_ast_types.AstType.U64))
-        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            23
+            (compiler_ir_types.CompilerIrBinOp.Shl
+              (compiler_ast_types.AstType.U8))
+            (compiler_ir_types.CompilerIrValue.Var 20)
+            (compiler_ir_types.CompilerIrValue.I64 256)
+            (compiler_ast_types.AstType.U64))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
 
 (define (opt-typed-fold-shift-instrs) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
@@ -3349,7 +3358,8 @@
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
           17
-          (compiler_ir_types.CompilerIrBinOp.Shl)
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.U8))
           (compiler_ir_types.CompilerIrValue.Var 15)
           (compiler_ir_types.CompilerIrValue.Var 16)
           (compiler_ast_types.AstType.I64))
@@ -3361,7 +3371,8 @@
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.BinOp
               19
-              (compiler_ir_types.CompilerIrBinOp.Shr)
+              (compiler_ir_types.CompilerIrBinOp.Shr
+                (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrValue.Var 18)
               (compiler_ir_types.CompilerIrValue.I64 1)
               (compiler_ast_types.AstType.I64))
@@ -3490,14 +3501,16 @@
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
           32
-          (compiler_ir_types.CompilerIrBinOp.Shl)
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrValue.I64 1)
           (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
             33
-            (compiler_ir_types.CompilerIrBinOp.Shl)
+            (compiler_ir_types.CompilerIrBinOp.Shl
+              (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrValue.I64 1)
             (compiler_ir_types.CompilerIrValue.I64 8)
             (compiler_ast_types.AstType.U8))
@@ -3752,9 +3765,13 @@
       (unless (= (opt-mov-dst-i64-value pos 17 0) 8) (return 13))
       (unless (= (opt-mov-dst-i64-value pos 19 0) (- 0 4)) (return 14))
       (unless (= (opt-mov-dst-i64-value pos 22 0) 1) (return 15))
-      (unless (= (opt-count-arith-instrs neg) 4) (return 16))
-      (unless (compiler_float.compiler-float-self-test) (return 17))
-      (unless (compiler-optimize-float-fold-ok?) (return 18))
+      ;; An immediate is normalized with the shift's U8 RHS payload before
+      ;; folding: 256 wraps to zero instead of being treated as an invalid
+      ;; U64 count, preserving the all-ones U64 lhs.
+      (unless (= (opt-mov-dst-i64-value pos 23 0) (- 0 1)) (return 16))
+      (unless (= (opt-count-arith-instrs neg) 4) (return 17))
+      (unless (compiler_float.compiler-float-self-test) (return 18))
+      (unless (compiler-optimize-float-fold-ok?) (return 19))
       (unless
         (and
           (match (compiler_optimize.opt-fold-unop
@@ -3773,7 +3790,7 @@
             (compiler_ast_types.AstType.F32))
             [(compiler_ir_types.CompilerIrMaybeValue.No) true]
             [_ false]))
-        (return 19))
+        (return 20))
       42)))
 
 ;; Positive strength-reduction cases: integer neutral/absorbing identities and
@@ -3907,14 +3924,16 @@
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
           32
-          (compiler_ir_types.CompilerIrBinOp.Shl)
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
             33
-            (compiler_ir_types.CompilerIrBinOp.Shr)
+            (compiler_ir_types.CompilerIrBinOp.Shr
+              (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ir_types.CompilerIrValue.I64 0)
             (compiler_ast_types.AstType.I64))
@@ -4756,6 +4775,53 @@
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstrList.Nil))))
 
+;; Shift direction, lhs, rhs value, result, and destination shape are identical
+;; here; only the RHS count type differs. The raw I64(-1) is a signed -1 under
+;; I8 metadata and the all-ones byte under U8 metadata, so CSE must retain both
+;; trapping expressions instead of rewriting the second one to a Mov from the
+;; first. A shared Var would be malformed IR because it cannot have both types.
+(define (opt-cse-shift-count-type-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      60
+      (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I8))
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        61
+        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
+        (compiler_ast_types.AstType.I64))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-shift-binop-count [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        _
+        (compiler_ir_types.CompilerIrBinOp.Shl _)
+        _
+        _
+        _)
+      1]
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        _
+        (compiler_ir_types.CompilerIrBinOp.Shr _)
+        _
+        _
+        _)
+      1]
+    [_ 0]))
+
+(define (opt-count-shift-binops
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
+  (match instrs
+    [(compiler_ir_types.CompilerIrInstrList.Nil) 0]
+    [(compiler_ir_types.CompilerIrInstrList.Cons instr rest)
+      (+ (opt-shift-binop-count instr) (opt-count-shift-binops (box-get rest)))]))
+
 (define (opt-cse-sqrt-instrs) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
     (compiler_ir_types.CompilerIrInstr.UnOp
@@ -5250,6 +5316,11 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
         (opt-cse-probe-different-instrs))]
+    [shift-count-types : compiler_ir_types.CompilerIrInstrList
+      (compiler_optimize.opt-cse-instrs
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.OptExprTable.Nil)
+        (opt-cse-shift-count-type-instrs))]
     (begin
       (unless (= (opt-count-arith-instrs cse) 1) (return 1))
       (unless (= (opt-mov-src-var sqrt 3 (- 0 1)) 2) (return 10))
@@ -5261,6 +5332,8 @@
       (unless (= (opt-mov-src-var probe 5 (- 0 1)) 4) (return 7))
       (unless (= (opt-count-cpuid-instrs probe-different) 3) (return 8))
       (unless (= (opt-count-xgetbv-instrs probe-different) 2) (return 9))
+      (unless (= (opt-count-shift-binops shift-count-types) 2) (return 10))
+      (unless (= (opt-count-mov-dst-instrs shift-count-types 61) 0) (return 11))
       42)))
 
 ;; --- cross-block GVN self-tests ---------------------------------------------
@@ -33277,7 +33350,8 @@
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
           9
-          (compiler_ir_types.CompilerIrBinOp.Shl)
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrValue.Var 30)
           (compiler_ir_types.CompilerIrValue.I64 8)
           (compiler_ast_types.AstType.I64))
@@ -33627,7 +33701,8 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
             310
-            (compiler_ir_types.CompilerIrBinOp.Shl)
+            (compiler_ir_types.CompilerIrBinOp.Shl
+              (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrValue.I64 0)
             (compiler_ir_types.CompilerIrValue.I64 64)
             (compiler_ast_types.AstType.I64))
@@ -33647,7 +33722,8 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
             310
-            (compiler_ir_types.CompilerIrBinOp.Shl)
+            (compiler_ir_types.CompilerIrBinOp.Shl
+              (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrValue.I64 0)
             (compiler_ir_types.CompilerIrValue.I64 64)
             (compiler_ast_types.AstType.I64))
@@ -33690,7 +33766,8 @@
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.BinOp
                 s
-                (compiler_ir_types.CompilerIrBinOp.Shl)
+                (compiler_ir_types.CompilerIrBinOp.Shl
+                  (compiler_ast_types.AstType.I64))
                 prev
                 (compiler_ir_types.CompilerIrValue.I64
                   (if (= mode 2)
@@ -33787,7 +33864,8 @@
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
           (+ 300 i)
-          (compiler_ir_types.CompilerIrBinOp.Shl)
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrValue.Var (+ 103 (* i 10)))
           (compiler_ir_types.CompilerIrValue.I64 (* 8 (- 7 i)))
           (compiler_ast_types.AstType.I64))
@@ -33959,7 +34037,7 @@
     (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
       [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ rhs _)
         (match op
-          [(compiler_ir_types.CompilerIrBinOp.Shl)
+          [(compiler_ir_types.CompilerIrBinOp.Shl _)
             (match rhs
               [(compiler_ir_types.CompilerIrValue.I64 k)
                 (if (= k lit)
@@ -34061,7 +34139,7 @@
         (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs i9)
           [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ rhs _)
             (match op
-              [(compiler_ir_types.CompilerIrBinOp.Shl)
+              [(compiler_ir_types.CompilerIrBinOp.Shl _)
                 (match rhs
                   [(compiler_ir_types.CompilerIrValue.I64 k) (= k 8)]
                   [_ false])]
@@ -35520,3 +35598,17 @@
       (opt-bt-expand-witness-run 1000)
       1200
       "(2 & 2) == 0 is false")))
+
+(test
+  scalar-shift-count-type-cse
+  (test.assert-i64-eq
+    (compiler-optimize-cse-self-test)
+    42
+    "CSE keeps otherwise-identical shifts with distinct RHS count types"))
+
+(test
+  scalar-shift-count-type-fold
+  (test.assert-i64-eq
+    (compiler-optimize-typed-fold-self-test)
+    42
+    "shift folding resolves and normalizes the RHS using its payload type"))

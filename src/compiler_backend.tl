@@ -2695,14 +2695,14 @@
         [(compiler_ast_types.AstType.F64) "vmulpd"]
         [(compiler_ast_types.AstType.F32) "vmulps"]
         [_ ""])]
-    [(compiler_ir_types.CompilerIrBinOp.Shl)
+    [(compiler_ir_types.CompilerIrBinOp.Shl _)
       (match elem-ty
         [(compiler_ast_types.AstType.I64) "vpsllvq"]
         [(compiler_ast_types.AstType.U64) "vpsllvq"]
         [(compiler_ast_types.AstType.I32) "vpsllvd"]
         [(compiler_ast_types.AstType.U32) "vpsllvd"]
         [_ ""])]
-    [(compiler_ir_types.CompilerIrBinOp.Shr)
+    [(compiler_ir_types.CompilerIrBinOp.Shr _)
       (match elem-ty
         [(compiler_ast_types.AstType.U64) "vpsrlvq"]
         [(compiler_ast_types.AstType.I32) "vpsravd"]
@@ -2758,7 +2758,7 @@
   [op : compiler_ir_types.CompilerIrBinOp]
   [elem-ty : compiler_ast_types.AstType]) : bool
   (match op
-    [(compiler_ir_types.CompilerIrBinOp.Shr)
+    [(compiler_ir_types.CompilerIrBinOp.Shr _)
       (match elem-ty
         [(compiler_ast_types.AstType.I64) true]
         [_ false])]
@@ -3940,14 +3940,14 @@
         [(compiler_ast_types.AstType.F64) "vmulpd"]
         [(compiler_ast_types.AstType.F32) "vmulps"]
         [_ ""])]
-    [(compiler_ir_types.CompilerIrBinOp.Shl)
+    [(compiler_ir_types.CompilerIrBinOp.Shl _)
       (match elem-ty
         [(compiler_ast_types.AstType.I64) "vpsllvq"]
         [(compiler_ast_types.AstType.U64) "vpsllvq"]
         [(compiler_ast_types.AstType.I32) "vpsllvd"]
         [(compiler_ast_types.AstType.U32) "vpsllvd"]
         [_ ""])]
-    [(compiler_ir_types.CompilerIrBinOp.Shr)
+    [(compiler_ir_types.CompilerIrBinOp.Shr _)
       (match elem-ty
         [(compiler_ast_types.AstType.I64) "vpsravq"]
         [(compiler_ast_types.AstType.U64) "vpsrlvq"]
@@ -13445,8 +13445,8 @@
       (match op
         [(compiler_ir_types.CompilerIrBinOp.Div) true]
         [(compiler_ir_types.CompilerIrBinOp.Mod) true]
-        [(compiler_ir_types.CompilerIrBinOp.Shl) true]
-        [(compiler_ir_types.CompilerIrBinOp.Shr) true]
+        [(compiler_ir_types.CompilerIrBinOp.Shl _) true]
+        [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
         [_ false])]
     [(compiler_ir_types.CompilerIrInstr.Call _ name _ _)
       (compiler-backend-stdlib-io-panic-name? name)]
@@ -13484,9 +13484,17 @@
 (define (compiler-backend-abort-arg-reg [index : i64]) : String
   (match compiler-backend-abort-site-target
     [(CompilerBackendTarget.Linux)
-      (cond [(= index 0) "%rdi"] [(= index 1) "%rsi"] [else "%rdx"])]
+      (cond
+        [(= index 0) "%rdi"]
+        [(= index 1) "%rsi"]
+        [(= index 2) "%rdx"]
+        [else "%rcx"])]
     [(CompilerBackendTarget.Windows)
-      (cond [(= index 0) "%rcx"] [(= index 1) "%rdx"] [else "%r8"])]))
+      (cond
+        [(= index 0) "%rcx"]
+        [(= index 1) "%rdx"]
+        [(= index 2) "%r8"]
+        [else "%r9"])]))
 
 (define (compiler-backend-abort-site-next-label [suffix : String]) : String
   (begin
@@ -13546,6 +13554,41 @@
       (compiler-backend-abort-arg-reg 1)
       "\n    popq "
       (compiler-backend-abort-arg-reg 2)
+      "\n"
+      (compiler-backend-emit-call-space-sub call-space)
+      "    call "
+      symbol
+      "\n"
+      (compiler-backend-emit-call-space-add call-space)
+      (compiler-backend-abort-site-descriptor-after-call label))))
+
+;; Shift source-located aborts carry a fourth boolean argument indicating
+;; whether the count is unsigned.  Keep this setup separate from the legacy
+;; three-argument helper so all existing bounds/division/panic ABIs remain
+;; byte-for-byte stable.
+(define (compiler-backend-abort-call-shift-asm
+  [symbol : String]
+  [suffix : String]
+  [save-count : String]
+  [save-width : String]
+  [unsigned-count? : bool]
+  [call-space : i64]) : String
+  (let
+    [label : String (compiler-backend-abort-site-next-label suffix)]
+    (str_cat.str-cat
+      save-width
+      save-count
+      (compiler-backend-abort-site-load-arg0 label)
+      "    popq "
+      (compiler-backend-abort-arg-reg 1)
+      "\n    popq "
+      (compiler-backend-abort-arg-reg 2)
+      "\n    movq $"
+      (if unsigned-count?
+        "1"
+        "0")
+      ", "
+      (compiler-backend-abort-arg-reg 3)
       "\n"
       (compiler-backend-emit-call-space-sub call-space)
       "    call "
@@ -16723,8 +16766,8 @@
     [(compiler_ir_types.CompilerIrBinOp.BitAnd) true]
     [(compiler_ir_types.CompilerIrBinOp.BitOr) true]
     [(compiler_ir_types.CompilerIrBinOp.BitXor) true]
-    [(compiler_ir_types.CompilerIrBinOp.Shl) true]
-    [(compiler_ir_types.CompilerIrBinOp.Shr) true]
+    [(compiler_ir_types.CompilerIrBinOp.Shl _) true]
+    [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
     [_ false]))
 
 (define (compiler-backend-missing-compare-operand-ty
@@ -16756,9 +16799,17 @@
               (compiler-backend-missing-compare-operand-ty result-ty)])])
       result-ty)
     (if (compiler-backend-binop-bit-or-shift? op)
-      (match (compiler-backend-value-type types global-types lhs)
-        [(compiler_regalloc.CompilerRegMaybeType.Some ty) ty]
-        [(compiler_regalloc.CompilerRegMaybeType.No) result-ty])
+      ;; Shifts carry their lhs/result type in the BinOp field.  In
+      ;; particular, a literal lhs is represented as I64 regardless of its
+      ;; source cast, so recovering the type from the value would turn a U64
+      ;; shift into a signed/arithmetic operation after propagation.
+      (match op
+        [(compiler_ir_types.CompilerIrBinOp.Shl _) result-ty]
+        [(compiler_ir_types.CompilerIrBinOp.Shr _) result-ty]
+        [_
+          (match (compiler-backend-value-type types global-types lhs)
+            [(compiler_regalloc.CompilerRegMaybeType.Some ty) ty]
+            [(compiler_regalloc.CompilerRegMaybeType.No) result-ty])])
       result-ty)))
 
 (define (compiler-backend-value-float?
@@ -20033,52 +20084,87 @@
   [ty : compiler_ast_types.AstType]) : i64
   (* (compiler-backend-type-size type-segment-bases ty) 8))
 
-(define (compiler-backend-shift-count-valid?
+(define (compiler-backend-shift-count-valid-typed?
   [type-segment-bases : i64]
   [count : i64]
-  [ty : compiler_ast_types.AstType]) : bool
-  (and
-    (>= count 0)
-    (< count (compiler-backend-shift-count-width type-segment-bases ty))))
+  [count-ty : compiler_ast_types.AstType]
+  [lhs-ty : compiler_ast_types.AstType]) : bool
+  (if (compiler-backend-type-signed? count-ty)
+    (and
+      (>= count 0)
+      (< count (compiler-backend-shift-count-width type-segment-bases lhs-ty)))
+    (match count-ty
+      [(compiler_ast_types.AstType.U64)
+        (<
+          (cast count : u64)
+          (cast
+            (compiler-backend-shift-count-width type-segment-bases lhs-ty)
+            : u64))]
+      [_
+        (and
+          (>= count 0)
+          (<
+            count
+            (compiler-backend-shift-count-width type-segment-bases lhs-ty)))])))
 
 (define (compiler-backend-shift-guard-asm
   [type-segment-bases : i64]
-  [ty : compiler_ast_types.AstType]
+  [lhs-ty : compiler_ast_types.AstType]
+  [count-ty : compiler_ast_types.AstType]
   [count-reg : String]) : String
   (let
-    [width : i64 (compiler-backend-shift-count-width type-segment-bases ty)]
+    [width : i64 (compiler-backend-shift-count-width type-segment-bases lhs-ty)]
+    [count-sized : String
+      (compiler-backend-sized-reg type-segment-bases count-reg count-ty)]
+    [count-signed? : bool (compiler-backend-type-signed? count-ty)]
     [negative-abort : String
       (if compiler-backend-abort-site-active
-        (compiler-backend-abort-call-three-asm
+        (compiler-backend-abort-call-shift-asm
           "tl_shift_abort_at"
           "shift_negative"
+          (compiler-backend-abort-normalized-push-asm
+            type-segment-bases
+            count-ty
+            count-reg)
           (str_cat.str-cat "    pushq $" (string.int->string width) "\n")
-          (str_cat.str-cat "    pushq " count-reg "\n")
+          false
           0)
         "    call tl_shift_abort\n")]
     [large-abort : String
       (if compiler-backend-abort-site-active
-        (compiler-backend-abort-call-three-asm
+        (compiler-backend-abort-call-shift-asm
           "tl_shift_abort_at"
           "shift_large"
+          (compiler-backend-abort-normalized-push-asm
+            type-segment-bases
+            count-ty
+            count-reg)
           (str_cat.str-cat "    pushq $" (string.int->string width) "\n")
-          (str_cat.str-cat "    pushq " count-reg "\n")
+          (not count-signed?)
           0)
         "    call tl_shift_abort\n")]
+    [negative-check : String
+      (if count-signed?
+        (str_cat.str-cat
+          "    test"
+          (compiler-backend-int-instruction-suffix type-segment-bases count-ty)
+          " "
+          count-sized
+          ", "
+          count-sized
+          "\n    jge 1f\n"
+          negative-abort
+          "1:\n")
+        "")]
     (string.append
+      negative-check
       (str_cat.str-cat
-        "    testq "
-        count-reg
-        ", "
-        count-reg
-        "\n    jge 1f\n"
-        negative-abort
-        "1:\n")
-      (str_cat.str-cat
-        "    cmpq $"
+        "    cmp"
+        (compiler-backend-int-instruction-suffix type-segment-bases count-ty)
+        " $"
         (string.int->string width)
         ", "
-        count-reg
+        count-sized
         "\n    jb 1f\n"
         large-abort
         "1:\n"))))
@@ -20086,7 +20172,8 @@
 (define (compiler-backend-binop-shift-asm
   [type-segment-bases : i64]
   [mnemonic : String]
-  [ty : compiler_ast_types.AstType]
+  [lhs-ty : compiler_ast_types.AstType]
+  [count-ty : compiler_ast_types.AstType]
   [lhs : String]
   [count-reg : String]) : String
   (let
@@ -20097,13 +20184,17 @@
         ""
         (str_cat.str-cat "    movq " count-reg ", %rcx\n"))]
     (string.append
-      (compiler-backend-shift-guard-asm type-segment-bases ty count-reg)
+      (compiler-backend-shift-guard-asm
+        type-segment-bases
+        lhs-ty
+        count-ty
+        count-reg)
       (string.append
         count-move
         (str_cat.str-cat
           "    "
           mnemonic
-          (compiler-backend-int-instruction-suffix type-segment-bases ty)
+          (compiler-backend-int-instruction-suffix type-segment-bases lhs-ty)
           " %cl, "
           lhs
           "\n")))))
@@ -20241,20 +20332,22 @@
         (compiler-backend-binop-reg-asm type-segment-bases "or" ty rhs lhs)]
       [(compiler_ir_types.CompilerIrBinOp.BitXor)
         (compiler-backend-binop-reg-asm type-segment-bases "xor" ty rhs lhs)]
-      [(compiler_ir_types.CompilerIrBinOp.Shl)
+      [(compiler_ir_types.CompilerIrBinOp.Shl count-ty)
         (compiler-backend-binop-shift-asm
           type-segment-bases
           "shl"
           ty
+          count-ty
           lhs
           rhs-reg)]
-      [(compiler_ir_types.CompilerIrBinOp.Shr)
+      [(compiler_ir_types.CompilerIrBinOp.Shr count-ty)
         (compiler-backend-binop-shift-asm
           type-segment-bases
           (if (compiler-backend-type-signed? ty)
             "sar"
             "shr")
           ty
+          count-ty
           lhs
           rhs-reg)])))
 
@@ -20327,48 +20420,58 @@
 (define (compiler-backend-binop-immediate-shift-asm
   [type-segment-bases : i64]
   [mnemonic : String]
-  [ty : compiler_ast_types.AstType]
+  [lhs-ty : compiler_ast_types.AstType]
+  [count-ty : compiler_ast_types.AstType]
   [imm : String]
   [staging-reg : String]) : CompilerBackendMaybeAsm
   (let
     [count : i64
       (string.>int (string.substring imm 1 (- (string.string-length imm) 1)))]
-    (if (compiler-backend-shift-count-valid? type-segment-bases count ty)
+    (if (compiler-backend-shift-count-valid-typed?
+      type-segment-bases
+      count
+      count-ty
+      lhs-ty)
       (CompilerBackendMaybeAsm.Some
         (string.append
           (str_cat.str-cat
             "    "
             mnemonic
-            (compiler-backend-int-instruction-suffix type-segment-bases ty)
+            (compiler-backend-int-instruction-suffix type-segment-bases lhs-ty)
             " "
             imm)
           (str_cat.str-cat
             ", "
-            (compiler-backend-sized-reg type-segment-bases staging-reg ty)
+            (compiler-backend-sized-reg type-segment-bases staging-reg lhs-ty)
             "\n")))
       (CompilerBackendMaybeAsm.No))))
 
 (define (compiler-backend-binop-immediate-shift-reg-asm
   [type-segment-bases : i64]
   [mnemonic : String]
-  [ty : compiler_ast_types.AstType]
+  [lhs-ty : compiler_ast_types.AstType]
+  [count-ty : compiler_ast_types.AstType]
   [imm : String]
   [dst-reg : String]) : CompilerBackendMaybeAsm
   (let
     [count : i64
       (string.>int (string.substring imm 1 (- (string.string-length imm) 1)))]
-    (if (compiler-backend-shift-count-valid? type-segment-bases count ty)
+    (if (compiler-backend-shift-count-valid-typed?
+      type-segment-bases
+      count
+      count-ty
+      lhs-ty)
       (CompilerBackendMaybeAsm.Some
         (str_cat.str-cat
           (str_cat.str-cat
             "    "
             mnemonic
-            (compiler-backend-int-instruction-suffix type-segment-bases ty)
+            (compiler-backend-int-instruction-suffix type-segment-bases lhs-ty)
             " "
             imm)
           (str_cat.str-cat
             ", "
-            (compiler-backend-sized-reg type-segment-bases dst-reg ty)
+            (compiler-backend-sized-reg type-segment-bases dst-reg lhs-ty)
             "\n")))
       (CompilerBackendMaybeAsm.No))))
 
@@ -20453,20 +20556,22 @@
           imm
           (compiler-backend-sized-reg type-segment-bases dst-reg ty)
           dst-reg))]
-    [(compiler_ir_types.CompilerIrBinOp.Shl)
+    [(compiler_ir_types.CompilerIrBinOp.Shl count-ty)
       (compiler-backend-binop-immediate-shift-reg-asm
         type-segment-bases
         "shl"
         ty
+        count-ty
         imm
         dst-reg)]
-    [(compiler_ir_types.CompilerIrBinOp.Shr)
+    [(compiler_ir_types.CompilerIrBinOp.Shr count-ty)
       (compiler-backend-binop-immediate-shift-reg-asm
         type-segment-bases
         (if (compiler-backend-type-signed? ty)
           "sar"
           "shr")
         ty
+        count-ty
         imm
         dst-reg)]
     [(compiler_ir_types.CompilerIrBinOp.BitAnd)
@@ -20575,10 +20680,12 @@
   [lhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]) : ResultCompilerBackend
   (let
+    [count-ty : compiler_ast_types.AstType
+      (compiler_ir_types.compiler-ir-binop-rhs-type op ty)]
     [mnemonic : String
       (match op
-        [(compiler_ir_types.CompilerIrBinOp.Shl) "shl"]
-        [(compiler_ir_types.CompilerIrBinOp.Shr)
+        [(compiler_ir_types.CompilerIrBinOp.Shl _) "shl"]
+        [(compiler_ir_types.CompilerIrBinOp.Shr _)
           (if (compiler-backend-type-signed? ty)
             "sar"
             "shr")]
@@ -20588,7 +20695,11 @@
         (ResultCompilerBackend.Ok
           (str_cat.str-cat
             lhs-asm
-            (compiler-backend-shift-guard-asm type-segment-bases ty "%rcx")
+            (compiler-backend-shift-guard-asm
+              type-segment-bases
+              ty
+              count-ty
+              "%rcx")
             "    "
             mnemonic
             (compiler-backend-int-instruction-suffix type-segment-bases ty)
@@ -20601,8 +20712,8 @@
   [op : compiler_ir_types.CompilerIrBinOp]
   [ty : compiler_ast_types.AstType]) : String
   (match op
-    [(compiler_ir_types.CompilerIrBinOp.Shl) "shl"]
-    [(compiler_ir_types.CompilerIrBinOp.Shr)
+    [(compiler_ir_types.CompilerIrBinOp.Shl _) "shl"]
+    [(compiler_ir_types.CompilerIrBinOp.Shr _)
       (if (compiler-backend-type-signed? ty)
         "sar"
         "shr")]
@@ -20620,6 +20731,8 @@
   [planned-rcx : String]
   [planned-result : String]) : ResultCompilerBackend
   (let
+    [count-ty : compiler_ast_types.AstType
+      (compiler_ir_types.compiler-ir-binop-rhs-type op operand-ty)]
     [lhs-home : String (compiler-backend-value-scalar-register assignments lhs)]
     [rhs-home : String (compiler-backend-value-scalar-register assignments rhs)]
     [rhs-in-rcx? : bool (string.eq rhs-home "%rcx")]
@@ -20666,6 +20779,7 @@
                       type-segment-bases
                       (compiler-backend-binop-shift-mnemonic op operand-ty)
                       operand-ty
+                      count-ty
                       (compiler-backend-sized-reg
                         type-segment-bases
                         result-reg
@@ -20866,20 +20980,22 @@
           ty
           imm
           staging-reg))]
-    [(compiler_ir_types.CompilerIrBinOp.Shl)
+    [(compiler_ir_types.CompilerIrBinOp.Shl count-ty)
       (compiler-backend-binop-immediate-shift-asm
         type-segment-bases
         "shl"
         ty
+        count-ty
         imm
         staging-reg)]
-    [(compiler_ir_types.CompilerIrBinOp.Shr)
+    [(compiler_ir_types.CompilerIrBinOp.Shr count-ty)
       (compiler-backend-binop-immediate-shift-asm
         type-segment-bases
         (if (compiler-backend-type-signed? ty)
           "sar"
           "shr")
         ty
+        count-ty
         imm
         staging-reg)]
     [_ (CompilerBackendMaybeAsm.No)]))
@@ -21360,8 +21476,8 @@
 (define (compiler-backend-binop-shift-op?
   [op : compiler_ir_types.CompilerIrBinOp]) : bool
   (match op
-    [(compiler_ir_types.CompilerIrBinOp.Shl) true]
-    [(compiler_ir_types.CompilerIrBinOp.Shr) true]
+    [(compiler_ir_types.CompilerIrBinOp.Shl _) true]
+    [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
     [_ false]))
 
 (define (compiler-backend-binop-valid-immediate-shift?
@@ -21372,10 +21488,11 @@
   (if (compiler-backend-binop-shift-op? op)
     (match (compiler-backend-immediate-operand rhs)
       [(CompilerBackendMaybeImmediate.Some imm)
-        (compiler-backend-shift-count-valid?
+        (compiler-backend-shift-count-valid-typed?
           type-segment-bases
           (string.>int
             (string.substring imm 1 (- (string.string-length imm) 1)))
+          (compiler_ir_types.compiler-ir-binop-rhs-type op ty)
           ty)]
       [(CompilerBackendMaybeImmediate.No) false])
     false))
@@ -49438,8 +49555,8 @@
         [(compiler_ir_types.CompilerIrBinOp.Mod) "%rdx"]
         [(compiler_ir_types.CompilerIrBinOp.SafeDiv) "%rdx"]
         [(compiler_ir_types.CompilerIrBinOp.SafeMod) "%rdx"]
-        [(compiler_ir_types.CompilerIrBinOp.Shl) "%rcx"]
-        [(compiler_ir_types.CompilerIrBinOp.Shr) "%rcx"]
+        [(compiler_ir_types.CompilerIrBinOp.Shl _) "%rcx"]
+        [(compiler_ir_types.CompilerIrBinOp.Shr _) "%rcx"]
         [(compiler_ir_types.CompilerIrBinOp.Mul) "%rdx"]
         [_ ""])]
     (make-array rax-extra extra "" "" "")))

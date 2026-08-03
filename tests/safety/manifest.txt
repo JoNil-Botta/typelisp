@@ -11,7 +11,7 @@ float_literal_signed_zero_defined|run-exit|tests/safety/float_literal_signed_zer
 
 # Integer division/modulo and invalid shift counts trap deterministically.
 division_by_zero_trap|run-trap|tests/safety/division_by_zero_trap.tl|135|integer division or remainder error: dividend=1 divisor=0
-shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|shift count out of range: count=-1 width=64
+shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|shift count out of range: count=-1 width=32
 
 # Array/string/generated collection bounds trap rather than reading invalid memory.
 array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|array index out of bounds: index=1 length=1

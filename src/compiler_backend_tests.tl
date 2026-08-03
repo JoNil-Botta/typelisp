@@ -7352,7 +7352,8 @@
               (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
               assignments
               2
-              (compiler_ir_types.CompilerIrBinOp.Shl)
+              (compiler_ir_types.CompilerIrBinOp.Shl
+                (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.I64 2)
               (compiler_ast_types.AstType.I64))
@@ -16577,83 +16578,83 @@
   (and
     (compiler_backend.backend-and8
       (compiler-backend-avx2-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shl)
+        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I32))
         (compiler_ast_types.AstType.I32)
         8
         "    vpsllvd %ymm7, %ymm6, %ymm8\n")
       (compiler-backend-avx2-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.I32))
         (compiler_ast_types.AstType.I32)
         8
         "    vpsravd %ymm7, %ymm6, %ymm8\n")
       (compiler-backend-avx2-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.U32))
         (compiler_ast_types.AstType.U32)
         8
         "    vpsrlvd %ymm7, %ymm6, %ymm8\n")
       (compiler-backend-avx2-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shl)
+        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I64))
         (compiler_ast_types.AstType.I64)
         4
         "    vpsllvq %ymm7, %ymm6, %ymm8\n")
       (compiler-backend-avx2-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.U64))
         (compiler_ast_types.AstType.U64)
         4
         "    vpsrlvq %ymm7, %ymm6, %ymm8\n")
       (compiler-backend-avx2-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.I64))
         (compiler_ast_types.AstType.I64)
         4
         "    vpxor %ymm1, %ymm1, %ymm1\n    vpcmpgtq %ymm6, %ymm1, %ymm0\n    vpcmpeqd %ymm1, %ymm1, %ymm1\n    vpsllq $63, %ymm1, %ymm1\n    vpsrlq $57, %ymm1, %ymm1\n    vpsubq %ymm7, %ymm1, %ymm1\n    vpsllvq %ymm1, %ymm0, %ymm0\n    vpsrlvq %ymm7, %ymm6, %ymm8\n    vpor %ymm0, %ymm8, %ymm8\n")
       (compiler-backend-avx2-vector-binop-diagnostic?
-        (compiler_ir_types.CompilerIrBinOp.Shl)
+        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I16))
         (compiler_ast_types.AstType.I16)
         16
         "backend: unsupported AVX2 vector binary op")
       (compiler-backend-avx2-vector-binop-diagnostic?
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.U8))
         (compiler_ast_types.AstType.U8)
         32
         "backend: unsupported AVX2 vector binary op"))
     (compiler_backend.backend-and8
       (compiler-backend-avx512-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shl)
+        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.U32))
         (compiler_ast_types.AstType.U32)
         16
         "    vpsllvd %zmm7, %zmm6, %zmm8\n")
       (compiler-backend-avx512-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.I32))
         (compiler_ast_types.AstType.I32)
         16
         "    vpsravd %zmm7, %zmm6, %zmm8\n")
       (compiler-backend-avx512-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.U32))
         (compiler_ast_types.AstType.U32)
         16
         "    vpsrlvd %zmm7, %zmm6, %zmm8\n")
       (compiler-backend-avx512-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shl)
+        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.U64))
         (compiler_ast_types.AstType.U64)
         8
         "    vpsllvq %zmm7, %zmm6, %zmm8\n")
       (compiler-backend-avx512-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.I64))
         (compiler_ast_types.AstType.I64)
         8
         "    vpsravq %zmm7, %zmm6, %zmm8\n")
       (compiler-backend-avx512-vector-binop-emits?
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.U64))
         (compiler_ast_types.AstType.U64)
         8
         "    vpsrlvq %zmm7, %zmm6, %zmm8\n")
       (compiler-backend-avx512-vector-binop-diagnostic?
-        (compiler_ir_types.CompilerIrBinOp.Shl)
+        (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.U16))
         (compiler_ast_types.AstType.U16)
         32
         "backend: unsupported AVX-512 vector binary op")
       (compiler-backend-avx512-vector-binop-diagnostic?
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.I8))
         (compiler_ast_types.AstType.I8)
         64
         "backend: unsupported AVX-512 vector binary op"))))
@@ -25211,11 +25212,11 @@
 
 (define (compiler-backend-direct-immediate-shift-home-ok?) : bool
   (match (compiler-backend-direct-immediate-shift-asm
-    (compiler_ir_types.CompilerIrBinOp.Shl)
+    (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I64))
     (compiler_ast_types.AstType.I64))
     [(compiler_backend.ResultCompilerBackend.Ok shl-asm)
       (match (compiler-backend-direct-immediate-shift-asm
-        (compiler_ir_types.CompilerIrBinOp.Shr)
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.I64))
         (compiler_ast_types.AstType.I64))
         [(compiler_backend.ResultCompilerBackend.Ok shr-asm)
           (and
@@ -25290,10 +25291,10 @@
 
 (define (compiler-backend-direct-rcx-shift-home-ok?) : bool
   (match (compiler-backend-direct-rcx-shift-asm
-    (compiler_ir_types.CompilerIrBinOp.Shl))
+    (compiler_ir_types.CompilerIrBinOp.Shl (compiler_ast_types.AstType.I64)))
     [(compiler_backend.ResultCompilerBackend.Ok shl-asm)
       (match (compiler-backend-direct-rcx-shift-asm
-        (compiler_ir_types.CompilerIrBinOp.Shr))
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.I64)))
         [(compiler_backend.ResultCompilerBackend.Ok shr-asm)
           (and
             (compiler_backend.backend-and8
@@ -26309,7 +26310,231 @@
 (define (compiler-backend-shift-guard-source) : String
   "(define (main) : i64 (shl 1 -1))")
 
+;; Keep every scalar shift in this fixture parameterized so backend emission
+;; cannot fold away the count guards.  The result/lhs widths deliberately
+;; match the count width; this makes the sized test/cmp instructions and the
+;; narrow diagnostic normalization observable in each function body.
+(define (compiler-backend-scalar-shift-matrix-source) : String
+  "(extern (shift_matrix_count) : u64 (:symbol \"tl_arg_count\"))
+(define (shift_u64_lit [count : u64]) : u64
+  (let
+    [seed : u64 (cast 1 : u64)]
+    [copy : u64 seed]
+    (shr copy count)))
+(define (shift_si8 [value : i8] [count : i8]) : i8
+  (shr value count))
+(define (shift_ui8 [value : u8] [count : u8]) : u8
+  (shr value count))
+(define (shift_si16 [value : i16] [count : i16]) : i16
+  (shr value count))
+(define (shift_ui16 [value : u16] [count : u16]) : u16
+  (shr value count))
+(define (shift_si32 [value : i32] [count : i32]) : i32
+  (shr value count))
+(define (shift_ui32 [value : u32] [count : u32]) : u32
+  (shr value count))
+(define (shift_si64 [value : i64] [count : i64]) : i64
+  (shr value count))
+(define (shift_ui64 [value : u64] [count : u64]) : u64
+  (shr value count))
+(define (main) : i64
+  (let
+    [a : i64 (cast (shift_si8 (cast 1 : i8) (cast 0 : i8)) : i64)]
+    [b : i64 (cast (shift_ui8 (cast 1 : u8) (cast 0 : u8)) : i64)]
+    [c : i64 (cast (shift_si16 (cast 1 : i16) (cast 0 : i16)) : i64)]
+    [d : i64 (cast (shift_ui16 (cast 1 : u16) (cast 0 : u16)) : i64)]
+    [e : i64 (cast (shift_si32 (cast 1 : i32) (cast 0 : i32)) : i64)]
+    [f : i64 (cast (shift_ui32 (cast 1 : u32) (cast 0 : u32)) : i64)]
+    [g : i64 (shift_si64 (cast 1 : i64) (cast 0 : i64))]
+    [h : i64 (cast (shift_ui64 (cast 1 : u64) (cast 0 : u64)) : i64)]
+    [i : i64 (cast (shift_u64_lit (shift_matrix_count)) : i64)]
+    (+ a (+ b (+ c (+ d (+ e (+ f (+ g (+ h i))))))))))")
+
+(define (compiler-backend-shift-count-reg [suffix : String]) : String
+  (cond
+    [(string.eq suffix "b") "%r8b"]
+    [(string.eq suffix "w") "%r8w"]
+    [(string.eq suffix "l") "%r8d"]
+    [else "%r8"]))
+
+(define (compiler-backend-shift-count-push-reg [suffix : String]) : String
+  (if (string.eq suffix "q")
+    "%r8"
+    "%r11"))
+
+(define (compiler-backend-shift-guard-body-ok?
+  [body : String]
+  [suffix : String]
+  [width : String]
+  [signed? : bool]
+  [extension : String]
+  [flag-reg : String]) : bool
+  (let
+    [reg : String (compiler-backend-shift-count-reg suffix)]
+    [test : String
+      (str_cat.str-cat "    test" suffix " " reg ", " reg "\n    jge 1f\n")]
+    [cmp : String
+      (str_cat.str-cat "    cmp" suffix " $" width ", " reg "\n    jb 1f\n")]
+    [count-push : String
+      (str_cat.str-cat
+        "    pushq "
+        (compiler-backend-shift-count-push-reg suffix)
+        "\n")]
+    [normalized-push : String
+      (if (string.eq extension "")
+        count-push
+        (str_cat.str-cat extension "\n    pushq %r11\n"))]
+    [zero-flag : String (str_cat.str-cat "    movq $0, " flag-reg "\n")]
+    [one-flag : String (str_cat.str-cat "    movq $1, " flag-reg "\n")]
+    (and
+      (> (string.string-length body) 0)
+      (compiler_backend.compiler-backend-string-contains? body cmp)
+      (compiler_backend.compiler-backend-string-contains? body normalized-push)
+      (if signed?
+        (and
+          (compiler_backend.compiler-backend-string-contains? body test)
+          (compiler_backend.compiler-backend-string-contains? body zero-flag)
+          (not
+            (compiler_backend.compiler-backend-string-contains? body one-flag)))
+        (and
+          (not (compiler_backend.compiler-backend-string-contains? body test))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              body
+              "    jge 1f\n"))
+          (compiler_backend.compiler-backend-string-contains? body one-flag)
+          (not
+            (compiler_backend.compiler-backend-string-contains? body zero-flag)))))))
+
+(define (compiler-backend-scalar-shift-matrix-target-ok?
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (match (compiler_backend.compiler-backend-emit-source-for-target
+    (compiler-backend-scalar-shift-matrix-source)
+    target)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (let
+        [literal : String
+          (compiler-backend-asm-function-body asm "_tl_shift_u64_lit")]
+        [si8 : String (compiler-backend-asm-function-body asm "_tl_shift_si8")]
+        [ui8 : String (compiler-backend-asm-function-body asm "_tl_shift_ui8")]
+        [si16 : String
+          (compiler-backend-asm-function-body asm "_tl_shift_si16")]
+        [ui16 : String
+          (compiler-backend-asm-function-body asm "_tl_shift_ui16")]
+        [si32 : String
+          (compiler-backend-asm-function-body asm "_tl_shift_si32")]
+        [ui32 : String
+          (compiler-backend-asm-function-body asm "_tl_shift_ui32")]
+        [si64 : String
+          (compiler-backend-asm-function-body asm "_tl_shift_si64")]
+        [ui64 : String
+          (compiler-backend-asm-function-body asm "_tl_shift_ui64")]
+        [flag-reg : String
+          (if (compiler_backend.compiler-backend-target-windows? target)
+            "%r9"
+            "%rcx")]
+        (and
+          ;; All helpers stay on stable direct user symbols so body extraction
+          ;; is independent of compact-name slot assignment.
+          (compiler_backend.backend-and8
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              ".globl _tl_shift_u64_lit\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              ".globl _tl_shift_si8\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              ".globl _tl_shift_ui8\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              ".globl _tl_shift_si16\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              ".globl _tl_shift_ui16\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              ".globl _tl_shift_si32\n")
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              ".globl _tl_shift_ui32\n")
+            (and
+              (compiler_backend.compiler-backend-string-contains?
+                asm
+                ".globl _tl_shift_si64\n")
+              (compiler_backend.compiler-backend-string-contains?
+                asm
+                ".globl _tl_shift_ui64\n")))
+          ;; A U64 literal/copy must select the logical right-shift mnemonic.
+          (compiler_backend.compiler-backend-string-contains?
+            literal
+            "    shrq %cl, %rax\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              literal
+              "    sarq %cl, %rax\n"))
+          (compiler-backend-shift-guard-body-ok?
+            si8
+            "b"
+            "8"
+            true
+            "    movsbq %r8b, %r11"
+            flag-reg)
+          (compiler-backend-shift-guard-body-ok?
+            ui8
+            "b"
+            "8"
+            false
+            "    movzbq %r8b, %r11"
+            flag-reg)
+          (compiler-backend-shift-guard-body-ok?
+            si16
+            "w"
+            "16"
+            true
+            "    movswq %r8w, %r11"
+            flag-reg)
+          (compiler-backend-shift-guard-body-ok?
+            ui16
+            "w"
+            "16"
+            false
+            "    movzwq %r8w, %r11"
+            flag-reg)
+          (compiler-backend-shift-guard-body-ok?
+            si32
+            "l"
+            "32"
+            true
+            "    movslq %r8d, %r11"
+            flag-reg)
+          (compiler-backend-shift-guard-body-ok?
+            ui32
+            "l"
+            "32"
+            false
+            "    movl %r8d, %r11d"
+            flag-reg)
+          (compiler-backend-shift-guard-body-ok? si64 "q" "64" true "" flag-reg)
+          (compiler-backend-shift-guard-body-ok?
+            ui64
+            "q"
+            "64"
+            false
+            ""
+            flag-reg)))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-scalar-shift-matrix-ok?) : bool
+  (and
+    (compiler-backend-scalar-shift-matrix-target-ok?
+      compiler_backend.CompilerBackendTarget.Linux)
+    (compiler-backend-scalar-shift-matrix-target-ok?
+      compiler_backend.CompilerBackendTarget.Windows)))
+
 (define (compiler-backend-shift-guard-ok?) : bool
+  ;; `main` returns the shift, so contextual typing keeps this literal shift
+  ;; at i64/width64 (the discarded-expression integration fixture is width32).
   (match (compiler_backend.compiler-backend-emit-source
     (compiler-backend-shift-guard-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -26466,14 +26691,16 @@
         "    idivq %r8\n")
       (and
         (compiler-backend-narrow-binop-shape?
-          (compiler_ir_types.CompilerIrBinOp.Shr)
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.U8))
           (compiler_ast_types.AstType.I8)
           (compiler_ast_types.AstType.U8)
           (compiler_ast_types.AstType.I8)
           "    movq %r8, %rcx\n    sarb %cl, %r9b\n"
           "%rax")
         (compiler-backend-narrow-binop-shape?
-          (compiler_ir_types.CompilerIrBinOp.Shr)
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.U8))
           (compiler_ast_types.AstType.U8)
           (compiler_ast_types.AstType.U8)
           (compiler_ast_types.AstType.U8)
@@ -26481,7 +26708,8 @@
           "%rax"))
       (and
         (compiler-backend-narrow-binop-shape?
-          (compiler_ir_types.CompilerIrBinOp.Shl)
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.U8))
           (compiler_ast_types.AstType.U8)
           (compiler_ast_types.AstType.U8)
           (compiler_ast_types.AstType.U8)
@@ -35328,7 +35556,8 @@
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
           2
-          (compiler_ir_types.CompilerIrBinOp.Shl)
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.I64))
@@ -35656,7 +35885,8 @@
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             assignments
             2
-            (compiler_ir_types.CompilerIrBinOp.Shl)
+            (compiler_ir_types.CompilerIrBinOp.Shl
+              (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64)
@@ -35669,7 +35899,8 @@
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             assignments
             2
-            (compiler_ir_types.CompilerIrBinOp.Shl)
+            (compiler_ir_types.CompilerIrBinOp.Shl
+              (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64)
@@ -35682,7 +35913,8 @@
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             shift-register-assignments
             2
-            (compiler_ir_types.CompilerIrBinOp.Shl)
+            (compiler_ir_types.CompilerIrBinOp.Shl
+              (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64)
@@ -35696,7 +35928,8 @@
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
               shift-register-assignments
               2
-              (compiler_ir_types.CompilerIrBinOp.Shl)
+              (compiler_ir_types.CompilerIrBinOp.Shl
+                (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ast_types.AstType.I64)
@@ -36227,7 +36460,9 @@
         (compiler-backend-register-f32-aggregate-ok?))
       (compiler-backend-win64-f64-abi-ok?)
       (compiler-backend-aggregate-storage-shape-ok?)
-      (compiler-backend-shift-guard-ok?)
+      (and
+        (compiler-backend-shift-guard-ok?)
+        (compiler-backend-scalar-shift-matrix-ok?))
       (and
         (compiler-backend-windows-runtime-guard-ok?)
         (compiler-backend-simd-vector-ok?)

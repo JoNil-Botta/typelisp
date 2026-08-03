@@ -39,8 +39,21 @@
   (BitAnd)
   (BitOr)
   (BitXor)
-  (Shl)
-  (Shr))
+  ;; Scalar shifts carry the independently typed RHS count.  The BinOp
+  ;; instruction's type field remains the lhs/result type; this payload is
+  ;; metadata used by lowering, optimization, and backend guard emission.
+  (Shl ast.AstType)
+  (Shr ast.AstType))
+
+;; Return the RHS operand type carried by a shift.  All non-shift operations
+;; use the instruction operand type for both operands.
+(define (compiler-ir-binop-rhs-type
+  [op : CompilerIrBinOp]
+  [operand-ty : ast.AstType]) : ast.AstType
+  (match op
+    [(CompilerIrBinOp.Shl rhs-ty) rhs-ty]
+    [(CompilerIrBinOp.Shr rhs-ty) rhs-ty]
+    [_ operand-ty]))
 
 ;; Scalar comparison instructions carry their operand type in the `BinOp`
 ;; type field. Their destination is always `bool`; every other binary op uses
@@ -6540,8 +6553,8 @@
     [(CompilerIrBinOp.BitAnd) "bitand"]
     [(CompilerIrBinOp.BitOr) "bitor"]
     [(CompilerIrBinOp.BitXor) "bitxor"]
-    [(CompilerIrBinOp.Shl) "shl"]
-    [(CompilerIrBinOp.Shr) "shr"]))
+    [(CompilerIrBinOp.Shl _) "shl"]
+    [(CompilerIrBinOp.Shr _) "shr"]))
 
 (define (compiler-ir-mask-binop-name [op : CompilerIrMaskBinOp]) : String
   (match op

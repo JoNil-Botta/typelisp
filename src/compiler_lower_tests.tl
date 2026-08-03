@@ -2888,13 +2888,15 @@
       (match want
         [(compiler_ir_types.CompilerIrBinOp.BitXor) true]
         [_ false])]
-    [(compiler_ir_types.CompilerIrBinOp.Shl)
+    [(compiler_ir_types.CompilerIrBinOp.Shl actual-count-ty)
       (match want
-        [(compiler_ir_types.CompilerIrBinOp.Shl) true]
+        [(compiler_ir_types.CompilerIrBinOp.Shl want-count-ty)
+          (compiler_typecheck_core.tc-type-eq actual-count-ty want-count-ty)]
         [_ false])]
-    [(compiler_ir_types.CompilerIrBinOp.Shr)
+    [(compiler_ir_types.CompilerIrBinOp.Shr actual-count-ty)
       (match want
-        [(compiler_ir_types.CompilerIrBinOp.Shr) true]
+        [(compiler_ir_types.CompilerIrBinOp.Shr want-count-ty)
+          (compiler_typecheck_core.tc-type-eq actual-count-ty want-count-ty)]
         [_ false])]))
 
 (define (lower-test-instr-binop-op-count
@@ -6058,7 +6060,8 @@
                 (lower-test-function-binop-op-count
                   functions
                   "bits"
-                  compiler_ir_types.CompilerIrBinOp.Shl)
+                  (compiler_ir_types.CompilerIrBinOp.Shl
+                    (compiler_ast_types.AstType.I32)))
                 0)
                 unit
                 (set! ok false))
@@ -6066,7 +6069,8 @@
                 (lower-test-function-binop-op-count
                   functions
                   "bits"
-                  compiler_ir_types.CompilerIrBinOp.Shr)
+                  (compiler_ir_types.CompilerIrBinOp.Shr
+                    (compiler_ast_types.AstType.I32)))
                 0)
                 unit
                 (set! ok false))
@@ -9458,12 +9462,14 @@
               (lower-test-function-vector-binop-op-count
                 functions
                 "fill"
-                (compiler_ir_types.CompilerIrBinOp.Shl))]
+                (compiler_ir_types.CompilerIrBinOp.Shl
+                  (compiler_ast_types.AstType.I64)))]
             [shr-count : i64
               (lower-test-function-vector-binop-op-count
                 functions
                 "fill"
-                (compiler_ir_types.CompilerIrBinOp.Shr))]
+                (compiler_ir_types.CompilerIrBinOp.Shr
+                  (compiler_ast_types.AstType.I64)))]
             [abort-count : i64
               (lower-test-functions-call-count functions "tl_shift_abort")]
             [shape-count : i64
@@ -12522,6 +12528,60 @@
   "(define (main [flag : bool]) : i64
   (if flag 1 false))")
 
+(define (compiler-lower-scalar-shift-count-source) : String
+  "(define (shift-u8 [value : u64] [count : u8]) : u64
+  (shl value count))
+(define (shift-u64 [value : u64] [count : u64]) : u64
+  (shr value count))
+(define (main) : i64
+  (let
+    [a : u64 (shift-u8 (cast 1 : u64) (cast 1 : u8))]
+    [b : u64 (shift-u64 (cast 1 : u64) (cast 1 : u64))]
+    (+ (cast a : i64) (cast b : i64))))")
+
+(define (compiler-lower-scalar-shift-count-types-ok?) : bool
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-scalar-shift-count-source))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "shift-u8"
+                (compiler_ir_types.CompilerIrBinOp.Shl
+                  (compiler_ast_types.AstType.U8)))
+              1)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "shift-u64"
+                (compiler_ir_types.CompilerIrBinOp.Shr
+                  (compiler_ast_types.AstType.U64)))
+              1)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "shift-u8"
+                (compiler_ir_types.CompilerIrBinOp.Shl
+                  (compiler_ast_types.AstType.U64)))
+              0)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "shift-u64"
+                (compiler_ir_types.CompilerIrBinOp.Shr
+                  (compiler_ast_types.AstType.U8)))
+              0))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(test
+  compiler-lower-scalar-shift-count-types
+  (test.assert-true
+    (compiler-lower-scalar-shift-count-types-ok?)
+    "scalar lowering preserves independent u8/u64 shift count payloads"))
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -12574,6 +12634,9 @@
       (if (compiler-lower-error-ok?
         (compiler-lower-branch-mismatch-source)
         "typecheck: if branches must match")
+        unit
+        (set! ok false))
+      (if (compiler-lower-scalar-shift-count-types-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-array-literal-source))

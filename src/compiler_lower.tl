@@ -12017,8 +12017,8 @@
       (match op
         [(ir.CompilerIrBinOp.Div) true]
         [(ir.CompilerIrBinOp.Mod) true]
-        [(ir.CompilerIrBinOp.Shl) true]
-        [(ir.CompilerIrBinOp.Shr) true]
+        [(ir.CompilerIrBinOp.Shl _) true]
+        [(ir.CompilerIrBinOp.Shr _) true]
         [_ false])]
     [(ir.CompilerIrInstr.Call _ name _ _)
       (let
@@ -12341,7 +12341,7 @@
       (ir.CompilerIrValue.String (ci.intern-str string-id))]
     [(ast.AstLiteral.Unit) ir.CompilerIrValue.Unit]))
 
-(define (lower-binop [op : ast.AstBinOp]) : ir.CompilerIrBinOp
+(define (lower-binop [op : ast.AstBinOp] [rhs-ty : ast.AstType]) : ir.CompilerIrBinOp
   (match op
     [(ast.AstBinOp.Add) ir.CompilerIrBinOp.Add]
     [(ast.AstBinOp.Sub) ir.CompilerIrBinOp.Sub]
@@ -12359,8 +12359,8 @@
     [(ast.AstBinOp.BitAnd) ir.CompilerIrBinOp.BitAnd]
     [(ast.AstBinOp.BitOr) ir.CompilerIrBinOp.BitOr]
     [(ast.AstBinOp.BitXor) ir.CompilerIrBinOp.BitXor]
-    [(ast.AstBinOp.Shl) ir.CompilerIrBinOp.Shl]
-    [(ast.AstBinOp.Shr) ir.CompilerIrBinOp.Shr]))
+    [(ast.AstBinOp.Shl) (ir.CompilerIrBinOp.Shl rhs-ty)]
+    [(ast.AstBinOp.Shr) (ir.CompilerIrBinOp.Shr rhs-ty)]))
 
 (define (lower-unop [op : ast.AstUnOp]) : ir.CompilerIrUnOp
   (match op
@@ -13233,7 +13233,7 @@
                 (if (> left 0)
                   (lower-emit-binop
                     bits-state
-                    ir.CompilerIrBinOp.Shl
+                    (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
                     bits-value
                     (ir.CompilerIrValue.I64 left)
                     (ast.AstType.I64))
@@ -13242,7 +13242,7 @@
                 [(LowerExpr.Expr shl-state shl-value _)
                   (match (lower-emit-binop
                     shl-state
-                    ir.CompilerIrBinOp.Shr
+                    (ir.CompilerIrBinOp.Shr (ast.AstType.I64))
                     shl-value
                     (ir.CompilerIrValue.I64 right)
                     (if (lower-type-signed? field-ty)
@@ -13299,7 +13299,7 @@
                       (if (> byte-offset 0)
                         (lower-emit-binop
                           mask-state
-                          ir.CompilerIrBinOp.Shl
+                          (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
                           mask-value
                           (ir.CompilerIrValue.I64 (* byte-offset 8))
                           (ast.AstType.I64))
@@ -13496,7 +13496,12 @@
                                         alloc2
                                         (ir.CompilerIrInstr.BinOp
                                           word0-cmp
-                                          (lower-binop op)
+                                          (lower-binop
+                                            op
+                                            (lower-register-word-type
+                                              ctx
+                                              group-ty
+                                              0))
                                           l0
                                           r0
                                           (lower-register-word-type
@@ -13505,7 +13510,12 @@
                                             0)))
                                       (ir.CompilerIrInstr.BinOp
                                         word1-cmp
-                                        (lower-binop op)
+                                        (lower-binop
+                                          op
+                                          (lower-register-word-type
+                                            ctx
+                                            group-ty
+                                            1))
                                         l1
                                         r1
                                         (lower-register-word-type
@@ -24345,11 +24355,11 @@
                                                 allocated
                                                 (ir.CompilerIrInstr.BinOp
                                                   var-id
-                                                  (lower-binop op)
+                                                  (lower-binop op right-ty)
                                                   left-value
                                                   right-value
                                                   (if (ir.compiler-ir-binop-compare?
-                                                    (lower-binop op))
+                                                    (lower-binop op right-ty))
                                                     left-ty
                                                     result-ty))
                                                 origin)
@@ -42106,7 +42116,7 @@
                 [(LowerMaybeVectorMapValue.Some rhs-plan)
                   (LowerMaybeVectorMapValue.Some
                     (LowerVectorMapValue.BinOp
-                      (lower-binop op)
+                      (lower-binop op dst-elem)
                       (box lhs-plan)
                       (box rhs-plan)))]
                 [(LowerMaybeVectorMapValue.No) (LowerMaybeVectorMapValue.No)])]
@@ -42942,8 +42952,8 @@
 
 (define (lower-vector-map-binop-shift? [op : ir.CompilerIrBinOp]) : bool
   (match op
-    [(ir.CompilerIrBinOp.Shl) true]
-    [(ir.CompilerIrBinOp.Shr) true]
+    [(ir.CompilerIrBinOp.Shl _) true]
+    [(ir.CompilerIrBinOp.Shr _) true]
     [_ false]))
 
 (define (lower-emit-checked-vector-shift
@@ -45081,13 +45091,15 @@
       (match right
         [(ir.CompilerIrBinOp.BitXor) true]
         [_ false])]
-    [(ir.CompilerIrBinOp.Shl)
+    [(ir.CompilerIrBinOp.Shl left-count-ty)
       (match right
-        [(ir.CompilerIrBinOp.Shl) true]
+        [(ir.CompilerIrBinOp.Shl right-count-ty)
+          (tc_core.tc-type-eq left-count-ty right-count-ty)]
         [_ false])]
-    [(ir.CompilerIrBinOp.Shr)
+    [(ir.CompilerIrBinOp.Shr left-count-ty)
       (match right
-        [(ir.CompilerIrBinOp.Shr) true]
+        [(ir.CompilerIrBinOp.Shr right-count-ty)
+          (tc_core.tc-type-eq left-count-ty right-count-ty)]
         [_ false])]
     [_ false]))
 
@@ -47862,7 +47874,6 @@
   [lanes : i64]
   [expr : ast.AstExpr]
   [ast-op : ast.AstBinOp]
-  [ir-op : ir.CompilerIrBinOp]
   [left : ast.AstExpr]
   [right : ast.AstExpr]) : ResultLowerExpr
   (match (lower-expr-result-type-or-check
@@ -47909,6 +47920,11 @@
                           (let
                             [count-ty : ast.AstType
                               (tc_core.tc-type-without-regions right-ty)]
+                            [typed-ir-op : ir.CompilerIrBinOp
+                              (match ast-op
+                                [(ast.AstBinOp.Shl)
+                                  (ir.CompilerIrBinOp.Shl count-ty)]
+                                [_ (ir.CompilerIrBinOp.Shr count-ty)])]
                             (if (and
                               (tc_core.tc-integer-type? count-ty)
                               (=
@@ -47920,7 +47936,7 @@
                                 right-state
                                 active-mask
                                 lanes
-                                ir-op
+                                typed-ir-op
                                 left-value
                                 right-value
                                 lane-ty
@@ -48074,7 +48090,6 @@
         lanes
         expr
         op
-        (ir.CompilerIrBinOp.Shl)
         left
         right)]
     [(ast.AstBinOp.Shr)
@@ -48090,7 +48105,6 @@
         lanes
         expr
         op
-        (ir.CompilerIrBinOp.Shr)
         left
         right)]
     [(ast.AstBinOp.BitAnd)

@@ -296,7 +296,13 @@ normalize_asm() {
                 next
             }
 
-            if (line == "" || line ~ /^#/ || line ~ /^\.seh_/) {
+            # Object-format symbol metadata, not body code: Win64 unwind
+            # (`.seh_*`) has no ELF spelling, and the ELF symbol type/size
+            # (`.type NAME,@function` / `.size NAME, . - NAME`) has no COFF
+            # spelling. Neither contributes a byte to .text, so neither belongs
+            # in a target-to-target body comparison.
+            if (line == "" || line ~ /^#/ || line ~ /^\.seh_/ ||
+                    line ~ /^\.type[ \t]/ || line ~ /^\.size[ \t]/) {
                 next
             }
 

@@ -10949,6 +10949,37 @@
     "    .seh_endproc\n"
     ""))
 
+;; ELF function symbols for the Linux text path.
+;;
+;; Without these two directives `as` records every code symbol this backend
+;; emits as STT_NOTYPE with `st_size` 0, so nothing that resolves an address to
+;; a name -- perf, valgrind/cachegrind, a debugger backtrace -- can attribute a
+;; sample to a function, and profiling a selfhost build means post-processing
+;; the generated `.s` first. Both directives are assembler metadata: they
+;; describe the symbol table entry and contribute no bytes to `.text`, so the
+;; emitted program is byte-identical with or without them.
+;;
+;; They belong to whole FUNCTIONS only. Data labels keep the assembler default
+;; typing, the thread-local arena object must stay untyped (`as` rejects
+;; `.type` on a TLS symbol), and block-local `.L` labels never reach the
+;; object's symbol table at all. Windows COFF has no GNU-as spelling for
+;; either, so the Windows text path emits nothing.
+(define (compiler-backend-emit-function-type-directive
+  [target : CompilerBackendTarget]
+  [symbol : String]) : String
+  (if (compiler-backend-target-linux? target)
+    (str_cat.str-cat "    .type " symbol ",@function\n")
+    ""))
+
+;; `. - symbol` is evaluated where the directive sits, so this must close the
+;; function after its last emitted byte and before the next function's `.type`.
+(define (compiler-backend-emit-function-size-directive
+  [target : CompilerBackendTarget]
+  [symbol : String]) : String
+  (if (compiler-backend-target-linux? target)
+    (str_cat.str-cat "    .size " symbol ", . - " symbol "\n")
+    ""))
+
 (define (compiler-backend-emit-function-entry
   [target : CompilerBackendTarget]
   [symbol : String]
@@ -37261,10 +37292,12 @@
     ".globl "
     symbol
     "\n"
+    (compiler-backend-emit-function-type-directive target symbol)
     symbol
     ":\n"
     (compiler-backend-inline-memory-call-asm target symbol)
-    "    ret\n"))
+    "    ret\n"
+    (compiler-backend-emit-function-size-directive target symbol)))
 
 (define (compiler-backend-emit-inline-memory-call-with-arg-assignments
   [type-segment-bases : i64]
@@ -55624,6 +55657,12 @@
                                         span-index
                                         spans
                                         name)
+                                      ;; Immediately before the entry label:
+                                      ;; the shrinkwrap and ordinary prologues
+                                      ;; both open with `symbol:`.
+                                      (compiler-backend-emit-function-type-directive
+                                        target
+                                        symbol)
                                       (if shrinkwrap-active?
                                         (str_cat.str-cat symbol ":\n" "")
                                         selected-prologue)
@@ -55646,6 +55685,12 @@
                                         "")
                                       (compiler-backend-emit-windows-seh-endproc
                                         target)
+                                      ;; Closes the function at its last
+                                      ;; emitted byte, before the next
+                                      ;; function's `.globl`/`.type`.
+                                      (compiler-backend-emit-function-size-directive
+                                        target
+                                        symbol)
                                       "\n"))))))))]
                     [(ResultCompilerBackend.Err message)
                       (let
@@ -58571,6 +58616,24 @@
   [emit-entry : bool]) : String
   (compiler-backend-target-entry-text-with-crt target emit-entry false))
 
+;; `_tl_start` is the freestanding Linux entry and the only function this
+;; module emits outside compiler-backend-emit-function, so it carries the same
+;; ELF symbol typing (see compiler-backend-emit-function-type-directive). This
+;; text is emitted only from the Linux arm of
+;; compiler-backend-entry-for-target-with-crt, so neither needs a target test.
+;; The label line itself is untouched: scripts detect the freestanding entry by
+;; grepping for `^_tl_start:$`.
+;;
+;; The size closes the entry at the exit syscall rather than after the
+;; mmap-failure stub, because that stub re-enters `.text` by name. In a debug
+;; build the entry itself sits in `.text.typelisp_runtime` (the debug trailer
+;; parks the runtime there), and `. - _tl_start` spanning two sections is not
+;; an assemble-time constant.
+(define compiler-backend-entry-type-directive : String
+  "    .type _tl_start,@function\n")
+(define compiler-backend-entry-size-directive : String
+  "    .size _tl_start, . - _tl_start\n")
+
 ;; Run main on a fresh 1 GiB mmap'd stack, then exit(main()). The compiler
 ;; recurses far deeper than the default 8 MiB stack rlimit allows ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â type-directed
 ;; `clone` of large IR values during arena escapes is the worst case ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â so
@@ -58581,7 +58644,8 @@
 ;; failed reservation and exit 134 so a runner constraint cannot masquerade as
 ;; an unrelated compiler SIGSEGV.
 (define (compiler-backend-entry-call-main) : String
-  "    movq $0x40000000, %rsi
+  (str_cat.str-cat
+    "    movq $0x40000000, %rsi
     xorq %rdi, %rdi
     movq $3, %rdx
     movq $0x22, %r10
@@ -58598,7 +58662,9 @@
     movq %rax, %rdi
     movq $60, %rax
     syscall
-    .section .rodata
+"
+    compiler-backend-entry-size-directive
+    "    .section .rodata
 .L_tl_main_stack_mmap_error:
     .ascii \"typelisp runtime: 1 GiB main-stack mmap failed\\n\"
     .text
@@ -58611,7 +58677,7 @@
     movq $60, %rax
     movq $134, %rdi
     syscall
-")
+"))
 
 (define (compiler-backend-entry
   [capture-argv : bool]
@@ -58636,6 +58702,7 @@
         "")]
     (if (or capture-argv capture-env)
       (str_cat.str-cat
+        compiler-backend-entry-type-directive
         "_tl_start:\n"
         startup-profile-asm
         "    movq (%rsp), %rax\n"
@@ -58658,6 +58725,7 @@
         global-inits
         (compiler-backend-entry-call-main))
       (str_cat.str-cat
+        compiler-backend-entry-type-directive
         "_tl_start:\n"
         startup-profile-asm
         "    call tl_thread_init\n"

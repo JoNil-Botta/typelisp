@@ -6429,6 +6429,16 @@
 ;; Answer interference from per-var live segments when both
 ;; sides have segment data, with the coarse interval as the conservative
 ;; fallback.
+;;
+;; The `left` operand is re-resolved on every query even though the greedy
+;; allocator's register scans hold it fixed across a whole register's residents.
+;; Hoisting it into a `...-with-left?` entry threaded through the scans was
+;; measured and REJECTED: the resolve is two compares and one bound-checked
+;; load, which is cheaper than carrying the result across the call boundary at
+;; every one of the ~19M queries (opt2 self-compile: +58M instructions net,
+;; from `reg-free?` losing its inlining and the scans paying an extra argument
+;; per query). Reducing this cost needs the query COUNT to drop -- a per-
+;; register interval union -- not a cheaper per-query prologue.
 (define (compiler-reg-vars-interfere-segmented-index?
   [intervals : CompilerRegIntervalIndex]
   [left : i64]

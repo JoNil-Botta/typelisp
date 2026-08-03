@@ -3761,16 +3761,6 @@
         head
         (opt-aggregate-instr-list-append (box-get rest) right))]))
 
-(define (opt-aggregate-instr-seq-append-from
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [right : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    right
-    (ir.compiler-ir-instr-cons
-      (ir.compiler-ir-instr-seq-ref instrs index)
-      (opt-aggregate-instr-seq-append-from instrs (+ index 1) right))))
-
 (define (opt-aggregate-append-blocks!
   [blocks : ir.CompilerIrBlockList]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
@@ -56670,14 +56660,18 @@
     [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ (opt-inline-body-instr-op-ok? instr)]))
 
-(define (opt-inline-instr-seq-has-bounds-check?
+(define (opt-inline-instr-seq-has-bounds-check-from?
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : bool
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     false
     (if (ir.compiler-ir-instr-seq-bounds-check? instrs index)
       true
-      (opt-inline-instr-seq-has-bounds-check? instrs (+ index 1)))))
+      (opt-inline-instr-seq-has-bounds-check-from? instrs (+ index 1)))))
+
+(define (opt-inline-instr-seq-has-bounds-check?
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (opt-inline-instr-seq-has-bounds-check-from? instrs 0))
 
 (define (opt-inline-blocks-have-bounds-check? [blocks : ir.CompilerIrBlockList]) : bool
   (match blocks
@@ -56685,7 +56679,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
-          (if (opt-inline-instr-seq-has-bounds-check? instrs 0)
+          (if (opt-inline-instr-seq-has-bounds-check? instrs)
             true
             (opt-inline-blocks-have-bounds-check? (box-get rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -57537,33 +57531,55 @@
           (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Unit) (clone ret))])]
     [_ (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Unit) (clone ret))]))
 
-(define (opt-inline-expand-instrs
-  [instrs : ir.CompilerIrInstrList]
+(define (opt-inline-expand-instrs-from
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
   [dst : i64]
   [ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
   [label-prefix : String]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) ir.CompilerIrInstrList.Nil]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (box-get rest)
-        [(ir.CompilerIrInstrList.Nil)
-          (ir.compiler-ir-instr-cons
-            (opt-inline-return->mov instr dst ret sa np base)
-            ir.CompilerIrInstrList.Nil)]
-        [_
-          (ir.compiler-ir-instr-cons
-            (opt-inline-clone-instr instr sa np base label-prefix)
-            (opt-inline-expand-instrs
-              (box-get rest)
-              dst
-              ret
-              sa
-              np
-              base
-              label-prefix))])]))
+  (if (>= index count)
+    ir.CompilerIrInstrList.Nil
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (if (= index (- count 1))
+        (ir.compiler-ir-instr-cons
+          (opt-inline-return->mov instr dst ret sa np base)
+          ir.CompilerIrInstrList.Nil)
+        (ir.compiler-ir-instr-cons
+          (opt-inline-clone-instr instr sa np base label-prefix)
+          (opt-inline-expand-instrs-from
+            instrs
+            (+ index 1)
+            count
+            dst
+            ret
+            sa
+            np
+            base
+            label-prefix))))))
+
+(define (opt-inline-expand-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [dst : i64]
+  [ret : ast.AstType]
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [label-prefix : String]) : ir.CompilerIrInstrList
+  (opt-inline-expand-instrs-from
+    instrs
+    0
+    (ir.compiler-ir-instr-seq-count instrs)
+    dst
+    ret
+    sa
+    np
+    base
+    label-prefix))
 
 ;; Span policy for inlined clones: prefer the callee instruction's original
 ;; source span under the clone's new caller/value key. If the callee instruction
@@ -57631,8 +57647,10 @@
             (ir.compiler-source-spans-insert-instr out caller cloned span)]
           [(ir.CompilerMaybeSourceSpan.No) out])])))
 
-(define (opt-inline-expand-instrs-with-spans
-  [instrs : ir.CompilerIrInstrList]
+(define (opt-inline-expand-instrs-with-spans-from
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
   [dst : i64]
   [ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
@@ -57644,78 +57662,106 @@
   [caller : i64]
   [call-instr : ir.CompilerIrInstr]
   [callee : i64]) : OptInlineSpanState
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil)
-      (OptInlineSpanState.State ir.CompilerIrInstrList.Nil base 0 out-spans)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (box-get rest)
-        [(ir.CompilerIrInstrList.Nil)
-          (let
-            [moved : ir.CompilerIrInstr
-              (opt-inline-return->mov instr dst ret sa np base)]
-            [next-spans : ir.CompilerSourceSpans
-              (opt-inline-record-clone-span
-                source-spans
-                out-spans
-                caller
-                call-instr
-                callee
-                instr
-                moved)]
-            (OptInlineSpanState.State
-              (ir.compiler-ir-instr-cons moved ir.CompilerIrInstrList.Nil)
-              base
-              0
-              next-spans))]
-        [_
-          (let
-            [cloned : ir.CompilerIrInstr
-              (opt-inline-clone-instr instr sa np base label-prefix)]
-            [next-spans : ir.CompilerSourceSpans
-              (opt-inline-record-clone-span
-                source-spans
-                out-spans
-                caller
-                call-instr
-                callee
-                instr
-                cloned)]
-            (match (opt-inline-expand-instrs-with-spans
-              (box-get rest)
-              dst
-              ret
-              sa
-              np
-              base
-              label-prefix
+  (if (>= index count)
+    (OptInlineSpanState.State ir.CompilerIrInstrList.Nil base 0 out-spans)
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (if (= index (- count 1))
+        (let
+          [moved : ir.CompilerIrInstr
+            (opt-inline-return->mov instr dst ret sa np base)]
+          [next-spans : ir.CompilerSourceSpans
+            (opt-inline-record-clone-span
               source-spans
-              next-spans
+              out-spans
               caller
               call-instr
-              callee)
-              [(OptInlineSpanState.State rest-instrs next-vars _ final-spans)
-                (OptInlineSpanState.State
-                  (ir.compiler-ir-instr-cons cloned rest-instrs)
-                  next-vars
-                  0
-                  final-spans)]))])]))
+              callee
+              instr
+              moved)]
+          (OptInlineSpanState.State
+            (ir.compiler-ir-instr-cons moved ir.CompilerIrInstrList.Nil)
+            base
+            0
+            next-spans))
+        (let
+          [cloned : ir.CompilerIrInstr
+            (opt-inline-clone-instr instr sa np base label-prefix)]
+          [next-spans : ir.CompilerSourceSpans
+            (opt-inline-record-clone-span
+              source-spans
+              out-spans
+              caller
+              call-instr
+              callee
+              instr
+              cloned)]
+          (match (opt-inline-expand-instrs-with-spans-from
+            instrs
+            (+ index 1)
+            count
+            dst
+            ret
+            sa
+            np
+            base
+            label-prefix
+            source-spans
+            next-spans
+            caller
+            call-instr
+            callee)
+            [(OptInlineSpanState.State rest-instrs next-vars _ final-spans)
+              (OptInlineSpanState.State
+                (ir.compiler-ir-instr-cons cloned rest-instrs)
+                next-vars
+                0
+                final-spans)]))))))
 
-(define (opt-inline-single-block-instrs [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrInstrList
+(define (opt-inline-expand-instrs-with-spans
+  [instrs : ir.CompilerIrInstrSeq]
+  [dst : i64]
+  [ret : ast.AstType]
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [label-prefix : String]
+  [source-spans : ir.CompilerSourceSpans]
+  [out-spans : ir.CompilerSourceSpans]
+  [caller : i64]
+  [call-instr : ir.CompilerIrInstr]
+  [callee : i64]) : OptInlineSpanState
+  (opt-inline-expand-instrs-with-spans-from
+    instrs
+    0
+    (ir.compiler-ir-instr-seq-count instrs)
+    dst
+    ret
+    sa
+    np
+    base
+    label-prefix
+    source-spans
+    out-spans
+    caller
+    call-instr
+    callee))
+
+(define (opt-inline-empty-instr-seq) : ir.CompilerIrInstrSeq
+  (ir.compiler-ir-instr-builder-to-seq
+    (ir.compiler-ir-instr-builder-with-capacity 0)))
+
+(define (opt-inline-single-block-instrs [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrInstrSeq
   (match blocks
     [(ir.CompilerIrBlockList.Cons block _)
       (match block
-        [(ir.CompilerIrBlock.Block _ seq)
-          (opt-aggregate-instr-seq-append-from seq 0 ir.CompilerIrInstrList.Nil)])]
+        [(ir.CompilerIrBlock.Block _ seq) seq])]
     [(ir.CompilerIrBlockList.Array seq)
       (if (= (ir.compiler-ir-block-seq-count seq) 1)
         (match (ir.compiler-ir-block-seq-ref seq 0)
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (opt-aggregate-instr-seq-append-from
-              instrs
-              0
-              ir.CompilerIrInstrList.Nil)])
-        ir.CompilerIrInstrList.Nil)]
-    [_ ir.CompilerIrInstrList.Nil]))
+          [(ir.CompilerIrBlock.Block _ instrs) instrs])
+        (opt-inline-empty-instr-seq))]
+    [_ (opt-inline-empty-instr-seq)]))
 
 (define (opt-inline-append
   [a : ir.CompilerIrInstrList]
@@ -58099,15 +58145,6 @@
             (OptMaybeFunction.No))))]
     [(option_i64.None) (OptMaybeFunction.No)]))
 
-(define (opt-inline-instr-list-has-bounds-check?
-  [instrs : ir.CompilerIrInstrList]) : bool
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) false]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
-        [_ (opt-inline-instr-list-has-bounds-check? (box-get rest))])]))
-
 (define (opt-inline-bounds-inline-ok?
   [has-bounds? : bool]
   [absorbable? : bool]
@@ -58182,7 +58219,7 @@
                 (if (opt-inline-arity-ok? cargs np)
                   (let
                     [added-blocks : i64 0]
-                    [body-instrs : ir.CompilerIrInstrList
+                    [body-instrs : ir.CompilerIrInstrSeq
                       (opt-inline-single-block-instrs cblocks)]
                     [const-args : i64 (opt-inline-args-const-count cargs)]
                     [absorbable? : bool
@@ -58192,7 +58229,7 @@
                         func-name
                         callee-name)]
                     [has-bounds? : bool
-                      (opt-inline-instr-list-has-bounds-check? body-instrs)]
+                      (opt-inline-instr-seq-has-bounds-check? body-instrs)]
                     [bounds-leaf? : bool
                       (opt-inline-bounds-leaf-ok? cblocks np callee-ret)]
                     [callee-instrs : i64
@@ -58297,7 +58334,7 @@
                 (if (opt-inline-arity-ok? cargs np)
                   (let
                     [added-blocks : i64 0]
-                    [body-instrs : ir.CompilerIrInstrList
+                    [body-instrs : ir.CompilerIrInstrSeq
                       (opt-inline-single-block-instrs cblocks)]
                     [const-args : i64 (opt-inline-args-const-count cargs)]
                     [absorbable? : bool
@@ -58307,7 +58344,7 @@
                         func-name
                         callee-name)]
                     [has-bounds? : bool
-                      (opt-inline-instr-list-has-bounds-check? body-instrs)]
+                      (opt-inline-instr-seq-has-bounds-check? body-instrs)]
                     [bounds-leaf? : bool
                       (opt-inline-bounds-leaf-ok? cblocks np callee-ret)]
                     [callee-instrs : i64

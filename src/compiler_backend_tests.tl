@@ -34421,6 +34421,7 @@
       [occupancy : compiler_regalloc.CompilerRegGreedyOccupancy
         (compiler_regalloc.compiler-reg-greedy-occupancy-make
           assignments
+          (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
           registers
           (array-length registers))]
       [ref-counts : (Array i64) (array.make-array i64 2)]
@@ -34531,6 +34532,7 @@
       [occupancy : compiler_regalloc.CompilerRegGreedyOccupancy
         (compiler_regalloc.compiler-reg-greedy-occupancy-make
           assignments
+          (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
           registers
           (array-length registers))]
       [ref-counts : (Array i64) (array.make-array i64 5)]

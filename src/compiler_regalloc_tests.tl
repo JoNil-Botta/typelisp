@@ -6222,6 +6222,9 @@
       "compiler-reg-early-scratch-model-ok?"
       (reg.compiler-reg-early-scratch-model-ok?))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-greedy-live-union-invariant-ok?"
+      (reg.compiler-reg-greedy-live-union-invariant-ok?))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-scratch-default-pool-target-invariant-ok?"
       (reg.compiler-reg-scratch-default-pool-target-invariant-ok?))
     (compiler-regalloc-self-test-require!

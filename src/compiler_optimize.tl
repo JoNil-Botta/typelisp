@@ -2266,19 +2266,81 @@
         (opt-collect-value-uses-array items value)
         (opt-collect-phi-uses-array items (box-get rest)))]))
 
+;; Same tag-chain economics as `opt-instr-def-var` (see the note there): this
+;; `match` lowers to a linear compare chain, so arm position is cost. In an
+;; opt2 self-compile this primitive runs ~34M times and the declaration order
+;; put `Alloc` -- the single most frequent shape, and non-using, so it fell
+;; through to the catch-all -- at the end of a 50-comparison walk, pushing the
+;; average query to 29.3 comparisons. Arms are ordered by measured dynamic
+;; frequency (4.2 comparisons average on the same compile), with explicit
+;; no-use arms for the hot non-using shapes (Alloc,
+;; Jump, LaneId) that previously reached the same answer through the catch-all.
+;; Variant patterns over one enum are disjoint, so reordering cannot change
+;; which arm matches.
 (define (opt-collect-instr-uses-array
   [items : (__tl_dyn-array i64)]
   [instr : ir.CompilerIrInstr]) : unit
   (match instr
+    [(ir.CompilerIrInstr.Alloc _ _) unit]
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items offset))]
     [(ir.CompilerIrInstr.Mov _ src _) (opt-collect-value-uses-array items src)]
+    [(ir.CompilerIrInstr.Call _ _ args _)
+      (opt-collect-call-args-uses-array items args)]
+    [(ir.CompilerIrInstr.Load _ src _) (opt-collect-value-uses-array items src)]
+    [(ir.CompilerIrInstr.StorePtr ptr value _)
+      (begin
+        (opt-collect-value-uses-array items ptr)
+        (opt-collect-value-uses-array items value))]
+    [(ir.CompilerIrInstr.Branch cond _ _)
+      (opt-collect-value-uses-array items cond)]
     [(ir.CompilerIrInstr.BinOp _ _ l r _)
       (begin
         (opt-collect-value-uses-array items l)
         (opt-collect-value-uses-array items r))]
+    [(ir.CompilerIrInstr.Return maybe)
+      (match maybe
+        [(ir.CompilerIrMaybeValue.Some value)
+          (opt-collect-value-uses-array items value)]
+        [(ir.CompilerIrMaybeValue.No) unit])]
+    [(ir.CompilerIrInstr.AddrOf _ src) (opt-used-array-add items src)]
+    [(ir.CompilerIrInstr.Jump _) unit]
+    [(ir.CompilerIrInstr.CopyBytes dst src _)
+      (begin
+        (opt-collect-value-uses-array items dst)
+        (opt-collect-value-uses-array items src))]
+    [(ir.CompilerIrInstr.Phi _ inputs _)
+      (opt-collect-phi-uses-array items inputs)]
+    [(ir.CompilerIrInstr.Cast _ src _ _)
+      (opt-collect-value-uses-array items src)]
+    [(ir.CompilerIrInstr.BoundsCheck index length _)
+      (begin
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items length))]
+    [(ir.CompilerIrInstr.TailCall _ args _)
+      (opt-collect-call-args-uses-array items args)]
     [(ir.CompilerIrInstr.UnOp _ _ src _)
       (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.Call _ _ args _)
-      (opt-collect-call-args-uses-array items args)]
+    ;; Register-group ops use their operands (Pack: each word; Word: src).
+    [(ir.CompilerIrInstr.Word _ src _ _)
+      (opt-collect-value-uses-array items src)]
+    [(ir.CompilerIrInstr.Pack _ words _)
+      (opt-collect-value-list-uses-array items words)]
+    [(ir.CompilerIrInstr.Store _ value _)
+      (opt-collect-value-uses-array items value)]
+    [(ir.CompilerIrInstr.Switch index _ _ _)
+      (opt-collect-value-uses-array items index)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
+      (opt-collect-value-uses-array items index)]
+    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-collect-value-uses-array items cond)]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _)
+      (opt-collect-value-uses-array items src)]
+    [(ir.CompilerIrInstr.LaneId _ _ _) unit]
+    [(ir.CompilerIrInstr.Splat _ value _ _)
+      (opt-collect-value-uses-array items value)]
     [(ir.CompilerIrInstr.CallIndirect _ func args _)
       (begin
         (opt-collect-value-uses-array items func)
@@ -2303,6 +2365,10 @@
           (opt-collect-value-uses-array items base)
           (opt-collect-value-uses-array items func)
           (opt-collect-call-args-uses-array items args)))]
+    [(ir.CompilerIrInstr.TailCallIndirect func args _)
+      (begin
+        (opt-collect-value-uses-array items func)
+        (opt-collect-call-args-uses-array items args))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
         [active-mask (struct-get (box-get payload-box) active-mask)]
@@ -2310,34 +2376,15 @@
         (begin
           (opt-collect-value-uses-array items active-mask)
           (opt-collect-spmd-call-args-uses-array items args)))]
-    [(ir.CompilerIrInstr.TailCall _ args _)
-      (opt-collect-call-args-uses-array items args)]
-    [(ir.CompilerIrInstr.Store _ value _)
-      (opt-collect-value-uses-array items value)]
-    [(ir.CompilerIrInstr.AddrOf _ src) (opt-used-array-add items src)]
-    [(ir.CompilerIrInstr.Gep _ base offset _)
-      (begin
-        (opt-collect-value-uses-array items base)
-        (opt-collect-value-uses-array items offset))]
-    [(ir.CompilerIrInstr.Load _ src _) (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.StorePtr ptr value _)
-      (begin
-        (opt-collect-value-uses-array items ptr)
-        (opt-collect-value-uses-array items value))]
-    [(ir.CompilerIrInstr.CopyBytes dst src _)
-      (begin
-        (opt-collect-value-uses-array items dst)
-        (opt-collect-value-uses-array items src))]
-    [(ir.CompilerIrInstr.BoundsCheck index length _)
-      (begin
-        (opt-collect-value-uses-array items index)
-        (opt-collect-value-uses-array items length))]
-    [(ir.CompilerIrInstr.Cast _ src _ _)
-      (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.Bitcast _ src _ _)
-      (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.Splat _ value _ _)
-      (opt-collect-value-uses-array items value)]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [mask (struct-get (box-get payload-box) mask)]
+        [on-true (struct-get (box-get payload-box) on-true)]
+        [on-false (struct-get (box-get payload-box) on-false)]
+        (begin
+          (opt-collect-value-uses-array items mask)
+          (opt-collect-value-uses-array items on-true)
+          (opt-collect-value-uses-array items on-false)))]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
         [lhs (struct-get (box-get payload-box) lhs)]
@@ -2369,15 +2416,6 @@
       (opt-collect-value-uses-array items src)]
     [(ir.CompilerIrInstr.MaskReduce _ _ src _)
       (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [mask (struct-get (box-get payload-box) mask)]
-        [on-true (struct-get (box-get payload-box) on-true)]
-        [on-false (struct-get (box-get payload-box) on-false)]
-        (begin
-          (opt-collect-value-uses-array items mask)
-          (opt-collect-value-uses-array items on-true)
-          (opt-collect-value-uses-array items on-false)))]
     [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
       (begin
         (opt-collect-value-uses-array items base)
@@ -2449,30 +2487,6 @@
       (opt-collect-value-uses-array items index)]
     [(ir.CompilerIrInstr.Syscall _ args)
       (opt-collect-call-args-uses-array items args)]
-    [(ir.CompilerIrInstr.Branch cond _ _)
-      (opt-collect-value-uses-array items cond)]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
-      (opt-collect-value-uses-array items cond)]
-    [(ir.CompilerIrInstr.Return maybe)
-      (match maybe
-        [(ir.CompilerIrMaybeValue.Some value)
-          (opt-collect-value-uses-array items value)]
-        [(ir.CompilerIrMaybeValue.No) unit])]
-    [(ir.CompilerIrInstr.Phi _ inputs _)
-      (opt-collect-phi-uses-array items inputs)]
-    ;; Register-group ops use their operands (Pack: each word; Word: src).
-    [(ir.CompilerIrInstr.Pack _ words _)
-      (opt-collect-value-list-uses-array items words)]
-    [(ir.CompilerIrInstr.Word _ src _ _)
-      (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.TailCallIndirect func args _)
-      (begin
-        (opt-collect-value-uses-array items func)
-        (opt-collect-call-args-uses-array items args))]
-    [(ir.CompilerIrInstr.Switch index _ _ _)
-      (opt-collect-value-uses-array items index)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
-      (opt-collect-value-uses-array items index)]
     [_ unit]))
 
 ;; Decrement the operand use counts an instruction contributed. Called when DCE
@@ -9455,32 +9469,50 @@
           (opt-cfg-fill-i64! tout count (- 0 1))))
       (OptDomInfo index 0 empty idom tin tout))))
 
+;; Dominance is interval containment on the Euler tour numbering `opt-cfg-
+;; dominators-with` builds once per dom info: `dominator-id` dominates
+;; `label-id` exactly when its [tin, tout] interval encloses the label's.
+;;
+;; The `reachable` array is deliberately NOT consulted. `opt-dom-build-euler!`
+;; pre-fills tin/tout with -1, and its DFS reaches only the entry plus ids that
+;; `opt-dom-child-rows-fill!` linked into the dom tree -- and that fill admits
+;; an id only when `reachable[id]` is set. So `tin[id] >= 0` already implies
+;; `reachable[id]`, and the `(>= dom-tin 0)` guard below subsumes both
+;; reachability tests exactly rather than merely approximating them.
+;;
+;; Ids are range-checked against the tin array itself rather than the CFG block
+;; count: on the Euler path the two are equal by construction (both arrays are
+;; allocated at `opt-cfg-index-block-count`), and a dom info produced by the
+;; test-only bitset builder carries empty tin/tout, which this bound answers
+;; "does not dominate" instead of indexing off the end.
+;;
+;; `label-tin >= 0` is implied by `dom-tin >= 0` and `dom-tin <= label-tin`, so
+;; only the dominator's tin needs its own sign test, and the tout pair is read
+;; only once the tin comparisons have already held.
 (define (opt-dom-info-dominates-id?
   [info : OptDomInfo]
   [dominator-id : i64]
   [label-id : i64]) : bool
   (let
-    [index : OptCfgIndex (struct-get info index)]
-    [count : i64 (opt-cfg-index-block-count index)]
+    [tin : (__tl_dyn-array i64) (struct-get info tin)]
+    [count : i64 (array-length tin)]
     (if (and
       (>= dominator-id 0)
       (< dominator-id count)
       (>= label-id 0)
       (< label-id count))
-      (if (and
-        (array-ref (struct-get index reachable) dominator-id)
-        (array-ref (struct-get index reachable) label-id))
+      ;; A block dominates itself exactly when the dom tree numbered it, which
+      ;; is what the general test below reduces to when both ids are equal.
+      (if (= dominator-id label-id)
+        (>= (array-ref tin dominator-id) 0)
         (let
-          [dom-tin : i64 (array-ref (struct-get info tin) dominator-id)]
-          [dom-tout : i64 (array-ref (struct-get info tout) dominator-id)]
-          [label-tin : i64 (array-ref (struct-get info tin) label-id)]
-          [label-tout : i64 (array-ref (struct-get info tout) label-id)]
+          [dom-tin : i64 (array-ref tin dominator-id)]
           (and
             (>= dom-tin 0)
-            (>= label-tin 0)
-            (<= dom-tin label-tin)
-            (<= label-tout dom-tout)))
-        false)
+            (<= dom-tin (array-ref tin label-id))
+            (<=
+              (array-ref (struct-get info tout) label-id)
+              (array-ref (struct-get info tout) dominator-id)))))
       false)))
 
 (define (opt-dom-bitset-info-dominates-id?
@@ -9818,19 +9850,62 @@
         (array-set! set var true)
         true))))
 
+;; Instruction-tag dispatch order matters here: a `match` over a payload enum
+;; lowers to a linear tag compare chain, so an arm's position is its cost, and
+;; anything routed to the trailing catch-all pays the whole chain. This is one
+;; of the two hottest primitives in an opt2 self-compile (~70M calls), and the
+;; declaration-ordered arm list made the average query walk 11.3 comparisons
+;; because the terminators and memory writers -- Branch/Return/Jump/StorePtr,
+;; which are non-defining and so hit the catch-all -- are among the most
+;; frequent shapes in real IR.
+;;
+;; The arms below are ordered by measured dynamic frequency (4.2 comparisons
+;; average on the same compile), and every hot non-defining shape gets an
+;; explicit `None` arm near the front instead of falling through ~35
+;; comparisons to reach the same answer. Variant patterns
+;; over one enum are disjoint, so reordering them cannot change which arm
+;; matches; the explicit `None` arms return exactly what the catch-all returned
+;; for those tags. Rare vector/mask/SPMD forms stay at the back, and the shapes
+;; deliberately left in the catch-all (indirect and C-ABI calls, vector and
+;; predicated stores, TailCallIndirect) keep answering `None` exactly as
+;; before.
 (define (opt-instr-def-var [instr : ir.CompilerIrInstr]) : option_i64.Option
   (match instr
-    [(ir.CompilerIrInstr.Mov dst _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Alloc dst _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.AddrOf dst _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Gep dst _ _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.Load dst _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.Cast dst _ _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.Bitcast dst _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Mov dst _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Call dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.BinOp dst _ _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Load dst _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Branch _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.StorePtr _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.Return _) (option_i64.None)]
+    [(ir.CompilerIrInstr.AddrOf dst _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Jump _) (option_i64.None)]
+    [(ir.CompilerIrInstr.Phi dst _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.CopyBytes _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.Cast dst _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.BoundsCheck _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.TailCall _ _ _) (option_i64.None)]
     [(ir.CompilerIrInstr.UnOp dst _ _ _) (option_i64.Some dst)]
+    ;; Pack/Word define their dst like any scalar op. Without these arms
+    ;; the verifier saw every use of a register-group word as use-before-def
+    ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
+    [(ir.CompilerIrInstr.Word dst _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Pack dst _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Store _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.TotalEnumBranch _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.Switch _ _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.Bitcast dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.LaneId dst _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Splat dst _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.SpmdCall payload-box)
+      (let
+        [result (struct-get (box-get payload-box) result)]
+        (match result
+          [(ir.CompilerIrSpmdCallResult.Unit) (option_i64.None)]
+          [(ir.CompilerIrSpmdCallResult.Value dst _ _) (option_i64.Some dst)]))]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
         [dst (struct-get (box-get payload-box) dst)]
@@ -9871,19 +9946,6 @@
     [(ir.CompilerIrInstr.CpuId dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Xgetbv dst _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Syscall dst _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.Call dst _ _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [result (struct-get (box-get payload-box) result)]
-        (match result
-          [(ir.CompilerIrSpmdCallResult.Unit) (option_i64.None)]
-          [(ir.CompilerIrSpmdCallResult.Value dst _ _) (option_i64.Some dst)]))]
-    [(ir.CompilerIrInstr.Phi dst _ _) (option_i64.Some dst)]
-    ;; Pack/Word define their dst like any scalar op. Without these arms
-    ;; the verifier saw every use of a register-group word as use-before-def
-    ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
-    [(ir.CompilerIrInstr.Pack dst _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.Word dst _ _ _) (option_i64.Some dst)]
     [_ (option_i64.None)]))
 
 (define (opt-instr-def-position [instr : ir.CompilerIrInstr] [pos : i64]) : i64
@@ -10029,6 +10091,119 @@
       (opt-var-defs-index-params! params items)
       (opt-var-defs-index-blocks! blocks 0 items)
       items)))
+
+;; Fused single-definition check + var->def index.
+;;
+;; The two facts the SSA verifier needs -- "every virtual register is defined
+;; at most once" and "where each one is defined" -- are the same walk over the
+;; same instructions. Deriving them separately walked every instruction twice
+;; per verify and allocated a throwaway membership bitmap alongside the index
+;; that already records membership: a filled slot IS a duplicate definition,
+;; and an out-of-range destination is the same rejection the bitmap made at its
+;; bounds check. One walk therefore produces both facts, and the index doubles
+;; as the membership set. `Duplicate` carries no index because the verifier
+;; rejects the function before any use query runs.
+(defenum OptVarDefsIndex
+  (Duplicate)
+  (Index (__tl_dyn-array OptMaybeVarDef)))
+
+(define (opt-var-defs-checked-add!
+  [items : (__tl_dyn-array OptMaybeVarDef)]
+  [var : i64]
+  [block-id : i64]
+  [pos : i64]) : bool
+  (if (or (< var 0) (>= var (array-length items)))
+    false
+    (match (array-ref items var)
+      [(OptMaybeVarDef.Some _) false]
+      [(OptMaybeVarDef.No)
+        (begin
+          (array-set!
+            items
+            var
+            (OptMaybeVarDef.Some (OptVarDef.Def var block-id pos)))
+          true)])))
+
+(define (opt-var-defs-checked-params!
+  [params : ir.CompilerIrParamList]
+  [items : (__tl_dyn-array OptMaybeVarDef)]) : bool
+  (match (ir.compiler-ir-param-list-force-cons params)
+    [(ir.CompilerIrParamList.Nil) true]
+    [(ir.CompilerIrParamList.Array seq)
+      (opt-var-defs-checked-params!
+        (ir.compiler-ir-param-seq-to-list seq)
+        items)]
+    [(ir.CompilerIrParamList.Cons param rest)
+      (match param
+        [(ir.CompilerIrParam.Param _ _ var)
+          (and
+            (opt-var-defs-checked-add! items var 0 0)
+            (opt-var-defs-checked-params! (box-get rest) items))])]))
+
+(define (opt-var-defs-checked-instr-seq-from!
+  [instrs : ir.CompilerIrInstrSeq]
+  [block-id : i64]
+  [index : i64]
+  [pos : i64]
+  [items : (__tl_dyn-array OptMaybeVarDef)]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some var)
+          (and
+            (opt-var-defs-checked-add!
+              items
+              var
+              block-id
+              (opt-instr-def-position instr pos))
+            (opt-var-defs-checked-instr-seq-from!
+              instrs
+              block-id
+              (+ index 1)
+              (+ pos 1)
+              items))]
+        [(option_i64.None)
+          (opt-var-defs-checked-instr-seq-from!
+            instrs
+            block-id
+            (+ index 1)
+            (+ pos 1)
+            items)]))))
+
+(define (opt-var-defs-checked-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [block-id : i64]
+  [items : (__tl_dyn-array OptMaybeVarDef)]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (and
+            (opt-var-defs-checked-instr-seq-from! instrs block-id 0 1 items)
+            (opt-var-defs-checked-blocks! (box-get rest) (+ block-id 1) items))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-var-defs-checked-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        block-id
+        items)]))
+
+(define (opt-var-defs-index-checked
+  [params : ir.CompilerIrParamList]
+  [vars : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptVarDefsIndex
+  (if (< vars 0)
+    (OptVarDefsIndex.Duplicate)
+    (let
+      [items : (__tl_dyn-array OptMaybeVarDef)
+        (array.make-array OptMaybeVarDef vars)]
+      (if (and
+        (opt-var-defs-checked-params! params items)
+        (opt-var-defs-checked-blocks! blocks 0 items))
+        (OptVarDefsIndex.Index items)
+        (OptVarDefsIndex.Duplicate)))))
 
 (define (opt-var-def-lookup
   [defs : (__tl_dyn-array OptMaybeVarDef)]
@@ -10670,42 +10845,37 @@
   [context : OptCfgContext]) : ResultCompilerOptimizeVerify
   (match func
     [(ir.CompilerIrFunction.Function _ params _ vars blocks)
-      (cond
-        [(not (opt-verify-single-defs? params vars blocks))
+      (match (opt-var-defs-index-checked params vars blocks)
+        [(OptVarDefsIndex.Duplicate)
           (ResultCompilerOptimizeVerify.Err
             "optimizer verify: duplicate var definition")]
-        [else
+        [(OptVarDefsIndex.Index defs)
           (let
             [doms : OptDomInfo (struct-get context doms)]
             [pred-map : OptPredMap (struct-get context pred-map)]
-            [defs : (__tl_dyn-array OptMaybeVarDef)
-              (opt-var-defs-index params vars blocks)]
             (match (opt-verify-phi-predecessors-blocks pred-map blocks)
               [(ResultCompilerOptimizeVerify.Ok)
                 (opt-verify-block-uses defs doms blocks 0)]
               [(ResultCompilerOptimizeVerify.Err message)
                 (ResultCompilerOptimizeVerify.Err message)]))])]))
 
-(define (opt-verify-final-function-body-with-context
+;; The caller derived the index (and with it the single-definition proof) for
+;; exactly this function; final IR that fails that proof is not checked here at
+;; all, so this entry point takes the facts rather than re-deriving them.
+(define (opt-verify-final-function-body-with-defs
+  [defs : (__tl_dyn-array OptMaybeVarDef)]
   [func : ir.CompilerIrFunction]
   [context : OptCfgContext]) : ResultCompilerOptimizeVerify
   (match func
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
-      (cond
-        [(not (opt-verify-single-defs? params vars blocks))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: duplicate var definition")]
-        [else
-          (let
-            [doms : OptDomInfo (struct-get context doms)]
-            [pred-map : OptPredMap (struct-get context pred-map)]
-            [defs : (__tl_dyn-array OptMaybeVarDef)
-              (opt-var-defs-index params vars blocks)]
-            (match (opt-verify-phi-predecessors-blocks pred-map blocks)
-              [(ResultCompilerOptimizeVerify.Ok)
-                (opt-verify-block-uses-contextual defs doms blocks 0)]
-              [(ResultCompilerOptimizeVerify.Err message)
-                (ResultCompilerOptimizeVerify.Err message)]))])]))
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (let
+        [doms : OptDomInfo (struct-get context doms)]
+        [pred-map : OptPredMap (struct-get context pred-map)]
+        (match (opt-verify-phi-predecessors-blocks pred-map blocks)
+          [(ResultCompilerOptimizeVerify.Ok)
+            (opt-verify-block-uses-contextual defs doms blocks 0)]
+          [(ResultCompilerOptimizeVerify.Err message)
+            (ResultCompilerOptimizeVerify.Err message)]))]))
 
 ;; The structural CFG contract, read off the context's index rather than
 ;; recomputed. `context` must be valid for the function's blocks, which is the
@@ -10761,10 +10931,12 @@
           [(ResultCompilerOptimizeVerify.Ok)
             ;; Final backend IR is not required to be SSA. Apply dominance/use
             ;; checks when it is SSA-shaped; otherwise the structural CFG checks
-            ;; are the valid final-IR contract.
-            (if (opt-verify-single-defs? params vars blocks)
-              (opt-verify-final-function-body-with-context func context)
-              (ResultCompilerOptimizeVerify.Ok))]
+            ;; are the valid final-IR contract. The SSA-shape decision and the
+            ;; index the dominance checks read are one derivation.
+            (match (opt-var-defs-index-checked params vars blocks)
+              [(OptVarDefsIndex.Index defs)
+                (opt-verify-final-function-body-with-defs defs func context)]
+              [(OptVarDefsIndex.Duplicate) (ResultCompilerOptimizeVerify.Ok)])]
           [(ResultCompilerOptimizeVerify.Err message)
             (ResultCompilerOptimizeVerify.Err message)]))]))
 
@@ -14926,6 +15098,14 @@
       cases
       (opt-cfg-switch-seen-seed set (opt_string_i64_map.with-capacity 64)))))
 
+;; Only the five label-bearing forms above contribute an edge; every other
+;; instruction returns `set` unchanged. This walk therefore tests the variant tag
+;; in place -- one load off the instruction slot, no call, no label-set copy --
+;; and enters `opt-cfg-instr-successors` only for the forms whose arms it
+;; actually has. The arm list here is that function's arm list, so the fold is
+;; unchanged; skipping a non-bearing instruction skips only an identity step.
+;; Blocks average under eight instructions and about one in twelve bears an edge,
+;; so the call was overwhelmingly paid to be told "nothing".
 (define (opt-cfg-instr-seq-successors
   [set : OptLabelSet]
   [instrs : ir.CompilerIrInstrSeq]) : OptLabelSet
@@ -14937,7 +15117,18 @@
     (begin
       (while (< index count)
         (begin
-          (set! out (opt-cfg-instr-successors out (array-ref slots index)))
+          (match (array-ref slots index)
+            [(ir.CompilerIrInstr.Jump _)
+              (set! out (opt-cfg-instr-successors out (array-ref slots index)))]
+            [(ir.CompilerIrInstr.Branch _ _ _)
+              (set! out (opt-cfg-instr-successors out (array-ref slots index)))]
+            [(ir.CompilerIrInstr.TotalEnumBranch _ _ _)
+              (set! out (opt-cfg-instr-successors out (array-ref slots index)))]
+            [(ir.CompilerIrInstr.Switch _ _ _ _)
+              (set! out (opt-cfg-instr-successors out (array-ref slots index)))]
+            [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
+              (set! out (opt-cfg-instr-successors out (array-ref slots index)))]
+            [_ unit])
           (set! index (+ index 1))))
       out)))
 
@@ -15376,52 +15567,14 @@
         header
         body-labels))))
 
-(define (opt-cfg-natural-loop-successors
-  [blocks : ir.CompilerIrBlockList]
-  [pred-map : OptPredMap]
-  [reachable : OptLabelSet]
-  [doms : OptDomInfo]
-  [source-id : i64]
-  [source : i64]
-  [successors : OptLabelSet]
-  [tail : OptNaturalLoopList]) : OptNaturalLoopList
-  (match successors
-    [(OptLabelSet.Nil) tail]
-    [(OptLabelSet.Dense _ _)
-      (let
-        [header : i64 (opt-label-ref successors 0)]
-        [next : OptNaturalLoopList
-          (opt-cfg-natural-loop-successors
-            blocks
-            pred-map
-            reachable
-            doms
-            source-id
-            source
-            (opt-label-tail successors)
-            tail)]
-        (match (opt-cfg-index-id (struct-get doms index) header)
-          [(option_i64.Some header-id)
-            ;; `reachable` is the flattened form of this very index's
-            ;; `reachable` array (opt-cfg-index-reachable-labels builds one from
-            ;; the other), so testing the array at `header-id` decides exactly
-            ;; what scanning the set for `header` decided -- without the linear
-            ;; `string.eq` walk over every reachable label in the function.
-            (if (and
-              (array-ref
-                (struct-get (struct-get doms index) reachable)
-                header-id)
-              (opt-dom-info-dominates-id? doms header-id source-id))
-              (OptNaturalLoopList.Cons
-                (opt-natural-loop-build blocks pred-map reachable header source)
-                (box next))
-              next)]
-          [(option_i64.None) next]))]))
-
 ;; `remaining` starts as the very block list `doms`'s index was built from, and
 ;; `opt-cfg-index-build` numbers blocks in this walk order, so `source-id` is the
 ;; walk position. The range guard replaces the old missing-label arm: an id past
 ;; the indexed block count is exactly the case a label lookup would have missed.
+;; Edges come from that same index's successor CSR row instead of re-deriving the
+;; block's successor label set from its instruction stream -- see the row-order
+;; note on `opt-cfg-natural-loop-edges-csr`; this walk consumes the row exactly
+;; as the Array walk below does.
 (define (opt-cfg-natural-loop-blocks
   [all-blocks : ir.CompilerIrBlockList]
   [remaining : ir.CompilerIrBlockList]
@@ -15443,21 +15596,25 @@
                 reachable
                 doms
                 (+ source-id 1))]
-            [reachable-ids : (__tl_dyn-array bool)
-              (struct-get (struct-get doms index) reachable)]
+            [index : OptCfgIndex (struct-get doms index)]
+            [reachable-ids : (__tl_dyn-array bool) (struct-get index reachable)]
             (if (and
               (< source-id (array-length reachable-ids))
               (array-ref reachable-ids source-id))
-              (opt-cfg-natural-loop-successors
+              (opt-cfg-natural-loop-edges-csr
                 all-blocks
+                index
                 pred-map
                 reachable
                 doms
                 source-id
                 label
-                (opt-cfg-block-successors-with-next
-                  block
-                  (opt-cfg-entry-label (box-get rest)))
+                (array-ref
+                  (struct-get (struct-get index succs) offsets)
+                  source-id)
+                (array-ref
+                  (struct-get (struct-get index succs) offsets)
+                  (+ source-id 1))
                 tail)
               tail))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -15469,16 +15626,17 @@
         doms
         source-id)]))
 
-;; Allocation-free natural-loop scan for Array block lists: walks the block
-;; seq directly and reads each block's successor row from the context's CSR
-;; index instead of consing a seq->list copy and recomputing per-block
-;; successor sets from instructions. The CSR row holds exactly the
-;; deduplicated opt-cfg-block-successors-with-next set in reverse insertion
-;; order (opt-label-add prepends; opt-cfg-csr-fill-rows! reverses the row),
-;; so iterating blocks from last to first and each CSR row forward while
-;; front-consing emits loops in precisely the order the cons-list scan
-;; produced. Reachability and ids come from the same index the set scan
-;; consulted (the reachable set is built from this reachable array).
+;; Back-edge scan for one block, reading its successors from the context's CSR
+;; index instead of recomputing the block's successor set from its instruction
+;; stream. The CSR row holds exactly the deduplicated
+;; opt-cfg-block-successors-with-next set in reverse insertion order
+;; (opt-label-add prepends; opt-cfg-index-label-set-to-ids keeps label-set order
+;; and drops labels the index cannot resolve -- precisely the old missing-label
+;; arm; opt-cfg-csr-fill-rows! reverses the row), so visiting blocks from last to
+;; first and each CSR row forward while front-consing emits loops in precisely
+;; the order the label-set walk produced. Reachability and ids come from the same
+;; index that walk consulted (the reachable set is built from this reachable
+;; array).
 (define (opt-cfg-natural-loop-edges-csr
   [all-blocks : ir.CompilerIrBlockList]
   [index : OptCfgIndex]
@@ -25105,45 +25263,146 @@
                         (OptFunctionPassResult.Result func false)]))
                   (OptFunctionPassResult.Result func false))])]))]))
 
-(define (opt-bool-branch-chain-instrs-define-root-and?
+;; Gate for the bool-branch `and`-chain pass: does any conditional branch test a
+;; value that an `and` materialized in this function?
+;;
+;; Proving that used to be quadratic. For every block ending in `branch %v` the
+;; walk re-read every instruction of every block looking for `%v = and ...`, and
+;; re-materialized a cons list of the whole block array once per re-read. The
+;; answer needs neither: the `and` destinations and the branch conditions are
+;; two independent facts, each decidable in one sequential pass over the dense
+;; instruction/block arrays that already hold them.
+;;
+;; Measured over the opt2 self-compile of src/main.tl (59,726 gate calls), which
+;; is where the old walk was the profile's worst D1 read-miss density -- 64.2M
+;; D1 read misses, one per 20 instructions executed:
+;;   - the scanned functions hold 4,990,494 instructions, and the walk performed
+;;     86,389,242 instruction visits: every instruction stream was re-read 17.3x
+;;     on average (worst single call: 8,757 instructions re-read 179 times =
+;;     1,567,503 visits), far past what L1 holds, so nearly every visit missed;
+;;   - 11,844,076 cons cells were materialized by the per-re-read
+;;     `compiler-ir-block-seq-to-list`, all cold on first touch;
+;;   - 59,384 of the 59,726 calls (99.4%) ran that walk over a function with no
+;;     `and` instruction at all, where no re-read can ever succeed. The whole
+;;     self-compile contains just 546 `and` destinations.
+;; So the common answer is settled by one sequential pass with no allocation,
+;; and the 0.6% that can still say yes cost two more sequential passes. That
+;; leaves 5,037,778 instruction visits (1.009x the stream, 17.2x fewer), 2,494
+;; block visits (none of them consed), and 342 mark arrays. Running both walks
+;; against each other inside one compiler agreed on all 59,766 gate answers.
+(define (opt-bool-branch-chain-instrs-and-dst-max
   [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [root : i64]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    false
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
-      [(ir.CompilerIrInstr.BinOp dst op _ _ _)
-        (if (and
-          (= dst root)
-          (match op
-            [(ir.CompilerIrBinOp.And) true]
-            [_ false]))
-          true
-          (opt-bool-branch-chain-instrs-define-root-and?
-            instrs
-            (+ index 1)
-            root))]
-      [_
-        (opt-bool-branch-chain-instrs-define-root-and? instrs (+ index 1) root)])))
+  [best : i64]) : i64
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [found : i64 best]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref slots index)
+            [(ir.CompilerIrInstr.BinOp dst op _ _ _)
+              (match op
+                [(ir.CompilerIrBinOp.And)
+                  (if (> dst found)
+                    (set! found dst)
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
+      found)))
 
-(define (opt-bool-branch-chain-blocks-define-root-and?
+(define (opt-bool-branch-chain-block-seq-and-dst-max
+  [blocks : ir.CompilerIrBlockSeq]
+  [best : i64]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
+    [index : i64 0]
+    [found : i64 best]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref blocks index)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (set!
+                found
+                (opt-bool-branch-chain-instrs-and-dst-max instrs found))])
+          (set! index (+ index 1))))
+      found)))
+
+;; Highest destination of an `and` BinOp anywhere in the block list, or -1 when
+;; the function has none -- which is also the whole gate answer for 99.4% of
+;; calls, since a branch condition no `and` defines can never be a chain root.
+(define (opt-bool-branch-chain-blocks-and-dst-max
   [blocks : ir.CompilerIrBlockList]
-  [root : i64]) : bool
+  [best : i64]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Nil) best]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
-          (or
-            (opt-bool-branch-chain-instrs-define-root-and? instrs 0 root)
-            (opt-bool-branch-chain-blocks-define-root-and? (box-get rest) root))])]
+          (opt-bool-branch-chain-blocks-and-dst-max
+            (box-get rest)
+            (opt-bool-branch-chain-instrs-and-dst-max instrs best))])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-bool-branch-chain-blocks-define-root-and?
-        (ir.compiler-ir-block-seq-to-list seq)
-        root)]))
+      (opt-bool-branch-chain-block-seq-and-dst-max seq best)]))
 
-(define (opt-bool-branch-chain-block-candidate?
-  [all-blocks : ir.CompilerIrBlockList]
+(define (opt-bool-branch-chain-mark-instrs-ands!
+  [marks : (__tl_dyn-array bool)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref slots index)
+            [(ir.CompilerIrInstr.BinOp dst op _ _ _)
+              (match op
+                [(ir.CompilerIrBinOp.And)
+                  (if (>= dst 0)
+                    (if (< dst (array-length marks))
+                      (array-set! marks dst true)
+                      unit)
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
+      unit)))
+
+(define (opt-bool-branch-chain-mark-block-seq-ands!
+  [marks : (__tl_dyn-array bool)]
+  [blocks : ir.CompilerIrBlockSeq]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref blocks index)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (opt-bool-branch-chain-mark-instrs-ands! marks instrs)])
+          (set! index (+ index 1))))
+      unit)))
+
+(define (opt-bool-branch-chain-mark-blocks-ands!
+  [marks : (__tl_dyn-array bool)]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-bool-branch-chain-mark-instrs-ands! marks instrs)
+            (opt-bool-branch-chain-mark-blocks-ands! marks (box-get rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bool-branch-chain-mark-block-seq-ands! marks seq)]))
+
+(define (opt-bool-branch-chain-block-branches-marked?
+  [marks : (__tl_dyn-array bool)]
   [block : ir.CompilerIrBlock]) : bool
   (match block
     [(ir.CompilerIrBlock.Block _ instrs)
@@ -25153,30 +25412,53 @@
           (> count 0)
           (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
             [(ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var cond-var) _ _)
-              (opt-bool-branch-chain-blocks-define-root-and?
-                all-blocks
-                cond-var)]
+              (and
+                (>= cond-var 0)
+                (< cond-var (array-length marks))
+                (array-ref marks cond-var))]
             [_ false])))]))
 
-(define (opt-bool-branch-chain-blocks-have-candidate-from?
-  [all-blocks : ir.CompilerIrBlockList]
+(define (opt-bool-branch-chain-block-seq-marked-branch?
+  [marks : (__tl_dyn-array bool)]
+  [blocks : ir.CompilerIrBlockSeq]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (< index count)
+        (if (opt-bool-branch-chain-block-branches-marked?
+          marks
+          (ir.compiler-ir-block-seq-ref blocks index))
+          (begin
+            (set! found true)
+            (set! index count))
+          (set! index (+ index 1))))
+      found)))
+
+(define (opt-bool-branch-chain-blocks-marked-branch?
+  [marks : (__tl_dyn-array bool)]
   [blocks : ir.CompilerIrBlockList]) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Nil) false]
     [(ir.CompilerIrBlockList.Cons block rest)
-      (if (opt-bool-branch-chain-block-candidate? all-blocks block)
+      (if (opt-bool-branch-chain-block-branches-marked? marks block)
         true
-        (opt-bool-branch-chain-blocks-have-candidate-from?
-          all-blocks
-          (box-get rest)))]
+        (opt-bool-branch-chain-blocks-marked-branch? marks (box-get rest)))]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-bool-branch-chain-blocks-have-candidate-from?
-        all-blocks
-        (ir.compiler-ir-block-seq-to-list seq))]))
+      (opt-bool-branch-chain-block-seq-marked-branch? marks seq)]))
 
 (define (opt-bool-branch-chain-blocks-have-candidate?
   [blocks : ir.CompilerIrBlockList]) : bool
-  (opt-bool-branch-chain-blocks-have-candidate-from? blocks blocks))
+  (let
+    [and-max : i64 (opt-bool-branch-chain-blocks-and-dst-max blocks -1)]
+    (if (< and-max 0)
+      false
+      (let
+        [marks : (__tl_dyn-array bool) (array.make-array bool (+ and-max 1))]
+        (begin
+          (opt-bool-branch-chain-mark-blocks-ands! marks blocks)
+          (opt-bool-branch-chain-blocks-marked-branch? marks blocks))))))
 
 (define (opt-bool-branch-chain-function-with-context-result
   [type-segment-bases : i64]

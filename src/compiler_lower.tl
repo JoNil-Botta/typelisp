@@ -3260,6 +3260,59 @@
                   logical-id))
               (set! cur rest))])))))
 
+;; Per-declaration memo of the import-alias logical symbol ID, live for exactly
+;; one lower-name-env-from-import-aliases pass.
+;;
+;; The rendered logical display name feeding lower-logical-symbol-id-select is a
+;; function of the TARGET declaration alone -- entry path, the declaration's own
+;; path, its owning module, and its name. The importing alias never appears in
+;; it. The alias fanout, however, visits every declaration of a module once per
+;; importing alias, so an opt1 self-compile rendered the same "<module>::<name>"
+;; string 232337 times across at most 26609 distinct declarations. Those strings
+;; are pure scratch -- only the interned ID they resolve to is retained -- yet
+;; the lowering arena has no free, so all 51.5 MB of them stayed live through
+;; the compile-wide peak, in each of the two name-env builds.
+;;
+;; Keying on the declaration's program-order position collapses that to one
+;; render per declaration. The first visit still renders and interns in exactly
+;; the original order, so the intern pool receives the same insertions with the
+;; same IDs; later visits reuse the ID that intern-generated-canonical-name
+;; would have returned from its existing slot anyway.
+(define lower-alias-symbol-memo : (Array i64)
+  (make-array i64 0))
+
+(define (lower-alias-symbol-memo-reset! [count : i64]) : unit
+  (let
+    [slots : (Array i64)
+      (make-array
+        i64
+        (if (< count 1)
+          1
+          count))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! slots index -1)
+          (set! index (+ index 1))))
+      (set! lower-alias-symbol-memo slots))))
+
+(define (lower-alias-symbol-memo-release!) : unit
+  (set! lower-alias-symbol-memo (make-array i64 0)))
+
+(define (lower-alias-symbol-memo-get [position : i64]) : i64
+  (if (or (< position 0) (>= position (array-length lower-alias-symbol-memo)))
+    -1
+    (array-ref lower-alias-symbol-memo position)))
+
+(define (lower-alias-symbol-memo-set! [position : i64] [symbol-id : i64]) : unit
+  (if (or
+    (< position 0)
+    (< symbol-id 0)
+    (>= position (array-length lower-alias-symbol-memo)))
+    unit
+    (array-set! lower-alias-symbol-memo position symbol-id)))
+
 (define (lower-name-env-add-import-alias-binding-symbol-id
   [names : LowerNameEnv]
   [alias : String]
@@ -3307,47 +3360,9 @@
     (lower-alias-overlay-record! source-id logical-id)
     (lower-name-env-bind-logical-symbol-id source-id logical-id symbol-id names)))
 
-(define (lower-name-env-add-import-alias-binding-id
-  [names : LowerNameEnv]
-  [alias : String]
-  [source-name : String]
-  [source-id : i64]
-  [logical-name : String]
-  [logical-id : i64]
-  [direct : bool]) : LowerNameEnv
-  (lower-name-env-add-import-alias-binding-symbol-id
-    names
-    alias
-    source-name
-    source-id
-    logical-name
-    logical-id
-    (lower-logical-symbol-id-select logical-name logical-id direct)))
-
-(define (lower-name-env-add-import-alias-binding-base-id
-  [names : LowerNameEnv]
-  [alias : String]
-  [alias-id : i64]
-  [_ : String]
-  [base-id : i64]
-  [logical-id : i64]
-  [logical-name : String]
-  [direct : bool]) : LowerNameEnv
-  (lower-name-env-add-import-alias-binding-id
-    names
-    alias
-    ;; The rendered module key is never read by the callee (its parameter is
-    ;; `[_ : String]`); only the composite key ID below is live. Rendering it
-    ;; per visited (import, decl) pair retained 13.7 MB per name-env build on
-    ;; the opt1 self-compile.
-    ""
-    (csym.compiler-symbol-module-key-id-by-id alias-id base-id)
-    logical-name
-    logical-id
-    direct))
-
 (define (lower-name-env-add-decl-import-alias-binding-base-id
   [names : LowerNameEnv]
+  [position : i64]
   [entry-path : String]
   [decl-path : String]
   [alias : String]
@@ -3359,27 +3374,56 @@
   [path-aware : bool]) : LowerNameEnv
   (let
     [logical-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
-    (lower-name-env-add-import-alias-binding-base-id
-      names
-      alias
-      alias-id
-      source-name
-      source-id
-      logical-id
-      (lower-alias-logical-name-id
-        entry-path
-        decl-path
-        module
-        module-id
-        source-id
+    [memoized : i64 (lower-alias-symbol-memo-get position)]
+    (if (>= memoized 0)
+      ;; This declaration was already resolved earlier in the pass by another
+      ;; importing alias. Re-rendering its display name would rebuild a string
+      ;; whose every interned constituent is already present -- the composite
+      ;; logical key above, and the canonical name itself -- so the render can
+      ;; only reproduce `memoized`.
+      (lower-name-env-add-import-alias-binding-base-symbol-id
+        names
+        alias
+        alias-id
         source-name
-        path-aware)
-      (lower-alias-logical-symbol-direct?
-        entry-path
-        decl-path
-        logical-id
         source-id
-        path-aware))))
+        logical-id
+        ""
+        memoized)
+      ;; First sight of this declaration: render, derive, and intern in the
+      ;; original order (logical key, display name, alias composite key, then
+      ;; the canonical symbol) so intern ID assignment is unchanged.
+      (let
+        [logical-name : String
+          (lower-alias-logical-name-id
+            entry-path
+            decl-path
+            module
+            module-id
+            source-id
+            source-name
+            path-aware)]
+        [direct : bool
+          (lower-alias-logical-symbol-direct?
+            entry-path
+            decl-path
+            logical-id
+            source-id
+            path-aware)]
+        [source-key-id : i64
+          (csym.compiler-symbol-module-key-id-by-id alias-id source-id)]
+        [symbol-id : i64
+          (lower-logical-symbol-id-select logical-name logical-id direct)]
+        (begin
+          (lower-alias-symbol-memo-set! position symbol-id)
+          (lower-name-env-add-import-alias-binding-symbol-id
+            names
+            alias
+            source-name
+            source-key-id
+            logical-name
+            logical-id
+            symbol-id))))))
 
 (define (lower-name-env-add-import-alias-binding-base-symbol-id
   [names : LowerNameEnv]
@@ -4851,6 +4895,7 @@
 
 (define (lower-name-env-add-decl-alias-in-module
   [names : LowerNameEnv]
+  [position : i64]
   [entry-path : String]
   [decl-path : String]
   [alias : String]
@@ -4865,6 +4910,7 @@
         [name-str : String (tc_core.tc-env-key-name-text name)]
         (lower-name-env-add-decl-import-alias-binding-base-id
           names
+          position
           entry-path
           decl-path
           alias
@@ -4879,6 +4925,7 @@
         [name-str : String (tc_core.tc-env-key-name-text name)]
         (lower-name-env-add-decl-import-alias-binding-base-id
           names
+          position
           entry-path
           decl-path
           alias
@@ -4893,6 +4940,7 @@
         [name-str : String (tc_core.tc-env-key-name-text name)]
         (lower-name-env-add-decl-import-alias-binding-base-id
           names
+          position
           entry-path
           decl-path
           alias
@@ -4927,6 +4975,7 @@
             [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               names
+              position
               entry-path
               decl-path
               alias
@@ -4944,6 +4993,7 @@
             [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               names
+              position
               entry-path
               decl-path
               alias
@@ -4961,6 +5011,7 @@
             [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               names
+              position
               entry-path
               decl-path
               alias
@@ -4978,6 +5029,7 @@
             [cleanup-str : String (tc_core.tc-env-key-name-text cleanup-name)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               names
+              position
               entry-path
               decl-path
               alias
@@ -4992,6 +5044,7 @@
         [inner : ast.AstDecl (box-get inner-box)]
         (lower-name-env-add-decl-alias-in-module
           names
+          position
           entry-path
           decl-path
           alias
@@ -5221,6 +5274,7 @@
                       cur-names
                       (lower-name-env-add-decl-alias-in-module
                         cur-names
+                        position
                         entry-path
                         decl-path
                         alias
@@ -5447,6 +5501,11 @@
       ;; Seed the overlay membership set from the base env so the per-alias
       ;; "already bound?" check below is O(1) instead of an O(base) linear scan.
       (lower-alias-overlay-seed-from-env! cur-names)
+      ;; The fanout below revisits each imported declaration once per importing
+      ;; alias; the memo is indexed by that declaration's position in
+      ;; `all-decls` and is valid only while this pass' (decls, paths,
+      ;; entry-path, path-aware) tuple is fixed.
+      (lower-alias-symbol-memo-reset! (ast.ast-decl-list-len (& all-decls)))
       (while (< index count)
         (let
           [decl : ast.AstDecl
@@ -5480,6 +5539,7 @@
                 (set! cur-module-id next-module)]
               [_ unit])
             (set! index (+ index 1)))))
+      (lower-alias-symbol-memo-release!)
       cur-names)))
 
 (define (lower-name-env-with-import-aliases

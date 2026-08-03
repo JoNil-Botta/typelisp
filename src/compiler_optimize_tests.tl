@@ -34878,7 +34878,8 @@
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
           9
-          (compiler_ir_types.CompilerIrBinOp.Shl)
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrValue.Var 30)
           (compiler_ir_types.CompilerIrValue.I64 8)
           (compiler_ast_types.AstType.I64))
@@ -36560,6 +36561,7 @@
     (compiler-optimize-inline-dense-input-ok?)
     true
     "inline extraction and expansion preserve dense order for Cons and compact Array inputs"))
+
 ;; --- multi-application scheduling budget (unroll + bce_version) ----------------
 ;;
 ;; The unroller and the single-block and multi-block bce_version drivers apply

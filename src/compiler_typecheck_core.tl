@@ -6912,6 +6912,22 @@
               : (Ptr u8)))
           : i64)))))
 
+;; Cleanup-owner markers are only ever introduced by `with`-resource bindings, so
+;; most programs never create one. `tc-active-cleanup-owners` has to walk the
+;; whole persistent binding spine to prove that, once per checked let/store/
+;; transfer expression. Counting marker binds at the single persistent-bind choke
+;; point turns that proof into one load: a marker can only be observed by the
+;; scan if some binding record carries `tc-cleanup-owner-marker-id` as its key,
+;; and every binding record is created here, so a zero count means every spine in
+;; every store is marker-free and the scan is provably empty. The count is
+;; monotone and process-wide, i.e. conservative in the safe direction: it can
+;; only ever disable the fast path, never enable it wrongly.
+(define tc-cleanup-owner-marker-bind-count : i64
+  0)
+
+(define (tc-cleanup-owner-markers-possible?) : bool
+  (not (= tc-cleanup-owner-marker-bind-count 0)))
+
 (define (tc-type-env-cache-head [index : i64]) : i64
   (- 0 index))
 
@@ -6924,6 +6940,12 @@
   [ty : ast.AstType]) : TcTypeEnv
   (let
     [store-handle : i64 (struct-get env store)]
+    [_note-marker : unit
+      (if (= name-id (tc-cleanup-owner-marker-id))
+        (set!
+          tc-cleanup-owner-marker-bind-count
+          (+ tc-cleanup-owner-marker-bind-count 1))
+        unit)]
     [index : i64
       (tc-type-env-store-push-binding!
         store-handle
@@ -14291,20 +14313,22 @@
 (define (tc-active-cleanup-owners [env : TcTypeEnv]) : TcStringList
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (let
-      [head : i64 (struct-get env head)]
-      (if (< head -1)
-        (let
-          [store-handle : i64 (struct-get env store)]
-          [cache : TcTypeEnvCache
-            (tc-type-env-cache-at
-              (tc-type-env-cache-ptr
-                store-handle
-                (tc-type-env-cache-index head)))]
-          (tc-active-cleanup-owners-scan
-            env
-            (TcTypeEnv store-handle (struct-get cache rest) 0)))
-        (tc-active-cleanup-owners-scan env env)))))
+    (if (not (tc-cleanup-owner-markers-possible?))
+      TcStringList.Nil
+      (let
+        [head : i64 (struct-get env head)]
+        (if (< head -1)
+          (let
+            [store-handle : i64 (struct-get env store)]
+            [cache : TcTypeEnvCache
+              (tc-type-env-cache-at
+                (tc-type-env-cache-ptr
+                  store-handle
+                  (tc-type-env-cache-index head)))]
+            (tc-active-cleanup-owners-scan
+              env
+              (TcTypeEnv store-handle (struct-get cache rest) 0)))
+          (tc-active-cleanup-owners-scan env env))))))
 
 (define (tc-lifetime-list-count [items : ast.AstLifetimeList]) : i64
   (ast.ast-lifetime-list-len (& items)))
@@ -42670,21 +42694,31 @@
             (tc-resource-binding-list-add-bound-names bindings bound))])]
     [_ false]))
 
+;; `tc-expr-result-uses-cleanup-owner?` can only answer true through
+;; `tc-name-is-free-cleanup-owner?`, which first requires the name to be a member
+;; of `owners`. With an empty owner list the answer is false for every
+;; expression, so the recursive expression walk is pure overhead and is skipped.
 (define (tc-expr-result-uses-active-cleanup-owner?
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : bool
-  (tc-expr-result-uses-cleanup-owner?
-    expr
-    (tc-active-cleanup-owners env)
-    TcStringList.Nil))
+  (let
+    [owners : TcStringList (tc-active-cleanup-owners env)]
+    (match owners
+      [(TcStringList.Nil) false]
+      [_ (tc-expr-result-uses-cleanup-owner? expr owners TcStringList.Nil)])))
 
 (define (tc-expr-list-any-result-uses-active-cleanup-owner?
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]) : bool
-  (tc-expr-list-any-result-uses-cleanup-owner?
-    exprs
-    (tc-active-cleanup-owners env)
-    TcStringList.Nil))
+  (let
+    [owners : TcStringList (tc-active-cleanup-owners env)]
+    (match owners
+      [(TcStringList.Nil) false]
+      [_
+        (tc-expr-list-any-result-uses-cleanup-owner?
+          exprs
+          owners
+          TcStringList.Nil)])))
 
 (define (tc-ensure-cleanup-resource-not-let-bound
   [ctx : TcContext]

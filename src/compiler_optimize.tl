@@ -40797,7 +40797,7 @@
 
 (defenum OptBceVersionGuardResult
   (No)
-  (Some ir.CompilerIrInstrList ir.CompilerIrValue))
+  (Some ir.CompilerIrInstrSeq ir.CompilerIrValue))
 
 ;; Underivable checks kept in the fast clone, identified by instruction index:
 ;; guard derivation and cloning walk the same block instruction sequence in
@@ -40828,7 +40828,7 @@
 ;; the clone must preserve (remapped) instead of dropping.
 (defenum OptBceVersionGuardOut
   (No)
-  (Some ir.CompilerIrInstrList ir.CompilerIrValue OptBceVersionKeep))
+  (Some ir.CompilerIrInstrSeq ir.CompilerIrValue OptBceVersionKeep))
 
 (define (opt-bce-version-body-max) : i64
   48)
@@ -42168,36 +42168,112 @@
                 (struct-get state derived))])]
         [_ state]))))
 
+(define (opt-bce-version-append-reverse-instr-list!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [instrs : ir.CompilerIrInstrList]) : unit
+  (match instrs
+    [(ir.CompilerIrInstrList.Nil) unit]
+    [(ir.CompilerIrInstrList.Cons instr rest)
+      (begin
+        (opt-bce-version-append-reverse-instr-list! builder (box-get rest))
+        (ir.compiler-ir-instr-builder-push! builder instr))]))
+
+(define (opt-bce-version-and-chain-array
+  [cell : (__tl_dyn-array i64)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [current : ir.CompilerIrValue]
+  [values : ir.CompilerIrValueSeq]
+  [index : i64]) : ir.CompilerIrValue
+  (if (>= index (struct-get values len))
+    current
+    (let
+      [dst : i64 (opt-bce-version-alloc-var cell)]
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          builder
+          (ir.CompilerIrInstr.BinOp
+            dst
+            (ir.CompilerIrBinOp.And)
+            current
+            (array-ref (struct-get values slots) index)
+            (ast.AstType.Bool)))
+        (opt-bce-version-and-chain-array
+          cell
+          builder
+          (ir.CompilerIrValue.Var dst)
+          values
+          (+ index 1))))))
+
 (define (opt-bce-version-and-chain
   [cell : (__tl_dyn-array i64)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [first : ir.CompilerIrValue]
-  [rest : ir.CompilerIrValueList]
-  [instrs : ir.CompilerIrInstrList]) : OptBceVersionGuardResult
+  [rest : ir.CompilerIrValueList]) : ir.CompilerIrValue
   (match rest
-    [(ir.CompilerIrValueList.Nil) (OptBceVersionGuardResult.Some instrs first)]
-    [(ir.CompilerIrValueList.Array seq)
-      (opt-bce-version-and-chain
-        cell
-        first
-        (ir.compiler-ir-value-seq-to-list seq)
-        instrs)]
+    [(ir.CompilerIrValueList.Nil) first]
     [(ir.CompilerIrValueList.Cons value tail)
       (let
         [dst : i64 (opt-bce-version-alloc-var cell)]
-        (opt-bce-version-and-chain
-          cell
-          (ir.CompilerIrValue.Var dst)
-          (box-get tail)
-          (opt-aggregate-instr-list-append
-            instrs
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                dst
-                (ir.CompilerIrBinOp.And)
-                first
-                value
-                (ast.AstType.Bool))
-              (ir.CompilerIrInstrList.Nil)))))]))
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (ir.CompilerIrInstr.BinOp
+              dst
+              (ir.CompilerIrBinOp.And)
+              first
+              value
+              (ast.AstType.Bool)))
+          (opt-bce-version-and-chain
+            cell
+            builder
+            (ir.CompilerIrValue.Var dst)
+            (box-get tail))))]
+    [(ir.CompilerIrValueList.Array seq)
+      (opt-bce-version-and-chain-array cell builder first seq 0)]))
+
+(define (opt-bce-version-build-guard
+  [cell : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrList]
+  [values : ir.CompilerIrValueList]) : OptBceVersionGuardResult
+  (let
+    [value-count : i64 (ir.compiler-ir-value-list-count values)]
+    (if (= value-count 0)
+      (OptBceVersionGuardResult.No)
+      (let
+        [builder : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity
+            (+
+              (ir.compiler-ir-instr-list-count instrs)
+              (if (> value-count 1)
+                (- value-count 1)
+                0)))]
+        (begin
+          (opt-bce-version-append-reverse-instr-list! (&mut builder) instrs)
+          (match values
+            [(ir.CompilerIrValueList.Nil) (OptBceVersionGuardResult.No)]
+            [(ir.CompilerIrValueList.Cons first rest)
+              (let
+                [guard-value : ir.CompilerIrValue
+                  (opt-bce-version-and-chain
+                    cell
+                    (&mut builder)
+                    first
+                    (box-get rest))]
+                (OptBceVersionGuardResult.Some
+                  (ir.compiler-ir-instr-builder-to-seq builder)
+                  guard-value))]
+            [(ir.CompilerIrValueList.Array seq)
+              (let
+                [guard-value : ir.CompilerIrValue
+                  (opt-bce-version-and-chain-array
+                    cell
+                    (&mut builder)
+                    (array-ref (struct-get seq slots) 0)
+                    seq
+                    1)]
+                (OptBceVersionGuardResult.Some
+                  (ir.compiler-ir-instr-builder-to-seq builder)
+                  guard-value))]))))))
 
 ;; Assemble the guard from the derived per-check conditions: the once-only
 ;; `seed < bound` and `seed >= 0` when any counter-cased check needs them (a
@@ -42267,29 +42343,31 @@
         (match seeded
           [(OptBceVersionGuardAcc.No) (OptBceVersionGuardResult.No)]
           [(OptBceVersionGuardAcc.Some all-instrs all-values _)
-            (match all-values
-              [(ir.CompilerIrValueList.Nil) (OptBceVersionGuardResult.No)]
-              [(ir.CompilerIrValueList.Array seq)
-                (match (ir.compiler-ir-value-seq-to-list seq)
-                  [(ir.CompilerIrValueList.Nil) (OptBceVersionGuardResult.No)]
-                  [(ir.CompilerIrValueList.Array _)
-                    (OptBceVersionGuardResult.No)]
-                  [(ir.CompilerIrValueList.Cons first rest)
-                    (opt-bce-version-and-chain
-                      cell
-                      first
-                      (box-get rest)
-                      (ir.compiler-ir-instr-list-reverse-onto
-                        all-instrs
-                        ir.CompilerIrInstrList.Nil))])]
-              [(ir.CompilerIrValueList.Cons first rest)
-                (opt-bce-version-and-chain
-                  cell
-                  first
-                  (box-get rest)
-                  (ir.compiler-ir-instr-list-reverse-onto
-                    all-instrs
-                    ir.CompilerIrInstrList.Nil))])]))]))
+            (opt-bce-version-build-guard cell all-instrs all-values)]))]))
+
+;; Append the terminating branch to a freshly built dense guard block.
+(define (opt-bce-version-guard-block
+  [label : i64]
+  [guard-instrs : ir.CompilerIrInstrSeq]
+  [guard-value : ir.CompilerIrValue]
+  [true-label : i64]
+  [false-label : i64]) : ir.CompilerIrBlock
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count guard-instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ count 1))]
+    (begin
+      (ir.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        guard-instrs
+        0
+        count)
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Branch guard-value true-label false-label))
+      (ir.CompilerIrBlock.Block
+        label
+        (ir.compiler-ir-instr-builder-to-seq builder)))))
 
 ;; Assemble the single-block guard: derive the per-check conditions, then
 ;; finish them (seed compares + And chain).
@@ -42983,16 +43061,12 @@
                                 exit-label)
                               (ir.CompilerIrInstrList.Nil))))))]
                   [guard-block : ir.CompilerIrBlock
-                    (ir.compiler-ir-block
+                    (opt-bce-version-guard-block
                       guard-label
-                      (opt-aggregate-instr-list-append
-                        guard-instrs
-                        (ir.compiler-ir-instr-cons
-                          (ir.CompilerIrInstr.Branch
-                            guard-value
-                            fast-label
-                            label)
-                          (ir.CompilerIrInstrList.Nil))))]
+                      guard-instrs
+                      guard-value
+                      fast-label
+                      label)]
                   (OptUnrollResult.Result
                     (opt-bce-version-rewrite-blocks
                       blocks
@@ -45675,7 +45749,7 @@
 ;; the clone must preserve (remapped) instead of dropping.
 (defenum OptBceMbGuardOut
   (No)
-  (Some ir.CompilerIrInstrList ir.CompilerIrValue OptBceMbKeep))
+  (Some ir.CompilerIrInstrSeq ir.CompilerIrValue OptBceMbKeep))
 
 ;; A multi-block index of the form `base + scale*counter + offset` (either
 ;; operand order): one Add operand recovers counter-affine with a positive
@@ -47170,7 +47244,7 @@
 
 ;; The phi inputs that belong to the fast latch edges (kept in the copy).
 (define (opt-bce-mb-exit-seed-nonnegative?
-  [guard-instrs : ir.CompilerIrInstrList]
+  [guard-instrs : ir.CompilerIrInstrSeq]
   [blocks : ir.CompilerIrBlockList]
   [seed : ir.CompilerIrValue]
   [iphi : i64]) : bool
@@ -47179,39 +47253,35 @@
     [_
       (let
         [cseed : ir.CompilerIrValue (opt-bce-mb-canon-value blocks seed)]
-        (match guard-instrs
-          [(ir.CompilerIrInstrList.Nil) false]
-          [(ir.CompilerIrInstrList.Cons instr rest)
-            (match instr
-              [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
-                (if (and
-                  (or
-                    (opt-binop-eq op (ir.CompilerIrBinOp.Ge))
-                    (opt-binop-eq op (ir.CompilerIrBinOp.Gt)))
-                  (let
-                    [clhs : ir.CompilerIrValue
-                      (opt-bce-mb-canon-value blocks lhs)]
+        [index : i64 0]
+        [count : i64 (ir.compiler-ir-instr-seq-count guard-instrs)]
+        [found : bool false]
+        (begin
+          (while (and (< index count) (not found))
+            (begin
+              (match (ir.compiler-ir-instr-seq-ref guard-instrs index)
+                [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+                  (if (and
                     (or
-                      (opt-value-eq clhs cseed)
-                      (opt-value-eq clhs (ir.CompilerIrValue.Var iphi))))
-                  (match rhs
-                    [(ir.CompilerIrValue.I64 v)
-                      (if (opt-binop-eq op (ir.CompilerIrBinOp.Ge))
-                        (>= v 0)
-                        (>= v -1))]
-                    [_ false]))
-                  true
-                  (opt-bce-mb-exit-seed-nonnegative?
-                    (box-get rest)
-                    blocks
-                    cseed
-                    iphi))]
-              [_
-                (opt-bce-mb-exit-seed-nonnegative?
-                  (box-get rest)
-                  blocks
-                  cseed
-                  iphi)])]))]))
+                      (opt-binop-eq op (ir.CompilerIrBinOp.Ge))
+                      (opt-binop-eq op (ir.CompilerIrBinOp.Gt)))
+                    (let
+                      [clhs : ir.CompilerIrValue
+                        (opt-bce-mb-canon-value blocks lhs)]
+                      (or
+                        (opt-value-eq clhs cseed)
+                        (opt-value-eq clhs (ir.CompilerIrValue.Var iphi))))
+                    (match rhs
+                      [(ir.CompilerIrValue.I64 v)
+                        (if (opt-binop-eq op (ir.CompilerIrBinOp.Ge))
+                          (>= v 0)
+                          (>= v -1))]
+                      [_ false]))
+                    (set! found true)
+                    unit)]
+                [_ unit])
+              (set! index (+ index 1))))
+          found))]))
 
 ;; Does any instruction in this block's terminator mention `label`?
 (define (opt-bce-mb-block-targets?
@@ -47360,7 +47430,7 @@
   [shape : OptBceMbShape]
   [fast-blocks : ir.CompilerIrBlockList]
   [fast-bounded : i64]
-  [guard-instrs : ir.CompilerIrInstrList]) : OptBceMbExitSplit
+  [guard-instrs : ir.CompilerIrInstrSeq]) : OptBceMbExitSplit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (OptBceMbExitSplit.No)]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -47757,7 +47827,7 @@
   [shape : OptBceMbShape]
   [fast-blocks : ir.CompilerIrBlockList]
   [fast-bounded : i64]
-  [guard-instrs : ir.CompilerIrInstrList]
+  [guard-instrs : ir.CompilerIrInstrSeq]
   [cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
   (match (opt-bce-mb-find-exit-split
     blocks
@@ -47838,19 +47908,15 @@
               guard-label
               keep)]
           [guard-block : ir.CompilerIrBlock
-            (ir.compiler-ir-block
+            (opt-bce-version-guard-block
               guard-label
-              (opt-aggregate-instr-list-append
-                guard-instrs
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Branch
-                    guard-value
-                    (ir.compiler-ir-label
-                      (string.append
-                        (ir.compiler-ir-label-text (struct-get shape header))
-                        "__bce_fast"))
-                    (struct-get shape header))
-                  (ir.CompilerIrInstrList.Nil))))]
+              guard-instrs
+              guard-value
+              (ir.compiler-ir-label
+                (string.append
+                  (ir.compiler-ir-label-text (struct-get shape header))
+                  "__bce_fast"))
+              (struct-get shape header))]
           (OptUnrollResult.Result
             (let
               [rewritten-blocks : ir.CompilerIrBlockList
@@ -51892,8 +51958,20 @@
                                       (opt-if-convert-live-values? first second)))
                                     false
                                     (let
-                                      [tail : ir.CompilerIrInstrList
-                                        (ir.compiler-ir-instr-cons
+                                      [source-builder : ir.CompilerIrInstrBuilder
+                                        (ir.compiler-ir-instr-builder-with-capacity
+                                          (+ (struct-get source count) 1))]
+                                      [merge-builder : ir.CompilerIrInstrBuilder
+                                        (ir.compiler-ir-instr-builder-with-capacity
+                                          (- (struct-get merge count) 1))]
+                                      (begin
+                                        (ir.compiler-ir-instr-builder-append-seq-range!
+                                          (&mut source-builder)
+                                          source-instrs
+                                          0
+                                          (- (struct-get source count) 1))
+                                        (ir.compiler-ir-instr-builder-push!
+                                          (&mut source-builder)
                                           (ir.ir-instr-select
                                             dst
                                             condition
@@ -51904,30 +51982,29 @@
                                               second
                                               first)
                                             0
-                                            ty)
-                                          (ir.compiler-ir-instr-cons
-                                            (ir.CompilerIrInstr.Jump
-                                              merge-label)
-                                            ir.CompilerIrInstrList.Nil))]
-                                      (begin
+                                            ty))
+                                        (ir.compiler-ir-instr-builder-push!
+                                          (&mut source-builder)
+                                          (ir.CompilerIrInstr.Jump merge-label))
+                                        (ir.compiler-ir-instr-builder-append-seq-range!
+                                          (&mut merge-builder)
+                                          merge-instrs
+                                          1
+                                          (struct-get merge count))
                                         (array-set!
                                           (struct-get blocks slots)
                                           id
-                                          (ir.compiler-ir-block
+                                          (ir.CompilerIrBlock.Block
                                             source-label
-                                            (ir.compiler-ir-instr-seq-to-list-rev
-                                              (struct-get source-instrs slots)
-                                              (- (struct-get source count) 2)
-                                              tail)))
+                                            (ir.compiler-ir-instr-builder-to-seq
+                                              source-builder)))
                                         (array-set!
                                           (struct-get blocks slots)
                                           (+ id 3)
-                                          (ir.compiler-ir-block
+                                          (ir.CompilerIrBlock.Block
                                             merge-label
-                                            (opt-aggregate-instr-seq-append-from
-                                              merge-instrs
-                                              1
-                                              ir.CompilerIrInstrList.Nil)))
+                                            (ir.compiler-ir-instr-builder-to-seq
+                                              merge-builder)))
                                         (array-set!
                                           facts
                                           (+ id 3)

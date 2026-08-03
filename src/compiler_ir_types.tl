@@ -1782,6 +1782,20 @@
         (array-set! (struct-get builder slots) index instr)
         (set! (struct-get builder len) (+ index 1))))))
 
+(define (compiler-ir-instr-builder-append-seq-range!
+  [builder : (&mut builder CompilerIrInstrBuilder)]
+  [instrs : CompilerIrInstrSeq]
+  [start : i64]
+  [end : i64]) : unit
+  (let
+    [index : i64 start]
+    (while (< index end)
+      (begin
+        (compiler-ir-instr-builder-push!
+          builder
+          (compiler-ir-instr-seq-ref instrs index))
+        (set! index (+ index 1))))))
+
 (define (compiler-ir-instr-builder-to-seq [builder : CompilerIrInstrBuilder]) : CompilerIrInstrSeq
   (CompilerIrInstrSeq (struct-get builder slots) (struct-get builder len)))
 

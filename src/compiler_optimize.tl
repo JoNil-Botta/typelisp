@@ -22134,7 +22134,7 @@
             [is-header : bool (= label header)]
             [is-preheader : bool (= label preheader)]
             [is-latch : bool (= label latch)]
-            (if (not (or is-header (or is-preheader is-latch)))
+            (if (not (or is-header is-preheader is-latch))
               (ir.compiler-ir-block-cons
                 block
                 (opt-induction-insert-support-blocks

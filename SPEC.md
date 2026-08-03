@@ -2845,11 +2845,14 @@ definition before typechecking, lowering, and codegen.
 The compiler-owned `(include-str-lzss name "path")` form is the compressed
 runtime-static sibling of `include-str` and `include-bin`. It uses the same
 explicit input and path-resolution rules, deterministically LZSS-compresses
-the text at the loader boundary, and defines an opaque static
+the file's exact bytes at the loader boundary, and defines an opaque static
 `name : (Array u8)`. The bounded binary-data payload starts with the
 compiler-owned `__typelisp_embedded_stdlib_lzss_v1__` marker, the decimal
-uncompressed byte length and a newline, followed by the token stream. This
-form exists for compiler-owned source payload tables.
+uncompressed byte length and a newline, followed by the token stream. Like
+`include-bin`, and unlike `include-str`, the input is never decoded or
+validated as text, so binary payloads round-trip exactly. This form exists for
+compiler-owned payload tables: the compiler embeds both its stdlib source
+table and its stdlib comptime image through it.
 
 #### 4.4.8 `(include-str-comptime name "path")` - compile-time text input
 

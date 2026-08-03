@@ -98,23 +98,180 @@
         (arena.tl_arena_set previous))]
     owned))
 
+;; The image is embedded through `include-str-lzss`, so the payload bytes are
+;; the compiler-owned LZSS framing: the marker, the decimal uncompressed byte
+;; length, a newline, then the token stream. The image compresses about 3.1x
+;; (5,010,300 -> 1,623,689 bytes when this landed), which is the difference
+;; between a 12.45 MB and a 9.06 MB published compiler.
+;;
+;; `compiler_embedded_stdlib` decodes the same framing for the stdlib *source*
+;; table, but it decodes to `String` and it is linked into every build, embedded
+;; or not. This module is only ever compiled into embedded builds, so the
+;; byte-valued decoder lives here instead of moving shared code onto the
+;; unconditional path.
+;;
+;; Expansion is per call, exactly where the byte copy used to be: the decoded
+;; image is transient working memory owned by whatever arena the caller made
+;; current, and caching it would retain megabytes for the process to save a few
+;; milliseconds per compile (~17 ms to expand 5.0 MB, measured on Windows).
+(define (compiler-embedded-stdlib-tlci-compressed-prefix) : String
+  "__typelisp_embedded_stdlib_lzss_v1__")
+
+(defenum CompilerEmbeddedStdlibTlciFrame
+  (Invalid)
+  ;; uncompressed byte length, first token-stream index
+  (Valid i64 i64))
+
+(define (compiler-embedded-stdlib-tlci-prefix?
+  [compressed : (& compressed (__tl_dyn-array u8))]
+  [prefix : String]) : bool
+  (let
+    [index : i64 0]
+    [prefix-len : i64 (string.string-length prefix)]
+    [matches : bool (>= (array-length compressed) prefix-len)]
+    (begin
+      (while (and matches (< index prefix-len))
+        (begin
+          (if (!=
+            (array-ref compressed index)
+            (cast (string.string-ref prefix index) : u8))
+            (set! matches false)
+            unit)
+          (set! index (+ index 1))))
+      matches)))
+
+(define (compiler-embedded-stdlib-tlci-frame
+  [compressed : (& compressed (__tl_dyn-array u8))]) : CompilerEmbeddedStdlibTlciFrame
+  (let
+    [prefix : String (compiler-embedded-stdlib-tlci-compressed-prefix)]
+    [start : i64 (string.string-length prefix)]
+    [index : i64 start]
+    [raw-len : i64 0]
+    [valid : bool false]
+    (begin
+      (if (compiler-embedded-stdlib-tlci-prefix? compressed prefix)
+        (begin
+          (while (and
+            (< index (array-length compressed))
+            (>= (array-ref compressed index) (cast 48 : u8))
+            (<= (array-ref compressed index) (cast 57 : u8)))
+            (begin
+              (set!
+                raw-len
+                (+
+                  (* raw-len 10)
+                  (- (cast (array-ref compressed index) : i64) 48)))
+              (set! index (+ index 1))))
+          (if (and
+            (> index start)
+            (< index (array-length compressed))
+            (= (array-ref compressed index) (cast 10 : u8)))
+            (set! valid true)
+            unit))
+        unit)
+      (if valid
+        (CompilerEmbeddedStdlibTlciFrame.Valid raw-len (+ index 1))
+        CompilerEmbeddedStdlibTlciFrame.Invalid))))
+
+(define (compiler-embedded-stdlib-tlci-lzss-decode
+  [compressed : (& compressed (__tl_dyn-array u8))]
+  [compressed-start : i64]
+  [raw-len : i64]) : (__tl_dyn-array u8)
+  (let
+    [out : (__tl_dyn-array u8) (array.make-array u8 raw-len)]
+    [compressed-index : i64 0]
+    [out-index : i64 0]
+    [compressed-len : i64 (- (array-length compressed) compressed-start)]
+    (begin
+      (while (and (< compressed-index compressed-len) (< out-index raw-len))
+        (let
+          [flags : i64
+            (cast
+              (array-ref compressed (+ compressed-start compressed-index))
+              : i64)]
+          [bit : i64 0]
+          (begin
+            (set! compressed-index (+ compressed-index 1))
+            (while (and
+              (< bit 8)
+              (< compressed-index compressed-len)
+              (< out-index raw-len))
+              (begin
+                (if (!= (bit-and flags (shl 1 bit)) 0)
+                  (begin
+                    (array-set!
+                      out
+                      out-index
+                      (array-ref
+                        compressed
+                        (+ compressed-start compressed-index)))
+                    (set! compressed-index (+ compressed-index 1))
+                    (set! out-index (+ out-index 1)))
+                  (let
+                    [packed : i64
+                      (bit-or
+                        (shl
+                          (cast
+                            (array-ref
+                              compressed
+                              (+ compressed-start compressed-index))
+                            : i64)
+                          8)
+                        (cast
+                          (array-ref
+                            compressed
+                            (+ compressed-start (+ compressed-index 1)))
+                          : i64))]
+                    [offset : i64 (+ (shr packed 4) 1)]
+                    [length : i64 (+ (bit-and packed 15) 3)]
+                    [copy-index : i64 0]
+                    (begin
+                      (set! compressed-index (+ compressed-index 2))
+                      (while (and (< copy-index length) (< out-index raw-len))
+                        (begin
+                          (array-set!
+                            out
+                            out-index
+                            (array-ref out (- out-index offset)))
+                          (set! out-index (+ out-index 1))
+                          (set! copy-index (+ copy-index 1)))))))
+                (set! bit (+ bit 1)))))))
+      (if (or (!= out-index raw-len) (!= compressed-index compressed-len))
+        (begin
+          (string.tl_oob_abort)
+          (array.make-array u8 0))
+        out))))
+
+;; Uncompressed image length. Zero means "no image in this build" -- the seed
+;; and test payloads are empty rather than compressed -- and every caller
+;; treats that as unavailable before touching the bytes.
 (define (compiler-embedded-stdlib-tlci-length) : i64
-  (array-length payload.embedded-stdlib-tlci-bytes))
+  (let
+    [compressed : (__tl_dyn-array u8) payload.embedded-stdlib-tlci-bytes]
+    (if (= (array-length compressed) 0)
+      0
+      (match (compiler-embedded-stdlib-tlci-frame (& compressed))
+        [(CompilerEmbeddedStdlibTlciFrame.Valid raw-len _) raw-len]
+        [(CompilerEmbeddedStdlibTlciFrame.Invalid)
+          (begin
+            (string.tl_oob_abort)
+            0)]))))
 
 (define (compiler-embedded-stdlib-tlci-copy) : (__tl_dyn-array u8)
   (let
-    [length : i64 (compiler-embedded-stdlib-tlci-length)]
-    [out : (__tl_dyn-array u8) (array.make-array u8 length)]
-    [index : i64 0]
-    (begin
-      (while (< index length)
-        (begin
-          (array-set!
-            out
-            index
-            (array-ref payload.embedded-stdlib-tlci-bytes index))
-          (set! index (+ index 1))))
-      out)))
+    [compressed : (__tl_dyn-array u8) payload.embedded-stdlib-tlci-bytes]
+    (if (= (array-length compressed) 0)
+      (array.make-array u8 0)
+      (match (compiler-embedded-stdlib-tlci-frame (& compressed))
+        [(CompilerEmbeddedStdlibTlciFrame.Valid raw-len start)
+          (compiler-embedded-stdlib-tlci-lzss-decode
+            (& compressed)
+            start
+            raw-len)]
+        [(CompilerEmbeddedStdlibTlciFrame.Invalid)
+          (begin
+            (string.tl_oob_abort)
+            (array.make-array u8 0))]))))
 
 (define (compiler-embedded-stdlib-tlci-surface) : CompilerEmbeddedStdlibTlciSurface
   (if (= (compiler-embedded-stdlib-tlci-length) 0)

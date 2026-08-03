@@ -10074,6 +10074,119 @@
       (opt-var-defs-index-blocks! blocks 0 items)
       items)))
 
+;; Fused single-definition check + var->def index.
+;;
+;; The two facts the SSA verifier needs -- "every virtual register is defined
+;; at most once" and "where each one is defined" -- are the same walk over the
+;; same instructions. Deriving them separately walked every instruction twice
+;; per verify and allocated a throwaway membership bitmap alongside the index
+;; that already records membership: a filled slot IS a duplicate definition,
+;; and an out-of-range destination is the same rejection the bitmap made at its
+;; bounds check. One walk therefore produces both facts, and the index doubles
+;; as the membership set. `Duplicate` carries no index because the verifier
+;; rejects the function before any use query runs.
+(defenum OptVarDefsIndex
+  (Duplicate)
+  (Index (__tl_dyn-array OptMaybeVarDef)))
+
+(define (opt-var-defs-checked-add!
+  [items : (__tl_dyn-array OptMaybeVarDef)]
+  [var : i64]
+  [block-id : i64]
+  [pos : i64]) : bool
+  (if (or (< var 0) (>= var (array-length items)))
+    false
+    (match (array-ref items var)
+      [(OptMaybeVarDef.Some _) false]
+      [(OptMaybeVarDef.No)
+        (begin
+          (array-set!
+            items
+            var
+            (OptMaybeVarDef.Some (OptVarDef.Def var block-id pos)))
+          true)])))
+
+(define (opt-var-defs-checked-params!
+  [params : ir.CompilerIrParamList]
+  [items : (__tl_dyn-array OptMaybeVarDef)]) : bool
+  (match (ir.compiler-ir-param-list-force-cons params)
+    [(ir.CompilerIrParamList.Nil) true]
+    [(ir.CompilerIrParamList.Array seq)
+      (opt-var-defs-checked-params!
+        (ir.compiler-ir-param-seq-to-list seq)
+        items)]
+    [(ir.CompilerIrParamList.Cons param rest)
+      (match param
+        [(ir.CompilerIrParam.Param _ _ var)
+          (and
+            (opt-var-defs-checked-add! items var 0 0)
+            (opt-var-defs-checked-params! (box-get rest) items))])]))
+
+(define (opt-var-defs-checked-instr-seq-from!
+  [instrs : ir.CompilerIrInstrSeq]
+  [block-id : i64]
+  [index : i64]
+  [pos : i64]
+  [items : (__tl_dyn-array OptMaybeVarDef)]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some var)
+          (and
+            (opt-var-defs-checked-add!
+              items
+              var
+              block-id
+              (opt-instr-def-position instr pos))
+            (opt-var-defs-checked-instr-seq-from!
+              instrs
+              block-id
+              (+ index 1)
+              (+ pos 1)
+              items))]
+        [(option_i64.None)
+          (opt-var-defs-checked-instr-seq-from!
+            instrs
+            block-id
+            (+ index 1)
+            (+ pos 1)
+            items)]))))
+
+(define (opt-var-defs-checked-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [block-id : i64]
+  [items : (__tl_dyn-array OptMaybeVarDef)]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (and
+            (opt-var-defs-checked-instr-seq-from! instrs block-id 0 1 items)
+            (opt-var-defs-checked-blocks! (box-get rest) (+ block-id 1) items))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-var-defs-checked-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        block-id
+        items)]))
+
+(define (opt-var-defs-index-checked
+  [params : ir.CompilerIrParamList]
+  [vars : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptVarDefsIndex
+  (if (< vars 0)
+    (OptVarDefsIndex.Duplicate)
+    (let
+      [items : (__tl_dyn-array OptMaybeVarDef)
+        (array.make-array OptMaybeVarDef vars)]
+      (if (and
+        (opt-var-defs-checked-params! params items)
+        (opt-var-defs-checked-blocks! blocks 0 items))
+        (OptVarDefsIndex.Index items)
+        (OptVarDefsIndex.Duplicate)))))
+
 (define (opt-var-def-lookup
   [defs : (__tl_dyn-array OptMaybeVarDef)]
   [var : i64]) : OptMaybeVarDef
@@ -10714,42 +10827,37 @@
   [context : OptCfgContext]) : ResultCompilerOptimizeVerify
   (match func
     [(ir.CompilerIrFunction.Function _ params _ vars blocks)
-      (cond
-        [(not (opt-verify-single-defs? params vars blocks))
+      (match (opt-var-defs-index-checked params vars blocks)
+        [(OptVarDefsIndex.Duplicate)
           (ResultCompilerOptimizeVerify.Err
             "optimizer verify: duplicate var definition")]
-        [else
+        [(OptVarDefsIndex.Index defs)
           (let
             [doms : OptDomInfo (struct-get context doms)]
             [pred-map : OptPredMap (struct-get context pred-map)]
-            [defs : (__tl_dyn-array OptMaybeVarDef)
-              (opt-var-defs-index params vars blocks)]
             (match (opt-verify-phi-predecessors-blocks pred-map blocks)
               [(ResultCompilerOptimizeVerify.Ok)
                 (opt-verify-block-uses defs doms blocks 0)]
               [(ResultCompilerOptimizeVerify.Err message)
                 (ResultCompilerOptimizeVerify.Err message)]))])]))
 
-(define (opt-verify-final-function-body-with-context
+;; The caller derived the index (and with it the single-definition proof) for
+;; exactly this function; final IR that fails that proof is not checked here at
+;; all, so this entry point takes the facts rather than re-deriving them.
+(define (opt-verify-final-function-body-with-defs
+  [defs : (__tl_dyn-array OptMaybeVarDef)]
   [func : ir.CompilerIrFunction]
   [context : OptCfgContext]) : ResultCompilerOptimizeVerify
   (match func
-    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
-      (cond
-        [(not (opt-verify-single-defs? params vars blocks))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: duplicate var definition")]
-        [else
-          (let
-            [doms : OptDomInfo (struct-get context doms)]
-            [pred-map : OptPredMap (struct-get context pred-map)]
-            [defs : (__tl_dyn-array OptMaybeVarDef)
-              (opt-var-defs-index params vars blocks)]
-            (match (opt-verify-phi-predecessors-blocks pred-map blocks)
-              [(ResultCompilerOptimizeVerify.Ok)
-                (opt-verify-block-uses-contextual defs doms blocks 0)]
-              [(ResultCompilerOptimizeVerify.Err message)
-                (ResultCompilerOptimizeVerify.Err message)]))])]))
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (let
+        [doms : OptDomInfo (struct-get context doms)]
+        [pred-map : OptPredMap (struct-get context pred-map)]
+        (match (opt-verify-phi-predecessors-blocks pred-map blocks)
+          [(ResultCompilerOptimizeVerify.Ok)
+            (opt-verify-block-uses-contextual defs doms blocks 0)]
+          [(ResultCompilerOptimizeVerify.Err message)
+            (ResultCompilerOptimizeVerify.Err message)]))]))
 
 ;; The structural CFG contract, read off the context's index rather than
 ;; recomputed. `context` must be valid for the function's blocks, which is the
@@ -10805,10 +10913,12 @@
           [(ResultCompilerOptimizeVerify.Ok)
             ;; Final backend IR is not required to be SSA. Apply dominance/use
             ;; checks when it is SSA-shaped; otherwise the structural CFG checks
-            ;; are the valid final-IR contract.
-            (if (opt-verify-single-defs? params vars blocks)
-              (opt-verify-final-function-body-with-context func context)
-              (ResultCompilerOptimizeVerify.Ok))]
+            ;; are the valid final-IR contract. The SSA-shape decision and the
+            ;; index the dominance checks read are one derivation.
+            (match (opt-var-defs-index-checked params vars blocks)
+              [(OptVarDefsIndex.Index defs)
+                (opt-verify-final-function-body-with-defs defs func context)]
+              [(OptVarDefsIndex.Duplicate) (ResultCompilerOptimizeVerify.Ok)])]
           [(ResultCompilerOptimizeVerify.Err message)
             (ResultCompilerOptimizeVerify.Err message)]))]))
 

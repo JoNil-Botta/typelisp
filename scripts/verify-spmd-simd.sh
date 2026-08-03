@@ -154,6 +154,7 @@ tests/spmd/private_helper_masked_load.tl
 tests/spmd/private_helper_store.tl
 tests/spmd/private_helper_effects.tl
 tests/spmd/i8_mul_reject.tl
+tests/spmd/full_gang_all_active_i64.tl
 tests/spmd/masked_if_i64.tl
 tests/spmd/masked_if_offset_i64.tl
 tests/spmd/masked_if_index_value_i64.tl

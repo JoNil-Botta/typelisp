@@ -128,6 +128,63 @@
       (compiler_lower.CompilerLowerMode.Avx2)
       (compiler_lower.lower-simd-foreach-fallback-diagnostic))))
 
+(define (compiler-lower-smoke-masked-full-gang-source) : String
+  "(define (fill [xs : (Array i64)] [copy : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (let
+      [x : i64 (array-ref xs i)]
+      (begin
+        (array-set! copy i x)
+        (if (< x 0)
+          (array-set! out i x)
+          (array-set! out i 0))))))")
+
+(define (compiler-lower-smoke-masked-full-gang-mode-ok?
+  [mode : compiler_lower.CompilerLowerMode]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-smoke-masked-full-gang-source)
+    mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(ir.CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (compiler_lower_tests.lower-test-function-tail-mask-count
+                functions
+                "fill")
+              1)
+            (=
+              (compiler_lower_tests.lower-test-function-vector-load-count
+                functions
+                "fill")
+              1)
+            (=
+              (compiler_lower_tests.lower-test-function-vector-store-count
+                functions
+                "fill")
+              1)
+            (=
+              (compiler_lower_tests.lower-test-function-predicated-load-count
+                functions
+                "fill")
+              1)
+            ;; One parent tail store plus two divergent stores in each of the
+            ;; full and tail bodies. Child masks must remain predicated.
+            (=
+              (compiler_lower_tests.lower-test-function-predicated-store-count
+                functions
+                "fill")
+              5))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-smoke-masked-full-gang-ok?) : bool
+  (and
+    (compiler-lower-smoke-masked-full-gang-mode-ok?
+      (compiler_lower.CompilerLowerMode.Avx2))
+    (compiler-lower-smoke-masked-full-gang-mode-ok?
+      (compiler_lower.CompilerLowerMode.Avx512))))
+
 ;; Scalar `spmd-reduce` addend split: a `sum` over `(+ X U)` with
 ;; reduction-invariant `U` lowers to a loop that accumulates only `X` plus one
 ;; exit `(* trip-count U)` (visible as a single `Mul` in the lowered IR), while
@@ -942,6 +999,9 @@
     (unless
       (compiler-lower-smoke-foreach-multi-output-shape-ok?)
       (io.panic "lower: multi-output foreach smoke mismatch"))
+    (unless
+      (compiler-lower-smoke-masked-full-gang-ok?)
+      (io.panic "lower: masked full-gang all-active smoke mismatch"))
     (unless
       (compiler-lower-smoke-spmd-reduce-split-ok?)
       (io.panic "lower: spmd reduce addend split smoke mismatch"))

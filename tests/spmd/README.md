@@ -75,6 +75,10 @@ compile and run in `avx2` and `avx512`.
   arguments; nested masks; index forwarding; and a non-full tail. Exit 42.
 - `masked_if_i64.tl` - AVX2/AVX-512 masked varying `if` over `n = 13` i64
   lanes, with direct-index predicated reads/writes and a masked tail. Exit 42.
+- `full_gang_all_active_i64.tl` - scalar/AVX2/AVX-512 parent-only reads and
+  writes plus nested divergent children across zero, sub-gang, exact AVX2 and
+  AVX-512 gangs, and partial tails. It also executes an always-empty child
+  mask and checks untouched output sentinels. Exit 42.
 - `masked_if_offset_i64.tl` - AVX2/AVX-512 masked varying `if` over `n = 12`
   i64 lanes with shifted contiguous `(+ i 1)` predicated reads/writes. Exit 42.
 - `masked_if_index_value_i64.tl` - AVX2/AVX-512 masked varying `if` over
@@ -224,6 +228,7 @@ Coverage map:
   composition, and i16/u16 coverage lives in `masked_if_i64.tl`,
   `masked_if_offset_i64.tl`, `masked_if_index_value_i64.tl`,
   `masked_if_index_mod_i64.tl`, `masked_if_value_i64.tl`,
+  `full_gang_all_active_i64.tl`,
   `masked_if_bitand_value_i64.tl`, `masked_if_bitwise_value_types.tl`,
   `masked_if_shift_value_types.tl`, `masked_if_shift_inactive.tl`,
   `masked_if_value_types.tl`, `masked_if_nested_i64.tl`, and

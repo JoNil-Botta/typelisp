@@ -3441,15 +3441,18 @@
     [_ false]))
 
 (define (opt-aggregate-instrs-touch-candidate?
-  [instrs : ir.CompilerIrInstrList]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
   [base : i64]
   [ptrs : opt_aggregate_pointer_vec.Vec]) : bool
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) false]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (or
-        (opt-aggregate-instr-has-pointer? instr base ptrs)
-        (opt-aggregate-instrs-touch-candidate? (box-get rest) base ptrs))]))
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-aggregate-instr-has-pointer?
+        (ir.compiler-ir-instr-seq-ref instrs index)
+        base
+        ptrs)
+      (opt-aggregate-instrs-touch-candidate? instrs (+ index 1) base ptrs))))
 
 (define (opt-aggregate-instr-known-safe?
   [instr : ir.CompilerIrInstr]
@@ -3489,16 +3492,17 @@
   [base : i64]
   [ty : ast.AstType]
   [size : i64]
-  [instrs : ir.CompilerIrInstrList]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
   [ptrs : opt_aggregate_pointer_vec.Vec (:consume)]
   [accesses : opt_aggregate_access_vec.Vec (:consume)]
   [seen-alloc : bool]) : OptAggregateScanResult
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil)
-      (if seen-alloc
-        (OptAggregateScanResult.Ok ptrs accesses)
-        (OptAggregateScanResult.Reject))]
-    [(ir.CompilerIrInstrList.Cons instr rest)
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (if seen-alloc
+      (OptAggregateScanResult.Ok ptrs accesses)
+      (OptAggregateScanResult.Reject))
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       (if (not seen-alloc)
         (match (opt-aggregate-direct-alloc instr)
           [(OptMaybeAggregateAlloc.Some dst alloc-ty alloc-size)
@@ -3511,7 +3515,8 @@
                 base
                 ty
                 size
-                (box-get rest)
+                instrs
+                (+ index 1)
                 ptrs
                 accesses
                 true)
@@ -3520,7 +3525,8 @@
                 base
                 ty
                 size
-                (box-get rest)
+                instrs
+                (+ index 1)
                 ptrs
                 accesses
                 false))]
@@ -3530,7 +3536,8 @@
               base
               ty
               size
-              (box-get rest)
+              instrs
+              (+ index 1)
               ptrs
               accesses
               false)])
@@ -3551,7 +3558,8 @@
                         base
                         ty
                         size
-                        (box-get rest)
+                        instrs
+                        (+ index 1)
                         ptrs
                         accesses
                         true))]
@@ -3564,7 +3572,8 @@
                     base
                     ty
                     size
-                    (box-get rest)
+                    instrs
+                    (+ index 1)
                     ptrs
                     accesses
                     true))])]
@@ -3580,13 +3589,15 @@
                     base
                     ty
                     size
-                    (box-get rest)
+                    instrs
+                    (+ index 1)
                     ptrs
                     accesses
                     true))]
               [(option_i64.None)
                 (if (opt-aggregate-instrs-touch-candidate?
-                  (box-get rest)
+                  instrs
+                  (+ index 1)
                   base
                   ptrs)
                   (OptAggregateScanResult.Reject)
@@ -3595,7 +3606,8 @@
                     base
                     ty
                     size
-                    (box-get rest)
+                    instrs
+                    (+ index 1)
                     ptrs
                     accesses
                     true))])]
@@ -3613,7 +3625,8 @@
                       base
                       ty
                       size
-                      (box-get rest)
+                      instrs
+                      (+ index 1)
                       ptrs
                       accesses
                       true)))]
@@ -3624,7 +3637,8 @@
                     (ir.compiler-ir-effect-invalidates-cse?
                       (ir.compiler-ir-instr-effect instr))
                     (opt-aggregate-instrs-touch-candidate?
-                      (box-get rest)
+                      instrs
+                      (+ index 1)
                       base
                       ptrs)))
                   (OptAggregateScanResult.Reject)
@@ -3633,7 +3647,8 @@
                     base
                     ty
                     size
-                    (box-get rest)
+                    instrs
+                    (+ index 1)
                     ptrs
                     accesses
                     true))])]
@@ -3642,30 +3657,37 @@
               (OptAggregateScanResult.Reject)
               (if (and
                 (opt-aggregate-instr-crosses-unknown-effect? instr base ptrs)
-                (opt-aggregate-instrs-touch-candidate? (box-get rest) base ptrs))
+                (opt-aggregate-instrs-touch-candidate?
+                  instrs
+                  (+ index 1)
+                  base
+                  ptrs))
                 (OptAggregateScanResult.Reject)
                 (opt-aggregate-scan-instrs
                   type-segment-bases
                   base
                   ty
                   size
-                  (box-get rest)
+                  instrs
+                  (+ index 1)
                   ptrs
                   accesses
-                  true)))]))]))
+                  true)))])))))
 
 (define (opt-aggregate-classify-one
   [type-segment-bases : i64]
   [base : i64]
   [ty : ast.AstType]
   [size : i64]
-  [instrs : ir.CompilerIrInstrList]) : OptAggregateScanResult
+  [instrs : ir.CompilerIrInstrSeq]
+  [start : i64]) : OptAggregateScanResult
   (opt-aggregate-scan-instrs
     type-segment-bases
     base
     ty
     size
     instrs
+    start
     (opt_aggregate_pointer_vec.with-capacity
       opt-aggregate-list-initial-capacity)
     (opt_aggregate_access_vec.with-capacity opt-aggregate-list-initial-capacity)
@@ -3673,11 +3695,25 @@
 
 (define (opt-aggregate-candidates-from-instrs
   [type-segment-bases : i64]
-  [scan : ir.CompilerIrInstrList]
+  [scan : ir.CompilerIrInstrSeq]
   [candidates : opt_aggregate_candidate_vec.Vec (:consume)]) : opt_aggregate_candidate_vec.Vec
-  (match scan
-    [(ir.CompilerIrInstrList.Nil) candidates]
-    [(ir.CompilerIrInstrList.Cons instr rest)
+  (let
+    [index : i64 0]
+    (opt-aggregate-candidates-from-instrs-at
+      type-segment-bases
+      scan
+      index
+      candidates)))
+
+(define (opt-aggregate-candidates-from-instrs-at
+  [type-segment-bases : i64]
+  [scan : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [candidates : opt_aggregate_candidate_vec.Vec (:consume)]) : opt_aggregate_candidate_vec.Vec
+  (if (>= index (ir.compiler-ir-instr-seq-count scan))
+    candidates
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref scan index)]
       (match (opt-aggregate-direct-alloc instr)
         [(OptMaybeAggregateAlloc.Some base ty size)
           (match (opt-aggregate-classify-one
@@ -3685,7 +3721,8 @@
             base
             ty
             size
-            scan)
+            scan
+            index)
             [(OptAggregateScanResult.Ok ptrs accesses)
               (begin
                 (opt_aggregate_candidate_vec.push
@@ -3696,20 +3733,23 @@
                     size
                     ptrs
                     accesses))
-                (opt-aggregate-candidates-from-instrs
+                (opt-aggregate-candidates-from-instrs-at
                   type-segment-bases
-                  (box-get rest)
+                  scan
+                  (+ index 1)
                   candidates))]
             [(OptAggregateScanResult.Reject)
-              (opt-aggregate-candidates-from-instrs
+              (opt-aggregate-candidates-from-instrs-at
                 type-segment-bases
-                (box-get rest)
+                scan
+                (+ index 1)
                 candidates)])]
         [(OptMaybeAggregateAlloc.No)
-          (opt-aggregate-candidates-from-instrs
+          (opt-aggregate-candidates-from-instrs-at
             type-segment-bases
-            (box-get rest)
-            candidates)])]))
+            scan
+            (+ index 1)
+            candidates)]))))
 
 (define (opt-aggregate-instr-list-append
   [left : ir.CompilerIrInstrList]
@@ -3731,31 +3771,55 @@
       (ir.compiler-ir-instr-seq-ref instrs index)
       (opt-aggregate-instr-seq-append-from instrs (+ index 1) right))))
 
-(define (opt-aggregate-flatten-blocks [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrInstrList
+(define (opt-aggregate-append-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrInstrList.Nil)]
+    [(ir.CompilerIrBlockList.Nil) unit]
     [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-aggregate-instr-seq-append-from
-            instrs
-            0
-            (opt-aggregate-flatten-blocks (box-get rest)))])]
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (ir.compiler-ir-instr-builder-append-seq-range!
+              builder
+              instrs
+              0
+              (ir.compiler-ir-instr-seq-count instrs))])
+        (opt-aggregate-append-blocks! (box-get rest) builder))]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-aggregate-flatten-blocks (ir.compiler-ir-block-seq-to-list seq))]))
+      (let
+        [index : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (while (< index count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref seq index)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (ir.compiler-ir-instr-builder-append-seq-range!
+                  builder
+                  instrs
+                  0
+                  (ir.compiler-ir-instr-seq-count instrs))])
+            (set! index (+ index 1)))))]))
+
+(define (opt-aggregate-flatten-blocks [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (ir.compiler-ir-block-list-instruction-count blocks))]
+    (begin
+      (opt-aggregate-append-blocks! blocks (&mut builder))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-aggregate-allocation-candidates-function
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : opt_aggregate_candidate_vec.Vec
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-      (let
-        [instrs : ir.CompilerIrInstrList (opt-aggregate-flatten-blocks blocks)]
-        (opt-aggregate-candidates-from-instrs
-          type-segment-bases
-          instrs
-          (opt_aggregate_candidate_vec.with-capacity
-            opt-aggregate-list-initial-capacity)))]))
+      (opt-aggregate-candidates-from-instrs
+        type-segment-bases
+        (opt-aggregate-flatten-blocks blocks)
+        (opt_aggregate_candidate_vec.with-capacity
+          opt-aggregate-list-initial-capacity))]))
 
 (define (opt-aggregate-candidate-list-append
   [left : opt_aggregate_candidate_vec.Vec (:consume)]

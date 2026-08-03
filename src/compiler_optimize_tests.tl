@@ -2223,6 +2223,24 @@
       9]
     [(not (opt-aggregate-access-vector-growth-ok?)) 10]
     [(not (opt-aggregate-core-vector-growth-ok?)) 11]
+    [(not
+        (opt-aggregate-cross-block-candidates-rejected?
+          (opt-aggregate-cross-block-load-blocks)))
+      12]
+    [(not
+        (opt-aggregate-cross-block-candidates-rejected?
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (opt-aggregate-cross-block-load-blocks))))
+      13]
+    [(not
+        (opt-aggregate-cross-block-flatten-order-ok?
+          (opt-aggregate-cross-block-load-blocks)))
+      14]
+    [(not
+        (opt-aggregate-cross-block-flatten-order-ok?
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (opt-aggregate-cross-block-load-blocks))))
+      15]
     [else 42]))
 
 (define (opt-aggregate-array-local-instrs) : compiler_ir_types.CompilerIrInstrList
@@ -2569,6 +2587,123 @@
                 (compiler_ir_types.CompilerIrValue.I64 0)))
             compiler_ir_types.CompilerIrInstrList.Nil))
         compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-aggregate-cross-block-load-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-aggregate-test-alloc)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            2
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.U8))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 10)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "next"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "next")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            3
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.U8))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              4
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 4)))
+              compiler_ir_types.CompilerIrInstrList.Nil))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-aggregate-cross-block-candidates-rejected?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (let
+    [program : compiler_ir_types.CompilerIrProgram
+      (compiler_ir_types.CompilerIrProgram.Program
+        compiler_ir_types.CompilerIrGlobalList.Nil
+        (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.CompilerIrFunction.Function
+            (opt-test-symbol "main")
+            compiler_ir_types.CompilerIrParamList.Nil
+            (compiler_ast_types.AstType.I64)
+            4
+            blocks)
+          compiler_ir_types.CompilerIrFunctionList.Nil)
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    [candidates : opt_aggregate_candidate_vec.Vec
+      (compiler_optimize.opt-aggregate-allocation-candidates
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        program)]
+    (= (compiler_optimize.opt-aggregate-candidate-list-count candidates) 0)))
+
+(define (opt-aggregate-cross-block-flatten-order-ok?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (let
+    [instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_optimize.opt-aggregate-flatten-blocks blocks)]
+    (and
+      (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 7)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+        [(compiler_ir_types.CompilerIrInstr.Call dst name _ _)
+          (and (= dst 1) (= name cbi.compiler-builtin-id-tl-alloc))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 1)
+        [(compiler_ir_types.CompilerIrInstr.Gep
+            dst
+            (compiler_ir_types.CompilerIrValue.Var src)
+            (compiler_ir_types.CompilerIrValue.I64 offset)
+            _)
+          (and (= dst 2) (= src 1) (= offset 0))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 2)
+        [(compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var ptr)
+            (compiler_ir_types.CompilerIrValue.I64 value)
+            _)
+          (and (= ptr 2) (= value 10))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 3)
+        [(compiler_ir_types.CompilerIrInstr.Jump label)
+          (compiler_ir_types.compiler-ir-symbol-eq?
+            label
+            (compiler_ir_types.compiler-ir-label "next"))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 4)
+        [(compiler_ir_types.CompilerIrInstr.Gep
+            dst
+            (compiler_ir_types.CompilerIrValue.Var src)
+            (compiler_ir_types.CompilerIrValue.I64 offset)
+            _)
+          (and (= dst 3) (= src 1) (= offset 0))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 5)
+        [(compiler_ir_types.CompilerIrInstr.Load
+            dst
+            (compiler_ir_types.CompilerIrValue.Var src)
+            _)
+          (and (= dst 4) (= src 3))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 6)
+        [(compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var value)))
+          (= value 4)]
+        [_ false]))))
 
 (define (opt-count-load-dst-instrs
   [instrs : compiler_ir_types.CompilerIrInstrList]

@@ -3328,7 +3328,7 @@
   [names : LowerNameEnv]
   [alias : String]
   [alias-id : i64]
-  [base-name : String]
+  [_ : String]
   [base-id : i64]
   [logical-id : i64]
   [logical-name : String]
@@ -3336,7 +3336,11 @@
   (lower-name-env-add-import-alias-binding-id
     names
     alias
-    (csym.compiler-symbol-module-key alias base-name)
+    ;; The rendered module key is never read by the callee (its parameter is
+    ;; `[_ : String]`); only the composite key ID below is live. Rendering it
+    ;; per visited (import, decl) pair retained 13.7 MB per name-env build on
+    ;; the opt1 self-compile.
+    ""
     (csym.compiler-symbol-module-key-id-by-id alias-id base-id)
     logical-name
     logical-id
@@ -3381,7 +3385,7 @@
   [names : LowerNameEnv]
   [alias : String]
   [alias-id : i64]
-  [base-name : String]
+  [_ : String]
   [base-id : i64]
   [logical-id : i64]
   [logical-name : String]
@@ -3389,7 +3393,9 @@
   (lower-name-env-add-import-alias-binding-symbol-id
     names
     alias
-    (csym.compiler-symbol-module-key alias base-name)
+    ;; As above: the callee ignores the rendered key (`[_ : String]`); only
+    ;; the composite key ID is consumed.
+    ""
     (csym.compiler-symbol-module-key-id-by-id alias-id base-id)
     logical-name
     logical-id

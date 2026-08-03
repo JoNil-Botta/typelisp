@@ -25876,6 +25876,490 @@
       [else 42])))
 
 ;; --- Gep use-splitting self-tests --------------------------------------------
+;; Invariant-offset Gep splitting. One counted loop reading `a[start + i]`,
+;; with the variant selector perturbing exactly one gate at a time:
+;;   0  the plain shape: the Add is single-use and both operands are clean
+;;   1  a non-Gep consumer of the Add (the all-uses gate rejects)
+;;   2  a second in-loop use of the invariant addend with one base (the
+;;      pressure gate rejects: the addend would stay live for no saving)
+;;   3  the Gep base is defined inside the loop (no preheader home for the
+;;      derived base, so the correctness filter rejects)
+;;   4  two bases share the Add AND the addend has a second in-loop use: k >= 2
+;;      pays for the surviving addend, so this one splits
+;;   5  the plain shape reached through a branching guard, so the header has no
+;;      dedicated preheader and one has to be synthesized first
+;;   6  ONE base indexed at two different invariant offsets: each needs its own
+;;      derived base, and sharing one across the offsets would retarget the
+;;      second address
+;;   7  a DEAD Cast of the Add, the chain a removed BoundsCheck strands: the
+;;      pipeline DCE retires it, so it must not count against the all-uses gate
+;; Variants 1 and 2 keep their perturbation LIVE (a store consumes it);
+;; otherwise the dead-use settling would retire it and the gate would not be
+;; exercised at all.
+(define (opt-gep-offset-test-tail) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      15
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 10)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "loop"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; The perturbation each variant injects after the load.
+(define (opt-gep-offset-test-consume [value : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.StorePtr
+      (compiler_ir_types.CompilerIrValue.Var 13)
+      (compiler_ir_types.CompilerIrValue.Var value)
+      (compiler_ast_types.AstType.I64))
+    (opt-gep-offset-test-tail)))
+
+(define (opt-gep-offset-test-extras [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (= variant 7)
+    ;; the dead cast a removed BoundsCheck leaves behind
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Cast
+        16
+        (compiler_ir_types.CompilerIrValue.Var 12)
+        (compiler_ast_types.AstType.I64)
+        (compiler_ast_types.AstType.U64))
+      (opt-gep-offset-test-tail))
+    (if (= variant 1)
+      ;; a plain arithmetic consumer of the Add: not an address use
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          16
+          (compiler_ir_types.CompilerIrBinOp.Mul)
+          (compiler_ir_types.CompilerIrValue.Var 12)
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (opt-gep-offset-test-consume 16))
+      (if (or (= variant 2) (= variant 4))
+        ;; a second in-loop reader of the invariant addend
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            17
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 3)
+            (compiler_ast_types.AstType.I64))
+          (opt-gep-offset-test-consume 17))
+        (opt-gep-offset-test-tail)))))
+
+;; Variant 6 adds a second Add/Gep on the SAME base at a different invariant
+;; offset: the derived-base cache has to key on the offset as well as the base.
+(define (opt-gep-offset-test-second-offset [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (= variant 6)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        21
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          22
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 21)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            23
+            (compiler_ir_types.CompilerIrValue.Var 22)
+            (compiler_ast_types.AstType.I64))
+          (opt-gep-offset-test-extras variant))))
+    (opt-gep-offset-test-extras variant)))
+
+;; Variant 4 adds a second Gep on a different base, sharing the same Add.
+(define (opt-gep-offset-test-second-base [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (= variant 4)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        19
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.Var 12)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          20
+          (compiler_ir_types.CompilerIrValue.Var 19)
+          (compiler_ast_types.AstType.I64))
+        (opt-gep-offset-test-extras variant)))
+    (opt-gep-offset-test-second-offset variant)))
+
+(define (opt-gep-offset-test-body-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [base : compiler_ir_types.CompilerIrValue
+      (if (= variant 3)
+        (compiler_ir_types.CompilerIrValue.Var 18)
+        (compiler_ir_types.CompilerIrValue.Var 0))]
+    [core : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          12
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            13
+            base
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              14
+              (compiler_ir_types.CompilerIrValue.Var 13)
+              (compiler_ast_types.AstType.I64))
+            (opt-gep-offset-test-second-base variant))))]
+    (if (= variant 3)
+      ;; the base itself becomes loop variant
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          18
+          (compiler_ir_types.CompilerIrBinOp.Mul)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ast_types.AstType.I64))
+        core)
+      core)))
+
+(define (opt-gep-offset-test-loop-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      10
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 15)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        11
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-label "exit"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+;; Variant 5 enters the loop from a two-successor guard, which is exactly the
+;; bce fast-clone shape: `opt-natural-loop-safe-preheader-block?` rejects it, so
+;; the pass has to synthesize a preheader before it can hoist anything.
+(define (opt-gep-offset-test-entry-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (= variant 5)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.compiler-ir-label "loop")
+        (compiler_ir_types.compiler-ir-label "exit"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "loop"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-gep-offset-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-gep-offset-test-entry-instrs variant))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-gep-offset-test-loop-instrs))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-gep-offset-test-body-instrs variant))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-gep-offset-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "base-a"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "base-b"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "n"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "start"
+            (compiler_ast_types.AstType.I64)
+            3)
+          (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.CompilerIrParam.Param
+              "start2"
+              (compiler_ast_types.AstType.I64)
+              4)
+            (compiler_ir_types.CompilerIrParamList.Nil)))))))
+
+(define (opt-gep-offset-test-function [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "gep_offset")
+    (opt-gep-offset-test-params)
+    (compiler_ast_types.AstType.I64)
+    24
+    (opt-gep-offset-test-blocks variant)))
+
+(define (opt-gep-offset-test-run [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-gep-offset-function
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-gep-offset-test-function variant)))
+
+(define (opt-gep-offset-test-gep-count-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-gep-offset-test-gep-count-from
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.Gep _ _ _ _) 1]
+          [_ 0])))))
+
+;; Geps in the block that carries `label`; -1 when there is no such block.
+(define (opt-gep-offset-test-geps-in
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-gep-offset-test-gep-count-from instrs 0 0)])]))
+
+;; The body Gep must now index on the loop counter itself, not on the Add.
+(define (opt-gep-offset-test-body-index-is-counter?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label "body"))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-gep-offset-test-body-index-scan instrs 0 false)])]))
+
+(define (opt-gep-offset-test-body-index-scan
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [seen : bool]) : bool
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    seen
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Gep _ _ offset _)
+        (if (compiler_optimize.opt-value-eq
+          offset
+          (compiler_ir_types.CompilerIrValue.Var 10))
+          (opt-gep-offset-test-body-index-scan instrs (+ index 1) true)
+          false)]
+      [_ (opt-gep-offset-test-body-index-scan instrs (+ index 1) seen)])))
+
+(define (opt-gep-offset-test-nth-gep-offset
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [skip : i64]) : compiler_ir_types.CompilerIrValue
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Gep _ _ offset _)
+        (if (= skip 0)
+          offset
+          (opt-gep-offset-test-nth-gep-offset instrs (+ index 1) (- skip 1)))]
+      [_ (opt-gep-offset-test-nth-gep-offset instrs (+ index 1) skip)])))
+
+;; Two derived bases for one array must carry the two different offsets; a
+;; cache keyed on the base alone would emit the same offset twice.
+(define (opt-gep-offset-test-derived-offsets-distinct?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (not
+            (compiler_optimize.opt-value-eq
+              (opt-gep-offset-test-nth-gep-offset instrs 0 0)
+              (opt-gep-offset-test-nth-gep-offset instrs 0 1)))])]))
+
+(define (opt-gep-offset-test-unchanged? [variant : i64]) : bool
+  (compiler_optimize.opt-block-list-eq
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-function-blocks (opt-gep-offset-test-run variant))
+    (opt-gep-offset-test-blocks variant)))
+
+(define (compiler-optimize-gep-offset-self-test) : i64
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [split : compiler_ir_types.CompilerIrFunction (opt-gep-offset-test-run 0)]
+    [split-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks split)]
+    [twice : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-gep-offset-function bases split)]
+    [shared : compiler_ir_types.CompilerIrFunction (opt-gep-offset-test-run 4)]
+    [shared-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks shared)]
+    [synthesized : compiler_ir_types.CompilerIrFunction
+      (opt-gep-offset-test-run 5)]
+    [synthesized-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks synthesized)]
+    [two-offsets : compiler_ir_types.CompilerIrFunction
+      (opt-gep-offset-test-run 6)]
+    [two-offset-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks two-offsets)]
+    [stranded : compiler_ir_types.CompilerIrFunction
+      (opt-gep-offset-test-run 7)]
+    [stranded-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks stranded)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function split)))
+        1]
+      ;; the derived base lands in the existing preheader (the entry block),
+      ;; and the body keeps its one Gep
+      [(not
+          (=
+            (opt-gep-offset-test-geps-in
+              split-blocks
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        2]
+      [(not
+          (=
+            (opt-gep-offset-test-geps-in
+              split-blocks
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        3]
+      [(not (opt-gep-offset-test-body-index-is-counter? split-blocks)) 4]
+      ;; one fresh var for the one derived base
+      [(not (= (compiler_optimize.opt-function-frame split) 25)) 5]
+      ;; a non-address consumer of the Add rejects the whole Add
+      [(not (opt-gep-offset-test-unchanged? 1)) 6]
+      ;; the addend would survive the rewrite and only one base pays for it
+      [(not (opt-gep-offset-test-unchanged? 2)) 7]
+      ;; the Gep base is loop variant: no preheader home for the derived base
+      [(not (opt-gep-offset-test-unchanged? 3)) 8]
+      ;; two bases DO pay for a surviving addend: one derived base each
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function shared)))
+        9]
+      [(not
+          (=
+            (opt-gep-offset-test-geps-in
+              shared-blocks
+              (compiler_ir_types.compiler-ir-label "entry"))
+            2))
+        10]
+      [(not (= (compiler_optimize.opt-function-frame shared) 26)) 11]
+      ;; a guard with two successors is not a preheader, so one is synthesized
+      ;; ahead of the header and the derived base lands there
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function synthesized)))
+        12]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count synthesized-blocks)
+            5))
+        13]
+      [(not
+          (=
+            (opt-gep-offset-test-geps-in
+              synthesized-blocks
+              (compiler_ir_types.compiler-ir-label "loop__preheader"))
+            1))
+        14]
+      ;; idempotence: the next pipeline iteration finds no Add left to split
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function twice)))
+        15]
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            bases
+            split-blocks
+            (compiler_optimize.opt-function-blocks twice)))
+        16]
+      ;; one array at two invariant offsets: a derived base each, carrying the
+      ;; two different offsets
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function two-offsets)))
+        17]
+      [(not
+          (=
+            (opt-gep-offset-test-geps-in
+              two-offset-blocks
+              (compiler_ir_types.compiler-ir-label "entry"))
+            2))
+        18]
+      [(not
+          (opt-gep-offset-test-derived-offsets-distinct?
+            two-offset-blocks
+            (compiler_ir_types.compiler-ir-label "entry")))
+        19]
+      [(not (= (compiler_optimize.opt-function-frame two-offsets) 26)) 20]
+      ;; a dead Cast of the Add is retired by the pipeline DCE, so it must not
+      ;; hold the split back
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function stranded)))
+        21]
+      [(not
+          (=
+            (opt-gep-offset-test-geps-in
+              stranded-blocks
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        22]
+      [(not (opt-gep-offset-test-body-index-is-counter? stranded-blocks)) 23]
+      [else 42])))
+
+(test
+  gep-offset-invariant-split
+  (test.assert-i64-eq
+    (compiler-optimize-gep-offset-self-test)
+    42
+    "invariant-offset Gep splitting hoists one derived base per (base, type), gates on all-uses and register pressure, synthesizes a missing preheader, and is idempotent"))
+
 (define (opt-gep-split-test-gep-count-from
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]

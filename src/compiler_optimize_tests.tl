@@ -2223,6 +2223,24 @@
       9]
     [(not (opt-aggregate-access-vector-growth-ok?)) 10]
     [(not (opt-aggregate-core-vector-growth-ok?)) 11]
+    [(not
+        (opt-aggregate-cross-block-candidates-rejected?
+          (opt-aggregate-cross-block-load-blocks)))
+      12]
+    [(not
+        (opt-aggregate-cross-block-candidates-rejected?
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (opt-aggregate-cross-block-load-blocks))))
+      13]
+    [(not
+        (opt-aggregate-cross-block-flatten-order-ok?
+          (opt-aggregate-cross-block-load-blocks)))
+      14]
+    [(not
+        (opt-aggregate-cross-block-flatten-order-ok?
+          (compiler_ir_types.compiler-ir-block-list-compact
+            (opt-aggregate-cross-block-load-blocks))))
+      15]
     [else 42]))
 
 (define (opt-aggregate-array-local-instrs) : compiler_ir_types.CompilerIrInstrList
@@ -2569,6 +2587,123 @@
                 (compiler_ir_types.CompilerIrValue.I64 0)))
             compiler_ir_types.CompilerIrInstrList.Nil))
         compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-aggregate-cross-block-load-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-aggregate-test-alloc)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            2
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.U8))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 10)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "next"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "next")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            3
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.U8))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              4
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 4)))
+              compiler_ir_types.CompilerIrInstrList.Nil))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-aggregate-cross-block-candidates-rejected?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (let
+    [program : compiler_ir_types.CompilerIrProgram
+      (compiler_ir_types.CompilerIrProgram.Program
+        compiler_ir_types.CompilerIrGlobalList.Nil
+        (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.CompilerIrFunction.Function
+            (opt-test-symbol "main")
+            compiler_ir_types.CompilerIrParamList.Nil
+            (compiler_ast_types.AstType.I64)
+            4
+            blocks)
+          compiler_ir_types.CompilerIrFunctionList.Nil)
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    [candidates : opt_aggregate_candidate_vec.Vec
+      (compiler_optimize.opt-aggregate-allocation-candidates
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        program)]
+    (= (compiler_optimize.opt-aggregate-candidate-list-count candidates) 0)))
+
+(define (opt-aggregate-cross-block-flatten-order-ok?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (let
+    [instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_optimize.opt-aggregate-flatten-blocks blocks)]
+    (and
+      (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 7)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+        [(compiler_ir_types.CompilerIrInstr.Call dst name _ _)
+          (and (= dst 1) (= name cbi.compiler-builtin-id-tl-alloc))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 1)
+        [(compiler_ir_types.CompilerIrInstr.Gep
+            dst
+            (compiler_ir_types.CompilerIrValue.Var src)
+            (compiler_ir_types.CompilerIrValue.I64 offset)
+            _)
+          (and (= dst 2) (= src 1) (= offset 0))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 2)
+        [(compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var ptr)
+            (compiler_ir_types.CompilerIrValue.I64 value)
+            _)
+          (and (= ptr 2) (= value 10))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 3)
+        [(compiler_ir_types.CompilerIrInstr.Jump label)
+          (compiler_ir_types.compiler-ir-symbol-eq?
+            label
+            (compiler_ir_types.compiler-ir-label "next"))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 4)
+        [(compiler_ir_types.CompilerIrInstr.Gep
+            dst
+            (compiler_ir_types.CompilerIrValue.Var src)
+            (compiler_ir_types.CompilerIrValue.I64 offset)
+            _)
+          (and (= dst 3) (= src 1) (= offset 0))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 5)
+        [(compiler_ir_types.CompilerIrInstr.Load
+            dst
+            (compiler_ir_types.CompilerIrValue.Var src)
+            _)
+          (and (= dst 4) (= src 3))]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 6)
+        [(compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var value)))
+          (= value 4)]
+        [_ false]))))
 
 (define (opt-count-load-dst-instrs
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -13387,6 +13522,155 @@
         sret-params
         enum-ty))))
 
+(define (opt-inline-dense-input-shape-ok?
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : bool
+  (and
+    (= (compiler_ir_types.compiler-ir-instr-list-count instrs) 3)
+    (match instrs
+      [(compiler_ir_types.CompilerIrInstrList.Cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            first-dst
+            (compiler_ir_types.CompilerIrValue.I64 first-value)
+            _)
+          rest)
+        (match (box-get rest)
+          [(compiler_ir_types.CompilerIrInstrList.Cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                second-dst
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var second-left)
+                (compiler_ir_types.CompilerIrValue.I64 second-right)
+                _)
+              rest2)
+            (match (box-get rest2)
+              [(compiler_ir_types.CompilerIrInstrList.Cons
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    final-dst
+                    (compiler_ir_types.CompilerIrValue.Var final-source)
+                    _)
+                  rest3)
+                (and
+                  (= first-dst 10)
+                  (= first-value 7)
+                  (= second-dst 11)
+                  (= second-left 10)
+                  (= second-right 5)
+                  (= final-dst 99)
+                  (= final-source 11)
+                  (match (box-get rest3)
+                    [(compiler_ir_types.CompilerIrInstrList.Nil) true]
+                    [_ false]))]
+              [_ false])]
+          [_ false])]
+      [_ false])))
+
+(define (compiler-optimize-inline-dense-input-ok?) : bool
+  (let
+    [callee-instrs : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          0
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            1
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 5)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 1)))
+            compiler_ir_types.CompilerIrInstrList.Nil)))]
+    [block : compiler_ir_types.CompilerIrBlock
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "dense_inline")
+        callee-instrs)]
+    [cons-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        block
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    [array-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-list-compact cons-blocks)]
+    [cons-seq : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_optimize.opt-inline-single-block-instrs cons-blocks)]
+    [array-seq : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_optimize.opt-inline-single-block-instrs array-blocks)]
+    [expanded-cons : compiler_ir_types.CompilerIrInstrList
+      (compiler_optimize.opt-inline-expand-instrs
+        cons-seq
+        99
+        (compiler_ast_types.AstType.I64)
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        0
+        10
+        "dense")]
+    [expanded-array : compiler_ir_types.CompilerIrInstrList
+      (compiler_optimize.opt-inline-expand-instrs
+        array-seq
+        99
+        (compiler_ast_types.AstType.I64)
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        0
+        10
+        "dense")]
+    [empty-block : compiler_ir_types.CompilerIrBlock
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "dense_empty")
+        compiler_ir_types.CompilerIrInstrList.Nil)]
+    [empty-seq : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_optimize.opt-inline-single-block-instrs
+        (compiler_ir_types.compiler-ir-block-cons
+          empty-block
+          compiler_ir_types.CompilerIrBlockList.Nil))]
+    [multi-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        block
+        (compiler_ir_types.compiler-ir-block-cons
+          empty-block
+          compiler_ir_types.CompilerIrBlockList.Nil))]
+    [multi-array-seq : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_optimize.opt-inline-single-block-instrs
+        (compiler_ir_types.compiler-ir-block-list-compact multi-blocks))]
+    [no-bounds : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-from-list callee-instrs)]
+    [with-bounds : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-from-list
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              1
+              (compiler_ir_types.CompilerIrValue.I64 2)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "dense_bounds.ok"))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.No))
+                compiler_ir_types.CompilerIrInstrList.Nil)))))]
+    (and
+      (= (compiler_ir_types.compiler-ir-instr-seq-count cons-seq) 3)
+      (= (compiler_ir_types.compiler-ir-instr-seq-count array-seq) 3)
+      (opt-inline-dense-input-shape-ok? expanded-cons)
+      (opt-inline-dense-input-shape-ok? expanded-array)
+      (= (compiler_ir_types.compiler-ir-instr-seq-count empty-seq) 0)
+      (= (compiler_ir_types.compiler-ir-instr-seq-count multi-array-seq) 0)
+      (not (compiler_optimize.opt-inline-instr-seq-has-bounds-check? no-bounds))
+      (compiler_optimize.opt-inline-instr-seq-has-bounds-check? with-bounds)
+      (not
+        (compiler_optimize.opt-inline-instr-seq-has-bounds-check?
+          (compiler_ir_types.compiler-ir-instr-seq-from-list
+            compiler_ir_types.CompilerIrInstrList.Nil))))))
+
 (define (compiler-optimize-inline-self-test) : i64
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
@@ -13581,6 +13865,9 @@
                     (unless
                       (compiler-optimize-inline-band-boundary-ok?)
                       (return 57))
+                    (unless
+                      (compiler-optimize-inline-dense-input-ok?)
+                      (return 58))
                     (unless
                       (compiler-optimize-inline-multi-call-ok?)
                       (return 30))
@@ -35474,6 +35761,198 @@
         6]
       [else 42])))
 
+;; --- dense LICM/induction insertion order witnesses -------------------------
+;; These fixtures use the destination as a compact position marker.  A Jump is
+;; encoded as -1, so the expected vectors pin both the inserted order and the
+;; original terminator/suffix boundaries without comparing unrelated payloads.
+(define (opt-dense-insertion-test-mov [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Mov
+    dst
+    (compiler_ir_types.CompilerIrValue.I64 dst)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-dense-insertion-test-code
+  [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Phi dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Jump _) -1]
+    [_ -2]))
+
+(define (opt-dense-insertion-test-seq-codes?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [expected : (Array i64)]
+  [count : i64]
+  [index : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (< index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+      (=
+        (opt-dense-insertion-test-code
+          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index))
+        (array-ref expected index))
+      (opt-dense-insertion-test-seq-codes? instrs expected count (+ index 1)))))
+
+(define (opt-dense-insertion-test-licm-original-with-term [term-label : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-dense-insertion-test-mov 10)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-dense-insertion-test-mov 11)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump term-label)
+        ;; Keep a deliberately unusual suffix after the first terminator: the
+        ;; dense insertion must preserve it exactly, as the old list path did.
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-dense-insertion-test-mov 12)
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-dense-insertion-test-licm-hoisted [first : i64] [second : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-dense-insertion-test-mov first)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-dense-insertion-test-mov second)
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-dense-insertion-test-licm-order-self-test) : i64
+  (let
+    [term-label : i64 (compiler_ir_types.compiler-ir-label "dense.licm.term")]
+    [with-term : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-from-list
+        (opt-dense-insertion-test-licm-original-with-term term-label))]
+    [inserted : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_optimize.opt-licm-insert-before-terminator-seq
+        (opt-dense-insertion-test-licm-hoisted 20 21)
+        with-term)]
+    [no-term : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-from-list
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-dense-insertion-test-mov 30)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-dense-insertion-test-mov 31)
+            compiler_ir_types.CompilerIrInstrList.Nil)))]
+    [appended : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_optimize.opt-licm-insert-before-terminator-seq
+        (opt-dense-insertion-test-licm-hoisted 40 41)
+        no-term)]
+    [expected-inserted : (Array i64) (array.make-array i64 6)]
+    [expected-appended : (Array i64) (array.make-array i64 4)]
+    (begin
+      (array-set! expected-inserted 0 10)
+      (array-set! expected-inserted 1 11)
+      (array-set! expected-inserted 2 20)
+      (array-set! expected-inserted 3 21)
+      (array-set! expected-inserted 4 -1)
+      (array-set! expected-inserted 5 12)
+      (array-set! expected-appended 0 30)
+      (array-set! expected-appended 1 31)
+      (array-set! expected-appended 2 40)
+      (array-set! expected-appended 3 41)
+      (cond
+        [(not (= (compiler_ir_types.compiler-ir-instr-seq-count inserted) 6)) 1]
+        [(not (= (compiler_ir_types.compiler-ir-instr-seq-count appended) 4)) 2]
+        [(not
+            (opt-dense-insertion-test-seq-codes? inserted expected-inserted 6 0))
+          3]
+        [(not
+            (opt-dense-insertion-test-seq-codes? appended expected-appended 4 0))
+          4]
+        [else 42]))))
+
+(define (opt-dense-insertion-test-induction-blocks
+  [preheader : i64]
+  [header : i64]
+  [exit : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      preheader
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-dense-insertion-test-mov 1)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump header)
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        header
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-dense-insertion-test-mov 2)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump exit)
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-dense-insertion-test-induction-result-ok?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Cons preheader rest)
+      (match (box-get rest)
+        [(compiler_ir_types.CompilerIrBlockList.Cons header _)
+          (and
+            (= (opt-block-instr-count preheader) 3)
+            (= (opt-block-instr-count header) 4)
+            (=
+              (opt-dense-insertion-test-code (opt-block-instr-at preheader 0))
+              1)
+            (=
+              (opt-dense-insertion-test-code (opt-block-instr-at preheader 1))
+              20)
+            (=
+              (opt-dense-insertion-test-code (opt-block-instr-at preheader 2))
+              -1)
+            (= (opt-dense-insertion-test-code (opt-block-instr-at header 0)) 30)
+            (= (opt-dense-insertion-test-code (opt-block-instr-at header 1)) 2)
+            (= (opt-dense-insertion-test-code (opt-block-instr-at header 2)) 40)
+            (= (opt-dense-insertion-test-code (opt-block-instr-at header 3)) -1))]
+        [_ false])]
+    [(compiler_ir_types.CompilerIrBlockList.Array _) false]
+    [_ false]))
+
+(define (opt-dense-insertion-test-induction-order-self-test) : i64
+  (let
+    [preheader : i64
+      (compiler_ir_types.compiler-ir-label "dense.induction.pre")]
+    [header : i64
+      (compiler_ir_types.compiler-ir-label "dense.induction.header")]
+    [exit : i64 (compiler_ir_types.compiler-ir-label "dense.induction.exit")]
+    [seed-instrs : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-dense-insertion-test-mov 20)
+        compiler_ir_types.CompilerIrInstrList.Nil)]
+    [phi-instrs : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          30
+          compiler_ir_types.CompilerIrPhiInputList.Nil
+          (compiler_ast_types.AstType.I64))
+        compiler_ir_types.CompilerIrInstrList.Nil)]
+    [next-instrs : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-dense-insertion-test-mov 40)
+        compiler_ir_types.CompilerIrInstrList.Nil)]
+    [cons-result : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-induction-insert-support-blocks
+        header
+        preheader
+        header
+        seed-instrs
+        phi-instrs
+        next-instrs
+        (opt-dense-insertion-test-induction-blocks preheader header exit))]
+    [array-result : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-induction-insert-support-blocks
+        header
+        preheader
+        header
+        seed-instrs
+        phi-instrs
+        next-instrs
+        (compiler_ir_types.compiler-ir-block-list-compact
+          (opt-dense-insertion-test-induction-blocks preheader header exit)))]
+    (cond
+      [(not (opt-dense-insertion-test-induction-result-ok? cons-result)) 1]
+      [(not (opt-dense-insertion-test-induction-result-ok? array-result)) 2]
+      [else 42])))
+
 ;; --- global-cell runtime witnesses -------------------------------------------
 ;;
 ;; Compiled like every other inline test; they pin the language semantics the
@@ -35539,6 +36018,20 @@
     (compiler-optimize-global-cell-pipeline-self-test)
     42
     "global-array loop versions once the descriptor loads become invariant SSA values"))
+
+(test
+  dense-licm-insertion-order
+  (test.assert-i64-eq
+    (opt-dense-insertion-test-licm-order-self-test)
+    42
+    "dense LICM insertion preserves prefix, fragment order, terminator, suffix, and append-at-end"))
+
+(test
+  dense-induction-insertion-order
+  (test.assert-i64-eq
+    (opt-dense-insertion-test-induction-order-self-test)
+    42
+    "dense induction support insertion preserves overlap order for Cons and compact Array block lists"))
 
 (test
   global-cell-runtime-loader
@@ -35612,3 +36105,10 @@
     (compiler-optimize-typed-fold-self-test)
     42
     "shift folding resolves and normalizes the RHS using its payload type"))
+
+(test
+  inline-dense-input
+  (test.assert-bool-eq
+    (compiler-optimize-inline-dense-input-ok?)
+    true
+    "inline extraction and expansion preserve dense order for Cons and compact Array inputs"))

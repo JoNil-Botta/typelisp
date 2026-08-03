@@ -15098,6 +15098,14 @@
       cases
       (opt-cfg-switch-seen-seed set (opt_string_i64_map.with-capacity 64)))))
 
+;; Only the five label-bearing forms above contribute an edge; every other
+;; instruction returns `set` unchanged. This walk therefore tests the variant tag
+;; in place -- one load off the instruction slot, no call, no label-set copy --
+;; and enters `opt-cfg-instr-successors` only for the forms whose arms it
+;; actually has. The arm list here is that function's arm list, so the fold is
+;; unchanged; skipping a non-bearing instruction skips only an identity step.
+;; Blocks average under eight instructions and about one in twelve bears an edge,
+;; so the call was overwhelmingly paid to be told "nothing".
 (define (opt-cfg-instr-seq-successors
   [set : OptLabelSet]
   [instrs : ir.CompilerIrInstrSeq]) : OptLabelSet
@@ -15109,7 +15117,18 @@
     (begin
       (while (< index count)
         (begin
-          (set! out (opt-cfg-instr-successors out (array-ref slots index)))
+          (match (array-ref slots index)
+            [(ir.CompilerIrInstr.Jump _)
+              (set! out (opt-cfg-instr-successors out (array-ref slots index)))]
+            [(ir.CompilerIrInstr.Branch _ _ _)
+              (set! out (opt-cfg-instr-successors out (array-ref slots index)))]
+            [(ir.CompilerIrInstr.TotalEnumBranch _ _ _)
+              (set! out (opt-cfg-instr-successors out (array-ref slots index)))]
+            [(ir.CompilerIrInstr.Switch _ _ _ _)
+              (set! out (opt-cfg-instr-successors out (array-ref slots index)))]
+            [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
+              (set! out (opt-cfg-instr-successors out (array-ref slots index)))]
+            [_ unit])
           (set! index (+ index 1))))
       out)))
 
@@ -15548,52 +15567,14 @@
         header
         body-labels))))
 
-(define (opt-cfg-natural-loop-successors
-  [blocks : ir.CompilerIrBlockList]
-  [pred-map : OptPredMap]
-  [reachable : OptLabelSet]
-  [doms : OptDomInfo]
-  [source-id : i64]
-  [source : i64]
-  [successors : OptLabelSet]
-  [tail : OptNaturalLoopList]) : OptNaturalLoopList
-  (match successors
-    [(OptLabelSet.Nil) tail]
-    [(OptLabelSet.Dense _ _)
-      (let
-        [header : i64 (opt-label-ref successors 0)]
-        [next : OptNaturalLoopList
-          (opt-cfg-natural-loop-successors
-            blocks
-            pred-map
-            reachable
-            doms
-            source-id
-            source
-            (opt-label-tail successors)
-            tail)]
-        (match (opt-cfg-index-id (struct-get doms index) header)
-          [(option_i64.Some header-id)
-            ;; `reachable` is the flattened form of this very index's
-            ;; `reachable` array (opt-cfg-index-reachable-labels builds one from
-            ;; the other), so testing the array at `header-id` decides exactly
-            ;; what scanning the set for `header` decided -- without the linear
-            ;; `string.eq` walk over every reachable label in the function.
-            (if (and
-              (array-ref
-                (struct-get (struct-get doms index) reachable)
-                header-id)
-              (opt-dom-info-dominates-id? doms header-id source-id))
-              (OptNaturalLoopList.Cons
-                (opt-natural-loop-build blocks pred-map reachable header source)
-                (box next))
-              next)]
-          [(option_i64.None) next]))]))
-
 ;; `remaining` starts as the very block list `doms`'s index was built from, and
 ;; `opt-cfg-index-build` numbers blocks in this walk order, so `source-id` is the
 ;; walk position. The range guard replaces the old missing-label arm: an id past
 ;; the indexed block count is exactly the case a label lookup would have missed.
+;; Edges come from that same index's successor CSR row instead of re-deriving the
+;; block's successor label set from its instruction stream -- see the row-order
+;; note on `opt-cfg-natural-loop-edges-csr`; this walk consumes the row exactly
+;; as the Array walk below does.
 (define (opt-cfg-natural-loop-blocks
   [all-blocks : ir.CompilerIrBlockList]
   [remaining : ir.CompilerIrBlockList]
@@ -15615,21 +15596,25 @@
                 reachable
                 doms
                 (+ source-id 1))]
-            [reachable-ids : (__tl_dyn-array bool)
-              (struct-get (struct-get doms index) reachable)]
+            [index : OptCfgIndex (struct-get doms index)]
+            [reachable-ids : (__tl_dyn-array bool) (struct-get index reachable)]
             (if (and
               (< source-id (array-length reachable-ids))
               (array-ref reachable-ids source-id))
-              (opt-cfg-natural-loop-successors
+              (opt-cfg-natural-loop-edges-csr
                 all-blocks
+                index
                 pred-map
                 reachable
                 doms
                 source-id
                 label
-                (opt-cfg-block-successors-with-next
-                  block
-                  (opt-cfg-entry-label (box-get rest)))
+                (array-ref
+                  (struct-get (struct-get index succs) offsets)
+                  source-id)
+                (array-ref
+                  (struct-get (struct-get index succs) offsets)
+                  (+ source-id 1))
                 tail)
               tail))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -15641,16 +15626,17 @@
         doms
         source-id)]))
 
-;; Allocation-free natural-loop scan for Array block lists: walks the block
-;; seq directly and reads each block's successor row from the context's CSR
-;; index instead of consing a seq->list copy and recomputing per-block
-;; successor sets from instructions. The CSR row holds exactly the
-;; deduplicated opt-cfg-block-successors-with-next set in reverse insertion
-;; order (opt-label-add prepends; opt-cfg-csr-fill-rows! reverses the row),
-;; so iterating blocks from last to first and each CSR row forward while
-;; front-consing emits loops in precisely the order the cons-list scan
-;; produced. Reachability and ids come from the same index the set scan
-;; consulted (the reachable set is built from this reachable array).
+;; Back-edge scan for one block, reading its successors from the context's CSR
+;; index instead of recomputing the block's successor set from its instruction
+;; stream. The CSR row holds exactly the deduplicated
+;; opt-cfg-block-successors-with-next set in reverse insertion order
+;; (opt-label-add prepends; opt-cfg-index-label-set-to-ids keeps label-set order
+;; and drops labels the index cannot resolve -- precisely the old missing-label
+;; arm; opt-cfg-csr-fill-rows! reverses the row), so visiting blocks from last to
+;; first and each CSR row forward while front-consing emits loops in precisely
+;; the order the label-set walk produced. Reachability and ids come from the same
+;; index that walk consulted (the reachable set is built from this reachable
+;; array).
 (define (opt-cfg-natural-loop-edges-csr
   [all-blocks : ir.CompilerIrBlockList]
   [index : OptCfgIndex]

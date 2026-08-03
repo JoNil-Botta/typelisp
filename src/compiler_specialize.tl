@@ -488,7 +488,7 @@
       with-declaration)))
 
 (define (spec-generated-context-diagnostic-with-owner
-  [owner : SpecOwnerContext]
+  [_owner : SpecOwnerContext]
   [diag : cdiag.CompilerDiagnostic]
   [generator : String]
   [item : String]
@@ -2049,7 +2049,7 @@
 ;; remains for serial/test callers; production normalization routes through
 ;; these workers so every expression/type read is resolved by the job owner.
 (define (gen-maybe-type-eq-with-owner
-  [owner : SpecOwnerContext]
+  [_owner : SpecOwnerContext]
   [env : ctfe.CtfeEnv]
   [a : ast.AstMaybeType]
   [b : ast.AstMaybeType]) : bool
@@ -2074,7 +2074,7 @@
     (ast.ast-expr-unspan-with-pools (spec-owner-pools owner) b)))
 
 (define (gen-param-eq-with-owner
-  [owner : SpecOwnerContext]
+  [_owner : SpecOwnerContext]
   [env : ctfe.CtfeEnv]
   [a : ast.AstParam]
   [b : ast.AstParam]) : bool
@@ -2117,7 +2117,7 @@
       (gen-param-list-eq-at-with-owner owner env (& a) (& b) len 0))))
 
 (define (gen-macro-param-eq-with-owner
-  [owner : SpecOwnerContext]
+  [_owner : SpecOwnerContext]
   [env : ctfe.CtfeEnv]
   [a : ast.AstMacroParam]
   [b : ast.AstMacroParam]) : bool
@@ -2160,7 +2160,7 @@
       (gen-macro-param-list-eq-at-with-owner owner env (& a) (& b) len 0))))
 
 (define (gen-field-def-eq-with-owner
-  [owner : SpecOwnerContext]
+  [_owner : SpecOwnerContext]
   [env : ctfe.CtfeEnv]
   [a : ast.AstFieldDef]
   [b : ast.AstFieldDef]) : bool
@@ -2199,7 +2199,7 @@
     (gen-field-list-eq-at-with-owner owner env (& a) (& b) 0)))
 
 (define (gen-variant-def-eq-with-owner
-  [owner : SpecOwnerContext]
+  [_owner : SpecOwnerContext]
   [env : ctfe.CtfeEnv]
   [a : ast.AstVariantDef]
   [b : ast.AstVariantDef]) : bool
@@ -2238,8 +2238,8 @@
     (gen-variant-list-eq-at-with-owner owner env (& a) (& b) 0)))
 
 (define (gen-fn-metadata-eq-with-owner
-  [owner : SpecOwnerContext]
-  [env : ctfe.CtfeEnv]
+  [_owner : SpecOwnerContext]
+  [_env : ctfe.CtfeEnv]
   [a : ast.AstFnMetadata]
   [b : ast.AstFnMetadata]) : bool
   (match a

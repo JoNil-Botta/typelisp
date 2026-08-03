@@ -3451,7 +3451,7 @@
     (begin
       (while (and (not grew?) (< iterations max-iterations))
         (let
-          [copied : String
+          [_copied : String
             (intern-compat-state-persistent-substring
               state
               source

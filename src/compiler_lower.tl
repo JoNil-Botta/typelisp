@@ -60627,152 +60627,147 @@
                   (compiler-lower-profile-finish "macro_handoff"))]
               [_macro-expand-profile-start : unit
                 (cfg compile-profile (compiler-lower-profile-start))]
-              (let
-                [macro-result : tc_core.ResultMacroExpand
-                  (tc_core.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
-                    load-state
-                    macro-program
-                    macro-paths
-                    committed-macro-pools
-                    source-names
-                    job-state
-                    stdlib-roots
-                    (lower-source-language-cfgs)
-                    intern-state)]
-                (begin
-                  (ci.intern-compat-state-capture-from-globals! intern-state)
-                  (match macro-result
-                    [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-lower-profile-finish "macro_expand"))
-                        (cfg
-                          compile-profile
-                          (compiler-lower-profile-pools
-                            "macro_expand"
-                            committed-macro-pools))
-                        (let
-                          [checked-detach? : bool
-                            lower-checked-dest-pools-active]
-                          [macro-changed? : bool
-                            (tc_core.macro-expand-program-structurally-changed?)]
-                          [retain-macro-source? : bool
-                            (and checked-detach? (not macro-changed?))]
-                          [detach-load-pools? : bool
-                            (and checked-detach? macro-changed?)]
-                          [_detach-profile-decision : unit
+              [macro-result : tc_core.ResultMacroExpand
+                (tc_core.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
+                  load-state
+                  macro-program
+                  macro-paths
+                  committed-macro-pools
+                  source-names
+                  job-state
+                  stdlib-roots
+                  (lower-source-language-cfgs)
+                  intern-state)]
+              (begin
+                (ci.intern-compat-state-capture-from-globals! intern-state)
+                (match macro-result
+                  [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-lower-profile-finish "macro_expand"))
+                      (cfg
+                        compile-profile
+                        (compiler-lower-profile-pools
+                          "macro_expand"
+                          committed-macro-pools))
+                      (let
+                        [checked-detach? : bool lower-checked-dest-pools-active]
+                        [macro-changed? : bool
+                          (tc_core.macro-expand-program-structurally-changed?)]
+                        [retain-macro-source? : bool
+                          (and checked-detach? (not macro-changed?))]
+                        [detach-load-pools? : bool
+                          (and checked-detach? macro-changed?)]
+                        [_detach-profile-decision : unit
+                          (cfg
+                            compile-profile
+                            (begin
+                              (compiler-lower-profile-counter
+                                "macro_detach.fast_path_hits"
+                                (if retain-macro-source?
+                                  1
+                                  0))
+                              (compiler-lower-profile-counter
+                                "macro_detach.fast_path_misses"
+                                (if detach-load-pools?
+                                  1
+                                  0))
+                              (compiler-lower-profile-counter
+                                "macro_detach.change_reasons"
+                                (tc_core.macro-expand-program-structural-change-reasons-value))))]
+                        [_finalize-profile-start : unit
+                          (if checked-detach?
+                            (cfg compile-profile (compiler-lower-profile-start))
+                            unit)]
+                        [detached-compaction : ast.AstProgramCompaction
+                          (if detach-load-pools?
+                            (ast.ast-program-compact-with-pools
+                              committed-macro-pools
+                              (compiler-lower-checked-dest-pools-current)
+                              expanded)
+                            (ast.AstProgramCompaction
+                              (if retain-macro-source?
+                                macro-program
+                                expanded)
+                              committed-macro-pools))]
+                        [detached-program : ast.AstProgram
+                          (match detached-compaction
+                            [(ast.AstProgramCompaction out _) out])]
+                        [detached-pools : ast.AstNodePoolContext
+                          (match detached-compaction
+                            [(ast.AstProgramCompaction _ out-pools) out-pools])]
+                        [detached-entry-path : String
+                          (if detach-load-pools?
+                            (lower-copy-string-into-pools
+                              macro-entry-path
+                              detached-pools)
+                            macro-entry-path)]
+                        [detached-cache-scope : String
+                          (if detach-load-pools?
+                            (lower-copy-string-into-pools
+                              macro-cache-scope
+                              detached-pools)
+                            macro-cache-scope)]
+                        [detached-paths : ast.AstDeclPathList
+                          (if detach-load-pools?
+                            (lower-copy-paths-into-pools
+                              expanded-paths
+                              detached-pools)
+                            (if retain-macro-source?
+                              macro-paths
+                              expanded-paths))]
+                        [_clear-source-derived-caches : unit
+                          (if checked-detach?
+                            (lower-clear-macro-expanded-source-caches-into-pools!
+                              detached-pools)
+                            unit)]
+                        [_commit-detached-pools : unit
+                          (cond
+                            [detach-load-pools?
+                              (lower-checked-dest-pools-commit! detached-pools)]
+                            [retain-macro-source?
+                              (lower-checked-dest-pools-retain-macro-source!
+                                detached-pools)]
+                            [else unit])]
+                        [committed-pools : ast.AstNodePoolContext
+                          (if checked-detach?
+                            (compiler-lower-checked-dest-pools-current)
+                            detached-pools)]
+                        [_disable-late-detach : unit
+                          (if checked-detach?
+                            (lower-checked-dest-pools-deactivate-after-commit!)
+                            unit)]
+                        [_finalize-profile-finish : unit
+                          (if checked-detach?
                             (cfg
                               compile-profile
-                              (begin
-                                (compiler-lower-profile-counter
-                                  "macro_detach.fast_path_hits"
-                                  (if retain-macro-source?
-                                    1
-                                    0))
-                                (compiler-lower-profile-counter
-                                  "macro_detach.fast_path_misses"
-                                  (if detach-load-pools?
-                                    1
-                                    0))
-                                (compiler-lower-profile-counter
-                                  "macro_detach.change_reasons"
-                                  (tc_core.macro-expand-program-structural-change-reasons-value))))]
-                          [_finalize-profile-start : unit
-                            (if checked-detach?
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-start))
-                              unit)]
-                          [detached-compaction : ast.AstProgramCompaction
-                            (if detach-load-pools?
-                              (ast.ast-program-compact-with-pools
-                                committed-macro-pools
-                                (compiler-lower-checked-dest-pools-current)
-                                expanded)
-                              (ast.AstProgramCompaction
-                                (if retain-macro-source?
-                                  macro-program
-                                  expanded)
-                                committed-macro-pools))]
-                          [detached-program : ast.AstProgram
-                            (match detached-compaction
-                              [(ast.AstProgramCompaction out _) out])]
-                          [detached-pools : ast.AstNodePoolContext
-                            (match detached-compaction
-                              [(ast.AstProgramCompaction _ out-pools) out-pools])]
-                          [detached-entry-path : String
-                            (if detach-load-pools?
-                              (lower-copy-string-into-pools
-                                macro-entry-path
-                                detached-pools)
-                              macro-entry-path)]
-                          [detached-cache-scope : String
-                            (if detach-load-pools?
-                              (lower-copy-string-into-pools
-                                macro-cache-scope
-                                detached-pools)
-                              macro-cache-scope)]
-                          [detached-paths : ast.AstDeclPathList
-                            (if detach-load-pools?
-                              (lower-copy-paths-into-pools
-                                expanded-paths
-                                detached-pools)
-                              (if retain-macro-source?
-                                macro-paths
-                                expanded-paths))]
-                          [_clear-source-derived-caches : unit
-                            (if checked-detach?
-                              (lower-clear-macro-expanded-source-caches-into-pools!
-                                detached-pools)
-                              unit)]
-                          [_commit-detached-pools : unit
-                            (cond
-                              [detach-load-pools?
-                                (lower-checked-dest-pools-commit!
-                                  detached-pools)]
-                              [retain-macro-source?
-                                (lower-checked-dest-pools-retain-macro-source!
-                                  detached-pools)]
-                              [else unit])]
-                          [committed-pools : ast.AstNodePoolContext
-                            (if checked-detach?
-                              (compiler-lower-checked-dest-pools-current)
-                              detached-pools)]
-                          [_disable-late-detach : unit
-                            (if checked-detach?
-                              (lower-checked-dest-pools-deactivate-after-commit!)
-                              unit)]
-                          [_finalize-profile-finish : unit
-                            (if checked-detach?
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-finish "macro_finalize"))
-                              unit)]
-                          (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
-                            load-state
-                            prefix-cache
-                            job-state
-                            detached-entry-path
-                            detached-program
-                            detached-paths
-                            mode
-                            stdlib-roots
-                            detached-cache-scope
-                            committed-pools
-                            source-names
-                            intern-state)))]
-                    [(tc_core.ResultMacroExpand.Err diag)
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-lower-profile-finish "macro_expand"))
-                        (ResultCompilerLower.Err
-                          (box
-                            (cdiag.compiler-diagnostic-copy
-                              (lower-diagnostic-with-path
-                                (box-get diag)
-                                macro-entry-path)))))]))))]
+                              (compiler-lower-profile-finish "macro_finalize"))
+                            unit)]
+                        (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
+                          load-state
+                          prefix-cache
+                          job-state
+                          detached-entry-path
+                          detached-program
+                          detached-paths
+                          mode
+                          stdlib-roots
+                          detached-cache-scope
+                          committed-pools
+                          source-names
+                          intern-state)))]
+                  [(tc_core.ResultMacroExpand.Err diag)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-lower-profile-finish "macro_expand"))
+                      (ResultCompilerLower.Err
+                        (box
+                          (cdiag.compiler-diagnostic-copy
+                            (lower-diagnostic-with-path
+                              (box-get diag)
+                              macro-entry-path)))))])))]
           [(spec.ResultGenProgramWithPaths.Err diag)
             (begin
               (cfg

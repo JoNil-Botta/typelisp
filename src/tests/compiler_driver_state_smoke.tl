@@ -382,7 +382,9 @@
                                 (=
                                   before-decoy-structural-count
                                   after-decoy-structural-count)
-                                (= b-structural-id after-decoy-structural-id)
+                                (=
+                                  before-decoy-structural-id
+                                  after-decoy-structural-id)
                                 (string.eq
                                   before-decoy-structural-rendered
                                   after-decoy-structural-rendered)

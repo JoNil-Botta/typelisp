@@ -25,23 +25,20 @@
             [grown-head : i64 (raw-head owner)]
             [public-grown : arena.Arena (arena.current)]
             (begin
-              (if (and
-                (not (= grown-head (arena.raw-handle owner)))
-                (= (arena.raw-handle public-grown) (arena.raw-handle owner)))
-                unit
+              (unless
+                (and
+                  (not (= grown-head (arena.raw-handle owner)))
+                  (= (arena.raw-handle public-grown) (arena.raw-handle owner)))
                 (return 1))
               ; Passing the physical child to set! must canonicalize to root.
               (unsafe
                 (arena.set! (arena.Arena grown-head)))
-              (if (not
-                (= (arena.raw-handle (arena.current)) (arena.raw-handle owner)))
-                (return 1)
-                unit)
+              (unless
+                (= (arena.raw-handle (arena.current)) (arena.raw-handle owner))
+                (return 1))
               (unsafe
                 (arena.rewind mark))
-              (if (not (= (raw-head owner) (arena.raw-handle owner)))
-                (return 1)
-                unit)
+              (unless (= (raw-head owner) (arena.raw-handle owner)) (return 1))
               (tl_alloc (cast 8 : u64))
               (unsafe
                 (begin

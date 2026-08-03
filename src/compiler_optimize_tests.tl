@@ -17231,6 +17231,341 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (opt-thread-test-function name blocks)))
 
+;; --- forwarding-block straightening ----------------------------------------
+;; Both arms are trampolines and neither destination carries a phi, so both
+;; edges thread. The `true` arm goes through two of them, which is the chain
+;; case: the destination's phis are repaired against the LAST forwarding block,
+;; not the first. No trampoline here is followed by its own target, so none of
+;; them is an already-elided `jmp`.
+(define (opt-cfg-straighten-plain-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "sf-then")
+          (compiler_ir_types.compiler-ir-label "sf-else"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "sf-then")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "sf-mid"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "sf-else")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "sf-no"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "sf-yes")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 1)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "sf-mid")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "sf-yes"))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "sf-no")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 0)))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; The arith_loop shape: a jump-only block sitting immediately before its own
+;; target. The backend already elides that `jmp`, and both `opt-loop-preheaders`
+;; and the M-F loop-constant hoist need the block to stay, so the pass must
+;; decline and report no change.
+(define (opt-cfg-straighten-fallthrough-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "sk-pre")
+          (compiler_ir_types.compiler-ir-label "sk-out"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "sk-pre")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "sk-body"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "sk-body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 1)))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "sk-out")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; Only the `true` arm is a trampoline; the `false` arm does real work, so it
+;; stays a predecessor. The join's phi therefore has to survive with the
+;; threaded origin substituted for the removed block.
+(define (opt-cfg-straighten-phi-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "sp-then")
+          (compiler_ir_types.compiler-ir-label "sp-else"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "sp-then")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "sp-join"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "sp-else")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              1
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "sp-join"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "sp-join")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Phi
+                2
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ir_types.compiler-ir-label "sp-then")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Var 1)
+                    (compiler_ir_types.compiler-ir-label "sp-else")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 2)))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; The `it-slice-eq?` trap, minimised: both arms are trampolines onto the same
+;; join and the join's phi gives them different values. Threading both would
+;; need two `entry` inputs in one phi, so the second arm must be refused.
+(define (opt-cfg-straighten-duplicate-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "sd-then")
+          (compiler_ir_types.compiler-ir-label "sd-else"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "sd-then")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "sd-join"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "sd-else")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "sd-join"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        ;; Unreachable spacer: it keeps both arms off `sd-join`'s lexical front
+        ;; door, so neither is skipped as an already-elided `jmp` and the
+        ;; duplicate-predecessor rail is what decides the second arm.
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "sd-spacer")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 2)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "sd-join")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Phi
+                  1
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.I64 1)
+                    (compiler_ir_types.compiler-ir-label "sd-then")
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 0)
+                      (compiler_ir_types.compiler-ir-label "sd-else")
+                      (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 1)))
+                  (compiler_ir_types.CompilerIrInstrList.Nil))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; Switch coverage: the default edge and one case edge thread to different
+;; destinations, while a second case aimed at the destination the first case
+;; already claimed is refused. The default is decided first, so `accepted` has
+;; to carry across both the default and the case walk.
+(define (opt-cfg-straighten-switch-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Switch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          1
+          (compiler_ir_types.compiler-ir-switch-case-cons
+            1
+            (compiler_ir_types.compiler-ir-label "ss-a")
+            (compiler_ir_types.compiler-ir-switch-case-cons
+              2
+              (compiler_ir_types.compiler-ir-label "ss-b")
+              compiler_ir_types.CompilerIrSwitchCaseList.Nil))
+          (compiler_ir_types.compiler-ir-label "ss-d"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "ss-a")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "ss-x"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "ss-b")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "ss-x"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "ss-d")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "ss-y"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "ss-x")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 1)))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "ss-y")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 2)))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; No block is a bare `jump`, so the candidate scan must decline before the
+;; clone, the CFG index and the use census are ever built.
+(define (opt-cfg-straighten-inert-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "si-yes")
+          (compiler_ir_types.compiler-ir-label "si-no"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "si-yes")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.I64 1)))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "si-no")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; The pass verifies its own result and hands back the input when the verify
+;; rejects, so these blocks have to be verifiable to begin with: the branch
+;; condition is a declared parameter rather than a free var.
+(define (opt-cfg-straighten-test-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "straighten")
+    (opt-sccp-cond-params)
+    (compiler_ast_types.AstType.I64)
+    16
+    blocks))
+
+(define (opt-cfg-straighten-run
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_optimize.OptFunctionPassResult
+  (compiler_optimize.opt-cfg-straighten-final-pass
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-cfg-straighten-test-function blocks)))
+
+;; A switch index is an integer, so this variant declares an i64 parameter
+;; where the branch cases declare a bool one.
+(define (opt-cfg-straighten-tag-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "tag"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.CompilerIrParamList.Nil)))
+
+(define (opt-cfg-straighten-run-switch
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_optimize.OptFunctionPassResult
+  (compiler_optimize.opt-cfg-straighten-final-pass
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "straighten-switch")
+      (opt-cfg-straighten-tag-params)
+      (compiler_ast_types.AstType.I64)
+      16
+      blocks)))
+
 (define (opt-cfg-switch-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.compiler-ir-block
@@ -30140,6 +30475,58 @@
         (opt-thread-successor-phi-blocks))]
     [thread-successor-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks thread-successor-function)]
+    [straighten-plain-result : compiler_optimize.OptFunctionPassResult
+      (opt-cfg-straighten-run (opt-cfg-straighten-plain-blocks))]
+    [straighten-plain-function : compiler_ir_types.CompilerIrFunction
+      (match straighten-plain-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+    [straighten-plain-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks straighten-plain-function)]
+    [straighten-plain-changed : bool
+      (match straighten-plain-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [straighten-phi-result : compiler_optimize.OptFunctionPassResult
+      (opt-cfg-straighten-run (opt-cfg-straighten-phi-blocks))]
+    [straighten-phi-function : compiler_ir_types.CompilerIrFunction
+      (match straighten-phi-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+    [straighten-phi-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks straighten-phi-function)]
+    [straighten-phi-changed : bool
+      (match straighten-phi-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [straighten-duplicate-result : compiler_optimize.OptFunctionPassResult
+      (opt-cfg-straighten-run (opt-cfg-straighten-duplicate-blocks))]
+    [straighten-duplicate-function : compiler_ir_types.CompilerIrFunction
+      (match straighten-duplicate-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+    [straighten-duplicate-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks straighten-duplicate-function)]
+    [straighten-duplicate-changed : bool
+      (match straighten-duplicate-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [straighten-inert-changed : bool
+      (match (opt-cfg-straighten-run (opt-cfg-straighten-inert-blocks))
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [straighten-fallthrough-result : compiler_optimize.OptFunctionPassResult
+      (opt-cfg-straighten-run (opt-cfg-straighten-fallthrough-blocks))]
+    [straighten-fallthrough-changed : bool
+      (match straighten-fallthrough-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [straighten-fallthrough-blocks : compiler_ir_types.CompilerIrBlockList
+      (match straighten-fallthrough-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _)
+          (compiler_optimize.opt-function-blocks func)])]
+    [straighten-switch-result : compiler_optimize.OptFunctionPassResult
+      (opt-cfg-straighten-run-switch (opt-cfg-straighten-switch-blocks))]
+    [straighten-switch-function : compiler_ir_types.CompilerIrFunction
+      (match straighten-switch-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+    [straighten-switch-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks straighten-switch-function)]
+    [straighten-switch-changed : bool
+      (match straighten-switch-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
     (begin
       (unless
         (= (compiler_ir_types.compiler-ir-block-list-count constant-if) 2)
@@ -30459,6 +30846,130 @@
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function thread-successor-function)))
         (return 57))
+      ;; Straightening, plain: both trampolines go, the `true` arm resolves
+      ;; through a two-block chain, and only entry plus the two returns remain.
+      (unless
+        (and
+          straighten-plain-changed
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              straighten-plain-blocks)
+            3)
+          (not
+            (opt-block-list-has-label?
+              straighten-plain-blocks
+              (compiler_ir_types.compiler-ir-label "sf-then")))
+          (not
+            (opt-block-list-has-label?
+              straighten-plain-blocks
+              (compiler_ir_types.compiler-ir-label "sf-mid")))
+          (not
+            (opt-block-list-has-label?
+              straighten-plain-blocks
+              (compiler_ir_types.compiler-ir-label "sf-else")))
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function straighten-plain-function)))
+        (return 63))
+      ;; Straightening with phi repair: the removed arm's input is replaced by
+      ;; one under the threaded origin, carrying the value it forwarded, and the
+      ;; arm that does real work keeps its own input.
+      (unless
+        (and
+          straighten-phi-changed
+          (not
+            (opt-block-list-has-label?
+              straighten-phi-blocks
+              (compiler_ir_types.compiler-ir-label "sp-then")))
+          (opt-block-list-has-label?
+            straighten-phi-blocks
+            (compiler_ir_types.compiler-ir-label "sp-else"))
+          (= (opt-count-phi-blocks straighten-phi-blocks) 1)
+          (opt-bool-branch-first-phi-has-label?
+            straighten-phi-blocks
+            (compiler_ir_types.compiler-ir-label "sp-join")
+            (compiler_ir_types.compiler-ir-label "entry"))
+          (opt-bool-branch-first-phi-has-label?
+            straighten-phi-blocks
+            (compiler_ir_types.compiler-ir-label "sp-join")
+            (compiler_ir_types.compiler-ir-label "sp-else"))
+          (not
+            (opt-bool-branch-first-phi-has-label?
+              straighten-phi-blocks
+              (compiler_ir_types.compiler-ir-label "sp-join")
+              (compiler_ir_types.compiler-ir-label "sp-then")))
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function straighten-phi-function)))
+        (return 64))
+      ;; Duplicate-predecessor rail: the first arm threads, the second is
+      ;; refused and keeps its block, so `sd-join` still has one phi input per
+      ;; predecessor. Threading both would need two `entry` inputs in one phi.
+      (unless
+        (and
+          straighten-duplicate-changed
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              straighten-duplicate-blocks)
+            3)
+          (not
+            (opt-block-list-has-label?
+              straighten-duplicate-blocks
+              (compiler_ir_types.compiler-ir-label "sd-then")))
+          (opt-block-list-has-label?
+            straighten-duplicate-blocks
+            (compiler_ir_types.compiler-ir-label "sd-else"))
+          (= (opt-count-phi-blocks straighten-duplicate-blocks) 1)
+          (opt-bool-branch-first-phi-has-label?
+            straighten-duplicate-blocks
+            (compiler_ir_types.compiler-ir-label "sd-join")
+            (compiler_ir_types.compiler-ir-label "entry"))
+          (opt-bool-branch-first-phi-has-label?
+            straighten-duplicate-blocks
+            (compiler_ir_types.compiler-ir-label "sd-join")
+            (compiler_ir_types.compiler-ir-label "sd-else"))
+          (not
+            (opt-bool-branch-first-phi-has-label?
+              straighten-duplicate-blocks
+              (compiler_ir_types.compiler-ir-label "sd-join")
+              (compiler_ir_types.compiler-ir-label "sd-then")))
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              straighten-duplicate-function)))
+        (return 65))
+      (unless (not straighten-inert-changed) (return 66))
+      ;; Already-elided rail: a trampoline directly in front of its own target
+      ;; is left alone, so `opt-loop-preheaders` output and the backend's
+      ;; loop-constant hoist keep the block shape they require.
+      (unless
+        (and
+          (not straighten-fallthrough-changed)
+          (opt-block-list-has-label?
+            straighten-fallthrough-blocks
+            (compiler_ir_types.compiler-ir-label "sk-pre")))
+        (return 67))
+      ;; Switch edges: the default and the first case thread to their own
+      ;; destinations, the second case is refused because the first already
+      ;; claimed that destination, and its block therefore stays.
+      (unless
+        (and
+          straighten-switch-changed
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              straighten-switch-blocks)
+            4)
+          (not
+            (opt-block-list-has-label?
+              straighten-switch-blocks
+              (compiler_ir_types.compiler-ir-label "ss-a")))
+          (not
+            (opt-block-list-has-label?
+              straighten-switch-blocks
+              (compiler_ir_types.compiler-ir-label "ss-d")))
+          (opt-block-list-has-label?
+            straighten-switch-blocks
+            (compiler_ir_types.compiler-ir-label "ss-b"))
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function straighten-switch-function)))
+        (return 68))
       42)))
 
 (define (compiler-optimize-fixed-point-self-test) : i64

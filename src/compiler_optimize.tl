@@ -26262,6 +26262,518 @@
                         (OptFunctionPassResult.Result func false)]))
                   (OptFunctionPassResult.Result func false))])]))]))
 
+;; --- forwarding-block straightening ----------------------------------------
+;;
+;; `if` / `cond` / `while` lowering gives every arm its own block, so an arm
+;; that does no work of its own still reaches the join through a block that is
+;; nothing but `jump join`. Nothing removed them. `opt-cfg-simplify-blocks`
+;; folds constant branches and drops unreachable blocks, but it never redirects
+;; a live predecessor, and `opt-thread-apply-edge!` above only fires once a
+;; merge's branch condition is already known constant. They are lowering
+;; artifacts, not something a late pass reintroduces -- they are present in the
+;; `--opt-level 0` dump -- and they survive to the backend, where each one costs
+;; a taken `jmp` every time it executes: 4.48M of them in gvn_table's
+;; `gvn-facts-slot` probe loop and 15.23M in intern_table's `it-slice-eq?` byte
+;; loop, in both cases on the hottest path in the benchmark. The backend already
+;; elides a `jmp` to the next block and already inverts a branch to fall through,
+;; so removing the block is the whole fix; no emitter change is involved.
+;;
+;; The rails are narrow on purpose. A block forwards only when it is EXACTLY one
+;; `Jump`, which rules out phis and side effects in a single test, and a
+;; destination is accepted only when its phis already carry an input for the last
+;; forwarding block on the chain. That input is the value the new predecessor
+;; inherits, and `opt-thread-repair-target-phis!` installs it under the new
+;; predecessor's label.
+;;
+;; The rewrite that must be refused is the diamond whose two arms are both
+;; trampolines onto the same join: threading both would give the join two inputs
+;; under one predecessor label, and they generally disagree -- in `it-slice-eq?`
+;; they are the incoming `%72` and a literal `false`. Each terminator therefore
+;; carries the set of labels its earlier edges have already been pointed at, and
+;; a repeat is left alone. The first arm threads, the second keeps its block, and
+;; the loop still loses its `jmp`.
+;;
+;; `TotalEnumBranch` / `TotalEnumSwitch` are deliberately not rewritten: the
+;; latter's `trap-label` is provenance rather than a CFG edge, so leaving both
+;; shapes alone keeps this pass out of that invariant entirely.
+;; The block a chain of `jump`-only blocks finally lands on, plus the last
+;; forwarding block on the way -- the label whose phi input the new predecessor
+;; takes over.
+(defenum OptCfgStraightenChain
+  (No)
+  (Some i64 i64))
+
+(define (opt-cfg-straighten-block-forward [block : ir.CompilerIrBlock]) : i64
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (if (not (= (ir.compiler-ir-instr-seq-count instrs) 1))
+        (ir.compiler-ir-label-none)
+        (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          [(ir.CompilerIrInstr.Jump target) target]
+          [_ (ir.compiler-ir-label-none)]))]))
+
+;; A forwarding block whose target is the block right after it in the list costs
+;; nothing: the backend already elides that `jmp` and falls through
+;; (`compiler-backend-jump-target-is-fallthrough?`). Removing it therefore wins
+;; no instruction, and it can lose several. Two backend features want exactly
+;; that shape -- a jump-only block sitting immediately before the code it
+;; guards. `opt-loop-preheaders` emits one per loop, and M-F loop-hoisted
+;; backend constants (compiler_backend.tl:17419) only fire for a loop "whose
+;; single out-of-loop predecessor P lies before the loop and ends in an
+;; unconditional Jump to the header". Straightening arith_loop's
+;; `while_body.1__preheader` away cost the two hoisted `movabsq` a register home
+;; and put them back inside the 16x-unrolled body: +40% on that benchmark, and
+;; +36.8% each on opt_arithmetic_loops and opt_function_calls. Skipping
+;; already-fallthrough blocks preserves every preheader and keeps every arm
+;; trampoline, because an arm's join never sits directly behind it.
+;;
+;; Block ids are assigned in list order by `opt-cfg-index-fill-labels!`, so
+;; id + 1 is the lexically next block.
+(define (opt-cfg-straighten-falls-through?
+  [index : OptCfgIndex]
+  [label : i64]
+  [target : i64]) : bool
+  (match (opt-cfg-index-id index label)
+    [(option_i64.None) false]
+    [(option_i64.Some id) (= (opt-cfg-index-label index (+ id 1)) target)]))
+
+;; The entry block stays reachable as block 0 no matter what happens to its
+;; predecessors, so straightening through it would strand it rather than remove
+;; it. Leave it out of the forwarding set.
+(define (opt-cfg-straighten-label-forward
+  [index : OptCfgIndex]
+  [entry-label : i64]
+  [label : i64]) : i64
+  (if (= label entry-label)
+    (ir.compiler-ir-label-none)
+    (match (opt-cfg-index-find-block index label)
+      [(OptMaybeBlock.No) (ir.compiler-ir-label-none)]
+      [(OptMaybeBlock.Some block)
+        (let
+          [target : i64 (opt-cfg-straighten-block-forward block)]
+          (if (opt-cfg-straighten-falls-through? index label target)
+            (ir.compiler-ir-label-none)
+            target))])))
+
+;; Bounded by the block count, so a ring of trampolines -- unreachable in
+;; practice but representable -- reports no chain instead of spinning.
+(define (opt-cfg-straighten-resolve
+  [index : OptCfgIndex]
+  [entry-label : i64]
+  [label : i64]
+  [via : i64]
+  [fuel : i64]) : OptCfgStraightenChain
+  (if (<= fuel 0)
+    (OptCfgStraightenChain.No)
+    (let
+      [next : i64 (opt-cfg-straighten-label-forward index entry-label label)]
+      (if (= next (ir.compiler-ir-label-none))
+        (if (= via (ir.compiler-ir-label-none))
+          (OptCfgStraightenChain.No)
+          (OptCfgStraightenChain.Some label via))
+        (opt-cfg-straighten-resolve index entry-label next label (- fuel 1))))))
+
+(define (opt-cfg-straighten-cases-contain?
+  [cases : ir.CompilerIrSwitchCaseList]
+  [label : i64]) : bool
+  (match (ir.compiler-ir-switch-case-list-force-cons cases)
+    [(ir.CompilerIrSwitchCaseList.Nil) false]
+    [(ir.CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(ir.CompilerIrSwitchCase.Case _ case-label)
+          (if (= case-label label)
+            true
+            (opt-cfg-straighten-cases-contain? (box-get rest) label))])]
+    [(ir.CompilerIrSwitchCaseList.Array seq)
+      (opt-cfg-straighten-cases-contain?
+        (ir.compiler-ir-switch-case-seq-to-list seq)
+        label)]))
+
+(define (opt-cfg-straighten-instr-contains?
+  [instr : ir.CompilerIrInstr]
+  [label : i64]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Jump target) (= target label)]
+    [(ir.CompilerIrInstr.Branch _ true-label false-label)
+      (or (= true-label label) (= false-label label))]
+    [(ir.CompilerIrInstr.Switch _ _ cases default-label)
+      (or
+        (= default-label label)
+        (opt-cfg-straighten-cases-contain? cases label))]
+    [_ false]))
+
+;; A one-slot cell. The edge rewriter sits several calls inside a switch-case
+;; walk, and a flag is cheaper to thread down than a second return value.
+(define (opt-cfg-straighten-mark! [flag : (__tl_dyn-array i64)]) : unit
+  (array-set! flag 0 1))
+
+;; Retarget one successor edge, or hand back the label unchanged. `original` is
+;; the terminator as it stood before this block was touched, and `accepted`
+;; holds the labels its earlier edges have already been pointed at; a
+;; destination named by either would make this block a duplicate predecessor of
+;; that destination, which a phi input list cannot express.
+(define (opt-cfg-straighten-edge
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [pred-label : i64]
+  [original : ir.CompilerIrInstr]
+  [accepted : OptLabelSet]
+  [flag : (__tl_dyn-array i64)]
+  [successor : i64]
+  [fuel : i64]) : i64
+  (match (opt-cfg-straighten-resolve
+    index
+    entry-label
+    successor
+    (ir.compiler-ir-label-none)
+    fuel)
+    [(OptCfgStraightenChain.No) successor]
+    [(OptCfgStraightenChain.Some target via)
+      (if (or
+        (= target successor)
+        (= target pred-label)
+        (opt-label-contains accepted target)
+        (opt-cfg-straighten-instr-contains? original target))
+        successor
+        (match (opt-cfg-index-find-block index target)
+          [(OptMaybeBlock.No) successor]
+          [(OptMaybeBlock.Some target-block)
+            (match target-block
+              [(ir.CompilerIrBlock.Block _ target-instrs)
+                (if (not
+                  (opt-thread-target-phis-repairable? target-instrs 0 via))
+                  successor
+                  (begin
+                    (opt-thread-repair-target-phis!
+                      target-instrs
+                      0
+                      uses
+                      via
+                      pred-label)
+                    (opt-cfg-straighten-mark! flag)
+                    target))])]))]))
+
+;; The default edge is decided first so the case walk can see it in `accepted`.
+(define (opt-cfg-straighten-switch
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [pred-label : i64]
+  [original : ir.CompilerIrInstr]
+  [flag : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]
+  [base : i64]
+  [cases : ir.CompilerIrSwitchCaseList]
+  [default-label : i64]
+  [fuel : i64]) : ir.CompilerIrInstr
+  (let
+    [accepted : OptLabelSet (OptLabelSet.Nil)]
+    [next-default : i64
+      (opt-cfg-straighten-edge
+        index
+        uses
+        entry-label
+        pred-label
+        original
+        accepted
+        flag
+        default-label
+        fuel)]
+    [seq : ir.CompilerIrSwitchCaseSeq
+      (ir.compiler-ir-switch-case-seq-from-list cases)]
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) (struct-get seq slots)]
+    [count : i64 (struct-get seq len)]
+    [out : (__tl_dyn-array ir.CompilerIrSwitchCase)
+      (array.make-array ir.CompilerIrSwitchCase count)]
+    [pos : i64 0]
+    (begin
+      (unless
+        (= next-default default-label)
+        (set! accepted (opt-label-add accepted next-default)))
+      (while (< pos count)
+        (begin
+          (match (array-ref slots pos)
+            [(ir.CompilerIrSwitchCase.Case tag case-label)
+              (let
+                [next-label : i64
+                  (opt-cfg-straighten-edge
+                    index
+                    uses
+                    entry-label
+                    pred-label
+                    original
+                    accepted
+                    flag
+                    case-label
+                    fuel)]
+                (begin
+                  (unless
+                    (= next-label case-label)
+                    (set! accepted (opt-label-add accepted next-label)))
+                  (array-set!
+                    out
+                    pos
+                    (ir.CompilerIrSwitchCase.Case tag next-label))))])
+          (set! pos (+ pos 1))))
+      (ir.CompilerIrInstr.Switch
+        value
+        base
+        (ir.CompilerIrSwitchCaseList.Array
+          (ir.CompilerIrSwitchCaseSeq out count))
+        next-default))))
+
+(define (opt-cfg-straighten-terminator
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [pred-label : i64]
+  [flag : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]
+  [fuel : i64]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Jump target)
+      (ir.CompilerIrInstr.Jump
+        (opt-cfg-straighten-edge
+          index
+          uses
+          entry-label
+          pred-label
+          instr
+          (OptLabelSet.Nil)
+          flag
+          target
+          fuel))]
+    [(ir.CompilerIrInstr.Branch cond true-label false-label)
+      (let
+        [next-true : i64
+          (opt-cfg-straighten-edge
+            index
+            uses
+            entry-label
+            pred-label
+            instr
+            (OptLabelSet.Nil)
+            flag
+            true-label
+            fuel)]
+        [accepted : OptLabelSet
+          (if (= next-true true-label)
+            (OptLabelSet.Nil)
+            (opt-label-add (OptLabelSet.Nil) next-true))]
+        [next-false : i64
+          (opt-cfg-straighten-edge
+            index
+            uses
+            entry-label
+            pred-label
+            instr
+            accepted
+            flag
+            false-label
+            fuel)]
+        (ir.CompilerIrInstr.Branch cond next-true next-false))]
+    [(ir.CompilerIrInstr.Switch value base cases default-label)
+      (opt-cfg-straighten-switch
+        index
+        uses
+        entry-label
+        pred-label
+        instr
+        flag
+        value
+        base
+        cases
+        default-label
+        fuel)]
+    [_ instr]))
+
+;; The working list is a clone, so writing the terminator back unconditionally
+;; costs nothing and keeps the change report in one place: `flag`.
+(define (opt-cfg-straighten-block!
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [flag : (__tl_dyn-array i64)]
+  [fuel : i64]
+  [block : ir.CompilerIrBlock]) : unit
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (= count 0)
+          unit
+          (let
+            [slot : i64 (- count 1)]
+            (ir.compiler-ir-instr-seq-set!
+              instrs
+              slot
+              (opt-cfg-straighten-terminator
+                index
+                uses
+                entry-label
+                label
+                flag
+                (ir.compiler-ir-instr-seq-ref instrs slot)
+                fuel)))))]))
+
+(define (opt-cfg-straighten-round!
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [flag : (__tl_dyn-array i64)]
+  [fuel : i64]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (opt-cfg-straighten-block! index uses entry-label flag fuel block)
+        (opt-cfg-straighten-round!
+          index
+          uses
+          entry-label
+          flag
+          fuel
+          (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [slot : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (while (< slot count)
+          (begin
+            (opt-cfg-straighten-block!
+              index
+              uses
+              entry-label
+              flag
+              fuel
+              (ir.compiler-ir-block-seq-ref seq slot))
+            (set! slot (+ slot 1)))))]))
+
+;; Also serves as "the label of the block after this one" when applied to a
+;; list tail.
+(define (opt-cfg-straighten-head-label [blocks : ir.CompilerIrBlockList]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.compiler-ir-label-none)]
+    [(ir.CompilerIrBlockList.Cons block _)
+      (match block
+        [(ir.CompilerIrBlock.Block label _) label])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (if (= (ir.compiler-ir-block-seq-count seq) 0)
+        (ir.compiler-ir-label-none)
+        (match (ir.compiler-ir-block-seq-ref seq 0)
+          [(ir.CompilerIrBlock.Block label _) label]))]))
+
+(define (opt-cfg-straighten-candidate-block?
+  [block : ir.CompilerIrBlock]
+  [next-label : i64]) : bool
+  (let
+    [target : i64 (opt-cfg-straighten-block-forward block)]
+    (and
+      (not (= target (ir.compiler-ir-label-none)))
+      (not (= target next-label)))))
+
+;; One cheap linear scan keeps the clone, the CFG index and the use census off
+;; every function with nothing to straighten. It applies the same lexical-next
+;; test the rewrite does, so a function whose only trampolines are loop
+;; preheaders -- the common shape -- costs one walk and nothing else.
+(define (opt-cfg-straighten-blocks-have-candidate?
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (opt-cfg-straighten-candidate-block?
+        block
+        (opt-cfg-straighten-head-label (box-get rest)))
+        true
+        (opt-cfg-straighten-blocks-have-candidate? (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [slot : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (begin
+          (while (< slot count)
+            (if (opt-cfg-straighten-candidate-block?
+              (ir.compiler-ir-block-seq-ref seq slot)
+              (if (< (+ slot 1) count)
+                (match (ir.compiler-ir-block-seq-ref seq (+ slot 1))
+                  [(ir.CompilerIrBlock.Block label _) label])
+                (ir.compiler-ir-label-none)))
+              (return true)
+              (set! slot (+ slot 1))))
+          false))]))
+
+;; The rewrite mutates instruction sequences, so it works on a deep clone and
+;; hands back the untouched input list when it changes nothing. `blocks` may
+;; still be aliased by the pipeline head. The trailing `opt-cfg-simplify-blocks`
+;; is what actually deletes the blocks this pass orphaned, and what drops the
+;; phi inputs they leave behind: `opt-cfg-filter-clean-blocks` filters every phi
+;; against the destination's REACHABLE predecessor set, so an input from a
+;; forwarding block that still has a predecessor of its own correctly survives.
+(define (opt-cfg-straighten-forwarding-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]) : OptBlockListPassResult
+  (if (not (opt-cfg-straighten-blocks-have-candidate? blocks))
+    (OptBlockListPassResult.Result blocks false)
+    (let
+      [work : ir.CompilerIrBlockList (opt-bool-branch-clone-blocks blocks)]
+      [index : OptCfgIndex (opt-cfg-index-build work)]
+      (if (not (opt-cfg-index-labels-unique? index))
+        (OptBlockListPassResult.Result blocks false)
+        (let
+          [uses : (__tl_dyn-array i64)
+            (opt-collect-blocks-uses-array frame work)]
+          [flag : (__tl_dyn-array i64) (array.make-array i64 1)]
+          [entry-label : i64 (opt-cfg-straighten-head-label work)]
+          [fuel : i64 (+ (ir.compiler-ir-block-list-count work) 1)]
+          (begin
+            (array-set! flag 0 0)
+            (opt-cfg-straighten-round! index uses entry-label flag fuel work)
+            (if (= (array-ref flag 0) 0)
+              (OptBlockListPassResult.Result blocks false)
+              (OptBlockListPassResult.Result
+                (opt-cfg-simplify-blocks work)
+                true))))))))
+
+(define (opt-cfg-straighten-final-pass
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (match (opt-cfg-straighten-forwarding-blocks blocks frame)
+        [(OptBlockListPassResult.Result next-blocks changed)
+          (if (not changed)
+            (OptFunctionPassResult.Result
+              (compiler-opt-debug-observe-function
+                type-segment-bases
+                "cfg_straighten"
+                func)
+              false)
+            (let
+              [candidate : ir.CompilerIrFunction
+                (ir.CompilerIrFunction.Function
+                  name
+                  params
+                  ret-ty
+                  frame
+                  next-blocks)]
+              (match (opt-verify-function candidate)
+                [(ResultCompilerOptimizeVerify.Ok)
+                  (OptFunctionPassResult.Result
+                    (compiler-opt-debug-observe-function
+                      type-segment-bases
+                      "cfg_straighten"
+                      candidate)
+                    true)]
+                [(ResultCompilerOptimizeVerify.Err _)
+                  (OptFunctionPassResult.Result
+                    (compiler-opt-debug-observe-function
+                      type-segment-bases
+                      "cfg_straighten"
+                      func)
+                    false)])))])]))
+
 ;; --- sparse conditional constant propagation -------------------------------
 ;;
 ;; SCCP v1 runs after the local scalar simplifier. It keeps a small scalar
@@ -56227,9 +56739,23 @@
                     (opt-licm-unswitch-final type-segment-bases final))]
                 [unswitch-changed : bool
                   (not (opt-function-eq type-segment-bases final unswitched))]
-                (OptFunctionPassResult.Result
-                  unswitched
-                  (or fixed-changed if-convert-changed unswitch-changed)))])]))))
+                ;; Last position in the pipeline on purpose: the arm blocks this
+                ;; removes are lowering artifacts, but versioning, unrolling and
+                ;; unswitching all clone blocks after the last CFG cleanup, so
+                ;; running anywhere earlier would leave their copies behind.
+                (match (opt-cfg-straighten-final-pass
+                  type-segment-bases
+                  unswitched)
+                  [(OptFunctionPassResult.Result
+                      straightened
+                      straighten-changed)
+                    (OptFunctionPassResult.Result
+                      straightened
+                      (or
+                        fixed-changed
+                        if-convert-changed
+                        unswitch-changed
+                        straighten-changed))]))])]))))
 
 (define (optimize-function-with-level-and-summaries
   [pools : ast.AstNodePoolContext]

@@ -2266,19 +2266,81 @@
         (opt-collect-value-uses-array items value)
         (opt-collect-phi-uses-array items (box-get rest)))]))
 
+;; Same tag-chain economics as `opt-instr-def-var` (see the note there): this
+;; `match` lowers to a linear compare chain, so arm position is cost. In an
+;; opt2 self-compile this primitive runs ~34M times and the declaration order
+;; put `Alloc` -- the single most frequent shape, and non-using, so it fell
+;; through to the catch-all -- at the end of a 50-comparison walk, pushing the
+;; average query to 29.3 comparisons. Arms are ordered by measured dynamic
+;; frequency (4.2 comparisons average on the same compile), with explicit
+;; no-use arms for the hot non-using shapes (Alloc,
+;; Jump, LaneId) that previously reached the same answer through the catch-all.
+;; Variant patterns over one enum are disjoint, so reordering cannot change
+;; which arm matches.
 (define (opt-collect-instr-uses-array
   [items : (__tl_dyn-array i64)]
   [instr : ir.CompilerIrInstr]) : unit
   (match instr
+    [(ir.CompilerIrInstr.Alloc _ _) unit]
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items offset))]
     [(ir.CompilerIrInstr.Mov _ src _) (opt-collect-value-uses-array items src)]
+    [(ir.CompilerIrInstr.Call _ _ args _)
+      (opt-collect-call-args-uses-array items args)]
+    [(ir.CompilerIrInstr.Load _ src _) (opt-collect-value-uses-array items src)]
+    [(ir.CompilerIrInstr.StorePtr ptr value _)
+      (begin
+        (opt-collect-value-uses-array items ptr)
+        (opt-collect-value-uses-array items value))]
+    [(ir.CompilerIrInstr.Branch cond _ _)
+      (opt-collect-value-uses-array items cond)]
     [(ir.CompilerIrInstr.BinOp _ _ l r _)
       (begin
         (opt-collect-value-uses-array items l)
         (opt-collect-value-uses-array items r))]
+    [(ir.CompilerIrInstr.Return maybe)
+      (match maybe
+        [(ir.CompilerIrMaybeValue.Some value)
+          (opt-collect-value-uses-array items value)]
+        [(ir.CompilerIrMaybeValue.No) unit])]
+    [(ir.CompilerIrInstr.AddrOf _ src) (opt-used-array-add items src)]
+    [(ir.CompilerIrInstr.Jump _) unit]
+    [(ir.CompilerIrInstr.CopyBytes dst src _)
+      (begin
+        (opt-collect-value-uses-array items dst)
+        (opt-collect-value-uses-array items src))]
+    [(ir.CompilerIrInstr.Phi _ inputs _)
+      (opt-collect-phi-uses-array items inputs)]
+    [(ir.CompilerIrInstr.Cast _ src _ _)
+      (opt-collect-value-uses-array items src)]
+    [(ir.CompilerIrInstr.BoundsCheck index length _)
+      (begin
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items length))]
+    [(ir.CompilerIrInstr.TailCall _ args _)
+      (opt-collect-call-args-uses-array items args)]
     [(ir.CompilerIrInstr.UnOp _ _ src _)
       (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.Call _ _ args _)
-      (opt-collect-call-args-uses-array items args)]
+    ;; Register-group ops use their operands (Pack: each word; Word: src).
+    [(ir.CompilerIrInstr.Word _ src _ _)
+      (opt-collect-value-uses-array items src)]
+    [(ir.CompilerIrInstr.Pack _ words _)
+      (opt-collect-value-list-uses-array items words)]
+    [(ir.CompilerIrInstr.Store _ value _)
+      (opt-collect-value-uses-array items value)]
+    [(ir.CompilerIrInstr.Switch index _ _ _)
+      (opt-collect-value-uses-array items index)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
+      (opt-collect-value-uses-array items index)]
+    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-collect-value-uses-array items cond)]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _)
+      (opt-collect-value-uses-array items src)]
+    [(ir.CompilerIrInstr.LaneId _ _ _) unit]
+    [(ir.CompilerIrInstr.Splat _ value _ _)
+      (opt-collect-value-uses-array items value)]
     [(ir.CompilerIrInstr.CallIndirect _ func args _)
       (begin
         (opt-collect-value-uses-array items func)
@@ -2303,6 +2365,10 @@
           (opt-collect-value-uses-array items base)
           (opt-collect-value-uses-array items func)
           (opt-collect-call-args-uses-array items args)))]
+    [(ir.CompilerIrInstr.TailCallIndirect func args _)
+      (begin
+        (opt-collect-value-uses-array items func)
+        (opt-collect-call-args-uses-array items args))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
         [active-mask (struct-get (box-get payload-box) active-mask)]
@@ -2310,34 +2376,15 @@
         (begin
           (opt-collect-value-uses-array items active-mask)
           (opt-collect-spmd-call-args-uses-array items args)))]
-    [(ir.CompilerIrInstr.TailCall _ args _)
-      (opt-collect-call-args-uses-array items args)]
-    [(ir.CompilerIrInstr.Store _ value _)
-      (opt-collect-value-uses-array items value)]
-    [(ir.CompilerIrInstr.AddrOf _ src) (opt-used-array-add items src)]
-    [(ir.CompilerIrInstr.Gep _ base offset _)
-      (begin
-        (opt-collect-value-uses-array items base)
-        (opt-collect-value-uses-array items offset))]
-    [(ir.CompilerIrInstr.Load _ src _) (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.StorePtr ptr value _)
-      (begin
-        (opt-collect-value-uses-array items ptr)
-        (opt-collect-value-uses-array items value))]
-    [(ir.CompilerIrInstr.CopyBytes dst src _)
-      (begin
-        (opt-collect-value-uses-array items dst)
-        (opt-collect-value-uses-array items src))]
-    [(ir.CompilerIrInstr.BoundsCheck index length _)
-      (begin
-        (opt-collect-value-uses-array items index)
-        (opt-collect-value-uses-array items length))]
-    [(ir.CompilerIrInstr.Cast _ src _ _)
-      (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.Bitcast _ src _ _)
-      (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.Splat _ value _ _)
-      (opt-collect-value-uses-array items value)]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [mask (struct-get (box-get payload-box) mask)]
+        [on-true (struct-get (box-get payload-box) on-true)]
+        [on-false (struct-get (box-get payload-box) on-false)]
+        (begin
+          (opt-collect-value-uses-array items mask)
+          (opt-collect-value-uses-array items on-true)
+          (opt-collect-value-uses-array items on-false)))]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
         [lhs (struct-get (box-get payload-box) lhs)]
@@ -2369,15 +2416,6 @@
       (opt-collect-value-uses-array items src)]
     [(ir.CompilerIrInstr.MaskReduce _ _ src _)
       (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [mask (struct-get (box-get payload-box) mask)]
-        [on-true (struct-get (box-get payload-box) on-true)]
-        [on-false (struct-get (box-get payload-box) on-false)]
-        (begin
-          (opt-collect-value-uses-array items mask)
-          (opt-collect-value-uses-array items on-true)
-          (opt-collect-value-uses-array items on-false)))]
     [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
       (begin
         (opt-collect-value-uses-array items base)
@@ -2449,30 +2487,6 @@
       (opt-collect-value-uses-array items index)]
     [(ir.CompilerIrInstr.Syscall _ args)
       (opt-collect-call-args-uses-array items args)]
-    [(ir.CompilerIrInstr.Branch cond _ _)
-      (opt-collect-value-uses-array items cond)]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
-      (opt-collect-value-uses-array items cond)]
-    [(ir.CompilerIrInstr.Return maybe)
-      (match maybe
-        [(ir.CompilerIrMaybeValue.Some value)
-          (opt-collect-value-uses-array items value)]
-        [(ir.CompilerIrMaybeValue.No) unit])]
-    [(ir.CompilerIrInstr.Phi _ inputs _)
-      (opt-collect-phi-uses-array items inputs)]
-    ;; Register-group ops use their operands (Pack: each word; Word: src).
-    [(ir.CompilerIrInstr.Pack _ words _)
-      (opt-collect-value-list-uses-array items words)]
-    [(ir.CompilerIrInstr.Word _ src _ _)
-      (opt-collect-value-uses-array items src)]
-    [(ir.CompilerIrInstr.TailCallIndirect func args _)
-      (begin
-        (opt-collect-value-uses-array items func)
-        (opt-collect-call-args-uses-array items args))]
-    [(ir.CompilerIrInstr.Switch index _ _ _)
-      (opt-collect-value-uses-array items index)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
-      (opt-collect-value-uses-array items index)]
     [_ unit]))
 
 ;; Decrement the operand use counts an instruction contributed. Called when DCE
@@ -9818,19 +9832,62 @@
         (array-set! set var true)
         true))))
 
+;; Instruction-tag dispatch order matters here: a `match` over a payload enum
+;; lowers to a linear tag compare chain, so an arm's position is its cost, and
+;; anything routed to the trailing catch-all pays the whole chain. This is one
+;; of the two hottest primitives in an opt2 self-compile (~70M calls), and the
+;; declaration-ordered arm list made the average query walk 11.3 comparisons
+;; because the terminators and memory writers -- Branch/Return/Jump/StorePtr,
+;; which are non-defining and so hit the catch-all -- are among the most
+;; frequent shapes in real IR.
+;;
+;; The arms below are ordered by measured dynamic frequency (4.2 comparisons
+;; average on the same compile), and every hot non-defining shape gets an
+;; explicit `None` arm near the front instead of falling through ~35
+;; comparisons to reach the same answer. Variant patterns
+;; over one enum are disjoint, so reordering them cannot change which arm
+;; matches; the explicit `None` arms return exactly what the catch-all returned
+;; for those tags. Rare vector/mask/SPMD forms stay at the back, and the shapes
+;; deliberately left in the catch-all (indirect and C-ABI calls, vector and
+;; predicated stores, TailCallIndirect) keep answering `None` exactly as
+;; before.
 (define (opt-instr-def-var [instr : ir.CompilerIrInstr]) : option_i64.Option
   (match instr
-    [(ir.CompilerIrInstr.Mov dst _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Alloc dst _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.AddrOf dst _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Gep dst _ _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.Load dst _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.Cast dst _ _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.Bitcast dst _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Mov dst _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Call dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.BinOp dst _ _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Load dst _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Branch _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.StorePtr _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.Return _) (option_i64.None)]
+    [(ir.CompilerIrInstr.AddrOf dst _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Jump _) (option_i64.None)]
+    [(ir.CompilerIrInstr.Phi dst _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.CopyBytes _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.Cast dst _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.BoundsCheck _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.TailCall _ _ _) (option_i64.None)]
     [(ir.CompilerIrInstr.UnOp dst _ _ _) (option_i64.Some dst)]
+    ;; Pack/Word define their dst like any scalar op. Without these arms
+    ;; the verifier saw every use of a register-group word as use-before-def
+    ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
+    [(ir.CompilerIrInstr.Word dst _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Pack dst _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.Store _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.TotalEnumBranch _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.Switch _ _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (option_i64.None)]
+    [(ir.CompilerIrInstr.Bitcast dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.LaneId dst _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Splat dst _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.SpmdCall payload-box)
+      (let
+        [result (struct-get (box-get payload-box) result)]
+        (match result
+          [(ir.CompilerIrSpmdCallResult.Unit) (option_i64.None)]
+          [(ir.CompilerIrSpmdCallResult.Value dst _ _) (option_i64.Some dst)]))]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
         [dst (struct-get (box-get payload-box) dst)]
@@ -9871,19 +9928,6 @@
     [(ir.CompilerIrInstr.CpuId dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Xgetbv dst _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Syscall dst _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.Call dst _ _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [result (struct-get (box-get payload-box) result)]
-        (match result
-          [(ir.CompilerIrSpmdCallResult.Unit) (option_i64.None)]
-          [(ir.CompilerIrSpmdCallResult.Value dst _ _) (option_i64.Some dst)]))]
-    [(ir.CompilerIrInstr.Phi dst _ _) (option_i64.Some dst)]
-    ;; Pack/Word define their dst like any scalar op. Without these arms
-    ;; the verifier saw every use of a register-group word as use-before-def
-    ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
-    [(ir.CompilerIrInstr.Pack dst _ _) (option_i64.Some dst)]
-    [(ir.CompilerIrInstr.Word dst _ _ _) (option_i64.Some dst)]
     [_ (option_i64.None)]))
 
 (define (opt-instr-def-position [instr : ir.CompilerIrInstr] [pos : i64]) : i64

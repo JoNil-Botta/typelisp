@@ -3359,7 +3359,7 @@
 ;; older scopes ignore later values written into shared spare capacity, while
 ;; growth copies the live prefix and keeps those older snapshots valid.
 (defstruct LintNameSet
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 (defstruct LintPendingAssignment
@@ -3403,12 +3403,12 @@
     items
     (let
       [n : i64 (struct-get items len)]
-      [slots : (Array String) (struct-get items slots)]
+      [slots : (__tl_dyn-array String) (struct-get items slots)]
       (begin
         (if (< n (array-length slots))
           unit
           (let
-            [bigger : (Array String)
+            [bigger : (__tl_dyn-array String)
               (make-array String (lint-grown-capacity (array-length slots)))]
             [index : i64 0]
             (begin

@@ -969,7 +969,7 @@
     uris
     (let
       [n : i64 (lsp-diagnostic-uris-len uris)]
-      [slots : (Array String) (struct-get uris slots)]
+      [slots : (__tl_dyn-array String) (struct-get uris slots)]
       (begin
         (if (< n (array-length slots))
           unit
@@ -979,7 +979,7 @@
               (if (< old-cap 4)
                 4
                 (* old-cap 2))]
-            [bigger : (Array String) (make-array String new-cap)]
+            [bigger : (__tl_dyn-array String) (make-array String new-cap)]
             [index : i64 0]
             (begin
               (while (< index n)
@@ -8446,7 +8446,7 @@
   [uris : lsp_vector_families.LspDiagnosticUris]) : lsp_vector_families.LspDiagnosticUris
   (let
     [n : i64 (lsp-diagnostic-uris-len uris)]
-    [slots : (Array String) (make-array String n)]
+    [slots : (__tl_dyn-array String) (make-array String n)]
     [index : i64 0]
     (begin
       (while (< index n)

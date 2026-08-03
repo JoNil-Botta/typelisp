@@ -3,11 +3,14 @@ set -eu
 
 # measure-typecheck-prefix-cache.sh - report typecheck prefix-cache stats.
 #
-# The script exercises the batch-shaped workloads that should benefit from the
-# in-process prefix snapshot cache:
-#   1. repeated stdlib-import compile batch
-#   2. one selfhost compile-manifest batch chunk
-#   3. repeated doctest typecheck batch
+# The script measures the in-process prefix snapshot cache across batch-shaped
+# workloads. The compile-batch rows are informational controls: code-generation
+# typechecking currently bypasses prefix snapshot lookup when clone-root and/or
+# surface semantic observations must be collected. The doctest batch is the
+# cache-active production workload whose repeated shared imports must hit:
+#   1. repeated stdlib-import compile batch (informational control)
+#   2. one selfhost compile-manifest batch chunk (informational control)
+#   3. repeated doctest typecheck batch (cache-active regression)
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -142,7 +145,7 @@ doctest_batch=$(write_doctest_batch)
 
 run_report \
     repeated-stdlib-import \
-    1 \
+    0 \
     "$COMPILER" compile --batch "$stdlib_batch" \
     --stdlib-root "$ROOT/stdlib" \
     --prefix-cache-stats

@@ -5275,16 +5275,20 @@
       "paddingRight"
       (json.JsonBool true))))
 
-(define (lsp-inlay-build [text : String] [start-line : i64] [end-line : i64]) : json.JsonSeq
+(define (lsp-inlay-build
+  [inlay-state : tc.TcInlayHintState]
+  [text : String]
+  [start-line : i64]
+  [end-line : i64]) : json.JsonSeq
   (let
-    [size : i64 (tc.tc-inlay-hints-size)]
+    [size : i64 (tc.tc-inlay-hints-size-for-state inlay-state)]
     [i : i64 0]
     [acc : json.JsonSeq (json.list-empty)]
     (begin
       (while (< i size)
         (let
-          [line1 : i64 (tc.tc-inlay-hint-line-at i)]
-          [col1 : i64 (tc.tc-inlay-hint-col-at i)]
+          [line1 : i64 (tc.tc-inlay-hint-line-at-for-state inlay-state i)]
+          [col1 : i64 (tc.tc-inlay-hint-col-at-for-state inlay-state i)]
           [line0 : i64 (- line1 1)]
           [off : i64 (lsp-offset-at-byte-position text line0 (- col1 1))]
           (begin
@@ -5301,7 +5305,7 @@
                     text
                     line1
                     col1
-                    (tc.tc-inlay-hint-type-at i))
+                    (tc.tc-inlay-hint-type-at-for-state inlay-state i))
                   acc))
               unit)
             (set! i (+ i 1)))))
@@ -5312,25 +5316,30 @@
   [uri : String]
   [range : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : unit
+  [stdlib-roots : lsp_svec.Vec]
+  [job-state : tc.TcJobState]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
       (let
         [start-line : i64 (lsp-inlay-range-line range "start" 0)]
         [end-line : i64 (lsp-inlay-range-line range "end" 1000000000)]
+        [inlay-state : tc.TcInlayHintState
+          (tc.tc-job-state-inlay-hints job-state)]
         (begin
-          (tc.tc-inlay-hints-enable!)
-          (match (compiler_check_core.compiler-check-source-with-roots-and-cfg
+          (tc.tc-inlay-hints-enable-for-state! inlay-state)
+          (match (compiler_check_core.compiler-check-source-with-roots-and-cfg-and-job-state
             path
             text
             stdlib-roots
-            (lsp-language-cfgs))
+            (lsp-language-cfgs)
+            job-state)
             [(compiler_check_core.ResultCompilerCheck.Ok _) unit]
             [(compiler_check_core.ResultCompilerCheck.Err _) unit])
           (let
-            [hints : json.JsonSeq (lsp-inlay-build text start-line end-line)]
+            [hints : json.JsonSeq
+              (lsp-inlay-build inlay-state text start-line end-line)]
             (begin
-              (tc.tc-inlay-hints-disable!)
+              (tc.tc-inlay-hints-disable-for-state! inlay-state)
               (lsp-write-response id (lsp-json-array hints))))))]
     [(LspDocumentLookup.Missing)
       (lsp-write-response id (lsp-json-array (json.list-empty)))]))
@@ -5339,7 +5348,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : unit
+  [stdlib-roots : lsp_svec.Vec]
+  [job-state : tc.TcJobState]) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get params (& td-key))
@@ -5350,7 +5360,7 @@
               [range-key : String "range"]
               (match (json.object-get params (& range-key))
                 [(json.JsonFound range)
-                  (lsp-inlay-respond id uri range docs stdlib-roots)]
+                  (lsp-inlay-respond id uri range docs stdlib-roots job-state)]
                 [(json.JsonMissing)
                   (lsp-write-response id (lsp-json-array (json.list-empty)))]))]
           [(LspJsonText.Missing)
@@ -9022,19 +9032,20 @@
                 (LspDocumentHandleResult.Continue docs))]))))))
 
 (define (lsp-nearest-inlay-hint-index
+  [inlay-state : tc.TcInlayHintState]
   [text : String]
   [line1 : i64]
   [col1 : i64]) : i64
   (let
-    [size : i64 (tc.tc-inlay-hints-size)]
+    [size : i64 (tc.tc-inlay-hints-size-for-state inlay-state)]
     [i : i64 0]
     [best-idx : i64 -1]
     [best-dist : i64 999999999]
     (begin
       (while (< i size)
         (let
-          [hint-line : i64 (tc.tc-inlay-hint-line-at i)]
-          [hint-col : i64 (tc.tc-inlay-hint-col-at i)]
+          [hint-line : i64 (tc.tc-inlay-hint-line-at-for-state inlay-state i)]
+          [hint-col : i64 (tc.tc-inlay-hint-col-at-for-state inlay-state i)]
           [d-line : i64
             (if (< hint-line line1)
               (- line1 hint-line)
@@ -9068,7 +9079,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  [stdlib-roots : lsp_svec.Vec]
+  [job-state : tc.TcJobState]) : LspDocumentHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -9083,20 +9095,23 @@
                 (lsp-byte-line-col-at-offset text position-off)]
               [line1 : i64 (struct-get byte-lc line)]
               [col1 : i64 (struct-get byte-lc col)]
+              [inlay-state : tc.TcInlayHintState
+                (tc.tc-job-state-inlay-hints job-state)]
               (begin
-                (tc.tc-inlay-hints-enable!)
-                (match (compiler_check_core.compiler-check-source-with-roots-and-cfg
+                (tc.tc-inlay-hints-enable-for-state! inlay-state)
+                (match (compiler_check_core.compiler-check-source-with-roots-and-cfg-and-job-state
                   path
                   text
                   stdlib-roots
-                  (lsp-language-cfgs))
+                  (lsp-language-cfgs)
+                  job-state)
                   [(compiler_check_core.ResultCompilerCheck.Ok _) unit]
                   [(compiler_check_core.ResultCompilerCheck.Err _) unit])
                 (let
                   [found-idx : i64
-                    (lsp-nearest-inlay-hint-index text line1 col1)]
+                    (lsp-nearest-inlay-hint-index inlay-state text line1 col1)]
                   (begin
-                    (tc.tc-inlay-hints-disable!)
+                    (tc.tc-inlay-hints-disable-for-state! inlay-state)
                     (if (= found-idx -1)
                       ;; Fallback: try to find explicit type annotation
                       (let
@@ -9128,7 +9143,9 @@
                             (LspDocumentHandleResult.Continue docs))))
                       (let
                         [found-type : String
-                          (tc.tc-inlay-hint-type-at found-idx)]
+                          (tc.tc-inlay-hint-type-at-for-state
+                            inlay-state
+                            found-idx)]
                         (begin
                           (lsp-write-response
                             id
@@ -9877,7 +9894,8 @@
 (define (lsp-handle-document-message
   [message : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  [stdlib-roots : lsp_svec.Vec]
+  [job-state : tc.TcJobState]) : LspDocumentHandleResult
   (match (lsp-json-string-field message "method")
     [(LspJsonText.Ok method)
       (let
@@ -10057,7 +10075,12 @@
                       [params-key : String "params"]
                       (match (json.object-get message (& params-key))
                         [(json.JsonFound params)
-                          (lsp-handle-inlay id params docs stdlib-roots)]
+                          (lsp-handle-inlay
+                            id
+                            params
+                            docs
+                            stdlib-roots
+                            job-state)]
                         [(json.JsonMissing)
                           (lsp-write-response
                             id
@@ -10156,7 +10179,12 @@
                   (arena.tl_arena_set scratch))
                 (set!
                   tool-result
-                  (lsp-handle-tool-message! method message docs stdlib-roots))
+                  (lsp-handle-tool-message!
+                    method
+                    message
+                    docs
+                    stdlib-roots
+                    job-state))
                 (let
                   [scratch-head : i64 (arena.tl_arena_current)]
                   (begin
@@ -10272,7 +10300,8 @@
 (define (lsp-handle-message
   [message : json.Json]
   [state : lsp_vector_families.LspServerState]
-  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  [stdlib-roots : lsp_svec.Vec]
+  [job-state : tc.TcJobState]) : LspHandleResult
   (match (lsp-json-string-field message "method")
     [(LspJsonText.Missing) (LspHandleResult.Continue state)]
     [(LspJsonText.Ok method)
@@ -10292,7 +10321,8 @@
               (lsp-handle-document-message
                 message
                 (struct-get state documents)
-                stdlib-roots)]
+                stdlib-roots
+                job-state)]
             (cond
               [(lsp-tool-method-mutates-document? method)
                 (lsp-server-state-copy-document-result
@@ -10366,7 +10396,8 @@
   [id : json.Json]
   [params : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  [stdlib-roots : lsp_svec.Vec]
+  [job-state : tc.TcJobState]) : LspDocumentHandleResult
   (cond
     [(string.eq method "tl/astDump") (lsp-handle-tl-ast-dump id params docs)]
     [(string.eq method "tl/listFunctions")
@@ -10397,7 +10428,7 @@
           (lsp-typecheck-tool-session-before!)
           (set!
             tool-result
-            (lsp-handle-tl-get-type-at id params docs stdlib-roots))
+            (lsp-handle-tl-get-type-at id params docs stdlib-roots job-state))
           (lsp-typecheck-tool-session-after!)
           tool-result))]
     [(string.eq method "tl/findReferences")
@@ -10430,7 +10461,8 @@
   [method : String]
   [message : json.Json]
   [docs : lsp_document_vec.Vec]
-  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  [stdlib-roots : lsp_svec.Vec]
+  [job-state : tc.TcJobState]) : LspDocumentHandleResult
   (let
     [id-key : String "id"]
     (match (json.object-get message (& id-key))
@@ -10445,7 +10477,8 @@
                 id
                 params
                 docs
-                stdlib-roots)]
+                stdlib-roots
+                job-state)]
             [(json.JsonMissing)
               (begin
                 (lsp-handle-tool-missing-params! method message id)
@@ -10505,6 +10538,7 @@
     [done : bool false]
     [status : i64 0]
     [state : lsp_vector_families.LspServerState (lsp-server-state-new)]
+    [job-state : tc.TcJobState (tc.tc-job-state-new)]
     (begin
       (lsp-language-config-reset!)
       (lsp-frame-session-cache-enable!)
@@ -10515,7 +10549,11 @@
               [text : String payload]
               (match (json.parse (& text))
                 [(json.OkJson message)
-                  (match (lsp-handle-message message state stdlib-roots)
+                  (match (lsp-handle-message
+                    message
+                    state
+                    stdlib-roots
+                    job-state)
                     [(LspHandleResult.Continue next-state)
                       (set! state next-state)]
                     [(LspHandleResult.Exit next-state)
@@ -10533,6 +10571,8 @@
       (if prefix-cache-stats
         (tc.tc-prefix-snapshot-cache-print-stats "lsp")
         unit)
+      (tc.tc-inlay-hints-reset-for-state!
+        (tc.tc-job-state-inlay-hints job-state))
       (lsp-server-state-destroy! state)
       status)))
 

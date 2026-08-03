@@ -108,17 +108,43 @@
   (present (__tl_dyn-array i64))
   (items (__tl_dyn-array CompilerRegLocation)))
 
+;; One register's live-interval union: the segments of every resident of that
+;; register, `slots[0 .. count)` ascending by effective start, three i64 per
+;; entry (see the block comment above compiler-reg-live-union-entry-words).
+;; Growth replaces the whole value in its owning array, exactly as
+;; CompilerRegIntervalSeq does -- an array of structs each holding an array,
+;; never an array of arrays.
+(defstruct CompilerRegLiveUnion
+  (slots (__tl_dyn-array i64))
+  (count i64))
+
 ;; Mutable inverse index for the greedy allocator's physical-register homes.
 ;; `words` is a flat [register][variable-word] bitset; primary/secondary retain
 ;; each variable's current pool indices so assignment updates clear old homes in
 ;; O(1). Register pairs occupy both indexed registers.
+;;
+;; `live-union*` is the per-register LiveIntervalUnion (LLVM RAGreedy): the live
+;; SEGMENTS of every resident of a register, kept sorted by effective start, so
+;; "is this register free for v?" is a stabbing query over v's own (1.37 on
+;; average) segments instead of one segmented-interference predicate call per
+;; resident (22.8 on average). See compiler-reg-live-union-interferes?.
 (defstruct CompilerRegGreedyOccupancy
   (words (__tl_dyn-array i64))
   (word-count i64)
   (primary (__tl_dyn-array i64))
   (secondary (__tl_dyn-array i64))
   ;; Canonical ownership register ID -> pool index, -1 when absent.
-  (pool-index (__tl_dyn-array i64)))
+  (pool-index (__tl_dyn-array i64))
+  ;; pool index -> that register's union.
+  (live-union (__tl_dyn-array CompilerRegLiveUnion))
+  ;; pool index -> residents with NO segment data. Such a resident is answered
+  ;; by the coarse whole-interval fallback inside the interference predicate,
+  ;; which the union does not model, so a nonzero count sends the whole query
+  ;; back to the per-resident scan.
+  (live-union-coarse (__tl_dyn-array i64))
+  ;; The segment table the union was built from. Every query must use the same
+  ;; interval index the occupancy was made with.
+  (live-union-segments (__tl_dyn-array CompilerRegIntervalSeq)))
 
 (defstruct CompilerRegIntervalIndex
   (starts (__tl_dyn-array i64))
@@ -17787,6 +17813,305 @@
   [word-index : i64]) : i64
   (+ (* reg-index (struct-get occupancy word-count)) word-index))
 
+;; ---------------------------------------------------------------------------
+;; Per-register live-interval union (LLVM RAGreedy LiveIntervalUnion).
+;;
+;; The greedy allocator asks "is register r free for v?" 833k times per opt2
+;; self-compile and answered it by walking r's occupancy bitset and calling the
+;; segmented interference predicate once per resident: 19.0M predicate calls,
+;; 97% of which answer "disjoint". A per-query prologue hoist was measured and
+;; rejected (see compiler-reg-vars-interfere-segmented-index?) -- at this volume
+;; only dropping the QUERY COUNT wins. Keeping the residents' segments sorted by
+;; start per register turns the scan into a stabbing query: a binary search per
+;; segment of the candidate (1.37 on average), with zero per-resident calls.
+;;
+;; ENTRY LAYOUT. `live-union[reg].slots` is a flat i64 array of
+;; compiler-reg-live-union-entry-words per entry:
+;;   +0 effective start   +1 end   +2 prefix maximum of `end` over [0 .. i]
+;; sorted ascending by effective start.
+;;
+;; EFFECTIVE START. The interference rule is half-open EXCEPT that a touch at
+;; point 0 counts as overlap (compiler-reg-interval-overlap?, M-A RC1):
+;;   overlap(a,b) <=> (a.end > b.start or b.start = 0)
+;;                and (b.end > a.start or a.start = 0)
+;; Mapping a start of 0 to a sentinel below every program point collapses both
+;; disjunctions into one comparison:
+;;   overlap(a,b) <=> es(b) < a.end and es(a) < b.end
+;; which is the form the sorted search needs: for a candidate segment s, the
+;; entries satisfying `es(u) < s.end` are exactly a PREFIX of the array (es is
+;; ascending), and within that prefix some entry satisfies `es(s) < u.end`
+;; exactly when the prefix maximum of `end` exceeds es(s). Both halves are
+;; therefore answered by one binary search plus one load -- and the answer is
+;; exact even when entries overlap each other (which pre-seeded homes allow).
+(define (compiler-reg-live-union-entry-words) : i64
+  3)
+
+(define (compiler-reg-live-union-empty) : CompilerRegLiveUnion
+  (CompilerRegLiveUnion (array.make-array i64 0) 0))
+
+;; Below every real program point and above i64 underflow, so `es < end` holds
+;; unconditionally for a point-0 segment without special-casing either side.
+(define (compiler-reg-live-union-neg-inf) : i64
+  (- 0 1000000000))
+
+(define (compiler-reg-live-union-effective-start [start : i64]) : i64
+  (if (= start 0)
+    (compiler-reg-live-union-neg-inf)
+    start))
+
+;; First index in [0, count) whose effective start is >= `bound`, else `count`.
+(define (compiler-reg-live-union-lower-bound
+  [entries : (__tl_dyn-array i64)]
+  [count : i64]
+  [bound : i64]) : i64
+  (let
+    [lo : i64 0]
+    [hi : i64 count]
+    (begin
+      (while (< lo hi)
+        (let
+          [mid : i64 (+ lo (/ (- hi lo) 2))]
+          (if (<
+            (array-ref entries (* mid (compiler-reg-live-union-entry-words)))
+            bound)
+            (set! lo (+ mid 1))
+            (set! hi mid))))
+      lo)))
+
+;; Does any union entry overlap the segment [es-start, end)?
+(define (compiler-reg-live-union-segment-hits?
+  [entries : (__tl_dyn-array i64)]
+  [count : i64]
+  [es-start : i64]
+  [end : i64]) : bool
+  (let
+    [above : i64 (compiler-reg-live-union-lower-bound entries count end)]
+    (if (= above 0)
+      false
+      (>
+        (array-ref
+          entries
+          (+ (* (- above 1) (compiler-reg-live-union-entry-words)) 2))
+        es-start))))
+
+;; Does any resident of `reg-index` interfere with the segment sequence `segs`?
+(define (compiler-reg-live-union-interferes?
+  [occupancy : CompilerRegGreedyOccupancy]
+  [reg-index : i64]
+  [segs : CompilerRegIntervalSeq]) : bool
+  (let
+    [union : CompilerRegLiveUnion
+      (array-ref (struct-get occupancy live-union) reg-index)]
+    [entries : (__tl_dyn-array i64) (struct-get union slots)]
+    [count : i64 (struct-get union count)]
+    [slots : (__tl_dyn-array CompilerRegInterval) (struct-get segs slots)]
+    [len : i64 (struct-get segs len)]
+    [index : i64 0]
+    [hit : bool false]
+    (begin
+      (while (and (< index len) (not hit))
+        (let
+          [seg : CompilerRegInterval (array-ref slots index)]
+          (begin
+            (if (compiler-reg-live-union-segment-hits?
+              entries
+              count
+              (compiler-reg-live-union-effective-start (struct-get seg start))
+              (struct-get seg end))
+              (set! hit true)
+              unit)
+            (set! index (+ index 1)))))
+      hit)))
+
+(define (compiler-reg-live-union-var-segments
+  [occupancy : CompilerRegGreedyOccupancy]
+  [var : i64]) : CompilerRegIntervalSeq
+  (let
+    [segments : (__tl_dyn-array CompilerRegIntervalSeq)
+      (struct-get occupancy live-union-segments)]
+    (if (or (< var 0) (>= var (array-length segments)))
+      (compiler-reg-interval-seq-empty)
+      (array-ref segments var))))
+
+;; Storage for `need` entries of `union`: either its own array or a doubled
+;; copy. The caller writes the resulting union value back into its slot.
+(define (compiler-reg-live-union-reserve
+  [union : CompilerRegLiveUnion]
+  [need : i64]) : (__tl_dyn-array i64)
+  (let
+    [entries : (__tl_dyn-array i64) (struct-get union slots)]
+    [words : i64 (compiler-reg-live-union-entry-words)]
+    [capacity : i64 (/ (array-length entries) words)]
+    (if (<= need capacity)
+      entries
+      (let
+        [doubled : i64
+          (if (< capacity 4)
+            4
+            (* capacity 2))]
+        [grown : i64
+          (if (< doubled need)
+            need
+            doubled)]
+        [bigger : (__tl_dyn-array i64) (array.make-array i64 (* grown words))]
+        [copy : i64 (* (struct-get union count) words)]
+        [index : i64 0]
+        (begin
+          (while (< index copy)
+            (begin
+              (array-set! bigger index (array-ref entries index))
+              (set! index (+ index 1))))
+          bigger)))))
+
+;; Rewrite the prefix maxima of `end` over [from, count).
+(define (compiler-reg-live-union-refresh-max!
+  [entries : (__tl_dyn-array i64)]
+  [count : i64]
+  [from : i64]) : unit
+  (let
+    [words : i64 (compiler-reg-live-union-entry-words)]
+    [index : i64
+      (if (< from 0)
+        0
+        from)]
+    [running : i64
+      (if (> index 0)
+        (array-ref entries (+ (* (- index 1) words) 2))
+        (compiler-reg-live-union-neg-inf))]
+    (while (< index count)
+      (let
+        [base : i64 (* index words)]
+        [end : i64 (array-ref entries (+ base 1))]
+        (begin
+          (if (> end running)
+            (set! running end)
+            unit)
+          (array-set! entries (+ base 2) running)
+          (set! index (+ index 1)))))))
+
+;; Insert one segment into `reg-index`'s union, keeping it sorted by effective
+;; start. Ties keep insertion order; the query is order-insensitive among equal
+;; starts, so any stable position is fine.
+(define (compiler-reg-live-union-insert-segment!
+  [occupancy : CompilerRegGreedyOccupancy]
+  [reg-index : i64]
+  [es-start : i64]
+  [end : i64]) : unit
+  (let
+    [store : (__tl_dyn-array CompilerRegLiveUnion)
+      (struct-get occupancy live-union)]
+    [union : CompilerRegLiveUnion (array-ref store reg-index)]
+    [count : i64 (struct-get union count)]
+    [entries : (__tl_dyn-array i64)
+      (compiler-reg-live-union-reserve union (+ count 1))]
+    [words : i64 (compiler-reg-live-union-entry-words)]
+    [at : i64 (compiler-reg-live-union-lower-bound entries count es-start)]
+    [cursor : i64 (- (* count words) 1)]
+    [floor : i64 (* at words)]
+    (begin
+      (while (>= cursor floor)
+        (begin
+          (array-set! entries (+ cursor words) (array-ref entries cursor))
+          (set! cursor (- cursor 1))))
+      (array-set! entries floor es-start)
+      (array-set! entries (+ floor 1) end)
+      (array-set! store reg-index (CompilerRegLiveUnion entries (+ count 1)))
+      (compiler-reg-live-union-refresh-max! entries (+ count 1) at))))
+
+;; Add `var` to `reg-index`'s union. A var without segment data cannot be
+;; modelled by the union and only bumps the coarse-resident count.
+(define (compiler-reg-live-union-add!
+  [occupancy : CompilerRegGreedyOccupancy]
+  [reg-index : i64]
+  [var : i64]) : unit
+  (let
+    [segs : CompilerRegIntervalSeq
+      (compiler-reg-live-union-var-segments occupancy var)]
+    [slots : (__tl_dyn-array CompilerRegInterval) (struct-get segs slots)]
+    [len : i64 (struct-get segs len)]
+    [index : i64 0]
+    (if (= len 0)
+      (let
+        [coarse : (__tl_dyn-array i64) (struct-get occupancy live-union-coarse)]
+        (array-set! coarse reg-index (+ (array-ref coarse reg-index) 1)))
+      (while (< index len)
+        (let
+          [seg : CompilerRegInterval (array-ref slots index)]
+          (begin
+            (compiler-reg-live-union-insert-segment!
+              occupancy
+              reg-index
+              (compiler-reg-live-union-effective-start (struct-get seg start))
+              (struct-get seg end))
+            (set! index (+ index 1))))))))
+
+;; Drop `var` from `reg-index`'s union. Both the union and `var`'s segments are
+;; ascending in effective start, so one merge pass compacts out exactly one
+;; entry per segment. Entries carry no owner id: two residents can only present
+;; the same (start, end) pair when they are pre-seeded overlapping homes, and
+;; then dropping either leaves the same multiset -- which is all the query
+;; observes.
+(define (compiler-reg-live-union-remove!
+  [occupancy : CompilerRegGreedyOccupancy]
+  [reg-index : i64]
+  [var : i64]) : unit
+  (let
+    [segs : CompilerRegIntervalSeq
+      (compiler-reg-live-union-var-segments occupancy var)]
+    [len : i64 (struct-get segs len)]
+    (if (= len 0)
+      (let
+        [coarse : (__tl_dyn-array i64) (struct-get occupancy live-union-coarse)]
+        (array-set! coarse reg-index (- (array-ref coarse reg-index) 1)))
+      (let
+        [slots : (__tl_dyn-array CompilerRegInterval) (struct-get segs slots)]
+        [store : (__tl_dyn-array CompilerRegLiveUnion)
+          (struct-get occupancy live-union)]
+        [union : CompilerRegLiveUnion (array-ref store reg-index)]
+        [count : i64 (struct-get union count)]
+        [entries : (__tl_dyn-array i64) (struct-get union slots)]
+        [words : i64 (compiler-reg-live-union-entry-words)]
+        [read : i64 0]
+        [write : i64 0]
+        [seg-index : i64 0]
+        [first-drop : i64 count]
+        (begin
+          (while (< read count)
+            (let
+              [from : i64 (* read words)]
+              [to : i64 (* write words)]
+              [matched : bool
+                (if (< seg-index len)
+                  (let
+                    [seg : CompilerRegInterval (array-ref slots seg-index)]
+                    (and
+                      (=
+                        (array-ref entries from)
+                        (compiler-reg-live-union-effective-start
+                          (struct-get seg start)))
+                      (= (array-ref entries (+ from 1)) (struct-get seg end))))
+                  false)]
+              (begin
+                (if matched
+                  (begin
+                    (if (< write first-drop)
+                      (set! first-drop write)
+                      unit)
+                    (set! seg-index (+ seg-index 1)))
+                  (begin
+                    (if (= from to)
+                      unit
+                      (begin
+                        (array-set! entries to (array-ref entries from))
+                        (array-set!
+                          entries
+                          (+ to 1)
+                          (array-ref entries (+ from 1)))))
+                    (set! write (+ write 1))))
+                (set! read (+ read 1)))))
+          (array-set! store reg-index (CompilerRegLiveUnion entries write))
+          (compiler-reg-live-union-refresh-max! entries write first-drop))))))
+
 (define (compiler-reg-greedy-occupancy-set-bit!
   [occupancy : CompilerRegGreedyOccupancy]
   [reg-index : i64]
@@ -17810,12 +18135,24 @@
                 word-index)]
             [mask : i64 (live.compiler-live-set-bit-mask var)]
             [old : i64 (array-ref words flat-index)]
-            (array-set!
-              words
-              flat-index
+            [was-set : bool (not (= (bit-and old mask) 0))]
+            (begin
+              ;; The union mirrors the bitset exactly: it is only touched when
+              ;; this call actually flips the bit, so a redundant set (or clear)
+              ;; can neither duplicate nor drop a resident's segments.
               (if present
-                (bit-or old mask)
-                (bit-and old (bit-xor mask -1))))))))))
+                (if was-set
+                  unit
+                  (compiler-reg-live-union-add! occupancy reg-index var))
+                (if was-set
+                  (compiler-reg-live-union-remove! occupancy reg-index var)
+                  unit))
+              (array-set!
+                words
+                flat-index
+                (if present
+                  (bit-or old mask)
+                  (bit-and old (bit-xor mask -1)))))))))))
 
 (define (compiler-reg-greedy-occupancy-clear!
   [occupancy : CompilerRegGreedyOccupancy]
@@ -17875,8 +18212,12 @@
     [(CompilerRegLocation.Spill _) unit]
     [(CompilerRegLocation.Remat _) unit]))
 
+;; `interval-index` seeds the per-register union. Every query against the
+;; returned occupancy MUST pass the same index: the union is a materialised view
+;; of exactly this segment table.
 (define (compiler-reg-greedy-occupancy-make
   [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
   [reg-arr : (__tl_dyn-array i64)]
   [rcount : i64]) : CompilerRegGreedyOccupancy
   (let
@@ -17912,13 +18253,31 @@
           n))]
     [pool-index : (__tl_dyn-array i64)
       (compiler-reg-greedy-pool-index-build reg-arr rcount)]
+    ;; Every register starts empty and only allocates entry storage when it
+    ;; first takes a resident: in the average function almost no pool register
+    ;; is ever occupied. The slots are initialised by
+    ;; compiler-reg-fill-live-union-array!, the same shape the segment tables
+    ;; use -- see that helper for why the fill is not written inline here.
+    [live-union : (__tl_dyn-array CompilerRegLiveUnion)
+      (array.make-array CompilerRegLiveUnion storage-reg-count)]
+    [live-union-coarse : (__tl_dyn-array i64)
+      (array.make-array i64 storage-reg-count)]
     [occupancy : CompilerRegGreedyOccupancy
-      (CompilerRegGreedyOccupancy words word-count primary secondary pool-index)]
+      (CompilerRegGreedyOccupancy
+        words
+        word-count
+        primary
+        secondary
+        pool-index
+        live-union
+        live-union-coarse
+        (struct-get interval-index segments))]
     [var : i64 0]
     (begin
       (compiler-reg-fill-i64-array words 0)
       (compiler-reg-fill-i64-array primary -1)
       (compiler-reg-fill-i64-array secondary -1)
+      (compiler-reg-fill-live-union-array! live-union 0)
       (while (< var n)
         (begin
           (if (= (array-ref present var) 1)
@@ -18028,22 +18387,55 @@
           (+ word-index 1)
           best)))))
 
+;; Can `var` take pool register `reg-index` without interfering with a resident?
+;;
+;; DECISION IDENTITY with the per-resident scan it replaces. `interferer-max`
+;; returns -1 exactly when no resident other than `var` itself interferes:
+;; ref-counts entries are built by accumulating loop-depth weights (>= 1) into a
+;; zeroed array and are only ever halved by the remat discount, so every real
+;; interferer contributes a weight >= 0 > -1. "Free" therefore means "no
+;; interferer", which is precisely what the union answers -- provided
+;;   * the candidate has segment data, and no resident of this register lacks it
+;;     (otherwise the predicate takes its coarse whole-interval fallback, which
+;;     the union does not model), and
+;;   * the candidate is not itself a resident of this register (the scan skips
+;;     `other = var`; the union cannot tell its own entries apart).
+;; Any of those three sends the query to the original scan, so the answer is the
+;; old answer in every case. Over a full opt2 self-compile all three guards are
+;; measured never to fire, so the fallback is a correctness backstop, not a
+;; performance path.
 (define (compiler-reg-greedy-reg-free?
   [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (__tl_dyn-array i64)]
   [var : i64]
   [reg-index : i64]) : bool
-  (=
-    (compiler-reg-greedy-interferer-max
-      occupancy
-      interval-index
-      ref-counts
-      var
-      reg-index
-      0
-      (- 0 1))
-    (- 0 1)))
+  (let
+    [primary : (__tl_dyn-array i64) (struct-get occupancy primary)]
+    [coarse : (__tl_dyn-array i64) (struct-get occupancy live-union-coarse)]
+    [segs : CompilerRegIntervalSeq
+      (if (and (>= reg-index 0) (< reg-index (array-length coarse)))
+        (compiler-reg-live-union-var-segments occupancy var)
+        (compiler-reg-interval-seq-empty))]
+    (if (and
+      (not (= (struct-get segs len) 0))
+      (= (array-ref coarse reg-index) 0)
+      (or
+        (>= var (array-length primary))
+        (and
+          (not (= (array-ref primary var) reg-index))
+          (not (= (array-ref (struct-get occupancy secondary) var) reg-index)))))
+      (not (compiler-reg-live-union-interferes? occupancy reg-index segs))
+      (=
+        (compiler-reg-greedy-interferer-max
+          occupancy
+          interval-index
+          ref-counts
+          var
+          reg-index
+          0
+          (- 0 1))
+        (- 0 1)))))
 
 ;; {rax,rdx}: the registers an idiv hard-clobbers (rax:rdx outputs). The INT_MIN/-1
 ;; overflow guard temps are no longer hardcoded to %r10/%r11 -- the guard scavenges
@@ -19068,7 +19460,11 @@
             (- count i)))
         0)]
     [occupancy : CompilerRegGreedyOccupancy
-      (compiler-reg-greedy-occupancy-make assignments reg-arr rcount)]
+      (compiler-reg-greedy-occupancy-make
+        assignments
+        interval-index
+        reg-arr
+        rcount)]
     (begin
       ;; Scratch pseudos have no stack home. Mark them at the eviction cascade
       ;; cap so a placed pseudo can evict/requeue a real value but can never be
@@ -27154,6 +27550,25 @@
       (array-set! items i (compiler-reg-interval-seq-empty))
       (compiler-reg-fill-interval-seq-array! items (+ i 1)))))
 
+;; Same shape as the interval-seq filler above: a small recursive helper that
+;; gives every slot its own empty value.
+;;
+;; This MUST stay a separate function. Writing the identical loop inline in
+;; compiler-reg-greedy-occupancy-make miscompiles on linux-x86_64 (the built
+;; compiler aborts with "tl: allocation failed" on any opt2 compile, while the
+;; windows-x86_64 build of the same source is fine); hoisting the fill here
+;; makes both targets correct. Reduced repro and evidence: an
+;; occupancy-make-local `while` filling a `(__tl_dyn-array T)` whose element
+;; type is a struct holding a dynamic array, versus the same fill in a helper.
+(define (compiler-reg-fill-live-union-array!
+  [items : (__tl_dyn-array CompilerRegLiveUnion)]
+  [i : i64]) : unit
+  (if (>= i (array-length items))
+    unit
+    (begin
+      (array-set! items i (compiler-reg-live-union-empty))
+      (compiler-reg-fill-live-union-array! items (+ i 1)))))
+
 ;; Generic constrained scratch-plan construction.  These builders attach the
 ;; deterministic instruction/ordinal identity, interval, and physical-home policy.
 (defenum CompilerRegScratchFillState
@@ -30149,6 +30564,7 @@
                         [scratch-occupancy : CompilerRegGreedyOccupancy
                           (compiler-reg-greedy-occupancy-make
                             assignments
+                            interval-index
                             scratch-registers
                             scratch-register-count)]
                         [scratch-ref-counts : (__tl_dyn-array i64)
@@ -31777,6 +32193,108 @@
     (compiler-reg-early-scratch-model-one-abi-ok?
       (cabi.CompilerRegTargetAbi.Windows))))
 
+(define (compiler-reg-live-union-test-seq [var : i64] [start : i64] [end : i64]) : CompilerRegIntervalSeq
+  (compiler-reg-interval-seq-append
+    (compiler-reg-interval-seq-empty)
+    (CompilerRegInterval var start end)))
+
+;; Pins the per-register union against the boundary rules the greedy relies on:
+;; a half-open touch at a nonzero point is DISJOINT, a touch at point 0 is
+;; OVERLAP, a multi-segment candidate is tested segment by segment, removal
+;; really frees the register again, and a resident with no segment data forces
+;; the coarse per-resident fallback instead of a union answer.
+(define (compiler-reg-greedy-live-union-invariant-ok?) : bool
+  (let
+    [vars : i64 7]
+    [starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [segments : (__tl_dyn-array CompilerRegIntervalSeq)
+      (array.make-array CompilerRegIntervalSeq vars)]
+    [ref-counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [assignments : CompilerRegAssignmentTable
+      (compiler-reg-assignment-table-make vars)]
+    [registers : (__tl_dyn-array i64)
+      (compiler-reg-scratch-register-array (cabi.CompilerRegTargetAbi.Linux))]
+    (begin
+      (compiler-reg-fill-i64-array starts -1)
+      (compiler-reg-fill-i64-array ends -1)
+      (compiler-reg-fill-interval-seq-array! segments 0)
+      ;; 0: resident [0,4)   1: touch at 4   2: overlaps   3: point-0 touch
+      ;; 4: two segments past the resident  5: no segments (coarse [4,8))
+      ;; 6: overlaps segment 4's second range
+      (array-set! segments 0 (compiler-reg-live-union-test-seq 0 0 4))
+      (array-set! segments 1 (compiler-reg-live-union-test-seq 1 4 8))
+      (array-set! segments 2 (compiler-reg-live-union-test-seq 2 3 6))
+      (array-set! segments 3 (compiler-reg-live-union-test-seq 3 0 0))
+      (array-set!
+        segments
+        4
+        (compiler-reg-interval-seq-append
+          (compiler-reg-live-union-test-seq 4 8 9)
+          (CompilerRegInterval 4 12 14)))
+      (array-set! segments 6 (compiler-reg-live-union-test-seq 6 13 15))
+      (array-set! starts 0 0)
+      (array-set! ends 0 4)
+      (array-set! starts 5 4)
+      (array-set! ends 5 8)
+      (let
+        [index : CompilerRegIntervalIndex
+          (CompilerRegIntervalIndex starts ends segments)]
+        [occupancy : CompilerRegGreedyOccupancy
+          (compiler-reg-greedy-occupancy-make
+            assignments
+            index
+            registers
+            (array-length registers))]
+        [resident-0-ok? : bool false]
+        [emptied-ok? : bool false]
+        [multi-ok? : bool false]
+        [coarse-resident-ok? : bool false]
+        (begin
+          (compiler-reg-greedy-occupancy-assign! occupancy 0 0 -1)
+          (set!
+            resident-0-ok?
+            (and
+              ;; touch at 4 is half-open, so [4,8) may share the register
+              (compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0)
+              ;; [3,6) genuinely overlaps [0,4)
+              (not
+                (compiler-reg-greedy-reg-free? occupancy index ref-counts 2 0))
+              ;; a point-0 touch counts as overlap (M-A RC1)
+              (not
+                (compiler-reg-greedy-reg-free? occupancy index ref-counts 3 0))
+              ;; both of var 4's segments clear [0,4)
+              (compiler-reg-greedy-reg-free? occupancy index ref-counts 4 0)
+              ;; var 5 has no segments: coarse [4,8) vs [0,4) via the fallback
+              (compiler-reg-greedy-reg-free? occupancy index ref-counts 5 0)))
+          (compiler-reg-greedy-occupancy-clear! occupancy 0)
+          (set!
+            emptied-ok?
+            (and
+              (compiler-reg-greedy-reg-free? occupancy index ref-counts 2 0)
+              (compiler-reg-greedy-reg-free? occupancy index ref-counts 3 0)))
+          (compiler-reg-greedy-occupancy-assign! occupancy 4 0 -1)
+          (set!
+            multi-ok?
+            (and
+              (compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0)
+              ;; [13,15) overlaps var 4's second segment [12,14)
+              (not
+                (compiler-reg-greedy-reg-free? occupancy index ref-counts 6 0))))
+          (compiler-reg-greedy-occupancy-clear! occupancy 4)
+          (compiler-reg-greedy-occupancy-assign! occupancy 5 0 -1)
+          (set!
+            coarse-resident-ok?
+            (and
+              ;; a segment-less resident forces the per-resident scan: var 0's
+              ;; coarse [0,4) clears var 5's coarse [4,8) ...
+              (compiler-reg-greedy-reg-free? occupancy index ref-counts 0 0)
+              ;; ... while var 1 has no coarse interval at all, which the
+              ;; predicate answers conservatively as interference
+              (not
+                (compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0))))
+          (and resident-0-ok? emptied-ok? multi-ok? coarse-resident-ok?))))))
+
 (define (compiler-reg-scratch-default-pool-target-invariant-ok?) : bool
   (let
     [intervals : CompilerRegIntervalSeq
@@ -31794,11 +32312,13 @@
     [linux-occupancy : CompilerRegGreedyOccupancy
       (compiler-reg-greedy-occupancy-make
         assignments
+        index
         linux-registers
         (array-length linux-registers))]
     [windows-occupancy : CompilerRegGreedyOccupancy
       (compiler-reg-greedy-occupancy-make
         assignments
+        index
         windows-registers
         (array-length windows-registers))]
     [excluded : CompilerRegIdSeq

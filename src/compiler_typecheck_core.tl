@@ -116,6 +116,21 @@
 (defstruct TcThreadNameKindState
   (address i64))
 
+;; Inlay-hint collection belongs to one compiler job. The fixed record arrays
+;; are allocated lazily in the arena captured when the state is created; the
+;; copied rendered strings use a separate per-generation arena.
+(defstruct TcInlayHintStateData
+  (enabled bool)
+  (count i64)
+  (lines (__tl_dyn-array i64))
+  (cols (__tl_dyn-array i64))
+  (types (__tl_dyn-array String))
+  (fixed-storage-arena i64)
+  (string-arena i64))
+
+(defstruct TcInlayHintState
+  (address i64))
+
 (defstruct TcTypeEnvStore
   (bindings (__tl_dyn-array TcTypeEnvBinding))
   (binding-capacity i64)
@@ -280,13 +295,16 @@
 (defstruct TcJobStateData
   (source-key-cache TcSourceKeyCacheState)
   (topenv-membership TcTopEnvMembershipState)
-  (thread-name-kind TcThreadNameKindState))
+  (thread-name-kind TcThreadNameKindState)
+  (inlay-hints TcInlayHintState))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
   ;; allocated in the owning driver's lifetime arena.
   (address i64))
 
+(define tc-inlay-hint-capacity : i64
+  65536)
 (define tc-topenv-renderable-table-capacity : i64
   32768)
 
@@ -337,6 +355,28 @@
               (ptr-cast (array-data cell) : (Ptr TcThreadNameKindStateData))))
           : i64)))))
 
+(define (tc-inlay-hint-state-new) : TcInlayHintState
+  (let
+    [cell : (__tl_dyn-array TcInlayHintStateData)
+      (array.make-array TcInlayHintStateData 1)]
+    (begin
+      (array-set!
+        cell
+        0
+        (TcInlayHintStateData
+          false
+          0
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array String 0)
+          (arena.tl_arena_current)
+          0))
+      (TcInlayHintState
+        (cast
+          (unsafe
+            (ptr->int (ptr-cast (array-data cell) : (Ptr TcInlayHintStateData))))
+          : i64)))))
+
 (define (tc-source-key-cache-state-new) : TcSourceKeyCacheState
   (TcSourceKeyCacheState
     (array.make-array i64 8192)
@@ -361,7 +401,8 @@
         (TcJobStateData
           (tc-source-key-cache-state-new)
           (tc-topenv-membership-state-new)
-          (tc-thread-name-kind-state-new)))
+          (tc-thread-name-kind-state-new)
+          (tc-inlay-hint-state-new)))
       (TcJobState
         (cast
           (unsafe
@@ -381,6 +422,26 @@
 
 (define (tc-job-state-thread-name-kind [state : TcJobState]) : TcThreadNameKindState
   (struct-get (tc-job-state-data state) thread-name-kind))
+
+(define (tc-job-state-inlay-hints [state : TcJobState]) : TcInlayHintState
+  (struct-get (tc-job-state-data state) inlay-hints))
+
+(define (tc-inlay-hint-state-data [state : TcInlayHintState]) : TcInlayHintStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (Ptr TcInlayHintStateData)))))
+
+(define (tc-inlay-hint-state-data-set!
+  [state : TcInlayHintState]
+  [data : TcInlayHintStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (MutPtr TcInlayHintStateData))
+      data)))
 
 (define (tc-topenv-membership-state-data [state : TcTopEnvMembershipState]) : TcTopEnvMembershipStateData
   (unsafe
@@ -464,11 +525,18 @@
     (array-set! (struct-get state control) 5 0)
     (array-set! (struct-get state control) 9 0)))
 
-(define (tc-job-state-reset-file-state! [state : TcJobState]) : unit
+;; Internal macro/typecheck pass boundaries reset file lookup carriers but must
+;; not tear down a caller-owned inlay generation active for the whole request.
+(define (tc-job-state-reset-derived-caches! [state : TcJobState]) : unit
   (begin
     (tc-source-key-cache-state-reset! (tc-job-state-source-key-cache state))
     (tc-topenv-membership-state-reset! (tc-job-state-topenv-membership state))
     (tc-thread-name-kind-state-reset! (tc-job-state-thread-name-kind state))))
+
+(define (tc-job-state-reset-file-state! [state : TcJobState]) : unit
+  (begin
+    (tc-job-state-reset-derived-caches! state)
+    (tc-inlay-hints-reset-for-state! (tc-job-state-inlay-hints state))))
 
 ;; Standalone source APIs and direct tests are serial compatibility surfaces.
 ;; Allocate their state only when one of those adapters is called; production
@@ -530,6 +598,10 @@
 (defstruct TcBodyState
   (data (__tl_dyn-array TcBodyStateData))
   (job-state TcJobState)
+  ;; Cache the inlay capability and enabled bit at body construction. The
+  ;; ordinary disabled path then pays only this body-local flag check.
+  (inlay-hint-state TcInlayHintState)
+  (inlay-hint-enabled bool)
   ;; The source-name owner is immutable for one typecheck body. Cache it here
   ;; so hot source-key lookups do not repeatedly traverse TcContext and the
   ;; intern session handle just to validate the job-owned tables.
@@ -750,6 +822,10 @@
       (TcBodyState
         cell
         job-state
+        (tc-job-state-inlay-hints job-state)
+        (struct-get
+          (tc-inlay-hint-state-data (tc-job-state-inlay-hints job-state))
+          enabled)
         (struct-get source-session table-id)
         (struct-get source-session reset-generation)))))
 
@@ -17989,7 +18065,7 @@
         tc-lazy-import-summary-backed-count
         (+ tc-lazy-import-summary-backed-count 1))
       unit)
-    (tc-job-state-reset-file-state! job-state)))
+    (tc-job-state-reset-derived-caches! job-state)))
 
 (define (tc-lazy-import-stub-record!
   [importer-module-id : i64]
@@ -28554,11 +28630,16 @@
     (begin
       (match result
         [(ResultTcType.Ok ty)
-          (begin
-            (tc-body-type-fact-record! (tc-context-body-state ctx) expr-id ty)
-            (if tc-inlay-hint-enabled
-              (tc-inlay-hint-maybe-record-expr expr ty)
-              unit))]
+          (let
+            [body-state : TcBodyState (tc-context-body-state ctx)]
+            (begin
+              (tc-body-type-fact-record! body-state expr-id ty)
+              (if (struct-get body-state inlay-hint-enabled)
+                (tc-inlay-hint-maybe-record-expr-for-state
+                  (struct-get body-state inlay-hint-state)
+                  expr
+                  ty)
+                unit)))]
         [(ResultTcType.Err _) unit])
       result)))
 
@@ -35080,135 +35161,204 @@
 ;; checked last) is always retained even when imported modules are re-checked.
 ;; Records are not file-attributed; the LSP filters them against the open
 ;; document's text before turning them into hints.
+;; Each TcJobState owns one collector: fixed arrays are lazy and live in the
+;; state creation arena, while copied rendered strings live in a disposable
+;; per-generation arena. The stdio LSP is serialized, but independent jobs can
+;; interleave without resetting one another's records.
 ;; --------------------------------------------------------------------------
-(define tc-inlay-hint-capacity : i64
-  65536)
-(define tc-inlay-hint-enabled : bool
-  false)
-(define tc-inlay-hint-count : i64
-  0)
-(define tc-inlay-hint-lines : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define tc-inlay-hint-cols : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define tc-inlay-hint-types : (__tl_dyn-array String)
-  (array.make-array String 0))
+(define (tc-inlay-hint-state-enabled? [state : TcInlayHintState]) : bool
+  (struct-get (tc-inlay-hint-state-data state) enabled))
 
-;; Rendered hint type strings are copied out of the typecheck's transient
-;; arenas (they would dangle once the check tears down) but must not go into
-;; the never-reset lazy global table arena either: every inlayHint/tl/getType
-;; request re-records up to tc-inlay-hint-capacity strings, so a long LSP
-;; session would grow without bound. Give the strings their own arena that
-;; tc-inlay-hints-enable! destroys once per request generation. The hint arrays
-;; themselves stay in the lazy global table arena.
-(define tc-inlay-hint-string-arena : i64
-  0)
-
-(define (tc-inlay-hint-string-arena-ensure!) : i64
-  (if (= tc-inlay-hint-string-arena 0)
-    (begin
-      (set! tc-inlay-hint-string-arena (arena.tl_arena_make_small))
-      tc-inlay-hint-string-arena)
-    tc-inlay-hint-string-arena))
-
-;; Republish the newest segment head: the arena grows by chaining segments and
-;; the stored handle has to track the head so a later switch does not re-anchor
-;; allocation onto an exhausted segment.
-(define (tc-inlay-hint-string-arena-finish! [previous : i64] [owner : i64]) : unit
+(define (tc-inlay-hint-storage-ensure-for-state! [state : TcInlayHintState]) : unit
   (let
+    [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
+    (if (= (array-length (struct-get data lines)) tc-inlay-hint-capacity)
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (struct-get data fixed-storage-arena)]
+        [_set-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        (begin
+          (set!
+            (struct-get data lines)
+            (array.make-array i64 tc-inlay-hint-capacity))
+          (set!
+            (struct-get data cols)
+            (array.make-array i64 tc-inlay-hint-capacity))
+          (set!
+            (struct-get data types)
+            (array.make-array String tc-inlay-hint-capacity))
+          ;; Arena allocation chains segments; retain the newest owner head so
+          ;; a later switch keeps allocating on the live chain.
+          (set! (struct-get data fixed-storage-arena) (arena.tl_arena_current))
+          (tc-inlay-hint-state-data-set! state data)
+          (unsafe
+            (arena.tl_arena_set
+              (if (= previous owner)
+                (struct-get data fixed-storage-arena)
+                previous))))))))
+
+(define (tc-inlay-hint-string-arena-ensure-for-state!
+  [state : TcInlayHintState]) : i64
+  (let
+    [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
+    (if (= (struct-get data string-arena) 0)
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64 (arena.tl_arena_make_small)]
+        (begin
+          (set! (struct-get data string-arena) owner)
+          (tc-inlay-hint-state-data-set! state data)
+          (unsafe
+            (arena.tl_arena_set previous))
+          (struct-get data string-arena)))
+      (struct-get data string-arena))))
+
+(define (tc-inlay-hint-string-arena-finish-for-state!
+  [state : TcInlayHintState]
+  [previous : i64]
+  [owner : i64]) : unit
+  (let
+    [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
     [head : i64 (arena.tl_arena_current)]
     (begin
-      (set! tc-inlay-hint-string-arena head)
+      (set! (struct-get data string-arena) head)
+      (tc-inlay-hint-state-data-set! state data)
       (unsafe
         (arena.tl_arena_set
           (if (= previous owner)
             head
             previous))))))
 
-;; Destroying any segment of the chain frees the whole arena: the runtime
-;; resolves the handle to its root (header +40) and unmaps the active chain
-;; from the root's head (+56) plus the retired list (+32).
-(define (tc-inlay-hint-string-arena-release!) : unit
-  (if (= tc-inlay-hint-string-arena 0)
-    unit
-    (begin
-      (unsafe
-        (arena.tl_arena_destroy tc-inlay-hint-string-arena))
-      (set! tc-inlay-hint-string-arena 0))))
-
-(define (tc-inlay-hint-storage-ensure!) : unit
-  (if (= (array-length tc-inlay-hint-lines) tc-inlay-hint-capacity)
-    unit
-    (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (set! tc-inlay-hint-lines (array.make-array i64 tc-inlay-hint-capacity))
-        (set! tc-inlay-hint-cols (array.make-array i64 tc-inlay-hint-capacity))
-        (set!
-          tc-inlay-hint-types
-          (array.make-array String tc-inlay-hint-capacity))
-        (tc-lazy-global-table-arena-finish! previous owner)))))
-
-(define (tc-inlay-hints-enable!) : unit
-  (begin
-    (tc-inlay-hint-storage-ensure!)
-    ;; Drop the previous generation's strings. Zero the count first: readers
-    ;; only ever walk i < tc-inlay-hints-size, which is count-bounded, so the
-    ;; slots still holding now-freed Strings become unreachable before the
-    ;; memory goes away. Every reader finishes with the hints it collected
-    ;; before the next enable! (the server is single-threaded and each request
-    ;; reads its hints before answering), so this bounds hint string memory to
-    ;; a single request instead of a whole session.
-    (set! tc-inlay-hint-count 0)
-    (tc-inlay-hint-string-arena-release!)
-    (set! tc-inlay-hint-enabled true)))
-
-(define (tc-inlay-hints-disable!) : unit
-  (set! tc-inlay-hint-enabled false))
-
-(define (tc-inlay-hints-size) : i64
-  (if (< tc-inlay-hint-count tc-inlay-hint-capacity)
-    tc-inlay-hint-count
-    tc-inlay-hint-capacity))
-
-(define (tc-inlay-hint-line-at [i : i64]) : i64
-  (array-ref tc-inlay-hint-lines i))
-
-(define (tc-inlay-hint-col-at [i : i64]) : i64
-  (array-ref tc-inlay-hint-cols i))
-
-(define (tc-inlay-hint-type-at [i : i64]) : String
-  (array-ref tc-inlay-hint-types i))
-
-(define (tc-inlay-hint-record! [line : i64] [col : i64] [ty : String]) : unit
-  ;; The hint arrays live in the never-reset lazy global table arena, but the
-  ;; rendered type string was allocated in the typecheck's transient arena and
-  ;; dangles once the check tears down (tl/getType JSON-encodes it afterwards).
-  ;; Copy it into the per-generation hint string arena so it outlives the check
-  ;; without accumulating across requests.
+;; Destroying any segment of the chain frees the complete generation arena.
+(define (tc-inlay-hint-string-arena-release-for-state!
+  [state : TcInlayHintState]) : unit
   (let
-    [slot : i64 (% tc-inlay-hint-count tc-inlay-hint-capacity)]
+    [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
+    [string-arena : i64 (struct-get data string-arena)]
+    (begin
+      (if (= string-arena 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy string-arena)))
+      (set! (struct-get data string-arena) 0)
+      (tc-inlay-hint-state-data-set! state data))))
+
+(define (tc-inlay-hints-reset-for-state! [state : TcInlayHintState]) : unit
+  (let
+    [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
+    (begin
+      ;; Make any strings held in fixed slots unreachable before freeing them.
+      (set! (struct-get data enabled) false)
+      (set! (struct-get data count) 0)
+      (tc-inlay-hint-state-data-set! state data)
+      (tc-inlay-hint-string-arena-release-for-state! state))))
+
+(define (tc-inlay-hints-enable-for-state! [state : TcInlayHintState]) : unit
+  (begin
+    (tc-inlay-hint-storage-ensure-for-state! state)
+    (let
+      [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
+      (begin
+        ;; Clear the logical range before destroying the prior generation.
+        (set! (struct-get data count) 0)
+        (tc-inlay-hint-state-data-set! state data)
+        (tc-inlay-hint-string-arena-release-for-state! state)
+        (let
+          [latest : TcInlayHintStateData (tc-inlay-hint-state-data state)]
+          (set! (struct-get latest enabled) true)
+          (tc-inlay-hint-state-data-set! state latest))))))
+
+(define (tc-inlay-hints-disable-for-state! [state : TcInlayHintState]) : unit
+  (let
+    [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
+    (begin
+      (set! (struct-get data enabled) false)
+      (tc-inlay-hint-state-data-set! state data))))
+
+(define (tc-inlay-hints-size-for-state [state : TcInlayHintState]) : i64
+  (let
+    [count : i64 (struct-get (tc-inlay-hint-state-data state) count)]
+    (if (< count tc-inlay-hint-capacity)
+      count
+      tc-inlay-hint-capacity)))
+
+(define (tc-inlay-hint-line-at-for-state [state : TcInlayHintState] [i : i64]) : i64
+  (array-ref (struct-get (tc-inlay-hint-state-data state) lines) i))
+
+(define (tc-inlay-hint-col-at-for-state [state : TcInlayHintState] [i : i64]) : i64
+  (array-ref (struct-get (tc-inlay-hint-state-data state) cols) i))
+
+(define (tc-inlay-hint-type-at-for-state [state : TcInlayHintState] [i : i64]) : String
+  (array-ref (struct-get (tc-inlay-hint-state-data state) types) i))
+
+(define (tc-inlay-hint-record-for-state!
+  [state : TcInlayHintState]
+  [line : i64]
+  [col : i64]
+  [ty : String]) : unit
+  ;; Copy rendered text into this state generation so it survives destruction
+  ;; of a transient typecheck/tool arena.
+  (let
+    [data : TcInlayHintStateData (tc-inlay-hint-state-data state)]
+    [slot : i64 (% (struct-get data count) tc-inlay-hint-capacity)]
     [previous : i64 (arena.tl_arena_current)]
-    [owner : i64 (tc-inlay-hint-string-arena-ensure!)]
+    [owner : i64 (tc-inlay-hint-string-arena-ensure-for-state! state)]
     [_set-owner : unit
       (unsafe
         (arena.tl_arena_set owner))]
     (begin
-      (array-set! tc-inlay-hint-lines slot line)
-      (array-set! tc-inlay-hint-cols slot col)
-      (array-set! tc-inlay-hint-types slot (string.copy (& ty)))
-      (tc-inlay-hint-string-arena-finish! previous owner)
-      (set! tc-inlay-hint-count (+ tc-inlay-hint-count 1)))))
+      (array-set! (struct-get data lines) slot line)
+      (array-set! (struct-get data cols) slot col)
+      (array-set! (struct-get data types) slot (string.copy (& ty)))
+      (tc-inlay-hint-string-arena-finish-for-state! state previous owner)
+      (let
+        [latest : TcInlayHintStateData (tc-inlay-hint-state-data state)]
+        (begin
+          (set! (struct-get latest count) (+ (struct-get latest count) 1))
+          (tc-inlay-hint-state-data-set! state latest))))))
 
-;; Record the inferred type of an un-annotated let binding value, if collection
-;; is enabled and the value expression carries a source span.
-;; Caller guards on tc-inlay-hint-enabled so the disabled path never calls this
-;; (keeping the per-binding cost in normal compiles to a single flag check).
-(define (tc-inlay-hint-maybe-record
+;; Serial/test adapters retain the historical no-state surface.
+(define (tc-inlay-hints-enable!) : unit
+  (tc-inlay-hints-enable-for-state!
+    (tc-job-state-inlay-hints (tc-serial-job-state))))
+
+(define (tc-inlay-hints-disable!) : unit
+  (tc-inlay-hints-disable-for-state!
+    (tc-job-state-inlay-hints (tc-serial-job-state))))
+
+(define (tc-inlay-hints-size) : i64
+  (tc-inlay-hints-size-for-state
+    (tc-job-state-inlay-hints (tc-serial-job-state))))
+
+(define (tc-inlay-hint-line-at [i : i64]) : i64
+  (tc-inlay-hint-line-at-for-state
+    (tc-job-state-inlay-hints (tc-serial-job-state))
+    i))
+
+(define (tc-inlay-hint-col-at [i : i64]) : i64
+  (tc-inlay-hint-col-at-for-state
+    (tc-job-state-inlay-hints (tc-serial-job-state))
+    i))
+
+(define (tc-inlay-hint-type-at [i : i64]) : String
+  (tc-inlay-hint-type-at-for-state
+    (tc-job-state-inlay-hints (tc-serial-job-state))
+    i))
+
+(define (tc-inlay-hint-record! [line : i64] [col : i64] [ty : String]) : unit
+  (tc-inlay-hint-record-for-state!
+    (tc-job-state-inlay-hints (tc-serial-job-state))
+    line
+    col
+    ty))
+
+;; Record the inferred type of an un-annotated let binding value. The explicit
+;; form is used by body hot paths; the no-state form remains a test adapter.
+(define (tc-inlay-hint-maybe-record-for-state
+  [state : TcInlayHintState]
   [maybe-ty : ast.AstMaybeType]
   [init : ast.AstExpr]
   [init-ty : ast.AstType]) : unit
@@ -35216,28 +35366,45 @@
     [(ast.AstMaybeType.No)
       (match init
         [(ast.AstExpr.Spanned _ span)
-          (tc-inlay-hint-record!
+          (tc-inlay-hint-record-for-state!
+            state
             (ast.ast-source-span-start-line span)
             (ast.ast-source-span-start-col span)
             (tc-type-render init-ty))]
         [_ unit])]
     [(ast.AstMaybeType.Some _) unit]))
 
-;; Record the inferred type of any spanned expression for tl/getType and
-;; inlay hint lookup. Unlike tc-inlay-hint-maybe-record (which filters to
-;; un-annotated let bindings), this records for any spanned expression so
-;; that tl/getType can resolve types at call sites and other expression
-;; positions. Caller must guard on tc-inlay-hint-enabled.
-(define (tc-inlay-hint-maybe-record-expr
+(define (tc-inlay-hint-maybe-record
+  [maybe-ty : ast.AstMaybeType]
+  [init : ast.AstExpr]
+  [init-ty : ast.AstType]) : unit
+  (tc-inlay-hint-maybe-record-for-state
+    (tc-job-state-inlay-hints (tc-serial-job-state))
+    maybe-ty
+    init
+    init-ty))
+
+;; Record the inferred type of any spanned expression for tl/getType.
+(define (tc-inlay-hint-maybe-record-expr-for-state
+  [state : TcInlayHintState]
   [expr : ast.AstExpr]
   [ty : ast.AstType]) : unit
   (match expr
     [(ast.AstExpr.Spanned _ span)
-      (tc-inlay-hint-record!
+      (tc-inlay-hint-record-for-state!
+        state
         (ast.ast-source-span-start-line span)
         (ast.ast-source-span-start-col span)
         (tc-type-render ty))]
     [_ unit]))
+
+(define (tc-inlay-hint-maybe-record-expr
+  [expr : ast.AstExpr]
+  [ty : ast.AstType]) : unit
+  (tc-inlay-hint-maybe-record-expr-for-state
+    (tc-job-state-inlay-hints (tc-serial-job-state))
+    expr
+    ty))
 
 (define (tc-let-binding-init-type-at
   [ctx : TcContext]
@@ -35344,75 +35511,84 @@
             (+ index 1)
             body)
             [(ResultTcType.Ok init-ty)
-              (begin
-                (if tc-inlay-hint-enabled
-                  (tc-inlay-hint-maybe-record maybe-ty init init-ty)
-                  unit)
-                (match maybe-ty
-                  [(ast.AstMaybeType.Some want)
-                    (let
-                      [resolved-want : ast.AstType (tc-resolve-type ctx want)]
-                      (match (tc-let-binding-plain-expected-ok
+              (let
+                [body-state : TcBodyState (tc-context-body-state ctx)]
+                (begin
+                  (if (struct-get body-state inlay-hint-enabled)
+                    (tc-inlay-hint-maybe-record-for-state
+                      (struct-get body-state inlay-hint-state)
+                      maybe-ty
+                      init
+                      init-ty)
+                    unit)
+                  (match maybe-ty
+                    [(ast.AstMaybeType.Some want)
+                      (let
+                        [resolved-want : ast.AstType (tc-resolve-type ctx want)]
+                        (match (tc-let-binding-plain-expected-ok
+                          ctx
+                          (tc-env-key-name-text name)
+                          (ast.AstMaybeType.Some resolved-want)
+                          init
+                          init-ty)
+                          [(ResultTcUnit.Ok)
+                            (match (tc-ensure-cleanup-resource-not-let-bound
+                              ctx
+                              env
+                              init
+                              init-ty)
+                              [(ResultTcUnit.Ok)
+                                (match (tc-ensure-reference-value-can-bind
+                                  env
+                                  init-ty)
+                                  [(ResultTcUnit.Ok)
+                                    (tc-let-bindings-for-body-at
+                                      ctx
+                                      (let
+                                        [binding-ty : ast.AstType
+                                          (if (tc-type-contains-any-region
+                                            init-ty)
+                                            init-ty
+                                            resolved-want)]
+                                        (tc-bind-c-abi-fnptr-if-needed-id
+                                          ctx
+                                          env
+                                          name
+                                          binding-ty
+                                          init))
+                                      bindings
+                                      body
+                                      (+ index 1))]
+                                  [(ResultTcUnit.Err message)
+                                    (ResultTcEnv.Err message)])]
+                              [(ResultTcUnit.Err message)
+                                (ResultTcEnv.Err message)])]
+                          [(ResultTcUnit.Err message) (ResultTcEnv.Err message)]))]
+                    [(ast.AstMaybeType.No)
+                      (match (tc-ensure-cleanup-resource-not-let-bound
                         ctx
-                        (tc-env-key-name-text name)
-                        (ast.AstMaybeType.Some resolved-want)
+                        env
                         init
                         init-ty)
                         [(ResultTcUnit.Ok)
-                          (match (tc-ensure-cleanup-resource-not-let-bound
-                            ctx
+                          (match (tc-ensure-reference-value-can-bind
                             env
-                            init
                             init-ty)
                             [(ResultTcUnit.Ok)
-                              (match (tc-ensure-reference-value-can-bind
-                                env
-                                init-ty)
-                                [(ResultTcUnit.Ok)
-                                  (tc-let-bindings-for-body-at
-                                    ctx
-                                    (let
-                                      [binding-ty : ast.AstType
-                                        (if (tc-type-contains-any-region
-                                          init-ty)
-                                          init-ty
-                                          resolved-want)]
-                                      (tc-bind-c-abi-fnptr-if-needed-id
-                                        ctx
-                                        env
-                                        name
-                                        binding-ty
-                                        init))
-                                    bindings
-                                    body
-                                    (+ index 1))]
-                                [(ResultTcUnit.Err message)
-                                  (ResultTcEnv.Err message)])]
+                              (tc-let-bindings-for-body-at
+                                ctx
+                                (tc-bind-c-abi-fnptr-if-needed-id
+                                  ctx
+                                  env
+                                  name
+                                  init-ty
+                                  init)
+                                bindings
+                                body
+                                (+ index 1))]
                             [(ResultTcUnit.Err message)
                               (ResultTcEnv.Err message)])]
-                        [(ResultTcUnit.Err message) (ResultTcEnv.Err message)]))]
-                  [(ast.AstMaybeType.No)
-                    (match (tc-ensure-cleanup-resource-not-let-bound
-                      ctx
-                      env
-                      init
-                      init-ty)
-                      [(ResultTcUnit.Ok)
-                        (match (tc-ensure-reference-value-can-bind env init-ty)
-                          [(ResultTcUnit.Ok)
-                            (tc-let-bindings-for-body-at
-                              ctx
-                              (tc-bind-c-abi-fnptr-if-needed-id
-                                ctx
-                                env
-                                name
-                                init-ty
-                                init)
-                              bindings
-                              body
-                              (+ index 1))]
-                          [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
-                      [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]))]
+                        [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])])))]
             [(ResultTcType.Err message) (ResultTcEnv.Err message)]))])))
 
 (define (tc-resource-cleanup-direct-name-ok [cleanup : ast.AstExpr]) : ResultTcUnit
@@ -66625,7 +66801,8 @@
 ;; walk on -- `macro-alias-derived-cache-reset!` (module/enum index, alias,
 ;; unqualified-import, flat-import targets, surface call-decl, the three source
 ;; key caches, imported-module identity), plus `tc-nominal-owner-cache-reset!`,
-;; `tc-resolve-type-name-cache-reset!` and `tc-job-state-reset-file-state!`. So
+;; `tc-resolve-type-name-cache-reset!` and `tc-job-state-reset-derived-caches!`.
+;; So
 ;; anything splice N's expansion left in one of those caches is unreachable
 ;; from splice N+1 onwards BY CONSTRUCTION. Retiring one splice behind puts the
 ;; destroy at splice N+2 -- a full reset past the last instant any of it can be
@@ -74782,50 +74959,174 @@
             (string.eq tc-unused-unsafe-target-path "")))))))
 
 (define (tc-inlay-hint-string-lifetime-record-in-arena!
+  [state : TcInlayHintState]
   [producer : arena.Arena]) : unit
   (begin
     (unsafe
       (arena.set! producer))
     (let
       [ty : String (string.append "lifetime-hint-" (string.int->string 42))]
-      (tc-inlay-hint-record! 7 11 ty))))
+      (tc-inlay-hint-record-for-state! state 7 11 ty))))
 
-(define (tc-inlay-hint-string-lifetime-ok?) : bool
+;; Exercise every retained no-state adapter against the one serial state. The
+;; fixed arrays are retained after reset, so this adds no second capacity-sized
+;; allocation while still covering read-after-disable and generation cleanup.
+(define (tc-inlay-hint-serial-adapters-ok?) : bool
+  (let
+    [state : TcInlayHintState (tc-job-state-inlay-hints (tc-serial-job-state))]
+    [readable? : bool false]
+    [clean? : bool false]
+    (begin
+      (tc-inlay-hints-reset-for-state! state)
+      (tc-inlay-hints-enable!)
+      (tc-inlay-hint-record! 17 23 "serial-adapter")
+      (tc-inlay-hints-disable!)
+      (set!
+        readable?
+        (and
+          (= (tc-inlay-hints-size) 1)
+          (= (tc-inlay-hint-line-at 0) 17)
+          (= (tc-inlay-hint-col-at 0) 23)
+          (string.eq (tc-inlay-hint-type-at 0) "serial-adapter")))
+      (tc-inlay-hints-reset-for-state! state)
+      (set!
+        clean?
+        (and
+          (not (tc-inlay-hint-state-enabled? state))
+          (= (tc-inlay-hints-size) 0)
+          (= (struct-get (tc-inlay-hint-state-data state) count) 0)
+          (= (struct-get (tc-inlay-hint-state-data state) string-arena) 0)))
+      (and readable? clean?))))
+
+(define (tc-inlay-hint-state-isolation-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]
     [producer : arena.Arena (arena.make)]
+    [job-a : TcJobState (tc-job-state-new)]
+    [job-b : TcJobState (tc-job-state-new)]
+    [state-a : TcInlayHintState (tc-job-state-inlay-hints job-a)]
+    [state-b : TcInlayHintState (tc-job-state-inlay-hints job-b)]
+    [initially-lazy? : bool
+      (and
+        (=
+          (array-length (struct-get (tc-inlay-hint-state-data state-a) lines))
+          0)
+        (=
+          (array-length (struct-get (tc-inlay-hint-state-data state-b) lines))
+          0)
+        (=
+          (array-length (struct-get (tc-inlay-hint-state-data state-a) cols))
+          0)
+        (=
+          (array-length (struct-get (tc-inlay-hint-state-data state-b) cols))
+          0)
+        (=
+          (array-length (struct-get (tc-inlay-hint-state-data state-a) types))
+          0)
+        (=
+          (array-length (struct-get (tc-inlay-hint-state-data state-b) types))
+          0))]
+    [restored-after-enable? : bool false]
+    [a-survived? : bool false]
+    [b-survived? : bool false]
+    [a-reset? : bool false]
+    [b-after-a-reset? : bool false]
+    [reuse-isolated? : bool false]
+    [fixed-capacities? : bool false]
     (begin
-      ;; Start from a fresh generation, then record a dynamically allocated
-      ;; producer string while a disposable arena is current.
-      (tc-inlay-hints-enable!)
-      (tc-inlay-hint-string-lifetime-record-in-arena! producer)
+      ;; Fixed storage is owned by the state creation arena even when first
+      ;; use occurs under a disposable producer arena.
+      (unsafe
+        (arena.set! producer))
+      (tc-inlay-hints-enable-for-state! state-a)
+      (set! restored-after-enable? (arena.eq? (arena.current) producer))
+      (tc-inlay-hint-string-lifetime-record-in-arena! state-a producer)
       (unsafe
         (arena.set! caller))
       (unsafe
         (arena.destroy producer))
-      ;; tl/getType reads after disable!, so this boundary must retain strings.
-      (tc-inlay-hints-disable!)
-      (let
-        [survived? : bool
-          (and
-            (= (tc-inlay-hints-size) 1)
-            (= (tc-inlay-hint-line-at 0) 7)
-            (= (tc-inlay-hint-col-at 0) 11)
-            (string.eq (tc-inlay-hint-type-at 0) "lifetime-hint-42"))]
-        (begin
-          ;; Enabling again drops this generation's strings; disable once
-          ;; more so the helper leaves the collector in its normal idle state.
-          (tc-inlay-hints-enable!)
-          (let
-            [cleared? : bool (= (tc-inlay-hints-size) 0)]
-            (begin
-              (tc-inlay-hints-disable!)
-              (and
-                survived?
-                cleared?
-                (not tc-inlay-hint-enabled)
-                (= tc-inlay-hint-count 0)
-                (= tc-inlay-hint-string-arena 0)))))))))
+      (tc-inlay-hints-disable-for-state! state-a)
+      (tc-inlay-hints-enable-for-state! state-b)
+      (tc-inlay-hint-record-for-state! state-b 21 31 "state-b")
+      (set!
+        fixed-capacities?
+        (and
+          (=
+            (array-length (struct-get (tc-inlay-hint-state-data state-a) lines))
+            tc-inlay-hint-capacity)
+          (=
+            (array-length (struct-get (tc-inlay-hint-state-data state-a) cols))
+            tc-inlay-hint-capacity)
+          (=
+            (array-length (struct-get (tc-inlay-hint-state-data state-a) types))
+            tc-inlay-hint-capacity)
+          (=
+            (array-length (struct-get (tc-inlay-hint-state-data state-b) lines))
+            tc-inlay-hint-capacity)
+          (=
+            (array-length (struct-get (tc-inlay-hint-state-data state-b) cols))
+            tc-inlay-hint-capacity)
+          (=
+            (array-length (struct-get (tc-inlay-hint-state-data state-b) types))
+            tc-inlay-hint-capacity)))
+      (set!
+        a-survived?
+        (and
+          (= (tc-inlay-hints-size-for-state state-a) 1)
+          (= (tc-inlay-hint-line-at-for-state state-a 0) 7)
+          (= (tc-inlay-hint-col-at-for-state state-a 0) 11)
+          (string.eq
+            (tc-inlay-hint-type-at-for-state state-a 0)
+            "lifetime-hint-42")))
+      (set!
+        b-survived?
+        (and
+          (= (tc-inlay-hints-size-for-state state-b) 1)
+          (= (tc-inlay-hint-line-at-for-state state-b 0) 21)
+          (= (tc-inlay-hint-col-at-for-state state-b 0) 31)
+          (string.eq (tc-inlay-hint-type-at-for-state state-b 0) "state-b")))
+      (tc-job-state-reset-file-state! job-a)
+      (set!
+        a-reset?
+        (and
+          (not (tc-inlay-hint-state-enabled? state-a))
+          (= (tc-inlay-hints-size-for-state state-a) 0)
+          (= (struct-get (tc-inlay-hint-state-data state-a) string-arena) 0)))
+      (set!
+        b-after-a-reset?
+        (and
+          (tc-inlay-hint-state-enabled? state-b)
+          (= (tc-inlay-hints-size-for-state state-b) 1)
+          (= (tc-inlay-hint-line-at-for-state state-b 0) 21)
+          (= (tc-inlay-hint-col-at-for-state state-b 0) 31)
+          (string.eq (tc-inlay-hint-type-at-for-state state-b 0) "state-b")))
+      (tc-inlay-hints-enable-for-state! state-a)
+      (tc-inlay-hint-record-for-state! state-a 41 51 "state-a-reused")
+      (tc-inlay-hints-disable-for-state! state-a)
+      (set!
+        reuse-isolated?
+        (and
+          (= (tc-inlay-hints-size-for-state state-a) 1)
+          (= (tc-inlay-hint-line-at-for-state state-a 0) 41)
+          (= (tc-inlay-hint-col-at-for-state state-a 0) 51)
+          (string.eq
+            (tc-inlay-hint-type-at-for-state state-a 0)
+            "state-a-reused")
+          (= (tc-inlay-hints-size-for-state state-b) 1)
+          (string.eq (tc-inlay-hint-type-at-for-state state-b 0) "state-b")))
+      (tc-inlay-hints-reset-for-state! state-a)
+      (tc-inlay-hints-reset-for-state! state-b)
+      (and
+        initially-lazy?
+        restored-after-enable?
+        a-survived?
+        b-survived?
+        fixed-capacities?
+        a-reset?
+        b-after-a-reset?
+        reuse-isolated?
+        (= (struct-get (tc-inlay-hint-state-data state-a) string-arena) 0)
+        (= (struct-get (tc-inlay-hint-state-data state-b) string-arena) 0)))))
 
 (define (tc-lazy-table-storage-ok?) : bool
   (let
@@ -74835,9 +75136,6 @@
       (and
         (= tc-lazy-global-table-arena 0)
         (= (array-length tc-type-needs-resolution-slots) 0)
-        (= (array-length tc-inlay-hint-lines) 0)
-        (= (array-length tc-inlay-hint-cols) 0)
-        (= (array-length tc-inlay-hint-types) 0)
         (= (array-length tc-agg-size-cache) 0)
         (= (array-length tc-agg-align-cache) 0)
         (= (array-length tc-agg-regwords-cache) 0)
@@ -74854,7 +75152,6 @@
       (unsafe
         (arena.set! scratch))]
     [_resolution : unit (tc-type-needs-resolution-storage-ensure!)]
-    [_inlay : unit (tc-inlay-hint-storage-ensure!)]
     [_size : unit (tc-agg-size-cache-storage-ensure!)]
     [_align : unit (tc-agg-align-cache-storage-ensure!)]
     [_regwords : unit (tc-agg-regwords-cache-storage-ensure!)]
@@ -74865,9 +75162,6 @@
     [exact-capacities? : bool
       (and
         (= (array-length tc-type-needs-resolution-slots) 131072)
-        (= (array-length tc-inlay-hint-lines) tc-inlay-hint-capacity)
-        (= (array-length tc-inlay-hint-cols) tc-inlay-hint-capacity)
-        (= (array-length tc-inlay-hint-types) tc-inlay-hint-capacity)
         (= (array-length tc-agg-size-cache) tc-agg-scalar-cache-capacity)
         (= (array-length tc-agg-align-cache) tc-agg-scalar-cache-capacity)
         (= (array-length tc-agg-regwords-cache) tc-agg-scalar-cache-capacity)
@@ -74902,7 +75196,6 @@
       (unsafe
         (arena.destroy scratch))
       (array-set! tc-type-needs-resolution-slots 0 17)
-      (array-set! tc-inlay-hint-lines 0 23)
       (array-set! tc-agg-size-cache 0 29)
       (array-set! tc-agg-align-cache 0 31)
       (array-set! tc-agg-regwords-cache 0 37)
@@ -74913,7 +75206,6 @@
         [survived? : bool
           (and
             (= (array-ref tc-type-needs-resolution-slots 0) 17)
-            (= (array-ref tc-inlay-hint-lines 0) 23)
             (= (array-ref tc-agg-size-cache 0) 29)
             (= (array-ref tc-agg-align-cache 0) 31)
             (= (array-ref tc-agg-regwords-cache 0) 37)
@@ -74924,7 +75216,6 @@
             (= (array-ref macro-unqualified-import-cache-module-keys 0) 43))]
         (begin
           (array-set! tc-type-needs-resolution-slots 0 0)
-          (array-set! tc-inlay-hint-lines 0 0)
           (array-set! tc-agg-size-cache 0 0)
           (array-set! tc-agg-align-cache 0 0)
           (array-set! tc-agg-regwords-cache 0 0)
@@ -74933,14 +75224,12 @@
           (let
             [unused-unsafe-lifetime? : bool
               (tc-unused-unsafe-storage-lifetime-ok?)]
-            [inlay-hint-lifetime? : bool (tc-inlay-hint-string-lifetime-ok?)]
             (and
               initially-lazy?
               restored-caller?
               exact-capacities?
               survived?
-              unused-unsafe-lifetime?
-              inlay-hint-lifetime?)))))))
+              unused-unsafe-lifetime?)))))))
 
 (define (macro-decl-list-slots-data-addr [decls : ast.AstDeclList]) : i64
   (cast
@@ -82971,7 +83260,7 @@
       ;; answers and refer to the replaced flat program view. Keep their shared
       ;; invalidation until they gain an insert API of their own.
       (macro-alias-derived-cache-reset!)
-      (tc-job-state-reset-file-state! (tc-context-job-state cur-ctx))
+      (tc-job-state-reset-derived-caches! (tc-context-job-state cur-ctx))
       ;; Do not reset ctfe-module-macro-export here: the export set is stable
       ;; across the splice (additive-inert) and is owned by macro-live-prescan-
       ;; ensure!, which repopulates it when the prescan is recomputed. Clearing it
@@ -83273,7 +83562,7 @@
                                             (begin
                                               (tc-nominal-owner-cache-reset!)
                                               (macro-alias-derived-cache-reset!)
-                                              (tc-job-state-reset-file-state!
+                                              (tc-job-state-reset-derived-caches!
                                                 (tc-context-job-state cur-ctx))
                                               (if defer-refresh?
                                                 (begin
@@ -84207,7 +84496,7 @@
             ;; the (module, qualifier) -> target mapping is derived from this
             ;; program's declarations.
             (macro-alias-derived-cache-reset!)
-            (tc-job-state-reset-file-state! job-state)
+            (tc-job-state-reset-derived-caches! job-state)
             ;; The ctfe-module-macro-export map is not reset per pass: it is owned
             ;; by macro-live-prescan-ensure!, which populates it once (with the
             ;; cached visible-name prescan) and repopulates it on the non-inert
@@ -84657,7 +84946,7 @@
                 [_release-scratch : unit
                   (begin
                     (macro-expand-scratch-release!)
-                    (tc-job-state-reset-file-state! job-state))]
+                    (tc-job-state-reset-derived-caches! job-state))]
                 (if (spec.compiler-specialize-needed-with-pools expanded pools)
                   (begin
                     (macro-expand-program-structural-change-note! 8)
@@ -84688,7 +84977,7 @@
                 (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
               (macro-expand-allocation-profile-snapshot! 0)
               (macro-expand-scratch-release!)
-              (tc-job-state-reset-file-state! job-state)
+              (tc-job-state-reset-derived-caches! job-state)
               (ResultMacroExpand.Err diag))])))))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state

@@ -79,19 +79,24 @@
     (compiler_load.compiler-load-session-reset-interns!)
     (tc.compiler-typecheck-reset-intern-owned-state!)))
 
-(define (compiler-check-program-with-paths-cache
+(define (compiler-check-program-with-paths-cache-and-job-state
   [path : String]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
-  [cache-scope : String]) : ResultCompilerCheck
+  [cache-scope : String]
+  [job-state : tc.TcJobState]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
+    (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
+      (compiler_load.compiler-load-serial-test-session-state)
+      tc.tc-prefix-snapshot-serial-test-cache-state
+      job-state
       (ast.ast-program decls)
       paths
       stdlib-roots
-      cache-scope)
+      cache-scope
+      (ast.ast-node-pool-context-capture-active))
       [(tc.ResultCompilerTypecheck.Ok summary)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
@@ -105,13 +110,28 @@
                 (box-get diag)
                 path))))])))
 
-(define (compiler-check-loaded-with-prelude-cache
+(define (compiler-check-program-with-paths-cache
+  [path : String]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]) : ResultCompilerCheck
+  (compiler-check-program-with-paths-cache-and-job-state
+    path
+    decls
+    paths
+    stdlib-roots
+    cache-scope
+    (tc.tc-serial-job-state)))
+
+(define (compiler-check-loaded-with-prelude-cache-and-job-state
   [path : String]
   [prelude-decls : ast.AstDeclList]
   [prelude-paths : ast.AstDeclPathList]
   [loaded : compiler_load.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
-  [cache-scope : String]) : ResultCompilerCheck
+  [cache-scope : String]
+  [job-state : tc.TcJobState]) : ResultCompilerCheck
   (match loaded
     [(compiler_load.ResultCompilerLoadWithPaths.Ok
         entry-decls
@@ -120,7 +140,7 @@
         _)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (compiler-check-program-with-paths-cache
+        (compiler-check-program-with-paths-cache-and-job-state
           path
           (compiler_load.compiler-load-decl-list-append
             prelude-decls
@@ -129,12 +149,29 @@
             prelude-paths
             (ast.ast-decl-path-list-with-modules entry-paths entry-modules))
           stdlib-roots
-          cache-scope))]
+          cache-scope
+          job-state))]
     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ResultCompilerCheck.Err
           (cdiag.compiler-diagnostic-list-box-single diag)))]))
+
+(define (compiler-check-loaded-with-prelude-cache
+  [path : String]
+  [prelude-decls : ast.AstDeclList]
+  [prelude-paths : ast.AstDeclPathList]
+  [loaded : compiler_load.ResultCompilerLoadWithPaths]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]) : ResultCompilerCheck
+  (compiler-check-loaded-with-prelude-cache-and-job-state
+    path
+    prelude-decls
+    prelude-paths
+    loaded
+    stdlib-roots
+    cache-scope
+    (tc.tc-serial-job-state)))
 
 (define (compiler-check-loaded-cache-with-paths
   [path : String]
@@ -315,11 +352,12 @@
     (svec.new)
     (compiler-check-language-cfgs)))
 
-(define (compiler-check-source-with-roots-and-cfg
+(define (compiler-check-source-with-roots-and-cfg-and-job-state
   [path : String]
   [source : String]
   [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
+  [cfgs : sym_i64_env.SymI64Env]
+  [job-state : tc.TcJobState]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -332,7 +370,7 @@
           prelude-paths
           prelude-modules
           prelude-seen)
-        (compiler-check-loaded-with-prelude-cache
+        (compiler-check-loaded-with-prelude-cache-and-job-state
           path
           prelude-decls
           (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
@@ -346,12 +384,25 @@
           (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
             stdlib-roots
-            cfgs))]
+            cfgs)
+          job-state)]
       [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ResultCompilerCheck.Err
             (cdiag.compiler-diagnostic-list-box-single diag)))])))
+
+(define (compiler-check-source-with-roots-and-cfg
+  [path : String]
+  [source : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
+  (compiler-check-source-with-roots-and-cfg-and-job-state
+    path
+    source
+    stdlib-roots
+    cfgs
+    (tc.tc-serial-job-state)))
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-source path source)

@@ -20,9 +20,16 @@
 
 ;; Importing the typechecker should leave large optional/cache tables empty.
 ;; Their first-use storage belongs to a dedicated persistent arena, not to the
-;; transient arena active at the lookup that happened to initialize them.
+;; transient arena active at the lookup that happened to initialize them. The
+;; inlay collector is job-owned and is covered by its explicit isolation test.
 (define (compiler-typecheck-lazy-table-storage-ok?) : bool
   (tc_core.tc-lazy-table-storage-ok?))
+
+(define (compiler-typecheck-inlay-hint-state-isolation-ok?) : bool
+  (tc_core.tc-inlay-hint-state-isolation-ok?))
+
+(define (compiler-typecheck-inlay-hint-serial-adapters-ok?) : bool
+  (tc_core.tc-inlay-hint-serial-adapters-ok?))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (string.append
@@ -11961,6 +11968,12 @@
     (if (compiler-typecheck-lazy-table-storage-ok?)
       unit
       (io.panic "typecheck: lazy global table storage test failed"))
+    (if (compiler-typecheck-inlay-hint-state-isolation-ok?)
+      unit
+      (io.panic "typecheck: inlay hint state isolation test failed"))
+    (if (compiler-typecheck-inlay-hint-serial-adapters-ok?)
+      unit
+      (io.panic "typecheck: inlay hint serial adapters test failed"))
     (compiler-typecheck-self-test-basics)
     (compiler-typecheck-self-test-diagnostics)
     (compiler-typecheck-self-test-models)

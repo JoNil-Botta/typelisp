@@ -541,27 +541,48 @@
     [total-off : i64 (lsp-smoke-index-of src "41")]
     [typed-off : i64 (lsp-smoke-index-of src "5]")]
     [next-off : i64 (lsp-smoke-index-of src "(+ total 1)")]
+    [job-state : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [inlay-state : tc_core.TcInlayHintState
+      (tc_core.tc-job-state-inlay-hints job-state)]
     (if (or (< total-off 0) (< typed-off 0) (< next-off 0))
       false
       (begin
-        (tc_core.tc-inlay-hints-enable!)
-        (tc_core.tc-inlay-hint-record! 1 (+ total-off 1) "i64")
-        (tc_core.tc-inlay-hint-record! 1 (+ typed-off 1) "i64")
-        (tc_core.tc-inlay-hint-record! 1 (+ next-off 1) "i64")
+        (tc_core.tc-inlay-hints-enable-for-state! inlay-state)
+        (tc_core.tc-inlay-hint-record-for-state!
+          inlay-state
+          1
+          (+ total-off 1)
+          "i64")
+        (tc_core.tc-inlay-hint-record-for-state!
+          inlay-state
+          1
+          (+ typed-off 1)
+          "i64")
+        (tc_core.tc-inlay-hint-record-for-state!
+          inlay-state
+          1
+          (+ next-off 1)
+          "i64")
         (let
-          [hints : json.JsonSeq (lsp_frame_core.lsp-inlay-build src 0 0)]
+          [hints : json.JsonSeq
+            (lsp_frame_core.lsp-inlay-build inlay-state src 0 0)]
           [rendered : String
             (json.stringify (lsp_frame_core.lsp-json-array hints))]
           [type-label : String "\": i64\""]
           [total-pos : String "\"character\":33"]
           [next-pos : String "\"character\":59"]
           (begin
-            (tc_core.tc-inlay-hints-disable!)
-            (and
-              (= (json.list-count hints) 2)
-              (string.contains (& rendered) (& type-label))
-              (string.contains (& rendered) (& total-pos))
-              (string.contains (& rendered) (& next-pos)))))))))
+            (tc_core.tc-inlay-hints-disable-for-state! inlay-state)
+            (let
+              [ok : bool
+                (and
+                  (= (json.list-count hints) 2)
+                  (string.contains (& rendered) (& type-label))
+                  (string.contains (& rendered) (& total-pos))
+                  (string.contains (& rendered) (& next-pos)))]
+              (begin
+                (tc_core.tc-inlay-hints-reset-for-state! inlay-state)
+                ok))))))))
 
 (define (lsp-formatting-smoke-ok?) : bool
   (let
@@ -612,45 +633,66 @@
     [src : String
       "(define (main) : i32 (let [total 41] [next (+ total 1)] next))"]
     [total-off : i64 (lsp-smoke-index-of src "41")]
+    [job-state : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [inlay-state : tc_core.TcInlayHintState
+      (tc_core.tc-job-state-inlay-hints job-state)]
     (if (< total-off 0)
       false
       (begin
-        (tc_core.tc-inlay-hints-enable!)
-        (match (check_core.compiler-check-source "test.tl" src)
+        (tc_core.tc-inlay-hints-enable-for-state! inlay-state)
+        (match (check_core.compiler-check-source-with-roots-and-cfg-and-job-state
+          "test.tl"
+          src
+          (lsp_svec.new)
+          (check_core.compiler-check-language-cfgs)
+          job-state)
           [(check_core.ResultCompilerCheck.Ok _) unit]
           [(check_core.ResultCompilerCheck.Err _) unit])
         (let
-          [size : i64 (tc_core.tc-inlay-hints-size)]
+          [size : i64 (tc_core.tc-inlay-hints-size-for-state inlay-state)]
           [i : i64 0]
           [found-ok : bool false]
           [near-ok : bool false]
           (begin
             (while (and (< i size) (not found-ok))
               (let
-                [hint-line : i64 (tc_core.tc-inlay-hint-line-at i)]
-                [hint-col : i64 (tc_core.tc-inlay-hint-col-at i)]
+                [hint-line : i64
+                  (tc_core.tc-inlay-hint-line-at-for-state inlay-state i)]
+                [hint-col : i64
+                  (tc_core.tc-inlay-hint-col-at-for-state inlay-state i)]
                 [target-line : i64 1]
                 [target-col : i64 (+ total-off 1)]
                 (begin
                   (if (and (= hint-line target-line) (= hint-col target-col))
                     (set!
                       found-ok
-                      (string.eq (tc_core.tc-inlay-hint-type-at i) "i32"))
+                      (string.eq
+                        (tc_core.tc-inlay-hint-type-at-for-state inlay-state i)
+                        "i32"))
                     unit)
                   (set! i (+ i 1)))))
             (let
               [near-idx : i64
                 (lsp_frame_core.lsp-nearest-inlay-hint-index
+                  inlay-state
                   src
                   1
                   (+ total-off 3))]
               (if (>= near-idx 0)
                 (set!
                   near-ok
-                  (string.eq (tc_core.tc-inlay-hint-type-at near-idx) "i32"))
+                  (string.eq
+                    (tc_core.tc-inlay-hint-type-at-for-state
+                      inlay-state
+                      near-idx)
+                    "i32"))
                 unit))
-            (tc_core.tc-inlay-hints-disable!)
-            (and found-ok near-ok)))))))
+            (tc_core.tc-inlay-hints-disable-for-state! inlay-state)
+            (let
+              [ok : bool (and found-ok near-ok)]
+              (begin
+                (tc_core.tc-inlay-hints-reset-for-state! inlay-state)
+                ok))))))))
 
 (define (lsp-find-references-smoke-ok?) : bool
   (let

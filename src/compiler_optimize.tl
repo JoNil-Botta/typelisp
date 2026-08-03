@@ -18896,40 +18896,53 @@
               instr
               (opt-licm-insert-before-terminator hoisted (box-get rest))))])]))
 
-(define (opt-licm-insert-before-terminator-seq-from
-  [hoisted : ir.CompilerIrInstrList]
+(define (opt-instr-builder-append-list!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [instrs : ir.CompilerIrInstrList]) : unit
+  (match instrs
+    [(ir.CompilerIrInstrList.Nil) unit]
+    [(ir.CompilerIrInstrList.Cons instr rest)
+      (begin
+        (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+        (opt-instr-builder-append-list! (&mut builder) (box-get rest)))]))
+
+(define (opt-licm-first-terminator-index
   [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (match hoisted
-    [(ir.CompilerIrInstrList.Nil)
-      (opt-aggregate-instr-seq-append-from
-        instrs
-        index
-        ir.CompilerIrInstrList.Nil)]
-    [_
-      (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-        hoisted
-        (let
-          [instr : ir.CompilerIrInstr
-            (ir.compiler-ir-instr-seq-ref instrs index)]
-          (if (opt-cfg-terminator-instr? instr)
-            (opt-aggregate-instr-list-append
-              hoisted
-              (opt-aggregate-instr-seq-append-from
-                instrs
-                index
-                ir.CompilerIrInstrList.Nil))
-            (ir.compiler-ir-instr-cons
-              instr
-              (opt-licm-insert-before-terminator-seq-from
-                hoisted
-                instrs
-                (+ index 1))))))]))
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index count)
+    count
+    (if (opt-cfg-terminator-instr? (ir.compiler-ir-instr-seq-ref instrs index))
+      index
+      (opt-licm-first-terminator-index instrs (+ index 1) count))))
 
 (define (opt-licm-insert-before-terminator-seq
   [hoisted : ir.CompilerIrInstrList]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
-  (opt-licm-insert-before-terminator-seq-from hoisted instrs 0))
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (match hoisted
+    [(ir.CompilerIrInstrList.Nil) instrs]
+    [_
+      (let
+        [original-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [inserted-count : i64 (ir.compiler-ir-instr-list-count hoisted)]
+        [terminator-index : i64
+          (opt-licm-first-terminator-index instrs 0 original-count)]
+        [builder : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity
+            (+ original-count inserted-count))]
+        (begin
+          (ir.compiler-ir-instr-builder-append-seq-range!
+            (&mut builder)
+            instrs
+            0
+            terminator-index)
+          (opt-instr-builder-append-list! (&mut builder) hoisted)
+          (ir.compiler-ir-instr-builder-append-seq-range!
+            (&mut builder)
+            instrs
+            terminator-index
+            original-count)
+          (ir.compiler-ir-instr-builder-to-seq builder)))]))
 
 (define (opt-licm-insert-preheader-blocks
   [preheader : i64]
@@ -18942,7 +18955,7 @@
         [(ir.CompilerIrBlock.Block label instrs)
           (ir.compiler-ir-block-cons
             (if (= label preheader)
-              (ir.compiler-ir-block
+              (ir.CompilerIrBlock.Block
                 label
                 (opt-licm-insert-before-terminator-seq hoisted instrs))
               block)
@@ -22128,33 +22141,71 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (let
-            [list-instrs : ir.CompilerIrInstrList
-              (opt-aggregate-instr-seq-append-from
-                instrs
-                0
-                ir.CompilerIrInstrList.Nil)]
-            [with-phi : ir.CompilerIrInstrList
-              (if (= label header)
-                (opt-aggregate-instr-list-append phi-instrs list-instrs)
-                list-instrs)]
-            [with-seed : ir.CompilerIrInstrList
-              (if (= label preheader)
-                (opt-licm-insert-before-terminator seed-instrs with-phi)
-                with-phi)]
-            [with-next : ir.CompilerIrInstrList
-              (if (= label latch)
-                (opt-licm-insert-before-terminator next-instrs with-seed)
-                with-seed)]
-            (ir.compiler-ir-block-cons
-              (ir.compiler-ir-block label with-next)
-              (opt-induction-insert-support-blocks
-                header
-                preheader
-                latch
-                seed-instrs
-                phi-instrs
-                next-instrs
-                (box-get rest))))])]
+            [is-header : bool (= label header)]
+            [is-preheader : bool (= label preheader)]
+            [is-latch : bool (= label latch)]
+            (if (not (or is-header (or is-preheader is-latch)))
+              (ir.compiler-ir-block-cons
+                block
+                (opt-induction-insert-support-blocks
+                  header
+                  preheader
+                  latch
+                  seed-instrs
+                  phi-instrs
+                  next-instrs
+                  (box-get rest)))
+              (let
+                [original-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                [terminator-index : i64
+                  (opt-licm-first-terminator-index instrs 0 original-count)]
+                [phi-count : i64
+                  (if is-header
+                    (ir.compiler-ir-instr-list-count phi-instrs)
+                    0)]
+                [seed-count : i64
+                  (if is-preheader
+                    (ir.compiler-ir-instr-list-count seed-instrs)
+                    0)]
+                [next-count : i64
+                  (if is-latch
+                    (ir.compiler-ir-instr-list-count next-instrs)
+                    0)]
+                [builder : ir.CompilerIrInstrBuilder
+                  (ir.compiler-ir-instr-builder-with-capacity
+                    (+ original-count (+ phi-count (+ seed-count next-count))))]
+                (begin
+                  (if is-header
+                    (opt-instr-builder-append-list! (&mut builder) phi-instrs)
+                    unit)
+                  (ir.compiler-ir-instr-builder-append-seq-range!
+                    (&mut builder)
+                    instrs
+                    0
+                    terminator-index)
+                  (if is-preheader
+                    (opt-instr-builder-append-list! (&mut builder) seed-instrs)
+                    unit)
+                  (if is-latch
+                    (opt-instr-builder-append-list! (&mut builder) next-instrs)
+                    unit)
+                  (ir.compiler-ir-instr-builder-append-seq-range!
+                    (&mut builder)
+                    instrs
+                    terminator-index
+                    original-count)
+                  (ir.compiler-ir-block-cons
+                    (ir.CompilerIrBlock.Block
+                      label
+                      (ir.compiler-ir-instr-builder-to-seq builder))
+                    (opt-induction-insert-support-blocks
+                      header
+                      preheader
+                      latch
+                      seed-instrs
+                      phi-instrs
+                      next-instrs
+                      (box-get rest)))))))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-induction-insert-support-blocks
         header
@@ -67206,13 +67257,13 @@
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (if (= label preheader)
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           label
           (opt-licm-insert-before-terminator-seq
             (opt-scratch-reset-mark-instrs mark-var)
             instrs))
         (if (= label latch)
-          (ir.compiler-ir-block
+          (ir.CompilerIrBlock.Block
             label
             (opt-licm-insert-before-terminator-seq
               (opt-scratch-reset-reset-instrs reset-var mark-var)

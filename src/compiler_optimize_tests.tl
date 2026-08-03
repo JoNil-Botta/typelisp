@@ -35609,6 +35609,198 @@
         6]
       [else 42])))
 
+;; --- dense LICM/induction insertion order witnesses -------------------------
+;; These fixtures use the destination as a compact position marker.  A Jump is
+;; encoded as -1, so the expected vectors pin both the inserted order and the
+;; original terminator/suffix boundaries without comparing unrelated payloads.
+(define (opt-dense-insertion-test-mov [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Mov
+    dst
+    (compiler_ir_types.CompilerIrValue.I64 dst)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-dense-insertion-test-code
+  [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Phi dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Jump _) -1]
+    [_ -2]))
+
+(define (opt-dense-insertion-test-seq-codes?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [expected : (Array i64)]
+  [count : i64]
+  [index : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (< index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+      (=
+        (opt-dense-insertion-test-code
+          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index))
+        (array-ref expected index))
+      (opt-dense-insertion-test-seq-codes? instrs expected count (+ index 1)))))
+
+(define (opt-dense-insertion-test-licm-original-with-term [term-label : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-dense-insertion-test-mov 10)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-dense-insertion-test-mov 11)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump term-label)
+        ;; Keep a deliberately unusual suffix after the first terminator: the
+        ;; dense insertion must preserve it exactly, as the old list path did.
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-dense-insertion-test-mov 12)
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-dense-insertion-test-licm-hoisted [first : i64] [second : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (opt-dense-insertion-test-mov first)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-dense-insertion-test-mov second)
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-dense-insertion-test-licm-order-self-test) : i64
+  (let
+    [term-label : i64 (compiler_ir_types.compiler-ir-label "dense.licm.term")]
+    [with-term : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-from-list
+        (opt-dense-insertion-test-licm-original-with-term term-label))]
+    [inserted : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_optimize.opt-licm-insert-before-terminator-seq
+        (opt-dense-insertion-test-licm-hoisted 20 21)
+        with-term)]
+    [no-term : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-from-list
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-dense-insertion-test-mov 30)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-dense-insertion-test-mov 31)
+            compiler_ir_types.CompilerIrInstrList.Nil)))]
+    [appended : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_optimize.opt-licm-insert-before-terminator-seq
+        (opt-dense-insertion-test-licm-hoisted 40 41)
+        no-term)]
+    [expected-inserted : (Array i64) (array.make-array i64 6)]
+    [expected-appended : (Array i64) (array.make-array i64 4)]
+    (begin
+      (array-set! expected-inserted 0 10)
+      (array-set! expected-inserted 1 11)
+      (array-set! expected-inserted 2 20)
+      (array-set! expected-inserted 3 21)
+      (array-set! expected-inserted 4 -1)
+      (array-set! expected-inserted 5 12)
+      (array-set! expected-appended 0 30)
+      (array-set! expected-appended 1 31)
+      (array-set! expected-appended 2 40)
+      (array-set! expected-appended 3 41)
+      (cond
+        [(not (= (compiler_ir_types.compiler-ir-instr-seq-count inserted) 6)) 1]
+        [(not (= (compiler_ir_types.compiler-ir-instr-seq-count appended) 4)) 2]
+        [(not
+            (opt-dense-insertion-test-seq-codes? inserted expected-inserted 6 0))
+          3]
+        [(not
+            (opt-dense-insertion-test-seq-codes? appended expected-appended 4 0))
+          4]
+        [else 42]))))
+
+(define (opt-dense-insertion-test-induction-blocks
+  [preheader : i64]
+  [header : i64]
+  [exit : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      preheader
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-dense-insertion-test-mov 1)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump header)
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        header
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-dense-insertion-test-mov 2)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump exit)
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-dense-insertion-test-induction-result-ok?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Cons preheader rest)
+      (match (box-get rest)
+        [(compiler_ir_types.CompilerIrBlockList.Cons header _)
+          (and
+            (= (opt-block-instr-count preheader) 3)
+            (= (opt-block-instr-count header) 4)
+            (=
+              (opt-dense-insertion-test-code (opt-block-instr-at preheader 0))
+              1)
+            (=
+              (opt-dense-insertion-test-code (opt-block-instr-at preheader 1))
+              20)
+            (=
+              (opt-dense-insertion-test-code (opt-block-instr-at preheader 2))
+              -1)
+            (= (opt-dense-insertion-test-code (opt-block-instr-at header 0)) 30)
+            (= (opt-dense-insertion-test-code (opt-block-instr-at header 1)) 2)
+            (= (opt-dense-insertion-test-code (opt-block-instr-at header 2)) 40)
+            (= (opt-dense-insertion-test-code (opt-block-instr-at header 3)) -1))]
+        [_ false])]
+    [(compiler_ir_types.CompilerIrBlockList.Array _) false]
+    [_ false]))
+
+(define (opt-dense-insertion-test-induction-order-self-test) : i64
+  (let
+    [preheader : i64
+      (compiler_ir_types.compiler-ir-label "dense.induction.pre")]
+    [header : i64
+      (compiler_ir_types.compiler-ir-label "dense.induction.header")]
+    [exit : i64 (compiler_ir_types.compiler-ir-label "dense.induction.exit")]
+    [seed-instrs : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-dense-insertion-test-mov 20)
+        compiler_ir_types.CompilerIrInstrList.Nil)]
+    [phi-instrs : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          30
+          compiler_ir_types.CompilerIrPhiInputList.Nil
+          (compiler_ast_types.AstType.I64))
+        compiler_ir_types.CompilerIrInstrList.Nil)]
+    [next-instrs : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (opt-dense-insertion-test-mov 40)
+        compiler_ir_types.CompilerIrInstrList.Nil)]
+    [cons-result : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-induction-insert-support-blocks
+        header
+        preheader
+        header
+        seed-instrs
+        phi-instrs
+        next-instrs
+        (opt-dense-insertion-test-induction-blocks preheader header exit))]
+    [array-result : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-induction-insert-support-blocks
+        header
+        preheader
+        header
+        seed-instrs
+        phi-instrs
+        next-instrs
+        (compiler_ir_types.compiler-ir-block-list-compact
+          (opt-dense-insertion-test-induction-blocks preheader header exit)))]
+    (cond
+      [(not (opt-dense-insertion-test-induction-result-ok? cons-result)) 1]
+      [(not (opt-dense-insertion-test-induction-result-ok? array-result)) 2]
+      [else 42])))
+
 ;; --- global-cell runtime witnesses -------------------------------------------
 ;;
 ;; Compiled like every other inline test; they pin the language semantics the
@@ -35674,6 +35866,20 @@
     (compiler-optimize-global-cell-pipeline-self-test)
     42
     "global-array loop versions once the descriptor loads become invariant SSA values"))
+
+(test
+  dense-licm-insertion-order
+  (test.assert-i64-eq
+    (opt-dense-insertion-test-licm-order-self-test)
+    42
+    "dense LICM insertion preserves prefix, fragment order, terminator, suffix, and append-at-end"))
+
+(test
+  dense-induction-insertion-order
+  (test.assert-i64-eq
+    (opt-dense-insertion-test-induction-order-self-test)
+    42
+    "dense induction support insertion preserves overlap order for Cons and compact Array block lists"))
 
 (test
   global-cell-runtime-loader

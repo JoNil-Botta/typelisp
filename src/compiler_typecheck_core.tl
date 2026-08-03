@@ -33690,8 +33690,8 @@
   false)
 (define tc-clone-root-collection-selected : tc_i64_i64_map.Map
   (tc_i64_i64_map.with-capacity 8))
-(define tc-clone-root-collection-roots : clone_support.CloneNameList
-  (clone_support.CloneNameList.Nil))
+(define tc-clone-root-collection-roots : clone_support.CloneRootEntries
+  (clone_support.CloneRootEntries.Empty))
 (define tc-clone-root-collection-arena : i64
   0)
 
@@ -33760,7 +33760,9 @@
       (tc-clone-root-collection-selected-from-program retained)]
     (begin
       (set! tc-clone-root-collection-selected selected)
-      (set! tc-clone-root-collection-roots (clone_support.CloneNameList.Nil))
+      (set!
+        tc-clone-root-collection-roots
+        (clone_support.CloneRootEntries.Empty))
       (set! tc-clone-root-collection-current-decl false)
       (set! tc-clone-root-collection-arena (arena.tl_arena_current))
       (set! tc-clone-root-collection-active true)
@@ -33788,20 +33790,17 @@
 (cfg
   compiler-surface-producer
   (define (tc-clone-root-collection-record-surface-roots!
-    [roots : clone_support.CloneNameList]) : unit
+    [roots : clone_support.CloneRootEntries]) : unit
     (let
-      [cur : clone_support.CloneNameList roots]
-      [done : bool false]
+      [index : i64 0]
+      [count : i64 (clone_support.clone-root-entries-len roots)]
       (begin
         (surface_facts.surface-typecheck-facts-recording-start-clone-call!)
-        (while (not done)
-          (match cur
-            [(clone_support.CloneNameList.Nil) (set! done true)]
-            [(clone_support.CloneNameList.ConsId root-key _ rest)
-              (begin
-                (surface_facts.surface-typecheck-facts-recording-note-clone-root!
-                  root-key)
-                (set! cur (box-get rest)))]))))))
+        (while (< index count)
+          (begin
+            (surface_facts.surface-typecheck-facts-recording-note-clone-root!
+              (clone_support.clone-root-entries-key-id-at-or roots index -1))
+            (set! index (+ index 1))))))))
 
 (define (tc-clone-root-collection-note! [ctx : TcContext] [ty : ast.AstType]) : unit
   (if (and
@@ -33825,10 +33824,10 @@
                     (tc-context-pools ctx)
                     (box-get decls-box)
                     (tc-clone-able-set ctx)
-                    (clone_support.CloneNameList.Nil)
+                    (clone_support.CloneRootEntries.Empty)
                     resolved
                     cbi.compiler-builtin-id-fix-empty)
-                  (clone_support.CloneNameList.Nil)))
+                  (clone_support.CloneRootEntries.Empty)))
               unit)
             ;; Resolve the nominal closure while `ty` and all nested type-pool
             ;; ids are still live in this function's semantic scratch scope.
@@ -33849,25 +33848,19 @@
     unit))
 
 (define (tc-clone-root-collection-copy-roots
-  [roots : clone_support.CloneNameList]) : clone_support.CloneNameList
-  (match roots
-    [(clone_support.CloneNameList.Nil) (clone_support.CloneNameList.Nil)]
-    [(clone_support.CloneNameList.ConsId name-id helper-name-id rest)
-      (clone_support.CloneNameList.ConsId
-        name-id
-        helper-name-id
-        (box (tc-clone-root-collection-copy-roots (box-get rest))))]))
+  [roots : clone_support.CloneRootEntries]) : clone_support.CloneRootEntries
+  (clone_support.clone-root-entries-copy roots))
 
 (define (tc-clone-root-collection-clear-state!) : unit
   (begin
     (set! tc-clone-root-collection-active false)
     (set! tc-clone-root-collection-current-decl false)
-    (set! tc-clone-root-collection-roots (clone_support.CloneNameList.Nil))))
+    (set! tc-clone-root-collection-roots (clone_support.CloneRootEntries.Empty))))
 
-(define (tc-clone-root-collection-finish! [_ctx : TcContext]) : clone_support.CloneNameList
+(define (tc-clone-root-collection-finish! [_ctx : TcContext]) : clone_support.CloneRootEntries
   (if tc-clone-root-collection-active
     (let
-      [roots : clone_support.CloneNameList
+      [roots : clone_support.CloneRootEntries
         (tc-clone-root-collection-copy-roots tc-clone-root-collection-roots)]
       [arena-handle : i64 tc-clone-root-collection-arena]
       (begin
@@ -33876,7 +33869,7 @@
         (unsafe
           (arena.tl_arena_destroy arena-handle))
         roots))
-    (clone_support.CloneNameList.Nil)))
+    (clone_support.CloneRootEntries.Empty)))
 
 (define (tc-clone-root-collection-abort!) : unit
   (if tc-clone-root-collection-active
@@ -33925,15 +33918,15 @@
                     (let
                       [root-key : i64 (array-ref root-keys cursor)]
                       (begin
-                        (if (clone_support.clone-name-list-contains-id?
+                        (if (clone_support.clone-root-entries-contains-id?
                           tc-clone-root-collection-roots
                           root-key)
                           unit
                           (set!
                             tc-clone-root-collection-roots
-                            (clone_support.clone-name-list-cons-id
-                              root-key
-                              tc-clone-root-collection-roots)))
+                            (clone_support.clone-root-entries-add-id
+                              tc-clone-root-collection-roots
+                              root-key)))
                         (set! cursor (- cursor 1))))))
                 unit)
               (set! index end))))

@@ -15,6 +15,8 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import stdlib.arena)
+(import stdlib.array)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as clone_id_map)
 (import stdlib.string)
@@ -23,10 +25,24 @@
   (map clone_id_map.Map)
   (aliases clone_id_map.Map))
 
-(defenum CloneNameList
-  (Nil)
+(defstruct CloneRootEntry
   ;; Nominal type key and the generated helper identity created for that key.
-  (ConsId i64 i64 (Box CloneNameList)))
+  (key-id i64)
+  (helper-id i64))
+
+;; Physical entries are oldest -> newest.  A view stores a physical prefix/range
+;; and presents it newest -> oldest through clone-root-entries-* accessors.
+;; The store is boxed so snapshots share the dense buffer while retaining their
+;; own start/length pair across appends and geometric growth.
+(defstruct CloneRootEntryStore
+  (entries (__tl_dyn-array CloneRootEntry))
+  (len i64)
+  (key-index clone_id_map.Map)
+  (arena i64))
+
+(defenum CloneRootEntries
+  (Empty)
+  (Dense (Box CloneRootEntryStore) i64 i64))
 
 (define (clone-helper-name-id-new-for-key [type-key-id : i64]) : i64
   (ci.intern-generated-canonical-name
@@ -271,87 +287,370 @@
             resolved))
         resolved))))
 
-(define (clone-name-list-cons-id [key-id : i64] [rest : CloneNameList]) : CloneNameList
-  (CloneNameList.ConsId
-    key-id
-    (clone-helper-name-id-new-for-key key-id)
-    (box rest)))
+;; Arena ownership follows the persistent store pattern used by lower-name
+;; stores and typechecker environments.  The owner root/current head is used
+;; for every store allocation; an unrelated caller arena is restored after the
+;; operation, while a caller already in this owner keeps its advanced head.
+(define (clone-root-entries-arena-owner-root [handle : i64]) : i64
+  (if (= handle 0)
+    0
+    (let
+      [root : i64
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
+      (if (= root 0)
+        handle
+        root))))
 
-(define (clone-name-list-helper-id-or
-  [names : CloneNameList]
+(define (clone-root-entries-arena-owner-current-head [handle : i64]) : i64
+  (let
+    [root : i64 (clone-root-entries-arena-owner-root handle)]
+    (if (= root 0)
+      0
+      (let
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+        (if (= head 0)
+          root
+          head)))))
+
+(define (clone-root-entries-arena-restore-after-owner-alloc!
+  [previous-arena : i64]
+  [owner : i64]) : unit
+  (if (=
+    (clone-root-entries-arena-owner-root previous-arena)
+    (clone-root-entries-arena-owner-root owner))
+    unit
+    (unsafe
+      (arena.tl_arena_set
+        (clone-root-entries-arena-owner-current-head previous-arena)))))
+
+(define (clone-root-entries-empty) : CloneRootEntries
+  CloneRootEntries.Empty)
+
+(define (clone-root-entries-empty? [roots : CloneRootEntries]) : bool
+  (match roots
+    [(CloneRootEntries.Empty) true]
+    [_ false]))
+
+(define (clone-root-entries-len [roots : CloneRootEntries]) : i64
+  (match roots
+    [(CloneRootEntries.Empty) 0]
+    [(CloneRootEntries.Dense _ _ len) len]))
+
+(define (clone-root-entries-capacity [roots : CloneRootEntries]) : i64
+  (match roots
+    [(CloneRootEntries.Empty) 0]
+    [(CloneRootEntries.Dense store _ _)
+      (array-length (struct-get (box-get store) entries))]))
+
+(define (clone-root-entries-physical-len [roots : CloneRootEntries]) : i64
+  (match roots
+    [(CloneRootEntries.Empty) 0]
+    [(CloneRootEntries.Dense store _ _) (struct-get (box-get store) len)]))
+
+(define (clone-root-entries-store-new) : (Box CloneRootEntryStore)
+  (let
+    [owner : i64 (clone-root-entries-arena-owner-root (arena.tl_arena_current))]
+    (box
+      (CloneRootEntryStore
+        (make-array CloneRootEntry 4)
+        0
+        (clone_id_map.with-capacity 8)
+        owner))))
+
+(define (clone-root-entries-store-copy-range!
+  [dst : (&mut dst (__tl_dyn-array CloneRootEntry))]
+  [src : (& src (__tl_dyn-array CloneRootEntry))]
+  [index : i64]
+  [count : i64]) : unit
+  (let
+    [cursor : i64 index]
+    (begin
+      (while (< cursor count)
+        (begin
+          (array-set! dst cursor (array-ref src cursor))
+          (set! cursor (+ cursor 1))))
+      unit)))
+
+(define (clone-root-entries-store-grow!
+  [store : (&mut store CloneRootEntryStore)]) : unit
+  (let
+    [owner : i64 (struct-get store arena)]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [old-capacity : i64 (array-length (struct-get store entries))]
+    [new-capacity : i64
+      (if (< old-capacity 1)
+        1
+        (* old-capacity 2))]
+    (begin
+      (unsafe
+        (arena.tl_arena_set (clone-root-entries-arena-owner-current-head owner)))
+      (let
+        [bigger : (__tl_dyn-array CloneRootEntry)
+          (make-array CloneRootEntry new-capacity)]
+        (begin
+          ;; Only the live physical prefix is copied; snapshots share the new
+          ;; dense handle and retain their old start/length bounds.
+          (clone-root-entries-store-copy-range!
+            (&mut bigger)
+            (& (struct-get store entries))
+            0
+            (struct-get store len))
+          (set! (struct-get store entries) bigger)))
+      (clone-root-entries-arena-restore-after-owner-alloc! previous-arena owner))))
+
+(define (clone-root-entries-store-entry-at
+  [store : (& store CloneRootEntryStore)]
+  [index : i64]) : CloneRootEntry
+  (unsafe
+    (ptr-read (ptr-offset (array-data (struct-get store entries)) index))))
+
+(define (clone-root-entries-entry-at-or
+  [roots : CloneRootEntries]
+  [logical-index : i64]
+  [fallback : CloneRootEntry]) : CloneRootEntry
+  (match roots
+    [(CloneRootEntries.Empty) fallback]
+    [(CloneRootEntries.Dense store start len)
+      (if (and (>= logical-index 0) (< logical-index len))
+        (let
+          [physical : i64 (+ start (- len (+ logical-index 1)))]
+          (clone-root-entries-store-entry-at (& (box-get store)) physical))
+        fallback)]))
+
+(define (clone-root-entries-key-id-at-or
+  [roots : CloneRootEntries]
+  [logical-index : i64]
+  [fallback : i64]) : i64
+  (struct-get
+    (clone-root-entries-entry-at-or
+      roots
+      logical-index
+      (CloneRootEntry fallback fallback))
+    key-id))
+
+(define (clone-root-entries-helper-id-at-or
+  [roots : CloneRootEntries]
+  [logical-index : i64]
+  [fallback : i64]) : i64
+  (struct-get
+    (clone-root-entries-entry-at-or
+      roots
+      logical-index
+      (CloneRootEntry fallback fallback))
+    helper-id))
+
+(define (clone-root-entries-store-index-in-view-or
+  [store : (& store CloneRootEntryStore)]
+  [start : i64]
+  [len : i64]
+  [key-id : i64]) : i64
+  (if (< key-id 0)
+    -1
+    (match (clone_id_map.get (& (struct-get store key-index)) key-id)
+      [(clone_id_map.LookupFound physical)
+        (if (and (>= physical start) (< physical (+ start len)))
+          physical
+          -1)]
+      [(clone_id_map.LookupMissing) -1])))
+
+(define (clone-root-entries-contains-id?
+  [roots : CloneRootEntries]
+  [key-id : i64]) : bool
+  (match roots
+    [(CloneRootEntries.Empty) false]
+    [(CloneRootEntries.Dense store start len)
+      (>=
+        (clone-root-entries-store-index-in-view-or
+          (& (box-get store))
+          start
+          len
+          key-id)
+        0)]))
+
+(define (clone-root-entries-helper-id-or
+  [roots : CloneRootEntries]
   [key-id : i64]
   [fallback : i64]) : i64
-  (let
-    [cur : CloneNameList names]
-    [result : i64 fallback]
-    [done : bool false]
-    (begin
-      (while (and
-        (not done)
-        (match cur
-          [(CloneNameList.Nil) false]
-          [_ true]))
-        (match cur
-          [(CloneNameList.Nil) unit]
-          [(CloneNameList.ConsId head helper-id rest)
-            (if (= head key-id)
-              (begin
-                (set! result helper-id)
-                (set! done true))
-              (set! cur (box-get rest)))]))
-      result)))
+  (match roots
+    [(CloneRootEntries.Empty) fallback]
+    [(CloneRootEntries.Dense store start len)
+      (let
+        [physical : i64
+          (clone-root-entries-store-index-in-view-or
+            (& (box-get store))
+            start
+            len
+            key-id)]
+        (if (< physical 0)
+          fallback
+          (struct-get
+            (clone-root-entries-store-entry-at (& (box-get store)) physical)
+            helper-id)))]))
 
 ;; Recover an imported nominal's canonical key when a generated declaration
 ;; retains only its unqualified base name. Ambiguous bases deliberately fail:
 ;; the lowerer must never bind a clone call to the wrong module's helper.
-(define (clone-name-list-unique-key-for-base-id-or
-  [names : CloneNameList]
+(define (clone-root-entries-unique-key-for-base-id-or
+  [roots : CloneRootEntries]
   [base-id : i64]
   [fallback : i64]) : i64
   (let
-    [cur : CloneNameList names]
+    [index : i64 0]
     [result : i64 fallback]
     [found : bool false]
     [ambiguous : bool false]
+    [count : i64 (clone-root-entries-len roots)]
     (begin
-      (while (and
-        (not ambiguous)
-        (match cur
-          [(CloneNameList.Nil) false]
-          [_ true]))
-        (match cur
-          [(CloneNameList.Nil) unit]
-          [(CloneNameList.ConsId head _ rest)
-            (begin
-              (if (= (clone-name-key-base-id head) base-id)
-                (if found
-                  (set! ambiguous true)
-                  (begin
-                    (set! result head)
-                    (set! found true)))
-                unit)
-              (set! cur (box-get rest)))]))
+      (while (and (< index count) (not ambiguous))
+        (let
+          [key-id : i64 (clone-root-entries-key-id-at-or roots index -1)]
+          (if (= (clone-name-key-base-id key-id) base-id)
+            (if found
+              (set! ambiguous true)
+              (begin
+                (set! result key-id)
+                (set! found true)))
+            unit)
+          (set! index (+ index 1))))
       (if ambiguous
         fallback
         result))))
 
-(define (clone-name-list-contains-id? [names : CloneNameList] [key-id : i64]) : bool
-  (let
-    [cur : CloneNameList names]
-    [found : bool false]
-    (begin
-      (while (and
-        (not found)
-        (match cur
-          [(CloneNameList.Nil) false]
-          [_ true]))
-        (match cur
-          [(CloneNameList.Nil) unit]
-          [(CloneNameList.ConsId head _ rest)
-            (if (= head key-id)
-              (set! found true)
-              (set! cur (box-get rest)))]))
-      found)))
+(define (clone-root-entries-materialize [roots : CloneRootEntries]) : CloneRootEntries
+  (match roots
+    [(CloneRootEntries.Empty) CloneRootEntries.Empty]
+    [(CloneRootEntries.Dense _ _ len)
+      (let
+        [out-store : (Box CloneRootEntryStore) (clone-root-entries-store-new)]
+        [index : i64 (- len 1)]
+        (begin
+          ;; Iterate physical oldest -> newest so helper identity and map first
+          ;; indices are byte-for-byte preserved.
+          (while (>= index 0)
+            (let
+              [entry : CloneRootEntry
+                (clone-root-entries-entry-at-or
+                  roots
+                  index
+                  (CloneRootEntry -1 -1))]
+              ;; index is logical; physical materialization is easiest by
+              ;; writing in reverse logical order to physical 0..len-1.
+              (if (<
+                (struct-get (box-get out-store) len)
+                (array-length (struct-get (box-get out-store) entries)))
+                unit
+                (clone-root-entries-store-grow! (&mut (box-get out-store))))
+              (let
+                [physical : i64 (struct-get (box-get out-store) len)]
+                (array-set!
+                  (struct-get (box-get out-store) entries)
+                  physical
+                  entry)
+                (set! (struct-get (box-get out-store) len) (+ physical 1))
+                (let
+                  [key-id : i64 (struct-get entry key-id)]
+                  [map (struct-get (box-get out-store) key-index)]
+                  (if (not (clone_id_map.contains? (& map) key-id))
+                    (clone_id_map.insert-ref! (&mut map) key-id physical)
+                    unit)
+                  (set! (struct-get (box-get out-store) key-index) map))))
+            (set! index (- index 1)))
+          (CloneRootEntries.Dense out-store 0 len)))]))
+
+(define (clone-root-entries-copy [roots : CloneRootEntries]) : CloneRootEntries
+  (clone-root-entries-materialize roots))
+
+(define (clone-root-entries-add-id [roots : CloneRootEntries] [key-id : i64]) : CloneRootEntries
+  (if (or (< key-id 0) (clone-root-entries-contains-id? roots key-id))
+    roots
+    (let
+      [helper-id : i64 (clone-helper-name-id-new-for-key key-id)]
+      (match roots
+        [(CloneRootEntries.Empty)
+          (let
+            [store : (Box CloneRootEntryStore) (clone-root-entries-store-new)]
+            (begin
+              (array-set!
+                (struct-get (box-get store) entries)
+                0
+                (CloneRootEntry key-id helper-id))
+              (set! (struct-get (box-get store) len) 1)
+              (clone_id_map.insert-ref!
+                (&mut (struct-get (box-get store) key-index))
+                key-id
+                0)
+              (CloneRootEntries.Dense store 0 1)))]
+        [(CloneRootEntries.Dense store start len)
+          (let
+            [store-len : i64 (struct-get (box-get store) len)]
+            [tail? : bool (and (= start 0) (= len store-len))]
+            [target : CloneRootEntries
+              (if tail?
+                roots
+                (clone-root-entries-materialize roots))]
+            (match target
+              [(CloneRootEntries.Dense target-store target-start target-len)
+                (let
+                  [owner : i64 (struct-get (box-get target-store) arena)]
+                  [previous-arena : i64 (arena.tl_arena_current)]
+                  (begin
+                    (unsafe
+                      (arena.tl_arena_set
+                        (clone-root-entries-arena-owner-current-head owner)))
+                    (if (>=
+                      (struct-get (box-get target-store) len)
+                      (array-length (struct-get (box-get target-store) entries)))
+                      (clone-root-entries-store-grow!
+                        (&mut (box-get target-store)))
+                      unit)
+                    (let
+                      [physical : i64 (struct-get (box-get target-store) len)]
+                      (array-set!
+                        (struct-get (box-get target-store) entries)
+                        physical
+                        (CloneRootEntry key-id helper-id))
+                      (set!
+                        (struct-get (box-get target-store) len)
+                        (+ physical 1))
+                      (clone_id_map.insert-ref!
+                        (&mut (struct-get (box-get target-store) key-index))
+                        key-id
+                        physical)
+                      (clone-root-entries-arena-restore-after-owner-alloc!
+                        previous-arena
+                        owner)
+                      (CloneRootEntries.Dense
+                        target-store
+                        target-start
+                        (+ target-len 1)))))]
+              [_ target]))]))))
+
+(define (clone-root-entries-take [roots : CloneRootEntries] [count : i64]) : CloneRootEntries
+  (if (<= count 0)
+    CloneRootEntries.Empty
+    (let
+      [len : i64 (clone-root-entries-len roots)]
+      (if (>= count len)
+        roots
+        (match roots
+          [(CloneRootEntries.Empty) CloneRootEntries.Empty]
+          [(CloneRootEntries.Dense store start _)
+            (CloneRootEntries.Dense store (+ start (- len count)) count)])))))
+
+(define (clone-root-entries-drop [roots : CloneRootEntries] [count : i64]) : CloneRootEntries
+  (if (<= count 0)
+    roots
+    (let
+      [len : i64 (clone-root-entries-len roots)]
+      (if (>= count len)
+        CloneRootEntries.Empty
+        (match roots
+          [(CloneRootEntries.Empty) CloneRootEntries.Empty]
+          [(CloneRootEntries.Dense store start _)
+            (CloneRootEntries.Dense store start (- len count))])))))
 
 (define (clone-name-set-len [names : CloneNameSet]) : i64
   (let
@@ -382,19 +681,169 @@
       (clone-name-pair-key-id (ci.intern "clone.smoke.first") base-id)]
     [second-key : i64
       (clone-name-pair-key-id (ci.intern "clone.smoke.second") base-id)]
-    [unique : CloneNameList
-      (CloneNameList.ConsId first-key 1 (box (CloneNameList.Nil)))]
-    [ambiguous : CloneNameList (CloneNameList.ConsId second-key 2 (box unique))]
+    [unique : CloneRootEntries
+      (clone-root-entries-add-id (clone-root-entries-empty) first-key)]
+    [ambiguous : CloneRootEntries (clone-root-entries-add-id unique second-key)]
     (and
       (not (clone-name-set-contains-id? one 2))
       (clone-name-set-contains-id? one 1)
       (= (clone-name-set-len dupe) 1)
       (= (clone-name-set-len grown) 11)
       (=
-        (clone-name-list-unique-key-for-base-id-or unique base-id -1)
+        (clone-root-entries-unique-key-for-base-id-or unique base-id -1)
         first-key)
-      (= (clone-name-list-unique-key-for-base-id-or ambiguous base-id -1) -1)
+      (= (clone-root-entries-unique-key-for-base-id-or ambiguous base-id -1) -1)
       (> (clone-name-set-capacity grown) seed-capacity))))
+
+(define (clone-root-entries-smoke-key-id [index : i64]) : i64
+  (ci.intern (string.append "CloneDenseSmokeRoot" (string.int->string index))))
+
+(define (clone-root-entries-smoke-add-sequential
+  [roots : CloneRootEntries]
+  [start : i64]
+  [end : i64]) : CloneRootEntries
+  (let
+    [out : CloneRootEntries roots]
+    [index : i64 start]
+    (begin
+      (while (< index end)
+        (begin
+          (set!
+            out
+            (clone-root-entries-add-id
+              out
+              (clone-root-entries-smoke-key-id index)))
+          (set! index (+ index 1))))
+      out)))
+
+(define (clone-root-entries-smoke-order-ok? [roots : CloneRootEntries]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (clone-root-entries-len roots)]
+    [ok : bool true]
+    (begin
+      (while (and (< index count) ok)
+        (if (not
+          (=
+            (clone-root-entries-key-id-at-or roots index -1)
+            (clone-root-entries-smoke-key-id (- count (+ index 1)))))
+          (set! ok false)
+          unit)
+        (set! index (+ index 1)))
+      ok)))
+
+(define (clone-root-entries-smoke-copy-equal?
+  [left : CloneRootEntries]
+  [right : CloneRootEntries]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (clone-root-entries-len left)]
+    [ok : bool (= count (clone-root-entries-len right))]
+    (begin
+      (while (and (< index count) ok)
+        (if (and
+          (=
+            (clone-root-entries-key-id-at-or left index -1)
+            (clone-root-entries-key-id-at-or right index -1))
+          (=
+            (clone-root-entries-helper-id-at-or left index -1)
+            (clone-root-entries-helper-id-at-or right index -1)))
+          unit
+          (set! ok false))
+        (set! index (+ index 1)))
+      ok)))
+
+(define (clone-root-entries-smoke-ok?) : bool
+  (let
+    [empty : CloneRootEntries (clone-root-entries-empty)]
+    [first-key : i64 (clone-root-entries-smoke-key-id 0)]
+    [grown-key : i64 (ci.intern "CloneDenseSmokeGrown")]
+    [branch-key : i64 (ci.intern "CloneDenseSmokeBranch")]
+    [first : CloneRootEntries (clone-root-entries-add-id empty first-key)]
+    [duplicate : CloneRootEntries (clone-root-entries-add-id first first-key)]
+    [roots : CloneRootEntries
+      (clone-root-entries-smoke-add-sequential first 1 24)]
+    [prefix : CloneRootEntries (clone-root-entries-take roots 3)]
+    [first-helper : i64 (clone-root-entries-helper-id-or first first-key -1)]
+    [prefix-helper : i64 (clone-root-entries-helper-id-at-or prefix 0 -1)]
+    [grown : CloneRootEntries (clone-root-entries-add-id roots grown-key)]
+    [branch : CloneRootEntries (clone-root-entries-add-id prefix branch-key)]
+    [copy : CloneRootEntries (clone-root-entries-copy branch)]
+    [base-id : i64 (ci.intern "CloneDenseSmokeKey")]
+    [first-qualified : i64
+      (clone-name-pair-key-id (ci.intern "clone.dense.first") base-id)]
+    [second-qualified : i64
+      (clone-name-pair-key-id (ci.intern "clone.dense.second") base-id)]
+    [unique-base : i64 (ci.intern "CloneDenseUniqueKey")]
+    [unique-qualified : i64
+      (clone-name-pair-key-id (ci.intern "clone.dense.unique") unique-base)]
+    [qualified : CloneRootEntries
+      (clone-root-entries-add-id
+        (clone-root-entries-add-id empty first-qualified)
+        second-qualified)]
+    [unique-root : CloneRootEntries
+      (clone-root-entries-add-id empty unique-qualified)]
+    (and
+      ;; Empty is allocation-free and duplicate insertion is idempotent.
+      (clone-root-entries-empty? empty)
+      (= (clone-root-entries-physical-len empty) 0)
+      (= (clone-root-entries-capacity empty) 0)
+      (= (clone-root-entries-len duplicate) 1)
+      (= (clone-root-entries-helper-id-or duplicate first-key -1) first-helper)
+      ;; 24 entries cross three geometric growth boundaries and remain ordered.
+      (= (clone-root-entries-len roots) 24)
+      (clone-root-entries-smoke-order-ok? roots)
+      ;; The one-entry snapshot remains unchanged after 4->8->16->32 growth,
+      ;; while its shared physical store and map observe later entries.
+      (= (clone-root-entries-len first) 1)
+      (= (clone-root-entries-key-id-at-or first 0 -1) first-key)
+      (= (clone-root-entries-helper-id-or first first-key -1) first-helper)
+      (not (clone-root-entries-contains-id? first grown-key))
+      (= (clone-root-entries-helper-id-or first grown-key -1) -1)
+      (= (clone-root-entries-physical-len first) 25)
+      (>= (clone-root-entries-capacity first) 25)
+      (= (clone-root-entries-len roots) 24)
+      (= (clone-root-entries-physical-len roots) 25)
+      (>= (clone-root-entries-capacity roots) 25)
+      (< (clone-root-entries-capacity roots) 50)
+      ;; A recent slice remains separate from the divergent COW branch.
+      (= (clone-root-entries-len prefix) 3)
+      (= (clone-root-entries-helper-id-at-or prefix 0 -1) prefix-helper)
+      (=
+        (clone-root-entries-key-id-at-or prefix 0 -1)
+        (clone-root-entries-smoke-key-id 23))
+      (not (clone-root-entries-contains-id? prefix grown-key))
+      (= (clone-root-entries-helper-id-or prefix grown-key -1) -1)
+      (= (clone-root-entries-key-id-at-or grown 0 -1) grown-key)
+      (= (clone-root-entries-len grown) 25)
+      ;; Divergent append materializes the stale prefix, leaving the original
+      ;; descendant untouched.
+      (= (clone-root-entries-len branch) 4)
+      (= (clone-root-entries-physical-len branch) 4)
+      (>= (clone-root-entries-capacity branch) 4)
+      (< (clone-root-entries-capacity branch) 8)
+      (= (clone-root-entries-key-id-at-or branch 0 -1) branch-key)
+      (=
+        (clone-root-entries-key-id-at-or roots 0 -1)
+        (clone-root-entries-smoke-key-id 23))
+      (= (clone-root-entries-len copy) 4)
+      (= (clone-root-entries-physical-len copy) 4)
+      (>= (clone-root-entries-capacity copy) 4)
+      (< (clone-root-entries-capacity copy) 8)
+      (clone-root-entries-smoke-copy-equal? branch copy)
+      (= (clone-root-entries-len (clone-root-entries-take roots 5)) 5)
+      (= (clone-root-entries-len (clone-root-entries-drop roots 5)) 19)
+      (=
+        (clone-root-entries-key-id-at-or (clone-root-entries-drop roots 5) 0 -1)
+        (clone-root-entries-smoke-key-id 18))
+      ;; Qualified keys with one base stay ambiguous; a unique base resolves.
+      (= (clone-root-entries-unique-key-for-base-id-or qualified base-id -1) -1)
+      (=
+        (clone-root-entries-unique-key-for-base-id-or
+          unique-root
+          unique-base
+          -1)
+        unique-qualified))))
 
 (define (clone-type-get [pools : ast.AstNodePoolContext] [id : i64]) : ast.AstType
   (ast.ast-node-pool-context-type-get pools id))
@@ -678,19 +1127,19 @@
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
+  [roots : CloneRootEntries]
   [types : ast.AstTypeList]
-  [module-id : i64]) : CloneNameList
+  [module-id : i64]) : CloneRootEntries
   (clone-root-add-type-list-at pools decls able roots (& types) module-id 0))
 
 (define (clone-root-add-type-list-at
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
+  [roots : CloneRootEntries]
   [types : (& types ast.AstTypeList)]
   [module-id : i64]
-  [index : i64]) : CloneNameList
+  [index : i64]) : CloneRootEntries
   (if (>= index (ast.ast-type-list-len types))
     roots
     (clone-root-add-type-list-at
@@ -714,19 +1163,19 @@
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
+  [roots : CloneRootEntries]
   [fields : ast.AstFieldDefList]
-  [module-id : i64]) : CloneNameList
+  [module-id : i64]) : CloneRootEntries
   (clone-root-add-fields-at pools decls able roots (& fields) module-id 0))
 
 (define (clone-root-add-fields-at
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
+  [roots : CloneRootEntries]
   [fields : (& fields ast.AstFieldDefList)]
   [module-id : i64]
-  [index : i64]) : CloneNameList
+  [index : i64]) : CloneRootEntries
   (if (>= index (ast.ast-field-def-list-len fields))
     roots
     (match (ast.ast-field-def-list-get
@@ -747,19 +1196,19 @@
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
+  [roots : CloneRootEntries]
   [variants : ast.AstVariantDefList]
-  [module-id : i64]) : CloneNameList
+  [module-id : i64]) : CloneRootEntries
   (clone-root-add-variants-at pools decls able roots (& variants) module-id 0))
 
 (define (clone-root-add-variants-at
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
+  [roots : CloneRootEntries]
   [variants : (& variants ast.AstVariantDefList)]
   [module-id : i64]
-  [index : i64]) : CloneNameList
+  [index : i64]) : CloneRootEntries
   (if (>= index (ast.ast-variant-def-list-len variants))
     roots
     (match (ast.ast-variant-def-list-get
@@ -781,9 +1230,9 @@
   [decls : ast.AstDeclList]
   [cursor : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
+  [roots : CloneRootEntries]
   [name-key-id : i64]
-  [module-id : i64]) : CloneNameList
+  [module-id : i64]) : CloneRootEntries
   ;; Index cursor rather than `ast-decl-list-step`, which this loop called TWICE
   ;; per declaration -- once to test the cursor for emptiness and once to read
   ;; its head -- so each declaration paid two 104 B row copies and two 144 B
@@ -793,7 +1242,7 @@
   (let
     [count : i64 (ast.ast-decl-list-len (& cursor))]
     [index : i64 0]
-    [out : CloneNameList roots]
+    [out : CloneRootEntries roots]
     [current-module-id : i64 module-id]
     [done : bool false]
     (begin
@@ -848,8 +1297,8 @@
   [decls : ast.AstDeclList]
   [cursor : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
-  [name-key-id : i64]) : CloneNameList
+  [roots : CloneRootEntries]
+  [name-key-id : i64]) : CloneRootEntries
   (clone-root-add-name-deps-in-module
     pools
     decls
@@ -863,27 +1312,24 @@
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
-  [name-key-id : i64]) : CloneNameList
+  [roots : CloneRootEntries]
+  [name-key-id : i64]) : CloneRootEntries
   (if (clone-name-set-contains-id? able name-key-id)
-    (if (clone-name-list-contains-id? roots name-key-id)
-      roots
-      (clone-root-add-name-deps
-        pools
-        decls
-        decls
-        able
-        (clone-name-list-cons-id name-key-id roots)
-        name-key-id))
+    (let
+      [with-name : CloneRootEntries
+        (clone-root-entries-add-id roots name-key-id)]
+      (if (= (clone-root-entries-len with-name) (clone-root-entries-len roots))
+        roots
+        (clone-root-add-name-deps pools decls decls able with-name name-key-id)))
     roots))
 
 (define (clone-root-add-type
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
+  [roots : CloneRootEntries]
   [ty : ast.AstType]
-  [module-id : i64]) : CloneNameList
+  [module-id : i64]) : CloneRootEntries
   (match ty
     [(ast.AstType.Tuple elems)
       (clone-root-add-type-list
@@ -952,39 +1398,34 @@
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]
-  [cursor : CloneNameList]) : CloneNameList
+  [roots : CloneRootEntries]
+  [cursor : CloneRootEntries]) : CloneRootEntries
   (let
-    [cur : CloneNameList cursor]
-    [out : CloneNameList roots]
+    [out : CloneRootEntries roots]
+    [index : i64 0]
+    [count : i64 (clone-root-entries-len cursor)]
     (begin
-      (while (match cur
-        [(CloneNameList.Nil) false]
-        [_ true])
-        (match cur
-          [(CloneNameList.Nil) unit]
-          [(CloneNameList.ConsId name-key-id _ rest)
-            (let
-              [with-name : CloneNameList
-                (clone-root-add-name pools decls able out name-key-id)]
-              (begin
-                (set!
-                  out
-                  (clone-root-add-name-deps
-                    pools
-                    decls
-                    decls
-                    able
-                    with-name
-                    name-key-id))
-                (set! cur (box-get rest))))]))
+      (while (< index count)
+        (let
+          [name-key-id : i64 (clone-root-entries-key-id-at-or cursor index -1)]
+          (begin
+            (set!
+              out
+              (clone-root-add-name-deps
+                pools
+                decls
+                decls
+                able
+                (clone-root-add-name pools decls able out name-key-id)
+                name-key-id))
+            (set! index (+ index 1)))))
       out)))
 
 (define (clone-stdlib-handoff-roots
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [able : CloneNameSet]
-  [roots : CloneNameList]) : CloneNameList
+  [roots : CloneRootEntries]) : CloneRootEntries
   (clone-root-expand pools decls able roots roots))
 
 (define (clone-helper-decl-count-in-module
@@ -1035,18 +1476,20 @@
     helper-name-id
     cbi.compiler-builtin-id-fix-empty))
 
-(define (clone-name-list-to-set [names : CloneNameList] [acc : CloneNameSet]) : CloneNameSet
+(define (clone-root-entries-to-set
+  [names : CloneRootEntries]
+  [acc : CloneNameSet]) : CloneNameSet
   (let
-    [cur : CloneNameList names]
+    [index : i64 0]
+    [count : i64 (clone-root-entries-len names)]
     [out : CloneNameSet acc]
     (begin
-      (while (match cur
-        [(CloneNameList.Nil) false]
-        [_ true])
-        (match cur
-          [(CloneNameList.Nil) unit]
-          [(CloneNameList.ConsId name-key-id _ rest)
-            (begin
-              (set! out (clone-name-set-insert-id out name-key-id))
-              (set! cur (box-get rest)))]))
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (clone-name-set-insert-id
+              out
+              (clone-root-entries-key-id-at-or names index -1)))
+          (set! index (+ index 1))))
       out)))

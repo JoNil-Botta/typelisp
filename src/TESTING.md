@@ -481,8 +481,9 @@ scripts/measure-spmd-mode-instruction-counts.sh --self-test
 Do not add AVX-512 cachegrind rows; use the methodology tracked by #4933.
 
 `scripts/measure-typecheck-prefix-cache.sh` reports the opt-in typecheck prefix
-snapshot cache counters for the batch workloads the cache is meant to help:
-repeated stdlib imports, one selfhost compile-manifest chunk, and doctests.
+snapshot cache counters for two informational compile controls and one
+cache-active production workload: repeated stdlib imports, one selfhost
+compile-manifest chunk, and doctests.
 
 ```sh
 TYPELISP_BIN=target/stage0/typelisp scripts/measure-typecheck-prefix-cache.sh
@@ -490,8 +491,10 @@ TYPELISP_BIN=target/stage0/typelisp scripts/measure-typecheck-prefix-cache.sh
 
 Each line includes elapsed time plus `hits`, `misses`, `stores`, `lookups`, and
 integer `hit-rate-per-mille` from the compiler's `--prefix-cache-stats` report.
-The repeated compile-batch and doctest workloads also fail when they do not
-produce the expected cache hits.
+The two compile-batch rows are informational controls and may legitimately
+report zero lookups because code-generation typechecking collects clone-root
+and/or surface semantic observations. The doctest batch is the cache-active
+regression row and fails unless it records at least one cache hit.
 
 `scripts/measure-lsp-check-latency.sh` is the local interactive LSP latency
 harness for repeated `tl/check` requests. It starts one `typelisp lsp` process,

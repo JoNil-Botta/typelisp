@@ -60,6 +60,7 @@ c_abi_sysv_tag_only_enum|tests/integration/c_abi_sysv_tag_only_enum.tl|42|-|-|be
 c_abi_sysv_enum_aggregate|tests/integration/c_abi_sysv_enum_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_enum_aggregate/baseline.c
 c_abi_slice_ptr_len|tests/integration/c_abi_slice_ptr_len.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
+arena_growth_stable_handle|tests/integration/arena_growth_stable_handle.tl|42|-|-|stdlib/arena.tl
 arena_pool_context_escape|tests/integration/arena_pool_context_escape.tl|42|-|-|stdlib/arena.tl stdlib/array.tl stdlib/string.tl
 arena_lazy_singleton_raw_addr_escape|tests/integration/arena_lazy_singleton_raw_addr_escape.tl|42|-|-|stdlib/arena.tl stdlib/array.tl stdlib/string.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl

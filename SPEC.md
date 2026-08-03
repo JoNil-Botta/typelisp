@@ -4706,6 +4706,17 @@ to storage allocated after the mark. A native target must provide the
 `tl_region_mark` / `tl_region_reset` runtime helpers before enabling
 `with-arena` execution, or document a target-specific limitation.
 
+Arena handles use stable-root identity. The first physical segment is the
+arena's root object and remains the value returned by `tl_arena_current` and
+stored in the current-arena TLS slot for the arena lifetime. Growth appends a
+physical segment and publishes it through the root's internal `root.current`
+field (header offset `+56`); it never changes the public root handle. A mark or
+partial rewind may move `root.current` back to an older segment while retaining
+the same root identity. `tl_arena_set` accepts either a root or a physical
+segment and canonicalizes through its `+40` root field. Full reset and destroy
+clear/free the complete active and retired chain, invalidating the root and all
+allocations.
+
 **First-class arena escape:** `(with-escape arena-expr body ...)` is a
 separate scoped form for first-class scratch arenas. `arena-expr` must
 typecheck as `arena.Arena` from `stdlib.arena`, such as a handle created by
@@ -4727,7 +4738,7 @@ clone semantics of moving the result back to the enclosing arena.
 variant of `with-escape`. It creates a fresh first-class scratch arena,
 evaluates the non-empty body sequence with that arena active, switches back to
 the enclosing active arena, clones the body result when the type requires it,
-destroys the scratch arena head, restores the enclosing active arena, and
+destroys the scratch arena root, restores the enclosing active arena, and
 returns the cloned result. The result surface and source-region stripping match
 `with-escape`. `with-arena` continues to reject region-tagged escapes;
 clone-out is explicit through `with-escape` for reusable first-class scratch
@@ -5698,16 +5709,21 @@ Linux uses local-exec TLS, with the FS base installed by the freestanding
 entry before global initializers run; Windows x64 uses the TEB
 arbitrary-user slot (`GS:0x28`). Raw thread spawn initializes a fresh zero
 current-arena slot before user code runs, so a worker's first allocation
-creates an independent default arena chain.
+creates an independent default arena chain. The slot always contains that
+chain's stable root; allocator and mark/reset internals reach the changing
+physical head through the root's `root.current` field.
 
 The compiler provides two allocation-free current-arena TLS intrinsics for
-runtime-prelude code: `(tls-current-arena)` returns the current arena handle
-as `i64`; `(tls-current-arena-set! arena)` writes it and requires an
-`unsafe` context. Both lower directly to the platform TLS access used by the
-backend helpers (`%fs:tl_current_arena@tpoff` on Linux, `GS:0x28` on
-Windows), emit no calls, and require no imports, so they are valid in
-`stdlib.runtime` before ordinary allocation is available. They name only the
-current-arena slot; arbitrary TLS slots are out of scope pending a separate
+runtime-prelude code: `(tls-current-arena)` returns the stable root handle for
+the current arena, or zero before the first allocation, as `i64`;
+`(tls-current-arena-set! arena)` is a raw direct TLS store that requires an
+`unsafe` context and a zero or stable-root value. It does not perform the
+physical-segment canonicalization provided by `tl_arena_set`. Both lower
+directly to the platform TLS access used by the backend helpers
+(`%fs:tl_current_arena@tpoff` on Linux, `GS:0x28` on Windows), emit no calls,
+and require no imports, so they are valid in `stdlib.runtime` before ordinary
+allocation is available. They name only the current-arena slot; arbitrary TLS
+slots are out of scope pending a separate
 source-level design.
 
 `tl_arena_make` creates an ordinary first-class arena with a single-threaded
@@ -6316,7 +6332,7 @@ transient build:
 `with-scratch` creates a fresh first-class scratch arena, evaluates the
 non-empty body sequence with that arena active, clones the body result into
 the enclosing arena when the type requires it, destroys the scratch arena
-head, restores the enclosing active arena, and returns the cloned result. It
+root, restores the enclosing active arena, and returns the cloned result. It
 uses the same clone-supported result rules and source-region stripping as
 `with-escape`, and rejects unsupported result shapes with a `with-scratch`
 diagnostic.

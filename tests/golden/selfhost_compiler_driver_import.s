@@ -675,6 +675,9 @@ tl_array_zero:
     movq %fs:tl_current_arena@tpoff, %r8
     testq %r8, %r8
     jz .Ltl_array_zero_fill
+    movq 56(%r8), %r8
+    testq %r8, %r8
+    jz .Ltl_array_zero_fill
     testq $5, 48(%r8)
     jnz .Ltl_array_zero_fill
     ret
@@ -730,6 +733,13 @@ tl_arena_current:
 
     .globl tl_arena_set
 tl_arena_set:
+    testq %rdi, %rdi
+    jz .L_tl_arena_set_store
+    movq 40(%rdi), %rax
+    testq %rax, %rax
+    jz .L_tl_arena_set_store
+    movq %rax, %rdi
+.L_tl_arena_set_store:
     movq %rdi, %fs:tl_current_arena@tpoff
     ret
 

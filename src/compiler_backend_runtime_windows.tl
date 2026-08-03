@@ -271,9 +271,18 @@ tl_arena_current:
 tl_arena_set:
 "
         (string.append
-          (compiler-backend-current-arena-store "%rcx")
+          "    testq %rcx, %rcx
+    jz .L_tl_arena_set_store
+    movq 40(%rcx), %rax
+    testq %rax, %rax
+    jz .L_tl_arena_set_store
+    movq %rax, %rcx
+.L_tl_arena_set_store:
+"
           (string.append
-            "    ret
+            (compiler-backend-current-arena-store "%rcx")
+            (string.append
+              "    ret
 
     .globl tl_arena_poison_enable
 tl_arena_poison_enable:
@@ -458,12 +467,12 @@ tl_arena_destroy:
     jz .L_tl_arena_destroy_win_active_done
     movq 0(%rsi), %rbx
 "
-            (string.append
-              (runtime_common.compiler-backend-runtime-profile-live-sub
-                "%rsi"
-                "%r10"
-                profile)
-              "    movq %rsi, %rcx
+              (string.append
+                (runtime_common.compiler-backend-runtime-profile-live-sub
+                  "%rsi"
+                  "%r10"
+                  profile)
+                "    movq %rsi, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
     call VirtualFree
@@ -489,7 +498,7 @@ tl_arena_destroy:
     popq %rbp
     ret
 
-")))))))
+"))))))))
 
 (define (compiler-backend-runtime-windows-arena-debug-functions) : String
   ".L_tl_arena_debug_register_root:
@@ -717,23 +726,24 @@ tl_alloc:
     movq %gs:0x28, %r8
     testq %r8, %r8
     jz .L_tl_alloc_new_arena_entry
-    movq 40(%r8), %r9
-    testq $1, 48(%r9)
+    movq 56(%r8), %r9
+    testq $1, 48(%r8)
     jnz .L_tl_alloc_win_atomic
 .L_tl_alloc_win_ordinary_retry:
-    movq 16(%r8), %r10
+    movq 16(%r9), %r10
     movq %r10, %rax
     addq %r11, %r10
     jc .L_tl_alloc_enter_abort
-    cmpq 24(%r8), %r10
+    cmpq 24(%r9), %r10
     ja .L_tl_alloc_new_arena_entry
-    cmpq 64(%r8), %r10
+    cmpq 64(%r9), %r10
     ja .L_tl_alloc_commit_arena_entry
-    movq %r10, 16(%r8)
+    movq %r10, 16(%r9)
 "
       fast-profile
       "    ret
 .L_tl_alloc_win_atomic:
+    movq %r8, %r9
     movq 56(%r9), %r8
     movq 16(%r8), %rax
 .L_tl_alloc_win_atomic_cas:
@@ -754,14 +764,14 @@ tl_alloc:
     mov %rsp, %rbp
     sub $80, %rsp
     movq %r11, -8(%rbp)
-    movq %r8, -16(%rbp)
-    movq %r8, %rcx
+    movq %r9, -16(%rbp)
+    movq %r9, %rcx
     movq %r10, %rdx
     call .L_tl_alloc_win_commit_to
     testq %rax, %rax
     jz .L_tl_alloc_abort
     movq -8(%rbp), %r11
-    movq -16(%rbp), %r8
+    movq -16(%rbp), %r9
     mov %rbp, %rsp
     pop %rbp
     jmp .L_tl_alloc_win_ordinary_retry
@@ -889,7 +899,6 @@ tl_alloc:
     jc .L_tl_alloc_atomic_commit_failed
     movq %r10, 16(%rax)
     movq %rax, 56(%r9)
-    movq %rax, %gs:0x28
     movq $1, 48(%r9)
     movq %r8, %rax
 "
@@ -974,7 +983,6 @@ tl_alloc:
     jc .L_tl_alloc_abort
     movq %gs:0x28, %r8
     movq %r8, -48(%rbp)
-    movq %r8, 0(%rax)
     leaq 72(%rax), %r8
     movq %r8, 8(%rax)
     movq %r8, 16(%rax)
@@ -983,15 +991,17 @@ tl_alloc:
     movq -48(%rbp), %r8
     testq %r8, %r8
     jz .L_tl_alloc_win_root_self
-    movq 40(%r8), %r10
+    movq 56(%r8), %r10
     jmp .L_tl_alloc_win_root_ready
 .L_tl_alloc_win_root_self:
-    movq %rax, %r10
+    xorq %r10, %r10
+    movq %rax, %r8
 .L_tl_alloc_win_root_ready:
-    movq %r10, 40(%rax)
+    movq %r10, 0(%rax)
+    movq %r8, 40(%rax)
     movq $0, 48(%rax)
-    movq %rax, 56(%r10)
-    movq %rax, 56(%rax)
+    movq %rax, 56(%r8)
+    movq %r8, %gs:0x28
     movq -40(%rbp), %rdx
     addq %rax, %rdx
     movq %rdx, 64(%rax)
@@ -1000,7 +1010,6 @@ tl_alloc:
     addq %r11, %r10
     jc .L_tl_alloc_abort
     movq %r10, 16(%rax)
-    movq %rax, %gs:0x28
     movq %r8, %rax
 "
       new-profile
@@ -1054,13 +1063,15 @@ tl_alloc:
         (string.replace
           base
           ".L_tl_alloc_win_root_self:
-    movq %rax, %r10
+    xorq %r10, %r10
+    movq %rax, %r8
 .L_tl_alloc_win_root_ready:
 "
           ".L_tl_alloc_win_root_self:
     movq %rax, %rcx
     call .L_tl_arena_debug_register_root
-    movq %rax, %r10
+    xorq %r10, %r10
+    movq %rax, %r8
 .L_tl_alloc_win_root_ready:
 ")
         base)
@@ -1086,9 +1097,7 @@ tl_region_reset:
     movq %gs:0x28, %r13
     testq %r13, %r13
     jz .L_tl_region_reset_win_invalid
-    movq 40(%r13), %r11
-    testq $1, 48(%r11)
-    jz .L_tl_region_reset_win_find
+    movq %r13, %r11
     movq 56(%r11), %r13
 .L_tl_region_reset_win_find:
     movq 8(%r13), %rax
@@ -1106,8 +1115,8 @@ tl_region_reset:
     sub $32, %rsp
     call tl_region_abort
 .L_tl_region_reset_win_found:
-    movq 40(%r13), %r11
-    movq %gs:0x28, %r14
+    movq %r11, %r14
+    movq 56(%r14), %r14
 .L_tl_region_reset_win_drop:
     cmpq %r13, %r14
     je .L_tl_region_reset_win_restore
@@ -1179,7 +1188,6 @@ tl_region_reset:
 .L_tl_region_reset_win_reused_ready:
     movq %r12, 16(%r13)
     movq %r13, 56(%r11)
-    movq %r13, %gs:0x28
     jmp .L_tl_region_reset_win_done
 .L_tl_region_reset_win_all:
     movq %gs:0x28, %r14
@@ -1251,16 +1259,19 @@ tl_region_reset:
         (string.replace
           (string.replace
             base
-            "    movq 40(%r13), %r11
-    testq $1, 48(%r11)
+            "    movq %gs:0x28, %r13
+    testq %r13, %r13
+    jz .L_tl_region_reset_win_invalid
+    movq %r13, %r11
+    movq 56(%r11), %r13
 "
-            "    movq 40(%r13), %r11
-    testq $8, 48(%r11)
-    jz .L_tl_region_reset_win_debug_guard_done
-    subq $32, %rsp
-    call tl_arena_debug_reset_abort
-.L_tl_region_reset_win_debug_guard_done:
-    testq $1, 48(%r11)
+            "    movq %gs:0x28, %r13
+    testq %r13, %r13
+    jz .L_tl_region_reset_win_invalid
+    testq $8, 48(%r13)
+    jnz tl_arena_debug_reset_abort
+    movq %r13, %r11
+    movq 56(%r11), %r13
 ")
           "    movq %gs:0x28, %r14
     movq $0, %gs:0x28
@@ -1450,6 +1461,9 @@ tl_array_zero:
     cmpq $64, %rdx
     jb .Ltl_array_zero_fill
     movq %gs:0x28, %r8
+    testq %r8, %r8
+    jz .Ltl_array_zero_fill
+    movq 56(%r8), %r8
     testq %r8, %r8
     jz .Ltl_array_zero_fill
     testq $5, 48(%r8)

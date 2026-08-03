@@ -28719,19 +28719,17 @@
         (compiler-backend-binop-scavenge-exclude-build)
         5
         "%r8")]
-    [next-exclude : (Array String)
+    ;; Keep the stable root in `scav` for the shared-arena flag check and use a
+    ;; second proven-free scratch register for the physical current head.
+    ;; `%rax` is the cursor/result register below, so exclude it from the head
+    ;; pick as well. Once the head is loaded, the root scratch is dead and is
+    ;; deliberately recycled as the next-cursor/profile scratch.
+    [head-exclude : (Array String)
       (compiler-backend-scavenge-exclude-append
         (compiler-backend-one-exclude scav)
         1
         "%rax")]
-    [next-reg : String
-      (compiler-backend-scavenge-reg
-        dst
-        next-exclude
-        2
-        (if (compiler-backend-target-windows? target)
-          "%r10"
-          "%rcx"))]
+    [head-reg : String (compiler-backend-scavenge-reg dst head-exclude 2 "%r9")]
     ;; The inline path advances the bump pointer with a plain store. Shared
     ;; arenas must use the runtime helper, whose atomic path reserves with CAS.
     (string.append
@@ -28748,12 +28746,16 @@
           scav
           ")\n    jnz "
           slow-label
-          "\n    movq 16("
+          "\n    movq 56("
           scav
+          "), "
+          head-reg
+          "\n    movq 16("
+          head-reg
           "), %rax"
           "\n"))
       (string.append
-        (str_cat.str-cat "    leaq " size-text "(%rax), " next-reg "\n")
+        (str_cat.str-cat "    leaq " size-text "(%rax), " scav "\n")
         (string.append
           ;; No wrap guard: `size` is a fixed 8..64 byte literal (the
           ;; fast-alloc admission gate) and the bump cursor is a canonical
@@ -28765,25 +28767,25 @@
             "    cmpq "
             usable-end-offset
             "("
-            scav
+            head-reg
             "), "
-            next-reg
+            scav
             "\n")
           (string.append
             (str_cat.str-cat
               "    ja "
               slow-label
               "\n    movq "
-              next-reg
-              ", 16("
               scav
+              ", 16("
+              head-reg
               ")\n")
             (string.append
               (runtime_common.compiler-backend-runtime-profile-alloc-account-with-scratch
                 (string.append "$" size-text)
                 profile-label
                 profile
-                next-reg)
+                scav)
               (string.append
                 (str_cat.str-cat "    jmp " done-label "\n" slow-label ":\n")
                 (str_cat.str-cat
@@ -58114,10 +58116,11 @@
         referenced-functions
         buf)]))
 
-;; `tl_current_arena` is the live bump-arena pointer shared by tl_alloc, the
-;; region runtime, and the first-class arena builtins. It is a
-;; per-thread active-arena slot: Linux uses local-exec ELF TLS; Windows
-;; stores the pointer in the TEB arbitrary-user slot (GS:0x28). Like the arena
+;; `tl_current_arena` is the stable first-segment root handle shared by tl_alloc,
+;; the region runtime, and the first-class arena builtins. Physical growth heads
+;; are reached through root+56 and never replace this public identity. It is a
+;; per-thread active-arena slot: Linux uses local-exec ELF TLS; Windows stores
+;; the root in the TEB arbitrary-user slot (GS:0x28). Like the arena
 ;; primitives, the runtime lives in exactly ONE object per executable (the entry
 ;; object, `emit-entry=true`); library/dependency objects (`emit-entry=false`)
 ;; emit none of the runtime and reference the Linux TLS slot as an extern.
@@ -67560,15 +67563,21 @@
         (compiler-backend-string-contains? asm "    movq $0x4000000, %rdx\n")
         (compiler-backend-string-contains? asm "    addq $64, %rcx\n")
         (compiler-backend-string-contains? asm "    movq $0, 32(%rax)\n")
-        (compiler-backend-string-contains? asm "    movq %r10, 40(%rax)\n")
+        (compiler-backend-string-contains? asm "    movq %r10, 0(%rax)\n")
+        (compiler-backend-string-contains? asm "    movq %r9, 40(%rax)\n")
         (compiler-backend-string-contains? asm "    movq $0, 48(%rax)\n")
+        (compiler-backend-string-contains? asm "    movq %rax, 56(%r9)\n")
         (compiler-backend-string-contains? asm "    leaq 64(%rax), %r8\n")
         (compiler-backend-string-contains? asm "    movq %rax, 40(%rax)\n")
         (compiler-backend-string-contains? asm "    movq $1, 48(%rax)\n")
         (compiler-backend-string-contains? asm "    leaq 64(%rax), %rcx\n")
         (compiler-backend-string-contains?
           asm
-          "    movq %rax, %fs:tl_current_arena@tpoff\n")
+          "    movq %r9, %fs:tl_current_arena@tpoff\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    movq %rax, %fs:tl_current_arena@tpoff\n"))
         (not
           (compiler-backend-string-contains? asm ".L_tl_alloc_size_ready:\n")))]
     [(ResultCompilerBackend.Err _) false]))
@@ -67580,14 +67589,14 @@
         (backend-and8
           (compiler-backend-string-contains? asm "    addq $7, %rdi\n")
           (compiler-backend-string-contains? asm "    andq $-8, %rdi\n")
-          (compiler-backend-string-contains? asm "    movq 16(%r8), %rax\n")
-          (compiler-backend-string-contains? asm "    movq %rcx, 16(%r8)\n")
+          (compiler-backend-string-contains? asm "    movq 16(%r9), %rcx\n")
+          (compiler-backend-string-contains? asm "    movq %rcx, 16(%r9)\n")
           (compiler-backend-string-contains? asm "    movq $9, %rax\n")
           (compiler-backend-string-contains? asm "    movq $0x22, %r10\n")
           (compiler-backend-string-contains? asm "    jc .L_tl_alloc_abort\n")
           (compiler-backend-string-contains? asm "    js .L_tl_alloc_abort\n"))
         (backend-and4
-          (compiler-backend-string-contains? asm "    testq $1, 48(%r9)\n")
+          (compiler-backend-string-contains? asm "    testq $1, 48(%r8)\n")
           (compiler-backend-string-contains?
             asm
             "    lock cmpxchgq %rcx, 16(%r8)\n")

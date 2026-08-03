@@ -29,29 +29,31 @@
       (unsafe
         (arena.tl_arena_set owner))
       ;; Fill the 64 MiB root without touching its payload pages, then force
-      ;; one overflow segment. The saved frontend-return handle still names
-      ;; `owner`, while the correct allocation target is the new head.
+      ;; one overflow segment. Public current remains the stable `owner` root;
+      ;; the physical head is observed only through the raw helper.
       (compiler-driver-smoke-runtime-alloc 67108800)
       (compiler-driver-smoke-runtime-alloc 8)
       (let
-        [head : i64 (arena.tl_arena_current)]
+        [head : i64
+          (compiler_driver_core.compiler-driver-arena-owner-current-head owner)]
+        [grown? : bool (not (= head owner))]
         (begin
           (compiler_driver_core.compiler-driver-restore-arena-owner-current!
             owner)
           (let
-            [preserved? : bool (= (arena.tl_arena_current) head)]
+            [preserved? : bool (= (arena.tl_arena_current) owner)]
             (begin
               (unsafe
                 (arena.tl_arena_set home))
               (compiler_driver_core.compiler-driver-restore-arena-owner-current!
                 owner)
               (let
-                [resumed? : bool (= (arena.tl_arena_current) head)]
+                [resumed? : bool (= (arena.tl_arena_current) owner)]
                 (begin
                   (unsafe
                     (arena.tl_arena_set home)
                     (arena.tl_arena_destroy owner))
-                  (and preserved? resumed?))))))))))
+                  (and grown? preserved? resumed?))))))))))
 
 (define (compiler-driver-lower-name-store-owner-current-ok?) : bool
   (let
@@ -61,12 +63,12 @@
       (unsafe
         (arena.tl_arena_set owner))
       ;; Advance this owner beyond its root before constructing the store. The
-      ;; store must retain the owner root, then resume its current head when a
-      ;; later segment is allocated from an unrelated active arena.
+      ;; store retains the owner root while the raw helper exposes its current
+      ;; physical head when a later segment is allocated.
       (compiler-driver-smoke-runtime-alloc 67108800)
       (compiler-driver-smoke-runtime-alloc 8)
       (let
-        [head : i64 (arena.tl_arena_current)]
+        [head : i64 (compiler_lower.lower-name-arena-owner-current-head owner)]
         [store : (Box compiler_lower.LowerNameStore)
           (box (compiler_lower.lower-name-store-new))]
         [store-owner : i64 (struct-get (box-get store) arena)]

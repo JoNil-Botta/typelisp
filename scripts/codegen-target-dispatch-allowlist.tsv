@@ -49,7 +49,7 @@ src/compiler_backend.tl	compiler-backend-atomic-new-reg	abi	compiler-backend-tar
 src/compiler_backend.tl	compiler-backend-closure-adapter-outgoing-frame-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Closure adapter outgoing space follows target calling convention rules.
 src/compiler_backend.tl	compiler-backend-c-memory-aggregate-type?	abi	compiler-backend-target-linux[?]	1	System V memory aggregate classification is Linux-target specific.
 src/compiler_backend.tl	compiler-backend-emit-syscall	runtime	compiler-backend-target-windows[?]|linux-x86_64	2	Raw syscall emission is only valid for Linux x86_64.
-src/compiler_backend.tl	compiler-backend-emit-inline-fast-alloc	runtime	compiler-backend-target-windows[?]	2	Windows register choices and incrementally committed arena bounds differ in the inline allocator fast path.
+src/compiler_backend.tl	compiler-backend-emit-inline-fast-alloc	runtime	compiler-backend-target-windows[?]	1	Windows uses the incrementally committed arena bound at offset 64; Linux uses the mapped-segment bound at offset 24.
 src/compiler_backend.tl	compiler-backend-emit-windows-main-argv-capture	entry	compiler-backend-target-windows[?]	1	Windows CRT passes argc and argv in Win64 registers.
 src/compiler_backend.tl	compiler-backend-emit-linux-crt-main-argv-capture	entry	compiler-backend-target-linux[?]	1	Linux CRT passes argc, argv, and envp in System V registers.
 src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	11	Function emission selects target entry capture, FPO eligibility/prologue, debug locations, and object-format suffixes.

@@ -9469,32 +9469,50 @@
           (opt-cfg-fill-i64! tout count (- 0 1))))
       (OptDomInfo index 0 empty idom tin tout))))
 
+;; Dominance is interval containment on the Euler tour numbering `opt-cfg-
+;; dominators-with` builds once per dom info: `dominator-id` dominates
+;; `label-id` exactly when its [tin, tout] interval encloses the label's.
+;;
+;; The `reachable` array is deliberately NOT consulted. `opt-dom-build-euler!`
+;; pre-fills tin/tout with -1, and its DFS reaches only the entry plus ids that
+;; `opt-dom-child-rows-fill!` linked into the dom tree -- and that fill admits
+;; an id only when `reachable[id]` is set. So `tin[id] >= 0` already implies
+;; `reachable[id]`, and the `(>= dom-tin 0)` guard below subsumes both
+;; reachability tests exactly rather than merely approximating them.
+;;
+;; Ids are range-checked against the tin array itself rather than the CFG block
+;; count: on the Euler path the two are equal by construction (both arrays are
+;; allocated at `opt-cfg-index-block-count`), and a dom info produced by the
+;; test-only bitset builder carries empty tin/tout, which this bound answers
+;; "does not dominate" instead of indexing off the end.
+;;
+;; `label-tin >= 0` is implied by `dom-tin >= 0` and `dom-tin <= label-tin`, so
+;; only the dominator's tin needs its own sign test, and the tout pair is read
+;; only once the tin comparisons have already held.
 (define (opt-dom-info-dominates-id?
   [info : OptDomInfo]
   [dominator-id : i64]
   [label-id : i64]) : bool
   (let
-    [index : OptCfgIndex (struct-get info index)]
-    [count : i64 (opt-cfg-index-block-count index)]
+    [tin : (__tl_dyn-array i64) (struct-get info tin)]
+    [count : i64 (array-length tin)]
     (if (and
       (>= dominator-id 0)
       (< dominator-id count)
       (>= label-id 0)
       (< label-id count))
-      (if (and
-        (array-ref (struct-get index reachable) dominator-id)
-        (array-ref (struct-get index reachable) label-id))
+      ;; A block dominates itself exactly when the dom tree numbered it, which
+      ;; is what the general test below reduces to when both ids are equal.
+      (if (= dominator-id label-id)
+        (>= (array-ref tin dominator-id) 0)
         (let
-          [dom-tin : i64 (array-ref (struct-get info tin) dominator-id)]
-          [dom-tout : i64 (array-ref (struct-get info tout) dominator-id)]
-          [label-tin : i64 (array-ref (struct-get info tin) label-id)]
-          [label-tout : i64 (array-ref (struct-get info tout) label-id)]
+          [dom-tin : i64 (array-ref tin dominator-id)]
           (and
             (>= dom-tin 0)
-            (>= label-tin 0)
-            (<= dom-tin label-tin)
-            (<= label-tout dom-tout)))
-        false)
+            (<= dom-tin (array-ref tin label-id))
+            (<=
+              (array-ref (struct-get info tout) label-id)
+              (array-ref (struct-get info tout) dominator-id)))))
       false)))
 
 (define (opt-dom-bitset-info-dominates-id?

@@ -22857,8 +22857,195 @@
     [(ast.AstType.MutPtr _) true]
     [_ false]))
 
-(define (tc-type-move-kind [ty : ast.AstType]) : TcMoveKind
-  (match ty
+(define (tc-type-move-kind-copyable-type-list-at
+  [ctx : TcContext]
+  [types : (& types ast.AstTypeList)]
+  [stack : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len types))
+    true
+    (and
+      (tc-move-kind-copyable?
+        (tc-type-move-kind-with-stack
+          ctx
+          (tc-context-type-get
+            ctx
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+          stack))
+      (tc-type-move-kind-copyable-type-list-at ctx types stack (+ index 1)))))
+
+(define (tc-type-move-kind-copyable-type-list?
+  [ctx : TcContext]
+  [types : ast.AstTypeList]
+  [stack : TcNameIdList]) : bool
+  (tc-type-move-kind-copyable-type-list-at ctx (& types) stack 0))
+
+(define (tc-type-move-kind-copyable-nominal-types?
+  [ctx : TcContext]
+  [nominal-id : i64]
+  [lifetimes : ast.AstLifetimeList]
+  [types : ast.AstTypeList]
+  [stack : TcNameIdList]) : bool
+  ;; Resolve declaration fields/payloads in the declaration owner's module,
+  ;; then apply the use-site lifetime arguments positionally. A failed
+  ;; substitution is an invalid type and therefore conservatively MoveOnly.
+  (match (tc-lifetime-subst-from-nominal-args-id ctx nominal-id lifetimes)
+    [(ResultTcLifetimeSubst.Ok subst)
+      (tc-type-move-kind-copyable-type-list?
+        ctx
+        (tc-lifetime-subst-type-list subst types)
+        stack)]
+    [(ResultTcLifetimeSubst.Err _) false]))
+
+(define (tc-type-move-kind-copyable-struct-fields?
+  [ctx : TcContext]
+  [nominal-id : i64]
+  [lifetimes : ast.AstLifetimeList]
+  [fields : ast.AstFieldDefList]
+  [stack : TcNameIdList]) : bool
+  (tc-type-move-kind-copyable-nominal-types?
+    ctx
+    nominal-id
+    lifetimes
+    (tc-field-type-list ctx fields)
+    stack))
+
+(define (tc-type-move-kind-copyable-enum-variants-at
+  [ctx : TcContext]
+  [nominal-id : i64]
+  [lifetimes : ast.AstLifetimeList]
+  [variants : (& variants ast.AstVariantDefList)]
+  [stack : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (struct-get variants len))
+    true
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def _ payloads _)
+        (and
+          (tc-type-move-kind-copyable-nominal-types?
+            ctx
+            nominal-id
+            lifetimes
+            (tc-resolve-type-list ctx payloads)
+            stack)
+          (tc-type-move-kind-copyable-enum-variants-at
+            ctx
+            nominal-id
+            lifetimes
+            variants
+            stack
+            (+ index 1)))])))
+
+(define (tc-type-move-kind-copyable-enum-variants?
+  [ctx : TcContext]
+  [nominal-id : i64]
+  [lifetimes : ast.AstLifetimeList]
+  [variants : ast.AstVariantDefList]
+  [stack : TcNameIdList]) : bool
+  (tc-type-move-kind-copyable-enum-variants-at
+    ctx
+    nominal-id
+    lifetimes
+    (& variants)
+    stack
+    0))
+
+(define (tc-type-move-kind-nominal-with-stack
+  [ctx : TcContext]
+  [name-id : i64]
+  [lifetimes : ast.AstLifetimeList]
+  [stack : TcNameIdList]) : TcMoveKind
+  (let
+    [handle : i64
+      (csym.compiler-symbols-lookup-type-id-or
+        (tc-context-symbols ctx)
+        name-id
+        (csym.compiler-symbols-missing-handle))]
+    (if (not (csym.compiler-symbols-handle-found? handle))
+      (TcMoveKind.MoveOnly)
+      (let
+        [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+        [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
+        (if (or
+          (< nominal-id 0)
+          (not
+            (or
+              (= kind (csym.compiler-symbol-kind-defstruct))
+              (= kind (csym.compiler-symbol-kind-defenum)))))
+          (TcMoveKind.MoveOnly)
+          (if (tc-name-id-list-contains stack nominal-id)
+            ;; Recursive by-value declarations are invalid layouts, but the
+            ;; classifier remains total and conservative instead of recursing
+            ;; forever.
+            (TcMoveKind.MoveOnly)
+            (let
+              [owner-ctx : TcContext
+                (tc-context-with-nominal-owner-index-module
+                  ctx
+                  (csym.compiler-symbol-handle-index handle))]
+              (match (csym.compiler-symbols-decl-at-index
+                (tc-context-symbols owner-ctx)
+                (csym.compiler-symbol-handle-index handle))
+                [(parser.ResultAstDecl.Ok decl)
+                  (let
+                    [next-stack : TcNameIdList
+                      (tc-name-id-list-add stack nominal-id)]
+                    (match decl
+                      [(ast.AstDecl.DefStruct _ _ _ cleanup fields)
+                        (if (ast.ast-struct-cleanup? cleanup)
+                          (TcMoveKind.MoveOnly)
+                          (if (tc-type-move-kind-copyable-struct-fields?
+                            owner-ctx
+                            nominal-id
+                            lifetimes
+                            fields
+                            next-stack)
+                            (TcMoveKind.Copyable)
+                            (TcMoveKind.MoveOnly)))]
+                      [(ast.AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
+                        (if (ast.ast-struct-cleanup? cleanup)
+                          (TcMoveKind.MoveOnly)
+                          (if (tc-type-move-kind-copyable-struct-fields?
+                            owner-ctx
+                            nominal-id
+                            lifetimes
+                            fields
+                            next-stack)
+                            (TcMoveKind.Copyable)
+                            (TcMoveKind.MoveOnly)))]
+                      [(ast.AstDecl.DefEnum _ _ cleanup variants)
+                        (if (ast.ast-enum-cleanup? cleanup)
+                          (TcMoveKind.MoveOnly)
+                          (if (tc-type-move-kind-copyable-enum-variants?
+                            owner-ctx
+                            nominal-id
+                            lifetimes
+                            variants
+                            next-stack)
+                            (TcMoveKind.Copyable)
+                            (TcMoveKind.MoveOnly)))]
+                      [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
+                        (if (ast.ast-enum-cleanup? cleanup)
+                          (TcMoveKind.MoveOnly)
+                          (if (tc-type-move-kind-copyable-enum-variants?
+                            owner-ctx
+                            nominal-id
+                            lifetimes
+                            variants
+                            next-stack)
+                            (TcMoveKind.Copyable)
+                            (TcMoveKind.MoveOnly)))]
+                      [_ (TcMoveKind.MoveOnly)]))]
+                [(parser.ResultAstDecl.Err _) (TcMoveKind.MoveOnly)]))))))))
+
+(define (tc-type-move-kind-with-stack
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [stack : TcNameIdList]) : TcMoveKind
+  (match (tc-resolve-type ctx ty)
     [(ast.AstType.I64) (TcMoveKind.Copyable)]
     [(ast.AstType.I32) (TcMoveKind.Copyable)]
     [(ast.AstType.I16) (TcMoveKind.Copyable)]
@@ -22875,38 +23062,67 @@
     [(ast.AstType.Never) (TcMoveKind.Copyable)]
     [(ast.AstType.Expr) (TcMoveKind.Copyable)]
     [(ast.AstType.ExprList) (TcMoveKind.Copyable)]
+    ;; Function values are represented by the function type only. Capturing
+    ;; closures carry a separate environment and remain a later issue.
     [(ast.AstType.Func _ _) (TcMoveKind.Copyable)]
     [(ast.AstType.Ptr _) (TcMoveKind.Copyable)]
     [(ast.AstType.MutPtr _) (TcMoveKind.Copyable)]
+    ;; Shared references are handles and remain Copyable independent of their
+    ;; referent. Mutable references are unique and therefore MoveOnly.
     [(ast.AstType.Ref _ _) (TcMoveKind.Copyable)]
-    [(ast.AstType.Region _ inner) (tc-type-move-kind (ast.ty-node-get inner))]
+    [(ast.AstType.MutRef _ _) (TcMoveKind.MoveOnly)]
+    [(ast.AstType.Region _ inner)
+      (tc-type-move-kind-with-stack ctx (tc-context-type-get ctx inner) stack)]
+    [(ast.AstType.Consume inner)
+      (tc-type-move-kind-with-stack ctx (tc-context-type-get ctx inner) stack)]
+    [(ast.AstType.Tuple elems)
+      (if (tc-type-move-kind-copyable-type-list? ctx (box-get elems) stack)
+        (TcMoveKind.Copyable)
+        (TcMoveKind.MoveOnly))]
+    [(ast.AstType.Array elem _)
+      (tc-type-move-kind-with-stack ctx (tc-context-type-get ctx elem) stack)]
+    ;; These are owning handles or unsized/compatibility views. Their element
+    ;; types do not make the value shallowly Copyable.
     [(ast.AstType.String) (TcMoveKind.MoveOnly)]
     [(ast.AstType.Str) (TcMoveKind.MoveOnly)]
     [(ast.AstType.Bytes) (TcMoveKind.MoveOnly)]
-    [(ast.AstType.Tuple _) (TcMoveKind.MoveOnly)]
-    [(ast.AstType.Array _ _) (TcMoveKind.MoveOnly)]
     [(ast.AstType.DynArray _) (TcMoveKind.MoveOnly)]
     [(ast.AstType.Slice _) (TcMoveKind.MoveOnly)]
     [(ast.AstType.Box _) (TcMoveKind.MoveOnly)]
-    [(ast.AstType.MutRef _ _) (TcMoveKind.MoveOnly)]
-    [(ast.AstType.Enum _) (TcMoveKind.MoveOnly)]
-    [(ast.AstType.EnumArgs _ _) (TcMoveKind.MoveOnly)]
-    [(ast.AstType.Struct _) (TcMoveKind.MoveOnly)]
-    [(ast.AstType.StructArgs _ _) (TcMoveKind.MoveOnly)]
+    [(ast.AstType.Enum name)
+      (tc-type-move-kind-nominal-with-stack
+        ctx
+        name
+        (ast.ast-lifetime-list-new)
+        stack)]
+    [(ast.AstType.EnumArgs name lifetimes)
+      (tc-type-move-kind-nominal-with-stack ctx name (box-get lifetimes) stack)]
+    [(ast.AstType.Struct name)
+      (tc-type-move-kind-nominal-with-stack
+        ctx
+        name
+        (ast.ast-lifetime-list-new)
+        stack)]
+    [(ast.AstType.StructArgs name lifetimes)
+      (tc-type-move-kind-nominal-with-stack ctx name (box-get lifetimes) stack)]
+    ;; Unresolved names and invalid type variables must never accidentally
+    ;; become Copyable.
     [(ast.AstType.Var _) (TcMoveKind.MoveOnly)]
-    [(ast.AstType.VarArgs _ _) (TcMoveKind.MoveOnly)]
-    [(ast.AstType.Consume inner) (tc-type-move-kind (ast.ty-node-get inner))]))
+    [(ast.AstType.VarArgs _ _) (TcMoveKind.MoveOnly)]))
+
+(define (tc-type-move-kind [ctx : TcContext] [ty : ast.AstType]) : TcMoveKind
+  (tc-type-move-kind-with-stack ctx ty TcNameIdList.Nil))
 
 (define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
   (match kind
     [(TcMoveKind.Copyable) true]
     [(TcMoveKind.MoveOnly) false]))
 
-(define (tc-type-copyable? [ty : ast.AstType]) : bool
-  (tc-move-kind-copyable? (tc-type-move-kind ty)))
+(define (tc-type-copyable? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (tc-move-kind-copyable? (tc-type-move-kind ctx ty)))
 
-(define (tc-type-move-only? [ty : ast.AstType]) : bool
-  (not (tc-type-copyable? ty)))
+(define (tc-type-move-only? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (not (tc-type-copyable? ctx ty)))
 
 (define (tc-raw-pointer-elem [ty : ast.AstType] [message : String]) : ResultTcType
   (match (tc-type-strip-region ty)
@@ -56458,9 +56674,12 @@
       (tc-moved-union-id-loop (& a-hidden) 0 b-hidden)
       origins)))
 
-(define (tc-move-var-move-only-id? [env : TcTypeEnv] [name-id : i64]) : bool
+(define (tc-move-var-move-only-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
   (match (tc-lookup-id env name-id)
-    [(ResultTcType.Ok ty) (tc-type-move-only? ty)]
+    [(ResultTcType.Ok ty) (tc-type-move-only? ctx ty)]
     [(ResultTcType.Err _) false]))
 
 (define (tc-type-consuming-by-value-now? [ctx : TcContext] [ty : ast.AstType]) : bool
@@ -56481,6 +56700,7 @@
 (define (tc-call-param-consuming-now? [ctx : TcContext] [ty : ast.AstType]) : bool
   (if (ast.ast-type-consuming-param? ty)
     (tc-type-move-only?
+      ctx
       (tc-resolve-type
         ctx
         (ast.ast-type-strip-consuming-param-with-pools
@@ -57380,7 +57600,7 @@
       [(TcMaybeMoveName.Some v-id v)
         (if (and
           (tc-moved-contains? locals v-id)
-          (tc-move-var-move-only-id? env v-id))
+          (tc-move-var-move-only-id? ctx env v-id))
           (if (tc-moved-partial? moved v-id)
             (tc-move-rich-use-conflict-result
               expr-bases
@@ -57421,7 +57641,7 @@
       [(TcMaybeMoveName.Some v-id v)
         (if (and
           (tc-moved-contains? locals v-id)
-          (tc-move-var-move-only-id? env v-id))
+          (tc-move-var-move-only-id? ctx env v-id))
           (if (tc-moved-partial? moved v-id)
             (tc-move-rich-use-conflict-result
               expr-bases
@@ -57500,7 +57720,7 @@
     loop-carried
     moved
     expr
-    (tc-type-move-only? (tc-resolve-type ctx target-ty))))
+    (tc-type-move-only? ctx (tc-resolve-type ctx target-ty))))
 
 (define (tc-move-after-match-scrutinee
   [ctx : TcContext]
@@ -61758,7 +61978,7 @@
   [borrowed : TcMovedSet]
   [expr : ast.AstExpr]
   [target-ty : ast.AstType]) : TcBorrowCheckResult
-  (if (tc-type-move-only? (tc-resolve-type ctx target-ty))
+  (if (tc-type-move-only? ctx (tc-resolve-type ctx target-ty))
     (tc-borrow-check-after-consuming-place expr-bases locals borrowed expr)
     (TcBorrowCheckResult.Ok borrowed)))
 
@@ -61797,7 +62017,7 @@
       [(TcMaybeMoveName.Some name-id name)
         (if (and
           (tc-moved-contains? locals name-id)
-          (tc-move-var-move-only-id? env name-id))
+          (tc-move-var-move-only-id? ctx env name-id))
           (match (tc-borrow-check-move-conflict
             expr-bases
             borrowed
@@ -62006,7 +62226,7 @@
       [(TcMaybeMoveName.Some name-id name)
         (if (and
           (tc-moved-contains? locals name-id)
-          (tc-move-var-move-only-id? env name-id))
+          (tc-move-var-move-only-id? ctx env name-id))
           (match (tc-borrow-check-move-conflict
             expr-bases
             borrowed

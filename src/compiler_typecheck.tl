@@ -2939,8 +2939,7 @@
     (tc_core.tc-type-contains-region
       (ast.ast-ty-box
         (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.String)))
-      cbi.compiler-builtin-id-fix-n)
-    (tc_core.tc-type-move-only? (ast.ast-ty-box (ast.AstType.I64)))))
+      cbi.compiler-builtin-id-fix-n)))
 
 (define (compiler-typecheck-box-tests-ok?) : bool
   (and
@@ -3554,44 +3553,146 @@
       "typecheck: try operand must be Result-like enum")
     (compiler-typecheck-ok? (compiler-typecheck-result-try-panic-source))))
 
-(define (compiler-typecheck-move-kind-copyable-tests-ok?) : bool
+(define (compiler-typecheck-move-kind-fixture-source) : String
+  "(defstruct Scalar (value i64))
+(defenum ScalarEnum (None) (Some i64))
+(defstruct ScalarC
+  (:repr c)
+  (value i64))
+(defstruct RefBox (:lifetimes a) (value (& a i64)))
+(defstruct NestedCopy (:lifetimes a)
+  (array (Array i64 2))
+  (tuple (Tuple i64 (& a i64)))
+  (scalar ScalarC)
+  (choice ScalarEnum))
+(defenum NestedChoice (:lifetimes a)
+  (None)
+  (SomeNested (NestedCopy a)))
+(defstruct CleanupScalar (:cleanup cleanup-scalar) (value i64))
+(defenum CleanupEnum (:cleanup cleanup-enum) (Value i64))
+(defstruct Cycle (next Cycle))
+(defstruct TextPacket (text String))
+(defenum PoisonChoice (None) (Text TextPacket))
+(defstruct NestedPoison (choice PoisonChoice))
+(defenum RefOption (:lifetimes a) (None) (SomeRef (& a i64)))
+(defenum MoveOnlyEnum (Text String))")
+
+(define (compiler-typecheck-move-kind-copyable-group-ok?
+  [ctx : tc_core.TcContext]) : bool
   (and
-    (tc_core.tc-type-copyable? (ast.AstType.I64))
-    (tc_core.tc-type-copyable? (ast.AstType.I32))
-    (tc_core.tc-type-copyable? (ast.AstType.F64))
-    (tc_core.tc-type-copyable? (ast.AstType.F32))
-    (tc_core.tc-type-copyable? (ast.AstType.Bool))
-    (tc_core.tc-type-copyable? (ast.AstType.Char))
-    (tc_core.tc-type-copyable? (ast.AstType.Unit))
-    (tc_core.tc-type-copyable? (ast.AstType.Never))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.I64))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.I32))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.F64))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.F32))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Bool))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Char))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Unit))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Never))
     (tc_core.tc-type-copyable?
+      ctx
       (ast.ast-ty-func (ast.ast-type-list-new) (ast.AstType.I64)))
     (tc_core.tc-type-copyable?
+      ctx
       (ast.ast-ty-ptr
         (ast.ast-ty-region
           cbi.compiler-builtin-id-fix-value
           (ast.AstType.String))))
     (tc_core.tc-type-copyable?
+      ctx
       (ast.ast-ty-mut-ptr (ast.ast-ty-dyn-array (ast.AstType.I64))))
     (tc_core.tc-type-copyable?
-      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.String)))))
-
-(define (compiler-typecheck-move-kind-move-only-tests-ok?) : bool
-  (and
-    (tc_core.tc-type-move-only? (ast.AstType.String))
-    (tc_core.tc-type-move-only? (ast.ast-ty-dyn-array (ast.AstType.I64)))
-    (tc_core.tc-type-move-only? (ast.ast-ty-array (ast.AstType.I64) 4))
-    (tc_core.tc-type-move-only?
+      ctx
+      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.String)))
+    (tc_core.tc-type-copyable?
+      ctx
+      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Str)))
+    (tc_core.tc-type-copyable?
+      ctx
+      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Bytes)))
+    ;; Arrays and tuples are structurally Copyable.
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (ast.AstType.I64) 4))
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (ast.AstType.I64) 0))
+    (tc_core.tc-type-copyable?
+      ctx
       (ast.ast-ty-tuple
         (ast.ast-type-cons
           (ast.AstType.I64)
           (ast.ast-type-cons (ast.AstType.Bool) (ast.ast-type-list-new)))))
-    (tc_core.tc-type-move-only? (ast.AstType.Struct (ci.intern "Box")))
-    (tc_core.tc-type-move-only? (ast.ast-ty-box (ast.AstType.I64)))
-    (tc_core.tc-type-move-only? (ast.AstType.Enum (ci.intern "MoveOnlyEnum")))
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-tuple (ast.ast-type-list-new)))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Struct (ci.intern "Scalar")))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Struct (ci.intern "ScalarC")))
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Enum (ci.intern "ScalarEnum")))
+    ;; One recursive positive chain covers array + tuple +
+    ;; struct + enum + shared reference.
+    (tc_core.tc-type-copyable?
+      ctx
+      (ast.ast-ty-struct-args
+        (ci.intern "NestedCopy")
+        (ast.ast-lifetime-cons
+          cbi.compiler-builtin-id-fix-n
+          (ast.ast-lifetime-list-new))))
+    (tc_core.tc-type-copyable?
+      ctx
+      (ast.ast-ty-enum-args
+        (ci.intern "NestedChoice")
+        (ast.ast-lifetime-cons
+          cbi.compiler-builtin-id-fix-n
+          (ast.ast-lifetime-list-new))))
+    ;; Lifetime arguments do not affect Copy; shared refs do.
+    (tc_core.tc-type-copyable?
+      ctx
+      (ast.ast-ty-struct-args
+        (ci.intern "RefBox")
+        (ast.ast-lifetime-cons
+          cbi.compiler-builtin-id-fix-n
+          (ast.ast-lifetime-list-new))))
+    (tc_core.tc-type-copyable?
+      ctx
+      (ast.ast-ty-enum-args
+        (ci.intern "RefOption")
+        (ast.ast-lifetime-cons
+          cbi.compiler-builtin-id-fix-n
+          (ast.ast-lifetime-list-new))))
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-consume (ast.AstType.I64)))))
+
+(define (compiler-typecheck-move-kind-move-only-group-ok?
+  [ctx : tc_core.TcContext]) : bool
+  (and
+    (tc_core.tc-type-move-only? ctx (ast.AstType.String))
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Str))
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Bytes))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-dyn-array (ast.AstType.I64)))
+    ;; Zero-length arrays still classify by element.
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-array (ast.AstType.String) 0))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-box (ast.AstType.I64)))
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "Box")))
     (tc_core.tc-type-move-only?
+      ctx
+      (ast.AstType.Enum (ci.intern "MoveOnlyEnum")))
+    (tc_core.tc-type-move-only?
+      ctx
+      (ast.AstType.Struct (ci.intern "CleanupScalar")))
+    (tc_core.tc-type-move-only?
+      ctx
+      (ast.AstType.Enum (ci.intern "CleanupEnum")))
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "Cycle")))
+    ;; Nested enum/struct poison must propagate through every aggregate layer.
+    (tc_core.tc-type-move-only?
+      ctx
+      (ast.AstType.Enum (ci.intern "PoisonChoice")))
+    (tc_core.tc-type-move-only?
+      ctx
+      (ast.AstType.Struct (ci.intern "NestedPoison")))
+    ;; Missing lifetime arguments are conservative.
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "RefBox")))
+    (tc_core.tc-type-move-only?
+      ctx
+      (ast.ast-ty-enum-args (ci.intern "RefOption") (ast.ast-lifetime-list-new)))
+    (tc_core.tc-type-move-only?
+      ctx
       (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (ast.AstType.I64)))
     (tc_core.tc-type-move-only?
+      ctx
       (ast.ast-ty-tuple
         (ast.ast-type-cons
           (ast.AstType.Struct (ci.intern "Box"))
@@ -3599,31 +3700,60 @@
             (ast.ast-ty-dyn-array (ast.AstType.I64))
             (ast.ast-type-list-new)))))))
 
-(define (compiler-typecheck-move-kind-region-tests-ok?) : bool
+(define (compiler-typecheck-move-kind-wrapper-group-ok?
+  [ctx : tc_core.TcContext]) : bool
   (and
     (tc_core.tc-type-copyable?
+      ctx
       (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.I64)))
     (tc_core.tc-type-copyable?
+      ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-n
         (ast.ast-ty-ref cbi.compiler-builtin-id-fix-value (ast.AstType.String))))
-    (tc_core.tc-type-move-only?
-      (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.String)))
-    (tc_core.tc-type-move-only?
+    (tc_core.tc-type-copyable?
+      ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-n
         (ast.ast-ty-tuple
           (ast.ast-type-cons (ast.AstType.I64) (ast.ast-type-list-new)))))
     (tc_core.tc-type-move-only?
+      ctx
+      (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.String)))
+    (tc_core.tc-type-move-only?
+      ctx
       (ast.ast-ty-region
-        cbi.compiler-builtin-id-fix-n
-        (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (ast.AstType.I64))))))
+        cbi.compiler-builtin-id-fix-value
+        (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (ast.AstType.I64))))
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-consume (ast.AstType.I64)))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-consume (ast.AstType.String)))))
+
+(define (compiler-typecheck-move-kind-fixture-tests-ok?) : bool
+  (match (parser.parse-ast-source (compiler-typecheck-move-kind-fixture-source))
+    [(parser.ResultAstProgram.Ok program)
+      (match (csym.build-compiler-symbols program)
+        [(csym.ResultCompilerSymbols.Ok symbols)
+          (match (csym.build-compiler-registries program)
+            [(csym.ResultCompilerRegistries.Ok registries)
+              (let
+                [ctx : tc_core.TcContext
+                  (tc_core.tc-context-new
+                    program
+                    symbols
+                    registries
+                    ""
+                    cbi.compiler-builtin-id-fix-empty
+                    (ast.ast-node-pool-context-capture-active))]
+                (and
+                  (compiler-typecheck-move-kind-copyable-group-ok? ctx)
+                  (compiler-typecheck-move-kind-move-only-group-ok? ctx)
+                  (compiler-typecheck-move-kind-wrapper-group-ok? ctx)))]
+            [(csym.ResultCompilerRegistries.Err _) false])]
+        [(csym.ResultCompilerSymbols.Err _) false])]
+    [(parser.ResultAstProgram.Err _) false]))
 
 (define (compiler-typecheck-move-kind-tests-ok?) : bool
-  (and
-    (compiler-typecheck-move-kind-copyable-tests-ok?)
-    (compiler-typecheck-move-kind-move-only-tests-ok?)
-    (compiler-typecheck-move-kind-region-tests-ok?)))
+  (compiler-typecheck-move-kind-fixture-tests-ok?))
 
 (define (compiler-typecheck-raw-pointer-source) : String
   "(extern (raw-sink [arg0 : (Ptr i64)]) : unit)
@@ -4543,14 +4673,6 @@
             (ast.ast-lifetime-cons
               cbi.compiler-builtin-id-fix-m
               (ast.ast-lifetime-list-new)))))]
-    [str-move-kind-ok : bool (tc_core.tc-type-move-only? (ast.AstType.Str))]
-    [bytes-move-kind-ok : bool (tc_core.tc-type-move-only? (ast.AstType.Bytes))]
-    [str-ref-move-kind-ok : bool
-      (tc_core.tc-type-copyable?
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Str)))]
-    [bytes-ref-move-kind-ok : bool
-      (tc_core.tc-type-copyable?
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Bytes)))]
     [region-erased-eq-ok : bool
       (tc_core.tc-type-eq
         (ast.ast-ty-ref
@@ -4591,10 +4713,6 @@
       bytes-distinct-ok
       nominal-lifetime-render-ok
       nominal-lifetime-distinct-ok
-      str-move-kind-ok
-      bytes-move-kind-ok
-      str-ref-move-kind-ok
-      bytes-ref-move-kind-ok
       region-erased-eq-ok
       region-distinct-ok
       mut-distinct-ok
@@ -9490,6 +9608,68 @@
   "(define (copy-reuse [n : i64]) : i64
   (let [t : i64 n] (+ n t)))")
 
+;; Structural Copy fixtures exercise the consuming-parameter path directly.
+;; Ordinary by-value parameters intentionally remain covered by the legacy
+;; compatibility fixtures below.
+(define (compiler-typecheck-move-structural-copy-source) : String
+  "(defstruct ScalarPacket (value i64))
+(defenum ScalarChoice (None) (Some i64))
+(defstruct RefPair (:lifetimes a) (ref (& a i64)) (value i64))
+(defstruct NestedRefPair (:lifetimes a) (pair (RefPair a)) (value i64))
+(define (take-array [value : (Array i64 4) (:consume)]) : unit unit)
+(define (take-tuple [value : (Tuple i64 bool) (:consume)]) : unit unit)
+(define (take-struct [value : ScalarPacket (:consume)]) : unit unit)
+(define (take-enum [value : ScalarChoice (:consume)]) : unit unit)
+(define (take-ref-pair [owner : i64] [value : (RefPair owner) (:consume)]) : unit unit)
+(define (take-nested-ref-pair [owner : i64] [value : (NestedRefPair owner) (:consume)]) : unit unit)
+(define (copy-array-reuse [value : (Array i64 4)]) : unit
+  (let [copy : (Array i64 4) value]
+    (begin (take-array value) (take-array copy))))
+(define (copy-tuple-reuse [value : (Tuple i64 bool)]) : unit
+  (begin (take-tuple value) (take-tuple value)))
+(define (copy-struct-reuse [value : ScalarPacket]) : unit
+  (begin (take-struct value) (take-struct value)))
+(define (copy-enum-reuse [value : ScalarChoice]) : unit
+  (begin (take-enum value) (take-enum value)))
+(define (copy-nested-ref-reuse [owner : i64] [value : (NestedRefPair owner)]) : unit
+  (begin
+    (take-nested-ref-pair owner value)
+    (take-nested-ref-pair owner value)))
+(define (copy-lifetime-ref-reuse [owner : i64] [value : (RefPair owner)]) : unit
+  (begin (take-ref-pair owner value) (take-ref-pair owner value)))")
+
+(define (compiler-typecheck-move-structural-copy-direct-poison-source) : String
+  "(defstruct TextPacket (text String))
+(define (take-text [value : TextPacket (:consume)]) : unit unit)
+(define (bad-text-reuse [value : TextPacket]) : unit
+  (begin (take-text value) (take-text value)))")
+
+(define (compiler-typecheck-move-structural-copy-nested-poison-source) : String
+  "(defstruct TextPacket (text String))
+(defstruct NestedTextPacket (packet TextPacket))
+(define (take-nested-text [value : NestedTextPacket (:consume)]) : unit unit)
+(define (bad-nested-text-reuse [value : NestedTextPacket]) : unit
+  (begin (take-nested-text value) (take-nested-text value)))")
+
+(define (compiler-typecheck-move-structural-copy-macro-source) : String
+  "(defmacro (generate-copyable) : Decls
+  `(begin (defstruct GeneratedScalar (value i64))))
+(generate-copyable)
+(define (take-generated [value : GeneratedScalar (:consume)]) : unit unit)
+(define (reuse-generated [value : GeneratedScalar]) : unit
+  (begin (take-generated value) (take-generated value)))")
+
+(define (compiler-typecheck-move-structural-copy-owner-source) : String
+  "(module owner)
+(defstruct Scalar (value i64))
+(defstruct Wrapper (value Scalar))
+(module use)
+(defstruct Scalar (text String))
+(import owner as o)
+(define (take-wrapper [value : o.Wrapper (:consume)]) : unit unit)
+(define (reuse-wrapper [value : o.Wrapper]) : unit
+  (begin (take-wrapper value) (take-wrapper value)))")
+
 (define (compiler-typecheck-move-branch-source) : String
   "(define (branch-move [flag : bool] [s : String]) : String
   (begin (if flag (let [t : String s] t) (let [u : String s] u)) s))")
@@ -10856,6 +11036,28 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-move-copyable-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-structural-copy-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-structural-copy-direct-poison-source)
+        "typecheck: use of moved value `value`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-structural-copy-nested-poison-source)
+        "typecheck: use of moved value `value`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-structural-copy-macro-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-structural-copy-owner-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

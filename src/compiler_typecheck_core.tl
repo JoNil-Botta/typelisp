@@ -71,7 +71,23 @@
   (ty ast.AstType)
   (parent i64))
 
+;; The four chain fields lead the record so the structural top-env index can
+;; read them with fixed word offsets (0..3) without materializing the whole
+;; cache. `chain-depth` is -1 for every node that is not an indexed explicit
+;; top-env layer (local compaction caches, and any explicit layer that failed
+;; an encoding guard); such nodes keep the plain `below` walk.
 (defstruct TcTypeEnvCache
+  (chain-depth i64)
+  (chain-seq i64)
+  ;; Binary-lifting ancestor pointers: entry k is the layer 2^k steps down the
+  ;; `below` chain, or 0 past the root.
+  (chain-jumps (__tl_dyn-array i64))
+  ;; Parallel to `values`: slot -> 2 + (packed ref of the previous layer that
+  ;; bound the same key, -1 when this layer is the first). 0 means the slot is
+  ;; still unregistered, which must stay distinct from "registered, no earlier
+  ;; version" -- the two collided in an earlier draft and made a first version
+  ;; point at itself.
+  (chain-prev (__tl_dyn-array i64))
   (ids tc_i64_i64_map.Map)
   (values (__tl_dyn-array ast.AstType))
   (unsafe-flags (__tl_dyn-array i64))
@@ -142,7 +158,21 @@
   ;; Zero for ordinary compatibility environments. The whole-program top env
   ;; attaches its owning job's membership capability here so generic bind and
   ;; lookup helpers need no process-global active-state selector.
-  (topenv-membership-state-address i64))
+  (topenv-membership-state-address i64)
+  ;; Address of this store's TcChainIndex cell, or 0 before the first explicit
+  ;; top-env layer is built. Word offset 8; the eight fields above are one word
+  ;; each, which the raw accessors below rely on.
+  (chain-state i64))
+
+;; Structural index over one store's explicit top-env layer forest. `map` sends
+;; a binding key to the packed reference of the newest layer that binds it;
+;; each layer's `chain-prev` slot threads the older versions in strictly
+;; decreasing `seq`. Values are never copied here: a reference is (layer node
+;; address, slot), so every payload read goes to the layer's own live arrays.
+(defstruct TcChainIndex
+  (map tc_i64_i64_map.Map)
+  (next-seq i64)
+  (owner-arena i64))
 
 (defstruct TcTypeEnv
   (store i64)
@@ -6742,7 +6772,8 @@
     0
     0
     (tc-type-env-store-owner-root (arena.tl_arena_current))
-    topenv-state-address))
+    topenv-state-address
+    0))
 
 (define (tc-type-env-store-new) : TcTypeEnvStore
   (tc-type-env-store-new-with-topenv-state-address 0))
@@ -9426,20 +9457,32 @@
       [(= head -1) false]
       [(< head -1)
         (let
-          [cache : TcTypeEnvCache
-            (tc-type-env-cache-at
-              (tc-type-env-cache-ptr
-                store-handle
-                (tc-type-env-cache-index head)))]
-          [ids : tc_i64_i64_map.Map (struct-get cache ids)]
-          [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
-          (if (>= index 0)
-            (= (array-ref (struct-get cache c-abi-fnptr-flags) index) 1)
-            (if (struct-get cache partial)
-              (tc-binding-c-abi-fnptr-persistent-id?
-                (TcTypeEnv store-handle (struct-get cache below) 0)
-                name-id)
-              false)))]
+          [node-addr : i64 (tc-type-env-cache-index head)]
+          (if (>= (tc-chain-node-depth node-addr) 0)
+            (let
+              [ref : i64 (tc-chain-resolve store-handle node-addr name-id)]
+              (if (>= ref 0)
+                (=
+                  (array-ref
+                    (struct-get
+                      (tc-chain-ref-cache store-handle ref)
+                      c-abi-fnptr-flags)
+                    (tc-chain-ref-slot ref))
+                  1)
+                false))
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr store-handle node-addr))]
+              [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+              [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+              (if (>= index 0)
+                (= (array-ref (struct-get cache c-abi-fnptr-flags) index) 1)
+                (if (struct-get cache partial)
+                  (tc-binding-c-abi-fnptr-persistent-id?
+                    (TcTypeEnv store-handle (struct-get cache below) 0)
+                    name-id)
+                  false)))))]
       [else
         (let
           [binding-ptr : (Ptr TcTypeEnvBinding)
@@ -9506,20 +9549,32 @@
       [(= head -1) false]
       [(< head -1)
         (let
-          [cache : TcTypeEnvCache
-            (tc-type-env-cache-at
-              (tc-type-env-cache-ptr
-                store-handle
-                (tc-type-env-cache-index head)))]
-          [ids : tc_i64_i64_map.Map (struct-get cache ids)]
-          [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
-          (if (>= index 0)
-            (= (array-ref (struct-get cache unsafe-flags) index) 1)
-            (if (struct-get cache partial)
-              (tc-binding-unsafe-id?
-                (TcTypeEnv store-handle (struct-get cache below) 0)
-                name-id)
-              false)))]
+          [node-addr : i64 (tc-type-env-cache-index head)]
+          (if (>= (tc-chain-node-depth node-addr) 0)
+            (let
+              [ref : i64 (tc-chain-resolve store-handle node-addr name-id)]
+              (if (>= ref 0)
+                (=
+                  (array-ref
+                    (struct-get
+                      (tc-chain-ref-cache store-handle ref)
+                      unsafe-flags)
+                    (tc-chain-ref-slot ref))
+                  1)
+                false))
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr store-handle node-addr))]
+              [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+              [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+              (if (>= index 0)
+                (= (array-ref (struct-get cache unsafe-flags) index) 1)
+                (if (struct-get cache partial)
+                  (tc-binding-unsafe-id?
+                    (TcTypeEnv store-handle (struct-get cache below) 0)
+                    name-id)
+                  false)))))]
       [else
         (let
           [binding-ptr : (Ptr TcTypeEnvBinding)
@@ -9851,6 +9906,409 @@
           [else (set! done true)]))
       cur-ids)))
 
+;; --- structural index over the explicit top-env layer forest -----------------
+;;
+;; `tc-env-with-cache-layer-over-explicit` pushes one immutable explicit layer
+;; per module extension / splice refresh, each layer's `below` being the layer
+;; it extends. A self-compile builds 343 such layers over 2 explicit roots, and
+;; because splices and module extensions re-extend older base snapshots the
+;; result is a FOREST, not a stack (measured: 214 of 343 pushes did not sit on
+;; the previous tip; max depth 128, mean creation depth 52). Every layer is a
+;; correct non-membership filter, so lookups fall through them one map probe at
+;; a time: 31.2M probes per opt1 self-compile, most of them from walks 12-18
+;; layers deep. With the index the same compile does 3.18M probes plus 0.53M
+;; version-list steps (0.17 per probe, 32 at worst).
+;;
+;; The index replaces that per-layer fall-through with one probe. Per store it
+;; keeps a single map from binding key to the packed reference of the NEWEST
+;; layer that binds it; each layer carries a `chain-prev` array parallel to its
+;; `values`, threading the older versions of the same key in strictly
+;; decreasing `seq`. A lookup starting at layer S takes the first version whose
+;; layer is an ancestor-or-self of S, which is exactly the layer the `below`
+;; walk would have stopped at:
+;;
+;;   * a version's layer is visited by the walk from S iff it is an
+;;     ancestor-or-self of S (the walk follows `below` and stops at the root);
+;;   * `seq` strictly increases along any root-to-node path, so among the
+;;     ancestors of S greater `seq` means greater depth means closer to S, and
+;;     the decreasing-`seq` version list therefore hands back the top-most
+;;     binding first;
+;;   * `seq` greater than S's own `seq` proves non-ancestry without any test.
+;;
+;; No value is ever copied into the index: a reference is (layer node address,
+;; slot), and every payload read goes to that layer's live arrays. This is what
+;; keeps `tc-top-env-reresolve-cache-layer!` (issue #6268) sound -- it rewrites
+;; `values` in place and never touches `ids`, so a re-resolved signature is
+;; observed identically through the index and through the walk. The index is
+;; append-only and is extended only where a layer is created, so nothing has to
+;; be invalidated.
+(define tc-chain-empty-i64-array : (__tl_dyn-array i64)
+  (array.make-array i64 0))
+
+;; A reference packs the layer node address (8-byte aligned, so the low three
+;; bits are free) above an 18-bit slot. Layers wider than the slot field, or
+;; sitting above the addressable range, are left unindexed and keep the walk.
+(define (tc-chain-ref-slot-limit) : i64
+  262144)
+
+(define (tc-chain-ref-addr-limit) : i64
+  140737488355328)
+
+(define (tc-chain-ref-pack [addr : i64] [slot : i64]) : i64
+  (bit-or (shl (shr addr 3) 18) slot))
+
+(define (tc-chain-ref-addr [ref : i64]) : i64
+  (shl (shr ref 18) 3))
+
+(define (tc-chain-ref-slot [ref : i64]) : i64
+  (bit-and ref 262143))
+
+;; Word offsets 0..3 of TcTypeEnvCache. The four chain fields lead the record
+;; and are one word each, so the version walk and the ancestor test read them
+;; without materializing the whole cache.
+(defmacro (tc-chain-node-depth [addr : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (ptr-read (int->ptr (cast ,addr : u64) : (Ptr i64)))))
+
+(defmacro (tc-chain-node-seq [addr : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (ptr-read (ptr-offset (int->ptr (cast ,addr : u64) : (Ptr i64)) 1))))
+
+(defmacro (tc-chain-node-jumps [addr : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (ptr-read
+      (ptr-cast
+        (ptr-offset (int->ptr (cast ,addr : u64) : (Ptr i64)) 2)
+        : (Ptr (__tl_dyn-array i64))))))
+
+(defmacro (tc-chain-node-prev [addr : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (ptr-read
+      (ptr-cast
+        (ptr-offset (int->ptr (cast ,addr : u64) : (Ptr i64)) 3)
+        : (Ptr (__tl_dyn-array i64))))))
+
+(define (tc-chain-node-set-fields!
+  [addr : i64]
+  [depth : i64]
+  [seq : i64]
+  [jumps : (__tl_dyn-array i64)]
+  [prev : (__tl_dyn-array i64)]) : unit
+  (let
+    [words : (MutPtr i64)
+      (unsafe
+        (int->ptr (cast addr : u64) : (MutPtr i64)))]
+    (begin
+      (unsafe
+        (ptr-write! (ptr-offset words 1) seq))
+      (unsafe
+        (ptr-write!
+          (ptr-cast (ptr-offset words 2) : (MutPtr (__tl_dyn-array i64)))
+          jumps))
+      (unsafe
+        (ptr-write!
+          (ptr-cast (ptr-offset words 3) : (MutPtr (__tl_dyn-array i64)))
+          prev))
+      ;; Depth last: it is the published "this layer is indexed" flag, and the
+      ;; three fields above must be visible before any walker reads it.
+      (unsafe
+        (ptr-write! words depth)))))
+
+(define (tc-chain-store-owner [store-handle : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-offset (int->ptr (cast store-handle : u64) : (Ptr i64)) 6))))
+
+(define (tc-chain-state-address [store-handle : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-offset (int->ptr (cast store-handle : u64) : (Ptr i64)) 8))))
+
+(define (tc-chain-state-set! [store-handle : i64] [addr : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-offset (int->ptr (cast store-handle : u64) : (MutPtr i64)) 8)
+      addr)))
+
+(define (tc-chain-state-read [addr : i64]) : TcChainIndex
+  (unsafe
+    (ptr-read (int->ptr (cast addr : u64) : (Ptr TcChainIndex)))))
+
+(define (tc-chain-state-write! [addr : i64] [state : TcChainIndex]) : unit
+  (unsafe
+    (ptr-write! (int->ptr (cast addr : u64) : (MutPtr TcChainIndex)) state)))
+
+;; The index cell and everything it points at live in the store's owner arena,
+;; exactly like the cache nodes whose addresses it records.
+(define (tc-chain-state-ensure! [store-handle : i64]) : i64
+  (let
+    [existing : i64 (tc-chain-state-address store-handle)]
+    (if (> existing 0)
+      existing
+      (let
+        [owner : i64 (tc-chain-store-owner store-handle)]
+        [previous : i64 (arena.tl_arena_current)]
+        [cell : i64
+          (begin
+            (unsafe
+              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+            (let
+              [slots : (__tl_dyn-array TcChainIndex)
+                (array.make-array TcChainIndex 1)]
+              (begin
+                (array-set!
+                  slots
+                  0
+                  (TcChainIndex (tc_i64_i64_map.with-capacity 1024) 0 owner))
+                (unsafe
+                  (cast
+                    (ptr->int (ptr-cast (array-data slots) : (Ptr u8)))
+                    : i64)))))]
+        (begin
+          (tc-type-env-store-restore-after-owner-alloc! previous owner)
+          (tc-chain-state-set! store-handle cell)
+          cell)))))
+
+(define (tc-chain-jump-levels [depth : i64]) : i64
+  (if (< depth 1)
+    0
+    (let
+      [levels : i64 1]
+      [span : i64 2]
+      (begin
+        (while (<= span depth)
+          (begin
+            (set! levels (+ levels 1))
+            (set! span (* span 2))))
+        levels))))
+
+(define (tc-chain-jump-at [addr : i64] [k : i64]) : i64
+  (if (= addr 0)
+    0
+    (let
+      [jumps : (__tl_dyn-array i64) (tc-chain-node-jumps addr)]
+      (if (< k (array.length jumps))
+        (array-ref jumps k)
+        0))))
+
+;; True when `x-addr` is `s-addr` or one of its `below` ancestors. Lifts S by
+;; the depth difference through the binary-lifting table; entry k is only read
+;; when bit k of the remaining difference is set, and the remaining difference
+;; never exceeds the current node's depth, so the entry always exists.
+(define (tc-chain-ancestor? [x-addr : i64] [s-addr : i64] [s-depth : i64]) : bool
+  (let
+    [x-depth : i64 (tc-chain-node-depth x-addr)]
+    (cond
+      [(> x-depth s-depth) false]
+      [(= x-depth s-depth) (= x-addr s-addr)]
+      [else
+        (let
+          [cur : i64 s-addr]
+          [delta : i64 (- s-depth x-depth)]
+          [k : i64 0]
+          (begin
+            (while (> delta 0)
+              (begin
+                (if (= (bit-and delta 1) 1)
+                  (set! cur (tc-chain-jump-at cur k))
+                  unit)
+                (set! delta (shr delta 1))
+                (set! k (+ k 1))))
+            (= cur x-addr)))])))
+
+;; Packed reference of the layer the plain `below` walk from the indexed layer
+;; at `s-addr` would have stopped at for `key`, or -1 when no ancestor of that
+;; layer binds it.
+(define (tc-chain-resolve [store-handle : i64] [s-addr : i64] [key : i64]) : i64
+  (let
+    [state-addr : i64 (tc-chain-state-address store-handle)]
+    (if (<= state-addr 0)
+      -1
+      (let
+        [state : TcChainIndex (tc-chain-state-read state-addr)]
+        [s-depth : i64 (tc-chain-node-depth s-addr)]
+        [s-seq : i64 (tc-chain-node-seq s-addr)]
+        [ref : i64
+          (tc_i64_i64_map.get-value-or (& (struct-get state map)) key -1)]
+        [answer : i64 -1]
+        [done : bool false]
+        (begin
+          (while (not done)
+            (if (< ref 0)
+              (set! done true)
+              (let
+                [addr : i64 (tc-chain-ref-addr ref)]
+                (if (and
+                  (<= (tc-chain-node-seq addr) s-seq)
+                  (tc-chain-ancestor? addr s-addr s-depth))
+                  (begin
+                    (set! answer ref)
+                    (set! done true))
+                  (set!
+                    ref
+                    (-
+                      (array-ref
+                        (tc-chain-node-prev addr)
+                        (tc-chain-ref-slot ref))
+                      2))))))
+          answer)))))
+
+(define (tc-chain-ref-cache [store-handle : i64] [ref : i64]) : TcTypeEnvCache
+  (tc-type-env-cache-at
+    (tc-type-env-cache-ptr store-handle (tc-chain-ref-addr ref))))
+
+;; Threads every key this layer binds onto its per-key version list. `ids`
+;; already holds the head-most slot per key, so the traversal only has to
+;; reproduce the covered-bind walk of `tc-env-cache-fill{,-prefix}` and take
+;; the first occurrence of each slot (`chain-prev` still zero).
+(define (tc-chain-register-layer!
+  [store-handle : i64]
+  [state-addr : i64]
+  [node-addr : i64]
+  [prev : (__tl_dyn-array i64)]
+  [rest-head : i64]
+  [count : i64]
+  [full : bool]) : unit
+  (let
+    [ids : tc_i64_i64_map.Map
+      (struct-get
+        (tc-type-env-cache-at (tc-type-env-cache-ptr store-handle node-addr))
+        ids)]
+    [state : TcChainIndex (tc-chain-state-read state-addr)]
+    [owner : i64 (struct-get state owner-arena)]
+    [head : i64 rest-head]
+    [left : i64 count]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (cond
+          [(= head -1) (set! done true)]
+          [(and (not full) (<= left 0)) (set! done true)]
+          [(>= head 0)
+            (let
+              [binding-ptr : (Ptr TcTypeEnvBinding)
+                (tc-type-env-binding-ptr store-handle head)]
+              [name-id : i64 (tc-type-env-binding-name-at binding-ptr)]
+              [slot : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+              (begin
+                (if (and
+                  (>= slot 0)
+                  (< slot (array.length prev))
+                  (= (array-ref prev slot) 0))
+                  (begin
+                    (array-set!
+                      prev
+                      slot
+                      (+
+                        (tc_i64_i64_map.get-value-or
+                          (& (struct-get state map))
+                          name-id
+                          -1)
+                        2))
+                    (tc-cache-map-grow-in-owner!
+                      (&mut (struct-get state map))
+                      owner)
+                    (tc_i64_i64_map.insert-ref!
+                      (&mut (struct-get state map))
+                      name-id
+                      (tc-chain-ref-pack node-addr slot)))
+                  unit)
+                (set! head (tc-type-env-binding-parent-at binding-ptr))
+                (set! left (- left 1))))]
+          [else
+            (set!
+              head
+              (struct-get
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr
+                    store-handle
+                    (tc-type-env-cache-index head)))
+                rest))]))
+      (tc-chain-state-write! state-addr state))))
+
+;; Publishes a freshly pushed explicit (scan-through = false) layer into its
+;; store's index. `below-head` is the layer this one extends for a partial
+;; link, or -1 for a root, whose `partial = false` already terminates the walk.
+(define (tc-chain-attach-layer!
+  [store-handle : i64]
+  [node-head : i64]
+  [below-head : i64]
+  [count : i64]
+  [capacity : i64]
+  [rest-head : i64]
+  [full : bool]) : unit
+  (let
+    [node-addr : i64 (tc-type-env-cache-index node-head)]
+    [below-addr : i64
+      (if (< below-head -1)
+        (tc-type-env-cache-index below-head)
+        0)]
+    [below-depth : i64
+      (if (= below-addr 0)
+        -1
+        (tc-chain-node-depth below-addr))]
+    [depth : i64
+      (if full
+        0
+        (+ below-depth 1))]
+    (if (or
+      (>= count (tc-chain-ref-slot-limit))
+      (>= capacity (tc-chain-ref-slot-limit))
+      (>= node-addr (tc-chain-ref-addr-limit))
+      (and (not full) (< below-depth 0)))
+      unit
+      (let
+        [state-addr : i64 (tc-chain-state-ensure! store-handle)]
+        [owner : i64 (tc-chain-store-owner store-handle)]
+        [previous : i64 (arena.tl_arena_current)]
+        [levels : i64 (tc-chain-jump-levels depth)]
+        (begin
+          ;; The jump and version arrays are reached from the index by node
+          ;; address, so they must live exactly as long as the node: allocate
+          ;; them in the store's owner arena, not the ambient one.
+          (unsafe
+            (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+          (let
+            [jumps : (__tl_dyn-array i64)
+              (if (= levels 0)
+                tc-chain-empty-i64-array
+                (array.make-array i64 levels))]
+            [prev : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+            [seq : i64
+              (let
+                [state : TcChainIndex (tc-chain-state-read state-addr)]
+                [next : i64 (struct-get state next-seq)]
+                (begin
+                  (tc-chain-state-write!
+                    state-addr
+                    (TcChainIndex
+                      (struct-get state map)
+                      (+ next 1)
+                      (struct-get state owner-arena)))
+                  next))]
+            (begin
+              (if (= levels 0)
+                unit
+                (let
+                  [k : i64 1]
+                  (begin
+                    (array-set! jumps 0 below-addr)
+                    (while (< k levels)
+                      (begin
+                        (array-set!
+                          jumps
+                          k
+                          (tc-chain-jump-at (array-ref jumps (- k 1)) (- k 1)))
+                        (set! k (+ k 1)))))))
+              (tc-chain-node-set-fields! node-addr depth seq jumps prev)
+              (tc-type-env-store-restore-after-owner-alloc! previous owner)
+              (tc-chain-register-layer!
+                store-handle
+                state-addr
+                node-addr
+                prev
+                rest-head
+                count
+                full))))))))
+
 (define (tc-env-with-cache-mode [env : TcTypeEnv] [scan-through : bool]) : TcTypeEnv
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
@@ -9871,20 +10329,37 @@
           c-abi-fnptr-flags
           shadow-flags
           true)]
+      [node : TcTypeEnv
+        (begin
+          (array-set! shadow-flags (- capacity 1) count)
+          (tc-type-env-cache-node
+            env
+            (TcTypeEnvCache
+              -1
+              -1
+              tc-chain-empty-i64-array
+              tc-chain-empty-i64-array
+              ids
+              values
+              unsafe-flags
+              c-abi-fnptr-flags
+              shadow-flags
+              scan-through
+              false
+              (struct-get env head)
+              (struct-get env head))))]
       (begin
-        (array-set! shadow-flags (- capacity 1) count)
-        (tc-type-env-cache-node
-          env
-          (TcTypeEnvCache
-            ids
-            values
-            unsafe-flags
-            c-abi-fnptr-flags
-            shadow-flags
-            scan-through
-            false
+        (if scan-through
+          unit
+          (tc-chain-attach-layer!
+            (struct-get env store)
+            (struct-get node head)
+            -1
+            count
+            capacity
             (struct-get env head)
-            (struct-get env head)))))))
+            true))
+        node))))
 
 (define (tc-env-with-partial-local-cache [env : TcTypeEnv]) : TcTypeEnv
   (tc-env-with-cache-prefix-layer
@@ -9917,20 +10392,37 @@
           c-abi-fnptr-flags
           shadow-flags
           true)]
+      [node : TcTypeEnv
+        (begin
+          (array-set! shadow-flags (- capacity 1) count)
+          (tc-type-env-cache-node
+            env
+            (TcTypeEnvCache
+              -1
+              -1
+              tc-chain-empty-i64-array
+              tc-chain-empty-i64-array
+              ids
+              values
+              unsafe-flags
+              c-abi-fnptr-flags
+              shadow-flags
+              scan-through
+              true
+              (struct-get env head)
+              (struct-get below head))))]
       (begin
-        (array-set! shadow-flags (- capacity 1) count)
-        (tc-type-env-cache-node
-          env
-          (TcTypeEnvCache
-            ids
-            values
-            unsafe-flags
-            c-abi-fnptr-flags
-            shadow-flags
-            scan-through
-            true
+        (if scan-through
+          unit
+          (tc-chain-attach-layer!
+            (struct-get env store)
+            (struct-get node head)
+            (struct-get below head)
+            count
+            capacity
             (struct-get env head)
-            (struct-get below head)))))))
+            false))
+        node))))
 
 (define (tc-env-with-cache-layer-over-explicit [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -13269,22 +13761,44 @@
             [(= head -1) (set! done true)]
             [(< head -1)
               (let
-                [cache : TcTypeEnvCache
-                  (tc-type-env-cache-at
-                    (tc-type-env-cache-ptr
-                      store-handle
-                      (tc-type-env-cache-index head)))]
-                [ids : tc_i64_i64_map.Map (struct-get cache ids)]
-                [index : i64 (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
-                (if (>= index 0)
-                  (begin
-                    ;; AstType is multi-word; keep this checked value read.
-                    (set! found-ty (array-ref (struct-get cache values) index))
-                    (set! found true)
-                    (set! done true))
-                  (if (struct-get cache partial)
-                    (set! head (struct-get cache below))
-                    (set! done true))))]
+                [node-addr : i64 (tc-type-env-cache-index head)]
+                (if (>= (tc-chain-node-depth node-addr) 0)
+                  ;; Indexed explicit top-env layer: one structural resolve
+                  ;; answers for this layer and everything below it.
+                  (let
+                    [ref : i64
+                      (tc-chain-resolve store-handle node-addr lookup-id)]
+                    (begin
+                      (if (>= ref 0)
+                        (begin
+                          (set!
+                            found-ty
+                            (array-ref
+                              (struct-get
+                                (tc-chain-ref-cache store-handle ref)
+                                values)
+                              (tc-chain-ref-slot ref)))
+                          (set! found true))
+                        unit)
+                      (set! done true)))
+                  (let
+                    [cache : TcTypeEnvCache
+                      (tc-type-env-cache-at
+                        (tc-type-env-cache-ptr store-handle node-addr))]
+                    [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+                    [index : i64
+                      (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
+                    (if (>= index 0)
+                      (begin
+                        ;; AstType is multi-word; keep this checked value read.
+                        (set!
+                          found-ty
+                          (array-ref (struct-get cache values) index))
+                        (set! found true)
+                        (set! done true))
+                      (if (struct-get cache partial)
+                        (set! head (struct-get cache below))
+                        (set! done true))))))]
             [else
               (let
                 [binding-ptr : (Ptr TcTypeEnvBinding)
@@ -13357,20 +13871,27 @@
           [(= head -1) (set! done true)]
           [(< head -1)
             (let
-              [cache : TcTypeEnvCache
-                (tc-type-env-cache-at
-                  (tc-type-env-cache-ptr
-                    store-handle
-                    (tc-type-env-cache-index head)))]
-              [ids : tc_i64_i64_map.Map (struct-get cache ids)]
-              [index : i64 (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
-              (if (>= index 0)
+              [node-addr : i64 (tc-type-env-cache-index head)]
+              (if (>= (tc-chain-node-depth node-addr) 0)
                 (begin
-                  (set! found true)
+                  (if (>= (tc-chain-resolve store-handle node-addr lookup-id) 0)
+                    (set! found true)
+                    unit)
                   (set! done true))
-                (if (struct-get cache partial)
-                  (set! head (struct-get cache below))
-                  (set! done true))))]
+                (let
+                  [cache : TcTypeEnvCache
+                    (tc-type-env-cache-at
+                      (tc-type-env-cache-ptr store-handle node-addr))]
+                  [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+                  [index : i64
+                    (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
+                  (if (>= index 0)
+                    (begin
+                      (set! found true)
+                      (set! done true))
+                    (if (struct-get cache partial)
+                      (set! head (struct-get cache below))
+                      (set! done true))))))]
           [else
             (let
               [binding-ptr : (Ptr TcTypeEnvBinding)
@@ -13424,33 +13945,58 @@
             [(= head -1) (set! done true)]
             [(< head -1)
               (let
-                [cache : TcTypeEnvCache
-                  (tc-type-env-cache-at
-                    (tc-type-env-cache-ptr
-                      store-handle
-                      (tc-type-env-cache-index head)))]
-                [ids : tc_i64_i64_map.Map (struct-get cache ids)]
-                [index : i64 (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
-                (if (>= index 0)
-                  (begin
-                    ;; AstType read stays checked; the flag is scalar i64.
-                    (set! found-ty (array-ref (struct-get cache values) index))
-                    (set!
-                      found-unsafe
-                      (=
-                        (unsafe
-                          (ptr-read
-                            (ptr-offset
-                              (ptr-cast
-                                (array-data (struct-get cache unsafe-flags))
-                                : (Ptr i64))
-                              index)))
-                        1))
-                    (set! found true)
-                    (set! done true))
-                  (if (struct-get cache partial)
-                    (set! head (struct-get cache below))
-                    (set! done true))))]
+                [node-addr : i64 (tc-type-env-cache-index head)]
+                (if (>= (tc-chain-node-depth node-addr) 0)
+                  (let
+                    [ref : i64
+                      (tc-chain-resolve store-handle node-addr lookup-id)]
+                    (begin
+                      (if (>= ref 0)
+                        (let
+                          [cache : TcTypeEnvCache
+                            (tc-chain-ref-cache store-handle ref)]
+                          [slot : i64 (tc-chain-ref-slot ref)]
+                          (begin
+                            (set!
+                              found-ty
+                              (array-ref (struct-get cache values) slot))
+                            (set!
+                              found-unsafe
+                              (=
+                                (array-ref (struct-get cache unsafe-flags) slot)
+                                1))
+                            (set! found true)))
+                        unit)
+                      (set! done true)))
+                  (let
+                    [cache : TcTypeEnvCache
+                      (tc-type-env-cache-at
+                        (tc-type-env-cache-ptr store-handle node-addr))]
+                    [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+                    [index : i64
+                      (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
+                    (if (>= index 0)
+                      (begin
+                        ;; AstType read stays checked; the flag is scalar i64.
+                        (set!
+                          found-ty
+                          (array-ref (struct-get cache values) index))
+                        (set!
+                          found-unsafe
+                          (=
+                            (unsafe
+                              (ptr-read
+                                (ptr-offset
+                                  (ptr-cast
+                                    (array-data (struct-get cache unsafe-flags))
+                                    : (Ptr i64))
+                                  index)))
+                            1))
+                        (set! found true)
+                        (set! done true))
+                      (if (struct-get cache partial)
+                        (set! head (struct-get cache below))
+                        (set! done true))))))]
             [else
               (let
                 [binding-ptr : (Ptr TcTypeEnvBinding)
@@ -16657,29 +17203,51 @@
       [(= head -1) false]
       [(< head -1)
         (let
-          [cache : TcTypeEnvCache
-            (tc-type-env-cache-at
-              (tc-type-env-cache-ptr
-                store-handle
-                (tc-type-env-cache-index head)))]
-          [ids : tc_i64_i64_map.Map (struct-get cache ids)]
-          [prefix-index : i64
-            (tc_i64_i64_map.get-value-or (& ids) prefix-id -1)]
-          (if (>= prefix-index 0)
+          [node-addr : i64 (tc-type-env-cache-index head)]
+          (if (>= (tc-chain-node-depth node-addr) 0)
+            ;; Both keys resolve to their top-most binding at or below this
+            ;; layer; the deeper-in-the-snapshot one is what the walk would
+            ;; have met first, and a tie means one layer holds both.
             (let
-              [name-index : i64
-                (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
-              (if (>= name-index 0)
-                (< prefix-index name-index)
-                true))
-            (if (struct-get cache partial)
-              (if (>= (tc_i64_i64_map.get-value-or (& ids) name-id -1) 0)
-                false
-                (tc-source-leading-segment-wins-over-exact-id?
-                  (TcTypeEnv store-handle (struct-get cache below) 0)
-                  name-id
-                  prefix-id))
-              false)))]
+              [prefix-ref : i64
+                (tc-chain-resolve store-handle node-addr prefix-id)]
+              [name-ref : i64 (tc-chain-resolve store-handle node-addr name-id)]
+              (cond
+                [(< prefix-ref 0) false]
+                [(< name-ref 0) true]
+                [else
+                  (let
+                    [prefix-addr : i64 (tc-chain-ref-addr prefix-ref)]
+                    [name-addr : i64 (tc-chain-ref-addr name-ref)]
+                    (if (= prefix-addr name-addr)
+                      (<
+                        (tc-chain-ref-slot prefix-ref)
+                        (tc-chain-ref-slot name-ref))
+                      (>
+                        (tc-chain-node-depth prefix-addr)
+                        (tc-chain-node-depth name-addr))))]))
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr store-handle node-addr))]
+              [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+              [prefix-index : i64
+                (tc_i64_i64_map.get-value-or (& ids) prefix-id -1)]
+              (if (>= prefix-index 0)
+                (let
+                  [name-index : i64
+                    (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+                  (if (>= name-index 0)
+                    (< prefix-index name-index)
+                    true))
+                (if (struct-get cache partial)
+                  (if (>= (tc_i64_i64_map.get-value-or (& ids) name-id -1) 0)
+                    false
+                    (tc-source-leading-segment-wins-over-exact-id?
+                      (TcTypeEnv store-handle (struct-get cache below) 0)
+                      name-id
+                      prefix-id))
+                  false)))))]
       [else
         (let
           [binding-ptr : (Ptr TcTypeEnvBinding)
@@ -24219,7 +24787,14 @@
     (=
       (comptime
         (offset-of (type TcTypeEnvStore) topenv-membership-state-address))
-      56)))
+      56)
+    (= (comptime (offset-of (type TcTypeEnvStore) chain-state)) 64)
+    ;; The structural top-env index reads these four through raw word offsets,
+    ;; so they must stay first and stay one word wide.
+    (= (comptime (offset-of (type TcTypeEnvCache) chain-depth)) 0)
+    (= (comptime (offset-of (type TcTypeEnvCache) chain-seq)) 8)
+    (= (comptime (offset-of (type TcTypeEnvCache) chain-jumps)) 16)
+    (= (comptime (offset-of (type TcTypeEnvCache) chain-prev)) 24)))
 
 (define (tc-type-env-owner-arena-smoke?) : bool
   (let

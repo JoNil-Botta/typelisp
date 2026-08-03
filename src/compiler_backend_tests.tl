@@ -5128,6 +5128,139 @@
         (compiler_backend.compiler-backend-set-current-fn-linux!)
         ok))))
 
+;; Three loops over four shared global arrays. LICM hoists a data pointer and a
+;; length per array, so the descriptors are live across every loop and the
+;; register pool is exhausted at the unrolled clear loop -- exactly the shape
+;; that makes the allocator spill the clear loop's single-use address temps.
+;; Slot coloring then used to merge all of those spilled temps onto ONE id whose
+;; use count (recomputed on the remapped blocks) is in the dozens, which turned
+;; off `compiler-backend-var-single-use?` and dropped every store onto the
+;; generic staged emitter: two scratch registers saved to and restored from
+;; their homes around a leaq, plus a home round-trip for the address, eleven
+;; instructions where one indexed move does the job.
+(define compiler-backend-fusion-pin-pressure-source : String
+  "(define g-seed : (Array i64)
+  (make-array i64 4))
+(define g-reachable : (Array i64)
+  (make-array i64 1))
+(define g-postorder : (Array i64)
+  (make-array i64 1))
+(define g-rpo : (Array i64)
+  (make-array i64 1))
+(define g-rpo-num : (Array i64)
+  (make-array i64 1))
+(define g-blocks : i64
+  0)
+(define g-reach-count : i64
+  0)
+
+(define (kernel) : i64
+  (let
+    [count : i64 g-blocks]
+    [i : i64 0]
+    [post : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! g-reachable i 0)
+          (array-set! g-postorder i -1)
+          (array-set! g-rpo i -1)
+          (array-set! g-rpo-num i -1)
+          (set! i (+ i 1))))
+      (set! post g-reach-count)
+      (set! i 0)
+      (while (< i post)
+        (begin
+          (array-set! g-rpo i (array-ref g-postorder (- (- post 1) i)))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i post)
+        (begin
+          (array-set! g-rpo-num (array-ref g-rpo i) i)
+          (set! i (+ i 1))))
+      post)))
+
+(define (main) : i64
+  (let
+    [n : i64 (array-ref g-seed 0)]
+    (begin
+      (set! g-blocks n)
+      (set! g-reachable (make-array i64 (+ n 1)))
+      (set! g-postorder (make-array i64 (+ n 1)))
+      (set! g-rpo (make-array i64 (+ n 1)))
+      (set! g-rpo-num (make-array i64 (+ n 1)))
+      (kernel))))")
+
+;; Slice one emitted basic block: labels start a line, every instruction is
+;; indented, so the block runs from its label to the next line-initial dot.
+(define (compiler-backend-asm-label-block [body : String] [label : String]) : String
+  (let
+    [marker : String (str_cat.str-cat label ":\n")]
+    [start : i64
+      (compiler_backend.compiler-backend-string-find-from body marker 0)]
+    (if (< start 0)
+      ""
+      (let
+        [block-start : i64 (+ start (string.string-length marker))]
+        [next : i64
+          (compiler_backend.compiler-backend-string-find-from
+            body
+            "\n."
+            block-start)]
+        [block-end : i64
+          (if (< next 0)
+            (string.string-length body)
+            next)]
+        (string.substring body block-start (- block-end block-start))))))
+
+(define (compiler-backend-fusion-pin-unroll-body [asm : String]) : String
+  (let
+    [body : String (compiler-backend-asm-function-body asm "_tl_kernel")]
+    [marker : i64
+      (compiler_backend.compiler-backend-string-find-from
+        body
+        "__unroll_body:\n"
+        0)]
+    (if (< marker 0)
+      ""
+      (compiler-backend-asm-label-block
+        (string.substring body marker (- (string.string-length body) marker))
+        "__unroll_body"))))
+
+(define (compiler-backend-fusion-pin-store-fusion-ok?) : bool
+  (begin
+    (compiler_backend.compiler-backend-set-scalar-registers! true)
+    (let
+      [ok : bool
+        (match (compiler-backend-emit-source-opt2-for-target
+          compiler-backend-fusion-pin-pressure-source
+          (compiler_backend.CompilerBackendTarget.Linux))
+          [(compiler_backend.ResultCompilerBackend.Ok asm)
+            (let
+              [block : String (compiler-backend-fusion-pin-unroll-body asm)]
+              (and
+                (not (string.eq block ""))
+                ;; Every unrolled clear store folds its address into an indexed
+                ;; addressing mode: one instruction, no address temp at all.
+                (>=
+                  (compiler_backend.compiler-backend-string-count block ",8)\n")
+                  64)
+                ;; No address is materialised, and no scratch register or gep
+                ;; result takes the round trip through a frame slot.
+                (=
+                  (compiler_backend.compiler-backend-string-count block "leaq")
+                  0)
+                (=
+                  (compiler_backend.compiler-backend-string-count
+                    block
+                    "(%rsp)")
+                  0)))]
+          [(compiler_backend.ResultCompilerBackend.Err _) false])]
+      (begin
+        (compiler_backend.compiler-backend-set-scalar-registers! false)
+        (compiler_backend.compiler-backend-set-current-fn-linux!)
+        ok))))
+
 (define (compiler-backend-peephole-assignments) : compiler_regalloc.CompilerRegAssignmentList
   (compiler_regalloc.compiler-reg-assignment-cons
     (compiler_regalloc.CompilerRegAssignment
@@ -36512,6 +36645,7 @@
         (compiler-backend-regalloc-ok?)
         (compiler-backend-call-save-r9-wrap-ok?)
         (compiler-backend-shifted-loop-bound-win64-ok?)
+        (compiler-backend-fusion-pin-store-fusion-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)
         (compiler-backend-callee-save-push-prologue-rebase-ok?)
         (compiler-backend-win64-callee-save-homes-ok?)

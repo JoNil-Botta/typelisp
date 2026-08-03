@@ -41258,6 +41258,162 @@
       false
       (= (array-ref counts var) 1))))
 
+;; --- fusion-pinned gep temps -----------------------------------------------
+;; A `Gep` whose destination is read by exactly one instruction, and that
+;; instruction is the very next one in the same block, is the shape the gep
+;; fusion cluster (compiler-backend-emit-gep-step) folds into the consumer's
+;; addressing mode. A fused gep needs no register and no home: base and index
+;; are read where they already live and the address never materialises.
+;;
+;; Slot coloring, however, merges non-interfering SPILLED variables onto one
+;; representative id, and the emitter's use counts are computed on the remapped
+;; blocks -- so a whole unrolled body's worth of independent gep temps can
+;; collapse into one id with a use count in the dozens, `single-use?` turns
+;; false, and every site falls back to the generic two-scratch staged emitter
+;; (save two registers to their homes, leaq, store the address to its home,
+;; restore, reload, use, restore). Reporting those temps to the coloring pass
+;; keeps their ids distinct, which keeps the peepholes firing.
+;;
+;; Adjacency is read off the DIFFERENCE in the running use counter across a
+;; single instruction: `counts` accumulates function-wide uses in program order,
+;; so a rise in the pending Gep destination's counter while counting the next
+;; instruction proves that instruction reads it. When the walk finishes,
+;; `counts` holds exactly the ordinary function-wide use counts, which decide
+;; the "used exactly once" half of the test.
+(define (compiler-backend-gep-fusion-pin-seq!
+  [counts : (Array i64)]
+  [adjacent : (Array bool)]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (Array compiler_ir_types.CompilerIrInstr)
+      (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [pending : i64 (- 0 1)]
+    (while (< index count)
+      (let
+        [instr : compiler_ir_types.CompilerIrInstr (array-ref slots index)]
+        [before : i64
+          (if (>= pending 0)
+            (array-ref counts pending)
+            0)]
+        (begin
+          (compiler-backend-count-instr-uses counts instr)
+          (if (and (>= pending 0) (> (array-ref counts pending) before))
+            (array-set! adjacent pending true)
+            unit)
+          (set!
+            pending
+            (match instr
+              [(compiler_ir_types.CompilerIrInstr.Gep dst _ _ _)
+                (if (and (>= dst 0) (< dst (array-length adjacent)))
+                  dst
+                  (- 0 1))]
+              [_ (- 0 1)]))
+          (set! index (+ index 1)))))))
+
+(define (compiler-backend-gep-fusion-pin-block-seq!
+  [counts : (Array i64)]
+  [adjacent : (Array bool)]
+  [blocks : compiler_ir_types.CompilerIrBlockSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
+    (while (< index count)
+      (begin
+        (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+            (compiler-backend-gep-fusion-pin-seq! counts adjacent instrs)])
+        (set! index (+ index 1))))))
+
+(define (compiler-backend-gep-fusion-pin-blocks!
+  [counts : (Array i64)]
+  [adjacent : (Array bool)]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (begin
+            (compiler-backend-gep-fusion-pin-seq! counts adjacent instrs)
+            (compiler-backend-gep-fusion-pin-blocks!
+              counts
+              adjacent
+              (box-get rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (compiler-backend-gep-fusion-pin-block-seq! counts adjacent seq)]))
+
+(define (compiler-backend-gep-fusion-pin-candidate?
+  [counts : (Array i64)]
+  [adjacent : (Array bool)]
+  [vars : i64]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index vars) (not found))
+        (begin
+          (if (and (array-ref adjacent index) (= (array-ref counts index) 1))
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+;; Spilled single-use gep temps consumed by the immediately following
+;; instruction, keyed by the PRE-coloring var ids the given blocks and plan
+;; assignments use. Register-homed temps already keep distinct ids through the
+;; renumbering, so only the spilled ones need reporting.
+(define (compiler-backend-gep-fusion-pinned-vars
+  [vars : i64]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_liveness.CompilerLiveI64Set
+  (if (<= vars 0)
+    (compiler_liveness.compiler-live-set-empty)
+    (let
+      [counts : (Array i64) (array.make-array i64 vars)]
+      [adjacent : (Array bool) (array.make-array bool vars)]
+      [_walk : unit
+        (compiler-backend-gep-fusion-pin-blocks! counts adjacent blocks)]
+      (if (not
+        (compiler-backend-gep-fusion-pin-candidate? counts adjacent vars))
+        (compiler_liveness.compiler-live-set-empty)
+        (let
+          [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
+            (compiler_regalloc.compiler-reg-assignment-index-build
+              assignments
+              vars)]
+          [words : (Array i64)
+            (compiler_liveness.compiler-live-set-builder (- vars 1))]
+          [index : i64 0]
+          [pinned : bool false]
+          (begin
+            (while (< index vars)
+              (begin
+                (if (and
+                  (array-ref adjacent index)
+                  (= (array-ref counts index) 1)
+                  (match (compiler_regalloc.compiler-reg-assignment-index-lookup
+                    assignment-index
+                    index)
+                    [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+                      (match location
+                        [(compiler_regalloc.CompilerRegLocation.Spill _) true]
+                        [_ false])]
+                    [(compiler_regalloc.CompilerRegMaybeLocation.No) false]))
+                  (begin
+                    (compiler_liveness.compiler-live-set-builder-insert!
+                      words
+                      index)
+                    (set! pinned true))
+                  unit)
+                (set! index (+ index 1))))
+            (if pinned
+              (compiler_liveness.compiler-live-set-from-words-trimmed
+                words
+                (array-length words))
+              (compiler_liveness.compiler-live-set-empty))))))))
+
 ;; Dead result-store elision: true when `var` is read by NO instruction in the
 ;; final emitted IR (use count 0 over emit-blocks-list, the post-rewrite
 ;; post-coloring blocks the emitter walks). Every operand read counts as a use,
@@ -54651,6 +54807,14 @@
             plan-types)]
         [has-group-vars : bool
           (> (compiler_liveness.compiler-live-set-count fn-group-vars) 0)]
+        ;; Address temps the gep fusion peepholes fold into their consumer.
+        ;; Computed on the exact blocks and assignments the coloring pass reads,
+        ;; so the ids line up; see compiler-backend-gep-fusion-pinned-vars.
+        [fusion-pinned-vars : compiler_liveness.CompilerLiveI64Set
+          (compiler-backend-gep-fusion-pinned-vars
+            scratch-vars
+            remat-blocks
+            (compiler_regalloc.compiler-reg-plan-assignments scratch-reg-plan))]
         ;; Compact the frame after regalloc by renumbering stack-resident
         ;; values into a dense slot prefix. Plans without intervals (the
         ;; stack-only opt0/opt1 path) pass through unchanged. Only real remat
@@ -54671,7 +54835,8 @@
             params
             remat-blocks
             scratch-vars
-            remat-vars)]
+            remat-vars
+            fusion-pinned-vars)]
         [assignments : compiler_regalloc.CompilerRegAssignmentList
           (match coloring
             [(compiler_regalloc.CompilerRegColoring.None)

@@ -25771,6 +25771,16 @@
 ;; that scalar prefix, every remaining slot-resident variable gets a private
 ;; dense slot above them, and register-homed variables move to ids that are not
 ;; used by a stack slot. The assignment table is rebuilt on the new keys.
+;;
+;; `fusion-pinned` names spilled variables whose IDENTITY the backend still
+;; needs after the renumbering: a single-use address temp the following
+;; instruction folds into its addressing mode (see
+;; compiler-backend-gep-fusion-pinned-vars). Merging one of those onto a shared
+;; representative would make the merged id's use count -- recomputed on the
+;; remapped blocks -- far greater than one and silently disable the fusion
+;; peephole. Pinned variables are therefore withheld from every sharing
+;; mechanism (the scalar walk and its phi/mov webs) and land in the private
+;; dense slots below, one fresh slot each.
 (define (compiler-reg-color-stack-slots
   [type-segment-bases : i64]
   [plan : CompilerRegPlan]
@@ -25778,7 +25788,8 @@
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]
   [vars : i64]
-  [slot-candidate-vars : i64]) : CompilerRegColoring
+  [slot-candidate-vars : i64]
+  [fusion-pinned : live.CompilerLiveI64Set]) : CompilerRegColoring
   (let
     [intervals : CompilerRegIntervalSeq (compiler-reg-plan-intervals plan)]
     (if (compiler-reg-interval-seq-empty? intervals)
@@ -25829,7 +25840,22 @@
               (while (< i vars)
                 (begin
                   (array-set! colorable i false)
-                  (set! i (+ i 1))))))]
+                  (set! i (+ i 1)))))
+            ;; Clearing the colorable flag is exactly the "no shared slot"
+            ;; decision: it withdraws the variable from the scalar walk AND
+            ;; from the phi/mov web builder (the only two mechanisms that hand
+            ;; one slot to several variables), leaving the private-slot loop
+            ;; below to give it a fresh id of its own.
+            (if (> (live.compiler-live-set-word-count fusion-pinned) 0)
+              (let
+                [i : i64 0]
+                (while (< i vars)
+                  (begin
+                    (if (live.compiler-live-set-contains? fusion-pinned i)
+                      (array-set! colorable i false)
+                      unit)
+                    (set! i (+ i 1)))))
+              unit))]
         ;; Count direct IR uses and defs, not type-table membership: dead defs
         ;; still emit a write, while raw-id holes and register-only scratch
         ;; pseudo-vars have no instruction reference and need no formula slot.
@@ -36319,7 +36345,8 @@
     ir.CompilerIrParamList.Nil
     ir.CompilerIrBlockList.Nil
     3
-    3)
+    3
+    (live.compiler-live-set-empty))
     [(CompilerRegColoring.Remap share-remap share-slots)
       (match (compiler-reg-color-stack-slots
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -36334,7 +36361,8 @@
         ir.CompilerIrParamList.Nil
         ir.CompilerIrBlockList.Nil
         2
-        2)
+        2
+        (live.compiler-live-set-empty))
         [(CompilerRegColoring.Remap split-remap split-slots)
           (and
             (= share-slots 2)
@@ -36342,6 +36370,65 @@
             (not (= (array-ref share-remap 0) (array-ref share-remap 2)))
             (= split-slots 2)
             (not (= (array-ref split-remap 0) (array-ref split-remap 1))))]
+        [(CompilerRegColoring.None) false])]
+    [(CompilerRegColoring.None) false]))
+
+;; Four spilled variables whose intervals form a strictly disjoint chain: the
+;; ordinary walk folds every one of them onto a single shared slot.
+(define (compiler-reg-color-fusion-pin-intervals) : CompilerRegIntervalSeq
+  (compiler-reg-interval-seq-prepend
+    (CompilerRegInterval 0 0 1)
+    (compiler-reg-interval-seq-prepend
+      (CompilerRegInterval 1 2 3)
+      (compiler-reg-interval-seq-prepend
+        (CompilerRegInterval 2 4 5)
+        (compiler-reg-interval-seq-prepend
+          (CompilerRegInterval 3 6 7)
+          (compiler-reg-interval-seq-empty))))))
+
+(define (compiler-reg-color-fusion-pin-coloring
+  [fusion-pinned : live.CompilerLiveI64Set]) : CompilerRegColoring
+  (compiler-reg-color-stack-slots
+    (ast.ast-node-pool-reader-type-segment-bases)
+    (CompilerRegPlan.Plan
+      (compiler-reg-color-spill-sharing-assignments 4)
+      (live.compiler-live-set-empty)
+      (compiler-reg-color-fusion-pin-intervals)
+      (compiler-reg-color-spill-sharing-types 4)
+      (compiler-reg-call-split-empty)
+      (compiler-reg-split-plan-empty))
+    (live.compiler-live-set-empty)
+    ir.CompilerIrParamList.Nil
+    ir.CompilerIrBlockList.Nil
+    4
+    4
+    fusion-pinned))
+
+;; Vars 0 and 1 stand in for the fusable single-use address temps the backend
+;; reports, vars 2 and 3 for ordinary spilled values. The pinned pair must come
+;; out of the coloring with distinct private ids -- a shared id would carry the
+;; other members' uses and switch off the fusion peephole -- while the ordinary
+;; pair keeps sharing exactly as it did before.
+(define (compiler-reg-color-fusion-pin-slots-ok?) : bool
+  (match (compiler-reg-color-fusion-pin-coloring (live.compiler-live-set-empty))
+    [(CompilerRegColoring.Remap merged-remap merged-slots)
+      (match (compiler-reg-color-fusion-pin-coloring
+        (live.compiler-live-set2 0 1))
+        [(CompilerRegColoring.Remap pin-remap pin-slots)
+          (and
+            (= merged-slots 1)
+            (= (array-ref merged-remap 0) (array-ref merged-remap 1))
+            (= (array-ref merged-remap 0) (array-ref merged-remap 2))
+            (= (array-ref merged-remap 0) (array-ref merged-remap 3))
+            (= pin-slots 3)
+            (not (= (array-ref pin-remap 0) (array-ref pin-remap 1)))
+            (not (= (array-ref pin-remap 0) (array-ref pin-remap 2)))
+            (not (= (array-ref pin-remap 0) (array-ref pin-remap 3)))
+            (not (= (array-ref pin-remap 1) (array-ref pin-remap 2)))
+            (not (= (array-ref pin-remap 1) (array-ref pin-remap 3)))
+            (= (array-ref pin-remap 2) (array-ref pin-remap 3))
+            (< (array-ref pin-remap 0) pin-slots)
+            (< (array-ref pin-remap 1) pin-slots))]
         [(CompilerRegColoring.None) false])]
     [(CompilerRegColoring.None) false]))
 
@@ -36361,7 +36448,8 @@
       ir.CompilerIrParamList.Nil)
     ir.CompilerIrBlockList.Nil
     3
-    3)
+    3
+    (live.compiler-live-set-empty))
     [(CompilerRegColoring.Remap remap slots)
       (and
         (= slots 2)
@@ -36412,7 +36500,8 @@
       params
       ir.CompilerIrBlockList.Nil
       3
-      3)
+      3
+      (live.compiler-live-set-empty))
       [(CompilerRegColoring.Remap remap slots)
         (let
           [active : i64 (array-ref remap 0)]
@@ -36478,7 +36567,8 @@
     ir.CompilerIrParamList.Nil
     ir.CompilerIrBlockList.Nil
     10
-    10)
+    10
+    (live.compiler-live-set-empty))
     [(CompilerRegColoring.Remap remap slots)
       (and
         (= slots 1)
@@ -36509,7 +36599,8 @@
       params
       ir.CompilerIrBlockList.Nil
       2
-      1)
+      1
+      (live.compiler-live-set-empty))
       [(CompilerRegColoring.Remap remap slots)
         (and (= slots 1) (= (array-ref remap 0) 0) (= (array-ref remap 1) 1))]
       [(CompilerRegColoring.None) false])))
@@ -36570,7 +36661,8 @@
         params
         blocks
         vars
-        vars)
+        vars
+        (live.compiler-live-set-empty))
         [(CompilerRegColoring.Remap remap slots)
           (and
             (= (array-ref remap 0) 3)
@@ -36652,7 +36744,8 @@
         params
         blocks
         vars
-        vars)
+        vars
+        (live.compiler-live-set-empty))
         [(CompilerRegColoring.Remap remap slots)
           (and
             (= slots 2)
@@ -36684,7 +36777,8 @@
         ir.CompilerIrParamList.Nil
         ir.CompilerIrBlockList.Nil
         (+ group-var 1)
-        (+ group-var 1))]
+        (+ group-var 1)
+        (live.compiler-live-set-empty))]
     (match coloring
       [(CompilerRegColoring.Remap remap slots)
         (and

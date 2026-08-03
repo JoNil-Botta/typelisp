@@ -5910,7 +5910,8 @@
       ir.CompilerIrParamList.Nil
       (compiler-reg-color-phi-web-blocks live-after-phi)
       2
-      2)))
+      2
+      (live.compiler-live-set-empty))))
 
 (cfg
   test
@@ -6245,6 +6246,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-spill-slot-sharing-ok?"
       (reg.compiler-reg-color-spill-slot-sharing-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-color-fusion-pin-slots-ok?"
+      (reg.compiler-reg-color-fusion-pin-slots-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-phi-web-slot-sharing-ok?"
       (cfg test (compiler-reg-color-phi-web-slot-sharing-ok?) true))

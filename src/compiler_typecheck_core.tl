@@ -55225,7 +55225,24 @@
   (Missing)
   (Removed TcMovedPathFacts))
 
+;; Storage published by the first write into a deferred exact-path index. It is
+;; reached through a plain-word cell every copy of that index shares, which is
+;; what lets a holder made before the write observe the write afterwards (see
+;; the note on `tc-moved-exact-path-index-deferred`). The cell holds the record's
+;; address rather than the record: a cell of records would default-construct
+;; three empty arrays per deferred index, which is the allocation this whole
+;; path exists to avoid.
+(defstruct TcMovedExactPathIndexSeed
+  (heads tc_i64_i64_map.Map)
+  (facts (__tl_dyn-array TcMovedPathFact))
+  (next (__tl_dyn-array i64)))
+
 (defstruct TcMovedExactPathIndex
+  ;; Empty for an index that owns its storage. For a deferred index it is a
+  ;; two-slot cell: slot 0 holds 0 and then the seed address, slot 1 the arena
+  ;; that owned the index at construction (see
+  ;; `tc-moved-exact-path-index-materialize`).
+  (seed (__tl_dyn-array i64))
   (heads tc_i64_i64_map.Map)
   (facts (__tl_dyn-array TcMovedPathFact))
   (next (__tl_dyn-array i64))
@@ -55331,17 +55348,16 @@
 ;;      its source's capacity, and `grow!` only doubles, so private capacities
 ;;      are 8, 16, 32, ...; capacity 1 is the shared map and nothing else.
 ;;
-;; The exact-path index deliberately does NOT get the same treatment. Its
-;; storage is written in place by `tc-moved-exact-path-index-insert-new`, so a
-;; set whose successor adds a path fact can still observe that fact through its
-;; own stale index -- and the borrow checker depends on it:
-;; `tc-borrow-check-mark-new-return-borrows` decides "is this borrow new?" with
-;; `tc-moved-path-exact-conflict-kind` against the PRE-initializer set, and the
-;; in-place write is what makes that answer false. Handing out one shared empty
-;; index (with copy-on-write at the insert) removes the observation and turns
+;; The exact-path index cannot be ALIASED the same way, because its storage is
+;; written in place by `tc-moved-exact-path-index-insert-new`: a set whose
+;; successor adds a path fact still observes that fact through its own stale
+;; index, and the borrow checker depends on it (see
+;; `tc-moved-exact-path-index-deferred`). One shared empty index with
+;; copy-on-write at the insert removes the observation and turns
 ;; tests/safety/borrow_call_arg_begin_before_last_use_reject from a rejection
-;; into an acceptance. The per-set empty index is therefore load-bearing, not
-;; redundant; retiring it needs the checker's intent restated first.
+;; into an acceptance. What the index shares instead is a per-index seed cell,
+;; which defers the storage without giving up the identity the observation
+;; needs.
 ;;
 ;; This global is initialized in the program arena at startup, so it outlives
 ;; every per-function typecheck scratch arena that may hold sets pointing at it.
@@ -55350,6 +55366,22 @@
 
 (define (tc-moved-id-map-shared-empty? [map : (& map tc_i64_i64_map.Map)]) : bool
   (= (tc_i64_i64_map.capacity map) 1))
+
+;; --- deferred exact-path index storage --------------------------------------
+;;
+;; A deferred index carries these three globals in place of private storage.
+;; They are only ever read: `tc-moved-exact-path-index-find` reads `heads`
+;; through the shared empty map (capacity 1, no Occupied slot, so every probe
+;; misses -- exactly what a freshly allocated empty table answered), and the two
+;; empty arrays are never indexed because a miss returns before any `array-ref`.
+;; Every write goes through `tc-moved-exact-path-index-materialize`, which
+;; allocates private storage first. They therefore need no copy-on-write guard.
+(define tc-moved-exact-path-index-no-seed : (__tl_dyn-array i64)
+  (make-array i64 0))
+(define tc-moved-exact-path-index-empty-facts : (__tl_dyn-array TcMovedPathFact)
+  (make-array TcMovedPathFact 0))
+(define tc-moved-exact-path-index-empty-next : (__tl_dyn-array i64)
+  (make-array i64 0))
 
 ;; Give an inserting writer private storage when it holds the shared empty map.
 ;; The replacement is the capacity the old code handed a fresh branch copy, so
@@ -55364,11 +55396,7 @@
     tc-moved-shared-empty-id-map
     tc-moved-shared-empty-id-map
     TcMovedPathFacts.Nil
-    (TcMovedExactPathIndex
-      (tc_i64_i64_map.with-capacity 8)
-      (make-array TcMovedPathFact 8)
-      (make-array i64 8)
-      0)
+    (tc-moved-exact-path-index-deferred)
     tc-moved-shared-empty-id-map
     0))
 
@@ -56006,6 +56034,153 @@
 (define (tc-moved-path-fact-origin [fact : TcMovedPathFact]) : i64
   (struct-get fact origin))
 
+;; An index that owns its storage. Used wherever a fact is known up front, so
+;; the seed cell that only a deferred index needs is never created.
+(define (tc-moved-exact-path-index-fresh) : TcMovedExactPathIndex
+  (TcMovedExactPathIndex
+    tc-moved-exact-path-index-no-seed
+    (tc_i64_i64_map.with-capacity 8)
+    (make-array TcMovedPathFact 8)
+    (make-array i64 8)
+    0))
+
+;; 97.3% of the indexes built per self-compile never receive a fact, so the
+;; storage above is built on first write instead of on construction. What the
+;; eager allocation bought was not the empty table -- an empty table answers
+;; every probe the same way a missing one does -- but the IDENTITY of the
+;; storage: `tc-moved-exact-path-index-insert-new` writes its fact into the
+;; heads table and the fact arrays in place, so a holder created before that
+;; write still observes the fact through the buffers it already points at.
+;; `tc-borrow-check-mark-new-return-borrows` depends on exactly that: it decides
+;; "is this borrow new?" with `tc-moved-path-exact-conflict-kind` against the
+;; PRE-initializer set, and the in-place write is what makes that answer false
+;; (dropping the observation turns
+;; tests/safety/borrow_call_arg_begin_before_last_use_reject from a rejection
+;; into an acceptance).
+;;
+;; The seed cell restates that identity without the storage: it is created
+;; empty, shared by every copy of this index, and filled by the first write.
+;; A holder that predates the write reaches the same buffers through the cell
+;; that it would have pointed at directly, so the observation is preserved
+;; exactly. Storage handed out by the cell is gen-0 storage only; once an index
+;; owns buffers it keeps them, and a later grow replaces them for the grower
+;; alone -- the same divergence the eager code had.
+(define (tc-moved-exact-path-index-deferred) : TcMovedExactPathIndex
+  (let
+    [cell : (__tl_dyn-array i64) (array.make-array i64 2)]
+    (begin
+      ;; The storage this index will need is allocated later, possibly under a
+      ;; shorter-lived arena than the one holding the sets that point at it.
+      ;; Record the owner now and allocate under it, exactly as
+      ;; `tc-move-path-segment-store-grow!` does for the segment store.
+      (array-set!
+        cell
+        1
+        (tc-type-env-store-owner-root (arena.tl_arena_current)))
+      (TcMovedExactPathIndex
+        cell
+        tc-moved-shared-empty-id-map
+        tc-moved-exact-path-index-empty-facts
+        tc-moved-exact-path-index-empty-next
+        0))))
+
+;; The seed record lives at a stable address so that the shared cell stays two
+;; plain words. This mirrors `tc-param-storage-origin-node-new` / `-read` above;
+;; the record is written exactly once, by the first writer.
+(define (tc-moved-exact-path-index-seed-new
+  [heads : tc_i64_i64_map.Map]
+  [facts : (__tl_dyn-array TcMovedPathFact)]
+  [links : (__tl_dyn-array i64)]) : i64
+  (let
+    [cell : (__tl_dyn-array TcMovedExactPathIndexSeed)
+      (array.make-array TcMovedExactPathIndexSeed 1)]
+    (begin
+      (array-set! cell 0 (TcMovedExactPathIndexSeed heads facts links))
+      (unsafe
+        (cast
+          (ptr->int
+            (ptr-cast (array-data cell) : (Ptr TcMovedExactPathIndexSeed)))
+          : i64)))))
+
+(define (tc-moved-exact-path-index-seed-read [address : i64]) : TcMovedExactPathIndexSeed
+  (unsafe
+    (ptr-read (int->ptr (cast address : u64) : (Ptr TcMovedExactPathIndexSeed)))))
+
+(define (tc-moved-exact-path-index-at-seed
+  [index : TcMovedExactPathIndex]
+  [address : i64]) : TcMovedExactPathIndex
+  (let
+    [cell : TcMovedExactPathIndexSeed
+      (tc-moved-exact-path-index-seed-read address)]
+    (TcMovedExactPathIndex
+      tc-moved-exact-path-index-no-seed
+      (struct-get cell heads)
+      (struct-get cell facts)
+      (struct-get cell next)
+      (struct-get index len))))
+
+;; The read-side resolution of the seed cell: an index that owns its storage is
+;; its own view, and a deferred index reads through the cell once the storage
+;; exists. Before that it keeps the empty placeholders, whose probes miss.
+(define (tc-moved-exact-path-index-view [index : TcMovedExactPathIndex]) : TcMovedExactPathIndex
+  (let
+    [seed : (__tl_dyn-array i64) (struct-get index seed)]
+    (if (= (array-length seed) 0)
+      index
+      (let
+        [address : i64 (array-ref seed 0)]
+        (if (= address 0)
+          index
+          (tc-moved-exact-path-index-at-seed index address))))))
+
+;; Allocate the storage the eager constructor used to allocate and publish it
+;; through the cell. The allocation runs under the arena that owned the index at
+;; construction, so the storage outlives every set that can reach this cell --
+;; the property the eager allocation had for free by allocating right there.
+(define (tc-moved-exact-path-index-fill-seed!
+  [seed : (__tl_dyn-array i64)]
+  [len : i64]) : TcMovedExactPathIndex
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (array-ref seed 1)]
+    [head : i64 (tc-type-env-store-owner-current-head owner)]
+    (begin
+      (if (= head 0)
+        unit
+        (unsafe
+          (arena.tl_arena_set head)))
+      (let
+        [heads : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 8)]
+        [facts : (__tl_dyn-array TcMovedPathFact)
+          (make-array TcMovedPathFact 8)]
+        [links : (__tl_dyn-array i64) (make-array i64 8)]
+        [address : i64 (tc-moved-exact-path-index-seed-new heads facts links)]
+        (begin
+          (array-set! seed 0 address)
+          (if (= head 0)
+            unit
+            (tc-type-env-store-restore-after-owner-alloc! previous owner))
+          (TcMovedExactPathIndex
+            tc-moved-exact-path-index-no-seed
+            heads
+            facts
+            links
+            len))))))
+
+;; The write-side resolution: same as the view, except that an empty cell is
+;; filled here with the storage the eager constructor used to allocate. The
+;; result owns that storage, so every later write on it takes the plain path.
+(define (tc-moved-exact-path-index-materialize [index : TcMovedExactPathIndex]) : TcMovedExactPathIndex
+  (let
+    [seed : (__tl_dyn-array i64) (struct-get index seed)]
+    (if (= (array-length seed) 0)
+      index
+      (let
+        [address : i64 (array-ref seed 0)]
+        (if (= address 0)
+          (tc-moved-exact-path-index-fill-seed! seed (struct-get index len))
+          (tc-moved-exact-path-index-at-seed index address))))))
+
 (define (tc-moved-exact-path-index-find-from
   [index : TcMovedExactPathIndex]
   [path : TcMovePath]
@@ -56031,10 +56206,11 @@
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : i64
   (let
-    [heads : tc_i64_i64_map.Map (struct-get index heads)]
+    [resolved : TcMovedExactPathIndex (tc-moved-exact-path-index-view index)]
+    [heads : tc_i64_i64_map.Map (struct-get resolved heads)]
     [hash : i64 (tc-moved-exact-path-hash path kind)]
     [head : i64 (tc_i64_i64_map.get-value-or (& heads) hash -1)]
-    (tc-moved-exact-path-index-find-from index path kind head)))
+    (tc-moved-exact-path-index-find-from resolved path kind head)))
 
 (define (tc-moved-exact-path-index-copy-prefix!
   [src-facts : (__tl_dyn-array TcMovedPathFact)]
@@ -56070,6 +56246,7 @@
             next-links
             len)
           (TcMovedExactPathIndex
+            tc-moved-exact-path-index-no-seed
             (struct-get index heads)
             next-facts
             next-links
@@ -56080,7 +56257,8 @@
   [fact : TcMovedPathFact]) : TcMovedExactPathIndex
   (let
     [ready : TcMovedExactPathIndex
-      (tc-moved-exact-path-index-ensure-capacity index)]
+      (tc-moved-exact-path-index-ensure-capacity
+        (tc-moved-exact-path-index-materialize index))]
     [heads : tc_i64_i64_map.Map (struct-get ready heads)]
     [path : TcMovePath (struct-get fact path)]
     [kind : TcMovedPathKind (struct-get fact kind)]
@@ -56092,6 +56270,7 @@
       (array-set! (struct-get ready next) slot head)
       (tc_i64_i64_map.insert-ref! (&mut heads) hash slot)
       (TcMovedExactPathIndex
+        tc-moved-exact-path-index-no-seed
         heads
         (struct-get ready facts)
         (struct-get ready next)
@@ -56107,18 +56286,18 @@
         (tc-moved-exact-path-index-from-facts-at (box-get rest) index)
         fact)]))
 
-;; 97.1% of the calls here rebuild an index with no facts at all, and the seed
-;; below is what they pay for. It cannot be shared or deferred: the seed's
-;; storage is the channel through which a set observes path facts its successors
-;; add in place (see the note on the shared empty id map above).
+;; 97.1% of the calls here rebuild an index with no facts at all. Those get the
+;; deferred form, which allocates one seed cell instead of a hash table and two
+;; arrays and keeps the observation channel the successors' in-place writes need
+;; (see `tc-moved-exact-path-index-deferred`). A rebuild that already has a fact
+;; would materialize immediately, so it takes owned storage directly.
 (define (tc-moved-exact-path-index-from-facts [facts : TcMovedPathFacts]) : TcMovedExactPathIndex
-  (tc-moved-exact-path-index-from-facts-at
-    facts
-    (TcMovedExactPathIndex
-      (tc_i64_i64_map.with-capacity 8)
-      (make-array TcMovedPathFact 8)
-      (make-array i64 8)
-      0)))
+  (match facts
+    [(TcMovedPathFacts.Nil) (tc-moved-exact-path-index-deferred)]
+    [_
+      (tc-moved-exact-path-index-from-facts-at
+        facts
+        (tc-moved-exact-path-index-fresh))]))
 
 (define (tc-moved-base-path-kind? [kind : TcMovedPathKind]) : bool
   (match kind
@@ -56245,7 +56424,8 @@
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMoveConflict
   (let
-    [index : TcMovedExactPathIndex (tc-moved-exact-path-index set)]
+    [index : TcMovedExactPathIndex
+      (tc-moved-exact-path-index-view (tc-moved-exact-path-index set))]
     [entry : i64 (tc-moved-exact-path-index-find index path kind)]
     (if (< entry 0)
       TcMoveConflict.No

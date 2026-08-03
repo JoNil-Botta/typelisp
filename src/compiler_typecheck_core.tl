@@ -6671,6 +6671,16 @@
 (define (tc-type-env-cache-segment-capacity) : i64
   8)
 
+;; Monotone counter of every event that can hand out a persistent-env node
+;; address: a new store cell, a new binding segment, or a new cache segment.
+;; Node addresses are stable while a store lives, because segments are only
+;; appended to the store's owner arena, so a cached (store handle, node
+;; address) pair can only ever be invalidated by a teardown that is followed by
+;; one of those three allocations. Caches over persistent chains therefore stay
+;; exact by dropping themselves whenever this counter moves.
+(define tc-type-env-store-epoch : i64
+  0)
+
 (define (tc-type-env-store-owner-root [handle : i64]) : i64
   (if (= handle 0)
     0
@@ -6725,6 +6735,7 @@
   (let
     [cell : (__tl_dyn-array TcTypeEnvStore) (array.make-array TcTypeEnvStore 1)]
     (begin
+      (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
       (array-set!
         cell
         0
@@ -6777,6 +6788,7 @@
     [owner : i64 (struct-get store owner-arena)]
     [previous-arena : i64 (arena.tl_arena_current)]
     (begin
+      (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
       (unsafe
         (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
       (let
@@ -6799,6 +6811,7 @@
     [owner : i64 (struct-get store owner-arena)]
     [previous-arena : i64 (arena.tl_arena_current)]
     (begin
+      (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
       (unsafe
         (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
       (let
@@ -6912,6 +6925,22 @@
               : (Ptr u8)))
           : i64)))))
 
+;; Cleanup-owner markers are only ever introduced by `with`-resource bindings, so
+;; most programs never create one. `tc-active-cleanup-owners` has to walk the
+;; whole persistent binding spine to prove that, once per checked let/store/
+;; transfer expression. Counting marker binds at the single persistent-bind choke
+;; point turns that proof into one load: a marker can only be observed by the
+;; scan if some binding record carries `tc-cleanup-owner-marker-id` as its key,
+;; and every binding record is created here, so a zero count means every spine in
+;; every store is marker-free and the scan is provably empty. The count is
+;; monotone and process-wide, i.e. conservative in the safe direction: it can
+;; only ever disable the fast path, never enable it wrongly.
+(define tc-cleanup-owner-marker-bind-count : i64
+  0)
+
+(define (tc-cleanup-owner-markers-possible?) : bool
+  (not (= tc-cleanup-owner-marker-bind-count 0)))
+
 (define (tc-type-env-cache-head [index : i64]) : i64
   (- 0 index))
 
@@ -6924,6 +6953,12 @@
   [ty : ast.AstType]) : TcTypeEnv
   (let
     [store-handle : i64 (struct-get env store)]
+    [_note-marker : unit
+      (if (= name-id (tc-cleanup-owner-marker-id))
+        (set!
+          tc-cleanup-owner-marker-bind-count
+          (+ tc-cleanup-owner-marker-bind-count 1))
+        unit)]
     [index : i64
       (tc-type-env-store-push-binding!
         store-handle
@@ -13475,7 +13510,189 @@
         scoped))
     (tc-lookup-unsafe-persistent-id env name-id)))
 
-(define (tc-name-bound-before-hygiene-global-boundary-id?
+;; Alias shadowing asks one pure question about the persistent env chain: is
+;; `name-id` bound anywhere in the span that starts at `env` and ends at the
+;; hygiene global boundary, at the first non-scan-through cache, or at the root?
+;; Module-local overlay construction asks it once per declaration against a
+;; chain that grows one binding at a time, so the plain walk below is quadratic
+;; in the number of declarations a module contributes (measured: 15.5M chain
+;; steps for 161K queries in one opt1 self compile, 99.99% of them answering
+;; "no").
+;;
+;; The span of a chain head is `delta ++ span(parent head)`, so a single-entry
+;; index of the last queried head answers repeated queries without rewalking:
+;; binding keys go into an open-addressed key set and cache nodes into a short
+;; list that is probed as before. Only the bindings pushed since the previous
+;; query are walked (measured: 23.8K walk steps instead of 15.5M).
+;;
+;; Soundness. The chain below a head is immutable and binding/cache records are
+;; append-only within a store, so a recorded key set stays exact for as long as
+;; the recorded head denotes the same node. The recorded set is dropped whenever
+;; the store handle differs or `tc-type-env-store-epoch` moved, i.e. whenever a
+;; store cell or an env segment was allocated, which is the only way a node
+;; address can be recycled. A rebuild always walks the full span, so the index
+;; is exact after every miss. Answers are a disjunction over the same node set
+;; the plain walk visits: the walk exits early on a hit, and the index covers a
+;; superset of that prefix only when the answer is already "yes".
+(define tc-name-bound-span-slot-capacity : i64
+  2048)
+(define tc-name-bound-span-cache-capacity : i64
+  128)
+(define tc-name-bound-span-keys : (__tl_dyn-array i64)
+  (array.make-array i64 tc-name-bound-span-slot-capacity))
+(define tc-name-bound-span-stamps : (__tl_dyn-array i64)
+  (array.make-array i64 tc-name-bound-span-slot-capacity))
+(define tc-name-bound-span-caches : (__tl_dyn-array i64)
+  (array.make-array i64 tc-name-bound-span-cache-capacity))
+
+;; Stamps start above the zero-filled array so the first generation is empty.
+(define tc-name-bound-span-stamp : i64
+  1)
+(define tc-name-bound-span-count : i64
+  0)
+(define tc-name-bound-span-cache-count : i64
+  0)
+(define tc-name-bound-span-valid : bool
+  false)
+(define tc-name-bound-span-store : i64
+  0)
+(define tc-name-bound-span-head : i64
+  -2)
+(define tc-name-bound-span-epoch : i64
+  -1)
+
+(define (tc-name-bound-span-mask) : i64
+  (- tc-name-bound-span-slot-capacity 1))
+
+(define (tc-name-bound-span-slot [key : i64]) : i64
+  (bit-and (bit-xor (* key 2654435761) (shr key 27)) (tc-name-bound-span-mask)))
+
+(define (tc-name-bound-span-next-slot [slot : i64]) : i64
+  (bit-and (+ slot 1) (tc-name-bound-span-mask)))
+
+(define (tc-name-bound-span-contains-at? [key : i64] [slot : i64] [tries : i64]) : bool
+  (if (>= tries tc-name-bound-span-slot-capacity)
+    false
+    (if (= (array-ref tc-name-bound-span-stamps slot) tc-name-bound-span-stamp)
+      (if (= (array-ref tc-name-bound-span-keys slot) key)
+        true
+        (tc-name-bound-span-contains-at?
+          key
+          (tc-name-bound-span-next-slot slot)
+          (+ tries 1)))
+      false)))
+
+(define (tc-name-bound-span-contains? [key : i64]) : bool
+  (tc-name-bound-span-contains-at? key (tc-name-bound-span-slot key) 0))
+
+(define (tc-name-bound-span-insert-at! [key : i64] [slot : i64] [tries : i64]) : bool
+  (if (>= tries tc-name-bound-span-slot-capacity)
+    false
+    (if (= (array-ref tc-name-bound-span-stamps slot) tc-name-bound-span-stamp)
+      (if (= (array-ref tc-name-bound-span-keys slot) key)
+        true
+        (tc-name-bound-span-insert-at!
+          key
+          (tc-name-bound-span-next-slot slot)
+          (+ tries 1)))
+      (begin
+        (array-set! tc-name-bound-span-stamps slot tc-name-bound-span-stamp)
+        (array-set! tc-name-bound-span-keys slot key)
+        (set! tc-name-bound-span-count (+ tc-name-bound-span-count 1))
+        true))))
+
+;; Half load keeps probe runs short; a longer span gives up on the index and
+;; falls back to the plain walk instead of degrading every later query.
+(define (tc-name-bound-span-insert! [key : i64]) : bool
+  (if (>= (* tc-name-bound-span-count 2) tc-name-bound-span-slot-capacity)
+    false
+    (tc-name-bound-span-insert-at! key (tc-name-bound-span-slot key) 0)))
+
+(define (tc-name-bound-span-note-cache! [cache-address : i64]) : bool
+  (if (>= tc-name-bound-span-cache-count tc-name-bound-span-cache-capacity)
+    false
+    (begin
+      (array-set!
+        tc-name-bound-span-caches
+        tc-name-bound-span-cache-count
+        cache-address)
+      (set! tc-name-bound-span-cache-count (+ tc-name-bound-span-cache-count 1))
+      true)))
+
+(define (tc-name-bound-span-clear!) : unit
+  (begin
+    (set! tc-name-bound-span-stamp (+ tc-name-bound-span-stamp 1))
+    (set! tc-name-bound-span-count 0)
+    (set! tc-name-bound-span-cache-count 0)))
+
+;; Records the span of `env` up to (but excluding) `stop-head`. Returns 1 when
+;; `stop-head` was reached, 2 when the span ended on its own, and 0 when the
+;; index overflowed. Head 0 is not a reachable chain head (the root is -1,
+;; bindings are record addresses and caches their negations), so it is the
+;; "no stop" sentinel.
+(define (tc-name-bound-span-fill! [env : TcTypeEnv] [stop-head : i64]) : i64
+  (if (= (struct-get env head) stop-head)
+    1
+    (match (tc-type-env-view env)
+      [(TcTypeEnvView.Nil) 2]
+      [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+        (if (tc-name-bound-span-note-cache!
+          (tc-type-env-cache-index (struct-get env head)))
+          (if scan-through
+            (tc-name-bound-span-fill! rest stop-head)
+            2)
+          0)]
+      [(TcTypeEnvView.Bind key _ rest)
+        (if (= key (tc-hygiene-global-boundary-id))
+          2
+          (if (tc-name-bound-span-insert! key)
+            (tc-name-bound-span-fill! rest stop-head)
+            0))])))
+
+(define (tc-name-bound-span-rebuild! [env : TcTypeEnv]) : bool
+  (begin
+    (tc-name-bound-span-clear!)
+    (if (= (tc-name-bound-span-fill! env 0) 0)
+      (begin
+        (set! tc-name-bound-span-valid false)
+        false)
+      (begin
+        (set! tc-name-bound-span-valid true)
+        (set! tc-name-bound-span-store (struct-get env store))
+        (set! tc-name-bound-span-head (struct-get env head))
+        (set! tc-name-bound-span-epoch tc-type-env-store-epoch)
+        true))))
+
+(define (tc-name-bound-span-prepare! [env : TcTypeEnv]) : bool
+  (if (and
+    tc-name-bound-span-valid
+    (= (struct-get env store) tc-name-bound-span-store)
+    (= tc-type-env-store-epoch tc-name-bound-span-epoch))
+    (if (= (tc-name-bound-span-fill! env tc-name-bound-span-head) 1)
+      (begin
+        (set! tc-name-bound-span-head (struct-get env head))
+        true)
+      ;; The chain is not an extension of the indexed head, so the partial
+      ;; delta above has to be discarded together with the stale suffix.
+      (tc-name-bound-span-rebuild! env))
+    (tc-name-bound-span-rebuild! env)))
+
+(define (tc-name-bound-span-cache-hit? [name-id : i64] [index : i64]) : bool
+  (if (>= index tc-name-bound-span-cache-count)
+    false
+    (let
+      [cache : TcTypeEnvCache
+        (tc-type-env-cache-at
+          (tc-type-env-cache-ptr
+            tc-name-bound-span-store
+            (array-ref tc-name-bound-span-caches index)))]
+      [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+      (match (tc_i64_i64_map.get (& ids) name-id)
+        [(tc_i64_i64_map.LookupFound _) true]
+        [(tc_i64_i64_map.LookupMissing)
+          (tc-name-bound-span-cache-hit? name-id (+ index 1))]))))
+
+(define (tc-name-bound-before-hygiene-global-boundary-scan-id?
   [env : TcTypeEnv]
   [name-id : i64]) : bool
   (match (tc-type-env-view env)
@@ -13488,14 +13705,23 @@
         [(tc_i64_i64_map.LookupFound _) true]
         [(tc_i64_i64_map.LookupMissing)
           (if scan-through
-            (tc-name-bound-before-hygiene-global-boundary-id? rest name-id)
+            (tc-name-bound-before-hygiene-global-boundary-scan-id? rest name-id)
             false)])]
     [(TcTypeEnvView.Bind key _ rest)
       (if (= key (tc-hygiene-global-boundary-id))
         false
         (if (= key name-id)
           true
-          (tc-name-bound-before-hygiene-global-boundary-id? rest name-id)))]))
+          (tc-name-bound-before-hygiene-global-boundary-scan-id? rest name-id)))]))
+
+(define (tc-name-bound-before-hygiene-global-boundary-id?
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (if (tc-name-bound-span-prepare! env)
+    (if (tc-name-bound-span-contains? name-id)
+      true
+      (tc-name-bound-span-cache-hit? name-id 0))
+    (tc-name-bound-before-hygiene-global-boundary-scan-id? env name-id)))
 
 (define (tc-unqualified-import-ambiguity-message-for-key
   [_ctx : TcContext]
@@ -14291,20 +14517,22 @@
 (define (tc-active-cleanup-owners [env : TcTypeEnv]) : TcStringList
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (let
-      [head : i64 (struct-get env head)]
-      (if (< head -1)
-        (let
-          [store-handle : i64 (struct-get env store)]
-          [cache : TcTypeEnvCache
-            (tc-type-env-cache-at
-              (tc-type-env-cache-ptr
-                store-handle
-                (tc-type-env-cache-index head)))]
-          (tc-active-cleanup-owners-scan
-            env
-            (TcTypeEnv store-handle (struct-get cache rest) 0)))
-        (tc-active-cleanup-owners-scan env env)))))
+    (if (not (tc-cleanup-owner-markers-possible?))
+      TcStringList.Nil
+      (let
+        [head : i64 (struct-get env head)]
+        (if (< head -1)
+          (let
+            [store-handle : i64 (struct-get env store)]
+            [cache : TcTypeEnvCache
+              (tc-type-env-cache-at
+                (tc-type-env-cache-ptr
+                  store-handle
+                  (tc-type-env-cache-index head)))]
+            (tc-active-cleanup-owners-scan
+              env
+              (TcTypeEnv store-handle (struct-get cache rest) 0)))
+          (tc-active-cleanup-owners-scan env env))))))
 
 (define (tc-lifetime-list-count [items : ast.AstLifetimeList]) : i64
   (ast.ast-lifetime-list-len (& items)))
@@ -42886,21 +43114,31 @@
             (tc-resource-binding-list-add-bound-names bindings bound))])]
     [_ false]))
 
+;; `tc-expr-result-uses-cleanup-owner?` can only answer true through
+;; `tc-name-is-free-cleanup-owner?`, which first requires the name to be a member
+;; of `owners`. With an empty owner list the answer is false for every
+;; expression, so the recursive expression walk is pure overhead and is skipped.
 (define (tc-expr-result-uses-active-cleanup-owner?
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : bool
-  (tc-expr-result-uses-cleanup-owner?
-    expr
-    (tc-active-cleanup-owners env)
-    TcStringList.Nil))
+  (let
+    [owners : TcStringList (tc-active-cleanup-owners env)]
+    (match owners
+      [(TcStringList.Nil) false]
+      [_ (tc-expr-result-uses-cleanup-owner? expr owners TcStringList.Nil)])))
 
 (define (tc-expr-list-any-result-uses-active-cleanup-owner?
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]) : bool
-  (tc-expr-list-any-result-uses-cleanup-owner?
-    exprs
-    (tc-active-cleanup-owners env)
-    TcStringList.Nil))
+  (let
+    [owners : TcStringList (tc-active-cleanup-owners env)]
+    (match owners
+      [(TcStringList.Nil) false]
+      [_
+        (tc-expr-list-any-result-uses-cleanup-owner?
+          exprs
+          owners
+          TcStringList.Nil)])))
 
 (define (tc-ensure-cleanup-resource-not-let-bound
   [ctx : TcContext]
@@ -55203,7 +55441,24 @@
   (Missing)
   (Removed TcMovedPathFacts))
 
+;; Storage published by the first write into a deferred exact-path index. It is
+;; reached through a plain-word cell every copy of that index shares, which is
+;; what lets a holder made before the write observe the write afterwards (see
+;; the note on `tc-moved-exact-path-index-deferred`). The cell holds the record's
+;; address rather than the record: a cell of records would default-construct
+;; three empty arrays per deferred index, which is the allocation this whole
+;; path exists to avoid.
+(defstruct TcMovedExactPathIndexSeed
+  (heads tc_i64_i64_map.Map)
+  (facts (__tl_dyn-array TcMovedPathFact))
+  (next (__tl_dyn-array i64)))
+
 (defstruct TcMovedExactPathIndex
+  ;; Empty for an index that owns its storage. For a deferred index it is a
+  ;; two-slot cell: slot 0 holds 0 and then the seed address, slot 1 the arena
+  ;; that owned the index at construction (see
+  ;; `tc-moved-exact-path-index-materialize`).
+  (seed (__tl_dyn-array i64))
   (heads tc_i64_i64_map.Map)
   (facts (__tl_dyn-array TcMovedPathFact))
   (next (__tl_dyn-array i64))
@@ -55309,17 +55564,16 @@
 ;;      its source's capacity, and `grow!` only doubles, so private capacities
 ;;      are 8, 16, 32, ...; capacity 1 is the shared map and nothing else.
 ;;
-;; The exact-path index deliberately does NOT get the same treatment. Its
-;; storage is written in place by `tc-moved-exact-path-index-insert-new`, so a
-;; set whose successor adds a path fact can still observe that fact through its
-;; own stale index -- and the borrow checker depends on it:
-;; `tc-borrow-check-mark-new-return-borrows` decides "is this borrow new?" with
-;; `tc-moved-path-exact-conflict-kind` against the PRE-initializer set, and the
-;; in-place write is what makes that answer false. Handing out one shared empty
-;; index (with copy-on-write at the insert) removes the observation and turns
+;; The exact-path index cannot be ALIASED the same way, because its storage is
+;; written in place by `tc-moved-exact-path-index-insert-new`: a set whose
+;; successor adds a path fact still observes that fact through its own stale
+;; index, and the borrow checker depends on it (see
+;; `tc-moved-exact-path-index-deferred`). One shared empty index with
+;; copy-on-write at the insert removes the observation and turns
 ;; tests/safety/borrow_call_arg_begin_before_last_use_reject from a rejection
-;; into an acceptance. The per-set empty index is therefore load-bearing, not
-;; redundant; retiring it needs the checker's intent restated first.
+;; into an acceptance. What the index shares instead is a per-index seed cell,
+;; which defers the storage without giving up the identity the observation
+;; needs.
 ;;
 ;; This global is initialized in the program arena at startup, so it outlives
 ;; every per-function typecheck scratch arena that may hold sets pointing at it.
@@ -55328,6 +55582,22 @@
 
 (define (tc-moved-id-map-shared-empty? [map : (& map tc_i64_i64_map.Map)]) : bool
   (= (tc_i64_i64_map.capacity map) 1))
+
+;; --- deferred exact-path index storage --------------------------------------
+;;
+;; A deferred index carries these three globals in place of private storage.
+;; They are only ever read: `tc-moved-exact-path-index-find` reads `heads`
+;; through the shared empty map (capacity 1, no Occupied slot, so every probe
+;; misses -- exactly what a freshly allocated empty table answered), and the two
+;; empty arrays are never indexed because a miss returns before any `array-ref`.
+;; Every write goes through `tc-moved-exact-path-index-materialize`, which
+;; allocates private storage first. They therefore need no copy-on-write guard.
+(define tc-moved-exact-path-index-no-seed : (__tl_dyn-array i64)
+  (make-array i64 0))
+(define tc-moved-exact-path-index-empty-facts : (__tl_dyn-array TcMovedPathFact)
+  (make-array TcMovedPathFact 0))
+(define tc-moved-exact-path-index-empty-next : (__tl_dyn-array i64)
+  (make-array i64 0))
 
 ;; Give an inserting writer private storage when it holds the shared empty map.
 ;; The replacement is the capacity the old code handed a fresh branch copy, so
@@ -55342,11 +55612,7 @@
     tc-moved-shared-empty-id-map
     tc-moved-shared-empty-id-map
     TcMovedPathFacts.Nil
-    (TcMovedExactPathIndex
-      (tc_i64_i64_map.with-capacity 8)
-      (make-array TcMovedPathFact 8)
-      (make-array i64 8)
-      0)
+    (tc-moved-exact-path-index-deferred)
     tc-moved-shared-empty-id-map
     0))
 
@@ -55984,6 +56250,153 @@
 (define (tc-moved-path-fact-origin [fact : TcMovedPathFact]) : i64
   (struct-get fact origin))
 
+;; An index that owns its storage. Used wherever a fact is known up front, so
+;; the seed cell that only a deferred index needs is never created.
+(define (tc-moved-exact-path-index-fresh) : TcMovedExactPathIndex
+  (TcMovedExactPathIndex
+    tc-moved-exact-path-index-no-seed
+    (tc_i64_i64_map.with-capacity 8)
+    (make-array TcMovedPathFact 8)
+    (make-array i64 8)
+    0))
+
+;; 97.3% of the indexes built per self-compile never receive a fact, so the
+;; storage above is built on first write instead of on construction. What the
+;; eager allocation bought was not the empty table -- an empty table answers
+;; every probe the same way a missing one does -- but the IDENTITY of the
+;; storage: `tc-moved-exact-path-index-insert-new` writes its fact into the
+;; heads table and the fact arrays in place, so a holder created before that
+;; write still observes the fact through the buffers it already points at.
+;; `tc-borrow-check-mark-new-return-borrows` depends on exactly that: it decides
+;; "is this borrow new?" with `tc-moved-path-exact-conflict-kind` against the
+;; PRE-initializer set, and the in-place write is what makes that answer false
+;; (dropping the observation turns
+;; tests/safety/borrow_call_arg_begin_before_last_use_reject from a rejection
+;; into an acceptance).
+;;
+;; The seed cell restates that identity without the storage: it is created
+;; empty, shared by every copy of this index, and filled by the first write.
+;; A holder that predates the write reaches the same buffers through the cell
+;; that it would have pointed at directly, so the observation is preserved
+;; exactly. Storage handed out by the cell is gen-0 storage only; once an index
+;; owns buffers it keeps them, and a later grow replaces them for the grower
+;; alone -- the same divergence the eager code had.
+(define (tc-moved-exact-path-index-deferred) : TcMovedExactPathIndex
+  (let
+    [cell : (__tl_dyn-array i64) (array.make-array i64 2)]
+    (begin
+      ;; The storage this index will need is allocated later, possibly under a
+      ;; shorter-lived arena than the one holding the sets that point at it.
+      ;; Record the owner now and allocate under it, exactly as
+      ;; `tc-move-path-segment-store-grow!` does for the segment store.
+      (array-set!
+        cell
+        1
+        (tc-type-env-store-owner-root (arena.tl_arena_current)))
+      (TcMovedExactPathIndex
+        cell
+        tc-moved-shared-empty-id-map
+        tc-moved-exact-path-index-empty-facts
+        tc-moved-exact-path-index-empty-next
+        0))))
+
+;; The seed record lives at a stable address so that the shared cell stays two
+;; plain words. This mirrors `tc-param-storage-origin-node-new` / `-read` above;
+;; the record is written exactly once, by the first writer.
+(define (tc-moved-exact-path-index-seed-new
+  [heads : tc_i64_i64_map.Map]
+  [facts : (__tl_dyn-array TcMovedPathFact)]
+  [links : (__tl_dyn-array i64)]) : i64
+  (let
+    [cell : (__tl_dyn-array TcMovedExactPathIndexSeed)
+      (array.make-array TcMovedExactPathIndexSeed 1)]
+    (begin
+      (array-set! cell 0 (TcMovedExactPathIndexSeed heads facts links))
+      (unsafe
+        (cast
+          (ptr->int
+            (ptr-cast (array-data cell) : (Ptr TcMovedExactPathIndexSeed)))
+          : i64)))))
+
+(define (tc-moved-exact-path-index-seed-read [address : i64]) : TcMovedExactPathIndexSeed
+  (unsafe
+    (ptr-read (int->ptr (cast address : u64) : (Ptr TcMovedExactPathIndexSeed)))))
+
+(define (tc-moved-exact-path-index-at-seed
+  [index : TcMovedExactPathIndex]
+  [address : i64]) : TcMovedExactPathIndex
+  (let
+    [cell : TcMovedExactPathIndexSeed
+      (tc-moved-exact-path-index-seed-read address)]
+    (TcMovedExactPathIndex
+      tc-moved-exact-path-index-no-seed
+      (struct-get cell heads)
+      (struct-get cell facts)
+      (struct-get cell next)
+      (struct-get index len))))
+
+;; The read-side resolution of the seed cell: an index that owns its storage is
+;; its own view, and a deferred index reads through the cell once the storage
+;; exists. Before that it keeps the empty placeholders, whose probes miss.
+(define (tc-moved-exact-path-index-view [index : TcMovedExactPathIndex]) : TcMovedExactPathIndex
+  (let
+    [seed : (__tl_dyn-array i64) (struct-get index seed)]
+    (if (= (array-length seed) 0)
+      index
+      (let
+        [address : i64 (array-ref seed 0)]
+        (if (= address 0)
+          index
+          (tc-moved-exact-path-index-at-seed index address))))))
+
+;; Allocate the storage the eager constructor used to allocate and publish it
+;; through the cell. The allocation runs under the arena that owned the index at
+;; construction, so the storage outlives every set that can reach this cell --
+;; the property the eager allocation had for free by allocating right there.
+(define (tc-moved-exact-path-index-fill-seed!
+  [seed : (__tl_dyn-array i64)]
+  [len : i64]) : TcMovedExactPathIndex
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (array-ref seed 1)]
+    [head : i64 (tc-type-env-store-owner-current-head owner)]
+    (begin
+      (if (= head 0)
+        unit
+        (unsafe
+          (arena.tl_arena_set head)))
+      (let
+        [heads : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 8)]
+        [facts : (__tl_dyn-array TcMovedPathFact)
+          (make-array TcMovedPathFact 8)]
+        [links : (__tl_dyn-array i64) (make-array i64 8)]
+        [address : i64 (tc-moved-exact-path-index-seed-new heads facts links)]
+        (begin
+          (array-set! seed 0 address)
+          (if (= head 0)
+            unit
+            (tc-type-env-store-restore-after-owner-alloc! previous owner))
+          (TcMovedExactPathIndex
+            tc-moved-exact-path-index-no-seed
+            heads
+            facts
+            links
+            len))))))
+
+;; The write-side resolution: same as the view, except that an empty cell is
+;; filled here with the storage the eager constructor used to allocate. The
+;; result owns that storage, so every later write on it takes the plain path.
+(define (tc-moved-exact-path-index-materialize [index : TcMovedExactPathIndex]) : TcMovedExactPathIndex
+  (let
+    [seed : (__tl_dyn-array i64) (struct-get index seed)]
+    (if (= (array-length seed) 0)
+      index
+      (let
+        [address : i64 (array-ref seed 0)]
+        (if (= address 0)
+          (tc-moved-exact-path-index-fill-seed! seed (struct-get index len))
+          (tc-moved-exact-path-index-at-seed index address))))))
+
 (define (tc-moved-exact-path-index-find-from
   [index : TcMovedExactPathIndex]
   [path : TcMovePath]
@@ -56009,10 +56422,11 @@
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : i64
   (let
-    [heads : tc_i64_i64_map.Map (struct-get index heads)]
+    [resolved : TcMovedExactPathIndex (tc-moved-exact-path-index-view index)]
+    [heads : tc_i64_i64_map.Map (struct-get resolved heads)]
     [hash : i64 (tc-moved-exact-path-hash path kind)]
     [head : i64 (tc_i64_i64_map.get-value-or (& heads) hash -1)]
-    (tc-moved-exact-path-index-find-from index path kind head)))
+    (tc-moved-exact-path-index-find-from resolved path kind head)))
 
 (define (tc-moved-exact-path-index-copy-prefix!
   [src-facts : (__tl_dyn-array TcMovedPathFact)]
@@ -56048,6 +56462,7 @@
             next-links
             len)
           (TcMovedExactPathIndex
+            tc-moved-exact-path-index-no-seed
             (struct-get index heads)
             next-facts
             next-links
@@ -56058,7 +56473,8 @@
   [fact : TcMovedPathFact]) : TcMovedExactPathIndex
   (let
     [ready : TcMovedExactPathIndex
-      (tc-moved-exact-path-index-ensure-capacity index)]
+      (tc-moved-exact-path-index-ensure-capacity
+        (tc-moved-exact-path-index-materialize index))]
     [heads : tc_i64_i64_map.Map (struct-get ready heads)]
     [path : TcMovePath (struct-get fact path)]
     [kind : TcMovedPathKind (struct-get fact kind)]
@@ -56070,6 +56486,7 @@
       (array-set! (struct-get ready next) slot head)
       (tc_i64_i64_map.insert-ref! (&mut heads) hash slot)
       (TcMovedExactPathIndex
+        tc-moved-exact-path-index-no-seed
         heads
         (struct-get ready facts)
         (struct-get ready next)
@@ -56085,18 +56502,18 @@
         (tc-moved-exact-path-index-from-facts-at (box-get rest) index)
         fact)]))
 
-;; 97.1% of the calls here rebuild an index with no facts at all, and the seed
-;; below is what they pay for. It cannot be shared or deferred: the seed's
-;; storage is the channel through which a set observes path facts its successors
-;; add in place (see the note on the shared empty id map above).
+;; 97.1% of the calls here rebuild an index with no facts at all. Those get the
+;; deferred form, which allocates one seed cell instead of a hash table and two
+;; arrays and keeps the observation channel the successors' in-place writes need
+;; (see `tc-moved-exact-path-index-deferred`). A rebuild that already has a fact
+;; would materialize immediately, so it takes owned storage directly.
 (define (tc-moved-exact-path-index-from-facts [facts : TcMovedPathFacts]) : TcMovedExactPathIndex
-  (tc-moved-exact-path-index-from-facts-at
-    facts
-    (TcMovedExactPathIndex
-      (tc_i64_i64_map.with-capacity 8)
-      (make-array TcMovedPathFact 8)
-      (make-array i64 8)
-      0)))
+  (match facts
+    [(TcMovedPathFacts.Nil) (tc-moved-exact-path-index-deferred)]
+    [_
+      (tc-moved-exact-path-index-from-facts-at
+        facts
+        (tc-moved-exact-path-index-fresh))]))
 
 (define (tc-moved-base-path-kind? [kind : TcMovedPathKind]) : bool
   (match kind
@@ -56223,7 +56640,8 @@
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMoveConflict
   (let
-    [index : TcMovedExactPathIndex (tc-moved-exact-path-index set)]
+    [index : TcMovedExactPathIndex
+      (tc-moved-exact-path-index-view (tc-moved-exact-path-index set))]
     [entry : i64 (tc-moved-exact-path-index-find index path kind)]
     (if (< entry 0)
       TcMoveConflict.No

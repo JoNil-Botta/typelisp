@@ -24,7 +24,11 @@ EOF
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-EMBEDDED_STDLIB=src/compiler_embedded_stdlib_payload.tl
+# Every compiler-owned LZSS stream in the binary must be accounted for here or
+# the stream count below rejects the report. The stdlib comptime image is the
+# second producer: it is embedded compressed through the same form, and its
+# input is a generated artifact rather than a checked-in source.
+EMBEDDED_STDLIB="src/compiler_embedded_stdlib_payload.tl src/compiler_embedded_stdlib_tlci_payload.tl"
 BINARY=
 
 while [ "$#" -gt 0 ]; do
@@ -455,15 +459,26 @@ encoded_payload_bytes=0
 
 while IFS= read -r path; do
     [ -n "$path" ] || continue
-    [ -f "$path" ] || {
+    if [ ! -f "$path" ]; then
+        # Generated build inputs live under target/ and are absent from a fresh
+        # checkout, so measuring a downloaded binary must not fail on them. The
+        # stream is still counted above; only its expanded size is unknown.
+        case "$path" in
+            target/* | */target/*)
+                printf '%s\t%s\t%s\n' generated_unavailable 0 "$path" \
+                    >> "$payloads_tsv"
+                continue
+                ;;
+        esac
         echo "embedded stdlib payload not found: $path" >&2
         exit 1
-    }
+    fi
     bytes=$(wc -c < "$path" | tr -d ' ')
     case "$path" in
         stdlib/tests/*) bucket=stdlib_tests ;;
         stdlib/*.tl) bucket=stdlib_top_level_modules ;;
         stdlib/*) bucket=stdlib_other ;;
+        target/* | */target/*) bucket=generated_images ;;
         *) bucket=other ;;
     esac
     printf '%s\t%s\t%s\n' "$bucket" "$bytes" "$path" >> "$payloads_tsv"
@@ -499,7 +514,8 @@ printf 'compressed_token_bytes\t%s\n' "$compressed_payload_bytes"
 printf 'static_payload_bytes\t%s\n' "$static_payload_bytes"
 printf 'encoded_payload_bytes\t%s\n' "$encoded_payload_bytes"
 printf 'bucket\tfiles\tbytes\n'
-for bucket in stdlib_top_level_modules stdlib_tests stdlib_other other; do
+for bucket in stdlib_top_level_modules stdlib_tests stdlib_other \
+    generated_images generated_unavailable other; do
     awk -F '\t' -v bucket="$bucket" '
 $1 == bucket {
     files += 1

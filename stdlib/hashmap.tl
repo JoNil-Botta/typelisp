@@ -18,6 +18,21 @@
 ;# Growth recomputes `hash-key` per occupied slot instead. The hash function,
 ;# capacity policy, probe order, first-tombstone rule, and growth condition are
 ;# shared, so slot indices and iteration order are identical under either.
+;#
+;# Read-only lookups go through one index-returning `find-index` helper rather
+;# than the `GeneratedHashmapProbe` value: `Found`/`Absent`/`Full` is a payload
+;# enum that the ABI returns through memory, and only the insert and mut-entry
+;# paths need the absent slot or the first tombstone it carries. `find-index`
+;# reports "no such key" as -1 and keeps the probe order, wrap rule and
+;# terminating bound of `probe` exactly, so lookup, containment and removal see
+;# the same slot for the same table state.
+;#
+;# The scalar scan loops bound themselves by wrap detection -- the cursor
+;# returning to the slot it started at -- instead of a separate step counter.
+;# The cursor is masked by a positive power-of-two capacity, so it visits every
+;# slot exactly once before repeating: the loop still stops after at most the
+;# slot-array length on a full table while carrying one less live value and one
+;# less add/compare per collision step.
 ;# The map's third descriptor word caches `growth threshold - deleted`.
 ;# Removal decrements it and tombstone reuse restores it, making
 ;# `len >= growth-limit` the previous `len + deleted` condition while keeping
@@ -248,34 +263,39 @@
                 (array-data (struct-get map slots))
                 : (Ptr GeneratedHashmapSlot)))]
           [cap : i64 (array_ops.length slots)]
+          ;; A zero-length table is reachable through a ZII-initialized map, and
+          ;; its mask would be -1 -- the guard is what keeps the masked cursor
+          ;; in bounds, not decoration.
           (if (<= cap 0)
             fallback
             (let
-              [hash : i64 (* key 6364136223846793005)]
-              [cursor : i64 (bit-and hash (- cap 1))]
-              [walked : i64 0]
               [mask : i64 (- cap 1)]
+              [cursor : i64 (bit-and (* key 6364136223846793005) mask)]
+              [start : i64 cursor]
               (begin
-                (while (< walked cap)
-                  ;; Occupied leads the arm order: it is the tag every
-                  ;; collision step reads, so the common step classifies a slot
-                  ;; in one compare instead of falling through two.
-                  (let
-                    [slot : GeneratedHashmapSlot
-                      (unsafe
-                        (ptr-read (ptr-offset data cursor)))]
-                    (match (struct-get slot state)
-                      [GeneratedHashmapSlotState.Occupied
-                        (if (= (struct-get slot key) key)
-                          (return (struct-get slot value))
-                          (begin
-                            (set! cursor (bit-and (+ cursor 1) mask))
-                            (set! walked (+ walked 1))))]
-                      [GeneratedHashmapSlotState.Empty (return fallback)]
-                      [GeneratedHashmapSlotState.Tombstone
-                        (begin
-                          (set! cursor (bit-and (+ cursor 1) mask))
-                          (set! walked (+ walked 1)))])))
+                (while true
+                  (begin
+                    ;; Occupied leads the arm order: it is the tag every
+                    ;; collision step reads, so the common step classifies a
+                    ;; slot in one compare instead of falling through two.
+                    (let
+                      [slot : GeneratedHashmapSlot
+                        (unsafe
+                          (ptr-read (ptr-offset data cursor)))]
+                      (match (struct-get slot state)
+                        [GeneratedHashmapSlotState.Occupied
+                          (if (= (struct-get slot key) key)
+                            (return (struct-get slot value))
+                            (set! cursor (bit-and (+ cursor 1) mask)))]
+                        [GeneratedHashmapSlotState.Empty (return fallback)]
+                        [GeneratedHashmapSlotState.Tombstone
+                          (set! cursor (bit-and (+ cursor 1) mask))]))
+                    ;; Wrap detection is the walked bound: a masked cursor over
+                    ;; a positive power-of-two capacity returns to `start` only
+                    ;; after visiting all `cap` slots.
+                    (if (= cursor start)
+                      (return fallback)
+                      unit)))
                 fallback))))
         `(lookup-value-or (get map key) fallback))]
     [update-slot-body : comptime.Expr
@@ -326,21 +346,30 @@
                         [GeneratedHashmapSlotState.Empty
                           (if (< first 0)
                             (begin
-                              (publish-occupied!
-                                (&mut (struct-get map slots))
-                                cursor
-                                key
-                                value)
+                              ;; The cursor is already a masked in-bounds index
+                              ;; and `data` is the array the loop just read
+                              ;; through, so publishing through the same raw
+                              ;; pointer skips re-deriving the array and the
+                              ;; bounds check `array-ref` would repeat.
+                              (unsafe
+                                (ptr-write!
+                                  (ptr-offset data cursor)
+                                  (GeneratedHashmapSlot
+                                    (GeneratedHashmapSlotState.Occupied)
+                                    key
+                                    value)))
                               (set!
                                 (struct-get map len)
                                 (+ (struct-get map len) 1))
                               (return unit))
                             (begin
-                              (publish-occupied!
-                                (&mut (struct-get map slots))
-                                first
-                                key
-                                value)
+                              (unsafe
+                                (ptr-write!
+                                  (ptr-offset data first)
+                                  (GeneratedHashmapSlot
+                                    (GeneratedHashmapSlotState.Occupied)
+                                    key
+                                    value)))
                               (set!
                                 (struct-get map len)
                                 (+ (struct-get map len) 1))
@@ -363,10 +392,16 @@
                         [GeneratedHashmapSlotState.Occupied
                           (if (= (struct-get observed-slot key) key)
                             (begin
-                              (set-occupied-value!
-                                (&mut (struct-get map slots))
-                                cursor
-                                value)
+                              ;; The slot was just classified Occupied with a
+                              ;; matching key, so the state re-check inside
+                              ;; set-occupied-value! is known-true here.
+                              (unsafe
+                                (ptr-write!
+                                  (ptr-offset data cursor)
+                                  (GeneratedHashmapSlot
+                                    (GeneratedHashmapSlotState.Occupied)
+                                    key
+                                    value)))
                               (return unit))
                             (set! cursor (bit-and (+ cursor 1) mask)))]))
                     ;; Map values may be shallow-copied while sharing their
@@ -376,11 +411,13 @@
                       (if (< first 0)
                         (return unit)
                         (begin
-                          (publish-occupied!
-                            (&mut (struct-get map slots))
-                            first
-                            key
-                            value)
+                          (unsafe
+                            (ptr-write!
+                              (ptr-offset data first)
+                              (GeneratedHashmapSlot
+                                (GeneratedHashmapSlotState.Occupied)
+                                key
+                                value)))
                           (set! (struct-get map len) (+ (struct-get map len) 1))
                           (set!
                             (struct-get map growth-limit)
@@ -512,53 +549,80 @@
                 (if (>= first 0)
                   (GeneratedHashmapProbe.Absent first)
                   (GeneratedHashmapProbe.Full)))))))]
+    ;; One index-returning lookup backs get/contains/remove for every family.
+    ;; The scalar arm scans through the raw data pointer with the probe order,
+    ;; wrap rule and bound `probe` uses; the general arm keeps `probe` so the
+    ;; stored-hash pre-compare still guards an expensive `key-eq?`. Absent is
+    ;; -1. First-tombstone reuse is an insert-side rule and is never observable
+    ;; through a read-only lookup, so dropping the payload enum here changes no
+    ;; slot index and no iteration order.
+    [find-index-decl : comptime.Expr
+      (if scalar-family
+        `(define (find-index [map : (& map Map)] [key : ,query-key-type]) : i64
+          (let
+            [slots : (& map (Array GeneratedHashmapSlot))
+              (& (struct-get map slots))]
+            [data : (Ptr GeneratedHashmapSlot)
+              (unsafe
+                (ptr-cast
+                  (array-data (struct-get map slots))
+                  : (Ptr GeneratedHashmapSlot)))]
+            [cap : i64 (array_ops.length slots)]
+            (if (<= cap 0)
+              -1
+              (let
+                [mask : i64 (- cap 1)]
+                [cursor : i64 (bit-and (* key 6364136223846793005) mask)]
+                [start : i64 cursor]
+                (begin
+                  (while true
+                    (begin
+                      (let
+                        [slot : GeneratedHashmapSlot
+                          (unsafe
+                            (ptr-read (ptr-offset data cursor)))]
+                        (match (struct-get slot state)
+                          [GeneratedHashmapSlotState.Occupied
+                            (if (= (struct-get slot key) key)
+                              (return cursor)
+                              (set! cursor (bit-and (+ cursor 1) mask)))]
+                          [GeneratedHashmapSlotState.Empty (return -1)]
+                          [GeneratedHashmapSlotState.Tombstone
+                            (set! cursor (bit-and (+ cursor 1) mask))]))
+                      (if (= cursor start)
+                        (return -1)
+                        unit)))
+                  -1)))))
+        `(define (find-index [map : (& map Map)] [key : ,query-key-type]) : i64
+          (match (probe
+            (& (struct-get map slots))
+            (capacity map)
+            key
+            (hash-key key))
+            [(GeneratedHashmapProbe.Found index) index]
+            [_ -1])))]
     [get-borrowed-body : comptime.Expr
-      (if scalar-family
-        `(let
-          [cap : i64 (capacity map)]
-          (match (probe (& (struct-get map slots)) cap key (hash-key key))
-            [(GeneratedHashmapProbe.Found index)
-              (let
-                [slot : GeneratedHashmapSlot
-                  (array-ref (struct-get map slots) index)]
-                (match (struct-get slot state)
-                  [GeneratedHashmapSlotState.Occupied
-                    (LookupFound (struct-get slot value))]
-                  [_ (LookupMissing)]))]
-            [_ (LookupMissing)]))
-        `(let
-          [cap : i64 (capacity map)]
-          (match (probe (& (struct-get map slots)) cap key (hash-key key))
-            [(GeneratedHashmapProbe.Found index)
-              (let
-                [slot : GeneratedHashmapSlot
-                  (array-ref (struct-get map slots) index)]
-                (match (struct-get slot state)
-                  [GeneratedHashmapSlotState.Occupied
-                    (let
-                      [value : ,V (struct-get slot value)]
-                      (LookupFound ,value-copy))]
-                  [_ (LookupMissing)]))]
-            [_ (LookupMissing)])))]
+      `(let
+        [index : i64 (find-index map key)]
+        (if (< index 0)
+          (LookupMissing)
+          (let
+            [slot : GeneratedHashmapSlot
+              (array-ref (struct-get map slots) index)]
+            (match (struct-get slot state)
+              [GeneratedHashmapSlotState.Occupied
+                (let
+                  [value : ,V (struct-get slot value)]
+                  (LookupFound ,value-copy))]
+              [_ (LookupMissing)]))))]
     [get-value-borrowed-body : comptime.Expr
-      (if scalar-family
-        `(let
-          [cap : i64 (capacity map)]
-          (match (probe (& (struct-get map slots)) cap key (hash-key key))
-            [(GeneratedHashmapProbe.Found index)
-              (match (struct-get (array-ref (struct-get map slots) index) state)
-                [GeneratedHashmapSlotState.Occupied
-                  (borrowed-value-found (slot-value-borrowed map index))]
-                [_ (borrowed-value-missing map)])]
-            [_ (borrowed-value-missing map)]))
-        `(let
-          [cap : i64 (capacity map)]
-          (match (probe (& (struct-get map slots)) cap key (hash-key key))
-            [(GeneratedHashmapProbe.Found index)
-              (match (struct-get (array-ref (struct-get map slots) index) state)
-                [GeneratedHashmapSlotState.Occupied
-                  (borrowed-value-found (slot-value-borrowed map index))]
-                [_ (borrowed-value-missing map)])]
+      `(let
+        [index : i64 (find-index map key)]
+        (if (< index 0)
+          (borrowed-value-missing map)
+          (match (struct-get (array-ref (struct-get map slots) index) state)
+            [GeneratedHashmapSlotState.Occupied
+              (borrowed-value-found (slot-value-borrowed map index))]
             [_ (borrowed-value-missing map)])))]
     [mut-entry-value-or-body : comptime.Expr
       (if scalar-family
@@ -588,19 +652,33 @@
           (struct-get entry index)
           value)
         unit)]
+    ;; Iteration walks every slot of the table, so the bounds check `array-ref`
+    ;; repeats per slot is pure overhead against a cursor the loop condition
+    ;; already bounds by the same length. The scalar arm reads through the raw
+    ;; data pointer; the visit order, and therefore the iteration order, is
+    ;; unchanged.
     [next-occupied-body : comptime.Expr
       (if scalar-family
         `(let
+          [slots : (& map (Array GeneratedHashmapSlot))
+            (& (struct-get map slots))]
+          [data : (Ptr GeneratedHashmapSlot)
+            (unsafe
+              (ptr-cast
+                (array-data (struct-get map slots))
+                : (Ptr GeneratedHashmapSlot)))]
+          [cap : i64 (array_ops.length slots)]
           [index : i64
             (if (< from 0)
               0
               from)]
-          [cap : i64 (capacity map)]
-          [found : bool false]
           (begin
-            (while (and (not found) (< index cap))
-              (match (struct-get (array-ref (struct-get map slots) index) state)
-                [GeneratedHashmapSlotState.Occupied (set! found true)]
+            (while (< index cap)
+              (match (struct-get
+                (unsafe
+                  (ptr-read (ptr-offset data index)))
+                state)
+                [GeneratedHashmapSlotState.Occupied (return index)]
                 [_ (set! index (+ index 1))]))
             index))
         `(let
@@ -620,8 +698,14 @@
       (if scalar-family
         `(if (and (>= index 0) (< index (capacity map)))
           (let
+            [data : (Ptr GeneratedHashmapSlot)
+              (unsafe
+                (ptr-cast
+                  (array-data (struct-get map slots))
+                  : (Ptr GeneratedHashmapSlot)))]
             [slot : GeneratedHashmapSlot
-              (array-ref (struct-get map slots) index)]
+              (unsafe
+                (ptr-read (ptr-offset data index)))]
             (match (struct-get slot state)
               [GeneratedHashmapSlotState.Occupied
                 (EntrySome (struct-get slot key) (struct-get slot value))]
@@ -696,52 +780,6 @@
               (set!
                 (struct-get slot state)
                 (GeneratedHashmapSlotState.Occupied))))))]
-    [remove-ref-body : comptime.Expr
-      (if scalar-family
-        `(let
-          [data : (Ptr GeneratedHashmapSlot)
-            (unsafe
-              (ptr-cast
-                (array-data (struct-get map slots))
-                : (Ptr GeneratedHashmapSlot)))]
-          [slots : (&mut map (Array GeneratedHashmapSlot))
-            (&mut (struct-get map slots))]
-          [cap : i64 (array_ops.length slots)]
-          (if (<= cap 0)
-            (RemoveMissing)
-            (let
-              [hash : i64 (* key 6364136223846793005)]
-              [cursor : i64 (bit-and hash (- cap 1))]
-              [walked : i64 0]
-              [mask : i64 (- cap 1)]
-              (begin
-                (while (< walked cap)
-                  (let
-                    [slot : GeneratedHashmapSlot
-                      (unsafe
-                        (ptr-read (ptr-offset data cursor)))]
-                    (match (struct-get slot state)
-                      [GeneratedHashmapSlotState.Occupied
-                        (if (= (struct-get slot key) key)
-                          (begin
-                            (mark-occupied-tombstone! slots cursor)
-                            (set!
-                              (struct-get map len)
-                              (- (struct-get map len) 1))
-                            (set!
-                              (struct-get map growth-limit)
-                              (- (struct-get map growth-limit) 1))
-                            (return (RemoveOk)))
-                          (begin
-                            (set! cursor (bit-and (+ cursor 1) mask))
-                            (set! walked (+ walked 1))))]
-                      [GeneratedHashmapSlotState.Empty (return (RemoveMissing))]
-                      [GeneratedHashmapSlotState.Tombstone
-                        (begin
-                          (set! cursor (bit-and (+ cursor 1) mask))
-                          (set! walked (+ walked 1)))])))
-                (RemoveMissing)))))
-        `(remove-borrowed-ref! map ,owned-query-key))]
     (if (string.eq value-kind "unsupported")
       `(begin
         (module ,module-name)
@@ -848,6 +886,7 @@
           (match lookup
             [(LookupFound value) value]
             [(LookupMissing) fallback]))
+        ,find-index-decl
         (define (get-borrowed [map : (& map Map)] [key : ,query-key-type]) : Lookup
           ,get-borrowed-body)
         (define (get [map : (& map Map)] [key : ,K]) : Lookup
@@ -872,13 +911,7 @@
             [(BorrowedValueFound _) true]
             [(BorrowedValueMissing) false]))
         (define (contains-borrowed? [map : (& map Map)] [key : ,query-key-type]) : bool
-          (match (probe
-            (& (struct-get map slots))
-            (capacity map)
-            key
-            (hash-key key))
-            [(GeneratedHashmapProbe.Found _) true]
-            [_ false]))
+          (>= (find-index map key) 0))
         (define (contains? [map : (& map Map)] [key : ,K]) : bool
           (contains-borrowed? map ,owned-query-key))
         (define (grow! [map : (&mut map Map)]) : unit
@@ -929,22 +962,19 @@
         (define (remove-borrowed-ref!
           [map : (&mut map Map)]
           [key : ,query-key-type]) : RemoveResult
-          (match (probe
-            (& (struct-get map slots))
-            (capacity-mut map)
-            key
-            (hash-key key))
-            [(GeneratedHashmapProbe.Found index)
+          (let
+            [index : i64 (find-index (& map) key)]
+            (if (< index 0)
+              (RemoveMissing)
               (begin
                 (mark-occupied-tombstone! (&mut (struct-get map slots)) index)
                 (set! (struct-get map len) (- (struct-get map len) 1))
                 (set!
                   (struct-get map growth-limit)
                   (- (struct-get map growth-limit) 1))
-                (RemoveOk))]
-            [_ (RemoveMissing)]))
+                (RemoveOk)))))
         (define (remove-ref! [map : (&mut map Map)] [key : ,K]) : RemoveResult
-          ,remove-ref-body)
+          (remove-borrowed-ref! map ,owned-query-key))
         (define (remove-ok? [result : RemoveResult]) : bool
           (match result
             [(RemoveOk) true]

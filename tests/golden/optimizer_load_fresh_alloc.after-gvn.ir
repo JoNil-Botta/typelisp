@@ -1,5 +1,5 @@
 after gvn @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc
-function @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc(values=%0:(Array i64)) -> i64 vars 27 {
+function @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc(values=%0:(Array i64)) -> i64 vars 26 {
 entry:
   %1 = gep %0, 1 : i64
   %2 = load %1 : i64
@@ -31,23 +31,22 @@ make_array_len_ok.2:
   %17 = mov 0 : i64
   %18 = gep %11, 1 : i64
   %19 = mov %4 : i64
-  %20 = cast %19 : i64 to u64
-  bounds_check 0, %20 message "bounds_ok.3"
-  %21 = gep %11, 0 : i64
-  %22 = mov %9 : u64
-  %23 = gep %22, 0 : i64
-  store_ptr %23, %3 : i64
-  %24 = gep %0, 1 : i64
-  %25 = load %24 : i64
-  %26 = add %3, %25 : i64
-  return %26
+  bounds_check 0, %19 message "bounds_ok.3"
+  %20 = gep %11, 0 : i64
+  %21 = mov %9 : u64
+  %22 = gep %21, 0 : i64
+  store_ptr %22, %3 : i64
+  %23 = gep %0, 1 : i64
+  %24 = load %23 : i64
+  %25 = add %3, %24 : i64
+  return %25
 }
 
 after gvn @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc
-function @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc(values=%0:(Array i64)) -> i64 vars 29 {
+function @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc(values=%0:(Array i64)) -> i64 vars 28 {
 entry:
-  %27 = gep %0, 1 : i64
-  %2 = load %27 : i64
+  %26 = gep %0, 1 : i64
+  %2 = load %26 : i64
   jump make_array_len_nonneg.0
 
 make_array_len_nonneg.0:
@@ -61,12 +60,12 @@ make_array_len_ok.2:
   store_ptr %12, %9 : u64
   %13 = gep %11, 8 : u8
   store_ptr %13, 4 : i64
-  %23 = gep %9, 0 : i64
-  store_ptr %23, %2 : i64
-  %28 = gep %0, 1 : i64
-  %25 = mov %2 : i64
-  %26 = add %2, %25 : i64
-  return %26
+  %22 = gep %9, 0 : i64
+  store_ptr %22, %2 : i64
+  %27 = gep %0, 1 : i64
+  %24 = mov %2 : i64
+  %25 = add %2, %24 : i64
+  return %25
 }
 
 after gvn @main

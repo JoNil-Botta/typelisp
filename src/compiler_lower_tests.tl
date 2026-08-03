@@ -12940,10 +12940,116 @@
       (compiler_ast_types.ast-node-pool-context-install! active-before)
       ok)))
 
+;; A BoundsCheck lowers to one unsigned `cmpq length, index`, so an operand that
+;; is already a width-64 integer is handed to the check directly instead of
+;; through a materialised `Cast ... : u64`. `get` therefore keeps exactly ONE
+;; cast (the i64 gep-offset conversion) where it used to carry three; the length
+;; is loaded as i64 and used as-is.
+;;
+;; `get-narrow` is the width negative: an i32 index really must be extended, so
+;; its u64 cast survives (two casts: the u64 check operand and the i64 gep
+;; offset). `plain-cast` is the consumer negative: a width-64 cast that feeds no
+;; bounds check is untouched.
+(define (compiler-lower-bounds-operand-source) : String
+  "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
+(define (get-narrow [a : (Array i64)] [i : i32]) : i64 (array-ref a i))
+(define (plain-cast [x : i64]) : u64 (cast x : u64))
+(define (main) : i64 0)")
+
+(define (compiler-lower-bounds-operand-counts-ok?
+  [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
+  (let
+    [ok : bool true]
+    (begin
+      ;; width-64 index and length: the check is still emitted, and the only
+      ;; surviving cast is the gep-offset one.
+      (if (= (lower-test-function-bounds-count functions "get") 1)
+        unit
+        (set! ok false))
+      (if (= (lower-test-function-cast-count functions "get") 1)
+        unit
+        (set! ok false))
+      ;; narrow index: the extension cast is still required.
+      (if (= (lower-test-function-bounds-count functions "get-narrow") 1)
+        unit
+        (set! ok false))
+      (if (= (lower-test-function-cast-count functions "get-narrow") 2)
+        unit
+        (set! ok false))
+      ;; a width-64 cast with no bounds-check consumer is left alone.
+      (if (= (lower-test-function-bounds-count functions "plain-cast") 0)
+        unit
+        (set! ok false))
+      (if (= (lower-test-function-cast-count functions "plain-cast") 1)
+        unit
+        (set! ok false))
+      ok)))
+
+(define (compiler-lower-bounds-operand-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-bounds-operand-source))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (compiler-lower-bounds-operand-counts-ok? functions)])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+;; The pass-through is a fixed point: u64 is itself width-64, so re-applying the
+;; operand rule to what the old cast used to produce emits nothing further, and
+;; lowering the same source again reaches the identical shape.
+(define (compiler-lower-bounds-operand-idempotent-ok?) : bool
+  (and
+    (compiler_lower.lower-bounds-operand-width-64?
+      (compiler_ast_types.AstType.U64))
+    (compiler-lower-bounds-operand-shape-ok?)))
+
+(define (compiler-lower-bounds-operand-width-predicate-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler_lower.lower-bounds-operand-width-64?
+        (compiler_ast_types.AstType.I64))
+        unit
+        (set! ok false))
+      (if (compiler_lower.lower-bounds-operand-width-64?
+        (compiler_ast_types.AstType.U64))
+        unit
+        (set! ok false))
+      (if (compiler_lower.lower-bounds-operand-width-64?
+        (compiler_ast_types.AstType.I32))
+        (set! ok false)
+        unit)
+      (if (compiler_lower.lower-bounds-operand-width-64?
+        (compiler_ast_types.AstType.U32))
+        (set! ok false)
+        unit)
+      (if (compiler_lower.lower-bounds-operand-width-64?
+        (compiler_ast_types.AstType.U8))
+        (set! ok false)
+        unit)
+      (if (compiler_lower.lower-bounds-operand-width-64?
+        (compiler_ast_types.AstType.F64))
+        (set! ok false)
+        unit)
+      (if (compiler_lower.lower-bounds-operand-width-64?
+        (compiler_ast_types.AstType.Bool))
+        (set! ok false)
+        unit)
+      ok)))
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
     (begin
+      (if (compiler-lower-bounds-operand-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-bounds-operand-width-predicate-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-bounds-operand-idempotent-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-name-env-dense-snapshots-ok?)
         unit
         (set! ok false))

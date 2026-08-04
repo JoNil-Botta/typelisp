@@ -421,9 +421,14 @@ check_global_handle_cse() {
 check_loadcse_forward() {
     _asm=$(compile_gate loadcse_forward tests/integration/loadcse_forward.tl)
     _body=$(function_body "$_asm" _tl_loadcse_forward_poke_sum)
-    assert_fixed_count_eq "$_body" 'movq 8(%rdi), %rax' 1 loadcse-forward
-    assert_fixed_count_eq "$_body" 'movq (%rdi), %rdi' 1 loadcse-forward
-    assert_regex_count_at_least "$_body" '^[[:space:]]+movq %r[a-z0-9]+, 16\(%rdi\)$' 1 loadcse-forward
+    # GAP4's property is ONE len load and ONE data load surviving the
+    # interleaved element stores; the destination registers are allocator
+    # choices, not part of the property (the phi-web ordering rework moved
+    # them without adding a load).
+    assert_regex_count_eq "$_body" '^[[:space:]]+movq 8\(%rdi\), %r[a-z0-9]+$' 1 loadcse-forward
+    assert_regex_count_eq "$_body" '^[[:space:]]+movq \(%rdi\), %r[a-z0-9]+$' 1 loadcse-forward
+    _data_reg=$(sed -n 's/^[[:space:]]*movq (%rdi), \(%r[a-z0-9]*\)$/\1/p' "$_body" | head -n 1)
+    assert_regex_count_at_least "$_body" "^[[:space:]]+movq %r[a-z0-9]+, 16\\($_data_reg\\)$" 1 loadcse-forward
 }
 
 check_switch_dispatch_scavenge() {

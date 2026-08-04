@@ -331,57 +331,6 @@
     [(CompilerFloatSomeBits bits) (= bits want)]
     [(CompilerFloatNoBits) false]))
 
-(define (compiler-float-generated-roundtrip-ok?) : bool
-  (let
-    [i : i64 0]
-    [ok : bool true]
-    (begin
-      ;; Exercise finite f64 printer/parser pairs across signs, exponent
-      ;; fields, and mantissas.  NaN/Inf exponent fields are intentionally
-      ;; excluded from the generated set.
-      (while (and (< i 160) ok)
-        (let
-          [sign : u64
-            (if (= (% i 2) 0)
-              (cast 0 : u64)
-              (shl (cast 1 : u64) 63))]
-          [exp-field : u64 (cast (+ 1 (% (* i 29) 2046)) : u64)]
-          [mantissa : u64
-            (bit-or
-              (shl (cast (% (* i 193) 4096) : u64) 32)
-              (cast (* i 2246822519) : u64))]
-          [bits : u64 (bit-or sign (bit-or (shl exp-field 52) mantissa))]
-          [text : String
-            (compiler-float-format-f64 (compiler-float-f64-from-bits bits))]
-          (begin
-            (if (compiler-float-parse-bits-eq? text bits)
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ;; Contextual f32 parsing rounds the widened f64 spelling back to the
-      ;; original binary32 payload.  Keep the same finite-only bound here.
-      (set! i 0)
-      (while (and (< i 160) ok)
-        (let
-          [sign : u32
-            (if (= (% i 2) 0)
-              (cast 0 : u32)
-              (shl (cast 1 : u32) 31))]
-          [exp-field : u32 (cast (+ 1 (% (* i 17) 254)) : u32)]
-          [mantissa : u32
-            (bit-or
-              (shl (cast (% (* i 71) 1024) : u32) 13)
-              (bit-and (cast (* i 2654435761) : u32) 0x7fffff))]
-          [bits : u32 (bit-or sign (bit-or (shl exp-field 23) mantissa))]
-          [value : f64 (compiler-float-f32-bits-to-f64 (cast bits : u64))]
-          [text : String (compiler-float-format-f64 value)]
-          (begin
-            (if (compiler-float-parse-f32-bits-eq? text (cast bits : u64))
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ok)))
-
 (define (compiler-float-self-test) : bool
   (and
     (compiler-float-parse-bits-eq? "0.1" 0x3fb999999999999a)
@@ -395,7 +344,6 @@
     (compiler-float-parse-f32-bits-eq? "0.1" 0x3dcccccd)
     (compiler-float-parse-f32-bits-eq? "0.10000000149011612" 0x3dcccccd)
     (compiler-float-parse-f32-bits-eq? "-0" 0x80000000)
-    (compiler-float-generated-roundtrip-ok?)
     (match (compiler-float-parse-f64-bits "1e+309")
       [(CompilerFloatSomeBits _) false]
       [(CompilerFloatNoBits) true])

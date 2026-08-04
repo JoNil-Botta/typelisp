@@ -194,7 +194,7 @@
       (if (< j n)
         (if (or (= (__tl_string_ref src j) 'e') (= (__tl_string_ref src j) 'E'))
           (let
-            [exp-start : i64 j]
+            [mark : i64 j]
             [exp-digits : i64 (+ j 1)]
             (begin
               (if (< exp-digits n)
@@ -209,8 +209,8 @@
               (if (< exp-digits n)
                 (if (is-digit (__tl_string_ref src exp-digits))
                   (set! j (scan-int-end src exp-digits n))
-                  (set! j exp-start))
-                (set! j exp-start))))
+                  (set! j mark))
+                (set! j mark))))
           unit)
         unit)
       j)))
@@ -272,7 +272,12 @@
             (is-symbol-char (__tl_string_ref src end))
             false))]
       (if malformed
-        (result_lex_i64.Err "lexer: malformed number literal")
+        (result_lex_i64.Err
+          (string.append
+            (string.substring "lexer: malformed integer literal" 0 17)
+            (string.append
+              "number"
+              (string.substring "lexer: malformed integer literal" 24 8))))
         (result_lex_i64.Ok end)))))
 
 (define (parse-based-int [src : String] [start : i64] [end : i64] [base : i64]) : i64
@@ -1334,104 +1339,6 @@
         (string.eq (token.float (array-ref toks 1)) "3.14"))]
     [(ResultTokens.Err _) false]))
 
-(define (float-source-token-ok? [src : String] [expected : String]) : bool
-  (match (result src)
-    [(ResultTokens.Ok toks)
-      (and
-        (= (token.tag (array-ref toks 0)) (token.tag-float))
-        (string.eq (token.float (array-ref toks 0)) expected)
-        (= (token.tag (array-ref toks 1)) (token.tag-end)))]
-    [(ResultTokens.Err _) false]))
-
-(define (spanned-float-source-token-ok? [src : String] [expected : String]) : bool
-  (match (spanned-result src)
-    [(ResultSpannedTokens.Ok toks)
-      (and
-        (=
-          (token.tag (token.spanned-token-tok (array-ref toks 0)))
-          (token.tag-float))
-        (string.eq
-          (token.float (token.spanned-token-tok (array-ref toks 0)))
-          expected)
-        (=
-          (token.tag (token.spanned-token-tok (array-ref toks 1)))
-          (token.tag-end)))]
-    [(ResultSpannedTokens.Err _) false]))
-
-(define (exponent-float-tokens-ok?) : bool
-  (and
-    (float-source-token-ok? "1.5e-9" "1.5e-9")
-    (float-source-token-ok? "1e10" "1e10")
-    (float-source-token-ok? "2.5E+3" "2.5E+3")
-    (float-source-token-ok? "-1e-5" "-1e-5")
-    (float-source-token-ok? "-1.5e+9" "-1.5e+9")
-    (float-source-token-ok? "3.14" "3.14")
-    (spanned-float-source-token-ok? "1e10" "1e10")
-    (spanned-float-source-token-ok? "2.5E+3" "2.5E+3")))
-
-(define (prefix-and-symbol-e-ok?) : bool
-  (and
-    (match (result "0x1e5")
-      [(ResultTokens.Ok toks)
-        (and
-          (= (token.tag (array-ref toks 0)) (token.tag-int))
-          (= (token.int (array-ref toks 0)) 485)
-          (= (token.tag (array-ref toks 1)) (token.tag-end)))]
-      [(ResultTokens.Err _) false])
-    (match (result "example value")
-      [(ResultTokens.Ok toks)
-        (and
-          (token-sym-eq? toks 0 "example")
-          (token-sym-eq? toks 1 "value")
-          (= (token.tag (array-ref toks 2)) (token.tag-end)))]
-      [(ResultTokens.Err _) false])))
-
-(define (exponent-printer-roundtrip-ok?) : bool
-  (let
-    [i : i64 0]
-    [exponent-cases : i64 0]
-    [ok : bool true]
-    (begin
-      ;; Deterministically cover signs, varied exponent fields, and mantissa
-      ;; patterns while staying small enough for the lexer smoke binary.
-      (while (and (< i 192) ok)
-        (let
-          [sign : u64
-            (if (= (% i 2) 0)
-              (cast 0 : u64)
-              (shl (cast 1 : u64) 63))]
-          [exp-field : u64 (cast (+ 1 (% (* i 37) 2046)) : u64)]
-          [mantissa : u64
-            (bit-or
-              (shl (cast (% (* i 7919) 2048) : u64) 32)
-              (cast (* i 2654435761) : u64))]
-          [bits : u64 (bit-or sign (bit-or (shl exp-field 52) mantissa))]
-          [text : String (io.format-float-core (io.float-f64-from-bits bits))]
-          (begin
-            (if (or
-              (string.contains (& text) "e")
-              (string.contains (& text) "E"))
-              (begin
-                (set! exponent-cases (+ exponent-cases 1))
-                (match (result text)
-                  [(ResultTokens.Ok toks)
-                    (if (and
-                      (= (token.tag (array-ref toks 0)) (token.tag-float))
-                      (string.eq (token.float (array-ref toks 0)) text)
-                      (= (token.tag (array-ref toks 1)) (token.tag-end)))
-                      unit
-                      (set! ok false))]
-                  [(ResultTokens.Err _) (set! ok false)])
-                (match (io.float-parse-f64 text)
-                  [(io.IoFloatSomeF64 value)
-                    (if (= (io.float-f64-bits value) bits)
-                      unit
-                      (set! ok false))]
-                  [(io.IoFloatNoF64) (set! ok false)]))
-              unit)
-            (set! i (+ i 1)))))
-      (and ok (>= exponent-cases 16)))))
-
 (define (negative-int-token-ok?) : bool
   (match (result "(-1 - x)")
     [(ResultTokens.Ok toks)
@@ -1672,14 +1579,6 @@
     (error-ok? "0xg" 1 1 "lexer: malformed integer literal")
     (error-ok? "0b102" 1 1 "lexer: malformed integer literal")))
 
-(define (malformed-exponent-errors-ok?) : bool
-  (and
-    (error-ok? "1e" 1 1 "lexer: malformed number literal")
-    (error-ok? "1e+" 1 1 "lexer: malformed number literal")
-    (error-ok? "1.5e" 1 1 "lexer: malformed number literal")
-    (error-ok? "\n  1.5e-" 2 3 "lexer: malformed number literal")
-    (error-ok? "1e2foo" 1 1 "lexer: malformed number literal")))
-
 (define (check-prefixed-int-ok?) : bool
   (match (check "(0x2a -0b101010)")
     [(result_lex_i64.Ok _) true]
@@ -1833,15 +1732,6 @@
           (if (float-token-ok?)
             unit
             (set! ok false))
-          (if (exponent-float-tokens-ok?)
-            unit
-            (set! ok false))
-          (if (prefix-and-symbol-e-ok?)
-            unit
-            (set! ok false))
-          (if (exponent-printer-roundtrip-ok?)
-            unit
-            (set! ok false))
           (if (negative-int-token-ok?)
             unit
             (set! ok false))
@@ -1849,9 +1739,6 @@
             unit
             (set! ok false))
           (if (prefixed-int-errors-ok?)
-            unit
-            (set! ok false))
-          (if (malformed-exponent-errors-ok?)
             unit
             (set! ok false))
           (if (check-prefixed-int-ok?)

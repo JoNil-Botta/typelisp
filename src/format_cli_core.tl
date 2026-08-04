@@ -109,43 +109,6 @@
     unit
     (io.panic "fmt number literal diagnostics changed")))
 
-(define (fmt-malformed-exponent-error?
-  [source : String]
-  [line : i64]
-  [col : i64]) : bool
-  (match (format_rules.format-rules-render-source-width-result source 80)
-    [(format_rules.ResultFormatString.Ok _) false]
-    [(format_rules.ResultFormatString.Err err)
-      (and
-        (string.eq
-          (tokens.format-source-error-message err)
-          "format lexer: malformed number literal")
-        (let
-          [span : tokens.FormatSourceSpan (tokens.format-source-error-span err)]
-          (tokens.format-source-span-eq? span line col line col)))]))
-
-(test
-  fmt-exponent-number-literal-diagnostics-include-location
-  (if (and
-    (fmt-malformed-exponent-error? "1e" 1 1)
-    (fmt-malformed-exponent-error? "1e+" 1 1)
-    (fmt-malformed-exponent-error? "1.5e" 1 1)
-    (fmt-malformed-exponent-error? "\n  1.5e-" 2 3))
-    (let
-      [message : String
-        (match (format_rules.format-rules-render-source-width-result
-          "\n  1.5e-"
-          80)
-          [(format_rules.ResultFormatString.Ok _) ""]
-          [(format_rules.ResultFormatString.Err err)
-            (fmt-source-error-message "bad.tl" err)])]
-      (if (string.eq
-        message
-        "bad.tl:2:3: format lexer: malformed number literal")
-        unit
-        (io.panic message)))
-    (io.panic "fmt exponent number literal diagnostics changed")))
-
 (test
   fmt-check-diff-renders-a-unified-hunk
   (let

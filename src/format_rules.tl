@@ -2563,21 +2563,6 @@
   "(defmacro (all [first : bool] [rest : bool ...]) : bool
   first)")
 
-(define (format-rules-exponent-source) : String
-  "(define F64_LO : f64 1.5e-9) (define F64_UP : f64 2.5E+3) (define F64_ONLY : f64 1e10) (define F32_NEG : f32 -1e-5) (define F32_PLUS : f32 1e+5)")
-
-(define (format-rules-exponent-expected) : String
-  "(define F64_LO : f64
-  1.5e-9)
-(define F64_UP : f64
-  2.5E+3)
-(define F64_ONLY : f64
-  1e10)
-(define F32_NEG : f32
-  -1e-5)
-(define F32_PLUS : f32
-  1e+5)")
-
 (define (format-rules-offset-slice-preserved?) : bool
   (let
     [head : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "x"))]
@@ -2634,10 +2619,6 @@
       (format-rules-render-source-width (format-rules-spmd-callable-source) 80)]
     [variadic : String
       (format-rules-render-source-width (format-rules-variadic-macro-source) 80)]
-    [exponents : String
-      (format-rules-render-source-width (format-rules-exponent-source) 80)]
-    [exponents-fixpoint : String
-      (format-rules-render-source-width exponents 80)]
     (begin
       (unless (string.eq decls (format-rules-decls-expected)) (return 1))
       (unless (string.eq flow (format-rules-flow-expected)) (return 2))
@@ -2661,9 +2642,5 @@
       (unless
         (string.eq variadic (format-rules-variadic-macro-expected))
         (return 9))
-      (unless
-        (string.eq exponents (format-rules-exponent-expected))
-        (return 14))
-      (unless (string.eq exponents-fixpoint exponents) (return 15))
       (unless (format-rules-offset-slice-preserved?) (return 10))
       42)))

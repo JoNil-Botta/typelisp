@@ -7963,9 +7963,26 @@
         0)
         unit
         (set! ok false))
-      ;; A reference field is substitution-dependent.
+      ;; A reference wrapper around an invariant pointee is invariant itself.
       (if (compiler-typecheck-generated-decl-scan?
         "(defstruct RefBox (:lifetimes a) (value (& a i64)))"
+        0)
+        (set! ok false)
+        unit)
+      ;; A dependent fixed array remains dependent beneath a reference.
+      (if (compiler-typecheck-generated-decl-scan?
+        "(defstruct RefArray (:lifetimes a) (value (& a (Array i64 4))))"
+        0)
+        unit
+        (set! ok false))
+      ;; Raw pointers follow the same invariant-wrapper rule.
+      (if (compiler-typecheck-generated-decl-scan?
+        "(define (ptr-id [p : (Ptr i64)]) : (Ptr i64) p)"
+        0)
+        (set! ok false)
+        unit)
+      (if (compiler-typecheck-generated-decl-scan?
+        "(define (ptr-array [p : (Ptr (Array i64 4))]) : (Ptr (Array i64 4)) p)"
         0)
         unit
         (set! ok false))
@@ -8003,12 +8020,12 @@
         0)
         unit
         (set! ok false))
-      ;; A reference parameter type is substitution-dependent.
+      ;; A reference parameter around an invariant pointee is invariant.
       (if (compiler-typecheck-generated-decl-scan?
         "(define (deref [p : (& caller i64)]) : i64 p)"
         0)
-        unit
-        (set! ok false))
+        (set! ok false)
+        unit)
       ;; A fixed array in a return type is substitution-dependent.
       (if (compiler-typecheck-generated-decl-scan?
         "(define (pair-array) : (Array i64 2) (array 7 9))"

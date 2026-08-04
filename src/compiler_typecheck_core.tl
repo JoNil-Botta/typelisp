@@ -4943,6 +4943,10 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-generated-decl-checks-proof-reused : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-abstract-proofs-recorded : i64
     0))
 (cfg
@@ -5180,6 +5184,7 @@
       (set! compiler-tc-macro-generated-decl-checks 0)
       (set! compiler-tc-macro-generated-decl-checks-invariant-eligible 0)
       (set! compiler-tc-macro-generated-decl-checks-concrete-required 0)
+      (set! compiler-tc-macro-generated-decl-checks-proof-reused 0)
       (set! compiler-tc-macro-abstract-proofs-recorded 0)
       (set! compiler-tc-macro-generated-module-memo-hits 0)
       (set! compiler-tc-macro-generated-module-catalog-builds 0)
@@ -5563,23 +5568,29 @@
       (match (ast.ast-decl-generated-meta decl)
         [(ast.AstGeneratedDeclMeta.Some generator _ _ _)
           (begin
-            (set!
-              compiler-tc-macro-generated-decl-checks
-              (+ compiler-tc-macro-generated-decl-checks 1))
-            ;; Report-only lane split for #5296: a generated declaration is an
-            ;; invariant-eligible candidate when its generator has a persisted
-            ;; abstract-validation proof and the declaration itself is free of
-            ;; substitution-dependent constructs. Checking behavior is
-            ;; unchanged; the totals still sum to generated_decl_checks.
+            ;; The lane split is independent of whether this success was
+            ;; concrete or proof-reused.  A declaration is invariant-eligible
+            ;; exactly when its generator proof is complete and the tightened
+            ;; dependency scan is clear; every other success is
+            ;; concrete-required.
             (if (and
-              (tc-macro-abstract-proof-exists-for-macro? generator)
+              (tc-proof-complete? generator)
               (not (tc-generated-decl-dependent-construct? ctx decl)))
               (set!
                 compiler-tc-macro-generated-decl-checks-invariant-eligible
                 (+ compiler-tc-macro-generated-decl-checks-invariant-eligible 1))
               (set!
                 compiler-tc-macro-generated-decl-checks-concrete-required
-                (+ compiler-tc-macro-generated-decl-checks-concrete-required 1))))]
+                (+ compiler-tc-macro-generated-decl-checks-concrete-required 1)))
+            ;; Actual checker calls and proof reuses are mutually exclusive;
+            ;; count the latter from the dispatch bit set for this attempt.
+            (if tc-proof-reuse-last-skip
+              (set!
+                compiler-tc-macro-generated-decl-checks-proof-reused
+                (+ compiler-tc-macro-generated-decl-checks-proof-reused 1))
+              (set!
+                compiler-tc-macro-generated-decl-checks
+                (+ compiler-tc-macro-generated-decl-checks 1))))]
         [(ast.AstGeneratedDeclMeta.No) unit])
       (match decl
         [(ast.AstDecl.Def decl-meta _ _ _)
@@ -5823,6 +5834,9 @@
       (compiler-tc-macro-counter-profile-line
         "generated_decl_checks_concrete_required"
         compiler-tc-macro-generated-decl-checks-concrete-required)
+      (compiler-tc-macro-counter-profile-line
+        "generated_decl_checks_proof_reused"
+        compiler-tc-macro-generated-decl-checks-proof-reused)
       (compiler-tc-macro-counter-profile-line
         "generated_module_abstract_proofs"
         compiler-tc-macro-abstract-proofs-recorded)
@@ -53859,7 +53873,7 @@
 
 ;; --- persisted abstract-validation proofs (#5296) -----------------------------
 ;;
-;; Report-only instrumentation for the future generated-module skip lane.
+;; Persisted abstract-validation proofs for the live generated-module skip lane.
 ;; `tc-check-defmacro-abstract-param` validates every kind-constrained macro
 ;; type operand abstractly at definition time; this table keeps the successful
 ;; results instead of discarding them: one entry per (macro-key, param-name)
@@ -53867,14 +53881,16 @@
 ;; display string `macro-wrap-generated-decl` stamps into generated declaration
 ;; metadata (`macro-decl-name-display` over the definition module), so a
 ;; generated declaration can test whether its generator owns any persisted
-;; proof without re-resolving the macro. Entries hold only intern-table ids in
-;; startup-allocated arrays: nothing here points into per-compile arenas, so
-;; the table stays readable across the arena rewinds that end a typecheck. A
-;; repeated proof for the same key overwrites in place. The table resets at
-;; every per-program macro-expansion boundary next to
-;; `macro-generated-module-memo-reset!`; entries past the fixed capacity are
-;; dropped, which is the conservative direction (the generator then reports no
-;; proof and its declarations land in the concrete-required lane).
+;; proof without re-resolving the macro. Complete-generator entries are owned
+;; String keys rather than intern ids because their proof lifetime crosses
+;; compatibility-table installs inside one macro-expansion program. Fixed slot
+;; storage lives in the never-reset global table arena, while the bounded key
+;; bytes live in a per-program arena destroyed on reset. A repeated proof for
+;; the same key is a no-op. The table resets at every per-program
+;; macro-expansion boundary next to `macro-generated-module-memo-reset!`;
+;; entries past the fixed capacity are dropped, which is the conservative
+;; direction (the generator then reports no proof and its declarations land in
+;; the concrete-required lane).
 (define tc-macro-abstract-proof-capacity : i64
   4096)
 (define tc-macro-abstract-proof-macro-keys : (__tl_dyn-array i64)
@@ -53885,9 +53901,2087 @@
   (array.make-array i64 4096))
 (define tc-macro-abstract-proof-count : i64
   0)
+(define tc-proof-complete-capacity : i64
+  4096)
+(define tc-proof-complete-keys : (__tl_dyn-array String)
+  (array.make-array String 0))
+(define tc-proof-complete-count : i64
+  0)
+(define tc-proof-complete-storage-ready : bool
+  false)
+(define tc-proof-complete-key-arena : i64
+  0)
+(define tc-proof-complete-ready : bool
+  false)
+
+;; The first successful concrete declaration owns the family row's checked
+;; declaration and identity; duplicate notes preserve both values exactly.
+(define tc-generated-family-capacity : i64
+  4096)
+(define tc-generated-family-generators : (__tl_dyn-array i64)
+  (array.make-array i64 4096))
+(define tc-generated-family-items : (__tl_dyn-array i64)
+  (array.make-array i64 4096))
+(define tc-generated-family-identities : (__tl_dyn-array i64)
+  (array.make-array i64 4096))
+(define tc-generated-family-decls : (__tl_dyn-array ast.AstDecl)
+  (array.make-array ast.AstDecl 4096))
+(define tc-generated-family-count : i64
+  0)
+(define tc-generated-family-generation : i64
+  -1)
+(define tc-generated-family-table-id : i64
+  -1)
+(define tc-generated-family-ready : bool
+  false)
+(define tc-generated-identity-capacity : i64
+  4096)
+(define tc-generated-identity-operands-per-identity : i64
+  16)
+(define tc-generated-identity-keys : (__tl_dyn-array i64)
+  (array.make-array i64 4096))
+(define tc-generated-identity-operand-counts : (__tl_dyn-array i64)
+  (array.make-array i64 4096))
+(define tc-generated-identity-operand-type-keys : (__tl_dyn-array i64)
+  (array.make-array i64 65536))
+(define tc-generated-identity-operand-kind-keys : (__tl_dyn-array i64)
+  (array.make-array i64 65536))
+(define tc-generated-identity-count : i64
+  0)
+(define tc-generated-identity-generation : i64
+  -1)
+(define tc-generated-identity-table-id : i64
+  -1)
+(define tc-generated-identity-ready : bool
+  false)
+
+;; This fast path is set only after at least one usable complete-proof entry
+;; exists. Expansion precedes final defmacro proof persistence, so identity
+;; capture is admitted only for syntactically complete fixed-type candidates;
+;; the lane and all query paths remain gated by this bit and are non-inserting.
+(define tc-proof-reuse-any-complete-proofs : bool
+  false)
+(define tc-proof-reuse-skips-total : i64
+  0)
+(define tc-proof-reuse-last-skip : bool
+  false)
+
+(define (tc-proof-reuse-skips-total-value) : i64
+  tc-proof-reuse-skips-total)
+
+(define tc-proof-reuse-identity-scratch-type-keys : (__tl_dyn-array i64)
+  (array.make-array i64 16))
+(define tc-proof-reuse-identity-scratch-kind-keys : (__tl_dyn-array i64)
+  (array.make-array i64 16))
+(define tc-proof-reuse-identity-scratch-count : i64
+  0)
+
+;; One bounded comparison session is shared by the generated-declaration proof
+;; lane.  The session owns only identity metadata and fixed comparison state;
+;; a failed or uninitialized session is never usable by the exact primitives.
+(define tc-proof-reuse-session-first-identity-id : i64
+  -1)
+(define tc-proof-reuse-session-next-identity-id : i64
+  -1)
+(define tc-proof-reuse-session-first-identity-slot : i64
+  -1)
+(define tc-proof-reuse-session-next-identity-slot : i64
+  -1)
+(define tc-proof-reuse-session-identity-count : i64
+  0)
+(define tc-proof-reuse-session-used-operand-mask : i64
+  0)
+(define tc-proof-reuse-session-invalid : bool
+  false)
+
+;; Lexical locals are recorded as bounded first/next name pairs while one
+;; declaration is walked.  Equal names outside this table are fixed values
+;; (globals/helpers) rather than locals; the final Rule-4 guard rejects that
+;; combination whenever a generated identity substitution was observed.
+(define tc-proof-reuse-session-local-capacity : i64
+  128)
+(define tc-proof-reuse-session-local-first-names : (__tl_dyn-array i64)
+  (array.make-array i64 128))
+(define tc-proof-reuse-session-local-next-names : (__tl_dyn-array i64)
+  (array.make-array i64 128))
+(define tc-proof-reuse-session-local-count : i64
+  0)
+(define tc-proof-reuse-session-local-overflow : bool
+  false)
+(define tc-proof-reuse-session-saw-substitution : bool
+  false)
+(define tc-proof-reuse-session-saw-nonlocal-value : bool
+  false)
+
+;; An unchanged complete type subtree beside a substitution is a fixed
+;; signature/annotation boundary.  Direct DefStruct field shapes may opt into
+;; the narrow exception below after their entire declaration compares exact.
+(define tc-proof-reuse-session-saw-fixed-type : bool
+  false)
+(define tc-proof-reuse-session-allow-mixed-struct : bool
+  false)
+
+;; These expression forms rely on an implicit expected type or contextual
+;; relation that is not represented by an AstType node.  Exact syntax is still
+;; useful for catalog shape, but a changed recorded type operand must fall back
+;; to concrete checking whenever this bounded fact was observed.
+(define tc-proof-reuse-session-saw-context-sensitive-expr : bool
+  false)
+
+;; Literal facts are deliberately bounded.  The count, rather than the
+;; backing storage contents, is authoritative after a reset; an over-capacity
+;; append poisons the session so the final rule guard fails closed.
+(define tc-proof-reuse-session-literal-capacity : i64
+  128)
+(define tc-proof-reuse-session-literal-values : (__tl_dyn-array i64)
+  (array.make-array i64 128))
+(define tc-proof-reuse-session-literal-texts : (__tl_dyn-array String)
+  (array.make-array String 128))
+(define tc-proof-reuse-session-literal-count : i64
+  0)
+(define tc-proof-reuse-session-literal-overflow : bool
+  false)
+(define tc-proof-reuse-session-saw-operator : bool
+  false)
+(define tc-proof-reuse-session-saw-shift : bool
+  false)
+(define tc-proof-reuse-session-saw-equality-or-clone : bool
+  false)
+(define tc-proof-reuse-session-saw-reflection : bool
+  false)
+(define tc-proof-reuse-session-saw-non-integer-literal : bool
+  false)
+
+(define (tc-proof-complete-bucket [macro-key-hash : i64]) : i64
+  (bit-and macro-key-hash (- tc-proof-complete-capacity 1)))
+
+(define (tc-proof-complete-storage-ensure!) : unit
+  (if tc-proof-complete-storage-ready
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+      [_set-owner : unit
+        (unsafe
+          (arena.tl_arena_set owner))]
+      (begin
+        (set!
+          tc-proof-complete-keys
+          (array.make-array String tc-proof-complete-capacity))
+        (set! tc-proof-complete-storage-ready true)
+        (tc-lazy-global-table-arena-finish! previous owner)))))
+
+(define (tc-proof-complete-key-arena-ensure!) : i64
+  (if (= tc-proof-complete-key-arena 0)
+    (begin
+      (set! tc-proof-complete-key-arena (arena.tl_arena_make_small))
+      tc-proof-complete-key-arena)
+    tc-proof-complete-key-arena))
+
+(define (tc-proof-complete-key-arena-reset!) : unit
+  (if (= tc-proof-complete-key-arena 0)
+    unit
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy tc-proof-complete-key-arena))
+      (set! tc-proof-complete-key-arena 0))))
+
+(define (tc-proof-complete-key-arena-finish! [previous : i64] [owner : i64]) : unit
+  (let
+    [head : i64 (arena.tl_arena_current)]
+    (begin
+      (set! tc-proof-complete-key-arena head)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous owner)
+            head
+            previous))))))
+
+(define (tc-proof-complete-copy-key [macro-key : String]) : String
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (tc-proof-complete-key-arena-ensure!)]
+    [_set-owner : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [copied : String (string.copy macro-key)]
+    (begin
+      (tc-proof-complete-key-arena-finish! previous owner)
+      copied)))
+
+(define (tc-proof-complete-ensure!) : unit
+  (begin
+    (tc-proof-complete-storage-ensure!)
+    (if tc-proof-complete-ready
+      unit
+      (let
+        [index : i64 0]
+        (begin
+          (while (< index tc-proof-complete-capacity)
+            (begin
+              (array-set! tc-proof-complete-keys index "")
+              (set! index (+ index 1))))
+          (set! tc-proof-complete-count 0)
+          (set! tc-proof-complete-ready true)
+          (set! tc-proof-reuse-any-complete-proofs false))))))
+
+(define (tc-proof-complete-reset!) : unit
+  (begin
+    (tc-proof-complete-key-arena-reset!)
+    (set! tc-proof-complete-ready false)
+    (set! tc-proof-complete-count 0)
+    (set! tc-proof-reuse-any-complete-proofs false)))
+
+(define (tc-proof-complete-note-at
+  [macro-key : String]
+  [cursor : i64]
+  [steps : i64]) : unit
+  (if (>= steps tc-proof-complete-capacity)
+    unit
+    (let
+      [slot : String (array-ref tc-proof-complete-keys cursor)]
+      (cond
+        [(= (string.string-length slot) 0)
+          (if (>= (* tc-proof-complete-count 2) tc-proof-complete-capacity)
+            unit
+            (begin
+              (array-set!
+                tc-proof-complete-keys
+                cursor
+                (tc-proof-complete-copy-key macro-key))
+              (set! tc-proof-complete-count (+ tc-proof-complete-count 1))
+              (set! tc-proof-reuse-any-complete-proofs true)))]
+        [(string.eq slot macro-key)
+          (set! tc-proof-reuse-any-complete-proofs true)]
+        [else
+          (tc-proof-complete-note-at
+            macro-key
+            (bit-and (+ cursor 1) (- tc-proof-complete-capacity 1))
+            (+ steps 1))]))))
+
+(define (tc-proof-complete-note! [macro-key : String]) : unit
+  (if (= (string.string-length macro-key) 0)
+    unit
+    (begin
+      (tc-proof-complete-ensure!)
+      (tc-proof-complete-note-at
+        macro-key
+        (tc-proof-complete-bucket (ci.intern-hash macro-key))
+        0))))
+
+(define (tc-proof-complete-lookup-at
+  [macro-key : String]
+  [cursor : i64]
+  [steps : i64]) : bool
+  (if (>= steps tc-proof-complete-capacity)
+    false
+    (let
+      [slot : String (array-ref tc-proof-complete-keys cursor)]
+      (if (= (string.string-length slot) 0)
+        false
+        (if (string.eq slot macro-key)
+          true
+          (tc-proof-complete-lookup-at
+            macro-key
+            (bit-and (+ cursor 1) (- tc-proof-complete-capacity 1))
+            (+ steps 1)))))))
+
+(define (tc-proof-complete? [macro-key : String]) : bool
+  (if (or
+    (not tc-proof-reuse-any-complete-proofs)
+    (= (string.string-length macro-key) 0))
+    false
+    (tc-proof-complete-lookup-at
+      macro-key
+      (tc-proof-complete-bucket (ci.intern-hash macro-key))
+      0)))
+
+(define (tc-generated-family-bucket [generator-id : i64] [item-id : i64]) : i64
+  (bit-and
+    (*
+      (bit-xor (* (+ generator-id 1) 2654435761) (* (+ item-id 1) 2246822519))
+      3266489917)
+    (- tc-generated-family-capacity 1)))
+
+(define (tc-generated-family-ensure!) : unit
+  (if (and
+    tc-generated-family-ready
+    (= tc-generated-family-generation (ci.intern-generation))
+    (= tc-generated-family-table-id (ci.intern-active-table-id)))
+    unit
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index tc-generated-family-capacity)
+          (begin
+            (array-set! tc-generated-family-generators index 0)
+            (array-set! tc-generated-family-items index 0)
+            (array-set! tc-generated-family-identities index 0)
+            (set! index (+ index 1))))
+        (set! tc-generated-family-count 0)
+        (set! tc-generated-family-generation (ci.intern-generation))
+        (set! tc-generated-family-table-id (ci.intern-active-table-id))
+        (set! tc-generated-family-ready true)))))
+
+(define (tc-generated-family-reset!) : unit
+  (begin
+    (set! tc-generated-family-ready false)
+    (set! tc-generated-family-count 0)
+    (set! tc-generated-family-generation -1)
+    (set! tc-generated-family-table-id -1)))
+
+(define (tc-generated-family-note!
+  [generator : String]
+  [item : String]
+  [identity : String]
+  [decl : ast.AstDecl]) : unit
+  (let
+    [generator-id : i64 (ci.intern generator)]
+    [item-id : i64 (ci.intern item)]
+    [identity-id : i64 (tc-generated-module-name-id identity)]
+    (begin
+      (tc-generated-family-ensure!)
+      (let
+        [cursor : i64 (tc-generated-family-bucket generator-id item-id)]
+        [generator-key : i64 (+ generator-id 1)]
+        [item-key : i64 (+ item-id 1)]
+        [identity-key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps tc-generated-family-capacity))
+            (let
+              [slot-generator : i64
+                (array-ref tc-generated-family-generators cursor)]
+              (cond
+                [(= slot-generator 0)
+                  (if (>=
+                    (* tc-generated-family-count 2)
+                    tc-generated-family-capacity)
+                    (set! done true)
+                    (begin
+                      (array-set!
+                        tc-generated-family-generators
+                        cursor
+                        generator-key)
+                      (array-set! tc-generated-family-items cursor item-key)
+                      (array-set!
+                        tc-generated-family-identities
+                        cursor
+                        identity-key)
+                      (array-set! tc-generated-family-decls cursor decl)
+                      (set!
+                        tc-generated-family-count
+                        (+ tc-generated-family-count 1))
+                      (set! done true)))]
+                [(and
+                    (= slot-generator generator-key)
+                    (= (array-ref tc-generated-family-items cursor) item-key))
+                  (set! done true)]
+                [else
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and (+ cursor 1) (- tc-generated-family-capacity 1)))
+                    (set! steps (+ steps 1)))]))
+            unit))))))
+
+(define (tc-generated-family-slot-id [generator-id : i64] [item-id : i64]) : i64
+  (if (or (< generator-id 0) (< item-id 0))
+    -1
+    (begin
+      (tc-generated-family-ensure!)
+      (let
+        [cursor : i64 (tc-generated-family-bucket generator-id item-id)]
+        [generator-key : i64 (+ generator-id 1)]
+        [item-key : i64 (+ item-id 1)]
+        [steps : i64 0]
+        [out : i64 -1]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps tc-generated-family-capacity))
+            (let
+              [slot-generator : i64
+                (array-ref tc-generated-family-generators cursor)]
+              (if (= slot-generator 0)
+                (set! done true)
+                (if (and
+                  (= slot-generator generator-key)
+                  (= (array-ref tc-generated-family-items cursor) item-key))
+                  (begin
+                    (set! out cursor)
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and (+ cursor 1) (- tc-generated-family-capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          out)))))
+
+(define (tc-generated-family-slot-id-by-name
+  [generator : String]
+  [item : String]) : i64
+  (match (ci.intern-lookup generator)
+    [(InternLookupFound generator-id)
+      (match (ci.intern-lookup item)
+        [(InternLookupFound item-id)
+          (tc-generated-family-slot-id generator-id item-id)]
+        [(InternLookupMissing) -1])]
+    [(InternLookupMissing) -1]))
+
+(define (tc-generated-family-decl-at [slot : i64]) : ast.AstDecl
+  (if (and (>= slot 0) (< slot tc-generated-family-capacity))
+    (array-ref tc-generated-family-decls slot)
+    (ast.ast-decl-fallback)))
+
+(define (tc-generated-family-first-identity-id
+  [generator : String]
+  [item : String]) : i64
+  (let
+    [slot : i64 (tc-generated-family-slot-id-by-name generator item)]
+    (if (and (>= slot 0) (< slot tc-generated-family-capacity))
+      (- (array-ref tc-generated-family-identities slot) 1)
+      -1)))
+
+(define (tc-proof-reuse-identity-bucket [identity-id : i64]) : i64
+  (bit-and
+    (* (+ identity-id 1) 2654435761)
+    (- tc-generated-identity-capacity 1)))
+
+(define (tc-generated-identity-ensure!) : unit
+  (if (and
+    tc-generated-identity-ready
+    (= tc-generated-identity-generation (ci.intern-generation))
+    (= tc-generated-identity-table-id (ci.intern-active-table-id)))
+    unit
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index tc-generated-identity-capacity)
+          (begin
+            (array-set! tc-generated-identity-keys index 0)
+            (array-set! tc-generated-identity-operand-counts index 0)
+            (set! index (+ index 1))))
+        (set! tc-generated-identity-count 0)
+        (set! tc-generated-identity-generation (ci.intern-generation))
+        (set! tc-generated-identity-table-id (ci.intern-active-table-id))
+        (set! tc-generated-identity-ready true)))))
+
+(define (tc-generated-identity-reset!) : unit
+  (begin
+    (set! tc-generated-identity-ready false)
+    (set! tc-generated-identity-count 0)
+    (set! tc-generated-identity-generation -1)
+    (set! tc-generated-identity-table-id -1)))
+
+(define (tc-proof-reuse-identity-scratch-reset!) : unit
+  (set! tc-proof-reuse-identity-scratch-count 0))
+
+(define (tc-proof-reuse-identity-scratch-append!
+  [type-key : String]
+  [kind : String]) : unit
+  (if (< tc-proof-reuse-identity-scratch-count 0)
+    unit
+    (if (>=
+      tc-proof-reuse-identity-scratch-count
+      tc-generated-identity-operands-per-identity)
+      (set! tc-proof-reuse-identity-scratch-count -1)
+      (let
+        [index : i64 tc-proof-reuse-identity-scratch-count]
+        (begin
+          (array-set!
+            tc-proof-reuse-identity-scratch-type-keys
+            index
+            (ci.intern type-key))
+          (array-set!
+            tc-proof-reuse-identity-scratch-kind-keys
+            index
+            (ci.intern kind))
+          (set!
+            tc-proof-reuse-identity-scratch-count
+            (+ tc-proof-reuse-identity-scratch-count 1)))))))
+
+(define (tc-proof-reuse-session-identity-comparison-reset!) : unit
+  (begin
+    (set! tc-proof-reuse-session-first-identity-id -1)
+    (set! tc-proof-reuse-session-next-identity-id -1)
+    (set! tc-proof-reuse-session-first-identity-slot -1)
+    (set! tc-proof-reuse-session-next-identity-slot -1)
+    (set! tc-proof-reuse-session-identity-count 0)
+    (set! tc-proof-reuse-session-used-operand-mask 0)
+    (set! tc-proof-reuse-session-invalid false)))
+
+(define (tc-proof-reuse-session-comparison-reset!) : unit
+  (begin
+    (tc-proof-reuse-session-identity-comparison-reset!)
+    (set! tc-proof-reuse-session-local-count 0)
+    (set! tc-proof-reuse-session-local-overflow false)
+    (set! tc-proof-reuse-session-saw-substitution false)
+    (set! tc-proof-reuse-session-saw-nonlocal-value false)
+    (set! tc-proof-reuse-session-saw-fixed-type false)
+    (set! tc-proof-reuse-session-allow-mixed-struct false)
+    (set! tc-proof-reuse-session-saw-context-sensitive-expr false)
+    (set! tc-proof-reuse-session-literal-count 0)
+    (set! tc-proof-reuse-session-literal-overflow false)
+    (set! tc-proof-reuse-session-saw-operator false)
+    (set! tc-proof-reuse-session-saw-shift false)
+    (set! tc-proof-reuse-session-saw-equality-or-clone false)
+    (set! tc-proof-reuse-session-saw-reflection false)
+    (set! tc-proof-reuse-session-saw-non-integer-literal false)))
+
+(define (tc-proof-reuse-session-reset!) : unit
+  (tc-proof-reuse-session-comparison-reset!))
+
+(define (tc-proof-reuse-session-note-substitution!) : unit
+  (set! tc-proof-reuse-session-saw-substitution true))
+
+(define (tc-proof-reuse-session-local-pair-index
+  [first-name-id : i64]
+  [next-name-id : i64]
+  [index : i64]) : i64
+  (if (>= index tc-proof-reuse-session-local-count)
+    -1
+    (if (and
+      (=
+        first-name-id
+        (array-ref tc-proof-reuse-session-local-first-names index))
+      (= next-name-id (array-ref tc-proof-reuse-session-local-next-names index)))
+      index
+      (tc-proof-reuse-session-local-pair-index
+        first-name-id
+        next-name-id
+        (+ index 1)))))
+
+(define (tc-proof-reuse-session-note-local-pair!
+  [first-name-id : i64]
+  [next-name-id : i64]) : bool
+  (if (or
+    tc-proof-reuse-session-invalid
+    tc-proof-reuse-session-local-overflow
+    (< first-name-id 0)
+    (< next-name-id 0))
+    false
+    (if (>=
+      tc-proof-reuse-session-local-count
+      tc-proof-reuse-session-local-capacity)
+      (begin
+        (set! tc-proof-reuse-session-local-overflow true)
+        (set! tc-proof-reuse-session-invalid true)
+        false)
+      (begin
+        (array-set!
+          tc-proof-reuse-session-local-first-names
+          tc-proof-reuse-session-local-count
+          first-name-id)
+        (array-set!
+          tc-proof-reuse-session-local-next-names
+          tc-proof-reuse-session-local-count
+          next-name-id)
+        (set!
+          tc-proof-reuse-session-local-count
+          (+ tc-proof-reuse-session-local-count 1))
+        true))))
+
+(define (tc-proof-reuse-session-value-name-exact?
+  [first-name-id : i64]
+  [next-name-id : i64]) : bool
+  (if (not
+    (tc-proof-reuse-session-reference-name-id-exact? first-name-id next-name-id))
+    false
+    (if (= first-name-id next-name-id)
+      (if (>=
+        (tc-proof-reuse-session-local-pair-index first-name-id next-name-id 0)
+        0)
+        true
+        (begin
+          (set! tc-proof-reuse-session-saw-nonlocal-value true)
+          true))
+      false)))
+
+(define (tc-proof-reuse-identity-id-lookup [identity : String]) : i64
+  (match (ci.intern-lookup identity)
+    [(InternLookupFound source-id)
+      (match (ci.intern-generated-canonical-lookup identity)
+        [(InternLookupFound generated-id) generated-id]
+        [(InternLookupMissing) source-id])]
+    [(InternLookupMissing)
+      (match (ci.intern-generated-canonical-lookup identity)
+        [(InternLookupFound generated-id) generated-id]
+        [(InternLookupMissing) -1])]))
+
+(define (tc-generated-identity-slot-id [identity-id : i64]) : i64
+  (if (< identity-id 0)
+    -1
+    (begin
+      (tc-generated-identity-ensure!)
+      (let
+        [cursor : i64 (tc-proof-reuse-identity-bucket identity-id)]
+        [key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [out : i64 -1]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps tc-generated-identity-capacity))
+            (let
+              [slot : i64 (array-ref tc-generated-identity-keys cursor)]
+              (if (= slot 0)
+                (set! done true)
+                (if (= slot key)
+                  (begin
+                    (set! out cursor)
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and
+                        (+ cursor 1)
+                        (- tc-generated-identity-capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          out)))))
+
+(define (tc-generated-identity-slot-valid? [slot : i64]) : bool
+  (and
+    (>= slot 0)
+    (< slot tc-generated-identity-capacity)
+    (> (array-ref tc-generated-identity-keys slot) 0)))
+
+(define (tc-generated-identity-operand-count-slot [slot : i64]) : i64
+  (if (not (tc-generated-identity-slot-valid? slot))
+    -1
+    (let
+      [count : i64 (array-ref tc-generated-identity-operand-counts slot)]
+      (if (and
+        (>= count 0)
+        (<= count tc-generated-identity-operands-per-identity))
+        count
+        -1))))
+
+(define (tc-generated-identity-operand-type-key-id-at-slot
+  [slot : i64]
+  [index : i64]) : i64
+  (if (not (tc-generated-identity-slot-valid? slot))
+    -1
+    (let
+      [count : i64 (array-ref tc-generated-identity-operand-counts slot)]
+      (if (and
+        (>= count 0)
+        (<= count tc-generated-identity-operands-per-identity)
+        (>= index 0)
+        (< index count)
+        (< index tc-generated-identity-operands-per-identity))
+        (array-ref
+          tc-generated-identity-operand-type-keys
+          (+ (* slot tc-generated-identity-operands-per-identity) index))
+        -1))))
+
+(define (tc-generated-identity-operand-kind-id-at-slot
+  [slot : i64]
+  [index : i64]) : i64
+  (if (not (tc-generated-identity-slot-valid? slot))
+    -1
+    (let
+      [count : i64 (array-ref tc-generated-identity-operand-counts slot)]
+      (if (and
+        (>= count 0)
+        (<= count tc-generated-identity-operands-per-identity)
+        (>= index 0)
+        (< index count)
+        (< index tc-generated-identity-operands-per-identity))
+        (array-ref
+          tc-generated-identity-operand-kind-keys
+          (+ (* slot tc-generated-identity-operands-per-identity) index))
+        -1))))
+
+(define (tc-generated-identity-copy-scratch-at! [slot : i64] [index : i64]) : unit
+  (if (>= index tc-proof-reuse-identity-scratch-count)
+    unit
+    (begin
+      (array-set!
+        tc-generated-identity-operand-type-keys
+        (+ (* slot tc-generated-identity-operands-per-identity) index)
+        (array-ref tc-proof-reuse-identity-scratch-type-keys index))
+      (array-set!
+        tc-generated-identity-operand-kind-keys
+        (+ (* slot tc-generated-identity-operands-per-identity) index)
+        (array-ref tc-proof-reuse-identity-scratch-kind-keys index))
+      (tc-generated-identity-copy-scratch-at! slot (+ index 1)))))
+
+(define (tc-generated-identity-scratch-matches-at?
+  [slot : i64]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (=
+        (array-ref
+          tc-generated-identity-operand-type-keys
+          (+ (* slot tc-generated-identity-operands-per-identity) index))
+        (array-ref tc-proof-reuse-identity-scratch-type-keys index))
+      (=
+        (array-ref
+          tc-generated-identity-operand-kind-keys
+          (+ (* slot tc-generated-identity-operands-per-identity) index))
+        (array-ref tc-proof-reuse-identity-scratch-kind-keys index))
+      (tc-generated-identity-scratch-matches-at? slot (+ index 1) count))))
+
+(define (tc-generated-identity-note! [identity : String]) : unit
+  (let
+    [identity-id : i64 (tc-generated-module-name-id identity)]
+    (begin
+      (tc-generated-identity-ensure!)
+      (let
+        [cursor : i64 (tc-proof-reuse-identity-bucket identity-id)]
+        [key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps tc-generated-identity-capacity))
+            (let
+              [slot : i64 (array-ref tc-generated-identity-keys cursor)]
+              (cond
+                [(= slot 0)
+                  (if (>=
+                    (* tc-generated-identity-count 2)
+                    tc-generated-identity-capacity)
+                    (set! done true)
+                    (begin
+                      (array-set! tc-generated-identity-keys cursor key)
+                      (array-set!
+                        tc-generated-identity-operand-counts
+                        cursor
+                        tc-proof-reuse-identity-scratch-count)
+                      (if (< tc-proof-reuse-identity-scratch-count 0)
+                        unit
+                        (tc-generated-identity-copy-scratch-at! cursor 0))
+                      (set!
+                        tc-generated-identity-count
+                        (+ tc-generated-identity-count 1))
+                      (set! done true)))]
+                [(= slot key)
+                  (begin
+                    (if (or
+                      (<
+                        (array-ref tc-generated-identity-operand-counts cursor)
+                        0)
+                      (< tc-proof-reuse-identity-scratch-count 0)
+                      (not
+                        (=
+                          (array-ref
+                            tc-generated-identity-operand-counts
+                            cursor)
+                          tc-proof-reuse-identity-scratch-count))
+                      (not
+                        (tc-generated-identity-scratch-matches-at?
+                          cursor
+                          0
+                          tc-proof-reuse-identity-scratch-count)))
+                      (array-set!
+                        tc-generated-identity-operand-counts
+                        cursor
+                        -1)
+                      unit)
+                    (set! done true))]
+                [else
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and
+                        (+ cursor 1)
+                        (- tc-generated-identity-capacity 1)))
+                    (set! steps (+ steps 1)))]))
+            unit))))))
+
+(define (tc-generated-identity-operand-count [identity : String]) : i64
+  (tc-generated-identity-operand-count-slot
+    (tc-generated-identity-slot-id (tc-proof-reuse-identity-id-lookup identity))))
+
+(define (tc-generated-identity-operand-type-key-id-at
+  [identity : String]
+  [index : i64]) : i64
+  (tc-generated-identity-operand-type-key-id-at-slot
+    (tc-generated-identity-slot-id (tc-proof-reuse-identity-id-lookup identity))
+    index))
+
+(define (tc-generated-identity-operand-kind-id-at
+  [identity : String]
+  [index : i64]) : i64
+  (tc-generated-identity-operand-kind-id-at-slot
+    (tc-generated-identity-slot-id (tc-proof-reuse-identity-id-lookup identity))
+    index))
+
+(define (tc-proof-reuse-session-identity-preflight-ids?
+  [first-id : i64]
+  [next-id : i64]) : bool
+  (begin
+    ;; Reset only identity comparison fields.  Literal facts and semantic
+    ;; notes belong to the surrounding declaration comparison and survive a
+    ;; preflight refresh; callers use the full session reset once per walk.
+    (tc-proof-reuse-session-identity-comparison-reset!)
+    (let
+      [first-slot : i64 (tc-generated-identity-slot-id first-id)]
+      [next-slot : i64 (tc-generated-identity-slot-id next-id)]
+      [first-count : i64 (tc-generated-identity-operand-count-slot first-slot)]
+      [next-count : i64 (tc-generated-identity-operand-count-slot next-slot)]
+      [ok : bool
+        (and
+          (>= first-id 0)
+          (>= next-id 0)
+          (>= first-slot 0)
+          (< first-slot tc-generated-identity-capacity)
+          (>= next-slot 0)
+          (< next-slot tc-generated-identity-capacity)
+          (>= first-count 1)
+          (<= first-count tc-generated-identity-operands-per-identity)
+          (>= next-count 1)
+          (<= next-count tc-generated-identity-operands-per-identity)
+          (= first-count next-count))]
+      [index : i64 0]
+      [outer : i64 0]
+      [inner : i64 0]
+      (begin
+        ;; Metadata queries are non-inserting.  Every ordered type-key and
+        ;; kind id must be present before the injective check can run.
+        (while (and ok (< index first-count))
+          (begin
+            (if (or
+              (<
+                (tc-generated-identity-operand-type-key-id-at-slot
+                  first-slot
+                  index)
+                0)
+              (<
+                (tc-generated-identity-operand-kind-id-at-slot first-slot index)
+                0)
+              (<
+                (tc-generated-identity-operand-type-key-id-at-slot
+                  next-slot
+                  index)
+                0)
+              (<
+                (tc-generated-identity-operand-kind-id-at-slot next-slot index)
+                0))
+              (set! ok false)
+              unit)
+            (set! index (+ index 1))))
+        ;; Fixed O(16^2) injectivity: duplicate first keys must map to the
+        ;; same next key, and duplicate next keys must map to the same first
+        ;; key.  Repeated identical pairs remain valid.
+        (set! outer 0)
+        (while (and ok (< outer first-count))
+          (begin
+            (set! inner 0)
+            (while (and ok (< inner first-count))
+              (begin
+                (if (and
+                  (=
+                    (tc-generated-identity-operand-type-key-id-at-slot
+                      first-slot
+                      outer)
+                    (tc-generated-identity-operand-type-key-id-at-slot
+                      first-slot
+                      inner))
+                  (not
+                    (=
+                      (tc-generated-identity-operand-type-key-id-at-slot
+                        next-slot
+                        outer)
+                      (tc-generated-identity-operand-type-key-id-at-slot
+                        next-slot
+                        inner))))
+                  (set! ok false)
+                  unit)
+                (if (and
+                  (=
+                    (tc-generated-identity-operand-type-key-id-at-slot
+                      next-slot
+                      outer)
+                    (tc-generated-identity-operand-type-key-id-at-slot
+                      next-slot
+                      inner))
+                  (not
+                    (=
+                      (tc-generated-identity-operand-type-key-id-at-slot
+                        first-slot
+                        outer)
+                      (tc-generated-identity-operand-type-key-id-at-slot
+                        first-slot
+                        inner))))
+                  (set! ok false)
+                  unit)
+                (set! inner (+ inner 1))))
+            (set! outer (+ outer 1))))
+        (if ok
+          (begin
+            (set! tc-proof-reuse-session-first-identity-id first-id)
+            (set! tc-proof-reuse-session-next-identity-id next-id)
+            (set! tc-proof-reuse-session-first-identity-slot first-slot)
+            (set! tc-proof-reuse-session-next-identity-slot next-slot)
+            (set! tc-proof-reuse-session-identity-count first-count)
+            (set! tc-proof-reuse-session-used-operand-mask 0)
+            (set! tc-proof-reuse-session-invalid false)
+            true)
+          (begin
+            (set! tc-proof-reuse-session-invalid true)
+            false))))))
+
+(define (tc-proof-reuse-session-identity-preflight?
+  [first-identity : String]
+  [next-identity : String]) : bool
+  (tc-proof-reuse-session-identity-preflight-ids?
+    (tc-proof-reuse-identity-id-lookup first-identity)
+    (tc-proof-reuse-identity-id-lookup next-identity)))
+
+(define (tc-proof-reuse-session-record-literal! [value : i64] [text : String]) : bool
+  (if (or
+    tc-proof-reuse-session-invalid
+    tc-proof-reuse-session-literal-overflow)
+    false
+    (if (>=
+      tc-proof-reuse-session-literal-count
+      tc-proof-reuse-session-literal-capacity)
+      (begin
+        (set! tc-proof-reuse-session-literal-overflow true)
+        (set! tc-proof-reuse-session-invalid true)
+        false)
+      (begin
+        (array-set!
+          tc-proof-reuse-session-literal-values
+          tc-proof-reuse-session-literal-count
+          value)
+        (array-set!
+          tc-proof-reuse-session-literal-texts
+          tc-proof-reuse-session-literal-count
+          text)
+        (set!
+          tc-proof-reuse-session-literal-count
+          (+ tc-proof-reuse-session-literal-count 1))
+        true))))
+
+(define (tc-proof-reuse-session-note-operator!) : unit
+  (set! tc-proof-reuse-session-saw-operator true))
+
+(define (tc-proof-reuse-session-note-shift!) : unit
+  (set! tc-proof-reuse-session-saw-shift true))
+
+(define (tc-proof-reuse-session-note-equality-or-clone!) : unit
+  (set! tc-proof-reuse-session-saw-equality-or-clone true))
+
+(define (tc-proof-reuse-session-note-reflection!) : unit
+  (set! tc-proof-reuse-session-saw-reflection true))
+
+(define (tc-proof-reuse-session-note-context-sensitive-expr!) : unit
+  (set! tc-proof-reuse-session-saw-context-sensitive-expr true))
+
+(define (tc-proof-reuse-session-ast-literal-exact?
+  [first-literal : ast.AstLiteral]
+  [next-literal : ast.AstLiteral]) : bool
+  (if tc-proof-reuse-session-invalid
+    false
+    (match first-literal
+      [(ast.AstLiteral.Int first-value first-text)
+        (match next-literal
+          [(ast.AstLiteral.Int next-value next-text)
+            (if (and
+              (= first-value next-value)
+              (string.eq first-text next-text))
+              (tc-proof-reuse-session-record-literal! next-value next-text)
+              false)]
+          [_ false])]
+      [(ast.AstLiteral.Float first-text)
+        (match next-literal
+          [(ast.AstLiteral.Float next-text)
+            (if (string.eq first-text next-text)
+              (begin
+                (set! tc-proof-reuse-session-saw-non-integer-literal true)
+                true)
+              false)]
+          [_ false])]
+      [(ast.AstLiteral.Bool first-value)
+        (match next-literal
+          [(ast.AstLiteral.Bool next-value)
+            (if (= first-value next-value)
+              (begin
+                (set! tc-proof-reuse-session-saw-non-integer-literal true)
+                true)
+              false)]
+          [_ false])]
+      [(ast.AstLiteral.Char first-value)
+        (match next-literal
+          [(ast.AstLiteral.Char next-value)
+            (let
+              [first-codepoint : i64 (cast first-value : i64)]
+              [next-codepoint : i64 (cast next-value : i64)]
+              (if (= first-codepoint next-codepoint)
+                (tc-proof-reuse-session-record-literal!
+                  next-codepoint
+                  (string.int->string next-codepoint))
+                false))]
+          [_ false])]
+      [(ast.AstLiteral.String first-string-id)
+        (match next-literal
+          [(ast.AstLiteral.String next-string-id)
+            (if (= first-string-id next-string-id)
+              (begin
+                (set! tc-proof-reuse-session-saw-non-integer-literal true)
+                true)
+              false)]
+          [_ false])]
+      [(ast.AstLiteral.Unit)
+        (match next-literal
+          [(ast.AstLiteral.Unit)
+            (begin
+              (set! tc-proof-reuse-session-saw-non-integer-literal true)
+              true)]
+          [_ false])])))
+
+(define (tc-proof-reuse-session-kind-floating? [kind-id : i64]) : bool
+  (if (< kind-id 0)
+    false
+    (let
+      [kind : String (ci.intern-str kind-id)]
+      (or (string.eq kind "f32") (string.eq kind "f64")))))
+
+(define (tc-proof-reuse-session-kind-nominal? [kind-id : i64]) : bool
+  (if (< kind-id 0)
+    false
+    (let
+      [kind : String (ci.intern-str kind-id)]
+      (or (string.eq kind "struct") (string.eq kind "enum")))))
+
+(define (tc-proof-reuse-session-kind-owning-or-cleanup-sensitive?
+  [kind-id : i64]) : bool
+  (if (< kind-id 0)
+    false
+    (let
+      [kind : String (ci.intern-str kind-id)]
+      (or
+        (string.eq kind "string")
+        (string.eq kind "bytes")
+        (string.eq kind "array")
+        (string.eq kind "dyn-array")
+        (string.eq kind "box")
+        (string.eq kind "tuple")
+        (string.eq kind "struct")
+        (string.eq kind "enum")
+        (string.eq kind "expr")
+        (string.eq kind "expr-list")
+        (string.eq kind "function")
+        (string.eq kind "consume-param")))))
+
+(define (tc-proof-reuse-session-literal-fits-kind?
+  [kind-id : i64]
+  [value : i64]
+  [text : String]) : bool
+  (if (< kind-id 0)
+    false
+    (let
+      [kind : String (ci.intern-str kind-id)]
+      (cond
+        [(string.eq kind "i64")
+          (tc-integer-literal-fits-value-or-text? value text (ast.AstType.I64))]
+        [(string.eq kind "i32")
+          (tc-integer-literal-fits-value-or-text? value text (ast.AstType.I32))]
+        [(string.eq kind "i16")
+          (tc-integer-literal-fits-value-or-text? value text (ast.AstType.I16))]
+        [(string.eq kind "i8")
+          (tc-integer-literal-fits-value-or-text? value text (ast.AstType.I8))]
+        [(string.eq kind "u64")
+          (tc-integer-literal-fits-value-or-text? value text (ast.AstType.U64))]
+        [(string.eq kind "u32")
+          (tc-integer-literal-fits-value-or-text? value text (ast.AstType.U32))]
+        [(string.eq kind "u16")
+          (tc-integer-literal-fits-value-or-text? value text (ast.AstType.U16))]
+        [(string.eq kind "u8")
+          (tc-integer-literal-fits-value-or-text? value text (ast.AstType.U8))]
+        ;; The existing integer-fit helper intentionally has no Char branch;
+        ;; keeping this conservative rejects a recorded fact when Char is the
+        ;; changed target instead of duplicating a character range check here.
+        [(string.eq kind "char")
+          (tc-integer-literal-fits-value-or-text? value text (ast.AstType.Char))]
+        [else true]))))
+
+(define (tc-proof-reuse-session-kind-integer-or-char? [kind-id : i64]) : bool
+  (if (< kind-id 0)
+    false
+    (let
+      [kind : String (ci.intern-str kind-id)]
+      (or
+        (string.eq kind "i64")
+        (string.eq kind "i32")
+        (string.eq kind "i16")
+        (string.eq kind "i8")
+        (string.eq kind "u64")
+        (string.eq kind "u32")
+        (string.eq kind "u16")
+        (string.eq kind "u8")
+        (string.eq kind "char")))))
+
+(define (tc-proof-reuse-session-literals-fit-kind-at?
+  [kind-id : i64]
+  [index : i64]) : bool
+  (if (>= index tc-proof-reuse-session-literal-count)
+    true
+    (and
+      (tc-proof-reuse-session-literal-fits-kind?
+        kind-id
+        (array-ref tc-proof-reuse-session-literal-values index)
+        (array-ref tc-proof-reuse-session-literal-texts index))
+      (tc-proof-reuse-session-literals-fit-kind-at? kind-id (+ index 1)))))
+
+(define (tc-proof-reuse-session-rule4-operand-ok? [index : i64]) : bool
+  (let
+    [first-type-key-id : i64
+      (tc-generated-identity-operand-type-key-id-at-slot
+        tc-proof-reuse-session-first-identity-slot
+        index)]
+    [next-type-key-id : i64
+      (tc-generated-identity-operand-type-key-id-at-slot
+        tc-proof-reuse-session-next-identity-slot
+        index)]
+    [first-kind-id : i64
+      (tc-generated-identity-operand-kind-id-at-slot
+        tc-proof-reuse-session-first-identity-slot
+        index)]
+    [next-kind-id : i64
+      (tc-generated-identity-operand-kind-id-at-slot
+        tc-proof-reuse-session-next-identity-slot
+        index)]
+    (if (or
+      (< first-type-key-id 0)
+      (< next-type-key-id 0)
+      (< first-kind-id 0)
+      (< next-kind-id 0))
+      false
+      (if (= first-type-key-id next-type-key-id)
+        true
+        (if (or
+          tc-proof-reuse-session-saw-context-sensitive-expr
+          (tc-proof-reuse-session-kind-floating? first-kind-id)
+          (tc-proof-reuse-session-kind-floating? next-kind-id)
+          (tc-proof-reuse-session-kind-nominal? first-kind-id)
+          (tc-proof-reuse-session-kind-nominal? next-kind-id)
+          (tc-proof-reuse-session-kind-owning-or-cleanup-sensitive?
+            first-kind-id)
+          (tc-proof-reuse-session-kind-owning-or-cleanup-sensitive?
+            next-kind-id)
+          tc-proof-reuse-session-saw-shift
+          tc-proof-reuse-session-saw-equality-or-clone
+          tc-proof-reuse-session-saw-reflection
+          tc-proof-reuse-session-saw-non-integer-literal
+          (and
+            (> tc-proof-reuse-session-literal-count 0)
+            (not (tc-proof-reuse-session-kind-integer-or-char? next-kind-id)))
+          (and
+            tc-proof-reuse-session-saw-operator
+            (not (= first-kind-id next-kind-id))))
+          false
+          (tc-proof-reuse-session-literals-fit-kind-at? next-kind-id 0))))))
+
+(define (tc-proof-reuse-session-rule4-ok?) : bool
+  (if (or
+    tc-proof-reuse-session-invalid
+    tc-proof-reuse-session-literal-overflow
+    (and
+      tc-proof-reuse-session-saw-substitution
+      tc-proof-reuse-session-saw-nonlocal-value)
+    (and
+      tc-proof-reuse-session-saw-substitution
+      tc-proof-reuse-session-saw-fixed-type
+      (not tc-proof-reuse-session-allow-mixed-struct))
+    (< tc-proof-reuse-session-first-identity-id 0)
+    (< tc-proof-reuse-session-next-identity-id 0)
+    (< tc-proof-reuse-session-identity-count 1)
+    (>
+      tc-proof-reuse-session-identity-count
+      tc-generated-identity-operands-per-identity))
+    false
+    (let
+      [index : i64 0]
+      [ok : bool true]
+      (begin
+        ;; The identity metadata table is bounded to sixteen ordered
+        ;; operands.  Inspect only operand bits that exact type comparison
+        ;; actually marked as changed.
+        (while (and ok (< index tc-generated-identity-operands-per-identity))
+          (begin
+            (if (=
+              (bit-and tc-proof-reuse-session-used-operand-mask (shl 1 index))
+              0)
+              unit
+              (if (tc-proof-reuse-session-rule4-operand-ok? index)
+                unit
+                (set! ok false)))
+            (set! index (+ index 1))))
+        ok))))
+
+(define (tc-proof-reuse-session-name-id-exact?
+  [first-name-id : i64]
+  [next-name-id : i64]) : bool
+  (if (or
+    tc-proof-reuse-session-invalid
+    (< tc-proof-reuse-session-first-identity-id 0)
+    (< tc-proof-reuse-session-next-identity-id 0)
+    (< tc-proof-reuse-session-identity-count 1)
+    (>
+      tc-proof-reuse-session-identity-count
+      tc-generated-identity-operands-per-identity))
+    false
+    (if (= first-name-id next-name-id)
+      true
+      (if (or
+        (< first-name-id 0)
+        (< next-name-id 0)
+        (not (ci.intern-renderable-id? first-name-id))
+        (not (ci.intern-renderable-id? next-name-id)))
+        false
+        (if (if (and
+          (ci.intern-qualified? first-name-id)
+          (ci.intern-qualified? next-name-id))
+          (and
+            (=
+              (ci.intern-qualified-base-id first-name-id)
+              (ci.intern-qualified-base-id next-name-id))
+            (=
+              (ci.intern-qualified-module-id first-name-id)
+              tc-proof-reuse-session-first-identity-id)
+            (=
+              (ci.intern-qualified-module-id next-name-id)
+              tc-proof-reuse-session-next-identity-id))
+          (and
+            (= first-name-id tc-proof-reuse-session-first-identity-id)
+            (= next-name-id tc-proof-reuse-session-next-identity-id)))
+          (begin
+            (tc-proof-reuse-session-note-substitution!)
+            true)
+          false)))))
+
+;; Referenced names are declaration-local facts, not family identities.  A
+;; direct per-declaration proof has no sibling declaration available to prove
+;; that a changed generated helper/value/type has the same shape, so every
+;; referenced name must be the exact same renderable intern id.  Keep this
+;; helper side-effect free: equal locals continue through the lexical-pair
+;; bookkeeping in the callers, while no reference can introduce a
+;; substitution fact.
+(define (tc-proof-reuse-session-reference-name-id-exact?
+  [first-name-id : i64]
+  [next-name-id : i64]) : bool
+  (and
+    (not tc-proof-reuse-session-invalid)
+    (>= first-name-id 0)
+    (>= next-name-id 0)
+    (ci.intern-renderable-id? first-name-id)
+    (ci.intern-renderable-id? next-name-id)
+    (= first-name-id next-name-id)))
+
+(define (tc-proof-reuse-session-operand-pair-index
+  [first-key-id : i64]
+  [next-key-id : i64]
+  [index : i64]) : i64
+  (if (>= index tc-proof-reuse-session-identity-count)
+    -1
+    (if (and
+      (=
+        (tc-generated-identity-operand-type-key-id-at-slot
+          tc-proof-reuse-session-first-identity-slot
+          index)
+        first-key-id)
+      (=
+        (tc-generated-identity-operand-type-key-id-at-slot
+          tc-proof-reuse-session-next-identity-slot
+          index)
+        next-key-id))
+      index
+      (tc-proof-reuse-session-operand-pair-index
+        first-key-id
+        next-key-id
+        (+ index 1)))))
+
+(define (tc-proof-reuse-session-note-key-pair!
+  [first-key : String]
+  [next-key : String]) : bool
+  (if (or
+    tc-proof-reuse-session-invalid
+    (< tc-proof-reuse-session-identity-count 1)
+    (>
+      tc-proof-reuse-session-identity-count
+      tc-generated-identity-operands-per-identity))
+    false
+    (match (ci.intern-lookup first-key)
+      [(InternLookupFound first-key-id)
+        (match (ci.intern-lookup next-key)
+          [(InternLookupFound next-key-id)
+            (let
+              [index : i64
+                (tc-proof-reuse-session-operand-pair-index
+                  first-key-id
+                  next-key-id
+                  0)]
+              (if (< index 0)
+                false
+                (begin
+                  (tc-proof-reuse-session-note-substitution!)
+                  (set!
+                    tc-proof-reuse-session-used-operand-mask
+                    (bit-or
+                      tc-proof-reuse-session-used-operand-mask
+                      (shl 1 index)))
+                  true)))]
+          [(InternLookupMissing) false])]
+      [(InternLookupMissing) false])))
+
+(define (tc-proof-reuse-session-ast-type-exact?
+  [ctx : TcContext]
+  [first-type : ast.AstType]
+  [next-type : ast.AstType]) : bool
+  (if (or
+    tc-proof-reuse-session-invalid
+    (< tc-proof-reuse-session-first-identity-id 0)
+    (< tc-proof-reuse-session-next-identity-id 0)
+    (< tc-proof-reuse-session-identity-count 1)
+    (>
+      tc-proof-reuse-session-identity-count
+      tc-generated-identity-operands-per-identity))
+    false
+    (if (ast.ast-type-eq-with-pools?
+      (tc-context-pools ctx)
+      first-type
+      next-type)
+      (begin
+        (set! tc-proof-reuse-session-saw-fixed-type true)
+        true)
+      (let
+        [first-key : String
+          (ctfe_support.ctfe-type-key-with-reflections-and-pools
+            (tc-context-pools ctx)
+            (ctfe_support.ctfe-reflect-info-list-empty)
+            first-type)]
+        [next-key : String
+          (ctfe_support.ctfe-type-key-with-reflections-and-pools
+            (tc-context-pools ctx)
+            (ctfe_support.ctfe-reflect-info-list-empty)
+            next-type)]
+        (if (string.eq first-key next-key)
+          (begin
+            (set! tc-proof-reuse-session-saw-fixed-type true)
+            true)
+          (if (tc-proof-reuse-session-note-key-pair! first-key next-key)
+            true
+            (match first-type
+              [(ast.AstType.Func first-args first-ret)
+                (match next-type
+                  [(ast.AstType.Func next-args next-ret)
+                    (let
+                      [first-list : ast.AstTypeList (box-get first-args)]
+                      [next-list : ast.AstTypeList (box-get next-args)]
+                      [index : i64 0]
+                      [args-ok : bool true]
+                      (begin
+                        (while (and
+                          args-ok
+                          (< index (ast.ast-type-list-len (& first-list)))
+                          (< index (ast.ast-type-list-len (& next-list))))
+                          (begin
+                            (if (tc-proof-reuse-session-ast-type-id-exact?
+                              ctx
+                              (ast.ast-type-list-get
+                                (& first-list)
+                                index
+                                (ast.ast-type-id-fallback))
+                              (ast.ast-type-list-get
+                                (& next-list)
+                                index
+                                (ast.ast-type-id-fallback)))
+                              unit
+                              (set! args-ok false))
+                            (set! index (+ index 1))))
+                        (and
+                          args-ok
+                          (=
+                            (ast.ast-type-list-len (& first-list))
+                            (ast.ast-type-list-len (& next-list)))
+                          (tc-proof-reuse-session-ast-type-exact?
+                            ctx
+                            (tc-context-type-get ctx first-ret)
+                            (tc-context-type-get ctx next-ret)))))]
+                  [_ false])]
+              [(ast.AstType.Tuple first-elems)
+                (match next-type
+                  [(ast.AstType.Tuple next-elems)
+                    (let
+                      [first-list : ast.AstTypeList (box-get first-elems)]
+                      [next-list : ast.AstTypeList (box-get next-elems)]
+                      [index : i64 0]
+                      [elems-ok : bool true]
+                      (begin
+                        (while (and
+                          elems-ok
+                          (< index (ast.ast-type-list-len (& first-list)))
+                          (< index (ast.ast-type-list-len (& next-list))))
+                          (begin
+                            (if (tc-proof-reuse-session-ast-type-id-exact?
+                              ctx
+                              (ast.ast-type-list-get
+                                (& first-list)
+                                index
+                                (ast.ast-type-id-fallback))
+                              (ast.ast-type-list-get
+                                (& next-list)
+                                index
+                                (ast.ast-type-id-fallback)))
+                              unit
+                              (set! elems-ok false))
+                            (set! index (+ index 1))))
+                        (and
+                          elems-ok
+                          (=
+                            (ast.ast-type-list-len (& first-list))
+                            (ast.ast-type-list-len (& next-list))))))]
+                  [_ false])]
+              [(ast.AstType.Array first-elem first-count)
+                (match next-type
+                  [(ast.AstType.Array next-elem next-count)
+                    (and
+                      (= first-count next-count)
+                      (tc-proof-reuse-session-ast-type-exact?
+                        ctx
+                        (tc-context-type-get ctx first-elem)
+                        (tc-context-type-get ctx next-elem)))]
+                  [_ false])]
+              [(ast.AstType.DynArray first-elem)
+                (match next-type
+                  [(ast.AstType.DynArray next-elem)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx first-elem)
+                      (tc-context-type-get ctx next-elem))]
+                  [_ false])]
+              [(ast.AstType.Slice first-elem)
+                (match next-type
+                  [(ast.AstType.Slice next-elem)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx first-elem)
+                      (tc-context-type-get ctx next-elem))]
+                  [_ false])]
+              [(ast.AstType.Box first-inner)
+                (match next-type
+                  [(ast.AstType.Box next-inner)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx first-inner)
+                      (tc-context-type-get ctx next-inner))]
+                  [_ false])]
+              [(ast.AstType.Region first-name first-inner)
+                (match next-type
+                  [(ast.AstType.Region next-name next-inner)
+                    (and
+                      (tc-proof-reuse-session-reference-name-id-exact?
+                        first-name
+                        next-name)
+                      (tc-proof-reuse-session-ast-type-exact?
+                        ctx
+                        (tc-context-type-get ctx first-inner)
+                        (tc-context-type-get ctx next-inner)))]
+                  [_ false])]
+              [(ast.AstType.Ref first-name first-inner)
+                (match next-type
+                  [(ast.AstType.Ref next-name next-inner)
+                    (and
+                      (tc-proof-reuse-session-reference-name-id-exact?
+                        first-name
+                        next-name)
+                      (tc-proof-reuse-session-ast-type-exact?
+                        ctx
+                        (tc-context-type-get ctx first-inner)
+                        (tc-context-type-get ctx next-inner)))]
+                  [_ false])]
+              [(ast.AstType.MutRef first-name first-inner)
+                (match next-type
+                  [(ast.AstType.MutRef next-name next-inner)
+                    (and
+                      (tc-proof-reuse-session-reference-name-id-exact?
+                        first-name
+                        next-name)
+                      (tc-proof-reuse-session-ast-type-exact?
+                        ctx
+                        (tc-context-type-get ctx first-inner)
+                        (tc-context-type-get ctx next-inner)))]
+                  [_ false])]
+              [(ast.AstType.Ptr first-inner)
+                (match next-type
+                  [(ast.AstType.Ptr next-inner)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx first-inner)
+                      (tc-context-type-get ctx next-inner))]
+                  [_ false])]
+              [(ast.AstType.MutPtr first-inner)
+                (match next-type
+                  [(ast.AstType.MutPtr next-inner)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx first-inner)
+                      (tc-context-type-get ctx next-inner))]
+                  [_ false])]
+              [(ast.AstType.Consume first-inner)
+                (match next-type
+                  [(ast.AstType.Consume next-inner)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx first-inner)
+                      (tc-context-type-get ctx next-inner))]
+                  [_ false])]
+              [_ false])))))))
+
+;; Exact generated-declaration comparison -----------------------------------
+;;
+;; The dependency scanner deliberately answers only an over-approximation.  A
+;; proof reuse decision needs a pairwise walk of the two declarations instead:
+;; every name, type, literal, operator and child node must be the exact
+;; established first-identity -> next-identity substitution.  These helpers
+;; are intentionally read-only apart from the bounded comparison facts owned
+;; by the proof-reuse session above.  In particular, no fresh name/type map is
+;; constructed while walking.  An unchanged type subtree alongside a real
+;; identity substitution is a fixed local/return boundary and fails Rule 4;
+;; the sole mixed-shape exception is a successfully exact direct DefStruct,
+;; whose fields have no value-flow edge between them.
+(define (tc-proof-reuse-session-expr-id-valid? [ctx : TcContext] [id : i64]) : bool
+  (and
+    (>= id 0)
+    (< id (ast.ast-node-pool-context-expr-len (tc-context-pools ctx)))))
+
+(define (tc-proof-reuse-session-type-id-valid? [ctx : TcContext] [id : i64]) : bool
+  (and
+    (>= id 0)
+    (< id (ast.ast-node-pool-context-type-len (tc-context-pools ctx)))))
+
+(define (tc-proof-reuse-session-ast-maybe-type-exact?
+  [ctx : TcContext]
+  [first-type : ast.AstMaybeType]
+  [next-type : ast.AstMaybeType]) : bool
+  (match first-type
+    [(ast.AstMaybeType.No)
+      (match next-type
+        [(ast.AstMaybeType.No) true]
+        [_ false])]
+    [(ast.AstMaybeType.Some first-inner)
+      (match next-type
+        [(ast.AstMaybeType.Some next-inner)
+          (tc-proof-reuse-session-ast-type-exact? ctx first-inner next-inner)]
+        [_ false])]))
+
+(define (tc-proof-reuse-session-ast-expr-id-exact?
+  [ctx : TcContext]
+  [first-id : i64]
+  [next-id : i64]) : bool
+  (and
+    (tc-proof-reuse-session-expr-id-valid? ctx first-id)
+    (tc-proof-reuse-session-expr-id-valid? ctx next-id)
+    (tc-proof-reuse-session-ast-expr-exact?
+      ctx
+      (tc-context-expr-get ctx first-id)
+      (tc-context-expr-get ctx next-id))))
+
+(define (tc-proof-reuse-session-ast-type-id-exact?
+  [ctx : TcContext]
+  [first-id : i64]
+  [next-id : i64]) : bool
+  (and
+    (tc-proof-reuse-session-type-id-valid? ctx first-id)
+    (tc-proof-reuse-session-type-id-valid? ctx next-id)
+    (tc-proof-reuse-session-ast-type-exact?
+      ctx
+      (tc-context-type-get ctx first-id)
+      (tc-context-type-get ctx next-id))))
+
+(define (tc-proof-reuse-session-ast-expr-list-exact?
+  [ctx : TcContext]
+  [first-exprs : ast.AstExprList]
+  [next-exprs : ast.AstExprList]
+  [index : i64]) : bool
+  (let
+    [first-len : i64 (ast.ast-expr-list-len (& first-exprs))]
+    [next-len : i64 (ast.ast-expr-list-len (& next-exprs))]
+    (if (not (= first-len next-len))
+      false
+      (if (>= index first-len)
+        true
+        (and
+          (tc-proof-reuse-session-ast-expr-id-exact?
+            ctx
+            (ast.ast-expr-list-get (& first-exprs) index -1)
+            (ast.ast-expr-list-get (& next-exprs) index -1))
+          (tc-proof-reuse-session-ast-expr-list-exact?
+            ctx
+            first-exprs
+            next-exprs
+            (+ index 1)))))))
+
+(define (tc-proof-reuse-session-ast-param-list-exact?
+  [ctx : TcContext]
+  [first-params : ast.AstParamList]
+  [next-params : ast.AstParamList]
+  [index : i64]) : bool
+  (let
+    [first-len : i64 (ast.ast-param-list-len (& first-params))]
+    [next-len : i64 (ast.ast-param-list-len (& next-params))]
+    (if (not (= first-len next-len))
+      false
+      (if (>= index first-len)
+        true
+        (match (ast.ast-param-list-get
+          (& first-params)
+          index
+          (ast.ast-param-fallback))
+          [(ast.AstParam.Param
+              first-name
+              first-type
+              first-comptime
+              first-consume)
+            (match (ast.ast-param-list-get
+              (& next-params)
+              index
+              (ast.ast-param-fallback))
+              [(ast.AstParam.Param
+                  next-name
+                  next-type
+                  next-comptime
+                  next-consume)
+                (let
+                  [ok : bool
+                    (and
+                      (tc-proof-reuse-session-reference-name-id-exact?
+                        first-name
+                        next-name)
+                      (tc-proof-reuse-session-ast-type-exact?
+                        ctx
+                        first-type
+                        next-type)
+                      (= first-comptime next-comptime)
+                      (= first-consume next-consume))]
+                  (if (not ok)
+                    false
+                    (and
+                      (tc-proof-reuse-session-note-local-pair!
+                        first-name
+                        next-name)
+                      (tc-proof-reuse-session-ast-param-list-exact?
+                        ctx
+                        first-params
+                        next-params
+                        (+ index 1)))))]
+              [_ false])]
+          [_ false])))))
+
+(define (tc-proof-reuse-session-ast-field-cleanup-exact?
+  [first-cleanup : ast.AstFieldCleanup]
+  [next-cleanup : ast.AstFieldCleanup]) : bool
+  (match first-cleanup
+    [(ast.AstFieldCleanup.No)
+      (match next-cleanup
+        [(ast.AstFieldCleanup.No) true]
+        [_ false])]
+    [_ false]))
+
+(define (tc-proof-reuse-session-ast-field-def-list-exact?
+  [ctx : TcContext]
+  [first-fields : ast.AstFieldDefList]
+  [next-fields : ast.AstFieldDefList]
+  [index : i64]) : bool
+  (let
+    [first-len : i64 (ast.ast-field-def-list-len (& first-fields))]
+    [next-len : i64 (ast.ast-field-def-list-len (& next-fields))]
+    (if (not (= first-len next-len))
+      false
+      (if (>= index first-len)
+        true
+        (match (ast.ast-field-def-list-get
+          (& first-fields)
+          index
+          (ast.ast-field-def-fallback))
+          [(ast.AstFieldDef.Def first-name first-type first-cleanup)
+            (match (ast.ast-field-def-list-get
+              (& next-fields)
+              index
+              (ast.ast-field-def-fallback))
+              [(ast.AstFieldDef.Def next-name next-type next-cleanup)
+                (and
+                  (tc-proof-reuse-session-reference-name-id-exact?
+                    first-name
+                    next-name)
+                  (tc-proof-reuse-session-ast-type-exact?
+                    ctx
+                    first-type
+                    next-type)
+                  (tc-proof-reuse-session-ast-field-cleanup-exact?
+                    first-cleanup
+                    next-cleanup)
+                  (tc-proof-reuse-session-ast-field-def-list-exact?
+                    ctx
+                    first-fields
+                    next-fields
+                    (+ index 1)))]
+              [_ false])]
+          [_ false])))))
+
+(define (tc-proof-reuse-session-ast-fn-metadata-exact?
+  [first-metadata : ast.AstFnMetadata]
+  [next-metadata : ast.AstFnMetadata]) : bool
+  (match first-metadata
+    [(ast.AstFnMetadata.No)
+      (match next-metadata
+        [(ast.AstFnMetadata.No) true]
+        [_ false])]
+    [_ false]))
+
+(define (tc-proof-reuse-session-clone-callee-name-id? [name-id : i64]) : bool
+  (if (not (ci.intern-renderable-id? name-id))
+    false
+    (or
+      (cbi.compiler-builtin-typecheck-clone-id? name-id)
+      (if (ci.intern-qualified? name-id)
+        (let
+          [base-id : i64 (ci.intern-qualified-base-id name-id)]
+          (and
+            (ci.intern-renderable-id? base-id)
+            (string.eq (ci.intern-str base-id) "clone")))
+        (string.eq (ci.intern-str name-id) "clone")))))
+
+(define (tc-proof-reuse-session-clone-callee-expr-id?
+  [ctx : TcContext]
+  [expr-id : i64]) : bool
+  (if (not (tc-proof-reuse-session-expr-id-valid? ctx expr-id))
+    false
+    (match (tc-context-expr-get ctx expr-id)
+      [(ast.AstExpr.Spanned inner-id _)
+        (tc-proof-reuse-session-clone-callee-expr-id? ctx inner-id)]
+      [(ast.AstExpr.Var name-id)
+        (tc-proof-reuse-session-clone-callee-name-id? name-id)]
+      [_ false])))
+
+(define (tc-proof-reuse-session-ast-expr-exact?
+  [ctx : TcContext]
+  [first-expr : ast.AstExpr]
+  [next-expr : ast.AstExpr]) : bool
+  ;; Literals, variables, Binary, and Unary forms remain structural.  Retained
+  ;; Call and StructGet forms are context-sensitive, so mark them while
+  ;; walking; unsupported expression forms fail closed.  Rule 4 vetoes
+  ;; changed recorded operands.  Referenced names are exact; only complete
+  ;; type-key operand pairs can admit a changed type subtree.
+  (if tc-proof-reuse-session-invalid
+    false
+    (match first-expr
+      ;; Spans are parser metadata and generated modules legitimately carry
+      ;; different source offsets.  Strip wrappers independently on each side.
+      [(ast.AstExpr.Spanned first-inner _)
+        (if (tc-proof-reuse-session-expr-id-valid? ctx first-inner)
+          (tc-proof-reuse-session-ast-expr-exact?
+            ctx
+            (tc-context-expr-get ctx first-inner)
+            next-expr)
+          false)]
+      [_
+        (match next-expr
+          [(ast.AstExpr.Spanned next-inner _)
+            (if (tc-proof-reuse-session-expr-id-valid? ctx next-inner)
+              (tc-proof-reuse-session-ast-expr-exact?
+                ctx
+                first-expr
+                (tc-context-expr-get ctx next-inner))
+              false)]
+          [(ast.AstExpr.Literal next-literal)
+            (match first-expr
+              [(ast.AstExpr.Literal first-literal)
+                (tc-proof-reuse-session-ast-literal-exact?
+                  first-literal
+                  next-literal)]
+              [_ false])]
+          [(ast.AstExpr.Var next-name)
+            (match first-expr
+              [(ast.AstExpr.Var first-name)
+                (tc-proof-reuse-session-value-name-exact? first-name next-name)]
+              [_ false])]
+          [(ast.AstExpr.Binary next-op next-left next-right)
+            (match first-expr
+              [(ast.AstExpr.Binary first-op first-left first-right)
+                (if (not (ctfe_support.ctfe-binop-eq first-op next-op))
+                  false
+                  (begin
+                    (tc-proof-reuse-session-note-operator!)
+                    (match first-op
+                      [(ast.AstBinOp.Eq)
+                        (tc-proof-reuse-session-note-equality-or-clone!)]
+                      [(ast.AstBinOp.Ne)
+                        (tc-proof-reuse-session-note-equality-or-clone!)]
+                      [(ast.AstBinOp.Shl) (tc-proof-reuse-session-note-shift!)]
+                      [(ast.AstBinOp.Shr) (tc-proof-reuse-session-note-shift!)]
+                      [_ unit])
+                    (and
+                      (tc-proof-reuse-session-ast-expr-id-exact?
+                        ctx
+                        first-left
+                        next-left)
+                      (tc-proof-reuse-session-ast-expr-id-exact?
+                        ctx
+                        first-right
+                        next-right))))]
+              [_ false])]
+          [(ast.AstExpr.Unary next-op next-inner)
+            (match first-expr
+              [(ast.AstExpr.Unary first-op first-inner)
+                (if (not (ctfe_support.ctfe-unop-eq first-op next-op))
+                  false
+                  (begin
+                    (tc-proof-reuse-session-note-operator!)
+                    (tc-proof-reuse-session-ast-expr-id-exact?
+                      ctx
+                      first-inner
+                      next-inner)))]
+              [_ false])]
+          [(ast.AstExpr.Call next-callee next-args)
+            (match first-expr
+              [(ast.AstExpr.Call first-callee first-args)
+                (begin
+                  (tc-proof-reuse-session-note-context-sensitive-expr!)
+                  (if (or
+                    (tc-proof-reuse-session-clone-callee-expr-id?
+                      ctx
+                      first-callee)
+                    (tc-proof-reuse-session-clone-callee-expr-id?
+                      ctx
+                      next-callee))
+                    (tc-proof-reuse-session-note-equality-or-clone!)
+                    unit)
+                  (and
+                    (tc-proof-reuse-session-ast-expr-id-exact?
+                      ctx
+                      first-callee
+                      next-callee)
+                    (tc-proof-reuse-session-ast-expr-list-exact?
+                      ctx
+                      first-args
+                      next-args
+                      0)))]
+              [_ false])]
+          [(ast.AstExpr.StructGet next-receiver next-field)
+            (match first-expr
+              [(ast.AstExpr.StructGet first-receiver first-field)
+                (begin
+                  (tc-proof-reuse-session-note-context-sensitive-expr!)
+                  (and
+                    (tc-proof-reuse-session-ast-expr-id-exact?
+                      ctx
+                      first-receiver
+                      next-receiver)
+                    (tc-proof-reuse-session-reference-name-id-exact?
+                      first-field
+                      next-field)))]
+              [_ false])]
+          ;; Keep this audited surface deliberately small; every other
+          ;; expression constructor falls through to concrete checking.
+          [_ false])])))
+
+(define (tc-proof-reuse-session-ast-decl-exact?
+  [ctx : TcContext]
+  [first-decl : ast.AstDecl]
+  [next-decl : ast.AstDecl]) : bool
+  (if tc-proof-reuse-session-invalid
+    false
+    (match first-decl
+      [(ast.AstDecl.DefStruct
+          _
+          first-name
+          first-repr
+          first-cleanup
+          first-fields)
+        (match next-decl
+          [(ast.AstDecl.DefStruct
+              _
+              next-name
+              next-repr
+              next-cleanup
+              next-fields)
+            (let
+              [ok : bool
+                (and
+                  (tc-proof-reuse-session-name-id-exact? first-name next-name)
+                  (match first-repr
+                    [(ast.AstStructRepr.Default)
+                      (match next-repr
+                        [(ast.AstStructRepr.Default) true]
+                        [_ false])]
+                    [_ false])
+                  (match first-cleanup
+                    [(ast.AstStructCleanup.No)
+                      (match next-cleanup
+                        [(ast.AstStructCleanup.No) true]
+                        [_ false])]
+                    [_ false])
+                  (tc-proof-reuse-session-ast-field-def-list-exact?
+                    ctx
+                    first-fields
+                    next-fields
+                    0))]
+              (begin
+                ;; Only a fully exact, direct DefStruct may authorize mixed
+                ;; fixed/substituted field types.  Rule 4 consumes this fact;
+                ;; failed/unsupported shapes leave it false.
+                (if ok
+                  (set! tc-proof-reuse-session-allow-mixed-struct true)
+                  unit)
+                ok))]
+          [_ false])]
+      [(ast.AstDecl.DefFn
+          _
+          first-name
+          first-params
+          first-ret
+          first-body
+          first-meta)
+        (match next-decl
+          [(ast.AstDecl.DefFn
+              _
+              next-name
+              next-params
+              next-ret
+              next-body
+              next-meta)
+            (and
+              (tc-proof-reuse-session-name-id-exact? first-name next-name)
+              (let
+                [scope-start : i64 tc-proof-reuse-session-local-count]
+                [params-ok : bool
+                  (tc-proof-reuse-session-ast-param-list-exact?
+                    ctx
+                    first-params
+                    next-params
+                    0)]
+                [body-ok : bool
+                  (if (and
+                    params-ok
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      first-ret
+                      next-ret))
+                    (tc-proof-reuse-session-ast-expr-id-exact?
+                      ctx
+                      first-body
+                      next-body)
+                    false)]
+                [metadata-ok : bool
+                  (if body-ok
+                    (tc-proof-reuse-session-ast-fn-metadata-exact?
+                      first-meta
+                      next-meta)
+                    false)]
+                (begin
+                  (set! tc-proof-reuse-session-local-count scope-start)
+                  (and params-ok body-ok metadata-ok))))]
+          [_ false])]
+      [(ast.AstDecl.Def _ first-name first-type first-body)
+        (match next-decl
+          [(ast.AstDecl.Def _ next-name next-type next-body)
+            (and
+              (tc-proof-reuse-session-name-id-exact? first-name next-name)
+              (tc-proof-reuse-session-ast-maybe-type-exact?
+                ctx
+                first-type
+                next-type)
+              (tc-proof-reuse-session-ast-expr-id-exact?
+                ctx
+                first-body
+                next-body))]
+          [_ false])]
+      [(ast.AstDecl.Unsafe first-box)
+        (match next-decl
+          [(ast.AstDecl.Unsafe next-box)
+            (let
+              [saved-allow : bool tc-proof-reuse-session-allow-mixed-struct]
+              [ok : bool
+                (tc-proof-reuse-session-ast-decl-exact?
+                  ctx
+                  (box-get first-box)
+                  (box-get next-box))]
+              (begin
+                ;; Keep the DefStruct exception scoped to a direct declaration;
+                ;; an unsafe wrapper remains concrete-only conservatively.
+                (set! tc-proof-reuse-session-allow-mixed-struct saved-allow)
+                ok))]
+          [_ false])]
+      [_ false])))
+
+(define (tc-proof-reuse-decl-safe-substitution-ids?
+  [ctx : TcContext]
+  [first-identity-id : i64]
+  [next-identity-id : i64]
+  [first-decl : ast.AstDecl]
+  [next-decl : ast.AstDecl]) : bool
+  (begin
+    (tc-proof-reuse-session-reset!)
+    (if (not
+      (tc-proof-reuse-session-identity-preflight-ids?
+        first-identity-id
+        next-identity-id))
+      false
+      (if (not
+        (tc-proof-reuse-session-ast-decl-exact? ctx first-decl next-decl))
+        false
+        ;; Rule 4 is intentionally last: the exact walk must finish before
+        ;; literal/operator/reflection facts can authorize a reuse decision.
+        (tc-proof-reuse-session-rule4-ok?)))))
+
+(define (tc-proof-reuse-decl-safe-substitution?
+  [ctx : TcContext]
+  [first-identity : String]
+  [next-identity : String]
+  [first-decl : ast.AstDecl]
+  [next-decl : ast.AstDecl]) : bool
+  (tc-proof-reuse-decl-safe-substitution-ids?
+    ctx
+    (tc-proof-reuse-identity-id-lookup first-identity)
+    (tc-proof-reuse-identity-id-lookup next-identity)
+    first-decl
+    next-decl))
+
+(define (tc-defmacro-fixed-type-params-complete?
+  [params : (& params ast.AstMacroParamList)]
+  [index : i64]
+  [seen-type-param : bool]) : bool
+  (if (>= index (ast.ast-macro-param-list-len params))
+    seen-type-param
+    (match (ast.ast-macro-param-list-get
+      params
+      index
+      (ast.ast-macro-param-fallback))
+      [(ast.AstMacroParam.Param _ ty variadic type-kinds)
+        (if (tc-macro-type-param-kind? ty)
+          (if (or variadic (ast.ast-macro-type-kind-list-empty? (& type-kinds)))
+            false
+            (tc-defmacro-fixed-type-params-complete? params (+ index 1) true))
+          (tc-defmacro-fixed-type-params-complete?
+            params
+            (+ index 1)
+            seen-type-param))])))
 
 (define (tc-macro-abstract-proof-reset!) : unit
-  (set! tc-macro-abstract-proof-count 0))
+  (begin
+    (set! tc-macro-abstract-proof-count 0)
+    (tc-proof-complete-reset!)
+    (tc-generated-family-reset!)
+    (tc-generated-identity-reset!)
+    (tc-proof-reuse-identity-scratch-reset!)
+    (set! tc-proof-reuse-skips-total 0)
+    (set! tc-proof-reuse-last-skip false)
+    (set! tc-proof-reuse-any-complete-proofs false)))
 
 (define (tc-macro-abstract-proof-find
   [macro-key-id : i64]
@@ -54420,8 +56514,8 @@
             body)]
         (begin
           (tc-macro-abstract-state-restore! saved)
-          ;; Persist the validated proof (#5296 report-only instrumentation);
-          ;; the abstract result itself still drives only acceptance here.
+          ;; Persist the validated proof used by the generated-declaration
+          ;; proof-reuse lane; the abstract result still gates macro acceptance.
           (match result
             [(ResultTcUnit.Ok)
               (tc-macro-abstract-proof-note! macro-key param-name checked-mask)]
@@ -54473,22 +56567,33 @@
   [params : ast.AstMacroParamList]
   [body : ast.AstExpr]) : ResultTcUnit
   ;; The proof key is the same qualified display string the generated-module
-  ;; wrapper stamps into AstGeneratedDeclMeta, so the report-only
-  ;; classification lane can join a generated declaration back to this
-  ;; definition (#5296).
-  (tc-check-defmacro-abstract-type-params-at
-    ctx
-    env
-    (tc-env-key-name-text name)
-    (macro-decl-name-display name (tc-context-module-id ctx))
-    (& params)
-    0
-    body))
+  ;; wrapper stamps into AstGeneratedDeclMeta, so the live proof-reuse lane can
+  ;; join a generated declaration back to this definition.
+  (let
+    [macro-key : String
+      (macro-decl-name-display name (tc-context-module-id ctx))]
+    [result : ResultTcUnit
+      (tc-check-defmacro-abstract-type-params-at
+        ctx
+        env
+        (tc-env-key-name-text name)
+        macro-key
+        (& params)
+        0
+        body)]
+    (begin
+      (match result
+        [(ResultTcUnit.Ok)
+          (if (tc-defmacro-fixed-type-params-complete? (& params) 0 false)
+            (tc-proof-complete-note! macro-key)
+            unit)]
+        [(ResultTcUnit.Err _) unit])
+      result)))
 
 ;; --- generated-decl dependent-construct scan (#5296) --------------------------
 ;;
-;; Conservative syntactic scan backing the report-only lane split in
-;; `compiler-tc-decl-profile-record`. It answers one question: may this
+;; Conservative syntactic scan backing the generated-declaration proof-reuse
+;; lane. It answers one question: may this
 ;; generated declaration depend on the concrete substitution that produced it?
 ;; Returning true (dependent) means the declaration is counted
 ;; concrete-required; false means invariant-eligible candidate. The scan flags:
@@ -54496,7 +56601,9 @@
 ;;     cast targets) -- its length is substitution-chosen,
 ;;   - a cleanup/ownership annotation (AstFieldCleanup.Fn/Owned,
 ;;     AstStructCleanup.Fn, and the enum-level equivalents),
-;;   - a reference or raw-pointer type (Ref, MutRef, Ptr, MutPtr),
+;;   - Ref/MutRef/Ptr/MutPtr wrappers are invariant by themselves; the recurse
+;;     keeps a dependent construct nested beneath one (such as a fixed Array)
+;;     dependent,
 ;;   - a lifetime-parameterized nominal type with non-empty lifetime args
 ;;     (StructArgs/EnumArgs/VarArgs),
 ;;   - a cast expression anywhere in a body,
@@ -54505,10 +56612,10 @@
 ;; A `make-array` element type in expression position is NOT dependent: the
 ;; produced value is a length-erased dynamic array.
 ;;
-;; v1 soundness note: the scan deliberately does not track kind-polymorphic
-;; value operations (clone/eq/arithmetic) applied to arg-typed values, so
-;; eligibility is an over-approximation to be tightened by the future skip lane
-;; (first-instance isomorphism verification).
+;; The exact walker performs the additional first-instance isomorphism and
+;; kind-polymorphic operation checks before a declaration can actually skip;
+;; this scan remains a conservative dependency veto for forms that require
+;; concrete checking.  It has no sibling-catalog knowledge.
 (define (tc-generated-type-dependent-construct?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
@@ -54538,10 +56645,26 @@
       (tc-generated-type-dependent-construct?
         ctx
         (tc-context-type-get ctx inner))]
-    [(ast.AstType.Ref _ _) true]
-    [(ast.AstType.MutRef _ _) true]
-    [(ast.AstType.Ptr _) true]
-    [(ast.AstType.MutPtr _) true]
+    ;; Reference/pointer wrappers themselves preserve the pointee's
+    ;; substitution invariance.  Recurse so a dependent construct nested
+    ;; beneath one (for example a fixed Array) still keeps the declaration in
+    ;; the concrete lane.
+    [(ast.AstType.Ref _ elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
+    [(ast.AstType.MutRef _ elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
+    [(ast.AstType.Ptr elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
+    [(ast.AstType.MutPtr elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
     [(ast.AstType.EnumArgs _ lifetimes)
       (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
     [(ast.AstType.StructArgs _ lifetimes)
@@ -68513,7 +70636,6 @@
     (set! macro-live-prescan-visible-names (TcNameIdList.Nil))
     (ctfe_support.ctfe-module-macro-export-reset!)
     (macro-generated-module-memo-reset!)
-    (tc-macro-abstract-proof-reset!)
     (macro-generated-decls-memo-reset!)
     (tc-macro-helper-env-cache-reset!)
     (tc-macro-module-env-cache-clear!)
@@ -69839,11 +71961,23 @@
             (& type-kinds)
             head-expr)
             [(ResultMacroCheck.Ok)
-              (spec.ResultGenKey.Ok
-                (str_cat.str-cat
-                  "type_"
-                  (ctfe_support.ctfe-type-key resolved-ty))
-                fuel)]
+              (begin
+                (if (ast.ast-macro-type-kind-list-empty? (& type-kinds))
+                  unit
+                  (tc-proof-reuse-identity-scratch-append!
+                    (ctfe_support.ctfe-type-key-with-reflections-and-pools
+                      (tc-context-pools ctx)
+                      (ctfe_support.ctfe-reflect-info-list-empty)
+                      resolved-ty)
+                    (ctfe_support.ctfe-type-kind-with-reflections-and-pools
+                      (tc-context-pools ctx)
+                      (ctfe_support.ctfe-reflect-info-list-empty)
+                      resolved-ty)))
+                (spec.ResultGenKey.Ok
+                  (str_cat.str-cat
+                    "type_"
+                    (ctfe_support.ctfe-type-key resolved-ty))
+                  fuel))]
             [(ResultMacroCheck.Err diag) (spec.ResultGenKey.Err diag)])]
         [(ResultMacroTypeArg.Err diag) (spec.ResultGenKey.Err diag)])]
     [(tc-macro-module-param-kind? ty)
@@ -70036,22 +72170,35 @@
   [args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]
   [call-expr : ast.AstExpr]) : spec.ResultGenKey
-  (match (macro-identity-key-params
-    ctx
-    decls
-    fallback-module
-    fallback-module-id
-    macro-name
-    params
-    args
-    env
-    (ctfe_support.ctfe-fuel-limit)
-    call-expr)
-    [(spec.ResultGenKey.Ok arg-key fuel)
-      (spec.ResultGenKey.Ok
-        (str_cat.str-cat definition-module ":" macro-name "(" arg-key ")")
-        fuel)]
-    [(spec.ResultGenKey.Err diag) (spec.ResultGenKey.Err diag)]))
+  (begin
+    ;; The scratch belongs to exactly one identity assembly. Failed key
+    ;; construction must not leak operands into a later successful call.
+    (tc-proof-reuse-identity-scratch-reset!)
+    (match (macro-identity-key-params
+      ctx
+      decls
+      fallback-module
+      fallback-module-id
+      macro-name
+      params
+      args
+      env
+      (ctfe_support.ctfe-fuel-limit)
+      call-expr)
+      [(spec.ResultGenKey.Ok arg-key fuel)
+        (let
+          [identity : String
+            (str_cat.str-cat definition-module ":" macro-name "(" arg-key ")")]
+          (begin
+            (if (tc-defmacro-fixed-type-params-complete? (& params) 0 false)
+              (tc-generated-identity-note! identity)
+              unit)
+            (tc-proof-reuse-identity-scratch-reset!)
+            (spec.ResultGenKey.Ok identity fuel)))]
+      [(spec.ResultGenKey.Err diag)
+        (begin
+          (tc-proof-reuse-identity-scratch-reset!)
+          (spec.ResultGenKey.Err diag))])))
 
 (define (macro-decls-generated-key [identity : String]) : String
   (string.append "decls:" identity))
@@ -87550,6 +89697,89 @@
           [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
       [_ (tc-check-decl-scoped ctx top-env global-env decl)])))
 
+;; Conservative proof-reuse lane for one generated declaration.  The first
+;; successful identity in a (generator,item) family remains concrete; only a
+;; later identity can reach the exact substitution walker after every bounded
+;; provenance, scan, identity, and Rule-4 gate succeeds.
+(defenum TcProofReuseGeneratedDeclDecision
+  (TcProofReuseGeneratedDeclConcrete)
+  (TcProofReuseGeneratedDeclConcreteSeed)
+  (TcProofReuseGeneratedDeclSkip))
+
+(define (tc-proof-reuse-generated-decl-decision
+  [ctx : TcContext]
+  [generator : String]
+  [item : String]
+  [identity : String]
+  [decl : ast.AstDecl]) : TcProofReuseGeneratedDeclDecision
+  ;; Keep the dark-lane fast path literal and outermost: before any metadata,
+  ;; visible-name, or family work, a session with no complete proof returns
+  ;; immediately.
+  (if (not tc-proof-reuse-any-complete-proofs)
+    (TcProofReuseGeneratedDeclConcrete)
+    (if (not (tc-proof-complete? generator))
+      (TcProofReuseGeneratedDeclConcrete)
+      (let
+        ;; The caller has already destructured this declaration's immutable
+        ;; generated metadata and passes those exact values here.
+        [next-identity-id : i64 (tc-proof-reuse-identity-id-lookup identity)]
+        [next-identity-slot : i64
+          (tc-generated-identity-slot-id next-identity-id)]
+        [next-operand-count : i64
+          (tc-generated-identity-operand-count-slot next-identity-slot)]
+        [identity-metadata-valid : bool
+          (and
+            (>= next-identity-id 0)
+            (tc-generated-identity-slot-valid? next-identity-slot)
+            (>= next-operand-count 1)
+            (<= next-operand-count tc-generated-identity-operands-per-identity))]
+        (if (not identity-metadata-valid)
+          (TcProofReuseGeneratedDeclConcrete)
+          (let
+            [family-slot : i64
+              (tc-generated-family-slot-id-by-name generator item)]
+            (if (or
+              (< family-slot 0)
+              (>= family-slot tc-generated-family-capacity))
+              ;; A missing family is still eligible to seed after a
+              ;; successful concrete check.  The dependency scan is required
+              ;; only for an actual skip, so it is deliberately not run here.
+              (TcProofReuseGeneratedDeclConcreteSeed)
+              (let
+                [first-identity-id : i64
+                  (- (array-ref tc-generated-family-identities family-slot) 1)]
+                (if (or
+                  (< first-identity-id 0)
+                  (= first-identity-id next-identity-id))
+                  (TcProofReuseGeneratedDeclConcrete)
+                  (match (spec.gen-decl-visible-name decl)
+                    [(spec.SpecMaybeString.Some visible)
+                      (if (not (string.eq visible item))
+                        (TcProofReuseGeneratedDeclConcrete)
+                        (let
+                          [first-decl : ast.AstDecl
+                            (tc-generated-family-decl-at family-slot)]
+                          ;; The dependency scan remains a per-declaration
+                          ;; veto: imports, casts, and other context-sensitive
+                          ;; constructs must complete their own concrete check.
+                          (if (tc-generated-decl-dependent-construct? ctx decl)
+                            (TcProofReuseGeneratedDeclConcrete)
+                            ;; The exact walker performs identity preflight,
+                            ;; declaration substitution, and Rule 4 in one
+                            ;; bounded proof. Compare only this declaration's
+                            ;; immutable checked family member; sibling catalog
+                            ;; shape is intentionally irrelevant.
+                            (if (tc-proof-reuse-decl-safe-substitution-ids?
+                              ctx
+                              first-identity-id
+                              next-identity-id
+                              first-decl
+                              decl)
+                              (TcProofReuseGeneratedDeclSkip)
+                              (TcProofReuseGeneratedDeclConcrete)))))]
+                    [(spec.SpecMaybeString.None)
+                      (TcProofReuseGeneratedDeclConcrete)]))))))))))
+
 (define (tc-check-nonfn-decl-with-global-env
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -87675,12 +89905,55 @@
         [template : ast.AstDecl
           (ast.ast-decl-with-meta ast.ast-decl-meta-runtime decl)]
         (match (ast.ast-decl-generated-meta decl)
-          [(ast.AstGeneratedDeclMeta.Some _ _ _ _)
-            (tc-check-decl-with-global-env-inner
-              ctx
-              top-env
-              global-env
-              template)]
+          [(ast.AstGeneratedDeclMeta.Some generator item _ identity)
+            (begin
+              ;; Every generated attempt starts concrete; the profile hook
+              ;; reads this bit only after the declaration succeeds.
+              (set! tc-proof-reuse-last-skip false)
+              (let
+                [decision : TcProofReuseGeneratedDeclDecision
+                  (tc-proof-reuse-generated-decl-decision
+                    ctx
+                    generator
+                    item
+                    identity
+                    decl)]
+                (match decision
+                  [(TcProofReuseGeneratedDeclSkip)
+                    (begin
+                      (set! tc-proof-reuse-last-skip true)
+                      (set!
+                        tc-proof-reuse-skips-total
+                        (+ tc-proof-reuse-skips-total 1))
+                      ResultTcUnit.Ok)]
+                  [(TcProofReuseGeneratedDeclConcrete)
+                    (tc-check-decl-with-global-env-inner
+                      ctx
+                      top-env
+                      global-env
+                      template)]
+                  [(TcProofReuseGeneratedDeclConcreteSeed)
+                    (let
+                      [result : ResultTcUnit
+                        (tc-check-decl-with-global-env-inner
+                          ctx
+                          top-env
+                          global-env
+                          template)]
+                      (begin
+                        ;; A family row is seeded only by a successful
+                        ;; concrete check.  The note operation preserves the
+                        ;; first row and is never repeated for ordinary
+                        ;; concrete decisions or failed checks.
+                        (match result
+                          [(ResultTcUnit.Ok)
+                            (tc-generated-family-note!
+                              generator
+                              item
+                              identity
+                              decl)]
+                          [(ResultTcUnit.Err _) unit])
+                        result))])))]
           [(ast.AstGeneratedDeclMeta.No)
             (match (tc-check-comptime-decl-purity ctx top-env template)
               [(ResultTcUnit.Ok)
@@ -88901,7 +91174,6 @@
     (ctfe_support.ctfe-module-value-reset!)
     (set! ctfe-needs-metadata true)
     (macro-generated-module-memo-reset!)
-    (tc-macro-abstract-proof-reset!)
     (macro-generated-decls-memo-reset!)))
 
 (define (compiler-typecheck-reset-file-state!) : unit

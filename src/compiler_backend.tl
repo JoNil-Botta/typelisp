@@ -59048,6 +59048,14 @@
         (compiler-backend-profile-start
           (struct-get program-index profile-state)))
       (let
+        ;; Prefix composition (string/bytes/float rodata, closure descriptors,
+        ;; switch tables, runtime data, externs, debug prefix and the rendered
+        ;; prefix string) is pure output text. Once the streaming emitter has
+        ;; copied those bytes into the home-owned output stream, nothing reads
+        ;; them again, but they used to stay resident in the backend emit arena
+        ;; for the whole per-function loop -- underneath the compile-wide peak.
+        ;; Mark here and release after the stream has consumed the prefix.
+        [prefix-mark : arena.ArenaMark (arena.mark)]
         [base-prefix-buf : text_buf.TextBuf
           (compiler-backend-emit-program-prefix-buffer
             target
@@ -59079,6 +59087,13 @@
           (if (compiler-backend-assembly-stream-active?)
             (begin
               (compiler-backend-assembly-stream-process-buffer! prefix-buf)
+              ;; The prefix bytes now live in the flushed output stream, and the
+              ;; per-function caches that could still name region-owned strings
+              ;; are cleared before the region goes away.
+              (compiler-backend-user-symbol-cache-reset!)
+              (compiler-backend-slot-cache-epoch-bump!)
+              (unsafe
+                (arena.rewind prefix-mark))
               (text_buf.empty))
             prefix-buf)]
         (begin

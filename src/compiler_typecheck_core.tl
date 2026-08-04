@@ -56617,704 +56617,758 @@
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
       (tc-generated-type-list-dependent-construct-at? ctx types (+ index 1)))))
 
-(define (tc-generated-maybe-type-dependent-construct?
-  [ctx : TcContext]
-  [maybe : ast.AstMaybeType]) : bool
-  (match maybe
-    [(ast.AstMaybeType.Some ty) (tc-generated-type-dependent-construct? ctx ty)]
-    [(ast.AstMaybeType.No) false]))
+;; The type-only dependency predicates stay unconditional for the normal exact
+;; proof walker; the full-AST classifier below is compile-profile/test-only.
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-maybe-type-dependent-construct?
+    [ctx : TcContext]
+    [maybe : ast.AstMaybeType]) : bool
+    (match maybe
+      [(ast.AstMaybeType.Some ty)
+        (tc-generated-type-dependent-construct? ctx ty)]
+      [(ast.AstMaybeType.No) false])))
 
-(define (tc-generated-param-list-dependent-construct-at?
-  [ctx : TcContext]
-  [params : (& params ast.AstParamList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-param-list-len params))
-    false
-    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param _ ty _ _)
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-param-list-dependent-construct-at?
+    [ctx : TcContext]
+    [params : (& params ast.AstParamList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-param-list-len params))
+      false
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(ast.AstParam.Param _ ty _ _)
+          (or
+            (tc-generated-type-dependent-construct? ctx ty)
+            (tc-generated-param-list-dependent-construct-at?
+              ctx
+              params
+              (+ index 1)))]))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-pattern-dependent-construct?
+    [ctx : TcContext]
+    [pattern : ast.AstPattern]) : bool
+    (match pattern
+      [(ast.AstPattern.Var _ maybe-ty)
+        (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)]
+      [(ast.AstPattern.Tuple items)
+        (tc-generated-pattern-list-dependent-construct-at?
+          ctx
+          (& (box-get items))
+          0)]
+      [(ast.AstPattern.Variant _ items)
+        (tc-generated-pattern-list-dependent-construct-at?
+          ctx
+          (& (box-get items))
+          0)]
+      [_ false])))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-pattern-list-dependent-construct-at?
+    [ctx : TcContext]
+    [items : (& items ast.AstPatternList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-pattern-list-len items))
+      false
+      (or
+        (tc-generated-pattern-dependent-construct?
+          ctx
+          (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback)))
+        (tc-generated-pattern-list-dependent-construct-at?
+          ctx
+          items
+          (+ index 1))))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-expr-list-dependent-construct-at?
+    [ctx : TcContext]
+    [exprs : (& exprs ast.AstExprList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-expr-list-len exprs))
+      false
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
+        (tc-generated-expr-list-dependent-construct-at? ctx exprs (+ index 1))))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-let-bindings-dependent-construct-at?
+    [ctx : TcContext]
+    [bindings : (& bindings ast.AstLetBindingList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-let-binding-list-len bindings))
+      false
+      (match (ast.ast-let-binding-list-get
+        bindings
+        index
+        (ast.ast-let-binding-fallback))
+        [(ast.AstLetBinding.Binding _ maybe-ty init-id)
+          (or
+            (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx init-id))
+            (tc-generated-let-bindings-dependent-construct-at?
+              ctx
+              bindings
+              (+ index 1)))]))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-match-arms-dependent-construct-at?
+    [ctx : TcContext]
+    [arms : (& arms ast.AstMatchArmList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-match-arm-list-len arms))
+      false
+      (match (ast.ast-match-arm-list-get
+        arms
+        index
+        (ast.ast-match-arm-fallback))
+        [(ast.AstMatchArm.Arm pattern body-id)
+          (or
+            (tc-generated-pattern-dependent-construct? ctx pattern)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx body-id))
+            (tc-generated-match-arms-dependent-construct-at?
+              ctx
+              arms
+              (+ index 1)))]))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-resource-bindings-dependent-construct-at?
+    [ctx : TcContext]
+    [bindings : (& bindings ast.AstResourceBindingList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-resource-binding-list-len bindings))
+      false
+      (match (ast.ast-resource-binding-list-get
+        bindings
+        index
+        (ast.ast-resource-binding-fallback))
+        [(ast.AstResourceBinding.Binding _ init-id cleanup-id _)
+          (or
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx init-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx cleanup-id))
+            (tc-generated-resource-bindings-dependent-construct-at?
+              ctx
+              bindings
+              (+ index 1)))]))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-expr-dependent-construct?
+    [ctx : TcContext]
+    [expr : ast.AstExpr]) : bool
+    (match expr
+      [(ast.AstExpr.Spanned inner-id _)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Literal _) false]
+      [(ast.AstExpr.Var _) false]
+      [(ast.AstExpr.Binary _ left-id right-id)
         (or
-          (tc-generated-type-dependent-construct? ctx ty)
-          (tc-generated-param-list-dependent-construct-at?
+          (tc-generated-expr-dependent-construct?
             ctx
-            params
-            (+ index 1)))])))
+            (tc-context-expr-get ctx left-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx right-id)))]
+      [(ast.AstExpr.Unary _ inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Call func-id args)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx func-id))
+          (tc-generated-expr-list-dependent-construct-at? ctx (& args) 0))]
+      [(ast.AstExpr.If cond-id then-id else-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx cond-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx then-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx else-id)))]
+      [(ast.AstExpr.Let let-box)
+        (match (box-get let-box)
+          [(ast.AstLet.Let bindings body-id)
+            (or
+              (tc-generated-let-bindings-dependent-construct-at?
+                ctx
+                (& bindings)
+                0)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx body-id)))])]
+      [(ast.AstExpr.Lambda lambda-box)
+        (match (box-get lambda-box)
+          [(ast.AstLambda.Lambda params ret body-id)
+            (or
+              (tc-generated-param-list-dependent-construct-at? ctx (& params) 0)
+              (tc-generated-maybe-type-dependent-construct? ctx ret)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx body-id)))])]
+      [(ast.AstExpr.Tuple items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      [(ast.AstExpr.TupleRef tuple-id _)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx tuple-id))]
+      [(ast.AstExpr.Array items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      [(ast.AstExpr.DynArray items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      ;; A make-array element type in expression position is not dependent; the
+      ;; produced value is a length-erased dynamic array.
+      [(ast.AstExpr.MakeArray _ len-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx len-id))]
+      [(ast.AstExpr.ArrayRef array-id index-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx array-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx index-id)))]
+      [(ast.AstExpr.ArraySet array-id index-id value-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx array-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx index-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.ArrayTake array-id live-id index-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx array-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx live-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx index-id)))]
+      [(ast.AstExpr.ArrayPush array-id value-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx array-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.StringRef str-id index-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx str-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx index-id)))]
+      [(ast.AstExpr.While cond-id body-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx cond-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx body-id)))]
+      [(ast.AstExpr.Begin items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      [(ast.AstExpr.Unsafe items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      [(ast.AstExpr.Set _ value-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx value-id))]
+      [(ast.AstExpr.Ann inner-id ty-id)
+        (or
+          (tc-generated-type-dependent-construct?
+            ctx
+            (tc-context-type-get ctx ty-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx inner-id)))]
+      [(ast.AstExpr.Cast _ _) true]
+      [(ast.AstExpr.Borrow _ _ place-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx place-id))]
+      [(ast.AstExpr.Match match-box)
+        (match (box-get match-box)
+          [(ast.AstMatch.Match scrutinee-id arms)
+            (or
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx scrutinee-id))
+              (tc-generated-match-arms-dependent-construct-at? ctx (& arms) 0))])]
+      [(ast.AstExpr.Foreach fe-box)
+        (match (box-get fe-box)
+          [(ast.AstForeach.Foreach _ elem-ty start-id end-id body-id)
+            (or
+              (tc-generated-type-dependent-construct? ctx elem-ty)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx start-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx end-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx body-id)))])]
+      [(ast.AstExpr.SpmdReduce reduce-box)
+        (match (box-get reduce-box)
+          [(ast.AstSpmdReduce.Reduce
+              _
+              _
+              elem-ty
+              start-id
+              end-id
+              init-id
+              value-id)
+            (or
+              (tc-generated-type-dependent-construct? ctx elem-ty)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx start-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx end-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx init-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx value-id)))])]
+      [(ast.AstExpr.SpmdScan scan-box)
+        (match (box-get scan-box)
+          [(ast.AstSpmdScan.Scan
+              _
+              _
+              elem-ty
+              start-id
+              end-id
+              _
+              init-ty
+              init-id
+              value-id
+              body-id)
+            (or
+              (tc-generated-type-dependent-construct? ctx elem-ty)
+              (tc-generated-type-dependent-construct? ctx init-ty)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx start-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx end-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx init-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx value-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx body-id)))])]
+      [(ast.AstExpr.SpmdBroadcast value-id lane-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx lane-id)))]
+      [(ast.AstExpr.SpmdShuffle value-id lane-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx lane-id)))]
+      [(ast.AstExpr.SpmdProgramIndex) false]
+      [(ast.AstExpr.SpmdProgramCount) false]
+      [(ast.AstExpr.StructGet receiver-id _)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx receiver-id))]
+      [(ast.AstExpr.StructSet receiver-id _ value-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx receiver-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.WithRegion _ body)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0)]
+      [(ast.AstExpr.WithEscape scratch-id body)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx scratch-id))
+          (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))]
+      [(ast.AstExpr.WithScratch body)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0)]
+      [(ast.AstExpr.InArena arena-id body)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx arena-id))
+          (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))]
+      [(ast.AstExpr.WithResource wr-box)
+        (match (box-get wr-box)
+          [(ast.AstWithResource.WithResource bindings body)
+            (or
+              (tc-generated-resource-bindings-dependent-construct-at?
+                ctx
+                (& bindings)
+                0)
+              (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))])]
+      [(ast.AstExpr.Box inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.BoxGet inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.BoxTake inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.BoxSet inner-id value-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx inner-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.TypeLiteral ty-id)
+        (tc-generated-type-dependent-construct?
+          ctx
+          (tc-context-type-get ctx ty-id))]
+      [(ast.AstExpr.Init maybe-ty-id)
+        (tc-generated-maybe-type-dependent-construct?
+          ctx
+          (ast.ast-maybe-type-from-id-with-pools
+            (tc-context-pools ctx)
+            maybe-ty-id))]
+      [(ast.AstExpr.Comptime inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Quote inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Quasiquote inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Unquote inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.UnquoteSplicing inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.BracketClause items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      [(ast.AstExpr.Try inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Return inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Break) false]
+      [(ast.AstExpr.Continue) false]
+      [(ast.AstExpr.PtrNull ty-id)
+        (tc-generated-type-dependent-construct?
+          ctx
+          (tc-context-type-get ctx ty-id))]
+      [(ast.AstExpr.PtrNullCheck inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.PtrAddrOf place-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx place-id))]
+      [(ast.AstExpr.PtrRead ptr-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx ptr-id))]
+      [(ast.AstExpr.PtrWrite ptr-id value-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx ptr-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.PtrOffset ptr-id offset-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx ptr-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx offset-id)))]
+      [(ast.AstExpr.PtrCast ptr-id ty-id)
+        (or
+          (tc-generated-type-dependent-construct?
+            ctx
+            (tc-context-type-get ctx ty-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx ptr-id)))]
+      [(ast.AstExpr.PtrToInt ptr-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx ptr-id))]
+      [(ast.AstExpr.IntToPtr value-id ty-id)
+        (or
+          (tc-generated-type-dependent-construct?
+            ctx
+            (tc-context-type-get ctx ty-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.StringData str-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx str-id))]
+      [(ast.AstExpr.StringFromBytes ptr-id len-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx ptr-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx len-id)))]
+      [(ast.AstExpr.ArrayData array-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx array-id))]
+      [(ast.AstExpr.BinaryData _) false]
+      [(ast.AstExpr.ProgramArgc) false]
+      [(ast.AstExpr.ProgramArgv) false]
+      [(ast.AstExpr.ProgramEnvp) false]
+      [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx leaf-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx subleaf-id)))]
+      [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx leaf-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx subleaf-id)))]
+      [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx leaf-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx subleaf-id)))]
+      [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx leaf-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx subleaf-id)))]
+      [(ast.AstExpr.Xgetbv index-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx index-id))]
+      [(ast.AstExpr.Syscall args)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& args) 0)])))
 
-(define (tc-generated-pattern-dependent-construct?
-  [ctx : TcContext]
-  [pattern : ast.AstPattern]) : bool
-  (match pattern
-    [(ast.AstPattern.Var _ maybe-ty)
-      (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)]
-    [(ast.AstPattern.Tuple items)
-      (tc-generated-pattern-list-dependent-construct-at?
-        ctx
-        (& (box-get items))
-        0)]
-    [(ast.AstPattern.Variant _ items)
-      (tc-generated-pattern-list-dependent-construct-at?
-        ctx
-        (& (box-get items))
-        0)]
-    [_ false]))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-field-cleanup-dependent?
+    [cleanup : ast.AstFieldCleanup]) : bool
+    (match cleanup
+      [(ast.AstFieldCleanup.No) false]
+      [_ true])))
 
-(define (tc-generated-pattern-list-dependent-construct-at?
-  [ctx : TcContext]
-  [items : (& items ast.AstPatternList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-pattern-list-len items))
-    false
-    (or
-      (tc-generated-pattern-dependent-construct?
-        ctx
-        (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback)))
-      (tc-generated-pattern-list-dependent-construct-at? ctx items (+ index 1)))))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-struct-cleanup-dependent?
+    [cleanup : ast.AstStructCleanup]) : bool
+    (match cleanup
+      [(ast.AstStructCleanup.No) false]
+      [_ true])))
 
-(define (tc-generated-expr-list-dependent-construct-at?
-  [ctx : TcContext]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-expr-list-len exprs))
-    false
-    (or
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (tc-generated-expr-list-dependent-construct-at? ctx exprs (+ index 1)))))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-enum-cleanup-dependent? [cleanup : ast.AstEnumCleanup]) : bool
+    (match cleanup
+      [(ast.AstEnumCleanup.No) false]
+      [_ true])))
 
-(define (tc-generated-let-bindings-dependent-construct-at?
-  [ctx : TcContext]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    false
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ maybe-ty init-id)
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-fields-dependent-construct-at?
+    [ctx : TcContext]
+    [fields : (& fields ast.AstFieldDefList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-field-def-list-len fields))
+      false
+      (match (ast.ast-field-def-list-get
+        fields
+        index
+        (ast.ast-field-def-fallback))
+        [(ast.AstFieldDef.Def _ ty cleanup)
+          (or
+            (tc-generated-field-cleanup-dependent? cleanup)
+            (tc-generated-type-dependent-construct? ctx ty)
+            (tc-generated-fields-dependent-construct-at? ctx fields (+ index 1)))]))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-payload-cleanups-dependent-at?
+    [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-variant-payload-cleanup-list-len cleanups))
+      false
+      (match (ast.ast-variant-payload-cleanup-list-get
+        cleanups
+        index
+        (ast.ast-variant-payload-cleanup-fallback))
+        [(ast.AstVariantPayloadCleanup.No)
+          (tc-generated-payload-cleanups-dependent-at? cleanups (+ index 1))]
+        [_ true]))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-variants-dependent-construct-at?
+    [ctx : TcContext]
+    [variants : (& variants ast.AstVariantDefList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-variant-def-list-len variants))
+      false
+      (match (ast.ast-variant-def-list-get
+        variants
+        index
+        (ast.ast-variant-def-fallback))
+        [(ast.AstVariantDef.Def _ payload-types payload-cleanups)
+          (or
+            (tc-generated-type-list-dependent-construct-at?
+              ctx
+              (& payload-types)
+              0)
+            (tc-generated-payload-cleanups-dependent-at? (& payload-cleanups) 0)
+            (tc-generated-variants-dependent-construct-at?
+              ctx
+              variants
+              (+ index 1)))]))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-decl-dependent-construct?
+    [ctx : TcContext]
+    [decl : ast.AstDecl]) : bool
+    (match decl
+      [(ast.AstDecl.Def _ _ maybe-ty body-id)
         (or
           (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)
           (tc-generated-expr-dependent-construct?
             ctx
-            (tc-context-expr-get ctx init-id))
-          (tc-generated-let-bindings-dependent-construct-at?
-            ctx
-            bindings
-            (+ index 1)))])))
-
-(define (tc-generated-match-arms-dependent-construct-at?
-  [ctx : TcContext]
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-match-arm-list-len arms))
-    false
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm pattern body-id)
+            (tc-context-expr-get ctx body-id)))]
+      [(ast.AstDecl.DefFn _ _ params ret body-id _)
         (or
-          (tc-generated-pattern-dependent-construct? ctx pattern)
+          (tc-generated-param-list-dependent-construct-at? ctx (& params) 0)
+          (tc-generated-type-dependent-construct? ctx ret)
           (tc-generated-expr-dependent-construct?
             ctx
-            (tc-context-expr-get ctx body-id))
-          (tc-generated-match-arms-dependent-construct-at? ctx arms (+ index 1)))])))
-
-(define (tc-generated-resource-bindings-dependent-construct-at?
-  [ctx : TcContext]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-resource-binding-list-len bindings))
-    false
-    (match (ast.ast-resource-binding-list-get
-      bindings
-      index
-      (ast.ast-resource-binding-fallback))
-      [(ast.AstResourceBinding.Binding _ init-id cleanup-id _)
+            (tc-context-expr-get ctx body-id)))]
+      ;; Macro declarations are compile-time only; they never reach the runtime
+      ;; checking lane this classification feeds.
+      [(ast.AstDecl.DefMacro _ _ _ _ _) false]
+      [(ast.AstDecl.Extern _ _ _ _ ty)
+        (tc-generated-type-dependent-construct? ctx ty)]
+      [(ast.AstDecl.DefEnum _ _ cleanup variants)
         (or
-          (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx init-id))
-          (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx cleanup-id))
-          (tc-generated-resource-bindings-dependent-construct-at?
-            ctx
-            bindings
-            (+ index 1)))])))
-
-(define (tc-generated-expr-dependent-construct?
-  [ctx : TcContext]
-  [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-id _)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Literal _) false]
-    [(ast.AstExpr.Var _) false]
-    [(ast.AstExpr.Binary _ left-id right-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx left-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx right-id)))]
-    [(ast.AstExpr.Unary _ inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Call func-id args)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx func-id))
-        (tc-generated-expr-list-dependent-construct-at? ctx (& args) 0))]
-    [(ast.AstExpr.If cond-id then-id else-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx cond-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx then-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx else-id)))]
-    [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
-        [(ast.AstLet.Let bindings body-id)
-          (or
-            (tc-generated-let-bindings-dependent-construct-at?
-              ctx
-              (& bindings)
-              0)
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx body-id)))])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
-        [(ast.AstLambda.Lambda params ret body-id)
-          (or
-            (tc-generated-param-list-dependent-construct-at? ctx (& params) 0)
-            (tc-generated-maybe-type-dependent-construct? ctx ret)
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx body-id)))])]
-    [(ast.AstExpr.Tuple items)
-      (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
-    [(ast.AstExpr.TupleRef tuple-id _)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx tuple-id))]
-    [(ast.AstExpr.Array items)
-      (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
-    [(ast.AstExpr.DynArray items)
-      (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
-    ;; A make-array element type in expression position is not dependent; the
-    ;; produced value is a length-erased dynamic array.
-    [(ast.AstExpr.MakeArray _ len-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx len-id))]
-    [(ast.AstExpr.ArrayRef array-id index-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx array-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx index-id)))]
-    [(ast.AstExpr.ArraySet array-id index-id value-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx array-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx index-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.ArrayTake array-id live-id index-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx array-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx live-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx index-id)))]
-    [(ast.AstExpr.ArrayPush array-id value-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx array-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.StringRef str-id index-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx str-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx index-id)))]
-    [(ast.AstExpr.While cond-id body-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx cond-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx body-id)))]
-    [(ast.AstExpr.Begin items)
-      (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
-    [(ast.AstExpr.Unsafe items)
-      (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
-    [(ast.AstExpr.Set _ value-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx value-id))]
-    [(ast.AstExpr.Ann inner-id ty-id)
-      (or
-        (tc-generated-type-dependent-construct?
-          ctx
-          (tc-context-type-get ctx ty-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id)))]
-    [(ast.AstExpr.Cast _ _) true]
-    [(ast.AstExpr.Borrow _ _ place-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx place-id))]
-    [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
-        [(ast.AstMatch.Match scrutinee-id arms)
-          (or
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx scrutinee-id))
-            (tc-generated-match-arms-dependent-construct-at? ctx (& arms) 0))])]
-    [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
-        [(ast.AstForeach.Foreach _ elem-ty start-id end-id body-id)
-          (or
-            (tc-generated-type-dependent-construct? ctx elem-ty)
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx start-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx end-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx body-id)))])]
-    [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
-        [(ast.AstSpmdReduce.Reduce _ _ elem-ty start-id end-id init-id value-id)
-          (or
-            (tc-generated-type-dependent-construct? ctx elem-ty)
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx start-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx end-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx init-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx value-id)))])]
-    [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
-        [(ast.AstSpmdScan.Scan
-            _
-            _
-            elem-ty
-            start-id
-            end-id
-            _
-            init-ty
-            init-id
-            value-id
-            body-id)
-          (or
-            (tc-generated-type-dependent-construct? ctx elem-ty)
-            (tc-generated-type-dependent-construct? ctx init-ty)
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx start-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx end-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx init-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx value-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx body-id)))])]
-    [(ast.AstExpr.SpmdBroadcast value-id lane-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx lane-id)))]
-    [(ast.AstExpr.SpmdShuffle value-id lane-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx lane-id)))]
-    [(ast.AstExpr.SpmdProgramIndex) false]
-    [(ast.AstExpr.SpmdProgramCount) false]
-    [(ast.AstExpr.StructGet receiver-id _)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx receiver-id))]
-    [(ast.AstExpr.StructSet receiver-id _ value-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx receiver-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.WithRegion _ body)
-      (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0)]
-    [(ast.AstExpr.WithEscape scratch-id body)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx scratch-id))
-        (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))]
-    [(ast.AstExpr.WithScratch body)
-      (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0)]
-    [(ast.AstExpr.InArena arena-id body)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx arena-id))
-        (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))]
-    [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (or
-            (tc-generated-resource-bindings-dependent-construct-at?
-              ctx
-              (& bindings)
-              0)
-            (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))])]
-    [(ast.AstExpr.Box inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.BoxGet inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.BoxTake inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.BoxSet inner-id value-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.TypeLiteral ty-id)
-      (tc-generated-type-dependent-construct?
-        ctx
-        (tc-context-type-get ctx ty-id))]
-    [(ast.AstExpr.Init maybe-ty-id)
-      (tc-generated-maybe-type-dependent-construct?
-        ctx
-        (ast.ast-maybe-type-from-id-with-pools
-          (tc-context-pools ctx)
-          maybe-ty-id))]
-    [(ast.AstExpr.Comptime inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Quote inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Quasiquote inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Unquote inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.UnquoteSplicing inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.BracketClause items)
-      (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
-    [(ast.AstExpr.Try inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Return inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Break) false]
-    [(ast.AstExpr.Continue) false]
-    [(ast.AstExpr.PtrNull ty-id)
-      (tc-generated-type-dependent-construct?
-        ctx
-        (tc-context-type-get ctx ty-id))]
-    [(ast.AstExpr.PtrNullCheck inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.PtrAddrOf place-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx place-id))]
-    [(ast.AstExpr.PtrRead ptr-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx ptr-id))]
-    [(ast.AstExpr.PtrWrite ptr-id value-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx ptr-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.PtrOffset ptr-id offset-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx ptr-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx offset-id)))]
-    [(ast.AstExpr.PtrCast ptr-id ty-id)
-      (or
-        (tc-generated-type-dependent-construct?
-          ctx
-          (tc-context-type-get ctx ty-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx ptr-id)))]
-    [(ast.AstExpr.PtrToInt ptr-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx ptr-id))]
-    [(ast.AstExpr.IntToPtr value-id ty-id)
-      (or
-        (tc-generated-type-dependent-construct?
-          ctx
-          (tc-context-type-get ctx ty-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.StringData str-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx str-id))]
-    [(ast.AstExpr.StringFromBytes ptr-id len-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx ptr-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx len-id)))]
-    [(ast.AstExpr.ArrayData array-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx array-id))]
-    [(ast.AstExpr.BinaryData _) false]
-    [(ast.AstExpr.ProgramArgc) false]
-    [(ast.AstExpr.ProgramArgv) false]
-    [(ast.AstExpr.ProgramEnvp) false]
-    [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx leaf-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx subleaf-id)))]
-    [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx leaf-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx subleaf-id)))]
-    [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx leaf-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx subleaf-id)))]
-    [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx leaf-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx subleaf-id)))]
-    [(ast.AstExpr.Xgetbv index-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx index-id))]
-    [(ast.AstExpr.Syscall args)
-      (tc-generated-expr-list-dependent-construct-at? ctx (& args) 0)]))
-
-(define (tc-generated-field-cleanup-dependent? [cleanup : ast.AstFieldCleanup]) : bool
-  (match cleanup
-    [(ast.AstFieldCleanup.No) false]
-    [_ true]))
-
-(define (tc-generated-struct-cleanup-dependent?
-  [cleanup : ast.AstStructCleanup]) : bool
-  (match cleanup
-    [(ast.AstStructCleanup.No) false]
-    [_ true]))
-
-(define (tc-generated-enum-cleanup-dependent? [cleanup : ast.AstEnumCleanup]) : bool
-  (match cleanup
-    [(ast.AstEnumCleanup.No) false]
-    [_ true]))
-
-(define (tc-generated-fields-dependent-construct-at?
-  [ctx : TcContext]
-  [fields : (& fields ast.AstFieldDefList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-field-def-list-len fields))
-    false
-    (match (ast.ast-field-def-list-get
-      fields
-      index
-      (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def _ ty cleanup)
+          (tc-generated-enum-cleanup-dependent? cleanup)
+          (tc-generated-variants-dependent-construct-at? ctx (& variants) 0))]
+      [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
         (or
-          (tc-generated-field-cleanup-dependent? cleanup)
-          (tc-generated-type-dependent-construct? ctx ty)
-          (tc-generated-fields-dependent-construct-at? ctx fields (+ index 1)))])))
-
-(define (tc-generated-payload-cleanups-dependent-at?
-  [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-variant-payload-cleanup-list-len cleanups))
-    false
-    (match (ast.ast-variant-payload-cleanup-list-get
-      cleanups
-      index
-      (ast.ast-variant-payload-cleanup-fallback))
-      [(ast.AstVariantPayloadCleanup.No)
-        (tc-generated-payload-cleanups-dependent-at? cleanups (+ index 1))]
-      [_ true])))
-
-(define (tc-generated-variants-dependent-construct-at?
-  [ctx : TcContext]
-  [variants : (& variants ast.AstVariantDefList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-variant-def-list-len variants))
-    false
-    (match (ast.ast-variant-def-list-get
-      variants
-      index
-      (ast.ast-variant-def-fallback))
-      [(ast.AstVariantDef.Def _ payload-types payload-cleanups)
+          (tc-generated-enum-cleanup-dependent? cleanup)
+          (tc-generated-variants-dependent-construct-at? ctx (& variants) 0))]
+      [(ast.AstDecl.DefStruct _ _ _ cleanup fields)
         (or
-          (tc-generated-type-list-dependent-construct-at?
-            ctx
-            (& payload-types)
-            0)
-          (tc-generated-payload-cleanups-dependent-at? (& payload-cleanups) 0)
-          (tc-generated-variants-dependent-construct-at?
-            ctx
-            variants
-            (+ index 1)))])))
-
-(define (tc-generated-decl-dependent-construct?
-  [ctx : TcContext]
-  [decl : ast.AstDecl]) : bool
-  (match decl
-    [(ast.AstDecl.Def _ _ maybe-ty body-id)
-      (or
-        (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)
-        (tc-generated-expr-dependent-construct?
+          (tc-generated-struct-cleanup-dependent? cleanup)
+          (tc-generated-fields-dependent-construct-at? ctx (& fields) 0))]
+      [(ast.AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
+        (or
+          (tc-generated-struct-cleanup-dependent? cleanup)
+          (tc-generated-fields-dependent-construct-at? ctx (& fields) 0))]
+      ;; Nested generated-module imports keep their own concrete checks.
+      [(ast.AstDecl.Import _ _) true]
+      [(ast.AstDecl.Unsafe inner-box)
+        (tc-generated-decl-dependent-construct? ctx (box-get inner-box))]
+      [(ast.AstDecl.ModuleBody _ decls-box)
+        (tc-generated-decl-list-dependent-construct-at?
           ctx
-          (tc-context-expr-get ctx body-id)))]
-    [(ast.AstDecl.DefFn _ _ params ret body-id _)
-      (or
-        (tc-generated-param-list-dependent-construct-at? ctx (& params) 0)
-        (tc-generated-type-dependent-construct? ctx ret)
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx body-id)))]
-    ;; Macro declarations are compile-time only; they never reach the runtime
-    ;; checking lane this classification feeds.
-    [(ast.AstDecl.DefMacro _ _ _ _ _) false]
-    [(ast.AstDecl.Extern _ _ _ _ ty)
-      (tc-generated-type-dependent-construct? ctx ty)]
-    [(ast.AstDecl.DefEnum _ _ cleanup variants)
-      (or
-        (tc-generated-enum-cleanup-dependent? cleanup)
-        (tc-generated-variants-dependent-construct-at? ctx (& variants) 0))]
-    [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
-      (or
-        (tc-generated-enum-cleanup-dependent? cleanup)
-        (tc-generated-variants-dependent-construct-at? ctx (& variants) 0))]
-    [(ast.AstDecl.DefStruct _ _ _ cleanup fields)
-      (or
-        (tc-generated-struct-cleanup-dependent? cleanup)
-        (tc-generated-fields-dependent-construct-at? ctx (& fields) 0))]
-    [(ast.AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
-      (or
-        (tc-generated-struct-cleanup-dependent? cleanup)
-        (tc-generated-fields-dependent-construct-at? ctx (& fields) 0))]
-    ;; Nested generated-module imports keep their own concrete checks.
-    [(ast.AstDecl.Import _ _) true]
-    [(ast.AstDecl.Unsafe inner-box)
-      (tc-generated-decl-dependent-construct? ctx (box-get inner-box))]
-    [(ast.AstDecl.ModuleBody _ decls-box)
-      (tc-generated-decl-list-dependent-construct-at?
-        ctx
-        (& (box-get decls-box))
-        0)]
-    [_ false]))
+          (& (box-get decls-box))
+          0)]
+      [_ false])))
 
-(define (tc-generated-decl-list-dependent-construct-at?
-  [ctx : TcContext]
-  [decls : (& decls ast.AstDeclList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-decl-list-len decls))
-    false
-    (or
-      (tc-generated-decl-dependent-construct?
-        ctx
-        (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
-      (tc-generated-decl-list-dependent-construct-at? ctx decls (+ index 1)))))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-decl-list-dependent-construct-at?
+    [ctx : TcContext]
+    [decls : (& decls ast.AstDeclList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-decl-list-len decls))
+      false
+      (or
+        (tc-generated-decl-dependent-construct?
+          ctx
+          (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
+        (tc-generated-decl-list-dependent-construct-at? ctx decls (+ index 1))))))
 
 (define (tc-macro-param-list-needs-call-context?
   [params : ast.AstMacroParamList]) : bool

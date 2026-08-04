@@ -542,13 +542,16 @@ assembly owner. Batch mode names the exact saved entry scratch head at
 after that owner is destroyed. Together these rows distinguish intended session
 roots from lower-phase storage that accidentally survives an entry.
 
-The optimizer emits two owners that it reads just before releasing them.
-`optimizer-scratch` is the per-function escape scratch and is already rewound to
-zero when it is read, so it stays on the `optimize` phase. `optimize-inline` is
-the whole-program inline stage's arena and is read at its high-water mark, so it
-carries its own `optimize.inline` phase: the arena it names is already destroyed
-by the time the `optimize` snapshot runs, and folding it into that snapshot's
-unique-root sum would report storage the phase boundary no longer holds.
+The optimizer emits three owners that it reads just before releasing them.
+`optimizer-scratch` is the per-function escape scratch and `optimizer-late-scratch`
+is the same pattern for the fused post-prune late passes; both are already
+rewound to zero when they are read, so they stay on the `optimize` phase.
+`optimize-inline` is the whole-program inline stage's arena and is read at its
+high-water mark, so it carries its own `optimize.inline` phase: the arena it
+names is already destroyed by the time the `optimize` snapshot runs, and folding
+it into that snapshot's unique-root sum would report storage the phase boundary
+no longer holds. The late scratch is only created at `--opt-level 2`, where the
+late passes run.
 
 On Windows, correlate those rows with the compiler process's working set and
 private bytes using:

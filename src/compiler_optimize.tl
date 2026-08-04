@@ -30637,9 +30637,15 @@
         (ir.compiler-ir-block-seq-to-list seq)
         tail)]))
 
-(define (opt-late-total-switch-function
+;; A late per-function rewrite paired with whether it changed anything. `false`
+;; means the pass left the function's IR alone, so a fused traversal may keep
+;; the caller's input instead of materializing the pass output.
+(defenum OptLateRewriteResult
+  (Result ir.CompilerIrFunction bool))
+
+(define (opt-late-total-switch-function-rewrite
   [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  [func : ir.CompilerIrFunction]) : OptLateRewriteResult
   (match func
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
@@ -30655,6 +30661,12 @@
             (ir.compiler-ir-param-list-count params))]
         [blocks-result : OptLateTotalSwitchBlocks
           (opt-late-total-switch-blocks blocks occupied frame-cell)]
+        ;; One trap block is appended per rewritten switch, so an empty trap
+        ;; list is exactly "no switch in this function was rewritten".
+        [trap-count : i64
+          (match blocks-result
+            [(OptLateTotalSwitchBlocks.Result _ trap-blocks)
+              (ir.compiler-ir-block-list-count trap-blocks)])]
         [next-blocks : ir.CompilerIrBlockList
           (match blocks-result
             [(OptLateTotalSwitchBlocks.Result main-blocks trap-blocks)
@@ -30667,24 +30679,18 @@
             ret-ty
             (array-ref frame-cell 0)
             next-blocks)]
-        (compiler-opt-debug-observe-function
-          type-segment-bases
-          "total_switch"
-          rewritten))]))
+        (OptLateRewriteResult.Result
+          (compiler-opt-debug-observe-function
+            type-segment-bases
+            "total_switch"
+            rewritten)
+          (> trap-count 0)))]))
 
-(define (opt-late-total-switch-function-list
+(define (opt-late-total-switch-function
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) ir.CompilerIrFunctionList.Nil]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (ir.compiler-ir-function-cons
-        (opt-late-total-switch-function type-segment-bases func)
-        (opt-late-total-switch-function-list type-segment-bases (box-get rest)))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-late-total-switch-function-list
-        type-segment-bases
-        (ir.compiler-ir-function-seq-to-list seq))]))
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-late-total-switch-function-rewrite type-segment-bases func)
+    [(OptLateRewriteResult.Result rewritten _) rewritten]))
 
 (define (opt-switch-block-starts-with-phi? [index : OptCfgIndex] [label : i64]) : bool
   (match (opt-cfg-index-find-block index label)
@@ -49810,9 +49816,9 @@
         [(OptLateBoundsPairResult.No)
           (opt-late-bounds-pair-scan-loops blocks frame (box-get rest))])]))
 
-(define (opt-late-bounds-pair-function
+(define (opt-late-bounds-pair-function-rewrite
   [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  [func : ir.CompilerIrFunction]) : OptLateRewriteResult
   ;; Late pass outside the verified fixpoint: scan first, and only when a
   ;; rewrite candidate exists pay for verification. Rejection keeps the input.
   (match func
@@ -49821,7 +49827,7 @@
         blocks
         frame
         (opt-cfg-natural-loops blocks))
-        [(OptLateBoundsPairResult.No) func]
+        [(OptLateBoundsPairResult.No) (OptLateRewriteResult.Result func false)]
         [(OptLateBoundsPairResult.Some next-blocks next-frame)
           (let
             [candidate : ir.CompilerIrFunction
@@ -49836,25 +49842,20 @@
             ;; verify against a fresh view and keep the input on rejection.
             (match (opt-verify-function candidate)
               [(ResultCompilerOptimizeVerify.Ok)
-                (compiler-opt-debug-observe-function
-                  type-segment-bases
-                  "paired_bounds"
-                  candidate)]
-              [(ResultCompilerOptimizeVerify.Err _) func]))])]))
+                (OptLateRewriteResult.Result
+                  (compiler-opt-debug-observe-function
+                    type-segment-bases
+                    "paired_bounds"
+                    candidate)
+                  true)]
+              [(ResultCompilerOptimizeVerify.Err _)
+                (OptLateRewriteResult.Result func false)]))])]))
 
-(define (opt-late-bounds-pair-function-list
+(define (opt-late-bounds-pair-function
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) ir.CompilerIrFunctionList.Nil]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (ir.compiler-ir-function-cons
-        (opt-late-bounds-pair-function type-segment-bases func)
-        (opt-late-bounds-pair-function-list type-segment-bases (box-get rest)))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-late-bounds-pair-function-list
-        type-segment-bases
-        (ir.compiler-ir-function-seq-to-list seq))]))
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-late-bounds-pair-function-rewrite type-segment-bases func)
+    [(OptLateRewriteResult.Result rewritten _) rewritten]))
 
 ;; Derivation fold state: the guard accumulator (conditions for REMOVED
 ;; checks), the kept-check set, how many checks derived -- partial
@@ -70632,31 +70633,19 @@
                       (opt-pruned-program-globals final-pruned)]
                     [final-functions : ir.CompilerIrFunctionList
                       (opt-pruned-program-functions final-pruned)]
-                    [scratch-reset-functions : ir.CompilerIrFunctionList
-                      (opt-scratch-reset-function-list-with-level
+                    [late-functions : ir.CompilerIrFunctionList
+                      (opt-late-function-list-with-level
+                        pools
                         type-segment-bases
                         final-functions
                         level)]
-                    [paired-bounds-functions : ir.CompilerIrFunctionList
-                      (if (< level 2)
-                        scratch-reset-functions
-                        (opt-late-bounds-pair-function-list
-                          type-segment-bases
-                          scratch-reset-functions))]
-                    [total-switch-functions : ir.CompilerIrFunctionList
-                      (if (< level 2)
-                        paired-bounds-functions
-                        (opt-late-total-switch-function-list
-                          type-segment-bases
-                          paired-bounds-functions))]
                     (begin
                       (cfg
                         compile-profile
                         (compiler-opt-profile-finish profile-state "post_prune"))
                       (ir.CompilerIrProgram.Program
                         final-globals
-                        (ir.compiler-ir-function-list-compact
-                          total-switch-functions)
+                        (ir.compiler-ir-function-list-compact late-functions)
                         externs)))))))))]))
 
 (define (optimize-program-with-reader-context-and-level
@@ -71128,28 +71117,17 @@
                           (opt-pruned-program-globals final-pruned)]
                         [final-functions : ir.CompilerIrFunctionList
                           (opt-pruned-program-functions final-pruned)]
-                        [scratch-reset-functions : ir.CompilerIrFunctionList
-                          (opt-scratch-reset-function-list-with-level
+                        [late-functions : ir.CompilerIrFunctionList
+                          (opt-late-function-list-with-level
+                            pools
                             type-segment-bases
                             final-functions
                             level)]
-                        [paired-bounds-functions : ir.CompilerIrFunctionList
-                          (if (< level 2)
-                            scratch-reset-functions
-                            (opt-late-bounds-pair-function-list
-                              type-segment-bases
-                              scratch-reset-functions))]
-                        [total-switch-functions : ir.CompilerIrFunctionList
-                          (if (< level 2)
-                            paired-bounds-functions
-                            (opt-late-total-switch-function-list
-                              type-segment-bases
-                              paired-bounds-functions))]
                         [optimized : ir.CompilerIrProgram
                           (ir.CompilerIrProgram.Program
                             final-globals
                             (ir.compiler-ir-function-list-compact
-                              total-switch-functions)
+                              late-functions)
                             externs)]
                         (begin
                           (cfg
@@ -72953,32 +72931,6 @@
           frame
           (box-get rest)))]))
 
-(define (opt-scratch-reset-function-unchecked-with-context-result
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match func
-    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-      (match (opt-scratch-reset-apply-loops
-        type-segment-bases
-        context
-        blocks
-        frame
-        (opt-cfg-natural-loops-with-context blocks context))
-        [(OptScratchResetApplyResult.Result next-blocks next-frame changed)
-          (if changed
-            (let
-              [next : ir.CompilerIrFunction
-                (ir.CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  next-frame
-                  next-blocks)]
-              [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
-              (OptFunctionCtxResult.Result next next-context))
-            (OptFunctionCtxResult.Result func context))])]))
-
 (define (opt-scratch-reset-function-with-context-result
   [type-segment-bases : i64]
   [context : OptCfgContext]
@@ -73027,45 +72979,150 @@
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
-(define (opt-scratch-reset-function-unchecked
+(define (opt-scratch-reset-function-unchecked-rewrite
   [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  [func : ir.CompilerIrFunction]) : OptLateRewriteResult
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (if (<=
         (ir.compiler-ir-block-list-count blocks)
         (opt-heavy-pass-block-limit))
-        (match (opt-scratch-reset-function-unchecked-with-context-result
-          type-segment-bases
-          (opt-cfg-context-build blocks)
-          func)
-          [(OptFunctionCtxResult.Result next _) next])
-        func)]))
+        (let
+          [context : OptCfgContext (opt-cfg-context-build blocks)]
+          (match (opt-scratch-reset-apply-loops
+            type-segment-bases
+            context
+            blocks
+            frame
+            (opt-cfg-natural-loops-with-context blocks context))
+            [(OptScratchResetApplyResult.Result next-blocks next-frame changed)
+              (if changed
+                (OptLateRewriteResult.Result
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    next-frame
+                    next-blocks)
+                  true)
+                (OptLateRewriteResult.Result func false))]))
+        (OptLateRewriteResult.Result func false))]))
 
-(define (opt-scratch-reset-function-list-unchecked
+;; --- fused late (post-prune) function pass -----------------------------------
+;;
+;; The three post-prune rewrites -- scratch-reset, paired bounds and total
+;; switch -- are independent per-function maps: none of them reads another
+;; function, keeps state between functions, or observes an intermediate whole
+;; program list. Run as three whole-program traversals they left three complete
+;; generations of rewritten functions plus all of their CFG/loop/verify analysis
+;; in the compiler-entry arena, none of it reachable once the next traversal had
+;; run.
+;;
+;; So compose them per function instead, inside one reusable scratch arena that
+;; is rewound after every function. Only a function some rewrite actually
+;; changed is deep-cloned back into the enclosing arena; an untouched function
+;; is already owned there, so it is returned as-is and costs nothing. That keeps
+;; the enclosing arena's growth at "the functions this stage rewrote" rather
+;; than "three copies of the whole program".
+(define (opt-late-function-escaping
+  [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
+  [func : ir.CompilerIrFunction]
+  [scratch : i64]) : ir.CompilerIrFunction
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        (match (opt-scratch-reset-function-unchecked-rewrite
+          type-segment-bases
+          func)
+          [(OptLateRewriteResult.Result reset-func reset-changed)
+            (match (opt-late-bounds-pair-function-rewrite
+              type-segment-bases
+              reset-func)
+              [(OptLateRewriteResult.Result paired-func paired-changed)
+                (match (opt-late-total-switch-function-rewrite
+                  type-segment-bases
+                  paired-func)
+                  [(OptLateRewriteResult.Result switched-func switched-changed)
+                    (let
+                      [changed : bool
+                        (or reset-changed paired-changed switched-changed)]
+                      [scratch-head : i64 (arena.tl_arena_current)]
+                      (begin
+                        (unsafe
+                          (arena.tl_arena_set enclosing))
+                        (let
+                          ;; The rewritten function is built from a mix of
+                          ;; scratch nodes and shared input nodes, so escaping
+                          ;; it is a full deep clone. An unchanged function
+                          ;; never entered the scratch generation at all.
+                          [escaped : ir.CompilerIrFunction
+                            (if changed
+                              (ir.compiler-ir-clone-function
+                                pools
+                                switched-func)
+                              func)]
+                          [new-enclosing : i64 (arena.tl_arena_current)]
+                          [_restore : unit
+                            (unsafe
+                              (arena.tl_arena_set scratch-head)
+                              (arena.tl_region_reset mark)
+                              (arena.tl_arena_set new-enclosing))]
+                          escaped)))])])])))))
+
+(define (opt-late-function-list-escaping
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionList]
+  [scratch : i64]) : ir.CompilerIrFunctionList
   (match functions
     [(ir.CompilerIrFunctionList.Nil) (ir.CompilerIrFunctionList.Nil)]
     [(ir.CompilerIrFunctionList.Cons func rest)
       (ir.compiler-ir-function-cons
-        (opt-scratch-reset-function-unchecked type-segment-bases func)
-        (opt-scratch-reset-function-list-unchecked
+        (opt-late-function-escaping pools type-segment-bases func scratch)
+        (opt-late-function-list-escaping
+          pools
           type-segment-bases
-          (box-get rest)))]
+          (box-get rest)
+          scratch))]
     [(ir.CompilerIrFunctionList.Array seq)
-      (ir.compiler-ir-function-list-compact
-        (opt-scratch-reset-function-list-unchecked
-          type-segment-bases
-          (ir.compiler-ir-function-seq-to-list seq)))]))
+      (opt-late-function-list-escaping
+        pools
+        type-segment-bases
+        (ir.compiler-ir-function-seq-to-list seq)
+        scratch)]))
 
-(define (opt-scratch-reset-function-list-with-level
+(define (opt-late-function-list-with-level
+  [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionList]
   [level : i64]) : ir.CompilerIrFunctionList
   (if (< level 2)
     functions
-    (opt-scratch-reset-function-list-unchecked type-segment-bases functions)))
+    (let
+      [scratch : i64 (arena.tl_arena_make)]
+      [result : ir.CompilerIrFunctionList
+        (opt-late-function-list-escaping
+          pools
+          type-segment-bases
+          functions
+          scratch)]
+      (begin
+        ;; Every function in `result` is owned by the enclosing arena: escaped
+        ;; by clone when a rewrite changed it, otherwise never copied out of
+        ;; the enclosing arena in the first place. Nothing points into scratch.
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "optimize"
+          "optimizer-late-scratch"
+          scratch)
+        (unsafe
+          (arena.tl_arena_destroy scratch))
+        result))))
 
 (define (opt-scratch-reset-pre-ssa-function-with-context-result
   [pools : ast.AstNodePoolContext]

@@ -60112,6 +60112,65 @@
     level
     (opt-loop-bce-empty-summaries)))
 
+;; Optimizer input carrier (opt2 only).
+;;
+;; The whole-program inline stage runs in a dedicated arena, and by the time it
+;; returns only its final rewritten bodies are still read: the devirtualized
+;; function index, the call graph, the SCC and census tables, every superseded
+;; caller generation, and every superseded spans array are already dead. Those
+;; leftovers are the majority of that arena (measured on the self-compile: 460
+;; MiB committed, of which a deep copy of the surviving reachable functions is
+;; 204 MiB), and a bump arena cannot release them piecewise. The per-function
+;; optimizer loop then reads the surviving functions from end to end, so the
+;; whole arena -- dead generations included -- would otherwise stay resident
+;; across the loop, which is where the opt2 process peak forms.
+;;
+;; So copy just the surviving functions into a carrier arena, release the inline
+;; arena before the loop starts, and release the carrier once the loop has
+;; escaped every optimized function into the enclosing arena. The copy costs one
+;; transient overlap of the two arenas before the loop -- cheaper than carrying
+;; the dead generations through it, because the loop's own scratch peak lands on
+;; top of whatever the input costs.
+;;
+;; Level 1 keeps the direct path: its inline stage is the cheap tiny-leaf pass,
+;; whose arena is a fraction of the level-2 one, and the cheap self-compile path
+;; must not pay for a whole-program copy.
+(define (opt-optimizer-input-carrier [level : i64]) : i64
+  (if (< level 2)
+    0
+    (arena.tl_arena_make)))
+
+(define (opt-optimizer-input-carry
+  [pools : ast.AstNodePoolContext]
+  [carrier : i64]
+  [funcs : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
+  (if (= carrier 0)
+    funcs
+    (let
+      [home : i64 (arena.tl_arena_current)]
+      [_enter : unit
+        (unsafe
+          (arena.tl_arena_set carrier))]
+      [carried : ir.CompilerIrFunctionList
+        (ir.compiler-ir-clone-function-list pools funcs)]
+      [_leave : unit
+        (unsafe
+          (arena.tl_arena_set home))]
+      carried)))
+
+;; Both optimizer-input arenas report under the same mid-phase label: each is
+;; read at its high-water mark and destroyed before the "optimize" phase
+;; snapshot, so neither belongs in that snapshot's unique-root total.
+(define (opt-release-optimizer-input-arena [owner : String] [handle : i64]) : unit
+  (begin
+    (allocation_profile.compiler-allocation-profile-control!
+      2
+      "optimize.inline"
+      owner
+      handle)
+    (unsafe
+      (arena.tl_arena_destroy handle))))
+
 ;; Per-function arena escape. The optimizer fixpoint allocates up to
 ;; ~80 throwaway IR copies per function (10 iterations x ~8 passes), none freed
 ;; by the bump allocator. To cap peak memory we run each function's optimization
@@ -71044,12 +71103,25 @@
                       (opt-pruned-program-globals pruned)]
                     [pruned-functions : ir.CompilerIrFunctionList
                       (opt-pruned-program-functions pruned)]
+                    ;; Copy the surviving functions out of the inline arena and
+                    ;; release it before the loop; see `opt-optimizer-input-carrier`.
+                    ;; `pruned-globals` names the driver's globals, which live in
+                    ;; the lower-IR arena and are untouched by this release.
+                    [carrier : i64 (opt-optimizer-input-carrier level)]
+                    [optimizer-functions : ir.CompilerIrFunctionList
+                      (opt-optimizer-input-carry pools carrier pruned-functions)]
+                    [_release-inline-arena-early : unit
+                      (if (= carrier 0)
+                        unit
+                        (opt-release-optimizer-input-arena
+                          "optimize-inline"
+                          inline-arena))]
                     [summaries : OptLoopBceSummaries
                       (opt-loop-bce-summaries-set-profile-state
                         (opt-build-program-summaries
                           type-segment-bases
                           pruned-globals
-                          pruned-functions
+                          optimizer-functions
                           level)
                         profile-state)]
                     [_load-cse-profile-reset : unit
@@ -71061,35 +71133,32 @@
                       (optimize-function-list-with-level-and-summaries
                         pools
                         type-segment-bases
-                        pruned-functions
+                        optimizer-functions
                         level
                         summaries)]
-                    ;; No live pointer into `inline-arena` remains here. Every
-                    ;; function in `optimized-functions` was deep-cloned into this
-                    ;; arena on its way out of the escaping optimizer -- level 2
-                    ;; through `compiler-ir-clone-function`, level 1 through the
+                    ;; No live pointer into the optimizer-input arena remains
+                    ;; here. Every function in `optimized-functions` was
+                    ;; deep-cloned into the enclosing arena on its way out of the
+                    ;; escaping optimizer -- level 2 through
+                    ;; `compiler-ir-clone-function`, level 1 through the
                     ;; equivalent DCE block escape -- `inline-spans` was copied
                     ;; out above, and `globals`/`externs` are the driver's program
                     ;; shell, which the inline stage only reads. That leaves
                     ;; `reachable-functions`, `pruned`/`pruned-functions`,
-                    ;; `summaries`, the function index and the census as the
-                    ;; arena's only referents, and all of them are dead from here
-                    ;; on: nothing below this binding reads them.
-                    ;;
-                    ;; The ownership snapshot reports under a phase of its own
-                    ;; rather than under "optimize": this is a mid-phase reading
-                    ;; of an arena that is gone by the time the optimize phase
-                    ;; snapshot is taken, and sharing that phase label would add
-                    ;; it to that snapshot's unique-root total.
-                    [_release-inline-arena : unit
-                      (begin
-                        (allocation_profile.compiler-allocation-profile-control!
-                          2
-                          "optimize.inline"
+                    ;; `optimizer-functions`, `summaries`, the function index and
+                    ;; the census as the arena's only referents, and all of them
+                    ;; are dead from here on: nothing below this binding reads
+                    ;; them. `summaries` carries only i64/i64 maps and the
+                    ;; profile-state struct, never a body pointer, so the
+                    ;; compile-profile-summary emit below stays valid.
+                    [_release-optimizer-input : unit
+                      (if (= carrier 0)
+                        (opt-release-optimizer-input-arena
                           "optimize-inline"
                           inline-arena)
-                        (unsafe
-                          (arena.tl_arena_destroy inline-arena)))]
+                        (opt-release-optimizer-input-arena
+                          "optimizer-input"
+                          carrier))]
                     (begin
                       (cfg
                         compile-profile

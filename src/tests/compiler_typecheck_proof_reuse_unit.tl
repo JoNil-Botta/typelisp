@@ -9,6 +9,71 @@
 (import stdlib.io)
 (import stdlib.str_cat_runtime as str_cat)
 
+(define (compiler-typecheck-proof-reuse-source-missing? [text : String]) : bool
+  (match (ci.intern-lookup text)
+    [(InternLookupMissing) true]
+    [_ false]))
+
+(define (compiler-typecheck-proof-reuse-identity-count [identity : String]) : i64
+  (let
+    [slot : i64
+      (tc_core.tc-generated-identity-slot-id
+        (tc_core.tc-proof-reuse-identity-id-lookup identity))]
+    (if (and
+      (>= slot 0)
+      (< slot tc_core.tc-generated-identity-capacity)
+      (> (array-ref tc_core.tc-generated-identity-keys slot) 0))
+      (let
+        [count : i64
+          (array-ref tc_core.tc-generated-identity-operand-counts slot)]
+        (if (and
+          (>= count 0)
+          (<= count tc_core.tc-generated-identity-operands-per-identity))
+          count
+          -1))
+      -1)))
+
+(define (compiler-typecheck-proof-reuse-family-first-identity-id
+  [generator : String]
+  [item : String]) : i64
+  (let
+    [slot : i64 (tc_core.tc-generated-family-slot-id generator item)]
+    (if (and
+      (>= slot 0)
+      (< slot tc_core.tc-generated-family-capacity)
+      (> (array-ref tc_core.tc-generated-family-identities slot) 0))
+      (- (array-ref tc_core.tc-generated-family-identities slot) 1)
+      -1)))
+
+(define (compiler-typecheck-proof-reuse-owned-metadata-ok?
+  [generator : String]
+  [item : String]
+  [identity : String]
+  [identity-id : i64]
+  [type-key : String]
+  [kind : String]) : bool
+  (let
+    [family-first-id : i64
+      (compiler-typecheck-proof-reuse-family-first-identity-id generator item)]
+    [identity-slot : i64
+      (tc_core.tc-generated-identity-slot-id
+        (tc_core.tc-proof-reuse-identity-id-lookup identity))]
+    [identity-count : i64
+      (compiler-typecheck-proof-reuse-identity-count identity)]
+    (and
+      (and (= family-first-id identity-id))
+      (= identity-count 1)
+      (string.eq
+        (tc_core.tc-generated-identity-operand-type-key-at-slot identity-slot 0)
+        type-key)
+      (string.eq
+        (tc_core.tc-generated-identity-operand-kind-at-slot identity-slot 0)
+        kind)
+      (compiler-typecheck-proof-reuse-source-missing? generator)
+      (compiler-typecheck-proof-reuse-source-missing? item)
+      (compiler-typecheck-proof-reuse-source-missing? type-key)
+      (compiler-typecheck-proof-reuse-source-missing? kind))))
+
 (define (compiler-typecheck-proof-reuse-state-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -27,9 +92,9 @@
         (not tc_core.tc-proof-reuse-session-saw-context-sensitive-expr))
         unit
         (set! ok false))
-      (if (tc_core.tc-proof-reuse-session-identity-preflight?
-        "tc-self-missing-identity"
-        "tc-self-missing-identity")
+      (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+        (tc_core.tc-proof-reuse-identity-id-lookup "tc-self-missing-identity")
+        (tc_core.tc-proof-reuse-identity-id-lookup "tc-self-missing-identity"))
         (set! ok false)
         unit)
       (if (and
@@ -103,20 +168,35 @@
         "tc-self-item-0"
         "tc-self-identity-replacement"
         (ast.ast-decl-fallback))
-      (if (>=
-        (tc_core.tc-generated-family-first-identity-id
-          "tc-self-generator"
-          "tc-self-item-0")
-        0)
+      (if (let
+        [family-slot : i64
+          (tc_core.tc-generated-family-slot-id
+            "tc-self-generator"
+            "tc-self-item-0")]
+        (and
+          (>= family-slot 0)
+          (< family-slot tc_core.tc-generated-family-capacity)
+          (> (array-ref tc_core.tc-generated-family-identities family-slot) 0)))
         unit
         (set! ok false))
       (match (ci.intern-generated-canonical-lookup "tc-self-identity-0")
         [(InternLookupFound original-id)
-          (if (=
-            (tc_core.tc-generated-family-first-identity-id
-              "tc-self-generator"
-              "tc-self-item-0")
-            original-id)
+          (if (let
+            [family-slot : i64
+              (tc_core.tc-generated-family-slot-id
+                "tc-self-generator"
+                "tc-self-item-0")]
+            (and
+              (>= family-slot 0)
+              (< family-slot tc_core.tc-generated-family-capacity)
+              (>
+                (array-ref tc_core.tc-generated-family-identities family-slot)
+                0)
+              (=
+                (-
+                  (array-ref tc_core.tc-generated-family-identities family-slot)
+                  1)
+                original-id)))
             unit
             (set! ok false))]
         [(InternLookupMissing) (set! ok false)])
@@ -130,30 +210,50 @@
         "tc-self-first-wins-item"
         "tc-self-first-wins-replacement"
         (ast.AstDecl.Module (ci.intern "tc-self-first-wins-replacement-module")))
-      (if (=
-        (tc_core.tc-generated-family-first-identity-id
-          "tc-self-first-wins-generator"
-          "tc-self-first-wins-item")
-        (tc_core.tc-generated-module-name-id "tc-self-first-wins-identity"))
+      (if (let
+        [family-slot : i64
+          (tc_core.tc-generated-family-slot-id
+            "tc-self-first-wins-generator"
+            "tc-self-first-wins-item")]
+        (and
+          (>= family-slot 0)
+          (< family-slot tc_core.tc-generated-family-capacity)
+          (> (array-ref tc_core.tc-generated-family-identities family-slot) 0)
+          (=
+            (- (array-ref tc_core.tc-generated-family-identities family-slot) 1)
+            (tc_core.tc-generated-module-name-id "tc-self-first-wins-identity"))))
         unit
         (set! ok false))
-      (match (tc_core.tc-generated-family-decl-at
-        (tc_core.tc-generated-family-slot-id-by-name
-          "tc-self-first-wins-generator"
-          "tc-self-first-wins-item"))
-        [(ast.AstDecl.Module module-id)
-          (if (= module-id (ci.intern "tc-self-first-wins-module"))
-            unit
-            (set! ok false))]
-        [_ (set! ok false)])
+      (let
+        [family-slot : i64
+          (tc_core.tc-generated-family-slot-id
+            "tc-self-first-wins-generator"
+            "tc-self-first-wins-item")]
+        (if (and
+          (>= family-slot 0)
+          (< family-slot tc_core.tc-generated-family-capacity))
+          (match (array-ref tc_core.tc-generated-family-decls family-slot)
+            [(ast.AstDecl.Module module-id)
+              (if (= module-id (ci.intern "tc-self-first-wins-module"))
+                unit
+                (set! ok false))]
+            [_ (set! ok false)])
+          (set! ok false)))
       (let
         [index : i64 0]
         (while (< index 20)
-          (if (<
-            (tc_core.tc-generated-family-first-identity-id
-              "tc-self-generator"
-              (str_cat.str-cat "tc-self-item-" (string.int->string index)))
-            0)
+          (if (let
+            [family-slot : i64
+              (tc_core.tc-generated-family-slot-id
+                "tc-self-generator"
+                (str_cat.str-cat "tc-self-item-" (string.int->string index)))]
+            (not
+              (and
+                (>= family-slot 0)
+                (< family-slot tc_core.tc-generated-family-capacity)
+                (>
+                  (array-ref tc_core.tc-generated-family-identities family-slot)
+                  0))))
             (set! ok false)
             unit)
           (set! index (+ index 1)))
@@ -167,46 +267,52 @@
       (tc_core.tc-proof-reuse-identity-scratch-append! "type-c" "struct")
       (tc_core.tc-generated-identity-note! "tc-self-identity-b")
       (if (=
-        (tc_core.tc-generated-identity-operand-count "tc-self-identity-a")
+        (compiler-typecheck-proof-reuse-identity-count "tc-self-identity-a")
         2)
         unit
         (set! ok false))
       (if (=
-        (tc_core.tc-generated-identity-operand-count "tc-self-identity-b")
+        (compiler-typecheck-proof-reuse-identity-count "tc-self-identity-b")
         1)
         unit
         (set! ok false))
-      (if (=
-        (tc_core.tc-generated-identity-operand-kind-id-at
-          "tc-self-identity-b"
+      (if (string.eq
+        (tc_core.tc-generated-identity-operand-kind-at-slot
+          (tc_core.tc-generated-identity-slot-id
+            (tc_core.tc-proof-reuse-identity-id-lookup "tc-self-identity-b"))
           0)
-        (ci.intern "struct"))
+        "struct")
         unit
         (set! ok false))
-      (if (=
-        (tc_core.tc-generated-identity-operand-kind-id-at
-          "tc-self-identity-a"
+      (if (string.eq
+        (tc_core.tc-generated-identity-operand-kind-at-slot
+          (tc_core.tc-generated-identity-slot-id
+            (tc_core.tc-proof-reuse-identity-id-lookup "tc-self-identity-a"))
           1)
-        (ci.intern "slice"))
+        "slice")
         unit
         (set! ok false))
-      (if (=
-        (tc_core.tc-generated-identity-operand-type-key-id-at
-          "tc-self-identity-a"
+      (if (string.eq
+        (tc_core.tc-generated-identity-operand-type-key-at-slot
+          (tc_core.tc-generated-identity-slot-id
+            (tc_core.tc-proof-reuse-identity-id-lookup "tc-self-identity-a"))
           0)
-        (ci.intern "type-a"))
+        "type-a")
         unit
         (set! ok false))
       (if (=
-        (tc_core.tc-generated-identity-operand-count "tc-self-identity-a")
+        (compiler-typecheck-proof-reuse-identity-count "tc-self-identity-a")
         2)
         unit
         (set! ok false))
-      (if (>=
-        (tc_core.tc-generated-identity-operand-kind-id-at
-          "tc-self-identity-a"
-          2)
-        0)
+      (if (not
+        (=
+          (string.string-length
+            (tc_core.tc-generated-identity-operand-kind-at-slot
+              (tc_core.tc-generated-identity-slot-id
+                (tc_core.tc-proof-reuse-identity-id-lookup "tc-self-identity-a"))
+              2))
+          0))
         (set! ok false)
         unit)
       (tc_core.tc-proof-reuse-identity-scratch-reset!)
@@ -221,28 +327,92 @@
         unit)
       (tc_core.tc-generated-identity-note! "tc-self-identity-overflow")
       (if (=
-        (tc_core.tc-generated-identity-operand-count
+        (compiler-typecheck-proof-reuse-identity-count
           "tc-self-identity-overflow")
         -1)
         unit
         (set! ok false))
-      (if (= (tc_core.tc-generated-identity-operand-count "tc-self-absent") -1)
+      (if (=
+        (compiler-typecheck-proof-reuse-identity-count "tc-self-absent")
+        -1)
         unit
         (set! ok false))
       (tc_core.tc-macro-abstract-proof-reset!)
       (if (=
-        (tc_core.tc-generated-identity-operand-count "tc-self-identity-a")
+        (compiler-typecheck-proof-reuse-identity-count "tc-self-identity-a")
         -1)
         unit
         (set! ok false))
       (if (=
-        (tc_core.tc-generated-family-first-identity-id
+        (compiler-typecheck-proof-reuse-family-first-identity-id
           "tc-self-generator"
           "tc-self-item-0")
         -1)
         unit
         (set! ok false))
       (tc_core.tc-macro-abstract-proof-reset!)
+      ;; Proof-only family and operand text must stay in the owned key arena:
+      ;; recording/querying these novel strings cannot grow or populate the
+      ;; source interner.  Canonicalize only the generated identity before the
+      ;; source-pool mark; its id lives in the generated lane.
+      (let
+        [owned-generator : String "tc-self-owned-family-generator-novel"]
+        [owned-item : String "tc-self-owned-family-item-novel"]
+        [owned-identity : String "tc-self-owned-identity-novel"]
+        [owned-type-key : String "tc-self-owned-type-key-novel"]
+        [owned-kind : String "tc-self-owned-kind-novel"]
+        [owned-identity-id : i64
+          (tc_core.tc-generated-module-name-id owned-identity)]
+        [source-mark : i64 (ci.intern-pool-len)]
+        (begin
+          (tc_core.tc-generated-family-note!
+            owned-generator
+            owned-item
+            owned-identity
+            (ast.ast-decl-fallback))
+          (tc_core.tc-proof-reuse-identity-scratch-reset!)
+          (tc_core.tc-proof-reuse-identity-scratch-append!
+            owned-type-key
+            owned-kind)
+          (tc_core.tc-generated-identity-note! owned-identity)
+          (if (= source-mark (ci.intern-pool-len))
+            unit
+            (set! ok false))
+          (if (compiler-typecheck-proof-reuse-owned-metadata-ok?
+            owned-generator
+            owned-item
+            owned-identity
+            owned-identity-id
+            owned-type-key
+            owned-kind)
+            unit
+            (set! ok false))
+          (tc_core.macro-expand-scratch-clear-owned-caches!)
+          (if (= source-mark (ci.intern-pool-len))
+            unit
+            (set! ok false))
+          (if (compiler-typecheck-proof-reuse-owned-metadata-ok?
+            owned-generator
+            owned-item
+            owned-identity
+            owned-identity-id
+            owned-type-key
+            owned-kind)
+            unit
+            (set! ok false))
+          (tc_core.compiler-typecheck-clear-macro-expanded-source-caches!)
+          (if (= source-mark (ci.intern-pool-len))
+            unit
+            (set! ok false))
+          (if (compiler-typecheck-proof-reuse-owned-metadata-ok?
+            owned-generator
+            owned-item
+            owned-identity
+            owned-identity-id
+            owned-type-key
+            owned-kind)
+            unit
+            (set! ok false))))
       ;; Intra-program cache/arena cleanup must not discard proof-reuse state
       ;; captured during expansion.  Seed every bounded table, clear each
       ;; cleanup boundary, and query the exact values after both calls.
@@ -274,41 +444,51 @@
         unit
         (set! ok false))
       (if (=
-        (tc_core.tc-generated-identity-operand-count
+        (compiler-typecheck-proof-reuse-identity-count
           "tc-self-lifecycle-identity")
         1)
         unit
         (set! ok false))
-      (if (=
-        (tc_core.tc-generated-identity-operand-type-key-id-at
-          "tc-self-lifecycle-identity"
+      (if (string.eq
+        (tc_core.tc-generated-identity-operand-type-key-at-slot
+          (tc_core.tc-generated-identity-slot-id
+            (tc_core.tc-proof-reuse-identity-id-lookup
+              "tc-self-lifecycle-identity"))
           0)
-        (ci.intern "tc-self-lifecycle-type"))
+        "tc-self-lifecycle-type")
+        unit
+        (set! ok false))
+      (if (string.eq
+        (tc_core.tc-generated-identity-operand-kind-at-slot
+          (tc_core.tc-generated-identity-slot-id
+            (tc_core.tc-proof-reuse-identity-id-lookup
+              "tc-self-lifecycle-identity"))
+          0)
+        "tc-self-lifecycle-kind")
         unit
         (set! ok false))
       (if (=
-        (tc_core.tc-generated-identity-operand-kind-id-at
-          "tc-self-lifecycle-identity"
-          0)
-        (ci.intern "tc-self-lifecycle-kind"))
-        unit
-        (set! ok false))
-      (if (=
-        (tc_core.tc-generated-family-first-identity-id
+        (compiler-typecheck-proof-reuse-family-first-identity-id
           "tc-self-lifecycle-generator"
           "tc-self-lifecycle-item")
         (tc_core.tc-generated-module-name-id "tc-self-lifecycle-identity"))
         unit
         (set! ok false))
-      (match (tc_core.tc-generated-family-decl-at
-        (tc_core.tc-generated-family-slot-id-by-name
-          "tc-self-lifecycle-generator"
-          "tc-self-lifecycle-item"))
-        [(ast.AstDecl.Module module-id)
-          (if (= module-id (ci.intern "tc-self-lifecycle-module"))
-            unit
-            (set! ok false))]
-        [_ (set! ok false)])
+      (let
+        [family-slot : i64
+          (tc_core.tc-generated-family-slot-id
+            "tc-self-lifecycle-generator"
+            "tc-self-lifecycle-item")]
+        (if (and
+          (>= family-slot 0)
+          (< family-slot tc_core.tc-generated-family-capacity))
+          (match (array-ref tc_core.tc-generated-family-decls family-slot)
+            [(ast.AstDecl.Module module-id)
+              (if (= module-id (ci.intern "tc-self-lifecycle-module"))
+                unit
+                (set! ok false))]
+            [_ (set! ok false)])
+          (set! ok false)))
       (tc_core.compiler-typecheck-clear-macro-expanded-source-caches!)
       (if (tc_core.tc-proof-complete? "tc-self-lifecycle-complete")
         unit
@@ -321,41 +501,51 @@
         unit
         (set! ok false))
       (if (=
-        (tc_core.tc-generated-identity-operand-count
+        (compiler-typecheck-proof-reuse-identity-count
           "tc-self-lifecycle-identity")
         1)
         unit
         (set! ok false))
-      (if (=
-        (tc_core.tc-generated-identity-operand-type-key-id-at
-          "tc-self-lifecycle-identity"
+      (if (string.eq
+        (tc_core.tc-generated-identity-operand-type-key-at-slot
+          (tc_core.tc-generated-identity-slot-id
+            (tc_core.tc-proof-reuse-identity-id-lookup
+              "tc-self-lifecycle-identity"))
           0)
-        (ci.intern "tc-self-lifecycle-type"))
+        "tc-self-lifecycle-type")
+        unit
+        (set! ok false))
+      (if (string.eq
+        (tc_core.tc-generated-identity-operand-kind-at-slot
+          (tc_core.tc-generated-identity-slot-id
+            (tc_core.tc-proof-reuse-identity-id-lookup
+              "tc-self-lifecycle-identity"))
+          0)
+        "tc-self-lifecycle-kind")
         unit
         (set! ok false))
       (if (=
-        (tc_core.tc-generated-identity-operand-kind-id-at
-          "tc-self-lifecycle-identity"
-          0)
-        (ci.intern "tc-self-lifecycle-kind"))
-        unit
-        (set! ok false))
-      (if (=
-        (tc_core.tc-generated-family-first-identity-id
+        (compiler-typecheck-proof-reuse-family-first-identity-id
           "tc-self-lifecycle-generator"
           "tc-self-lifecycle-item")
         (tc_core.tc-generated-module-name-id "tc-self-lifecycle-identity"))
         unit
         (set! ok false))
-      (match (tc_core.tc-generated-family-decl-at
-        (tc_core.tc-generated-family-slot-id-by-name
-          "tc-self-lifecycle-generator"
-          "tc-self-lifecycle-item"))
-        [(ast.AstDecl.Module module-id)
-          (if (= module-id (ci.intern "tc-self-lifecycle-module"))
-            unit
-            (set! ok false))]
-        [_ (set! ok false)])
+      (let
+        [family-slot : i64
+          (tc_core.tc-generated-family-slot-id
+            "tc-self-lifecycle-generator"
+            "tc-self-lifecycle-item")]
+        (if (and
+          (>= family-slot 0)
+          (< family-slot tc_core.tc-generated-family-capacity))
+          (match (array-ref tc_core.tc-generated-family-decls family-slot)
+            [(ast.AstDecl.Module module-id)
+              (if (= module-id (ci.intern "tc-self-lifecycle-module"))
+                unit
+                (set! ok false))]
+            [_ (set! ok false)])
+          (set! ok false)))
       (tc_core.tc-macro-abstract-proof-reset!)
       ok)))
 
@@ -372,9 +562,9 @@
       (tc_core.tc-proof-reuse-identity-scratch-reset!)
       (tc_core.tc-proof-reuse-identity-scratch-append! "u8" "u8")
       (tc_core.tc-generated-identity-note! "tc-exact-next")
-      (if (tc_core.tc-proof-reuse-session-identity-preflight?
-        "tc-exact-first"
-        "tc-exact-next")
+      (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+        (tc_core.tc-proof-reuse-identity-id-lookup "tc-exact-first")
+        (tc_core.tc-proof-reuse-identity-id-lookup "tc-exact-next"))
         unit
         (set! ok false))
       (let
@@ -414,9 +604,9 @@
           ;; references pass without recording a substitution; bare or
           ;; qualified first/next identity names fail closed.
           (tc_core.tc-proof-reuse-session-reset!)
-          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-            "tc-exact-first"
-            "tc-exact-next")
+          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+            (tc_core.tc-proof-reuse-identity-id-lookup "tc-exact-first")
+            (tc_core.tc-proof-reuse-identity-id-lookup "tc-exact-next"))
             unit
             (set! ok false))
           (if (tc_core.tc-proof-reuse-session-reference-name-id-exact?
@@ -530,9 +720,11 @@
                           ;; reference to first/helper -> next/helper is
                           ;; outside this declaration's proof boundary.
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-exact-first"
-                            "tc-exact-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-exact-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-exact-next"))
                             (if (tc_core.tc-proof-reuse-session-ast-decl-exact?
                               ctx
                               first-reference-decl
@@ -570,9 +762,11 @@
                             unit)
                           ;; A canonical-key-equal pair is exact and does not
                           ;; consume an operand bit.
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-exact-first"
-                            "tc-exact-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-exact-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-exact-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -593,9 +787,11 @@
                             "bool"
                             "bool")
                           (tc_core.tc-generated-identity-note! "tc-exact-first")
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-exact-first"
-                            "tc-exact-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-exact-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-exact-next"))
                             (set! ok false)
                             unit)
                           (if (tc_core.tc-proof-reuse-session-name-id-exact?
@@ -622,9 +818,11 @@
                             "u8"
                             "u8")
                           (tc_core.tc-generated-identity-note! "tc-rule4-next")
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-first"
-                            "tc-rule4-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -643,9 +841,11 @@
                             unit
                             (set! ok false))
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-first"
-                            "tc-rule4-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -665,9 +865,11 @@
                           ;; Distinct integer spelling with the same parsed value is not an
                           ;; exact literal pair.
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-first"
-                            "tc-rule4-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-literal-exact?
@@ -690,9 +892,11 @@
                           (tc_core.tc-generated-identity-note!
                             "tc-rule4-int-next")
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-int-first"
-                            "tc-rule4-int-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-int-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-int-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -711,9 +915,11 @@
                             unit)
                           ;; Each semantic note independently rejects the same changed pair.
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-first"
-                            "tc-rule4-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -722,14 +928,21 @@
                             (ast.AstType.U8))
                             unit
                             (set! ok false))
-                          (tc_core.tc-proof-reuse-session-note-operator!)
+                          (if (tc_core.tc-proof-reuse-session-ast-expr-exact?
+                            ctx
+                            (ast.AstExpr.Binary (ast.AstBinOp.Add) -1 -1)
+                            (ast.AstExpr.Binary (ast.AstBinOp.Add) -1 -1))
+                            unit
+                            unit)
                           (if (tc_core.tc-proof-reuse-session-rule4-ok?)
                             (set! ok false)
                             unit)
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-first"
-                            "tc-rule4-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -738,14 +951,21 @@
                             (ast.AstType.U8))
                             unit
                             (set! ok false))
-                          (tc_core.tc-proof-reuse-session-note-shift!)
+                          (if (tc_core.tc-proof-reuse-session-ast-expr-exact?
+                            ctx
+                            (ast.AstExpr.Binary (ast.AstBinOp.Shl) -1 -1)
+                            (ast.AstExpr.Binary (ast.AstBinOp.Shl) -1 -1))
+                            unit
+                            unit)
                           (if (tc_core.tc-proof-reuse-session-rule4-ok?)
                             (set! ok false)
                             unit)
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-first"
-                            "tc-rule4-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -754,14 +974,21 @@
                             (ast.AstType.U8))
                             unit
                             (set! ok false))
-                          (tc_core.tc-proof-reuse-session-note-equality-or-clone!)
+                          (if (tc_core.tc-proof-reuse-session-ast-expr-exact?
+                            ctx
+                            (ast.AstExpr.Binary (ast.AstBinOp.Eq) -1 -1)
+                            (ast.AstExpr.Binary (ast.AstBinOp.Eq) -1 -1))
+                            unit
+                            unit)
                           (if (tc_core.tc-proof-reuse-session-rule4-ok?)
                             (set! ok false)
                             unit)
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-first"
-                            "tc-rule4-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -788,9 +1015,11 @@
                           (tc_core.tc-generated-identity-note!
                             "tc-rule4-float-next")
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-float-first"
-                            "tc-rule4-float-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-float-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-float-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -815,9 +1044,11 @@
                           (tc_core.tc-generated-identity-note!
                             "tc-rule4-string-next")
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-string-first"
-                            "tc-rule4-string-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-string-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-string-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -844,9 +1075,11 @@
                           (tc_core.tc-generated-identity-note!
                             "tc-rule4-same-next")
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-same-first"
-                            "tc-rule4-same-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-same-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-same-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -866,9 +1099,11 @@
                             (set! ok false))
                           ;; Capacity+1 identical facts poison the session and fail closed.
                           (tc_core.tc-proof-reuse-session-reset!)
-                          (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                            "tc-rule4-first"
-                            "tc-rule4-next")
+                          (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-first")
+                            (tc_core.tc-proof-reuse-identity-id-lookup
+                              "tc-rule4-next"))
                             unit
                             (set! ok false))
                           (if (tc_core.tc-proof-reuse-session-ast-type-exact?
@@ -1001,19 +1236,23 @@
                                           [exact-ok : bool
                                             (begin
                                               (tc_core.tc-proof-reuse-session-reset!)
-                                              (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                                                "tc-walker-first"
-                                                "tc-walker-next")
+                                              (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                                                (tc_core.tc-proof-reuse-identity-id-lookup
+                                                  "tc-walker-first")
+                                                (tc_core.tc-proof-reuse-identity-id-lookup
+                                                  "tc-walker-next"))
                                                 (tc_core.tc-proof-reuse-session-ast-decl-exact?
                                                   ctx
                                                   first-decl
                                                   next-decl)
                                                 false))]
                                           [safe-ok : bool
-                                            (tc_core.tc-proof-reuse-decl-safe-substitution?
+                                            (tc_core.tc-proof-reuse-decl-safe-substitution-ids?
                                               ctx
-                                              "tc-walker-first"
-                                              "tc-walker-next"
+                                              (tc_core.tc-proof-reuse-identity-id-lookup
+                                                "tc-walker-first")
+                                              (tc_core.tc-proof-reuse-identity-id-lookup
+                                                "tc-walker-next")
                                               first-decl
                                               next-decl)]
                                           (begin
@@ -1126,9 +1365,11 @@
                                             [exact-ok : bool
                                               (begin
                                                 (tc_core.tc-proof-reuse-session-reset!)
-                                                (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                                                  "tc-walker-first"
-                                                  "tc-walker-next")
+                                                (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                                                  (tc_core.tc-proof-reuse-identity-id-lookup
+                                                    "tc-walker-first")
+                                                  (tc_core.tc-proof-reuse-identity-id-lookup
+                                                    "tc-walker-next"))
                                                   (tc_core.tc-proof-reuse-session-ast-decl-exact?
                                                     ctx
                                                     first-decl
@@ -1182,6 +1423,25 @@
         "u8"
         true
         true)
+        unit
+        (set! ok false))
+      ;; Fixed-size arrays are dependent even when their shapes compare equal;
+      ;; the exact type fast path must veto the i64 -> u8 substitution.
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defstruct Vec (slots (Array i64 4)) (invariant i64)))
+(module tc-walker-next
+  (defstruct Vec (slots (Array u8 4)) (invariant i64)))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
         unit
         (set! ok false))
       ;; DefFn: a nominal type nested in the reference parameter is outside
@@ -1712,9 +1972,11 @@
                                       "u8"
                                       "u8")
                                     (tc_core.tc-proof-reuse-session-reset!)
-                                    (if (tc_core.tc-proof-reuse-session-identity-preflight?
-                                      "tc-walker-first"
-                                      "tc-walker-next")
+                                    (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                                      (tc_core.tc-proof-reuse-identity-id-lookup
+                                        "tc-walker-first")
+                                      (tc_core.tc-proof-reuse-identity-id-lookup
+                                        "tc-walker-next"))
                                       unit
                                       (set! ok false))
                                     (if (tc_core.tc-proof-reuse-session-ast-decl-exact?
@@ -1730,10 +1992,12 @@
                                     ;; failure, even when the declarations are
                                     ;; otherwise well-shaped.
                                     (tc_core.tc-macro-abstract-proof-reset!)
-                                    (if (tc_core.tc-proof-reuse-decl-safe-substitution?
+                                    (if (tc_core.tc-proof-reuse-decl-safe-substitution-ids?
                                       ctx
-                                      "tc-walker-missing"
-                                      "tc-walker-next"
+                                      (tc_core.tc-proof-reuse-identity-id-lookup
+                                        "tc-walker-missing")
+                                      (tc_core.tc-proof-reuse-identity-id-lookup
+                                        "tc-walker-next")
                                       first-decl
                                       next-decl)
                                       (set! ok false)
@@ -1752,10 +2016,12 @@
                                       "bool")
                                     (tc_core.tc-generated-identity-note!
                                       "tc-walker-first")
-                                    (if (tc_core.tc-proof-reuse-decl-safe-substitution?
+                                    (if (tc_core.tc-proof-reuse-decl-safe-substitution-ids?
                                       ctx
-                                      "tc-walker-first"
-                                      "tc-walker-next"
+                                      (tc_core.tc-proof-reuse-identity-id-lookup
+                                        "tc-walker-first")
+                                      (tc_core.tc-proof-reuse-identity-id-lookup
+                                        "tc-walker-next")
                                       first-decl
                                       next-decl)
                                       (set! ok false)

@@ -888,6 +888,9 @@
 (defstruct CompilerBackendStateData
   (intern-state ci.InternCompatState)
   (owner-arena i64)
+  ;; Complete backend results retain transient strings in this explicit outer
+  ;; emission owner, which may differ from the state owner in batch mode.
+  (emission-arena i64)
   ;; Scalar register allocation is a per-job option.  Keep it alongside the
   ;; exact intern capability so concurrent backend jobs never consult a
   ;; process-global opt-level switch.
@@ -930,6 +933,7 @@
         (CompilerBackendStateData
           intern-state
           owner-arena
+          0
           false
           ;; User-symbol storage is deliberately lazy.  In particular, a
           ;; generated id near the high end of the intern lane must not force
@@ -986,6 +990,69 @@
 
 (define (compiler-backend-state-owner-arena [state : CompilerBackendState]) : i64
   (struct-get (compiler-backend-state-data state) owner-arena))
+
+(define (compiler-backend-arena-owner-current-head [owner : arena.Arena]) : arena.Arena
+  (let
+    [handle : i64 (arena.raw-handle owner)]
+    (if (= handle 0)
+      owner
+      (let
+        [root-candidate : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
+        [root : i64
+          (if (= root-candidate 0)
+            handle
+            root-candidate)]
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+        (arena.Arena
+          (if (= head 0)
+            root
+            head))))))
+
+(define (compiler-backend-state-emission-arena [state : CompilerBackendState]) : i64
+  (struct-get (compiler-backend-state-data state) emission-arena))
+
+(define (compiler-backend-state-set-emission-arena!
+  [state : CompilerBackendState]
+  [owner : arena.Arena]) : unit
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    (begin
+      (set! (struct-get data emission-arena) (arena.raw-handle owner))
+      (compiler-backend-state-data-set! state data))))
+
+(define (compiler-backend-state-ensure-emission-arena!
+  [state : CompilerBackendState]) : arena.Arena
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    [stored : i64 (struct-get data emission-arena)]
+    (if (= stored 0)
+      (let
+        [current : arena.Arena (arena.current)]
+        (begin
+          (set! (struct-get data emission-arena) (arena.raw-handle current))
+          (compiler-backend-state-data-set! state data)
+          current))
+      (arena.Arena stored))))
+
+(define (compiler-backend-state-clear-emission-arena!
+  [state : CompilerBackendState]) : unit
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    (begin
+      (set! (struct-get data emission-arena) 0)
+      (compiler-backend-state-data-set! state data))))
+
+(define (compiler-backend-state-current-emission-arena
+  [state : CompilerBackendState]) : arena.Arena
+  (let
+    [stored : i64 (compiler-backend-state-emission-arena state)]
+    (if (= stored 0)
+      (arena.current)
+      (compiler-backend-arena-owner-current-head (arena.Arena stored)))))
 
 (define (compiler-backend-state-scalar-registers-enabled?
   [state : CompilerBackendState]) : bool
@@ -1251,7 +1318,7 @@
             (+ (struct-get entries len) (struct-get instr-entries len))]
           [build : CompilerBackendDebugFileBuildState
             (in-arena
-              (arena.Arena (compiler-backend-state-owner-arena backend-state))
+              (compiler-backend-state-current-emission-arena backend-state)
               (CompilerBackendDebugFileBuildState
                 (backend_i64_i64_map.with-capacity 16)
                 (array.make-array i64 capacity)
@@ -1390,8 +1457,10 @@
   compiler-backend-current-fn-win64)
 
 ;; Per-emission user-symbol mangling is sparse and owned by CompilerBackendState.
-;; There are no no-owner cache adapters: every internal route carries its exact
-;; backend state, so cache lifetime follows the job owner arena.
+;; The cache's key/value/epoch lanes live in the state owner and retain their
+;; capacity, while each epoch's mangled String payload follows the explicit
+;; outer emission owner. There are no no-owner cache adapters: every internal
+;; route carries its exact backend state.
 (define (compiler-backend-state-user-symbol-cache-reset!
   [state : CompilerBackendState]) : unit
   (let
@@ -1557,7 +1626,7 @@
                 (let
                   [mangled : String
                     (in-arena
-                      (arena.Arena (struct-get data owner-arena))
+                      (compiler-backend-state-current-emission-arena state)
                       (compiler-backend-user-symbol-uncached
                         (compiler-backend-symbol-text-state state name-id)))]
                   (array-set! keys insert-slot name-id)
@@ -61320,7 +61389,7 @@
                     (struct-get program-index profile-state)))
                 (ResultCompilerBackendBuffer.Err message))]))))))
 
-(define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+(define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-prepared-backend-state
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
   [program : compiler_ir_types.CompilerIrProgram]
@@ -61462,6 +61531,36 @@
             (compiler-backend-profile-finish profile-state "runtime_plan"))
           (ResultCompilerBackendBuffer.Err
             (box (compiler_diagnostic.compiler-diagnostic-at-start "" message))))])))
+
+(define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+  [backend-state : CompilerBackendState]
+  [type-segment-bases : i64]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [pic-emit? : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
+  (let
+    [_emission-arena : arena.Arena
+      (compiler-backend-state-ensure-emission-arena! backend-state)]
+    [result : ResultCompilerBackendBuffer
+      (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-prepared-backend-state
+        backend-state
+        type-segment-bases
+        program
+        target
+        mode
+        spans
+        emit-entry
+        crt-entry
+        pic-emit?
+        profile-state)]
+    (begin
+      (compiler-backend-state-clear-emission-arena! backend-state)
+      result)))
 
 (define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state
   [type-segment-bases : i64]
@@ -64727,7 +64826,7 @@
       emit-entry
       crt-entry)))
 
-(define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+(define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-prepared-backend-state
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
   [program : compiler_ir_types.CompilerIrProgram]
@@ -64807,6 +64906,34 @@
       [(ResultBackendRuntimePlan.Err message)
         (ResultCompilerBackendObject.Err
           (box (compiler_diagnostic.compiler-diagnostic-at-start "" message)))])))
+
+(define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+  [backend-state : CompilerBackendState]
+  [type-segment-bases : i64]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendObject
+  (let
+    [_emission-arena : arena.Arena
+      (compiler-backend-state-ensure-emission-arena! backend-state)]
+    [result : ResultCompilerBackendObject
+      (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-prepared-backend-state
+        backend-state
+        type-segment-bases
+        program
+        target
+        mode
+        spans
+        emit-entry
+        crt-entry
+        profile-state)]
+    (begin
+      (compiler-backend-state-clear-emission-arena! backend-state)
+      result)))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
   [type-segment-bases : i64]
@@ -68725,27 +68852,6 @@
 (define (compiler-backend-peephole-text-buf-once [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (compiler-backend-peephole-text-buf-once-in-arena buf (arena.current)))
 
-(define (compiler-backend-arena-owner-current-head [owner : arena.Arena]) : arena.Arena
-  (let
-    [handle : i64 (arena.raw-handle owner)]
-    (if (= handle 0)
-      owner
-      (let
-        [root-candidate : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
-        [root : i64
-          (if (= root-candidate 0)
-            handle
-            root-candidate)]
-        [head : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
-        (arena.Arena
-          (if (= head 0)
-            root
-            head))))))
-
 (define (compiler-backend-assembly-stream-carry-home-current!
   [home-arena : arena.Arena]) : unit
   ;; Rendering/appending the retained group can grow `home-arena`. Carry its
@@ -69476,6 +69582,8 @@
   ;; copied home, so the backend never retains the program's raw function text.
   (let
     [home-arena : arena.Arena (arena.current)]
+    [_set-emission-arena : unit
+      (compiler-backend-state-set-emission-arena! backend-state home-arena)]
     [emit-arena : arena.Arena (arena.make)]
     [raw-arena : arena.Arena (arena.make)]
     [peephole-arena : arena.Arena (arena.make)]

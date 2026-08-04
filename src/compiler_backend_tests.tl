@@ -12533,6 +12533,174 @@
       (compiler_ir_types.compiler-debug-info-set-enabled! previous-debug)]
     (and disabled-ok enabled-ok)))
 
+;; User-symbol cache lanes stay in the backend-state owner, but each epoch's
+;; mangled String follows the explicit outer emission owner.  A nested emitter
+;; arena may be rewound or destroyed while the cache hit remains valid.
+(define (compiler-backend-user-symbol-cache-emission-arena-ok?) : bool
+  (let
+    [caller : arena.Arena (arena.current)]
+    [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
+    [name-id : i64
+      (ci.intern-compat-state-intern intern-state "emission_arena_6274")]
+    [owner-symbol : String
+      (compiler_backend.compiler-backend-state-user-symbol-id
+        backend-state
+        name-id)]
+    [_reset-owner-cache : unit
+      (compiler_backend.compiler-backend-state-user-symbol-cache-reset!
+        backend-state)]
+    [emission : arena.Arena (arena.make)]
+    [nested : arena.Arena (arena.make)]
+    [owner-mark-before : arena.ArenaMark (arena.mark)]
+    [_set-emission : unit
+      (compiler_backend.compiler-backend-state-set-emission-arena!
+        backend-state
+        emission)]
+    [_set-nested : unit
+      (unsafe
+        (arena.set! nested))]
+    [emission-symbol-first : String
+      (compiler_backend.compiler-backend-state-user-symbol-id
+        backend-state
+        name-id)]
+    [emission-count-first : i64
+      (compiler_backend.compiler-backend-state-user-symbol-cache-count
+        backend-state)]
+    [first-ok : bool
+      (and
+        (string.eq emission-symbol-first "_tl_emission_arena_6274")
+        (= emission-count-first 1))]
+    [_restore-caller : unit
+      (unsafe
+        (arena.set! caller))]
+    [_destroy-nested : unit
+      (unsafe
+        (arena.destroy nested))]
+    [emission-symbol-hit : String
+      (compiler_backend.compiler-backend-state-user-symbol-id
+        backend-state
+        name-id)]
+    [emission-count-hit : i64
+      (compiler_backend.compiler-backend-state-user-symbol-cache-count
+        backend-state)]
+    [hit-ok : bool
+      (and
+        (string.eq emission-symbol-hit emission-symbol-first)
+        (string.eq emission-symbol-hit "_tl_emission_arena_6274")
+        (= emission-count-hit emission-count-first))]
+    [_reset-emission-cache : unit
+      (compiler_backend.compiler-backend-state-user-symbol-cache-reset!
+        backend-state)]
+    [_clear-emission : unit
+      (compiler_backend.compiler-backend-state-clear-emission-arena!
+        backend-state)]
+    [owner-mark-after : arena.ArenaMark (arena.mark)]
+    [owner-capacity : i64
+      (compiler_backend.compiler-backend-state-user-symbol-cache-capacity
+        backend-state)]
+    [owner-count : i64
+      (compiler_backend.compiler-backend-state-user-symbol-cache-count
+        backend-state)]
+    [_destroy-emission : unit
+      (unsafe
+        (arena.destroy emission))]
+    (and
+      (string.eq owner-symbol "_tl_emission_arena_6274")
+      first-ok
+      hit-ok
+      (= owner-capacity 16)
+      (= owner-count 0)
+      (arena.mark-eq? owner-mark-before owner-mark-after)
+      (arena.eq? (arena.current) caller))))
+
+;; Debug file-index working storage is an emission result, not persistent
+;; backend state.  Build it in the explicit emission owner while a nested arena
+;; is active, then validate the retained index after that nested arena dies.
+(define (compiler-backend-debug-file-index-emission-arena-ok?) : bool
+  (let
+    [caller : arena.Arena (arena.current)]
+    [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
+    [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
+    [function-a : i64
+      (ci.intern-compat-state-intern intern-state "debug_owner_a")]
+    [function-b : i64
+      (ci.intern-compat-state-intern intern-state "debug_owner_b")]
+    [path-a : i64
+      (ci.intern-compat-state-intern intern-state "src/debug_owner_a.tl")]
+    [path-b : i64
+      (ci.intern-compat-state-generated-name
+        intern-state
+        "src/debug_owner_high.tl")]
+    [symbol-a : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id function-a)]
+    [symbol-b : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id function-b)]
+    [spans : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert-located
+        (compiler_ir_types.compiler-source-spans-insert-located
+          (compiler_ir_types.compiler-source-spans-empty)
+          symbol-a
+          path-a
+          (compiler-backend-test-span 17 2))
+        symbol-b
+        path-b
+        (compiler-backend-test-span 29 4))]
+    [emission : arena.Arena (arena.make)]
+    [nested : arena.Arena (arena.make)]
+    [owner-mark-before : arena.ArenaMark (arena.mark)]
+    [_set-emission : unit
+      (compiler_backend.compiler-backend-state-set-emission-arena!
+        backend-state
+        emission)]
+    [_enable-debug : unit
+      (compiler_ir_types.compiler-debug-info-set-enabled! true)]
+    [_set-nested : unit
+      (unsafe
+        (arena.set! nested))]
+    [enabled-index : compiler_backend.CompilerBackendSourceSpanIndex
+      (compiler_backend.compiler-backend-source-span-index-build-with-backend-state
+        backend-state
+        spans)]
+    [_restore-caller : unit
+      (unsafe
+        (arena.set! caller))]
+    [_destroy-nested : unit
+      (unsafe
+        (arena.destroy nested))]
+    [debug-ok : bool
+      (and
+        (match (struct-get enabled-index debug-files)
+          [(compiler_backend.CompilerBackendDebugFileIndex.Files _ _ count)
+            (= count 2)]
+          [(compiler_backend.CompilerBackendDebugFileIndex.No) false])
+        (=
+          (compiler_backend.compiler-backend-debug-file-number
+            enabled-index
+            path-a)
+          1)
+        (=
+          (compiler_backend.compiler-backend-debug-file-number
+            enabled-index
+            path-b)
+          2))]
+    [_restore-debug : unit
+      (compiler_ir_types.compiler-debug-info-set-enabled! previous-debug)]
+    [_clear-emission : unit
+      (compiler_backend.compiler-backend-state-clear-emission-arena!
+        backend-state)]
+    [owner-mark-after : arena.ArenaMark (arena.mark)]
+    [_destroy-emission : unit
+      (unsafe
+        (arena.destroy emission))]
+    (and
+      debug-ok
+      (arena.mark-eq? owner-mark-before owner-mark-after)
+      (arena.eq? (arena.current) caller))))
+
 ;; Build a tiny backend program directly from an exact intern-state id.  The
 ;; route-isolation checks below deliberately build two structurally identical
 ;; programs from different intern tables; both tables hand out the same
@@ -31370,6 +31538,8 @@
     [before-bytes : i64
       (compiler_backend.compiler-backend-state-user-symbol-cache-retained-bytes
         backend-state)]
+    [before-emission-arena : i64
+      (compiler_backend.compiler-backend-state-emission-arena backend-state)]
     [state-size : i64 (compiler_backend.compiler-backend-state-size)]
     [symbol : String
       (compiler_backend.compiler-backend-state-user-symbol-id
@@ -31379,6 +31549,7 @@
       (= (ci.intern-compat-state-pool-len intern-state) 1)
       (= before-capacity 0)
       (= before-bytes 0)
+      (= before-emission-arena 0)
       (= state-size 8)
       (not
         (compiler_backend.compiler-backend-state-scalar-registers-enabled?
@@ -38568,6 +38739,8 @@
         (compiler-backend-instr-diagnostics-ok?)
         (compiler-backend-source-span-symbol-provenance-ok?)
         (compiler-backend-debug-disabled-sparse-paths-ok?)
+        (compiler-backend-debug-file-index-emission-arena-ok?)
+        (compiler-backend-user-symbol-cache-emission-arena-ok?)
         (compiler-backend-register-group-fail-closed-ok?)
         (compiler-backend-reg-part-pools-ok?)
         (compiler-backend-scavenge-emergency-reg-support-ok?)

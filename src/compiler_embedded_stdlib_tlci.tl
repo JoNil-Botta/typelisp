@@ -87,16 +87,9 @@
 ;: whatever arena was current at the load, and the load-failure state is sticky
 ;: for the whole pass, so the message it hands back must not be.
 (define (compiler-embedded-stdlib-tlci-session-own-text [text : String]) : String
-  (let
-    [previous : i64 (arena.tl_arena_current)]
-    [_enter : unit
-      (unsafe
-        (arena.tl_arena_set (compiler-embedded-stdlib-tlci-session-arena)))]
-    [owned : String (string.substring (& text) 0 (string.string-length text))]
-    [_restore : unit
-      (unsafe
-        (arena.tl_arena_set previous))]
-    owned))
+  (in-arena
+    (arena.Arena (compiler-embedded-stdlib-tlci-session-arena))
+    (string.substring (& text) 0 (string.string-length text))))
 
 ;; The image is embedded through `include-str-lzss`, so the payload bytes are
 ;; the compiler-owned LZSS framing: the marker, the decimal uncompressed byte

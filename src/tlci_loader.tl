@@ -426,16 +426,7 @@
 ;; cannot inherit an owner by omission; the arity is the enforcement.
 (define (tlci-loader-alloc-i64-array-in-arena [owner-arena : i64] [count : i64]) : (__tl_dyn-array
     i64)
-  (let
-    [previous : i64 (arena.tl_arena_current)]
-    [_enter : unit
-      (unsafe
-        (arena.tl_arena_set owner-arena))]
-    [items : (__tl_dyn-array i64) (make-array i64 count)]
-    [_restore : unit
-      (unsafe
-        (arena.tl_arena_set previous))]
-    items))
+  (in-arena (arena.Arena owner-arena) (make-array i64 count)))
 
 (define (tlci-loader-host-table-storage
   [owner-arena : i64]

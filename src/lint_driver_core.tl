@@ -1037,35 +1037,25 @@
 (define (selfhost-lint-unsafe-surface-cache-store-summary!
   [path : String]
   [summary : compiler_load.CompilerLoadSurfaceSummary]) : unit
-  (let
-    [home : i64 (arena.tl_arena_current)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set selfhost-lint-unsafe-surface-cache-arena))
-      (selfhost-lint-unsafe-surface-cache-push!
-        (SelfhostLintUnsafeSurfaceCacheEntry
-          (string.copy path)
-          true
-          (selfhost-lint-unsafe-surface-copy-decls
-            (struct-get summary decls)
-            (struct-get summary declaration-module-id)
-            (selfhost-lint-unsafe-surface-names-empty))))
-      (unsafe
-        (arena.tl_arena_set home)))))
+  (in-arena
+    (arena.Arena selfhost-lint-unsafe-surface-cache-arena)
+    (selfhost-lint-unsafe-surface-cache-push!
+      (SelfhostLintUnsafeSurfaceCacheEntry
+        (string.copy path)
+        true
+        (selfhost-lint-unsafe-surface-copy-decls
+          (struct-get summary decls)
+          (struct-get summary declaration-module-id)
+          (selfhost-lint-unsafe-surface-names-empty))))))
 
 (define (selfhost-lint-unsafe-surface-cache-store-invalid! [path : String]) : unit
-  (let
-    [home : i64 (arena.tl_arena_current)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set selfhost-lint-unsafe-surface-cache-arena))
-      (selfhost-lint-unsafe-surface-cache-push!
-        (SelfhostLintUnsafeSurfaceCacheEntry
-          (string.copy path)
-          false
-          (selfhost-lint-unsafe-surface-names-empty)))
-      (unsafe
-        (arena.tl_arena_set home)))))
+  (in-arena
+    (arena.Arena selfhost-lint-unsafe-surface-cache-arena)
+    (selfhost-lint-unsafe-surface-cache-push!
+      (SelfhostLintUnsafeSurfaceCacheEntry
+        (string.copy path)
+        false
+        (selfhost-lint-unsafe-surface-names-empty)))))
 
 (define (selfhost-lint-unsafe-surface-cache-load!
   [path : String]

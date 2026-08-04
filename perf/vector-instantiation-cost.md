@@ -9,7 +9,7 @@ Issue #5609 measures the proof-guided skip lane for five distinct compact
 
 The comparison is current main commit
 `fd19fade1ae04bb49fde42275480a652037e9912` versus branch commit
-`63acfbbf3fdc943d1b11cf53ad8a5da8ecdb18d6`. The Cachegrind and self-compile
+`82a7bb7baf073b9c8a5b70666014bbdc36c3e840`. The Cachegrind and self-compile
 comparisons below are one paired local run, not the checked global baseline.
 Cachegrind used equal-length compiler executable and output paths; the
 self-compile gate used the exact archived main source with equal-length output
@@ -40,11 +40,11 @@ one-to-five difference within each revision.
 | revision | one identity | five identities | incremental delta |
 | --- | ---: | ---: | ---: |
 | current main | 146,569,462 | 187,449,041 | 40,879,579 |
-| branch | 146,601,172 | 187,381,329 | 40,780,157 |
-| branch minus main (absolute) | +31,710 | -67,712 | -99,422 |
+| branch | 146,601,320 | 187,381,464 | 40,780,144 |
+| branch minus main (absolute) | +31,858 | -67,577 | -99,435 |
 
-The branch saves 99,422 `Ir` on the one-to-five increment, or 0.2432070% of
-main's increment. The one-identity absolute compile is +31,710 `Ir`; this is
+The branch saves 99,435 `Ir` on the one-to-five increment, or 0.2432388% of
+main's increment. The one-identity absolute compile is +31,858 `Ir`; this is
 not a claim of an absolute one-identity improvement.
 
 ## Concrete typecheck and allocation
@@ -56,10 +56,10 @@ five minus one.
 
 | measurement | current main | branch | branch minus main (absolute) | incremental savings |
 | --- | ---: | ---: | ---: | ---: |
-| `lower.typecheck` bytes | 2,298,192 / 2,700,168 | 2,332,168 / 2,701,816 | +33,976 / +1,648 | 32,328 (8.0422712%) |
-| total allocation bytes | 71,496,872 / 77,625,248 | 71,531,576 / 77,627,536 | +34,704 / +2,288 | 32,416 (0.5289493%) |
-| one-to-five increment | 401,976 | 369,648 | -32,328 | — |
-| one-to-five increment (total) | 6,128,376 | 6,095,960 | -32,416 | — |
+| `lower.typecheck` bytes | 2,298,192 / 2,700,168 | 2,331,880 / 2,702,008 | +33,688 / +1,840 | 31,848 (7.9228611%) |
+| total allocation bytes | 71,496,872 / 77,625,248 | 71,530,336 / 77,628,208 | +33,464 / +2,960 | 30,504 (0.4977501%) |
+| one-to-five increment | 401,976 | 370,128 | -31,848 | — |
+| one-to-five increment (total) | 6,128,376 | 6,097,872 | -30,504 | — |
 
 ## Proof-reuse counters
 
@@ -106,10 +106,10 @@ fixtures.
 
 The exact archived main source was self-compiled on the same host, with
 equal-length output directories and compiler executable names. Main measured
-61,776,694,992 `Ir`; the branch measured 62,043,310,180 `Ir`.
+61,776,694,992 `Ir`; the branch measured 62,043,378,918 `Ir`.
 
-The delta is +266,615,188 (`+0.4315789%`). The unchanged +0.5% gate allows
-308,883,474 `Ir`, leaving 42,268,286 `Ir` of headroom. This is a gate check,
+The delta is +266,683,926 (`+0.4316902%`). The unchanged +0.5% gate allows
+308,883,474 `Ir`, leaving 42,199,548 `Ir` of headroom. This is a gate check,
 not a stable elapsed-time or cross-host benchmark; the checked global
 instruction baseline was not edited.
 
@@ -117,12 +117,13 @@ instruction baseline was not edited.
 
 | assembly metric | current main | branch | branch delta |
 | --- | ---: | ---: | ---: |
-| bytes | 54,355,503 | 54,241,083 | -114,420 (-0.2105031%) |
+| bytes | 54,355,503 | 54,241,395 | -114,108 (-0.2099291%) |
 | lines | 1,719,167 | 1,716,963 | -2,204 |
 | defined symbols | 18,287 | 18,231 | -56 |
 
-The Linux bootstrap fixpoint passed (`stage2 == stage3`) and embedded-stdlib
-parity; the branch stage3 binary is 9,937,496 bytes.
+The formatter-stable final5 Linux bootstrap fixpoint passed (`stage2 == stage3`)
+and embedded-stdlib parity with the cfg manifest fix; the final5 stage3 binary
+is 9,937,496 bytes.
 
 ## Windows hard-4-GiB capacity gate
 
@@ -134,17 +135,17 @@ gate.
 | opt | run | elapsed ms | working bytes | private bytes | job bytes (% of cap) |
 | --- | --- | ---: | ---: | ---: | ---: |
 | opt1 | main | 87,500 | 1,035,603,968 | 1,149,198,336 | 1,167,265,792 (27.1775%) |
-| opt1 | branch | 89,896 | 1,008,685,056 | 1,124,286,464 | 1,142,353,920 (26.5975%) |
+| opt1 | branch | 85,476 | 1,017,815,040 | 1,141,104,640 | 1,142,358,016 (26.5976%) |
 | opt2 | main | 97,533 | 1,565,081,600 | 1,695,494,144 | 1,700,941,824 (39.6031%) |
-| opt2 | branch | 106,539 | 1,575,899,136 | 1,712,599,040 | 1,713,848,320 (39.9036%) |
+| opt2 | branch | 105,833 | 1,574,596,608 | 1,708,396,544 | 1,713,840,128 (39.9035%) |
 
-For opt1, branch job memory is -24,911,872 bytes (-2.134207%) versus main. For
-opt2, it is +12,906,496 bytes (+0.758785%). Both branch runs complete under
+For opt1, branch job memory is -24,907,776 bytes (-2.1338564%) versus main. For
+opt2, it is +12,898,304 bytes (+0.7583037%). Both branch runs complete under
 the hard cap.
 
-The actual normal `intern-capacity()` is 131,072 slots, and the final
+The actual normal `intern-capacity()` is 131,072 slots, and the final5
 Windows-target compiler compiled `src/main.tl`, assembled, and linked
-successfully at that fixed capacity. The resulting artifacts are 68,760,044
+successfully at that fixed capacity. The resulting artifacts are 68,760,356
 bytes of assembly, 16,664,894 bytes of object code, and 13,627,392 bytes of
 executable. Expanded-capacity results cannot be projected linearly onto fixed
 capacity; the direct fixed-capacity compile/link is authoritative. In a

@@ -57147,6 +57147,70 @@
             label
             (ir.compiler-ir-instr-builder-to-seq builder))))]))
 
+;; The same dead-Pack test `opt-successor-sink-strip-dead-packs-block` applies,
+;; asked as a question instead of answered by rebuilding. The strip rebuilds
+;; every block of every function on every run of this pass to delete a Pack
+;; that is almost never there (1.1K of 57.8K opt2 self-compile runs plan any
+;; move at all), and the rebuilt list -- structurally identical to its input in
+;; the no-strip case -- then forces a fresh CFG context build and a second full
+;; SSA verify downstream. Asking first keeps the input list itself as the
+;; answer, which is what the whole no-strip path needs: same blocks, so the
+;; caller's context stays valid and its entry verify's verdict still binds.
+(define (opt-successor-sink-instrs-have-dead-pack?
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Pack dst _ _)
+        (if (and (>= dst 0) (< dst frame) (<= (array-ref uses dst) 0))
+          true
+          (opt-successor-sink-instrs-have-dead-pack?
+            frame
+            uses
+            instrs
+            (+ index 1)))]
+      [_
+        (opt-successor-sink-instrs-have-dead-pack?
+          frame
+          uses
+          instrs
+          (+ index 1))])))
+
+(define (opt-successor-sink-block-seq-has-dead-pack?
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    false
+    (if (match (ir.compiler-ir-block-seq-ref blocks index)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (opt-successor-sink-instrs-have-dead-pack? frame uses instrs 0)])
+      true
+      (opt-successor-sink-block-seq-has-dead-pack?
+        frame
+        uses
+        blocks
+        (+ index 1)))))
+
+(define (opt-successor-sink-blocks-have-dead-pack?
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-successor-sink-instrs-have-dead-pack? frame uses instrs 0)])
+        true
+        (opt-successor-sink-blocks-have-dead-pack? frame uses (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-successor-sink-block-seq-has-dead-pack? frame uses seq 0)]))
+
 (define (opt-successor-sink-strip-dead-packs
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
@@ -57201,28 +57265,53 @@
         (ir.compiler-ir-block-seq-to-list seq)
         leaves)]))
 
-(define (opt-successor-sink-blocks-result
+;; `blocks-result` plus the one extra fact its caller needs: whether the block
+;; list it hands back is the very list it was given. `unchanged` is true only
+;; when nothing was stripped AND no move was planned, which makes the result
+;; blocks, the result context and the caller's `func` all identical to the
+;; inputs -- enough for the caller to reuse the entry verify's verdict.
+(defenum OptSuccessorSinkBlocksResult
+  (Result ir.CompilerIrBlockList OptCfgContext bool bool))
+
+;; `context` must be valid for `blocks`. When no dead Pack is present the strip
+;; is the identity, so `ready` IS `blocks` and that same context is already the
+;; context this pass would have rebuilt for it.
+(define (opt-successor-sink-blocks-result-with-context
   [type-segment-bases : i64]
   [frame : i64]
   [frame-cell : (__tl_dyn-array i64)]
-  [blocks : ir.CompilerIrBlockList]) : OptBlockCtxResult
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]) : OptSuccessorSinkBlocksResult
   (let
     [initial-uses : (__tl_dyn-array i64)
       (opt-collect-blocks-uses-array frame blocks)]
+    [stripped : bool
+      (opt-successor-sink-blocks-have-dead-pack? frame initial-uses blocks)]
     [ready : ir.CompilerIrBlockList
-      (opt-successor-sink-strip-dead-packs frame initial-uses blocks)]
+      (if stripped
+        (opt-successor-sink-strip-dead-packs frame initial-uses blocks)
+        blocks)]
     ;; The natural-loop scan needs the pred-map/reachable/dominator view of the
     ;; SAME block list this pass already indexes, and `opt-cfg-natural-loops`
     ;; builds a whole context (index included) internally. Build the context
-    ;; once and take its index instead of indexing `ready` twice.
-    [cfg-context : OptCfgContext (opt-cfg-context-build ready)]
+    ;; once and take its index instead of indexing `ready` twice -- and when
+    ;; the strip was the identity, the caller's context already is that build.
+    [cfg-context : OptCfgContext
+      (if stripped
+        (opt-cfg-context-build ready)
+        context)]
     [cfg : OptCfgIndex (struct-get cfg-context index)]
     [loops : OptNaturalLoopList
       (opt-cfg-natural-loops-with-context ready cfg-context)]
     [all-defs : (__tl_dyn-array i64) (opt-used-array-new frame)]
     [_all-defs : unit (opt-successor-sink-fill-all-defs! frame ready all-defs)]
+    ;; `initial-uses` counted uses over `blocks` and is dead once the strip
+    ;; decision is made, so it already is the count over `ready` whenever the
+    ;; strip did not run.
     [total-uses : (__tl_dyn-array i64)
-      (opt-collect-blocks-uses-array frame ready)]
+      (if stripped
+        (opt-collect-blocks-uses-array frame ready)
+        initial-uses)]
     [loop-phi-leaves : (__tl_dyn-array i64) (opt-used-array-new frame)]
     [_loop-phi-leaves : unit
       (opt-successor-sink-mark-phis! frame ready loop-phi-leaves)]
@@ -57248,12 +57337,31 @@
     ;; runs and saves the caller a whole CFG context build.
     (match moves
       [(OptSuccessorSinkMoves.Nil)
-        (OptBlockCtxResult.Result ready cfg-context true)]
+        (OptSuccessorSinkBlocksResult.Result
+          ready
+          cfg-context
+          true
+          (not stripped))]
       [_
-        (OptBlockCtxResult.Result
+        (OptSuccessorSinkBlocksResult.Result
           (opt-successor-sink-rewrite-blocks moves ready)
           cfg-context
+          false
           false)])))
+
+(define (opt-successor-sink-blocks-result
+  [type-segment-bases : i64]
+  [frame : i64]
+  [frame-cell : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : OptBlockCtxResult
+  (match (opt-successor-sink-blocks-result-with-context
+    type-segment-bases
+    frame
+    frame-cell
+    blocks
+    (opt-cfg-context-build blocks))
+    [(OptSuccessorSinkBlocksResult.Result out ctx reusable _)
+      (OptBlockCtxResult.Result out ctx reusable)]))
 
 (define (opt-successor-sink-blocks
   [type-segment-bases : i64]
@@ -57290,15 +57398,16 @@
           (let
             [frame-cell : (__tl_dyn-array i64) (opt-used-array-new 1)]
             [_frame-init : unit (array-set! frame-cell 0 frame)]
-            [sink-result : OptBlockCtxResult
-              (opt-successor-sink-blocks-result
+            [sink-result : OptSuccessorSinkBlocksResult
+              (opt-successor-sink-blocks-result-with-context
                 type-segment-bases
                 frame
                 frame-cell
-                blocks)]
+                blocks
+                context)]
             [next-blocks : ir.CompilerIrBlockList
               (match sink-result
-                [(OptBlockCtxResult.Result b _ _) b])]
+                [(OptSuccessorSinkBlocksResult.Result b _ _ _) b])]
             [next : ir.CompilerIrFunction
               (ir.CompilerIrFunction.Function
                 name
@@ -57308,15 +57417,25 @@
                 next-blocks)]
             [next-context : OptCfgContext
               (match sink-result
-                [(OptBlockCtxResult.Result _ ctx reusable)
+                [(OptSuccessorSinkBlocksResult.Result _ ctx reusable _)
                   (if reusable
                     ctx
                     (opt-cfg-context-build next-blocks))])]
-            (match (opt-verify-function-with-context next next-context)
-              [(ResultCompilerOptimizeVerify.Ok)
-                (OptFunctionCtxResult.Result next next-context)]
-              [(ResultCompilerOptimizeVerify.Err _)
-                (OptFunctionCtxResult.Result func context)]))])]))
+            ;; Nothing stripped, nothing moved and no new vreg means `next` is
+            ;; the same name/params/return type/frame/block list as `func` and
+            ;; `next-context` is the very context just verified against, so the
+            ;; entry verify above already decided this exit verify: it is the
+            ;; same pure query on the same values and can only answer Ok. Half
+            ;; of every SSA verify in the opt2 self-compile is this one.
+            (if (match sink-result
+              [(OptSuccessorSinkBlocksResult.Result _ _ _ unchanged)
+                (and unchanged (= (array-ref frame-cell 0) frame))])
+              (OptFunctionCtxResult.Result next next-context)
+              (match (opt-verify-function-with-context next next-context)
+                [(ResultCompilerOptimizeVerify.Ok)
+                  (OptFunctionCtxResult.Result next next-context)]
+                [(ResultCompilerOptimizeVerify.Err _)
+                  (OptFunctionCtxResult.Result func context)])))])]))
 
 (define (opt-successor-sink-function
   [type-segment-bases : i64]

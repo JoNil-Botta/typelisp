@@ -7912,17 +7912,24 @@
             (array-set! bigger (+ len 1) label)
             (OptLabelSet.Dense bigger (+ len 1)))))]))
 
+;; Membership walks the backing array directly rather than through
+;; `opt-label-count` plus one `opt-label-ref` per element. The sets are tiny --
+;; on a self-compile 45% of the queries are against the empty set and 88% see two
+;; labels or fewer -- so the dispatch per element, not the element count, is what
+;; this loop costs. Slot `len` down to slot 1 is exactly `opt-label-ref`'s index
+;; 0 up to `count - 1`, newest label first.
 (define (opt-label-contains [set : OptLabelSet] [label : i64]) : bool
-  (let
-    [index : i64 0]
-    [count : i64 (opt-label-count set)]
-    [found : bool false]
-    (begin
-      (while (and (< index count) (not found))
-        (if (= (opt-label-ref set index) label)
-          (set! found true)
-          (set! index (+ index 1))))
-      found)))
+  (match set
+    [(OptLabelSet.Nil) false]
+    [(OptLabelSet.Dense items len)
+      (let
+        [slot : i64 len]
+        (begin
+          (while (> slot 0)
+            (if (= (array-ref items slot) label)
+              (return true)
+              (set! slot (- slot 1))))
+          false))]))
 
 (define (opt-label-add [set : OptLabelSet] [label : i64]) : OptLabelSet
   (if (opt-label-contains set label)
@@ -8240,6 +8247,12 @@
 ;; label id answers the query directly. A per-build generation stamp makes
 ;; "belongs to this CFG" a compare instead of a clear, so a rebuild costs one
 ;; counter bump rather than a pass over the table (refs #5718, proposal 3).
+;;
+;; The table holds exactly one build, so it only serves the build itself --
+;; resolving successor labels while the rows are filled. A finished index answers
+;; `opt-cfg-index-id` from its own table instead (see `opt-cfg-index-id-map`),
+;; because a later build stamps over this one and passes routinely query an
+;; index that is no longer the newest.
 (define opt-cfg-label-slot : (__tl_dyn-array i64)
   (array.make-array i64 1))
 (define opt-cfg-label-stamp : (__tl_dyn-array i64)
@@ -8299,9 +8312,13 @@
 ;; they replace rebuilding a label map and rehashing every label and every
 ;; successor edge, once per verified function (refs #5718).
 (defstruct OptCfgIndex
-  (label-generation i64)
   (labels-unique bool)
   (labels (__tl_dyn-array i64))
+  ;; Open-addressed label -> id table owned by this index, so a lookup stays a
+  ;; probe after a later build has taken over the shared stamp table. Slots hold
+  ;; `id + 1` (zero is the empty slot ZII leaves behind) and the id identifies
+  ;; its own key through `labels`, so one word per slot is enough.
+  (id-map (__tl_dyn-array i64))
   ;; Dense block values share CFG id order. Passes that reuse a topology
   ;; context after replacing block values refresh this array once from their
   ;; exact current list before indexed reads.
@@ -8673,6 +8690,50 @@
       (array-set! rpo-num (array-ref rpo slot) slot)
       (opt-cfg-index-fill-rpo-num! rpo rpo-num reach-count (+ slot 1)))))
 
+;; Power-of-two capacity with room for at least one empty slot at every size, so
+;; a probe that misses always terminates on a zero word.
+(define (opt-cfg-index-id-map-capacity [count : i64]) : i64
+  (let
+    [size : i64 2]
+    (begin
+      (while (< size (* count 2))
+        (set! size (* size 2)))
+      size)))
+
+;; Labels inside one function are near-contiguous, so masking alone already
+;; spreads them; folding the high bits down first keeps a pruned, strided label
+;; set from collapsing onto one slot.
+(define (opt-cfg-index-id-slot [label : i64] [mask : i64]) : i64
+  (bit-and (bit-xor label (shr label 5)) mask))
+
+;; Ids are inserted in block order and an occupied slot whose label matches is
+;; left alone, so a duplicate-label CFG resolves to its first block -- the same
+;; answer the legacy list scan gave before the verifier rejects it.
+(define (opt-cfg-index-fill-id-map!
+  [slots : (__tl_dyn-array i64)]
+  [labels : (__tl_dyn-array i64)]
+  [count : i64]) : unit
+  (let
+    [mask : i64 (- (array-length slots) 1)]
+    [id : i64 0]
+    (while (< id count)
+      (let
+        [label : i64 (array-ref labels id)]
+        [slot : i64 (opt-cfg-index-id-slot label mask)]
+        [placed : bool false]
+        (begin
+          (while (not placed)
+            (let
+              [entry : i64 (array-ref slots slot)]
+              (if (= entry 0)
+                (begin
+                  (array-set! slots slot (+ id 1))
+                  (set! placed true))
+                (if (= (array-ref labels (- entry 1)) label)
+                  (set! placed true)
+                  (set! slot (bit-and (+ slot 1) mask))))))
+          (set! id (+ id 1)))))))
+
 (define (opt-cfg-index-build [blocks : ir.CompilerIrBlockList]) : OptCfgIndex
   (let
     [count : i64 (ir.compiler-ir-block-list-count blocks)]
@@ -8682,6 +8743,8 @@
     [generation : i64 (opt-cfg-label-table-begin!)]
     [labels-unique : bool
       (opt-cfg-index-fill-labels! blocks generation labels dense-blocks 0)]
+    [id-map : (__tl_dyn-array i64)
+      (array.make-array i64 (opt-cfg-index-id-map-capacity count))]
     [succ-rows : (__tl_dyn-array OptI64List)
       (array.make-array OptI64List count)]
     [pred-rows : (__tl_dyn-array OptI64List)
@@ -8693,6 +8756,7 @@
     [reach-count : i64 0]
     [targets-known : bool true]
     (begin
+      (opt-cfg-index-fill-id-map! id-map labels count)
       (set!
         targets-known
         (opt-cfg-index-fill-rows! blocks generation succ-rows pred-rows 0))
@@ -8711,9 +8775,9 @@
           (opt-cfg-index-fill-rpo! postorder rpo reach-count 0)
           (opt-cfg-index-fill-rpo-num! rpo rpo-num reach-count 0)
           (OptCfgIndex
-            generation
             labels-unique
             labels
+            id-map
             dense-blocks
             succ-csr
             pred-csr
@@ -8738,27 +8802,28 @@
     (array-ref (struct-get index labels) id)
     (ir.compiler-ir-label-none)))
 
-;; The shared table holds one build at a time. An index that is still live when
-;; a later build stamps over it therefore misses, and falls back to scanning its
-;; own id -> label array -- correct either way, because the fast path is only
-;; taken when the stamp proves the slot belongs to this build.
-(define (opt-cfg-index-id-scan
-  [labels : (__tl_dyn-array i64)]
-  [label : i64]
-  [id : i64]) : option_i64.Option
-  (if (>= id (array-length labels))
-    (option_i64.None)
-    (if (= (array-ref labels id) label)
-      (option_i64.Some id)
-      (opt-cfg-index-id-scan labels label (+ id 1)))))
-
+;; Probing this index's own table answers the query whether or not a later build
+;; has stamped over the shared one, so a stale index costs the same as the newest
+;; one. An unknown label lands on an empty slot, which the capacity rule
+;; guarantees exists.
 (define (opt-cfg-index-id [index : OptCfgIndex] [label : i64]) : option_i64.Option
   (let
-    [id : i64
-      (opt-cfg-label-table-get label (struct-get index label-generation))]
-    (if (>= id 0)
-      (option_i64.Some id)
-      (opt-cfg-index-id-scan (struct-get index labels) label 0))))
+    [slots : (__tl_dyn-array i64) (struct-get index id-map)]
+    [labels : (__tl_dyn-array i64) (struct-get index labels)]
+    [mask : i64 (- (array-length slots) 1)]
+    [slot : i64 (opt-cfg-index-id-slot label mask)]
+    (begin
+      (while true
+        (let
+          [entry : i64 (array-ref slots slot)]
+          (if (= entry 0)
+            (return (option_i64.None))
+            (let
+              [id : i64 (- entry 1)]
+              (if (= (array-ref labels id) label)
+                (return (option_i64.Some id))
+                (set! slot (bit-and (+ slot 1) mask)))))))
+      (option_i64.None))))
 
 (define (opt-cfg-index-refresh-block-seq!
   [out : (__tl_dyn-array ir.CompilerIrBlock)]

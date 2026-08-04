@@ -8728,6 +8728,12 @@
           [(compiler_backend.ResultCompilerBackend.Err _) false])]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
+;; The `movq $7, %rax` line exists to CLOBBER %rax so the reload that follows it
+;; is not elided. P22-A2 (a movq that fully redefines a register immediately
+;; after another movq into it drops the first) would delete that clobber and
+;; then the reload with it, so the clobbered value is consumed by
+;; `movq %rax, -104(%rbp)` -- the owner-invalidation coverage is unchanged and
+;; the pair stays out of A2's reach.
 (define (compiler-backend-post-regalloc-peephole-ok?) : bool
   (let
     [input : String
@@ -8749,6 +8755,7 @@
     movq -56(%rbp), %rax
     movq %rax, -72(%rbp)
     movq $7, %rax
+    movq %rax, -104(%rbp)
     movq -56(%rbp), %rax
     movq %rax, -80(%rbp)
     movq %rax, 16(%rbp)
@@ -8778,6 +8785,7 @@
     movq %rax, -64(%rbp)
     movq %rax, -72(%rbp)
     movq $7, %rax
+    movq %rax, -104(%rbp)
     movq -56(%rbp), %rax
     movq %rax, -80(%rbp)
     movq %rax, 16(%rbp)
@@ -8829,6 +8837,129 @@
       (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
     [got : String (compiler_backend.compiler-backend-peephole-asm input)]
     (string.eq got want)))
+
+;; P22-A1: a spill store whose source register already mirrors the destination
+;; slot writes back the value the slot holds and is dropped. The three positive
+;; shapes are separated from the load by material the ADJACENT pair rules cannot
+;; see through -- an unrelated single-dest op, and a carry-safe block label,
+;; which is the emergency-scavenge `restore ; label ; resave` shape the emitter
+;; actually produces. The negatives pin the invalidation: clobbering the register
+;; and clobbering the slot each keep the store.
+(define (compiler-backend-peephole-dead-mirror-store-ok?) : bool
+  (let
+    [gap-input : String
+      "    movq 72(%rsp), %r9
+    addq $1, %rax
+    movq %r9, 72(%rsp)
+"]
+    [gap-want : String "    movq 72(%rsp), %r9
+    addq $1, %rax
+"]
+    [label-input : String
+      "    movq 72(%rsp), %r9
+.Lf7_carry:
+    movq %r9, 72(%rsp)
+    addq $1, %r9
+"]
+    [label-want : String "    movq 72(%rsp), %r9
+.Lf7_carry:
+    addq $1, %r9
+"]
+    [store-first-input : String
+      "    movq %r9, 72(%rsp)
+    addq $1, %rax
+    movq %r9, 72(%rsp)
+"]
+    [store-first-want : String "    movq %r9, 72(%rsp)
+    addq $1, %rax
+"]
+    [reg-clobbered-input : String
+      "    movq 72(%rsp), %r9
+    addq $1, %r9
+    movq %r9, 72(%rsp)
+"]
+    [slot-clobbered-input : String
+      "    movq 72(%rsp), %r9
+    movq %rax, 72(%rsp)
+    addq $1, %rax
+    movq %r9, 72(%rsp)
+"]
+    [unsafe-label-input : String
+      "    movq 72(%rsp), %r9
+.Lf7_merge:
+    movq %r9, 72(%rsp)
+    addq $1, %r9
+"]
+    [_reset : unit
+      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
+    [gap-got : String
+      (compiler_backend.compiler-backend-peephole-asm gap-input)]
+    [store-first-got : String
+      (compiler_backend.compiler-backend-peephole-asm store-first-input)]
+    [reg-clobbered-got : String
+      (compiler_backend.compiler-backend-peephole-asm reg-clobbered-input)]
+    [slot-clobbered-got : String
+      (compiler_backend.compiler-backend-peephole-asm slot-clobbered-input)]
+    [unsafe-label-got : String
+      (compiler_backend.compiler-backend-peephole-asm unsafe-label-input)]
+    [_carry-safe : unit
+      (compiler_backend.compiler-backend-peephole-carry-safe-insert!
+        ".Lf7_carry")]
+    [label-got : String
+      (compiler_backend.compiler-backend-peephole-asm label-input)]
+    [_reset-after : unit
+      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
+    (and
+      (string.eq gap-got gap-want)
+      (string.eq label-got label-want)
+      (string.eq store-first-got store-first-want)
+      (string.eq reg-clobbered-got reg-clobbered-input)
+      (string.eq slot-clobbered-got slot-clobbered-input)
+      (string.eq unsafe-label-got unsafe-label-input))))
+
+;; P22-A2: `movq SRC, %rX` immediately followed by a movq that rewrites the whole
+;; of %rX without reading it drops the first line. The negatives pin the two
+;; guards: a source that reads the register (bare or as a memory base/index) and
+;; an untracked destination (%rbp) both keep the pair.
+(define (compiler-backend-peephole-dead-reg-def-ok?) : bool
+  (let
+    [input : String
+      "    movq 72(%rsp), %r9
+    movq %rax, %r9
+    movq %r9, 8(%rsp)
+"]
+    [want : String "    movq %rax, %r9
+    movq %r9, 8(%rsp)
+"]
+    [read-input : String
+      "    movq 72(%rsp), %r9
+    movq (%r9), %r9
+    movq %r9, 8(%rsp)
+"]
+    [index-input : String
+      "    movq 72(%rsp), %r9
+    movq 16(%rbx,%r9,8), %r9
+    movq %r9, 8(%rsp)
+"]
+    [untracked-input : String
+      "    movq 72(%rsp), %rbp
+    movq %rax, %rbp
+    movq %rbp, 8(%rsp)
+"]
+    [_reset : unit
+      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
+    [got : String (compiler_backend.compiler-backend-peephole-asm input)]
+    [read-got : String
+      (compiler_backend.compiler-backend-peephole-asm read-input)]
+    [index-got : String
+      (compiler_backend.compiler-backend-peephole-asm index-input)]
+    [untracked-got : String
+      (compiler_backend.compiler-backend-peephole-asm untracked-input)]
+    (and
+      (string.eq got want)
+      (string.eq read-got read-input)
+      (string.eq index-got index-input)
+      (string.eq untracked-got untracked-input))))
 
 (define (compiler-backend-peephole-detailed-abort-guard-ok?) : bool
   (let
@@ -10660,6 +10791,8 @@
     (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-peephole-vector-gp-owners-ok?)
+    (compiler-backend-peephole-dead-mirror-store-ok?)
+    (compiler-backend-peephole-dead-reg-def-ok?)
     (compiler-backend-peephole-detailed-abort-guard-ok?)
     (compiler-backend-peephole-drop-fallthrough-chain-ok?)
     (compiler-backend-peephole-drop-fallthrough-abort-guard-ok?)
@@ -11973,18 +12106,28 @@
             "    jmp .L_tl_test_join\n"))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
+;; The cycle fixture's "back" -> "join" edge is a BACK edge: "join" is the first
+;; (and only) block, so its P22-B target point is 0, and `emit-instr-post-base`
+;; is pinned above it here so the edge classifies as backward however the
+;; preceding tests left that global. A back edge keeps the pushq/popq staging
+;; bracket; the forward case is pinned by
+;; `compiler-backend-phi-forward-edge-unbracket-ok?` below.
 (define (compiler-backend-phi-parallel-copy-ok?) : bool
   (let
     [prev-count : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-cycle-temp-used-count)]
     [prev-base : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-cycle-temp-base-offset)]
+    [prev-post-base : i64
+      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-instr-post-base)]
     [_set : unit
       (begin
         (compiler_backend.compiler-backend-test-set-compiler-backend-cycle-temp-used-count!
           0)
         (compiler_backend.compiler-backend-test-set-compiler-backend-cycle-temp-base-offset!
-          -512))]
+          -512)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+          8))]
     [ok : bool
       (match (compiler_backend.compiler-backend-emit-phi-edge-copies
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -12047,7 +12190,80 @@
         (compiler_backend.compiler-backend-test-set-compiler-backend-cycle-temp-used-count!
           prev-count)
         (compiler_backend.compiler-backend-test-set-compiler-backend-cycle-temp-base-offset!
-          prev-base))]
+          prev-base)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+          prev-post-base))]
+    ok))
+
+;; P22-B: the same cycle fixture emitted across a FORWARD edge drops the
+;; pushq/popq staging bracket. "join" is the only block, so its target point is
+;; 0; pinning `emit-instr-post-base` to 0 makes the edge run forward (target at
+;; or past the end of the block being emitted), which is the case where every
+;; var live at the target's entry already reads OCCUPIED in the point-local
+;; scavenge query. The four marshalling movq lines must be unchanged -- only the
+;; two bracket instructions go.
+(define (compiler-backend-phi-forward-edge-unbracket-ok?) : bool
+  (let
+    [prev-count : i64
+      (compiler_backend.compiler-backend-test-get-compiler-backend-cycle-temp-used-count)]
+    [prev-base : i64
+      (compiler_backend.compiler-backend-test-get-compiler-backend-cycle-temp-base-offset)]
+    [prev-post-base : i64
+      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-instr-post-base)]
+    [_set : unit
+      (begin
+        (compiler_backend.compiler-backend-test-set-compiler-backend-cycle-temp-used-count!
+          0)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-cycle-temp-base-offset!
+          -512)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+          0))]
+    [ok : bool
+      (match (compiler_backend.compiler-backend-emit-phi-edge-copies
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler-backend-phi-cycle-blocks)
+        (compiler_ir_types.compiler-ir-label "join")
+        (compiler_ir_types.compiler-ir-label "back")
+        (compiler_backend.compiler-backend-program-index-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          compiler_ir_types.CompilerIrFunctionList.Nil
+          compiler_ir_types.CompilerIrExternList.Nil)
+        0
+        ""
+        ""
+        "")
+        [(compiler_backend.ResultCompilerBackend.Ok cycle)
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              cycle
+              "    movq -8(%rbp), %r10\n")
+            (compiler_backend.compiler-backend-string-contains?
+              cycle
+              "    movq %r10, -512(%rbp)\n")
+            (compiler_backend.compiler-backend-string-contains?
+              cycle
+              "    movq -512(%rbp), %r10\n")
+            (compiler_backend.compiler-backend-string-contains?
+              cycle
+              "    movq %r10, -16(%rbp)\n")
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                cycle
+                "    pushq %r8\n"))
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                cycle
+                "    popq %r8\n")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+    [_restore : unit
+      (begin
+        (compiler_backend.compiler-backend-test-set-compiler-backend-cycle-temp-used-count!
+          prev-count)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-cycle-temp-base-offset!
+          prev-base)
+        (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
+          prev-post-base))]
     ok))
 
 (define (compiler-backend-phi-group-cycle-copy-ok?) : bool
@@ -40061,6 +40277,7 @@
       (and
         (pmove.compiler-parallel-move-self-test?)
         (compiler-backend-phi-parallel-copy-ok?)
+        (compiler-backend-phi-forward-edge-unbracket-ok?)
         (compiler-backend-phi-group-cycle-copy-ok?)
         (compiler-backend-phi-group-stack-copy-split-scratch-ok?)
         (compiler-backend-phi-float-cycle-copy-ok?)

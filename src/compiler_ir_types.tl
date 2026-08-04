@@ -5238,6 +5238,54 @@
           (array-set! bigger len entry)
           (CompilerSourceSpansInstrEntryList bigger (+ len 1)))))))
 
+;; --- spans escape -----------------------------------------------------------
+;;
+;; Copy a spans table into whichever arena is current at the call so it can
+;; outlive the arena that produced it. Both entry kinds are flat inline
+;; aggregates over POD fields -- an interned symbol id, a path id, and the four
+;; i32 line/column words of `AstSourceSpan` -- and enum/struct payloads use the
+;; default inline layout, so duplicating the two slot arrays leaves no pointer
+;; back into the source arena. Only the live prefix is copied: an escaped table
+;; is handed to consumers that clear or rebuild the instruction side, never to
+;; one that appends onto the retained spare capacity.
+(define (compiler-source-spans-entry-list-escape
+  [entries : CompilerSourceSpansEntryList]) : CompilerSourceSpansEntryList
+  (let
+    [slots : (Array CompilerSourceSpansEntry) (struct-get entries slots)]
+    [len : i64 (struct-get entries len)]
+    [copy : (Array CompilerSourceSpansEntry)
+      (make-array CompilerSourceSpansEntry len)]
+    (begin
+      (compiler-source-spans-entry-list-copy-array-range!
+        (&mut copy)
+        (& slots)
+        0
+        len)
+      (CompilerSourceSpansEntryList copy len))))
+
+(define (compiler-source-spans-instr-entry-list-escape
+  [entries : CompilerSourceSpansInstrEntryList]) : CompilerSourceSpansInstrEntryList
+  (let
+    [slots : (Array CompilerSourceSpansInstrEntry) (struct-get entries slots)]
+    [len : i64 (struct-get entries len)]
+    [copy : (Array CompilerSourceSpansInstrEntry)
+      (make-array CompilerSourceSpansInstrEntry len)]
+    (begin
+      (compiler-source-spans-instr-entry-list-copy-array-range!
+        (&mut copy)
+        (& slots)
+        0
+        len)
+      (CompilerSourceSpansInstrEntryList copy len))))
+
+(define (compiler-source-spans-escape [spans : CompilerSourceSpans]) : CompilerSourceSpans
+  (match spans
+    [(CompilerSourceSpans.Spans entries instr-entries instr-count)
+      (CompilerSourceSpans.Spans
+        (compiler-source-spans-entry-list-escape entries)
+        (compiler-source-spans-instr-entry-list-escape instr-entries)
+        instr-count)]))
+
 (define (compiler-source-spans-instr-entry-array-lookup
   [slots : (Array CompilerSourceSpansInstrEntry)]
   [index : i64]

@@ -1,4 +1,5 @@
 ;; compiler_ir_types_smoke.tl - Runnable IR type/effect smoke.
+(import stdlib.arena)
 (import stdlib.string)
 (import compiler_ir_types)
 (import compiler_ast_types as ast)
@@ -846,6 +847,100 @@
       (unless (= (ci.intern-pool-len) pool-before) (set! ok false))
       ok)))
 
+;; Build a spans table entirely inside a throwaway arena, escape it into the
+;; enclosing arena, then destroy the throwaway arena and read the escape. Every
+;; lookup below dereferences the escaped slot arrays, so a shallow escape that
+;; kept pointing at the destroyed arena's storage faults or reads garbage here.
+;; This is the ownership boundary `optimize-program-with-spans-...` relies on
+;; when it runs the inliner in its own arena.
+(define (compiler-ir-smoke-source-spans-escape-ok?) : bool
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [scratch : i64 (arena.tl_arena_make)]
+    [first : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (compiler-ir-smoke-symbol-id "spans-escape-first"))]
+    [second : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (compiler-ir-smoke-symbol-id "spans-escape-second"))]
+    [instr-key : compiler_ir_types.CompilerSourceSpansInstrKey
+      (compiler_ir_types.CompilerSourceSpansInstrKey.Value 11 12)]
+    [store-key : compiler_ir_types.CompilerSourceSpansInstrKey
+      (compiler_ir_types.CompilerSourceSpansInstrKey.Store 13 14)]
+    [_enter : unit
+      (unsafe
+        (arena.tl_arena_set scratch))]
+    ;; The empty table starts with zero-length slot arrays, so the first append
+    ;; on each side allocates the live storage inside `scratch`.
+    [built : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert-instr-entry-located
+        (compiler_ir_types.compiler-source-spans-insert-instr-entry-located
+          (compiler_ir_types.compiler-source-spans-insert-located
+            (compiler_ir_types.compiler-source-spans-insert-located
+              (compiler_ir_types.compiler-source-spans-empty)
+              first
+              3
+              (ast.ast-source-span 10 20 30 40))
+            second
+            4
+            (ast.ast-source-span 50 60 70 80))
+          instr-key
+          5
+          (ast.ast-source-span 90 100 110 120))
+        store-key
+        6
+        (ast.ast-source-span 130 140 150 160))]
+    [_leave : unit
+      (unsafe
+        (arena.tl_arena_set enclosing))]
+    [escaped : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-escape built)]
+    [_destroy : unit
+      (unsafe
+        (arena.tl_arena_destroy scratch))]
+    (and
+      (= (compiler_ir_types.compiler-source-spans-count escaped) 2)
+      (= (compiler_ir_types.compiler-source-spans-instr-count escaped) 2)
+      (match (compiler_ir_types.compiler-source-spans-lookup-location
+        escaped
+        first)
+        [(compiler_ir_types.CompilerMaybeSourceLocation.Some
+            (compiler_ir_types.CompilerSourceLocation path-id span))
+          (and
+            (= path-id 3)
+            (= (ast.ast-source-span-start-line span) 10)
+            (= (ast.ast-source-span-end-col span) 40))]
+        [_ false])
+      (match (compiler_ir_types.compiler-source-spans-lookup-location
+        escaped
+        second)
+        [(compiler_ir_types.CompilerMaybeSourceLocation.Some
+            (compiler_ir_types.CompilerSourceLocation path-id span))
+          (and (= path-id 4) (= (ast.ast-source-span-start-line span) 50))]
+        [_ false])
+      (match escaped
+        [(compiler_ir_types.CompilerSourceSpans.Spans _ instr-entries _)
+          (and
+            (match (compiler_ir_types.compiler-source-spans-instr-entry-list-lookup
+              instr-entries
+              instr-key)
+              [(compiler_ir_types.CompilerMaybeSourceLocation.Some
+                  (compiler_ir_types.CompilerSourceLocation path-id span))
+                (and
+                  (= path-id 5)
+                  (= (ast.ast-source-span-start-line span) 90)
+                  (= (ast.ast-source-span-end-col span) 120))]
+              [_ false])
+            (match (compiler_ir_types.compiler-source-spans-instr-entry-list-lookup
+              instr-entries
+              store-key)
+              [(compiler_ir_types.CompilerMaybeSourceLocation.Some
+                  (compiler_ir_types.CompilerSourceLocation path-id span))
+                (and
+                  (= path-id 6)
+                  (= (ast.ast-source-span-start-line span) 130))]
+              [_ false]))]))))
+
 (define (main) : i64
   (begin
     (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
@@ -857,4 +952,5 @@
     (unless (compiler-ir-smoke-runtime-effect-self-test-ok?) (return 7))
     (unless (compiler-ir-smoke-slice-type-render-clone-ok?) (return 8))
     (unless (compiler-ir-smoke-derived-symbol-table-ok?) (return 9))
+    (unless (compiler-ir-smoke-source-spans-escape-ok?) (return 10))
     (compiler_ir_types.compiler-ir-effect-self-test)))

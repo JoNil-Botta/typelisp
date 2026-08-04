@@ -70559,6 +70559,12 @@
         ;; Levels 1 (cheap) and 2 (quality) both prune unreachable functions;
         ;; opt-inline-program-functions runs the full inliner at level 2 and
         ;; the call-free tiny-leaf pass at level 1.
+        ;;
+        ;; This spans-free entry keeps the inline stage in the enclosing arena.
+        ;; The dedicated inline arena lives on the spans variant below, which is
+        ;; the one the driver compiles through; adding it here would buy nothing
+        ;; (no caller of this entry compiles a whole program) and would need the
+        ;; same escape argument re-made for a second control flow.
         (begin
           (cfg compile-profile (compiler-opt-profile-start profile-state))
           (let
@@ -70993,106 +70999,167 @@
           (opt-remap-spans-program spans program))
         (begin
           (cfg compile-profile (compiler-opt-profile-start profile-state))
-          (match (opt-inline-program-functions-with-spans
-            type-segment-bases
-            functions
-            level
-            spans)
-            [(OptInlineSpanProgram.Program reachable-functions inline-spans)
+          ;; Everything the inline stage builds -- the devirtualized function
+          ;; index, the call graph, the SCC and census tables, every rewritten
+          ;; caller body, and every superseded spans array -- is dead once
+          ;; `optimize-function-list-with-level-and-summaries` below has escaped
+          ;; each optimized function into this arena. Running the stage in a
+          ;; dedicated arena lets that whole generation be released there
+          ;; instead of riding the compiler-entry arena through the backend.
+          (let
+            [enclosing : i64 (arena.tl_arena_current)]
+            [inline-arena : i64 (arena.tl_arena_make)]
+            [_enter-inline-arena : unit
+              (unsafe
+                (arena.tl_arena_set inline-arena))]
+            [inlined : OptInlineSpanProgram
+              (opt-inline-program-functions-with-spans
+                type-segment-bases
+                functions
+                level
+                spans)]
+            [_leave-inline-arena : unit
+              (unsafe
+                (arena.tl_arena_set enclosing))]
+            ;; The inline stage rebinds its two module-level tables on the way
+            ;; out, and it does so while its own arena is current. Rebind them
+            ;; again here so neither global names storage inside the arena this
+            ;; function is about to destroy.
+            [_rebind-inline-globals : unit
               (begin
-                (cfg
-                  compile-profile
-                  (compiler-opt-profile-finish profile-state "pre_prune"))
-                (cfg compile-profile (compiler-opt-profile-start profile-state))
-                (let
-                  [pruned : OptPrunedProgram
-                    (opt-prune-unreachable-program
-                      globals
-                      reachable-functions
-                      externs)]
-                  [pruned-globals : ir.CompilerIrGlobalList
-                    (opt-pruned-program-globals pruned)]
-                  [pruned-functions : ir.CompilerIrFunctionList
-                    (opt-pruned-program-functions pruned)]
-                  [summaries : OptLoopBceSummaries
-                    (opt-loop-bce-summaries-set-profile-state
-                      (opt-build-program-summaries
-                        type-segment-bases
-                        pruned-globals
-                        pruned-functions
-                        level)
-                      profile-state)]
-                  [_load-cse-profile-reset : unit
-                    (cfg
-                      compile-profile
-                      (compiler-opt-load-cse-profile-reset)
-                      unit)]
-                  [optimized-functions : ir.CompilerIrFunctionList
-                    (optimize-function-list-with-level-and-summaries
-                      pools
-                      type-segment-bases
-                      pruned-functions
-                      level
-                      summaries)]
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-opt-profile-finish profile-state "functions"))
-                    (cfg
-                      compile-profile-summary
-                      (compiler-opt-profile-summary-emit
-                        (struct-get summaries profile-state)))
-                    (cfg compile-profile (compiler-opt-load-cse-profile-emit))
-                    (cfg
-                      compile-profile
-                      (compiler-opt-profile-start profile-state))
-                    (let
-                      [final-pruned
-                        : OptPrunedProgram
-                        ;; Keep scanning the original global initializers so a
-                        ;; function referenced only from one still follows the
-                        ;; existing reachability rule even if that global is
-                        ;; later filtered from the emitted program.
-                        (opt-prune-unreachable-program
-                          globals
-                          optimized-functions
-                          externs)]
-                      [final-globals : ir.CompilerIrGlobalList
-                        (opt-pruned-program-globals final-pruned)]
-                      [final-functions : ir.CompilerIrFunctionList
-                        (opt-pruned-program-functions final-pruned)]
-                      [scratch-reset-functions : ir.CompilerIrFunctionList
-                        (opt-scratch-reset-function-list-with-level
+                (opt-inline-multiblock-ok-memo-reset!)
+                (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
+            (match inlined
+              [(OptInlineSpanProgram.Program
+                  reachable-functions
+                  inline-arena-spans)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-opt-profile-finish profile-state "pre_prune"))
+                  (cfg
+                    compile-profile
+                    (compiler-opt-profile-start profile-state))
+                  (let
+                    ;; The one inline-stage result that must survive the arena:
+                    ;; the spans table is consumed after the destroy, by
+                    ;; `opt-remap-spans-program` at the tail of this function.
+                    [inline-spans : ir.CompilerSourceSpans
+                      (ir.compiler-source-spans-escape inline-arena-spans)]
+                    [pruned : OptPrunedProgram
+                      (opt-prune-unreachable-program
+                        globals
+                        reachable-functions
+                        externs)]
+                    [pruned-globals : ir.CompilerIrGlobalList
+                      (opt-pruned-program-globals pruned)]
+                    [pruned-functions : ir.CompilerIrFunctionList
+                      (opt-pruned-program-functions pruned)]
+                    [summaries : OptLoopBceSummaries
+                      (opt-loop-bce-summaries-set-profile-state
+                        (opt-build-program-summaries
                           type-segment-bases
-                          final-functions
-                          level)]
-                      [paired-bounds-functions : ir.CompilerIrFunctionList
-                        (if (< level 2)
-                          scratch-reset-functions
-                          (opt-late-bounds-pair-function-list
-                            type-segment-bases
-                            scratch-reset-functions))]
-                      [total-switch-functions : ir.CompilerIrFunctionList
-                        (if (< level 2)
-                          paired-bounds-functions
-                          (opt-late-total-switch-function-list
-                            type-segment-bases
-                            paired-bounds-functions))]
-                      [optimized : ir.CompilerIrProgram
-                        (ir.CompilerIrProgram.Program
-                          final-globals
-                          (ir.compiler-ir-function-list-compact
-                            total-switch-functions)
-                          externs)]
+                          pruned-globals
+                          pruned-functions
+                          level)
+                        profile-state)]
+                    [_load-cse-profile-reset : unit
+                      (cfg
+                        compile-profile
+                        (compiler-opt-load-cse-profile-reset)
+                        unit)]
+                    [optimized-functions : ir.CompilerIrFunctionList
+                      (optimize-function-list-with-level-and-summaries
+                        pools
+                        type-segment-bases
+                        pruned-functions
+                        level
+                        summaries)]
+                    ;; No live pointer into `inline-arena` remains here. Every
+                    ;; function in `optimized-functions` was deep-cloned into this
+                    ;; arena on its way out of the escaping optimizer -- level 2
+                    ;; through `compiler-ir-clone-function`, level 1 through the
+                    ;; equivalent DCE block escape -- `inline-spans` was copied
+                    ;; out above, and `globals`/`externs` are the driver's program
+                    ;; shell, which the inline stage only reads. That leaves
+                    ;; `reachable-functions`, `pruned`/`pruned-functions`,
+                    ;; `summaries`, the function index and the census as the
+                    ;; arena's only referents, and all of them are dead from here
+                    ;; on: nothing below this binding reads them.
+                    ;;
+                    ;; The ownership snapshot reports under a phase of its own
+                    ;; rather than under "optimize": this is a mid-phase reading
+                    ;; of an arena that is gone by the time the optimize phase
+                    ;; snapshot is taken, and sharing that phase label would add
+                    ;; it to that snapshot's unique-root total.
+                    [_release-inline-arena : unit
                       (begin
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-finish
-                            profile-state
-                            "post_prune"))
-                        (CompilerOptimizedProgram.Program
-                          (compiler-opt-debug-finish-program optimized)
-                          (opt-remap-spans-program inline-spans optimized)))))))])))]))
+                        (allocation_profile.compiler-allocation-profile-control!
+                          2
+                          "optimize.inline"
+                          "optimize-inline"
+                          inline-arena)
+                        (unsafe
+                          (arena.tl_arena_destroy inline-arena)))]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-opt-profile-finish profile-state "functions"))
+                      (cfg
+                        compile-profile-summary
+                        (compiler-opt-profile-summary-emit
+                          (struct-get summaries profile-state)))
+                      (cfg compile-profile (compiler-opt-load-cse-profile-emit))
+                      (cfg
+                        compile-profile
+                        (compiler-opt-profile-start profile-state))
+                      (let
+                        [final-pruned
+                          : OptPrunedProgram
+                          ;; Keep scanning the original global initializers so a
+                          ;; function referenced only from one still follows the
+                          ;; existing reachability rule even if that global is
+                          ;; later filtered from the emitted program.
+                          (opt-prune-unreachable-program
+                            globals
+                            optimized-functions
+                            externs)]
+                        [final-globals : ir.CompilerIrGlobalList
+                          (opt-pruned-program-globals final-pruned)]
+                        [final-functions : ir.CompilerIrFunctionList
+                          (opt-pruned-program-functions final-pruned)]
+                        [scratch-reset-functions : ir.CompilerIrFunctionList
+                          (opt-scratch-reset-function-list-with-level
+                            type-segment-bases
+                            final-functions
+                            level)]
+                        [paired-bounds-functions : ir.CompilerIrFunctionList
+                          (if (< level 2)
+                            scratch-reset-functions
+                            (opt-late-bounds-pair-function-list
+                              type-segment-bases
+                              scratch-reset-functions))]
+                        [total-switch-functions : ir.CompilerIrFunctionList
+                          (if (< level 2)
+                            paired-bounds-functions
+                            (opt-late-total-switch-function-list
+                              type-segment-bases
+                              paired-bounds-functions))]
+                        [optimized : ir.CompilerIrProgram
+                          (ir.CompilerIrProgram.Program
+                            final-globals
+                            (ir.compiler-ir-function-list-compact
+                              total-switch-functions)
+                            externs)]
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-opt-profile-finish
+                              profile-state
+                              "post_prune"))
+                          (CompilerOptimizedProgram.Program
+                            (compiler-opt-debug-finish-program optimized)
+                            (opt-remap-spans-program inline-spans optimized)))))))]))))]))
 
 (define (optimize-program-with-spans-and-reader-context-and-level
   [pools : ast.AstNodePoolContext]

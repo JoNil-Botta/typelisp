@@ -148,13 +148,12 @@
 ;: `compiler-ir-label-text`: diagnostics reach this path with whatever the IR
 ;: happens to hold.
 (define (compiler-ir-symbol-text [symbol : i64]) : String
-  (if (< symbol 0)
-    ""
-    (if (compiler-ir-symbol-owned? symbol)
-      (array-ref compiler-ir-symbol-slots (compiler-ir-symbol-slot symbol))
-      (if (>= symbol (compiler-ir-symbol-base))
-        ""
-        (ci.intern-str symbol)))))
+  (cond
+    [(< symbol 0) ""]
+    [(compiler-ir-symbol-owned? symbol)
+      (array-ref compiler-ir-symbol-slots (compiler-ir-symbol-slot symbol))]
+    [(>= symbol (compiler-ir-symbol-base)) ""]
+    [else (ci.intern-str symbol)]))
 
 (define (compiler-ir-symbol-eq? [left : i64] [right : i64]) : bool
   (= left right))

@@ -30,7 +30,6 @@
 (import compiler_ir_types as ir)
 (import compiler_ast_types as ast)
 (import compiler_float as cfloat)
-(import compiler_intern as ci)
 (import stdlib.arena)
 (import stdlib.hash)
 (import stdlib.hashmap)

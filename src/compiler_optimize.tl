@@ -3972,7 +3972,9 @@
       (opt-aggregate-stack-promote-block-seq-candidate-from? seq 0)]))
 
 (define (opt-aggregate-stack-slot-count [size : i64]) : i64
-  (/ (+ size 7) 8))
+  (if (< size 1)
+    1
+    (/ (+ size 7) 8)))
 
 (define (opt-aggregate-promote-build
   [candidates : opt_aggregate_candidate_vec.Vec]
@@ -4027,11 +4029,26 @@
   (opt-aggregate-promote-lookup-from slots base 0))
 
 ;; Dense forward rebuild of one block under the slot plan: a promotable direct
-;; alloc becomes the pair `alloc storage ty` / `addr_of base storage` -- the
-;; same two instrs, in the same order, the old cons-list rewrite produced --
-;; and every other instr is kept. Blocks without a stack-promotable
-;; alloc, or whose allocs all escaped the slot plan, keep the ORIGINAL block
-;; value by reference. refs #5726
+;; alloc becomes one consecutive `alloc` per reserved frame slot (ending at
+;; `storage`), followed by `addr_of base storage`. This is the same contiguous
+;; reservation shape emitted by lowering; every other instr is kept. Blocks
+;; without a stack-promotable alloc, or whose allocs all escaped the slot plan,
+;; keep the ORIGINAL block value by reference. refs #5726
+(define (opt-aggregate-promote-alloc-run!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [storage : i64]
+  [ty : ast.AstType]
+  [size : i64]) : unit
+  (let
+    [slot-count : i64 (opt-aggregate-stack-slot-count size)]
+    [slot : i64 (+ (- storage slot-count) 1)]
+    (while (<= slot storage)
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          builder
+          (ir.CompilerIrInstr.Alloc slot ty))
+        (set! slot (+ slot 1))))))
+
 (define (opt-aggregate-promote-block
   [slots : opt_aggregate_promote_slot_vec.Vec]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
@@ -4052,13 +4069,15 @@
                   (ir.compiler-ir-instr-seq-ref instrs index)]
                 (begin
                   (match (opt-aggregate-direct-alloc instr)
-                    [(OptMaybeAggregateAlloc.Some base ty _)
+                    [(OptMaybeAggregateAlloc.Some base ty size)
                       (match (opt-aggregate-promote-lookup slots base)
                         [(option_i64.Some storage)
                           (begin
-                            (ir.compiler-ir-instr-builder-push!
+                            (opt-aggregate-promote-alloc-run!
                               (&mut builder)
-                              (ir.CompilerIrInstr.Alloc storage ty))
+                              storage
+                              ty
+                              size)
                             (ir.compiler-ir-instr-builder-push!
                               (&mut builder)
                               (ir.CompilerIrInstr.AddrOf base storage))
@@ -62566,6 +62585,65 @@
               (set! i (+ i 1))))
           total))]))
 
+;; Backend call emission copies pointer-shaped private MEMORY parameters into
+;; callee-owned stack storage.  Inlining substitutes the caller argument and
+;; would therefore alias the caller's storage, so keep this ABI boundary.
+(define (opt-inline-private-memory-name? [name : String]) : bool
+  (let
+    [prefix : String "__tl_internal_abi_mem_s"]
+    [prefix-len : i64 (string.string-length prefix)]
+    [n : i64 (string.string-length name)]
+    [i : i64 prefix-len]
+    [digits : i64 0]
+    [delimiter? : bool false]
+    [valid : bool
+      (and
+        (>= n prefix-len)
+        (string.eq (string.substring name 0 prefix-len) prefix))]
+    (begin
+      (while (and valid (< i n))
+        (let
+          [digit : i64 (cast (string.string-ref name i) : i64)]
+          (if (and (>= digit 48) (<= digit 57))
+            (begin
+              (set! digits (+ digits 1))
+              (set! i (+ i 1)))
+            (if (and
+              (= (cast (string.string-ref name i) : i64) 95)
+              (< (+ i 1) n)
+              (= (cast (string.string-ref name (+ i 1)) : i64) 95))
+              (begin
+                (set! delimiter? true)
+                (set! i n))
+              (set! valid false)))))
+      (and valid (> digits 0) delimiter?))))
+
+(define (opt-inline-private-memory-transport-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Struct name)
+      (and
+        (ir.compiler-ir-symbol-owned? name)
+        (opt-inline-private-memory-name? (ir.compiler-ir-symbol-text name)))]
+    [(ast.AstType.StructArgs name _)
+      (and
+        (ir.compiler-ir-symbol-owned? name)
+        (opt-inline-private-memory-name? (ir.compiler-ir-symbol-text name)))]
+    [_ false]))
+
+(define (opt-inline-params-have-private-memory?
+  [params : ir.CompilerIrParamList]) : bool
+  (match (ir.compiler-ir-param-list-force-cons params)
+    [(ir.CompilerIrParamList.Nil) false]
+    [(ir.CompilerIrParamList.Array seq)
+      (opt-inline-params-have-private-memory?
+        (ir.compiler-ir-param-seq-to-list seq))]
+    [(ir.CompilerIrParamList.Cons param rest)
+      (match param
+        [(ir.CompilerIrParam.Param _ ty _)
+          (or
+            (opt-inline-private-memory-transport-type? ty)
+            (opt-inline-params-have-private-memory? (box-get rest)))])]))
+
 (define (opt-inline-params-have-sret? [params : ir.CompilerIrParamList]) : bool
   (match (ir.compiler-ir-param-list-force-cons params)
     [(ir.CompilerIrParamList.Nil) false]
@@ -62596,6 +62674,7 @@
   (let
     [np : i64 (opt-inline-param-count cparams)]
     (and
+      (not (opt-inline-params-have-private-memory? cparams))
       (opt-inline-multiblock-return-type-ok? cparams ret)
       (opt-inline-params-sequential? cparams 0)
       (>= cvars np)
@@ -62677,7 +62756,9 @@
         false
         (let
           [np : i64 (opt-inline-param-count cparams)]
-          (if (opt-inline-params-sequential? cparams 0)
+          (if (and
+            (not (opt-inline-params-have-private-memory? cparams))
+            (opt-inline-params-sequential? cparams 0))
             (if (>= cvars np)
               (or
                 (opt-inline-single-block-ok? cblocks np)
@@ -62891,6 +62972,7 @@
         [instr-count : i64 (opt-inline-multiblock-cost-instrs cblocks)]
         (and
           (opt-inline-bool-type? ret)
+          (not (opt-inline-params-have-private-memory? cparams))
           (not (opt-inline-census-address-taken? index census callee-name))
           (> (opt-inline-census-refcount index census callee-name) 1)
           (opt-inline-params-sequential? cparams 0)
@@ -65811,6 +65893,7 @@
       (let
         [np : i64 (opt-inline-param-count cparams)]
         (and
+          (not (opt-inline-params-have-private-memory? cparams))
           (opt-inline-params-sequential? cparams 0)
           (>= cvars np)
           (opt-inline-single-block-ok? cblocks np)

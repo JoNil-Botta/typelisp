@@ -12549,7 +12549,7 @@
     [(ast.AstType.Expr) 0]
     [(ast.AstType.ExprList) 0]
     [(ast.AstType.Func _ _) 8]
-    [(ast.AstType.Tuple _) 8]
+    [(ast.AstType.Tuple _) (lower-inline-layout-size-or ctx ty 8)]
     [(ast.AstType.Array _ _) (lower-inline-layout-size-or ctx ty 8)]
     [(ast.AstType.DynArray _) 8]
     [(ast.AstType.Slice _) 0]
@@ -12604,7 +12604,7 @@
     [(ast.AstType.Expr) 1]
     [(ast.AstType.ExprList) 1]
     [(ast.AstType.Func _ _) 8]
-    [(ast.AstType.Tuple _) 8]
+    [(ast.AstType.Tuple _) (lower-inline-layout-align-or ctx ty 8)]
     [(ast.AstType.Array _ _) (lower-inline-layout-align-or ctx ty 8)]
     [(ast.AstType.DynArray _) 8]
     [(ast.AstType.Slice _) 0]
@@ -13073,10 +13073,11 @@
               (- size chunk))]))]))
 
 ;; A value is stored FULL-INLINE (its own bytes, addressed by a pointer) when it
-;; is a memory aggregate: a struct/enum or fixed array. Tuples, boxes,
+;; is a memory aggregate: a struct/enum, tuple, or fixed array. Boxes,
 ;; dyn-arrays, strings, closures, and scalars keep their existing register-width
-;; slot semantics:
-;; they use scalar load/store rather than byte-copy or pointer-return.
+;; slot semantics and use scalar load/store rather than byte-copy or
+;; pointer-return. Tuples remain address-shaped in expressions, but their
+;; nested representation is the tuple bytes rather than a pointer slot.
 ;; This is the precise gate for choosing inline byte-copy / pointer-return vs.
 ;; scalar load/store, distinct from the broad lower-type-contains-inline-
 ;; aggregate? (which is used for the conservative tail-call risk check).
@@ -13088,6 +13089,7 @@
     [(ast.AstType.StructArgs _ _) true]
     [(ast.AstType.Enum _) true]
     [(ast.AstType.EnumArgs _ _) true]
+    [(ast.AstType.Tuple _) true]
     [(ast.AstType.Array _ _) true]
     [_ false]))
 
@@ -14031,8 +14033,8 @@
   ;; A register-resident aggregate is carried as a word, so embedding it
   ;; in a memory aggregate is a scalar store of that word, not a byte-copy from a
   ;; pointer. A 2-word register-group stores BOTH words (word0 at offset, word1 at
-  ;; offset+8). Only a genuine memory aggregate (inline struct/enum that is not
-  ;; register-resident) needs the byte-copy.
+  ;; offset+8). Only a genuine memory aggregate (inline struct/enum/tuple that
+  ;; is not register-resident) needs the byte-copy.
   (if (and
     (lower-type-inline-storage? ctx ty)
     (not (lower-type-register-resident? ctx ty)))
@@ -14220,6 +14222,147 @@
   (if (lower-inline-aggregate-abi-copy-needed? ctx state ty)
     (lower-copy-inline-aggregate-to-heap ctx state value ty)
     (ResultLowerExpr.Ok (LowerExpr.Expr state value ty))))
+
+(define (lower-current-sret-var [env : sym_i64_env.SymI64Env]) : i64
+  (let
+    [marker : i64 (lower-sret-param-marker-id)]
+    (if (sym_i64_env.sym-i64-contains-id env marker)
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        marker
+        (csym.compiler-symbols-missing-handle))
+      (- 0 1))))
+
+;; Convert a source-level structural value (always represented by a pointer in
+;; expression lowering) to the physical return value required by the internal
+;; classifier. The sret case performs only a shallow byte move into the hidden
+;; caller slot; ownership remains with the already-lowered source expression.
+(define (lower-internal-return-register-two
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [ret-ty : ast.AstType]
+  [classification : LowerCAbiAggregate]
+  [first : LowerCAbiSlot]
+  [second : LowerCAbiSlot]) : ResultLowerExpr
+  (match first
+    [(LowerCAbiSlot.Slot first-ty first-offset)
+      (match (lower-load-at-offset state value first-offset first-ty)
+        [(LowerExpr.Expr first-state first-value _)
+          (match second
+            [(LowerCAbiSlot.Slot second-ty second-offset)
+              (match (lower-load-at-offset
+                first-state
+                value
+                second-offset
+                second-ty)
+                [(LowerExpr.Expr second-state second-value _)
+                  (match (lower-emit-pack
+                    second-state
+                    (ir.compiler-ir-value-cons
+                      first-value
+                      (ir.compiler-ir-value-cons
+                        second-value
+                        ir.CompilerIrValueList.Nil))
+                    (lower-internal-transport-type ctx ret-ty classification))
+                    [(LowerExpr.Expr packed-state packed-value _)
+                      (ResultLowerExpr.Ok
+                        (LowerExpr.Expr
+                          packed-state
+                          packed-value
+                          (lower-internal-transport-type
+                            ctx
+                            ret-ty
+                            classification)))])])])])]))
+
+(define (lower-prepare-internal-return-value
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [value : ir.CompilerIrValue]
+  [ret-ty : ast.AstType]) : ResultLowerExpr
+  (let
+    [class : LowerCAbiAggregate
+      (lower-internal-return-class-for-name
+        ctx
+        (lower-state-mode state)
+        (lower-state-current-function state)
+        ret-ty)]
+    (match class
+      [(LowerCAbiAggregate.Integer scalar-ty _)
+        (match (lower-load-at-offset state value 0 scalar-ty)
+          [(LowerExpr.Expr loaded loaded-value _)
+            (ResultLowerExpr.Ok (LowerExpr.Expr loaded loaded-value scalar-ty))])]
+      [(LowerCAbiAggregate.Register slots _)
+        (if (= (lower-c-abi-slot-list-count slots) 1)
+          (match (lower-c-abi-slot-list-ref slots 0)
+            [(LowerCAbiSlot.Slot scalar-ty offset)
+              (match (lower-load-at-offset state value offset scalar-ty)
+                [(LowerExpr.Expr loaded loaded-value _)
+                  (ResultLowerExpr.Ok
+                    (LowerExpr.Expr loaded loaded-value scalar-ty))])])
+          (lower-internal-return-register-two
+            ctx
+            state
+            value
+            ret-ty
+            class
+            (lower-c-abi-slot-list-ref slots 0)
+            (lower-c-abi-slot-list-ref slots 1)))]
+      [(LowerCAbiAggregate.Sret size)
+        (let
+          [sret-var : i64 (lower-current-sret-var env)]
+          (if (< sret-var 0)
+            (ResultLowerExpr.Err
+              (box
+                (lower-diagnostic
+                  "lower: structural return missing hidden sret parameter")))
+            (ResultLowerExpr.Ok
+              (LowerExpr.Expr
+                (lower-copy-bytes
+                  state
+                  (ir.CompilerIrValue.Var sret-var)
+                  0
+                  value
+                  0
+                  size)
+                (ir.CompilerIrValue.Var sret-var)
+                (ast.AstType.U64)))))]
+      [(LowerCAbiAggregate.No)
+        (let
+          [sret-var : i64 (lower-current-sret-var env)]
+          (if (and
+            (>= sret-var 0)
+            (lower-type-inline-struct-or-enum? ctx ret-ty)
+            (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
+            (match (lower-inline-aggregate-copy-size ctx ret-ty)
+              [(ResultLowerSize.Ok size)
+                (ResultLowerExpr.Ok
+                  (LowerExpr.Expr
+                    (lower-copy-bytes
+                      state
+                      (ir.CompilerIrValue.Var sret-var)
+                      0
+                      value
+                      0
+                      size)
+                    (ir.CompilerIrValue.Var sret-var)
+                    ret-ty))]
+              [(ResultLowerSize.Err message)
+                (ResultLowerExpr.Err (box (lower-diagnostic message)))])
+            (lower-return-abi-value ctx state value ret-ty)))]
+      [(LowerCAbiAggregate.ByRef _)
+        (ResultLowerExpr.Err
+          (box
+            (lower-diagnostic
+              "lower: byref return classification is unsupported")))]
+      [(LowerCAbiAggregate.Memory _)
+        (ResultLowerExpr.Err
+          (box
+            (lower-diagnostic
+              "lower: memory return classification is unsupported")))]
+      [(LowerCAbiAggregate.Unsupported message)
+        (ResultLowerExpr.Err (box (lower-diagnostic message)))])))
 
 (define (lower-raw-pointer-ir-type [ty : ast.AstType]) : ast.AstType
   (match (tc_core.tc-type-strip-region ty)
@@ -19020,6 +19163,16 @@
     (ir.CompilerIrParam.Param "__tl_env" (ast.AstType.U64) 0)
     (lower-param-list ctx params 1)))
 
+(define (lower-captured-internal-param-list
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [params : ast.AstParamList]
+  [source-start : i64]
+  [leading-sret? : bool]) : ir.CompilerIrParamList
+  (ir.compiler-ir-param-cons
+    (ir.CompilerIrParam.Param "__tl_env" (ast.AstType.U64) 0)
+    (lower-internal-param-list ctx mode params source-start leading-sret?)))
+
 (define (lower-function-with-captures
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
@@ -19038,20 +19191,37 @@
     (ResultLowerFunction.Err
       (box (lower-diagnostic (lower-reference-support-message))))
     (let
-      [param-count : i64 (+ 1 (lower-param-count params))]
+      [logical-name-text : String (ir.compiler-ir-symbol-text logical-name)]
+      [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
-      ;; sret ABI for closures: hidden result-slot pointer at var
-      ;; `param-count` (just past env + real params).
-      [sret-needed : bool
+      [ret-class : LowerCAbiAggregate
+        (lower-internal-return-class-for-name ctx mode logical-name-text ret-ty)]
+      [structural-sret? : bool
+        (match ret-class
+          [(LowerCAbiAggregate.Sret _) true]
+          [_ false])]
+      [nominal-sret? : bool
         (and
+          (not structural-sret?)
           (lower-mode-inline-aggregates? mode)
+          (not (lower-global-init-function? logical-name-text))
           (lower-type-inline-struct-or-enum? ctx ret-ty)
           (not (lower-type-register-resident? ctx ret-ty)))]
+      [source-start : i64
+        (if structural-sret?
+          2
+          1)]
       [sret-var : i64
-        (if sret-needed
-          param-count
-          (- 0 1))]
+        (if structural-sret?
+          1
+          (if nominal-sret?
+            (+ source-start param-count)
+            (- 0 1)))]
+      [ret-ir-ty : ast.AstType
+        (match ret-class
+          [(LowerCAbiAggregate.Unsupported _) (ast.AstType.U64)]
+          [_ (lower-internal-return-physical-type ctx mode ret-ty)])]
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
           spans
@@ -19059,9 +19229,12 @@
           body)]
       [state : LowerState
         (LowerState.State
-          (if sret-needed
-            (+ param-count 1)
-            param-count)
+          (+
+            source-start
+            param-count
+            (if nominal-sret?
+              1
+              0))
           0
           0
           (ir.compiler-ir-label "entry")
@@ -19074,46 +19247,79 @@
           type-cache
           mode
           (lower_i64_i64_map.with-capacity 8)
-          1
-          param-count)]
-      (match (lower-load-captures
-        ctx
-        state
-        (ir.CompilerIrValue.Var 0)
-        captures
-        (sym_i64_env.sym-i64-empty)
-        (tc_core.tc-bind-return-type top-env ret-ty))
-        [(ResultLowerEnv.Ok captured-state captured-env captured-type-env)
-          (let
-            [env : sym_i64_env.SymI64Env
-              (lower-bind-params params 1 captured-env)]
-            [type-env : tc_core.TcTypeEnv
-              (tc_core.tc-bind-params ctx captured-type-env params)]
-            (match (lower-tail-expr
-              ctx
-              captured-state
-              env
-              type-env
-              body
-              ret-ty
-              sret-var)
-              [(ResultLowerState.Ok final-state)
-                (ResultLowerFunction.Ok
-                  (lower-state-build-functions-with
-                    final-state
-                    (ir.CompilerIrFunction.Function
-                      logical-name
-                      (if (>= sret-var 0)
-                        (lower-param-list-append-sret
-                          (lower-captured-param-list ctx params)
-                          sret-var)
-                        (lower-captured-param-list ctx params))
+          source-start
+          (+ source-start param-count))]
+      (match ret-class
+        [(LowerCAbiAggregate.Unsupported message)
+          (ResultLowerFunction.Err
+            (box (lower-diagnostic-at-expr body message)))]
+        [_
+          (match (lower-load-captures
+            ctx
+            state
+            (ir.CompilerIrValue.Var 0)
+            captures
+            (sym_i64_env.sym-i64-empty)
+            (tc_core.tc-bind-return-type top-env ret-ty))
+            [(ResultLowerEnv.Ok captured-state captured-env captured-type-env)
+              (let
+                [initial-env : sym_i64_env.SymI64Env
+                  (if (>= sret-var 0)
+                    (sym_i64_env.sym-i64-bind-id
+                      captured-env
+                      (lower-sret-param-marker-id)
+                      sret-var)
+                    captured-env)]
+                [type-env : tc_core.TcTypeEnv
+                  (tc_core.tc-bind-params ctx captured-type-env params)]
+                (match (lower-bind-internal-params
+                  ctx
+                  mode
+                  params
+                  source-start
+                  captured-state
+                  initial-env
+                  type-env
+                  body)
+                  [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
+                    (match (lower-tail-expr
+                      ctx
+                      bound-state
+                      bound-env
+                      bound-type-env
+                      body
                       ret-ty
-                      (lower-state-next-var final-state)
-                      (lower-state-build-function-blocks final-state)))
-                  (lower-state-spans final-state))]
-              [(ResultLowerState.Err message) (ResultLowerFunction.Err message)]))]
-        [(ResultLowerEnv.Err message) (ResultLowerFunction.Err message)]))))
+                      sret-var)
+                      [(ResultLowerState.Ok final-state)
+                        (let
+                          [source-params : ir.CompilerIrParamList
+                            (lower-captured-internal-param-list
+                              ctx
+                              mode
+                              params
+                              source-start
+                              structural-sret?)]
+                          [all-params : ir.CompilerIrParamList
+                            (if nominal-sret?
+                              (lower-param-list-append-sret
+                                source-params
+                                sret-var)
+                              source-params)]
+                          (ResultLowerFunction.Ok
+                            (lower-state-build-functions-with
+                              final-state
+                              (ir.CompilerIrFunction.Function
+                                logical-name
+                                all-params
+                                ret-ir-ty
+                                (lower-state-next-var final-state)
+                                (lower-state-build-function-blocks final-state)))
+                            (lower-state-spans final-state)))]
+                      [(ResultLowerState.Err message)
+                        (ResultLowerFunction.Err message)])]
+                  [(ResultLowerEnv.Err message)
+                    (ResultLowerFunction.Err message)]))]
+            [(ResultLowerEnv.Err message) (ResultLowerFunction.Err message)])]))))
 
 (define (lower-lambda-noncapturing
   [ctx : tc_core.TcContext]
@@ -19264,6 +19470,13 @@
 
 (define (lower-region-reset-marker-id) : i64
   (lower-private-name-id 2 0))
+
+;; Lower-only binding for the caller-owned result slot. Kind zero is reserved
+;; for this marker; the value component is intentionally zero so this remains
+;; disjoint from all source and cleanup names without changing the 16-wide
+;; private-name encoding.
+(define (lower-sret-param-marker-id) : i64
+  (lower-private-name-id 0 0))
 
 (define (lower-spmd-reduce-acc-id) : i64
   (lower-private-name-id 3 0))
@@ -19984,7 +20197,12 @@
         [(ResultLowerExpr.Ok lowered)
           (match lowered
             [(LowerExpr.Expr value-state value-ir _)
-              (match (lower-return-abi-value ctx value-state value-ir return-ty)
+              (match (lower-prepare-internal-return-value
+                ctx
+                value-state
+                env
+                value-ir
+                return-ty)
                 [(ResultLowerExpr.Ok return-copy)
                   (match return-copy
                     [(LowerExpr.Expr return-state return-value _)
@@ -26368,8 +26586,9 @@
 
 ;; Lower `(tuple v0 v1 ...)`: reserve struct-shaped aggregate storage for the
 ;; element types, store each element at its field offset, and return the storage
-;; pointer typed as the tuple. The tuple value is pointer-shaped (size 8), like a
-;; struct/box handle. Mirrors `src/lower.rs` `lower_tuple`.
+;; pointer typed as the tuple. Tuple expressions remain address-shaped even
+;; though their inline byte layout is recursive (nested copies use the bytes).
+;; Mirrors `src/lower.rs` `lower_tuple`.
 (define (lower-tuple
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -27718,6 +27937,17 @@
           "; this slice supports "
           (lower-c-abi-aggregate-size-message mode))))))
 
+(define (lower-internal-abi-unsupported-message
+  [mode : CompilerLowerMode]
+  [ty : ast.AstType]) : String
+  (string.append
+    (string.append "lower: unsupported " (lower-c-abi-target-name mode))
+    (string.append
+      " internal aggregate ABI for "
+      (string.append
+        (tc_core.tc-type-render ty)
+        "; tuple/fixed-array parameters and returns require a non-zero finite inline layout"))))
+
 (define (lower-c-abi-two-register-return-message [ty : ast.AstType]) : String
   (string.append
     "lower: unsupported linux-x86_64 C two-register aggregate return ABI for "
@@ -27999,16 +28229,13 @@
       (array-set! items 1 second)
       (LowerCAbiSlotList items 2))))
 
-(define (lower-c-abi-sysv-register-aggregate-from-slots
-  [mode : CompilerLowerMode]
-  [resolved : ast.AstType]
+(define (lower-sysv-register-aggregate-from-slots
   [size : i64]
   [slots : LowerCAbiSysvSlots]
-  [allow-return? : bool]) : LowerCAbiAggregate
+  [allow-return? : bool]
+  [unsupported-message : String]) : LowerCAbiAggregate
   (cond
-    [(<= size 0)
-      (LowerCAbiAggregate.Unsupported
-        (lower-c-abi-unsupported-message mode resolved))]
+    [(<= size 0) (LowerCAbiAggregate.Unsupported unsupported-message)]
     [(> size 16)
       (if allow-return?
         (LowerCAbiAggregate.Sret size)
@@ -28018,13 +28245,11 @@
         [(LowerCAbiSysvSlots.Slots first second)
           (match first
             [(LowerCAbiEightbyteClass.Unsupported)
-              (LowerCAbiAggregate.Unsupported
-                (lower-c-abi-unsupported-message mode resolved))]
+              (LowerCAbiAggregate.Unsupported unsupported-message)]
             [_
               (match second
                 [(LowerCAbiEightbyteClass.Unsupported)
-                  (LowerCAbiAggregate.Unsupported
-                    (lower-c-abi-unsupported-message mode resolved))]
+                  (LowerCAbiAggregate.Unsupported unsupported-message)]
                 [_
                   (if (> size 8)
                     (LowerCAbiAggregate.Register
@@ -28037,8 +28262,31 @@
                         (lower-c-abi-sysv-slot-from-class first size 0))
                       size))])])]
         [(LowerCAbiSysvSlots.Unsupported)
-          (LowerCAbiAggregate.Unsupported
-            (lower-c-abi-unsupported-message mode resolved))])]))
+          (LowerCAbiAggregate.Unsupported unsupported-message)])]))
+
+(define (lower-c-abi-sysv-register-aggregate-from-slots
+  [mode : CompilerLowerMode]
+  [resolved : ast.AstType]
+  [size : i64]
+  [slots : LowerCAbiSysvSlots]
+  [allow-return? : bool]) : LowerCAbiAggregate
+  (lower-sysv-register-aggregate-from-slots
+    size
+    slots
+    allow-return?
+    (lower-c-abi-unsupported-message mode resolved)))
+
+(define (lower-internal-sysv-register-aggregate-from-slots
+  [mode : CompilerLowerMode]
+  [resolved : ast.AstType]
+  [size : i64]
+  [slots : LowerCAbiSysvSlots]
+  [allow-return? : bool]) : LowerCAbiAggregate
+  (lower-sysv-register-aggregate-from-slots
+    size
+    slots
+    allow-return?
+    (lower-internal-abi-unsupported-message mode resolved)))
 
 (define (lower-c-abi-sysv-register-aggregate
   [ctx : tc_core.TcContext]
@@ -28234,6 +28482,503 @@
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : LowerCAbiAggregate
   (lower-c-abi-aggregate-class-with-flags ctx mode ty true false))
+
+;; Internal aggregate ABI classification is deliberately separate from the C
+;; extern classifier above.  The latter is selected only for nominal
+;; Struct/Enum declarations and is part of the existing extern contract;
+;; these helpers select only structural Tuple/Array values for future internal
+;; parameter/return lowering.
+(define (lower-internal-sysv-classify-tuple-at
+  [ctx : tc_core.TcContext]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]
+  [cursor : i64]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (if (>= index (ast.ast-type-list-len types))
+    slots
+    (let
+      [ty : ast.AstType
+        (tc_core.tc-context-type-get
+          ctx
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+      [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
+      [field-align : i64 (lower-type-align ctx resolved)]
+      [field-size : i64 (lower-type-size ctx resolved)]
+      [offset : i64 (lower-align-up cursor field-align)]
+      (lower-internal-sysv-classify-tuple-at
+        ctx
+        types
+        (+ index 1)
+        (+ offset field-size)
+        base-offset
+        (if (<= field-size 0)
+          slots
+          (lower-internal-sysv-classify-type
+            ctx
+            resolved
+            (+ base-offset offset)
+            slots))))))
+
+(define (lower-internal-sysv-classify-array-at
+  [ctx : tc_core.TcContext]
+  [elem-ty : ast.AstType]
+  [elem-size : i64]
+  [stride : i64]
+  [index : i64]
+  [count : i64]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (if (>= index count)
+    slots
+    (lower-internal-sysv-classify-array-at
+      ctx
+      elem-ty
+      elem-size
+      stride
+      (+ index 1)
+      count
+      base-offset
+      (if (<= elem-size 0)
+        slots
+        (lower-internal-sysv-classify-type
+          ctx
+          elem-ty
+          (+ base-offset (* index stride))
+          slots)))))
+
+(define (lower-internal-sysv-classify-type
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]
+  [offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (let
+    [resolved : ast.AstType
+      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
+    (match resolved
+      [(ast.AstType.Tuple elem-types)
+        (let
+          [types : ast.AstTypeList (box-get elem-types)]
+          (lower-internal-sysv-classify-tuple-at ctx (& types) 0 0 offset slots))]
+      [(ast.AstType.Array elem-id count)
+        (let
+          [elem-ty : ast.AstType (tc_core.tc-context-type-get ctx elem-id)]
+          [elem-size : i64 (lower-type-size ctx elem-ty)]
+          [elem-align : i64 (lower-type-align ctx elem-ty)]
+          (lower-internal-sysv-classify-array-at
+            ctx
+            elem-ty
+            elem-size
+            (lower-align-up elem-size elem-align)
+            0
+            count
+            offset
+            slots))]
+      [(ast.AstType.Struct name)
+        (lower-internal-sysv-classify-nominal-id ctx name offset slots)]
+      [(ast.AstType.StructArgs name _)
+        (lower-internal-sysv-classify-nominal-id ctx name offset slots)]
+      [(ast.AstType.Enum name)
+        (lower-internal-sysv-classify-nominal-id ctx name offset slots)]
+      [(ast.AstType.EnumArgs name _)
+        (lower-internal-sysv-classify-nominal-id ctx name offset slots)]
+      [(ast.AstType.F64)
+        (lower-c-abi-sysv-mark-sse-slot slots (ast.AstType.F64) offset)]
+      [(ast.AstType.F32)
+        (lower-c-abi-sysv-mark-sse-slot slots (ast.AstType.F32) offset)]
+      [_
+        ;; Every other successfully laid-out value is carried by its actual
+        ;; bytes.  TypeLisp handles (String, Box, Func, DynArray, ordinary
+        ;; references, and inferred handles) therefore occupy INTEGER
+        ;; eightbytes even though they are not C-eligible extern fields.
+        (match (tc_core.tc-inline-aggregate-type-layout ctx resolved)
+          [(tc_core.ResultTcLayoutInfo.Ok info)
+            (let
+              [size : i64 (tc_core.tc-layout-info-size info)]
+              (if (<= size 0)
+                slots
+                (lower-c-abi-sysv-mark-integer-range slots offset size)))]
+          [(tc_core.ResultTcLayoutInfo.Err _) (LowerCAbiSysvSlots.Unsupported)])])))
+
+(define (lower-internal-sysv-classify-fields
+  [ctx : tc_core.TcContext]
+  [fields : tc_core.TcInlineFieldLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (lower-internal-sysv-classify-fields-at ctx fields base-offset slots 0))
+
+(define (lower-internal-sysv-classify-fields-at
+  [ctx : tc_core.TcContext]
+  [fields : tc_core.TcInlineFieldLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]
+  [index : i64]) : LowerCAbiSysvSlots
+  (if (>= index (tc_core.tc-inline-field-layout-list-count fields))
+    slots
+    (let
+      [field : tc_core.TcInlineFieldLayout
+        (tc_core.tc-inline-field-layout-list-ref fields index)]
+      (lower-internal-sysv-classify-fields-at
+        ctx
+        fields
+        base-offset
+        (lower-internal-sysv-classify-type
+          ctx
+          (tc_core.tc-inline-field-layout-type field)
+          (+ base-offset (tc_core.tc-inline-field-layout-offset field))
+          slots)
+        (+ index 1)))))
+
+(define (lower-internal-sysv-classify-payloads
+  [ctx : tc_core.TcContext]
+  [payloads : tc_core.TcInlinePayloadLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (lower-internal-sysv-classify-payloads-at ctx payloads base-offset slots 0))
+
+(define (lower-internal-sysv-classify-payloads-at
+  [ctx : tc_core.TcContext]
+  [payloads : tc_core.TcInlinePayloadLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]
+  [index : i64]) : LowerCAbiSysvSlots
+  (if (>= index (tc_core.tc-inline-payload-layout-list-count payloads))
+    slots
+    (let
+      [payload : tc_core.TcInlinePayloadLayout
+        (tc_core.tc-inline-payload-layout-list-ref payloads index)]
+      (lower-internal-sysv-classify-payloads-at
+        ctx
+        payloads
+        base-offset
+        (lower-internal-sysv-classify-type
+          ctx
+          (tc_core.tc-inline-payload-layout-type payload)
+          (+ base-offset (tc_core.tc-inline-payload-layout-offset payload))
+          slots)
+        (+ index 1)))))
+
+(define (lower-internal-sysv-classify-variants
+  [ctx : tc_core.TcContext]
+  [variants : tc_core.TcInlineVariantLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (lower-internal-sysv-classify-variants-at ctx variants base-offset slots 0))
+
+(define (lower-internal-sysv-classify-variants-at
+  [ctx : tc_core.TcContext]
+  [variants : tc_core.TcInlineVariantLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]
+  [index : i64]) : LowerCAbiSysvSlots
+  (if (>= index (tc_core.tc-inline-variant-layout-list-count variants))
+    slots
+    (match (tc_core.tc-inline-variant-layout-list-ref variants index)
+      [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
+        (lower-internal-sysv-classify-variants-at
+          ctx
+          variants
+          base-offset
+          (lower-internal-sysv-classify-payloads ctx payloads base-offset slots)
+          (+ index 1))])))
+
+(define (lower-internal-sysv-classify-layout
+  [ctx : tc_core.TcContext]
+  [layout : tc_core.TcInlineAggregateLayout]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (match layout
+    [(tc_core.TcInlineAggregateLayout.Struct _ _ fields)
+      (lower-internal-sysv-classify-fields ctx fields base-offset slots)]
+    [(tc_core.TcInlineAggregateLayout.Enum _ _ variants)
+      ;; Synthetic tagged-union view: int64 tag at offset 0 plus every variant
+      ;; payload overlaid in the union region starting at offset 8.
+      (lower-internal-sysv-classify-variants
+        ctx
+        variants
+        base-offset
+        (lower-c-abi-sysv-mark-integer-range slots base-offset 8))]))
+
+(define (lower-internal-sysv-classify-nominal-id
+  [ctx : tc_core.TcContext]
+  [name-id : i64]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
+    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+      (lower-internal-sysv-classify-layout ctx layout base-offset slots)]
+    [(tc_core.ResultTcInlineAggregateLayout.Err _)
+      (LowerCAbiSysvSlots.Unsupported)]))
+
+(define (lower-internal-sysv-register-aggregate
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [resolved : ast.AstType]
+  [size : i64]
+  [allow-return? : bool]) : LowerCAbiAggregate
+  (cond
+    [(<= size 0)
+      (LowerCAbiAggregate.Unsupported
+        (lower-internal-abi-unsupported-message mode resolved))]
+    [(> size 16)
+      (if allow-return?
+        (LowerCAbiAggregate.Sret size)
+        (LowerCAbiAggregate.Memory size))]
+    [else
+      (lower-internal-sysv-register-aggregate-from-slots
+        mode
+        resolved
+        size
+        (lower-internal-sysv-classify-type
+          ctx
+          resolved
+          0
+          (LowerCAbiSysvSlots.Slots
+            (LowerCAbiEightbyteClass.Empty)
+            (LowerCAbiEightbyteClass.Empty)))
+        allow-return?)]))
+
+(define (lower-internal-win64-type-supported?
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : bool
+  (match (tc_core.tc-inline-aggregate-type-layout ctx ty)
+    [(tc_core.ResultTcLayoutInfo.Ok _) true]
+    [(tc_core.ResultTcLayoutInfo.Err _) false]))
+
+(define (lower-internal-win64-aggregate-class
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [resolved : ast.AstType]
+  [size : i64]
+  [allow-return? : bool]
+  [allow-byref? : bool]) : LowerCAbiAggregate
+  (cond
+    [(<= size 0)
+      (LowerCAbiAggregate.Unsupported
+        (lower-internal-abi-unsupported-message mode resolved))]
+    [(not (lower-mode-windows-c-abi? mode))
+      (LowerCAbiAggregate.Unsupported
+        (lower-internal-abi-unsupported-message mode resolved))]
+    [(not (lower-internal-win64-type-supported? ctx resolved))
+      (LowerCAbiAggregate.Unsupported
+        (lower-internal-abi-unsupported-message mode resolved))]
+    [(lower-c-abi-register-aggregate-size? mode size)
+      (LowerCAbiAggregate.Integer (lower-c-abi-integer-scalar-type size) size)]
+    [allow-return? (LowerCAbiAggregate.Sret size)]
+    [(and allow-byref? (not (lower-c-abi-register-aggregate-size? mode size)))
+      (LowerCAbiAggregate.ByRef size)]
+    [else
+      (LowerCAbiAggregate.Unsupported
+        (lower-internal-abi-unsupported-message mode resolved))]))
+
+(define (lower-internal-aggregate-class-with-flags
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [ty : ast.AstType]
+  [allow-return? : bool]
+  [allow-byref? : bool]) : LowerCAbiAggregate
+  (let
+    [resolved : ast.AstType
+      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+    (match resolved
+      [(ast.AstType.Tuple _)
+        (match (tc_core.tc-inline-aggregate-type-layout ctx resolved)
+          [(tc_core.ResultTcLayoutInfo.Ok info)
+            (lower-internal-aggregate-class-from-size
+              ctx
+              mode
+              resolved
+              (tc_core.tc-layout-info-size info)
+              allow-return?
+              allow-byref?)]
+          [(tc_core.ResultTcLayoutInfo.Err _)
+            (LowerCAbiAggregate.Unsupported
+              (lower-internal-abi-unsupported-message mode resolved))])]
+      [(ast.AstType.Array _ _)
+        (match (tc_core.tc-inline-aggregate-type-layout ctx resolved)
+          [(tc_core.ResultTcLayoutInfo.Ok info)
+            (lower-internal-aggregate-class-from-size
+              ctx
+              mode
+              resolved
+              (tc_core.tc-layout-info-size info)
+              allow-return?
+              allow-byref?)]
+          [(tc_core.ResultTcLayoutInfo.Err _)
+            (LowerCAbiAggregate.Unsupported
+              (lower-internal-abi-unsupported-message mode resolved))])]
+      [_ (LowerCAbiAggregate.No)])))
+
+(define (lower-internal-aggregate-class-from-size
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [resolved : ast.AstType]
+  [size : i64]
+  [allow-return? : bool]
+  [allow-byref? : bool]) : LowerCAbiAggregate
+  (if (lower-mode-windows-c-abi? mode)
+    (lower-internal-win64-aggregate-class
+      ctx
+      mode
+      resolved
+      size
+      allow-return?
+      allow-byref?)
+    (lower-internal-sysv-register-aggregate
+      ctx
+      mode
+      resolved
+      size
+      allow-return?)))
+
+(define (lower-internal-aggregate-class
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [ty : ast.AstType]) : LowerCAbiAggregate
+  (lower-internal-aggregate-class-with-flags ctx mode ty false true))
+
+(define (lower-internal-return-aggregate-class
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [ty : ast.AstType]) : LowerCAbiAggregate
+  (lower-internal-aggregate-class-with-flags ctx mode ty true false))
+
+;; Structural values use the internal convention only for Tuple/Array roots.
+;; Keep this predicate alongside the classifier so all signature, call and
+;; return paths agree on the same source-level gate.
+(define (lower-internal-structural-type?
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+    [(ast.AstType.Tuple _) true]
+    [(ast.AstType.Array _ _) true]
+    [_ false]))
+
+(define (lower-internal-structural-type-list?
+  [ctx : tc_core.TcContext]
+  [types : ast.AstTypeList]) : bool
+  (lower-internal-structural-type-list-at? ctx (& types) 0))
+
+(define (lower-internal-structural-type-list-at?
+  [ctx : tc_core.TcContext]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len types))
+    false
+    (let
+      [ty : ast.AstType
+        (tc_core.tc-context-type-get
+          ctx
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+      (or
+        (lower-internal-structural-type? ctx ty)
+        (lower-internal-structural-type-list-at? ctx types (+ index 1))))))
+
+(define (lower-internal-aggregate-key
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : String
+  (ctfe.ctfe-type-key-with-reflections-and-pools
+    (tc_core.tc-context-pools ctx)
+    (ctfe.ctfe-reflect-info-list-empty)
+    (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))))
+
+(define (lower-internal-group-mask-from-slots [slots : LowerCAbiSlotList]) : i64
+  (if (= (lower-c-abi-slot-list-count slots) 2)
+    (let
+      [first : LowerCAbiSlot (lower-c-abi-slot-list-ref slots 0)]
+      [second : LowerCAbiSlot (lower-c-abi-slot-list-ref slots 1)]
+      [first-sse : bool
+        (match first
+          [(LowerCAbiSlot.Slot scalar-ty _)
+            (lower-register-word-sse-type? scalar-ty)])]
+      [second-sse : bool
+        (match second
+          [(LowerCAbiSlot.Slot scalar-ty _)
+            (lower-register-word-sse-type? scalar-ty)])]
+      (+
+        (if first-sse
+          1
+          0)
+        (if second-sse
+          2
+          0)))
+    0))
+
+;; Physical transport nominal types are intentionally opaque to the source
+;; checker. Their display spelling is consumed by backend ABI classification;
+;; the canonical source type key makes collisions impossible across nested
+;; tuples/arrays and mixed integer/SSE groups.
+(define (lower-internal-transport-type
+  [ctx : tc_core.TcContext]
+  [resolved : ast.AstType]
+  [classification : LowerCAbiAggregate]) : ast.AstType
+  (match classification
+    [(LowerCAbiAggregate.Integer scalar-ty _) scalar-ty]
+    [(LowerCAbiAggregate.Register slots _)
+      (if (= (lower-c-abi-slot-list-count slots) 1)
+        (match (lower-c-abi-slot-list-ref slots 0)
+          [(LowerCAbiSlot.Slot scalar-ty _) scalar-ty])
+        (let
+          [mask : i64 (lower-internal-group-mask-from-slots slots)]
+          [key : String (lower-internal-aggregate-key ctx resolved)]
+          [encoded : String
+            (string.append
+              "__tl_internal_abi_group_m"
+              (string.append (string.int->string mask) (string.append "__" key)))]
+          (ast.AstType.Struct (lower-derived-symbol-id encoded))))]
+    [(LowerCAbiAggregate.Memory size)
+      (let
+        [key : String (lower-internal-aggregate-key ctx resolved)]
+        [encoded : String
+          (string.append
+            "__tl_internal_abi_mem_s"
+            (string.append (string.int->string size) (string.append "__" key)))]
+        (ast.AstType.Struct (lower-derived-symbol-id encoded)))]
+    [(LowerCAbiAggregate.ByRef _) (ast.AstType.U64)]
+    [(LowerCAbiAggregate.Sret _) (ast.AstType.U64)]
+    [_ (lower-one-word-register-storage-type ctx resolved)]))
+
+(define (lower-internal-param-class
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [ty : ast.AstType]) : LowerCAbiAggregate
+  (if (lower-internal-structural-type? ctx ty)
+    (lower-internal-aggregate-class ctx mode ty)
+    (LowerCAbiAggregate.No)))
+
+(define (lower-internal-return-class
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [ty : ast.AstType]) : LowerCAbiAggregate
+  (if (lower-internal-structural-type? ctx ty)
+    (lower-internal-return-aggregate-class ctx mode ty)
+    (LowerCAbiAggregate.No)))
+
+(define (lower-internal-param-physical-type
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [ty : ast.AstType]) : ast.AstType
+  (let
+    [resolved : ast.AstType
+      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+    (lower-internal-transport-type
+      ctx
+      resolved
+      (lower-internal-param-class ctx mode resolved))))
+
+(define (lower-internal-return-physical-type
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [ty : ast.AstType]) : ast.AstType
+  (let
+    [resolved : ast.AstType
+      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+    [classification : LowerCAbiAggregate
+      (lower-internal-return-class ctx mode resolved)]
+    (match classification
+      [(LowerCAbiAggregate.No)
+        (lower-one-word-register-storage-type ctx resolved)]
+      [_ (lower-internal-transport-type ctx resolved classification)])))
 
 (define (lower-c-abi-register-resident-to-scalar
   [ctx : tc_core.TcContext]
@@ -28996,7 +29741,11 @@
   [state : LowerState]
   [values : ir.CompilerIrValueList]
   [result-ty : ast.AstType]) : ResultLowerArgs
-  (if (lower-inline-aggregate-abi-copy-needed? ctx state result-ty)
+  ;; Structural Tuple/Array sret is a leading ABI argument handled by the
+  ;; internal call path below. This legacy helper is nominal Struct/Enum only.
+  (if (and
+    (lower-type-inline-struct-or-enum? ctx result-ty)
+    (lower-inline-aggregate-abi-copy-needed? ctx state result-ty))
     (match (lower-inline-aggregate-copy-size ctx result-ty)
       [(ResultLowerSize.Ok size)
         (match (lower-reserve-inline-storage state size result-ty)
@@ -29007,6 +29756,463 @@
       [(ResultLowerSize.Err message)
         (ResultLowerArgs.Err (box (lower-diagnostic message)))])
     (ResultLowerArgs.Ok state values)))
+
+(define (lower-value-list-prepend-one
+  [head : ir.CompilerIrValue]
+  [tail : ir.CompilerIrValueList]) : ir.CompilerIrValueList
+  (ir.compiler-ir-value-cons head tail))
+
+(define (lower-internal-return-class-for-name
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [name : String]
+  [result-ty : ast.AstType]) : LowerCAbiAggregate
+  ;; Global initializers are invoked by startup code, which owns the stable
+  ;; arena result path rather than a caller stack slot.
+  (if (lower-global-init-function? name)
+    (LowerCAbiAggregate.No)
+    (lower-internal-return-class ctx mode result-ty)))
+
+(define (lower-internal-call-register-two
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [source-ty : ast.AstType]
+  [classification : LowerCAbiAggregate]
+  [slots : LowerCAbiSlotList]) : ResultLowerArgs
+  (match (lower-c-abi-register-arg-slot-values ctx state value source-ty slots)
+    [(ResultLowerArgs.Ok slot-state slot-values)
+      (match (ir.compiler-ir-value-list-force-cons slot-values)
+        [(ir.CompilerIrValueList.Cons first-value rest)
+          (match (ir.compiler-ir-value-list-force-cons (box-get rest))
+            [(ir.CompilerIrValueList.Cons second-value _)
+              (match (lower-emit-pack
+                slot-state
+                (ir.compiler-ir-value-cons
+                  first-value
+                  (ir.compiler-ir-value-cons
+                    second-value
+                    ir.CompilerIrValueList.Nil))
+                (lower-internal-transport-type ctx source-ty classification))
+                [(LowerExpr.Expr packed-state packed-value _)
+                  (ResultLowerArgs.Ok
+                    packed-state
+                    (ir.compiler-ir-value-cons
+                      packed-value
+                      ir.CompilerIrValueList.Nil))])]
+            [_
+              (ResultLowerArgs.Err
+                (box
+                  (lower-diagnostic "lower: structural register group arity")))])]
+        [_
+          (ResultLowerArgs.Err
+            (box (lower-diagnostic "lower: structural register group arity")))])]
+    [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)]))
+
+(define (lower-internal-call-arg-one
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [source-ty : ast.AstType]
+  [classification : LowerCAbiAggregate]
+  [origin : ast.AstExpr]) : ResultLowerArgs
+  (match classification
+    [(LowerCAbiAggregate.No)
+      (ResultLowerArgs.Ok
+        state
+        (ir.compiler-ir-value-cons value ir.CompilerIrValueList.Nil))]
+    [(LowerCAbiAggregate.Integer scalar-ty _)
+      (match (lower-load-at-offset state value 0 scalar-ty)
+        [(LowerExpr.Expr loaded loaded-value _)
+          (ResultLowerArgs.Ok
+            loaded
+            (ir.compiler-ir-value-cons loaded-value ir.CompilerIrValueList.Nil))])]
+    [(LowerCAbiAggregate.Register slots _)
+      (if (= (lower-c-abi-slot-list-count slots) 1)
+        (match (lower-c-abi-slot-list-ref slots 0)
+          [(LowerCAbiSlot.Slot scalar-ty offset)
+            (match (lower-load-at-offset state value offset scalar-ty)
+              [(LowerExpr.Expr loaded loaded-value _)
+                (ResultLowerArgs.Ok
+                  loaded
+                  (ir.compiler-ir-value-cons
+                    loaded-value
+                    ir.CompilerIrValueList.Nil))])])
+        (lower-internal-call-register-two
+          ctx
+          state
+          value
+          source-ty
+          classification
+          slots))]
+    [(LowerCAbiAggregate.Memory size)
+      (let
+        [physical-ty : ast.AstType
+          (lower-internal-transport-type ctx source-ty classification)]
+        (match (lower-state-alloc-var state)
+          [(LowerAlloc.Alloc allocated var-id)
+            (ResultLowerArgs.Ok
+              (lower-state-emit
+                allocated
+                (ir.CompilerIrInstr.Mov var-id value physical-ty))
+              (ir.compiler-ir-value-cons
+                (ir.CompilerIrValue.Var var-id)
+                ir.CompilerIrValueList.Nil))]))]
+    [(LowerCAbiAggregate.ByRef size)
+      (match (lower-reserve-inline-storage state size source-ty)
+        [(LowerExpr.Expr copy-state copy-ptr _)
+          (let
+            [copied : LowerState
+              (lower-copy-bytes copy-state copy-ptr 0 value 0 size)]
+            (match (lower-cast-value
+              copied
+              copy-ptr
+              source-ty
+              (ast.AstType.U64))
+              [(LowerExpr.Expr cast-state pointer _)
+                (ResultLowerArgs.Ok
+                  cast-state
+                  (ir.compiler-ir-value-cons pointer ir.CompilerIrValueList.Nil))]))])]
+    [(LowerCAbiAggregate.Unsupported message)
+      (ResultLowerArgs.Err (box (lower-diagnostic-at-expr origin message)))]
+    [(LowerCAbiAggregate.Sret _)
+      (ResultLowerArgs.Err
+        (box
+          (lower-diagnostic-at-expr
+            origin
+            "lower: structural return classification used for parameter")))]))
+
+(define (lower-internal-call-args-at
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [state : LowerState]
+  [values : ir.CompilerIrValueList]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]
+  [origin : ast.AstExpr]) : ResultLowerArgs
+  (match (ir.compiler-ir-value-list-force-cons values)
+    [(ir.CompilerIrValueList.Nil)
+      (if (>= index (ast.ast-type-list-len types))
+        (ResultLowerArgs.Ok state ir.CompilerIrValueList.Nil)
+        (ResultLowerArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
+    [(ir.CompilerIrValueList.Array seq)
+      (lower-internal-call-args-at
+        ctx
+        mode
+        state
+        (ir.compiler-ir-value-seq-to-list seq)
+        types
+        index
+        origin)]
+    [(ir.CompilerIrValueList.Cons value rest)
+      (if (>= index (ast.ast-type-list-len types))
+        (ResultLowerArgs.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch")))
+        (let
+          [source-ty : ast.AstType
+            (tc_core.tc-context-type-get
+              ctx
+              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+          (match (lower-internal-call-arg-one
+            ctx
+            state
+            value
+            source-ty
+            (lower-internal-param-class ctx mode source-ty)
+            origin)
+            [(ResultLowerArgs.Ok arg-state arg-values)
+              (match (lower-internal-call-args-at
+                ctx
+                mode
+                arg-state
+                (box-get rest)
+                types
+                (+ index 1)
+                origin)
+                [(ResultLowerArgs.Ok rest-state rest-values)
+                  (ResultLowerArgs.Ok
+                    rest-state
+                    (lower-value-list-append arg-values rest-values))]
+                [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])]
+            [(ResultLowerArgs.Err message) (ResultLowerArgs.Err message)])))]))
+
+(define (lower-internal-call-args
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [state : LowerState]
+  [values : ir.CompilerIrValueList]
+  [types : ast.AstTypeList]
+  [origin : ast.AstExpr]) : ResultLowerArgs
+  (lower-internal-call-args-at ctx mode state values (& types) 0 origin))
+
+(define (lower-internal-materialize-result-two
+  [call-value : ir.CompilerIrValue]
+  [result-ty : ast.AstType]
+  [slots : LowerCAbiSlotList]
+  [storage : ir.CompilerIrValue]
+  [storage-state : LowerState]) : ResultLowerExpr
+  (match (lower-c-abi-slot-list-ref slots 0)
+    [(LowerCAbiSlot.Slot first-ty first-offset)
+      (match (lower-emit-word storage-state call-value 0 first-ty)
+        [(LowerExpr.Expr first-state first-value _)
+          (match (lower-c-abi-slot-list-ref slots 1)
+            [(LowerCAbiSlot.Slot second-ty second-offset)
+              (match (lower-emit-word first-state call-value 1 second-ty)
+                [(LowerExpr.Expr second-state second-value _)
+                  (let
+                    [with0 : LowerState
+                      (lower-store-at-offset
+                        second-state
+                        storage
+                        first-offset
+                        first-value
+                        first-ty)]
+                    [with1 : LowerState
+                      (lower-store-at-offset
+                        with0
+                        storage
+                        second-offset
+                        second-value
+                        second-ty)]
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr with1 storage result-ty)))])])])]))
+
+(define (lower-internal-materialize-call-result
+  [state : LowerState]
+  [call-value : ir.CompilerIrValue]
+  [result-ty : ast.AstType]
+  [classification : LowerCAbiAggregate]) : ResultLowerExpr
+  (match classification
+    [(LowerCAbiAggregate.Integer scalar-ty size)
+      (match (lower-reserve-inline-storage state size result-ty)
+        [(LowerExpr.Expr storage-state storage _)
+          (ResultLowerExpr.Ok
+            (LowerExpr.Expr
+              (lower-store-at-offset
+                storage-state
+                storage
+                0
+                call-value
+                scalar-ty)
+              storage
+              result-ty))])]
+    [(LowerCAbiAggregate.Register slots size)
+      (match (lower-reserve-inline-storage state size result-ty)
+        [(LowerExpr.Expr storage-state storage _)
+          (if (= (lower-c-abi-slot-list-count slots) 1)
+            (match (lower-c-abi-slot-list-ref slots 0)
+              [(LowerCAbiSlot.Slot scalar-ty offset)
+                (ResultLowerExpr.Ok
+                  (LowerExpr.Expr
+                    (lower-store-at-offset
+                      storage-state
+                      storage
+                      offset
+                      call-value
+                      scalar-ty)
+                    storage
+                    result-ty))])
+            (lower-internal-materialize-result-two
+              call-value
+              result-ty
+              slots
+              storage
+              storage-state))])]
+    [_
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: unsupported structural call result")))]))
+
+(define (lower-internal-direct-call-values
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [source-id : i64]
+  [name : String]
+  [values : ir.CompilerIrValueList]
+  [param-types : ast.AstTypeList]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (let
+    [mode : CompilerLowerMode (lower-state-mode state)]
+    [result-class : LowerCAbiAggregate
+      (lower-internal-return-class-for-name ctx mode name result-ty)]
+    (match (lower-internal-call-args ctx mode state values param-types origin)
+      [(ResultLowerArgs.Ok args-state physical-values)
+        (match result-class
+          [(LowerCAbiAggregate.Sret size)
+            (match (lower-reserve-inline-storage args-state size result-ty)
+              [(LowerExpr.Expr slot-state slot-ptr _)
+                (match (lower-cast-value
+                  slot-state
+                  slot-ptr
+                  result-ty
+                  (ast.AstType.U64))
+                  [(LowerExpr.Expr cast-state sret-pointer _)
+                    (match (lower-state-alloc-var cast-state)
+                      [(LowerAlloc.Alloc allocated call-var)
+                        (let
+                          [callee : i64
+                            (lower-resolve-call-name-id-with-display
+                              allocated
+                              env
+                              source-id
+                              name)]
+                          (ResultLowerExpr.Ok
+                            (LowerExpr.Expr
+                              (lower-state-emit-at-expr
+                                allocated
+                                (ir.CompilerIrInstr.Call
+                                  call-var
+                                  callee
+                                  (ir.compiler-ir-call-args-from-list
+                                    (lower-value-list-prepend-one
+                                      sret-pointer
+                                      physical-values))
+                                  (ast.AstType.U64))
+                                origin)
+                              slot-ptr
+                              result-ty)))])])])]
+          [(LowerCAbiAggregate.No)
+            ;; Preserve the nominal/existing scalar path (including trailing
+            ;; nominal sret) exactly as before.
+            (match (lower-call-append-sret-arg
+              ctx
+              args-state
+              physical-values
+              result-ty)
+              [(ResultLowerArgs.Ok call-state call-values)
+                (match (lower-state-alloc-var call-state)
+                  [(LowerAlloc.Alloc allocated call-var)
+                    (let
+                      [callee : i64
+                        (lower-resolve-call-name-id-with-display
+                          allocated
+                          env
+                          source-id
+                          name)]
+                      (ResultLowerExpr.Ok
+                        (LowerExpr.Expr
+                          (lower-state-emit-at-expr
+                            allocated
+                            (ir.CompilerIrInstr.Call
+                              call-var
+                              callee
+                              (ir.compiler-ir-call-args-from-list call-values)
+                              (lower-one-word-register-storage-type
+                                ctx
+                                result-ty))
+                            origin)
+                          (ir.CompilerIrValue.Var call-var)
+                          result-ty)))])]
+              [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)])]
+          [(LowerCAbiAggregate.Unsupported message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr origin message)))]
+          [_
+            (match (lower-state-alloc-var args-state)
+              [(LowerAlloc.Alloc allocated call-var)
+                (let
+                  [callee : i64
+                    (lower-resolve-call-name-id-with-display
+                      allocated
+                      env
+                      source-id
+                      name)]
+                  [physical-ret : ast.AstType
+                    (lower-internal-transport-type ctx result-ty result-class)]
+                  [call-state : LowerState
+                    (lower-state-emit-at-expr
+                      allocated
+                      (ir.CompilerIrInstr.Call
+                        call-var
+                        callee
+                        (ir.compiler-ir-call-args-from-list physical-values)
+                        physical-ret)
+                      origin)]
+                  (match (lower-internal-materialize-call-result
+                    call-state
+                    (ir.CompilerIrValue.Var call-var)
+                    result-ty
+                    result-class)
+                    [(ResultLowerExpr.Ok result) (ResultLowerExpr.Ok result)]
+                    [(ResultLowerExpr.Err message)
+                      (ResultLowerExpr.Err message)]))])])]
+      [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)])))
+
+(define (lower-internal-indirect-call-values
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [func-value : ir.CompilerIrValue]
+  [values : ir.CompilerIrValueList]
+  [param-types : ast.AstTypeList]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (let
+    [mode : CompilerLowerMode (lower-state-mode state)]
+    [result-class : LowerCAbiAggregate
+      (lower-internal-return-class ctx mode result-ty)]
+    (match (lower-internal-call-args ctx mode state values param-types origin)
+      [(ResultLowerArgs.Ok args-state physical-values)
+        (match result-class
+          [(LowerCAbiAggregate.Sret size)
+            (match (lower-reserve-inline-storage args-state size result-ty)
+              [(LowerExpr.Expr slot-state slot-ptr _)
+                (match (lower-cast-value
+                  slot-state
+                  slot-ptr
+                  result-ty
+                  (ast.AstType.U64))
+                  [(LowerExpr.Expr cast-state sret-pointer _)
+                    (match (lower-state-alloc-var cast-state)
+                      [(LowerAlloc.Alloc allocated call-var)
+                        (ResultLowerExpr.Ok
+                          (LowerExpr.Expr
+                            (lower-state-emit-at-expr
+                              allocated
+                              (ir.CompilerIrInstr.CallIndirect
+                                call-var
+                                func-value
+                                (ir.compiler-ir-call-args-from-list
+                                  (lower-value-list-prepend-one
+                                    sret-pointer
+                                    physical-values))
+                                (ast.AstType.U64))
+                              origin)
+                            slot-ptr
+                            result-ty))])])])]
+          [(LowerCAbiAggregate.No)
+            (lower-indirect-call-values
+              ctx
+              args-state
+              func-value
+              physical-values
+              result-ty
+              origin)]
+          [(LowerCAbiAggregate.Unsupported message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr origin message)))]
+          [_
+            (match (lower-state-alloc-var args-state)
+              [(LowerAlloc.Alloc allocated call-var)
+                (let
+                  [physical-ret : ast.AstType
+                    (lower-internal-transport-type ctx result-ty result-class)]
+                  [call-state : LowerState
+                    (lower-state-emit-at-expr
+                      allocated
+                      (ir.CompilerIrInstr.CallIndirect
+                        call-var
+                        func-value
+                        (ir.compiler-ir-call-args-from-list physical-values)
+                        physical-ret)
+                      origin)]
+                  (lower-internal-materialize-call-result
+                    call-state
+                    (ir.CompilerIrValue.Var call-var)
+                    result-ty
+                    result-class))])])]
+      [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)])))
 
 (define (lower-direct-call-values
   [ctx : tc_core.TcContext]
@@ -29186,17 +30392,19 @@
   [env : sym_i64_env.SymI64Env]
   [source-id : i64]
   [name : String]
+  [param-types : ast.AstTypeList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match args-result
     [(ResultLowerCallArgs.Ok args-state values writebacks)
-      (match (lower-direct-call-values
+      (match (lower-internal-direct-call-values
         ctx
         args-state
         env
         source-id
         name
         values
+        param-types
         result-ty
         origin)
         [(ResultLowerExpr.Ok lowered)
@@ -29321,6 +30529,7 @@
                       env
                       source-id
                       name
+                      call-param-types
                       result-ty
                       origin)))]
               [(tc_core.ResultTcTypeList.Err message)
@@ -29452,22 +30661,43 @@
     args
     func-ty)
     [(ResultLowerCallArgs.Ok args-state values writebacks)
-      (match (lower-indirect-call-values
-        ctx
-        args-state
-        func-value
-        values
-        result-ty
-        origin)
-        [(ResultLowerExpr.Ok lowered)
-          (match lowered
-            [(LowerExpr.Expr call-state call-value call-ty)
-              (ResultLowerExpr.Ok
-                (LowerExpr.Expr
-                  (lower-apply-arg-writebacks ctx call-state writebacks)
-                  call-value
-                  call-ty))])]
-        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-resolve-type ctx func-ty))
+        [(ast.AstType.Func param-types _)
+          (match (lower-internal-indirect-call-values
+            ctx
+            args-state
+            func-value
+            values
+            (tc_core.tc-resolve-type-list ctx (box-get param-types))
+            result-ty
+            origin)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr call-state call-value call-ty)
+                  (ResultLowerExpr.Ok
+                    (LowerExpr.Expr
+                      (lower-apply-arg-writebacks ctx call-state writebacks)
+                      call-value
+                      call-ty))])]
+            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+        [_
+          (match (lower-indirect-call-values
+            ctx
+            args-state
+            func-value
+            values
+            result-ty
+            origin)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr call-state call-value call-ty)
+                  (ResultLowerExpr.Ok
+                    (LowerExpr.Expr
+                      (lower-apply-arg-writebacks ctx call-state writebacks)
+                      call-value
+                      call-ty))])]
+            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
     [(ResultLowerCallArgs.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-indirect-c-abi-call
@@ -33977,7 +35207,7 @@
 ;; `(array-ref arr index)` -> bounds-checked typed element load.
 ;; Read an array element given its address. For a memory aggregate
 ;; element the address IS the value (pointer representation); for scalars and
-;; pointer-slot types (tuple/box/dynarray/string handles) load the register-width
+;; pointer-slot types (box/dynarray/string handles) load the register-width
 ;; value. Mirrors lower-load-inline-value-at-offset at offset 0 but preserves the
 ;; exact lower-emit-load scalar path.
 (define (lower-array-elem-ref-result
@@ -55739,6 +56969,25 @@
     (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx callee-ret))
     (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret-ty))))
 
+(define (lower-tail-call-direct-structural-param?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [name : i64]) : bool
+  (match (lower-lookup-type-id
+    ctx
+    (lower-state-type-cache state)
+    env
+    type-env
+    name)
+    [(tc_core.ResultTcType.Ok fn-ty)
+      (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx fn-ty))
+        [(ast.AstType.Func param-types _)
+          (lower-internal-structural-type-list? ctx (box-get param-types))]
+        [_ false])]
+    [(tc_core.ResultTcType.Err _) false]))
+
 (define (lower-tail-call-direct-supported?
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -55752,6 +57001,8 @@
         ;; early-exit path may return a heap aggregate pointer instead of filling it.
         (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty)
         (lower-rvo-callee-has-early-return-id? state env name))
+      false]
+    [(lower-tail-call-direct-structural-param? ctx state env type-env name)
       false]
     [(lower-tail-call-self-target? state name) true]
     [(lower-symbol-function-define-id? ctx name)
@@ -55818,11 +57069,13 @@
     sret-var)
     false
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
-      [(ast.AstType.Func _ callee-ret)
-        (lower-tail-call-compatible-return?
-          ctx
-          (tc_core.tc-context-type-get ctx callee-ret)
-          ret-ty)]
+      [(ast.AstType.Func param-types callee-ret)
+        (and
+          (not (lower-internal-structural-type-list? ctx (box-get param-types)))
+          (lower-tail-call-compatible-return?
+            ctx
+            (tc_core.tc-context-type-get ctx callee-ret)
+            ret-ty))]
       [_ false])))
 
 (define (lower-tail-call-indirect-expr
@@ -55915,26 +57168,28 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]
-  [ret-ty : ast.AstType]
-  [sret-var : i64]) : ResultLowerState
+  [ret-ty : ast.AstType]) : ResultLowerState
   (match (lower-expr-expected ctx state env type-env expr ret-ty expr)
     [(ResultLowerExpr.Ok lowered)
       (match lowered
         [(LowerExpr.Expr body-state value expr-ty)
           (if (tc_core.tc-never-type? expr-ty)
             (ResultLowerState.Ok body-state)
-            (if (>= sret-var 0)
-              (lower-return-expr-to-sret ctx body-state value ret-ty sret-var)
-              (match (lower-return-abi-value ctx body-state value ret-ty)
-                [(ResultLowerExpr.Ok return-copy)
-                  (match return-copy
-                    [(LowerExpr.Expr return-state return-value _)
-                      (ResultLowerState.Ok
-                        (lower-state-emit
-                          return-state
-                          (ir.CompilerIrInstr.Return
-                            (lower-return-maybe return-value ret-ty))))])]
-                [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])))])]
+            (match (lower-prepare-internal-return-value
+              ctx
+              body-state
+              env
+              value
+              ret-ty)
+              [(ResultLowerExpr.Ok return-copy)
+                (match return-copy
+                  [(LowerExpr.Expr return-state return-value _)
+                    (ResultLowerState.Ok
+                      (lower-state-emit
+                        return-state
+                        (ir.CompilerIrInstr.Return
+                          (lower-return-maybe return-value ret-ty))))])]
+              [(ResultLowerExpr.Err message) (ResultLowerState.Err message)]))])]
     [(ResultLowerExpr.Err message) (ResultLowerState.Err message)]))
 
 (define (lower-return-sret
@@ -56351,6 +57606,7 @@
   [sret-var : i64]
   [origin : ast.AstExpr]) : LowerMaybeDirectStore
   (if (or
+    (not (lower-type-inline-struct-or-enum? ctx ret-ty))
     ;; Require a genuine top-level function-define so a direct `CompilerIrInstr.Call` to
     ;; this symbol is the correct lowering. This excludes builtins, C-ABI/extern
     ;; declarations, and -- critically -- top-level function-VALUE globals /
@@ -56477,7 +57733,7 @@
     [(LowerMaybeDirectStore.Store done-state) (ResultLowerState.Ok done-state)]
     [(LowerMaybeDirectStore.Err message) (ResultLowerState.Err message)]
     [(LowerMaybeDirectStore.No)
-      (lower-return-expr-generic ctx state env type-env origin ret-ty sret-var)]))
+      (lower-return-expr-generic ctx state env type-env origin ret-ty)]))
 
 (define (lower-return-call-name-to-sret
   [ctx : tc_core.TcContext]
@@ -56592,23 +57848,9 @@
           (tc_core.macro-hygiene-global-source-name-id-or raw-name raw-name)]
         [raw-text : String (ci.intern-str source-id)]
         (if (tc_core.tc-dotted-local-field-name-id? type-env raw-name)
-          (lower-return-expr-generic
-            ctx
-            state
-            env
-            type-env
-            origin
-            ret-ty
-            sret-var)
+          (lower-return-expr-generic ctx state env type-env origin ret-ty)
           (if (sym_i64_env.sym-i64-contains-id env raw-name)
-            (lower-return-expr-generic
-              ctx
-              state
-              env
-              type-env
-              origin
-              ret-ty
-              sret-var)
+            (lower-return-expr-generic ctx state env type-env origin ret-ty)
             (match (if (or
               (tc_core.macro-hygiene-global-id? raw-name)
               (tc_core.tc-hygiene-global-name? raw-text))
@@ -56654,16 +57896,8 @@
                   sret-var
                   origin)]
               [(tc_core.TcNameLookup.Err _)
-                (lower-return-expr-generic
-                  ctx
-                  state
-                  env
-                  type-env
-                  origin
-                  ret-ty
-                  sret-var)]))))]
-    [_
-      (lower-return-expr-generic ctx state env type-env origin ret-ty sret-var)]))
+                (lower-return-expr-generic ctx state env type-env origin ret-ty)]))))]
+    [_ (lower-return-expr-generic ctx state env type-env origin ret-ty)]))
 
 (define (lower-return-expr
   [ctx : tc_core.TcContext]
@@ -56675,6 +57909,7 @@
   [sret-var : i64]) : ResultLowerState
   (if (and
     (>= sret-var 0)
+    (lower-type-inline-struct-or-enum? ctx ret-ty)
     (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
     (match expr
       [(ast.AstExpr.Spanned inner-box _)
@@ -56694,9 +57929,8 @@
             ret-ty
             sret-var
             expr))]
-      [_
-        (lower-return-expr-generic ctx state env type-env expr ret-ty sret-var)])
-    (lower-return-expr-generic ctx state env type-env expr ret-ty sret-var)))
+      [_ (lower-return-expr-generic ctx state env type-env expr ret-ty)])
+    (lower-return-expr-generic ctx state env type-env expr ret-ty)))
 
 (define (lower-tail-call-safe-param-aggregate-arg?
   [ctx : tc_core.TcContext]
@@ -56786,6 +58020,9 @@
   [ret-ty : ast.AstType]
   [sret-var : i64]) : bool
   (or
+    ;; Structural ABI values use explicit materialization/call transforms;
+    ;; tail forwarding must not bypass those steps, even with a leading sret.
+    (lower-internal-structural-type? ctx ret-ty)
     ;; Aggregate returns do not make frame reuse unsafe when the current
     ;; function has the caller-owned sret slot to forward to the callee.
     (and
@@ -56806,6 +58043,7 @@
   [sret-var : i64]) : ResultLowerArgs
   (if (and
     (>= sret-var 0)
+    (lower-type-inline-struct-or-enum? ctx ret-ty)
     (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
     (ResultLowerArgs.Ok
       state
@@ -58114,6 +59352,193 @@
   [idx : i64]) : ir.CompilerIrParamList
   (lower-param-list-at ctx (& params) 0 idx))
 
+;; Internal functions keep one physical IR argument per source parameter. A
+;; structural sret pointer, when present, is the first physical argument; the
+;; source range therefore starts at `source-start` and never includes hidden
+;; arguments in the tail-call forwarding range.
+(define (lower-internal-param-list
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [params : ast.AstParamList]
+  [source-start : i64]
+  [leading-sret? : bool]) : ir.CompilerIrParamList
+  (let
+    [source : ir.CompilerIrParamList
+      (lower-internal-param-list-at ctx mode (& params) 0 source-start)]
+    (if leading-sret?
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) (- source-start 1))
+        source)
+      source)))
+
+(define (lower-internal-param-list-at
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [params : (& params ast.AstParamList)]
+  [index : i64]
+  [idx : i64]) : ir.CompilerIrParamList
+  (if (>= index (ast.ast-param-list-len params))
+    ir.CompilerIrParamList.Nil
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param name ty _ _)
+        (ir.compiler-ir-param-cons
+          (ir.CompilerIrParam.Param
+            (tc_core.tc-env-key-name-text name)
+            (lower-internal-param-physical-type ctx mode ty)
+            idx)
+          (lower-internal-param-list-at ctx mode params (+ index 1) (+ idx 1)))])))
+
+(define (lower-internal-param-storage-two
+  [physical : ir.CompilerIrValue]
+  [source-ty : ast.AstType]
+  [slots : LowerCAbiSlotList]
+  [storage : ir.CompilerIrValue]
+  [storage-state : LowerState]) : ResultLowerExpr
+  (match (lower-c-abi-slot-list-ref slots 0)
+    [(LowerCAbiSlot.Slot first-ty first-offset)
+      (match (lower-emit-word storage-state physical 0 first-ty)
+        [(LowerExpr.Expr first-state first-value _)
+          (match (lower-c-abi-slot-list-ref slots 1)
+            [(LowerCAbiSlot.Slot second-ty second-offset)
+              (match (lower-emit-word first-state physical 1 second-ty)
+                [(LowerExpr.Expr second-state second-value _)
+                  (let
+                    [with0 : LowerState
+                      (lower-store-at-offset
+                        second-state
+                        storage
+                        first-offset
+                        first-value
+                        first-ty)]
+                    [with1 : LowerState
+                      (lower-store-at-offset
+                        with0
+                        storage
+                        second-offset
+                        second-value
+                        second-ty)]
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr with1 storage source-ty)))])])])]))
+
+(define (lower-internal-param-storage
+  [state : LowerState]
+  [physical : ir.CompilerIrValue]
+  [source-ty : ast.AstType]
+  [classification : LowerCAbiAggregate]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match classification
+    [(LowerCAbiAggregate.Integer scalar-ty size)
+      (match (lower-reserve-inline-storage state size source-ty)
+        [(LowerExpr.Expr storage-state storage _)
+          (ResultLowerExpr.Ok
+            (LowerExpr.Expr
+              (lower-store-at-offset storage-state storage 0 physical scalar-ty)
+              storage
+              source-ty))])]
+    [(LowerCAbiAggregate.Register slots size)
+      (match (lower-reserve-inline-storage state size source-ty)
+        [(LowerExpr.Expr storage-state storage _)
+          (if (= (lower-c-abi-slot-list-count slots) 1)
+            (match (lower-c-abi-slot-list-ref slots 0)
+              [(LowerCAbiSlot.Slot scalar-ty offset)
+                (ResultLowerExpr.Ok
+                  (LowerExpr.Expr
+                    (lower-store-at-offset
+                      storage-state
+                      storage
+                      offset
+                      physical
+                      scalar-ty)
+                    storage
+                    source-ty))])
+            (lower-internal-param-storage-two
+              physical
+              source-ty
+              slots
+              storage
+              storage-state))])]
+    [(LowerCAbiAggregate.No)
+      (ResultLowerExpr.Ok (LowerExpr.Expr state physical source-ty))]
+    [(LowerCAbiAggregate.Memory _)
+      (ResultLowerExpr.Ok (LowerExpr.Expr state physical source-ty))]
+    [(LowerCAbiAggregate.ByRef _)
+      (ResultLowerExpr.Ok (LowerExpr.Expr state physical source-ty))]
+    [(LowerCAbiAggregate.Unsupported message)
+      (ResultLowerExpr.Err (box (lower-diagnostic-at-expr origin message)))]
+    [(LowerCAbiAggregate.Sret _)
+      (ResultLowerExpr.Err
+        (box
+          (lower-diagnostic-at-expr
+            origin
+            "lower: structural return classification used for parameter")))]))
+
+(define (lower-bind-internal-params-at
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [params : (& params ast.AstParamList)]
+  [index : i64]
+  [physical-index : i64]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [origin : ast.AstExpr]) : ResultLowerEnv
+  (if (>= index (ast.ast-param-list-len params))
+    (ResultLowerEnv.Ok state env type-env)
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param name ty _ _)
+        (let
+          [source-ty : ast.AstType
+            (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+          [physical-value : ir.CompilerIrValue
+            (ir.CompilerIrValue.Var physical-index)]
+          [classification : LowerCAbiAggregate
+            (lower-internal-param-class ctx mode source-ty)]
+          (match (lower-internal-param-storage
+            state
+            physical-value
+            source-ty
+            classification
+            origin)
+            [(ResultLowerExpr.Ok materialized)
+              (match materialized
+                [(LowerExpr.Expr next-state source-value _)
+                  (lower-bind-internal-params-at
+                    ctx
+                    mode
+                    params
+                    (+ index 1)
+                    (+ physical-index 1)
+                    next-state
+                    (sym_i64_env.sym-i64-bind-id
+                      env
+                      name
+                      (match source-value
+                        [(ir.CompilerIrValue.Var source-var) source-var]
+                        [_ physical-index]))
+                    (tc_core.tc-bind-id type-env name source-ty)
+                    origin)])]
+            [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)]))])))
+
+(define (lower-bind-internal-params
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [params : ast.AstParamList]
+  [source-start : i64]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [origin : ast.AstExpr]) : ResultLowerEnv
+  (lower-bind-internal-params-at
+    ctx
+    mode
+    (& params)
+    0
+    source-start
+    state
+    env
+    type-env
+    origin))
+
 (define (lower-param-list-at
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
@@ -58165,8 +59590,7 @@
     [(ast.AstType.StructArgs _ _) true]
     [(ast.AstType.Enum _) true]
     [(ast.AstType.EnumArgs _ _) true]
-    [(ast.AstType.Tuple elems)
-      (lower-type-list-contains-inline-aggregate? ctx (box-get elems))]
+    [(ast.AstType.Tuple _) true]
     [(ast.AstType.Array _ _) true]
     [(ast.AstType.Region _ inner)
       (lower-type-contains-inline-aggregate?
@@ -58274,23 +59698,33 @@
       [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
         (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
-      [ret-ir-ty : ast.AstType
-        (lower-one-word-register-storage-type ctx ret-ty)]
-      ;; sret ABI: an aggregate-returning function takes a hidden
-      ;; result-slot pointer at var `param-count` (just past the real params);
-      ;; the body writes the result through it instead of arena-copying.
-      [sret-needed : bool
+      [ret-class : LowerCAbiAggregate
+        (lower-internal-return-class-for-name ctx mode logical-name-text ret-ty)]
+      [structural-sret? : bool
+        (match ret-class
+          [(LowerCAbiAggregate.Sret _) true]
+          [_ false])]
+      [nominal-sret? : bool
         (and
+          (not structural-sret?)
           (lower-mode-inline-aggregates? mode)
           (not (lower-global-init-function? logical-name-text))
           (lower-type-inline-struct-or-enum? ctx ret-ty)
           (not (lower-type-register-resident? ctx ret-ty)))]
+      [source-start : i64
+        (if structural-sret?
+          1
+          0)]
       [sret-var : i64
-        (if sret-needed
-          param-count
-          (- 0 1))]
-      [env : sym_i64_env.SymI64Env
-        (lower-bind-params params 0 (sym_i64_env.sym-i64-empty))]
+        (if structural-sret?
+          0
+          (if nominal-sret?
+            (+ source-start param-count)
+            (- 0 1)))]
+      [ret-ir-ty : ast.AstType
+        (match ret-class
+          [(LowerCAbiAggregate.Unsupported _) (ast.AstType.U64)]
+          [_ (lower-internal-return-physical-type ctx mode ret-ty)])]
       [type-env : tc_core.TcTypeEnv
         (tc_core.tc-bind-return-type
           (tc_core.tc-bind-params
@@ -58305,9 +59739,12 @@
           body)]
       [state : LowerState
         (LowerState.State
-          (if sret-needed
-            (+ param-count 1)
-            param-count)
+          (+
+            source-start
+            param-count
+            (if nominal-sret?
+              1
+              0))
           0
           0
           (ir.compiler-ir-label "entry")
@@ -58320,28 +59757,71 @@
           type-cache
           mode
           (lower_i64_i64_map.with-capacity 8)
-          0
-          param-count)]
-      (if (lower-supported-function-return-type? ctx ret-ty)
-        (match (lower-tail-expr ctx state env type-env body ret-ty sret-var)
-          [(ResultLowerState.Ok final-state)
-            (ResultLowerFunction.Ok
-              (lower-state-build-functions-with
-                final-state
-                (ir.CompilerIrFunction.Function
-                  logical-name
-                  (if (>= sret-var 0)
-                    (lower-param-list-append-sret
-                      (lower-param-list ctx params 0)
-                      sret-var)
-                    (lower-param-list ctx params 0))
-                  ret-ir-ty
-                  (lower-state-next-var final-state)
-                  (lower-state-build-function-blocks final-state)))
-              (lower-state-spans final-state))]
-          [(ResultLowerState.Err message) (ResultLowerFunction.Err message)])
-        (ResultLowerFunction.Err
-          (box (lower-diagnostic-at-expr body "lower: unsupported expression")))))))
+          source-start
+          (+ source-start param-count))]
+      (match ret-class
+        [(LowerCAbiAggregate.Unsupported message)
+          (ResultLowerFunction.Err
+            (box (lower-diagnostic-at-expr body message)))]
+        [_
+          (if (lower-supported-function-return-type? ctx ret-ty)
+            (let
+              [initial-env : sym_i64_env.SymI64Env
+                (if (>= sret-var 0)
+                  (sym_i64_env.sym-i64-bind-id
+                    (sym_i64_env.sym-i64-empty)
+                    (lower-sret-param-marker-id)
+                    sret-var)
+                  (sym_i64_env.sym-i64-empty))]
+              (match (lower-bind-internal-params
+                ctx
+                mode
+                params
+                source-start
+                state
+                initial-env
+                type-env
+                body)
+                [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
+                  (match (lower-tail-expr
+                    ctx
+                    bound-state
+                    bound-env
+                    bound-type-env
+                    body
+                    ret-ty
+                    sret-var)
+                    [(ResultLowerState.Ok final-state)
+                      (let
+                        [source-params : ir.CompilerIrParamList
+                          (lower-internal-param-list
+                            ctx
+                            mode
+                            params
+                            source-start
+                            structural-sret?)]
+                        [all-params : ir.CompilerIrParamList
+                          (if nominal-sret?
+                            (lower-param-list-append-sret
+                              source-params
+                              sret-var)
+                            source-params)]
+                        (ResultLowerFunction.Ok
+                          (lower-state-build-functions-with
+                            final-state
+                            (ir.CompilerIrFunction.Function
+                              logical-name
+                              all-params
+                              ret-ir-ty
+                              (lower-state-next-var final-state)
+                              (lower-state-build-function-blocks final-state)))
+                          (lower-state-spans final-state)))]
+                    [(ResultLowerState.Err message)
+                      (ResultLowerFunction.Err message)])]
+                [(ResultLowerEnv.Err message) (ResultLowerFunction.Err message)]))
+            (ResultLowerFunction.Err
+              (box
+                (lower-diagnostic-at-expr body "lower: unsupported expression"))))]))))
 
 (define (lower-global-value
   [ctx : tc_core.TcContext]
@@ -59255,6 +60735,50 @@
       (ir.CompilerIrValue.Var idx)
       (lower-dispatch-param-values types (+ idx 1)))))
 
+(define (lower-dispatch-physical-param-list
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [types : ast.AstTypeList]
+  [source-start : i64]
+  [leading-sret? : bool]) : ir.CompilerIrParamList
+  (if leading-sret?
+    (ir.compiler-ir-param-cons
+      (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) 0)
+      (lower-dispatch-physical-param-list-at ctx mode (& types) 0 source-start))
+    (lower-dispatch-physical-param-list-at ctx mode (& types) 0 source-start)))
+
+(define (lower-dispatch-physical-param-list-at
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]
+  [idx : i64]) : ir.CompilerIrParamList
+  (if (>= index (ast.ast-type-list-len types))
+    ir.CompilerIrParamList.Nil
+    (let
+      [source-ty : ast.AstType
+        (tc_core.tc-context-type-get
+          ctx
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param
+          (string.append "arg" (string.int->string index))
+          (lower-internal-param-physical-type ctx mode source-ty)
+          idx)
+        (lower-dispatch-physical-param-list-at
+          ctx
+          mode
+          types
+          (+ index 1)
+          (+ idx 1))))))
+
+(define (lower-dispatch-physical-param-values [count : i64] [idx : i64]) : ir.CompilerIrValueList
+  (if (>= idx count)
+    ir.CompilerIrValueList.Nil
+    (ir.compiler-ir-value-cons
+      (ir.CompilerIrValue.Var idx)
+      (lower-dispatch-physical-param-values count (+ idx 1)))))
+
 (define (lower-dispatch-find-internal-name-from
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
@@ -59617,7 +61141,8 @@
   [variants : ast.AstDispatchVariantList]
   [module-id : i64]
   [names : LowerNameCache]
-  [spans : ir.CompilerSourceSpans]) : ResultLowerFunction
+  [spans : ir.CompilerSourceSpans]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
   (match fn-ty
     [(ast.AstType.Func param-types ret-box)
       (let
@@ -59627,10 +61152,23 @@
             (tc_core.tc-context-type-get ctx ret-box))]
         [clean-param-types : ast.AstTypeList
           (lower-dispatch-type-list-without-regions ctx (box-get param-types))]
-        [param-count : i64 (lower-dispatch-param-type-count clean-param-types)]
+        [ret-class : LowerCAbiAggregate
+          (lower-internal-return-class ctx mode ret-ty)]
+        [leading-sret? : bool
+          (match ret-class
+            [(LowerCAbiAggregate.Sret _) true]
+            [_ false])]
+        [source-start : i64
+          (if leading-sret?
+            1
+            0)]
+        [source-count : i64 (lower-dispatch-param-type-count clean-param-types)]
+        [param-count : i64 (+ source-start source-count)]
+        [physical-ret-ty : ast.AstType
+          (lower-internal-return-physical-type ctx mode ret-ty)]
         [args : ir.CompilerIrCallArgs
           (ir.compiler-ir-call-args-from-list
-            (lower-dispatch-param-values clean-param-types 0))]
+            (lower-dispatch-physical-param-values param-count 0))]
         [maybe-avx2 : LowerMaybeIrSymbol
           (lower-dispatch-find-internal-name
             variants
@@ -59662,7 +61200,7 @@
                     cache-name
                     fn-ty
                     args
-                    ret-ty
+                    physical-ret-ty
                     scalar-name
                     maybe-avx2
                     maybe-avx512
@@ -59683,7 +61221,7 @@
                   (lower-dispatch-cached-block
                     cache-name
                     args
-                    ret-ty
+                    physical-ret-ty
                     (+ param-count 23)))
                 (ir.compiler-ir-block-builder-append-list!
                   (&mut blocks)
@@ -59692,11 +61230,13 @@
                   (ir.compiler-ir-function-list-single
                     (ir.CompilerIrFunction.Function
                       logical-name
-                      (lower-dispatch-param-list-from-types
+                      (lower-dispatch-physical-param-list
                         ctx
+                        mode
                         clean-param-types
-                        0)
-                      ret-ty
+                        source-start
+                        leading-sret?)
+                      physical-ret-ty
                       (+ param-count 27)
                       (ir.compiler-ir-block-builder-to-list blocks)))
                   spans)))]
@@ -59941,7 +61481,8 @@
                 variants
                 module-id
                 name-cache
-                variant-spans)
+                variant-spans
+                mode)
                 [(ResultLowerFunction.Ok thunk-functions thunk-spans)
                   (let
                     ;; The synthesized thunk is built directly in the enclosing

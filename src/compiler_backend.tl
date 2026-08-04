@@ -16585,18 +16585,19 @@
 (define (compiler-backend-emit-group-word-copy
   [src : String]
   [dst : String]
-  [sse? : bool]) : ResultCompilerBackend
+  [sse? : bool]
+  [exclude : (Array String)]
+  [exclude-n : i64]) : ResultCompilerBackend
   (if (or
     (compiler-backend-peephole-register-operand? src)
     (compiler-backend-peephole-register-operand? dst))
     (ResultCompilerBackend.Ok
       (compiler-backend-emit-group-word-move src dst sse?))
     (let
-      [no-exclude : (Array String) (make-array String 0)]
       [scratch : String
         (if sse?
-          (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2")
-          (compiler-backend-scavenge-reg-here no-exclude 0 "%r8"))]
+          (compiler-backend-scavenge-xmm-reg -1 exclude exclude-n "%xmm2")
+          (compiler-backend-scavenge-reg-here exclude exclude-n "%r8"))]
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
           (compiler-backend-emit-group-word-move src scratch sse?)
@@ -17719,6 +17720,40 @@
             word-index)))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
+(define (compiler-backend-emit-group-word-stack-param
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [var : i64]
+  [word-index : i64]
+  [stack-idx : i64]
+  [vars : i64]
+  [ty : compiler_ast_types.AstType]
+  [program-index : CompilerBackendProgramIndex]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (match (compiler-backend-group-word-operand-with-backend-state
+    assignments
+    var
+    word-index
+    vars
+    backend-state)
+    [(ResultCompilerBackend.Ok dst)
+      (compiler-backend-emit-group-word-copy
+        (compiler-backend-frame-offset-with-backend-state
+          backend-state
+          (compiler-backend-incoming-stack-arg-offset target stack-idx))
+        dst
+        (compiler-backend-group-word-sse?
+          type-segment-bases
+          program-index
+          ty
+          word-index)
+        exclude
+        exclude-n)]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
+
 (define (compiler-backend-emit-group-word-param
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -17732,6 +17767,8 @@
   [vars : i64]
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
+  [exclude : (Array String)]
+  [exclude-n : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [sse? : bool
@@ -17746,21 +17783,19 @@
       int-idx
       float-idx
       position)
-      (match (compiler-backend-group-word-operand-with-backend-state
+      (compiler-backend-emit-group-word-stack-param
+        type-segment-bases
+        target
         assignments
         var
         word-index
+        stack-idx
         vars
+        ty
+        program-index
+        exclude
+        exclude-n
         backend-state)
-        [(ResultCompilerBackend.Ok dst)
-          (compiler-backend-emit-group-word-copy
-            (compiler-backend-frame-offset-with-backend-state
-              backend-state
-              (compiler-backend-incoming-stack-arg-offset target stack-idx))
-            dst
-            sse?)]
-        [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackend.Err message)])
       (match (compiler-backend-group-word-arg-reg
         target
         sse?
@@ -27726,6 +27761,7 @@
     "movd"))
 
 (define (compiler-backend-emit-c-memory-stack-copy-chunks
+  [type-segment-bases : i64]
   [dst-offset : i64]
   [src-reg : String]
   [xmm-scratch : String]
@@ -27749,6 +27785,7 @@
             (compiler-backend-c-memory-stack-dst-address dst-offset copy-offset)
             "\n")
           (compiler-backend-emit-c-memory-stack-copy-chunks
+            type-segment-bases
             dst-offset
             src-reg
             xmm-scratch
@@ -27756,33 +27793,82 @@
             (- remaining 16))))
       (let
         [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
-        [mnemonic : String (compiler-backend-c-memory-stack-xmm-mnemonic chunk)]
-        (str_cat.str-cat
-          (str_cat.str-cat
-            "    "
-            mnemonic
-            " "
-            (compiler-backend-copy-address copy-offset src-reg)
-            ", "
-            xmm-scratch
-            "\n")
-          (str_cat.str-cat
+        (if (< chunk 4)
+          ;; XMM `movd` is a four-byte transfer even when the logical tail is
+          ;; one or two bytes.  Use the low GP sub-register of the already
+          ;; planned source-stage register for an exact tail transfer.  When a
+          ;; further chunk follows, preserve and restore that stage pointer in
+          ;; the planned XMM scratch so no additional GP scratch is needed.
+          (let
+            [chunk-ty : compiler_ast_types.AstType
+              (compiler-backend-copy-chunk-type chunk)]
+            [suffix : String
+              (compiler-backend-int-instruction-suffix
+                type-segment-bases
+                chunk-ty)]
+            [part : String
+              (compiler-backend-sized-reg type-segment-bases src-reg chunk-ty)]
+            [preserve? : bool (> remaining chunk)]
             (str_cat.str-cat
-              "    "
-              mnemonic
+              (if preserve?
+                (str_cat.str-cat "    movq " src-reg ", " xmm-scratch "\n")
+                "")
+              "    mov"
+              suffix
               " "
-              xmm-scratch
+              (compiler-backend-copy-address copy-offset src-reg)
+              ", "
+              part
+              "\n"
+              "    mov"
+              suffix
+              " "
+              part
               ", "
               (compiler-backend-c-memory-stack-dst-address
                 dst-offset
                 copy-offset)
-              "\n")
-            (compiler-backend-emit-c-memory-stack-copy-chunks
-              dst-offset
-              src-reg
-              xmm-scratch
-              (+ copy-offset chunk)
-              (- remaining chunk))))))))
+              "\n"
+              (if preserve?
+                (str_cat.str-cat "    movq " xmm-scratch ", " src-reg "\n")
+                "")
+              (compiler-backend-emit-c-memory-stack-copy-chunks
+                type-segment-bases
+                dst-offset
+                src-reg
+                xmm-scratch
+                (+ copy-offset chunk)
+                (- remaining chunk))))
+          (let
+            [mnemonic : String
+              (compiler-backend-c-memory-stack-xmm-mnemonic chunk)]
+            (str_cat.str-cat
+              (str_cat.str-cat
+                "    "
+                mnemonic
+                " "
+                (compiler-backend-copy-address copy-offset src-reg)
+                ", "
+                xmm-scratch
+                "\n")
+              (str_cat.str-cat
+                (str_cat.str-cat
+                  "    "
+                  mnemonic
+                  " "
+                  xmm-scratch
+                  ", "
+                  (compiler-backend-c-memory-stack-dst-address
+                    dst-offset
+                    copy-offset)
+                  "\n")
+                (compiler-backend-emit-c-memory-stack-copy-chunks
+                  type-segment-bases
+                  dst-offset
+                  src-reg
+                  xmm-scratch
+                  (+ copy-offset chunk)
+                  (- remaining chunk))))))))))
 
 (define (compiler-backend-emit-copy-bytes-avoid
   [type-segment-bases : i64]
@@ -28439,6 +28525,7 @@
   "")
 
 (define (compiler-backend-emit-c-memory-stack-arg
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [value : compiler_ir_types.CompilerIrValue]
@@ -28472,6 +28559,7 @@
           (string.append
             src-asm
             (compiler-backend-emit-c-memory-stack-copy-chunks
+              type-segment-bases
               dst-offset
               src-reg
               copy-xmm
@@ -30975,23 +31063,165 @@
 
 ;; The aggregate type name a register-group value carries (for the
 ;; type-name -> word-count map). Empty for non-aggregate types.
+(define (compiler-backend-nominal-name-id-display [name-id : i64]) : String
+  (if (compiler_ir_types.compiler-ir-symbol-owned? name-id)
+    (compiler_ir_types.compiler-ir-symbol-text name-id)
+    (compiler_typecheck_core.tc-nominal-name-id-display name-id)))
+
 (define (compiler-backend-aggregate-type-name
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]) : String
   (match ty
     [(compiler_ast_types.AstType.Struct name)
-      (compiler_typecheck_core.tc-nominal-name-id-display name)]
+      (compiler-backend-nominal-name-id-display name)]
     [(compiler_ast_types.AstType.StructArgs name _)
-      (compiler_typecheck_core.tc-nominal-name-id-display name)]
+      (compiler-backend-nominal-name-id-display name)]
     [(compiler_ast_types.AstType.Enum name)
-      (compiler_typecheck_core.tc-nominal-name-id-display name)]
+      (compiler-backend-nominal-name-id-display name)]
     [(compiler_ast_types.AstType.EnumArgs name _)
-      (compiler_typecheck_core.tc-nominal-name-id-display name)]
+      (compiler-backend-nominal-name-id-display name)]
     [(compiler_ast_types.AstType.Region _ inner)
       (compiler-backend-aggregate-type-name
         type-segment-bases
         (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
     [_ ""]))
+
+;; Internal ABI transport types are nominal Struct/StructArgs values whose
+;; display name carries the physical convention.  Keep recognition separate
+;; from ordinary aggregate-name handling: user structs (and C marker
+;; aggregates) must never become private transports merely because their names
+;; share a prefix.  All numeric fields are parsed with a bounded digit walk so
+;; malformed/overflowing names fail closed instead of trapping in integer
+;; conversion.
+(define compiler-backend-abi-group-prefix : String
+  "__tl_internal_abi_group_m")
+(define compiler-backend-abi-memory-prefix : String
+  "__tl_internal_abi_mem_s")
+
+(define (compiler-backend-abi-name-prefix-at? [name : String] [prefix : String]) : bool
+  (let
+    [prefix-len : i64 (string.string-length prefix)]
+    (and
+      (>= (string.string-length name) prefix-len)
+      (string.eq (string.substring name 0 prefix-len) prefix))))
+
+(define (compiler-backend-abi-group-mask-from-name [name : String]) : i64
+  (let
+    [prefix-len : i64 (string.string-length compiler-backend-abi-group-prefix)]
+    (if (not
+      (compiler-backend-abi-name-prefix-at?
+        name
+        compiler-backend-abi-group-prefix))
+      -1
+      (let
+        [n : i64 (string.string-length name)]
+        [delimiter : i64 (+ prefix-len 2)]
+        (if (or
+          (>= (+ prefix-len 2) n)
+          (not (= (cast (string.string-ref name (+ prefix-len 1)) : i64) 95))
+          (not (= (cast (string.string-ref name delimiter) : i64) 95))
+          (>= (+ delimiter 1) n))
+          -1
+          (let
+            [digit : i64 (cast (string.string-ref name prefix-len) : i64)]
+            (if (and (>= digit 48) (<= digit 51))
+              (- digit 48)
+              -1)))))))
+
+(define (compiler-backend-abi-memory-size-from-name [name : String]) : i64
+  (let
+    [prefix-len : i64 (string.string-length compiler-backend-abi-memory-prefix)]
+    (if (not
+      (compiler-backend-abi-name-prefix-at?
+        name
+        compiler-backend-abi-memory-prefix))
+      0
+      (let
+        [n : i64 (string.string-length name)]
+        [i : i64 prefix-len]
+        [value : i64 0]
+        [digits : i64 0]
+        [valid : bool true]
+        [max-i64 : i64 9223372036854775807]
+        (begin
+          ;; The size terminates at the required double-underscore delimiter.
+          ;; Reject any other non-digit, missing digits, leading delimiter, or
+          ;; arithmetic overflow before multiplying by ten.
+          (while (and valid (< i n))
+            (let
+              [digit : i64 (cast (string.string-ref name i) : i64)]
+              (if (and (>= digit 48) (<= digit 57))
+                (let
+                  [d : i64 (- digit 48)]
+                  (if (or (> value (/ (- max-i64 d) 10)) (>= (+ i 1) n))
+                    (set! valid false)
+                    (begin
+                      (set! value (+ (* value 10) d))
+                      (set! digits (+ digits 1))
+                      (set! i (+ i 1)))))
+                (if (and
+                  (= digit 95)
+                  (< (+ i 1) n)
+                  (= (cast (string.string-ref name (+ i 1)) : i64) 95))
+                  (set! i n)
+                  (set! valid false)))))
+          (if (and
+            valid
+            (> digits 0)
+            (> value 0)
+            ;; `i` reaches n only for a delimiter immediately followed by a
+            ;; non-empty canonical key; the final suffix check below rejects a
+            ;; bare prefix or a delimiter with no key.
+            (< (+ prefix-len digits 2) n)
+            (= (cast (string.string-ref name (+ prefix-len digits)) : i64) 95)
+            (= (cast (string.string-ref name (+ prefix-len digits 1)) : i64) 95))
+            value
+            0))))))
+
+(define (compiler-backend-abi-group-mask
+  [type-segment-bases : i64]
+  [ty : compiler_ast_types.AstType]) : i64
+  (match ty
+    [(compiler_ast_types.AstType.Struct name)
+      (if (compiler_ir_types.compiler-ir-symbol-owned? name)
+        (compiler-backend-abi-group-mask-from-name
+          (compiler_ir_types.compiler-ir-symbol-text name))
+        -1)]
+    [(compiler_ast_types.AstType.StructArgs name _)
+      (if (compiler_ir_types.compiler-ir-symbol-owned? name)
+        (compiler-backend-abi-group-mask-from-name
+          (compiler_ir_types.compiler-ir-symbol-text name))
+        -1)]
+    [(compiler_ast_types.AstType.Region _ inner)
+      (compiler-backend-abi-group-mask
+        type-segment-bases
+        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
+    [_ -1]))
+
+(define (compiler-backend-abi-memory-size
+  [type-segment-bases : i64]
+  [ty : compiler_ast_types.AstType]) : i64
+  (match ty
+    [(compiler_ast_types.AstType.Struct name)
+      (if (compiler_ir_types.compiler-ir-symbol-owned? name)
+        (compiler-backend-abi-memory-size-from-name
+          (compiler_ir_types.compiler-ir-symbol-text name))
+        0)]
+    [(compiler_ast_types.AstType.StructArgs name _)
+      (if (compiler_ir_types.compiler-ir-symbol-owned? name)
+        (compiler-backend-abi-memory-size-from-name
+          (compiler_ir_types.compiler-ir-symbol-text name))
+        0)]
+    [(compiler_ast_types.AstType.Region _ inner)
+      (compiler-backend-abi-memory-size
+        type-segment-bases
+        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
+    [_ 0]))
+
+(define (compiler-backend-abi-group-type?
+  [type-segment-bases : i64]
+  [ty : compiler_ast_types.AstType]) : bool
+  (>= (compiler-backend-abi-group-mask type-segment-bases ty) 0))
 
 (define (compiler-backend-collect-group-counts-instr
   [type-segment-bases : i64]
@@ -31013,6 +31243,47 @@
                 (compiler_ir_types.compiler-ir-value-list-count words))
               map))))]
     [_ map]))
+
+(define (compiler-backend-collect-signature-group-counts-type
+  [type-segment-bases : i64]
+  [map : backend_string_i64_map.Map (:consume)]
+  [ty : compiler_ast_types.AstType]) : backend_string_i64_map.Map
+  (let
+    [mask : i64 (compiler-backend-abi-group-mask type-segment-bases ty)]
+    (if (< mask 0)
+      map
+      (let
+        [name : String
+          (compiler-backend-aggregate-type-name type-segment-bases ty)]
+        (if (string.eq name "")
+          map
+          (begin
+            ;; Encoded groups are always exactly two words, independent of
+            ;; whether a Pack survived optimization into this function.
+            (backend_string_i64_map.insert-ref! (&mut map) name 2)
+            map))))))
+
+(define (compiler-backend-collect-signature-group-counts-params
+  [type-segment-bases : i64]
+  [map : backend_string_i64_map.Map (:consume)]
+  [params : compiler_ir_types.CompilerIrParamList]) : backend_string_i64_map.Map
+  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
+    [(compiler_ir_types.CompilerIrParamList.Nil) map]
+    [(compiler_ir_types.CompilerIrParamList.Array seq)
+      (compiler-backend-collect-signature-group-counts-params
+        type-segment-bases
+        map
+        (compiler_ir_types.compiler-ir-param-seq-to-list seq))]
+    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
+      (match param
+        [(compiler_ir_types.CompilerIrParam.Param _ ty _)
+          (compiler-backend-collect-signature-group-counts-params
+            type-segment-bases
+            (compiler-backend-collect-signature-group-counts-type
+              type-segment-bases
+              map
+              ty)
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-group-counts-functions
   [type-segment-bases : i64]
@@ -31164,14 +31435,72 @@
       (compiler-backend-collect-block-seq-shared type-segment-bases state seq 0)]))
 
 (define (compiler-backend-collect-enter-function-shared
+  [type-segment-bases : i64]
   [state : CompilerBackendCollectState]
   [func : compiler_ir_types.CompilerIrFunction]) : CompilerBackendCollectState
   (match state
+    [(CompilerBackendCollectState.GroupCounts map)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function _ params ret-ty _ _)
+          (CompilerBackendCollectState.GroupCounts
+            (compiler-backend-collect-signature-group-counts-type
+              type-segment-bases
+              (compiler-backend-collect-signature-group-counts-params
+                type-segment-bases
+                map
+                params)
+              ret-ty))])]
     [(CompilerBackendCollectState.GroupClassMasks map _)
-      (CompilerBackendCollectState.GroupClassMasks
-        map
-        (compiler_regalloc.compiler-reg-function-var-types func))]
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function _ params ret-ty _ _)
+          (let
+            [with-params : backend_string_i64_map.Map
+              (compiler-backend-collect-signature-group-class-mask-params
+                type-segment-bases
+                map
+                params)]
+            (CompilerBackendCollectState.GroupClassMasks
+              (compiler-backend-merge-signature-group-class-mask-type
+                type-segment-bases
+                with-params
+                ret-ty)
+              (compiler_regalloc.compiler-reg-function-var-types func)))])]
     [_ state]))
+
+(define (compiler-backend-merge-signature-group-class-mask-type
+  [type-segment-bases : i64]
+  [map : backend_string_i64_map.Map (:consume)]
+  [ty : compiler_ast_types.AstType]) : backend_string_i64_map.Map
+  (let
+    [mask : i64 (compiler-backend-abi-group-mask type-segment-bases ty)]
+    (if (< mask 0)
+      map
+      (compiler-backend-merge-group-class-mask
+        map
+        (compiler-backend-aggregate-type-name type-segment-bases ty)
+        mask))))
+
+(define (compiler-backend-collect-signature-group-class-mask-params
+  [type-segment-bases : i64]
+  [map : backend_string_i64_map.Map (:consume)]
+  [params : compiler_ir_types.CompilerIrParamList]) : backend_string_i64_map.Map
+  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
+    [(compiler_ir_types.CompilerIrParamList.Nil) map]
+    [(compiler_ir_types.CompilerIrParamList.Array seq)
+      (compiler-backend-collect-signature-group-class-mask-params
+        type-segment-bases
+        map
+        (compiler_ir_types.compiler-ir-param-seq-to-list seq))]
+    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
+      (match param
+        [(compiler_ir_types.CompilerIrParam.Param _ ty _)
+          (compiler-backend-collect-signature-group-class-mask-params
+            type-segment-bases
+            (compiler-backend-merge-signature-group-class-mask-type
+              type-segment-bases
+              map
+              ty)
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-function-shared
   [type-segment-bases : i64]
@@ -31181,7 +31510,10 @@
     [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-backend-collect-blocks-shared
         type-segment-bases
-        (compiler-backend-collect-enter-function-shared state func)
+        (compiler-backend-collect-enter-function-shared
+          type-segment-bases
+          state
+          func)
         blocks)]))
 
 (define (compiler-backend-collect-function-seq-shared
@@ -31263,6 +31595,66 @@
     [(CompilerBackendCollectState.GroupClassMasks out _) out]
     [_ map]))
 
+(define (compiler-backend-param-list-has-private-memory?
+  [type-segment-bases : i64]
+  [params : compiler_ir_types.CompilerIrParamList]) : bool
+  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
+    [(compiler_ir_types.CompilerIrParamList.Nil) false]
+    [(compiler_ir_types.CompilerIrParamList.Array seq)
+      (compiler-backend-param-list-has-private-memory?
+        type-segment-bases
+        (compiler_ir_types.compiler-ir-param-seq-to-list seq))]
+    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
+      (match param
+        [(compiler_ir_types.CompilerIrParam.Param _ ty _)
+          (or
+            (> (compiler-backend-abi-memory-size type-segment-bases ty) 0)
+            (compiler-backend-param-list-has-private-memory?
+              type-segment-bases
+              (box-get rest)))])]))
+
+(define (compiler-backend-seed-private-memory-call-names
+  [type-segment-bases : i64]
+  [functions : compiler_ir_types.CompilerIrFunctionList]) : unit
+  (match functions
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) unit]
+    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+      (begin
+        (match func
+          [(compiler_ir_types.CompilerIrFunction.Function name params _ _ _)
+            (if (compiler-backend-param-list-has-private-memory?
+              type-segment-bases
+              params)
+              (compiler_regalloc.compiler-reg-add-c-memory-call-name! name)
+              unit)])
+        (compiler-backend-seed-private-memory-call-names
+          type-segment-bases
+          (box-get rest)))]
+    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
+      (compiler-backend-seed-private-memory-call-names-seq
+        type-segment-bases
+        seq
+        0)]))
+
+(define (compiler-backend-seed-private-memory-call-names-seq
+  [type-segment-bases : i64]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [index : i64]) : unit
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
+    unit
+    (begin
+      (match (compiler_ir_types.compiler-ir-function-seq-ref functions index)
+        [(compiler_ir_types.CompilerIrFunction.Function name params _ _ _)
+          (if (compiler-backend-param-list-has-private-memory?
+            type-segment-bases
+            params)
+            (compiler_regalloc.compiler-reg-add-c-memory-call-name! name)
+            unit)])
+      (compiler-backend-seed-private-memory-call-names-seq
+        type-segment-bases
+        functions
+        (+ index 1)))))
+
 (define (compiler-backend-program-index-build-with-backend-state-and-profile-state
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
@@ -31291,6 +31683,10 @@
         function-names
         function-signatures
         0)]
+    [_seed-private-memory-calls : unit
+      (compiler-backend-seed-private-memory-call-names
+        type-segment-bases
+        functions)]
     [extern-signature-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-extern-signatures-into
         type-segment-bases
@@ -31580,6 +31976,47 @@
         (compiler-backend-group-word-class-mask type-segment-bases index ty)
         (compiler-backend-group-word-sse-bit word-index))
       0)))
+
+;; System V assigns a two-eightbyte aggregate atomically. Test both required
+;; register banks before consuming either one: if one word cannot be assigned,
+;; the caller/callee must put both words on the stack and roll both cursors back.
+(define (compiler-backend-linux-group-register-banks-fit?
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [ty : compiler_ast_types.AstType]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]) : bool
+  (let
+    [w0-sse : bool
+      (compiler-backend-group-word-sse? type-segment-bases program-index ty 0)]
+    [int1 : i64
+      (if w0-sse
+        int-idx
+        (+ int-idx 1))]
+    [float1 : i64
+      (if w0-sse
+        (+ float-idx 1)
+        float-idx)]
+    [w1-sse : bool
+      (compiler-backend-group-word-sse? type-segment-bases program-index ty 1)]
+    (and
+      (compiler-backend-target-linux? target)
+      (not
+        (compiler-backend-stack-call-arg-for-banks?
+          target
+          w0-sse
+          int-idx
+          float-idx
+          position))
+      (not
+        (compiler-backend-stack-call-arg-for-banks?
+          target
+          w1-sse
+          int1
+          float1
+          (+ position 1))))))
 
 ;; Logical IR names have ids before index construction. Extern link symbols are
 ;; probed separately as exact ABI Strings.
@@ -32639,30 +33076,56 @@
         (if memory-aggregate?
           (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))
           0)]
-      ;; A register-group arg occupies two integer slots and, when it does
-      ;; not fit in the remaining arg registers, two stack slots -- mirror exactly
+      [private-memory-size : i64
+        (if (not c-abi?)
+          (compiler-backend-abi-memory-size type-segment-bases arg-ty)
+          0)]
+      ;; A register-group arg occupies two ABI word positions and, when it does
+      ;; not fit in the required register banks, two stack slots -- mirror exactly
       ;; what emit-call-args does so the reserved frame space matches. That
       ;; includes Windows: emit-call-args groups on BOTH targets (indexing by
       ;; `position` there), so counting a Windows group arg as one scalar slot
       ;; made tail-call stack accounting diverge from emission.
-      (if (> memory-size 0)
-        (compiler-backend-call-stack-arg-count
-          type-segment-bases
-          target
-          args
-          types
-          c-abi?
-          (+ arg-index 3)
-          int-idx
-          float-idx
-          (+ position 1)
-          (+ stack-count (compiler-backend-stack-slots-for-size memory-size))
-          program-index)
-        (if (compiler-backend-group-type?
-          type-segment-bases
-          program-index
-          arg-ty)
+      (cond
+        [(and (compiler-backend-target-linux? target) (> private-memory-size 0))
+          (compiler-backend-call-stack-arg-count
+            type-segment-bases
+            target
+            args
+            types
+            c-abi?
+            (+ arg-index 1)
+            int-idx
+            float-idx
+            (+ position 1)
+            (+
+              stack-count
+              (compiler-backend-stack-slots-for-size private-memory-size))
+            program-index)]
+        [(> memory-size 0)
+          (compiler-backend-call-stack-arg-count
+            type-segment-bases
+            target
+            args
+            types
+            c-abi?
+            (+ arg-index 3)
+            int-idx
+            float-idx
+            (+ position 1)
+            (+ stack-count (compiler-backend-stack-slots-for-size memory-size))
+            program-index)]
+        [(compiler-backend-group-type? type-segment-bases program-index arg-ty)
           (let
+            [linux-group-fits : bool
+              (compiler-backend-linux-group-register-banks-fit?
+                type-segment-bases
+                target
+                program-index
+                arg-ty
+                int-idx
+                float-idx
+                position)]
             [w0-sse : bool
               (compiler-backend-group-word-sse?
                 type-segment-bases
@@ -32698,30 +33161,46 @@
                 int1
                 float1
                 pos1)]
-            (compiler-backend-call-stack-arg-count
-              type-segment-bases
-              target
-              args
-              types
-              c-abi?
-              (+ arg-index 1)
-              (if w1-sse
-                int1
-                (+ int1 1))
-              (if w1-sse
-                (+ float1 1)
-                float1)
-              (+ position 2)
-              (+
-                stack-count
+            (if (and
+              (compiler-backend-target-linux? target)
+              (not linux-group-fits))
+              (compiler-backend-call-stack-arg-count
+                type-segment-bases
+                target
+                args
+                types
+                c-abi?
+                (+ arg-index 1)
+                int-idx
+                float-idx
+                (+ position 2)
+                (+ stack-count 2)
+                program-index)
+              (compiler-backend-call-stack-arg-count
+                type-segment-bases
+                target
+                args
+                types
+                c-abi?
+                (+ arg-index 1)
+                (if w1-sse
+                  int1
+                  (+ int1 1))
+                (if w1-sse
+                  (+ float1 1)
+                  float1)
+                (+ position 2)
                 (+
-                  (if w0-stack
-                    1
-                    0)
-                  (if w1-stack
-                    1
-                    0)))
-              program-index))
+                  stack-count
+                  (+
+                    (if w0-stack
+                      1
+                      0)
+                    (if w1-stack
+                      1
+                      0)))
+                program-index)))]
+        [else
           (compiler-backend-call-stack-arg-count
             type-segment-bases
             target
@@ -32744,7 +33223,7 @@
               position)
               (+ stack-count 1)
               stack-count)
-            program-index))))))
+            program-index)]))))
 
 (define (compiler-backend-type-list-stack-arg-count
   [type-segment-bases : i64]
@@ -32795,81 +33274,123 @@
         (if is-float
           (+ float-idx 1)
           float-idx)]
-      (if (compiler-backend-group-type? type-segment-bases program-index arg-ty)
-        (let
-          [w0-sse : bool
-            (compiler-backend-group-word-sse?
-              type-segment-bases
-              program-index
-              arg-ty
-              0)]
-          [w0-stack : bool
-            (compiler-backend-stack-call-arg-for-banks?
-              target
-              w0-sse
-              int-idx
-              float-idx
-              position)]
-          [int1 : i64
-            (if w0-sse
-              int-idx
-              (+ int-idx 1))]
-          [float1 : i64
-            (if w0-sse
-              (+ float-idx 1)
-              float-idx)]
-          [w1-sse : bool
-            (compiler-backend-group-word-sse?
-              type-segment-bases
-              program-index
-              arg-ty
-              1)]
-          [w1-stack : bool
-            (compiler-backend-stack-call-arg-for-banks?
-              target
-              w1-sse
-              int1
-              float1
-              (+ position 1))]
-          (compiler-backend-type-list-stack-arg-count-at
-            type-segment-bases
-            target
-            types
-            (+ type-index 1)
-            (if w1-sse
-              int1
-              (+ int1 1))
-            (if w1-sse
-              (+ float1 1)
-              float1)
-            (+ position 2)
-            (+
-              stack-count
-              (+
-                (if w0-stack
-                  1
-                  0)
-                (if w1-stack
-                  1
-                  0)))
-            program-index))
+      [private-memory-size : i64
+        (compiler-backend-abi-memory-size type-segment-bases arg-ty)]
+      (if (and
+        (compiler-backend-target-linux? target)
+        (> private-memory-size 0))
         (compiler-backend-type-list-stack-arg-count-at
           type-segment-bases
           target
           types
           (+ type-index 1)
-          next-int
-          next-float
+          int-idx
+          float-idx
           (+ position 1)
-          (if (compiler-backend-stack-call-arg-for-banks?
+          (+
+            stack-count
+            (compiler-backend-stack-slots-for-size private-memory-size))
+          program-index)
+        (if (compiler-backend-group-type?
+          type-segment-bases
+          program-index
+          arg-ty)
+          (let
+            [linux-group-fits : bool
+              (compiler-backend-linux-group-register-banks-fit?
+                type-segment-bases
+                target
+                program-index
+                arg-ty
+                int-idx
+                float-idx
+                position)]
+            [w0-sse : bool
+              (compiler-backend-group-word-sse?
+                type-segment-bases
+                program-index
+                arg-ty
+                0)]
+            [w0-stack : bool
+              (compiler-backend-stack-call-arg-for-banks?
+                target
+                w0-sse
+                int-idx
+                float-idx
+                position)]
+            [int1 : i64
+              (if w0-sse
+                int-idx
+                (+ int-idx 1))]
+            [float1 : i64
+              (if w0-sse
+                (+ float-idx 1)
+                float-idx)]
+            [w1-sse : bool
+              (compiler-backend-group-word-sse?
+                type-segment-bases
+                program-index
+                arg-ty
+                1)]
+            [w1-stack : bool
+              (compiler-backend-stack-call-arg-for-banks?
+                target
+                w1-sse
+                int1
+                float1
+                (+ position 1))]
+            (if (and
+              (compiler-backend-target-linux? target)
+              (not linux-group-fits))
+              (compiler-backend-type-list-stack-arg-count-at
+                type-segment-bases
+                target
+                types
+                (+ type-index 1)
+                int-idx
+                float-idx
+                (+ position 2)
+                (+ stack-count 2)
+                program-index)
+              (compiler-backend-type-list-stack-arg-count-at
+                type-segment-bases
+                target
+                types
+                (+ type-index 1)
+                (if w1-sse
+                  int1
+                  (+ int1 1))
+                (if w1-sse
+                  (+ float1 1)
+                  float1)
+                (+ position 2)
+                (+
+                  stack-count
+                  (+
+                    (if w0-stack
+                      1
+                      0)
+                    (if w1-stack
+                      1
+                      0)))
+                program-index)))
+          (compiler-backend-type-list-stack-arg-count-at
+            type-segment-bases
             target
-            is-float
-            int-idx
-            float-idx
-            position)
-            (+ stack-count 1)
-            stack-count)
-          program-index)))))
+            types
+            (+ type-index 1)
+            next-int
+            next-float
+            (+ position 1)
+            (if (compiler-backend-stack-call-arg-for-banks?
+              target
+              is-float
+              int-idx
+              float-idx
+              position)
+              (+ stack-count 1)
+              stack-count)
+            program-index))))))
 
 (define (compiler-backend-incoming-stack-arg-count
   [type-segment-bases : i64]
@@ -33354,6 +33875,57 @@
   (compiler-backend-windows-words-stack-space
     (+ 1 (* 2 (compiler-backend-call-args-count args)))))
 
+(define (compiler-backend-linux-closure-stack-arg-space-actual-from
+  [type-segment-bases : i64]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [types : compiler_regalloc.CompilerRegVarTypes]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]
+  [words : i64]) : i64
+  (if (>= index (compiler-backend-call-args-count args))
+    (compiler-backend-windows-words-stack-space words)
+    (let
+      [arg-ty : compiler_ast_types.AstType
+        (compiler-backend-call-actual-type
+          types
+          (CompilerBackendGlobalTypeTable.Empty)
+          (compiler-backend-call-arg-at args index))]
+      [memory-size : i64
+        (compiler-backend-abi-memory-size type-segment-bases arg-ty)]
+      [arg-words : i64
+        (if (> memory-size 0)
+          (compiler-backend-stack-slots-for-size memory-size)
+          (if (compiler-backend-group-type?
+            type-segment-bases
+            program-index
+            arg-ty)
+            2
+            1))]
+      (compiler-backend-linux-closure-stack-arg-space-actual-from
+        type-segment-bases
+        args
+        types
+        program-index
+        (+ index 1)
+        (+ words arg-words)))))
+
+(define (compiler-backend-linux-closure-stack-arg-space-actual
+  [type-segment-bases : i64]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [types : compiler_regalloc.CompilerRegVarTypes]
+  [program-index : CompilerBackendProgramIndex]) : i64
+  ;; Include the hidden closure environment pointer (one GP word) and then
+  ;; every actual argument.  This is intentionally a rounded upper bound for
+  ;; indirect calls: register placement is dynamic, while an encoded MEMORY
+  ;; value may occupy any number of outgoing stack slots.
+  (compiler-backend-linux-closure-stack-arg-space-actual-from
+    type-segment-bases
+    args
+    types
+    program-index
+    0
+    1))
+
 (define (compiler-backend-instr-needs-outgoing-space?
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (match instr
@@ -33372,6 +33944,7 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [instr : compiler_ir_types.CompilerIrInstr]
+  [types : compiler_regalloc.CompilerRegVarTypes]
   [program-index : CompilerBackendProgramIndex]) : i64
   (match target
     [(CompilerBackendTarget.Windows)
@@ -33431,7 +34004,11 @@
             (compiler-backend-call-param-types-index name program-index)
             program-index)]
         [(compiler_ir_types.CompilerIrInstr.CallIndirect _ _ args _)
-          (compiler-backend-windows-closure-stack-arg-space args)]
+          (compiler-backend-linux-closure-stack-arg-space-actual
+            type-segment-bases
+            args
+            types
+            program-index)]
         [(compiler_ir_types.CompilerIrInstr.TailCall name args _)
           (compiler-backend-linux-stack-arg-space
             type-segment-bases
@@ -33466,7 +34043,11 @@
                 (* (compiler-backend-call-args-count args) 16))
               16))]
         [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ args _)
-          (compiler-backend-windows-closure-stack-arg-space args)]
+          (compiler-backend-linux-closure-stack-arg-space-actual
+            type-segment-bases
+            args
+            types
+            program-index)]
         [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
           (compiler-backend-spmd-outgoing-stack-space
             type-segment-bases
@@ -33484,6 +34065,7 @@
   [target : CompilerBackendTarget]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [scan : CompilerBackendOutgoingFrameScan]
+  [types : compiler_regalloc.CompilerRegVarTypes]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendOutgoingFrameScan
   (let
     [slots : (Array compiler_ir_types.CompilerIrInstr)
@@ -33508,6 +34090,7 @@
                       type-segment-bases
                       target
                       instr
+                      types
                       program-index))))
               unit)
             (set! index (+ index 1)))))
@@ -33518,6 +34101,7 @@
   [target : CompilerBackendTarget]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [scan : CompilerBackendOutgoingFrameScan]
+  [types : compiler_regalloc.CompilerRegVarTypes]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendOutgoingFrameScan
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) scan]
@@ -33533,7 +34117,9 @@
               target
               instrs
               scan
+              types
               program-index)
+            types
             program-index)])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-outgoing-frame-scan-block-seq
@@ -33542,6 +34128,7 @@
         seq
         0
         scan
+        types
         program-index)]))
 
 (define (compiler-backend-outgoing-frame-scan-block-seq
@@ -33550,6 +34137,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
   [index : i64]
   [scan : CompilerBackendOutgoingFrameScan]
+  [types : compiler_regalloc.CompilerRegVarTypes]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendOutgoingFrameScan
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     scan
@@ -33565,13 +34153,16 @@
             target
             instrs
             scan
+            types
             program-index)
+          types
           program-index)])))
 
 (define (compiler-backend-outgoing-frame-space
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [blocks : compiler_ir_types.CompilerIrBlockList]
+  [types : compiler_regalloc.CompilerRegVarTypes]
   [program-index : CompilerBackendProgramIndex]) : i64
   (let
     [scan : CompilerBackendOutgoingFrameScan
@@ -33580,6 +34171,7 @@
         target
         blocks
         (CompilerBackendOutgoingFrameScan false 0)
+        types
         program-index)]
     (if (struct-get scan needed)
       ;; Reserve the max outgoing stack-arg space in the frame so calls need no
@@ -34374,14 +34966,53 @@
         (if memory-aggregate?
           (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))
           0)]
-      ;; A register-group argument occupies TWO consecutive integer arg
-      ;; registers. Linux SysV indexes them by `int-idx`; Windows by the unified
-      ;; `position`. The selfhost only passes register-group values between its own
-      ;; functions (never to an `(:abi c)` boundary), so a 2-register/2-stack-slot
-      ;; convention with a %rax:%rdx return is self-consistent on both targets.
+      [private-memory-size : i64
+        (if (not c-abi?)
+          (compiler-backend-abi-memory-size type-segment-bases arg-ty)
+          0)]
+      ;; A register-group argument occupies two eightbytes. Linux SysV assigns
+      ;; each word from its INTEGER/SSE class bank and falls back atomically to
+      ;; two stack slots when either bank cannot fit the whole group. Windows
+      ;; retains the existing unified-position group convention.
       (cond
+        [(and (compiler-backend-target-linux? target) (> private-memory-size 0))
+          (match (compiler-backend-emit-c-memory-stack-arg
+            type-segment-bases
+            target
+            arg-assignments
+            value
+            stack-idx
+            private-memory-size
+            planned-stage
+            backend-state)
+            [(ResultCompilerBackend.Ok head)
+              (begin
+                (compiler-backend-asm-append out head)
+                (compiler-backend-emit-call-args-with-assignments-into
+                  out
+                  type-segment-bases
+                  target
+                  arg-assignments
+                  args
+                  types
+                  c-abi?
+                  (+ arg-index 1)
+                  int-idx
+                  float-idx
+                  (+ position 1)
+                  (+
+                    stack-idx
+                    (compiler-backend-stack-slots-for-size private-memory-size))
+                  planned-stage
+                  func-diag
+                  program-index
+                  vars
+                  backend-state))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
         [(> memory-size 0)
           (match (compiler-backend-emit-c-memory-stack-arg
+            type-segment-bases
             target
             arg-assignments
             value
@@ -34416,6 +35047,15 @@
               (ResultCompilerBackend.Err message)])]
         [(compiler-backend-group-type? type-segment-bases program-index arg-ty)
           (let
+            [linux-group-fits : bool
+              (compiler-backend-linux-group-register-banks-fit?
+                type-segment-bases
+                target
+                program-index
+                arg-ty
+                int-idx
+                float-idx
+                position)]
             [w0-sse : bool
               (compiler-backend-group-word-sse?
                 type-segment-bases
@@ -34454,70 +35094,106 @@
                 int1
                 float1
                 (+ position 1))]
-            (match (compiler-backend-emit-group-word-call-arg
-              type-segment-bases
-              target
-              arg-assignments
-              value
-              0
-              int-idx
-              float-idx
-              position
-              stack-idx
-              vars
-              planned-stage
-              arg-ty
-              program-index
-              func-diag
-              backend-state)
-              [(ResultCompilerBackend.Ok head0)
-                (match (compiler-backend-emit-group-word-call-arg
-                  type-segment-bases
-                  target
-                  arg-assignments
-                  value
-                  1
-                  int1
-                  float1
-                  (+ position 1)
-                  stack1
-                  vars
-                  planned-stage
-                  arg-ty
-                  program-index
-                  func-diag
-                  backend-state)
-                  [(ResultCompilerBackend.Ok head1)
-                    (begin
-                      (compiler-backend-asm-append2 out head0 head1)
-                      (compiler-backend-emit-call-args-with-assignments-into
-                        out
-                        type-segment-bases
-                        target
-                        arg-assignments
-                        args
-                        types
-                        c-abi?
-                        (+ arg-index 1)
-                        (if w1-sse
-                          int1
-                          (+ int1 1))
-                        (if w1-sse
-                          (+ float1 1)
-                          float1)
-                        (+ position 2)
-                        (if w1-stack
-                          (+ stack1 1)
-                          stack1)
-                        planned-stage
-                        func-diag
-                        program-index
-                        vars
-                        backend-state))]
-                  [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err message)])]
-              [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err message)]))]
+            (if (and
+              (compiler-backend-target-linux? target)
+              (not linux-group-fits))
+              (match (compiler-backend-emit-group-stack-arg
+                target
+                arg-assignments
+                value
+                stack-idx
+                vars
+                planned-stage
+                arg-ty
+                program-index
+                backend-state)
+                [(ResultCompilerBackend.Ok head)
+                  (begin
+                    (compiler-backend-asm-append out head)
+                    (compiler-backend-emit-call-args-with-assignments-into
+                      out
+                      type-segment-bases
+                      target
+                      arg-assignments
+                      args
+                      types
+                      c-abi?
+                      (+ arg-index 1)
+                      int-idx
+                      float-idx
+                      (+ position 2)
+                      (+ stack-idx 2)
+                      planned-stage
+                      func-diag
+                      program-index
+                      vars
+                      backend-state))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])
+              (match (compiler-backend-emit-group-word-call-arg
+                type-segment-bases
+                target
+                arg-assignments
+                value
+                0
+                int-idx
+                float-idx
+                position
+                stack-idx
+                vars
+                planned-stage
+                arg-ty
+                program-index
+                func-diag
+                backend-state)
+                [(ResultCompilerBackend.Ok head0)
+                  (match (compiler-backend-emit-group-word-call-arg
+                    type-segment-bases
+                    target
+                    arg-assignments
+                    value
+                    1
+                    int1
+                    float1
+                    (+ position 1)
+                    stack1
+                    vars
+                    planned-stage
+                    arg-ty
+                    program-index
+                    func-diag
+                    backend-state)
+                    [(ResultCompilerBackend.Ok head1)
+                      (begin
+                        (compiler-backend-asm-append2 out head0 head1)
+                        (compiler-backend-emit-call-args-with-assignments-into
+                          out
+                          type-segment-bases
+                          target
+                          arg-assignments
+                          args
+                          types
+                          c-abi?
+                          (+ arg-index 1)
+                          (if w1-sse
+                            int1
+                            (+ int1 1))
+                          (if w1-sse
+                            (+ float1 1)
+                            float1)
+                          (+ position 2)
+                          (if w1-stack
+                            (+ stack1 1)
+                            stack1)
+                          planned-stage
+                          func-diag
+                          program-index
+                          vars
+                          backend-state))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])))]
         [(compiler-backend-stack-call-arg-for-banks?
             target
             is-float
@@ -46347,6 +47023,76 @@
         [(compiler_regalloc.CompilerRegMaybeType.No)
           (compiler_ast_types.ast-type-list-new)])]))
 
+(define (compiler-backend-top-level-structural-source-type?
+  [type-segment-bases : i64]
+  [ty : compiler_ast_types.AstType]) : bool
+  (match ty
+    [(compiler_ast_types.AstType.Region _ inner)
+      (compiler-backend-top-level-structural-source-type?
+        type-segment-bases
+        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
+    [(compiler_ast_types.AstType.Tuple _) true]
+    [(compiler_ast_types.AstType.Array _ _) true]
+    [_ false]))
+
+(define (compiler-backend-type-list-has-top-level-structural-source-at?
+  [type-segment-bases : i64]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (compiler_ast_types.ast-type-list-len types))
+    false
+    (or
+      (compiler-backend-top-level-structural-source-type?
+        type-segment-bases
+        (compiler_ast_types.ast-type-segment-bases-get
+          type-segment-bases
+          (compiler_ast_types.ast-type-list-get
+            types
+            index
+            (compiler_ast_types.ast-type-id-fallback))))
+      (compiler-backend-type-list-has-top-level-structural-source-at?
+        type-segment-bases
+        types
+        (+ index 1)))))
+
+(define (compiler-backend-effective-normal-indirect-param-types
+  [type-segment-bases : i64]
+  [types : compiler_regalloc.CompilerRegVarTypes]
+  [func : compiler_ir_types.CompilerIrValue]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [externs : compiler_ir_types.CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]) : compiler_ast_types.AstTypeList
+  (let
+    [declared : compiler_ast_types.AstTypeList
+      (compiler-backend-indirect-call-param-types
+        types
+        func
+        functions
+        externs
+        program-index)]
+    (match func
+      ;; A known function's program-index signature is already the physical
+      ;; ABI list (including hidden structural results), so never substitute
+      ;; actual source-var types for it.
+      [(compiler_ir_types.CompilerIrValue.Function _) declared]
+      [_
+        (if (or
+          (not
+            (=
+              (compiler-backend-call-args-count args)
+              (compiler-backend-type-list-count declared)))
+          (compiler-backend-type-list-has-top-level-structural-source-at?
+            type-segment-bases
+            (& declared)
+            0))
+          (compiler-backend-call-actual-param-types
+            type-segment-bases
+            types
+            (CompilerBackendGlobalTypeTable.Empty)
+            args)
+          declared)])))
+
 (define (compiler-backend-indirect-tail-call-register-only?
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -46398,9 +47144,11 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [param-types : compiler_ast_types.AstTypeList
-      (compiler-backend-indirect-call-param-types
+      (compiler-backend-effective-normal-indirect-param-types
+        type-segment-bases
         types
         func
+        args
         functions
         externs
         program-index)]
@@ -46595,9 +47343,11 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [param-types : compiler_ast_types.AstTypeList
-      (compiler-backend-indirect-call-param-types
+      (compiler-backend-effective-normal-indirect-param-types
+        type-segment-bases
         types
         func
+        args
         functions
         externs
         program-index)]
@@ -51032,6 +51782,35 @@
     vars
     backend-state))
 
+(define (compiler-backend-emit-private-memory-param-address
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [all-params : compiler_ir_types.CompilerIrParamList]
+  [var-id : i64]
+  [addr : String]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [home : String (compiler-backend-var-register-home assignments var-id)]
+    (if (string.eq home "")
+      (let
+        [exclude : (Array String)
+          (compiler-backend-param-register-exclude all-params assignments)]
+        [exclude-n : i64
+          (compiler-backend-param-register-exclude-count all-params assignments)]
+        [scratch : String
+          (compiler-backend-scavenge-reg var-id exclude exclude-n "%r8")]
+        (str_cat.str-cat
+          "    leaq "
+          addr
+          ", "
+          scratch
+          "\n"
+          (compiler-backend-emit-store-var-with-plan
+            assignments
+            var-id
+            scratch
+            backend-state)))
+      (str_cat.str-cat "    leaq " addr ", " home "\n"))))
+
 (define (compiler-backend-emit-param-spills-from
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -51074,210 +51853,326 @@
               (if is-float
                 (+ float-idx 1)
                 float-idx)]
+            [private-memory-size : i64
+              (compiler-backend-abi-memory-size type-segment-bases ty)]
             ;; A register-group parameter occupies two eightbytes.
             ;; INTEGER words advance the integer bank; SSE words advance the float
             ;; bank. This mirrors emit-call-args so self-calls agree on register vs
             ;; stack placement for mixed-bank aggregate words.
-            (if (compiler-backend-group-type?
-              type-segment-bases
-              program-index
-              ty)
-              (let
-                [w0-sse : bool
-                  (compiler-backend-group-word-sse?
-                    type-segment-bases
-                    program-index
-                    ty
-                    0)]
-                [w0-stack : bool
-                  (compiler-backend-stack-call-arg-for-banks?
-                    target
-                    w0-sse
-                    int-idx
-                    float-idx
-                    position)]
-                [int1 : i64
-                  (if w0-sse
-                    int-idx
-                    (+ int-idx 1))]
-                [float1 : i64
-                  (if w0-sse
-                    (+ float-idx 1)
-                    float-idx)]
-                [stack1 : i64
-                  (if w0-stack
-                    (+ stack-idx 1)
-                    stack-idx)]
-                [w1-sse : bool
-                  (compiler-backend-group-word-sse?
-                    type-segment-bases
-                    program-index
-                    ty
-                    1)]
-                [w1-stack : bool
-                  (compiler-backend-stack-call-arg-for-banks?
-                    target
-                    w1-sse
-                    int1
-                    float1
-                    (+ position 1))]
-                (match (compiler-backend-emit-group-word-param
-                  type-segment-bases
-                  target
-                  assignments
-                  var-id
-                  0
-                  int-idx
-                  float-idx
-                  position
-                  stack-idx
-                  vars
-                  ty
-                  program-index
-                  backend-state)
-                  [(ResultCompilerBackend.Ok head0)
-                    (match (compiler-backend-emit-group-word-param
-                      type-segment-bases
-                      target
-                      assignments
-                      var-id
-                      1
-                      int1
-                      float1
-                      (+ position 1)
-                      stack1
-                      vars
-                      ty
-                      program-index
-                      backend-state)
-                      [(ResultCompilerBackend.Ok head1)
-                        (match (compiler-backend-emit-param-spills-from
-                          type-segment-bases
-                          target
-                          assignments
-                          all-params
-                          (box-get rest)
-                          (if w1-sse
-                            int1
-                            (+ int1 1))
-                          (if w1-sse
-                            (+ float1 1)
-                            float1)
-                          (+ position 2)
-                          (if w1-stack
-                            (+ stack1 1)
-                            stack1)
-                          program-index
-                          vars
-                          backend-state)
-                          [(ResultCompilerBackend.Ok tail)
-                            (ResultCompilerBackend.Ok
-                              (string.append head0 (string.append head1 tail)))]
-                          [(ResultCompilerBackend.Err message)
-                            (ResultCompilerBackend.Err message)])]
-                      [(ResultCompilerBackend.Err message)
-                        (ResultCompilerBackend.Err message)])]
-                  [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err message)]))
-              (if (compiler-backend-stack-call-arg-for-banks?
-                target
-                is-float
-                int-idx
-                float-idx
-                position)
+            (cond
+              [(and
+                  (compiler-backend-target-linux? target)
+                  (> private-memory-size 0))
                 (match (compiler-backend-emit-param-spills-from
                   type-segment-bases
                   target
                   assignments
                   all-params
                   (box-get rest)
-                  next-int
-                  next-float
+                  int-idx
+                  float-idx
                   (+ position 1)
-                  (+ stack-idx 1)
+                  (+
+                    stack-idx
+                    (compiler-backend-stack-slots-for-size private-memory-size))
                   program-index
                   vars
                   backend-state)
                   [(ResultCompilerBackend.Ok tail)
                     (ResultCompilerBackend.Ok
-                      (let
-                        [addr : String
+                      (string.append
+                        tail
+                        (compiler-backend-emit-private-memory-param-address
+                          assignments
+                          all-params
+                          var-id
                           (compiler-backend-frame-offset-with-backend-state
                             backend-state
                             (compiler-backend-incoming-stack-arg-offset
                               target
-                              stack-idx))]
-                        [exclude-n : i64
-                          (compiler-backend-param-register-exclude-count
-                            all-params
-                            assignments)]
-                        [exclude : (Array String)
-                          (compiler-backend-param-register-exclude
-                            all-params
-                            assignments)]
-                        (str_cat.str-cat
-                          (if is-float
-                            (compiler-backend-emit-load-float-address-to-var
-                              assignments
-                              var-id
-                              addr
-                              ty
-                              ""
-                              backend-state)
-                            (compiler-backend-emit-load-scalar-address-to-var
-                              type-segment-bases
-                              assignments
-                              var-id
-                              addr
-                              ty
-                              exclude
-                              exclude-n
-                              ""
-                              backend-state))
-                          tail)))]
+                              stack-idx))
+                          backend-state)))]
                   [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err message)])
-                (match (if is-float
-                  (compiler-backend-target-float-arg-reg-for-banks
-                    target
-                    float-idx
-                    position)
-                  (compiler-backend-target-arg-reg-for-banks
-                    target
-                    int-idx
-                    position))
-                  [(ResultBackendReg.Ok reg)
-                    (match (compiler-backend-emit-param-spills-from
+                    (ResultCompilerBackend.Err message)])]
+              [(compiler-backend-group-type?
+                  type-segment-bases
+                  program-index
+                  ty)
+                (let
+                  [linux-group-fits : bool
+                    (compiler-backend-linux-group-register-banks-fit?
+                      type-segment-bases
+                      target
+                      program-index
+                      ty
+                      int-idx
+                      float-idx
+                      position)]
+                  [param-exclude : (Array String)
+                    (compiler-backend-param-register-exclude
+                      all-params
+                      assignments)]
+                  [param-exclude-n : i64
+                    (compiler-backend-param-register-exclude-count
+                      all-params
+                      assignments)]
+                  [w0-sse : bool
+                    (compiler-backend-group-word-sse?
+                      type-segment-bases
+                      program-index
+                      ty
+                      0)]
+                  [w0-stack : bool
+                    (compiler-backend-stack-call-arg-for-banks?
+                      target
+                      w0-sse
+                      int-idx
+                      float-idx
+                      position)]
+                  [int1 : i64
+                    (if w0-sse
+                      int-idx
+                      (+ int-idx 1))]
+                  [float1 : i64
+                    (if w0-sse
+                      (+ float-idx 1)
+                      float-idx)]
+                  [stack1 : i64
+                    (if w0-stack
+                      (+ stack-idx 1)
+                      stack-idx)]
+                  [w1-sse : bool
+                    (compiler-backend-group-word-sse?
+                      type-segment-bases
+                      program-index
+                      ty
+                      1)]
+                  [w1-stack : bool
+                    (compiler-backend-stack-call-arg-for-banks?
+                      target
+                      w1-sse
+                      int1
+                      float1
+                      (+ position 1))]
+                  (if (and
+                    (compiler-backend-target-linux? target)
+                    (not linux-group-fits))
+                    (match (compiler-backend-emit-group-word-stack-param
                       type-segment-bases
                       target
                       assignments
-                      all-params
-                      (box-get rest)
-                      next-int
-                      next-float
-                      (+ position 1)
+                      var-id
+                      0
                       stack-idx
-                      program-index
                       vars
+                      ty
+                      program-index
+                      param-exclude
+                      param-exclude-n
                       backend-state)
-                      [(ResultCompilerBackend.Ok tail)
-                        (ResultCompilerBackend.Ok
-                          (string.append
-                            (compiler-backend-emit-store-typed-var-with-plan
+                      [(ResultCompilerBackend.Ok head0)
+                        (match (compiler-backend-emit-group-word-stack-param
+                          type-segment-bases
+                          target
+                          assignments
+                          var-id
+                          1
+                          (+ stack-idx 1)
+                          vars
+                          ty
+                          program-index
+                          param-exclude
+                          param-exclude-n
+                          backend-state)
+                          [(ResultCompilerBackend.Ok head1)
+                            (match (compiler-backend-emit-param-spills-from
+                              type-segment-bases
+                              target
                               assignments
-                              var-id
-                              reg
-                              ty
+                              all-params
+                              (box-get rest)
+                              int-idx
+                              float-idx
+                              (+ position 2)
+                              (+ stack-idx 2)
+                              program-index
+                              vars
                               backend-state)
-                            tail))]
+                              [(ResultCompilerBackend.Ok tail)
+                                (ResultCompilerBackend.Ok
+                                  (string.append
+                                    tail
+                                    (string.append head0 head1)))]
+                              [(ResultCompilerBackend.Err message)
+                                (ResultCompilerBackend.Err message)])]
+                          [(ResultCompilerBackend.Err message)
+                            (ResultCompilerBackend.Err message)])]
                       [(ResultCompilerBackend.Err message)
-                        (ResultCompilerBackend.Err message)])]
-                  [(ResultBackendReg.Err _)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-at-start
-                          ""
-                          "backend: too many params")))]))))])]))
+                        (ResultCompilerBackend.Err message)])
+                    (match (compiler-backend-emit-group-word-param
+                      type-segment-bases
+                      target
+                      assignments
+                      var-id
+                      0
+                      int-idx
+                      float-idx
+                      position
+                      stack-idx
+                      vars
+                      ty
+                      program-index
+                      param-exclude
+                      param-exclude-n
+                      backend-state)
+                      [(ResultCompilerBackend.Ok head0)
+                        (match (compiler-backend-emit-group-word-param
+                          type-segment-bases
+                          target
+                          assignments
+                          var-id
+                          1
+                          int1
+                          float1
+                          (+ position 1)
+                          stack1
+                          vars
+                          ty
+                          program-index
+                          param-exclude
+                          param-exclude-n
+                          backend-state)
+                          [(ResultCompilerBackend.Ok head1)
+                            (match (compiler-backend-emit-param-spills-from
+                              type-segment-bases
+                              target
+                              assignments
+                              all-params
+                              (box-get rest)
+                              (if w1-sse
+                                int1
+                                (+ int1 1))
+                              (if w1-sse
+                                (+ float1 1)
+                                float1)
+                              (+ position 2)
+                              (if w1-stack
+                                (+ stack1 1)
+                                stack1)
+                              program-index
+                              vars
+                              backend-state)
+                              [(ResultCompilerBackend.Ok tail)
+                                (ResultCompilerBackend.Ok
+                                  (string.append
+                                    head0
+                                    (string.append head1 tail)))]
+                              [(ResultCompilerBackend.Err message)
+                                (ResultCompilerBackend.Err message)])]
+                          [(ResultCompilerBackend.Err message)
+                            (ResultCompilerBackend.Err message)])]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)])))]
+              [else
+                (if (compiler-backend-stack-call-arg-for-banks?
+                  target
+                  is-float
+                  int-idx
+                  float-idx
+                  position)
+                  (match (compiler-backend-emit-param-spills-from
+                    type-segment-bases
+                    target
+                    assignments
+                    all-params
+                    (box-get rest)
+                    next-int
+                    next-float
+                    (+ position 1)
+                    (+ stack-idx 1)
+                    program-index
+                    vars
+                    backend-state)
+                    [(ResultCompilerBackend.Ok tail)
+                      (ResultCompilerBackend.Ok
+                        (let
+                          [addr : String
+                            (compiler-backend-frame-offset-with-backend-state
+                              backend-state
+                              (compiler-backend-incoming-stack-arg-offset
+                                target
+                                stack-idx))]
+                          [exclude-n : i64
+                            (compiler-backend-param-register-exclude-count
+                              all-params
+                              assignments)]
+                          [exclude : (Array String)
+                            (compiler-backend-param-register-exclude
+                              all-params
+                              assignments)]
+                          (str_cat.str-cat
+                            (if is-float
+                              (compiler-backend-emit-load-float-address-to-var
+                                assignments
+                                var-id
+                                addr
+                                ty
+                                ""
+                                backend-state)
+                              (compiler-backend-emit-load-scalar-address-to-var
+                                type-segment-bases
+                                assignments
+                                var-id
+                                addr
+                                ty
+                                exclude
+                                exclude-n
+                                ""
+                                backend-state))
+                            tail)))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])
+                  (match (if is-float
+                    (compiler-backend-target-float-arg-reg-for-banks
+                      target
+                      float-idx
+                      position)
+                    (compiler-backend-target-arg-reg-for-banks
+                      target
+                      int-idx
+                      position))
+                    [(ResultBackendReg.Ok reg)
+                      (match (compiler-backend-emit-param-spills-from
+                        type-segment-bases
+                        target
+                        assignments
+                        all-params
+                        (box-get rest)
+                        next-int
+                        next-float
+                        (+ position 1)
+                        stack-idx
+                        program-index
+                        vars
+                        backend-state)
+                        [(ResultCompilerBackend.Ok tail)
+                          (ResultCompilerBackend.Ok
+                            (string.append
+                              (compiler-backend-emit-store-typed-var-with-plan
+                                assignments
+                                var-id
+                                reg
+                                ty
+                                backend-state)
+                              tail))]
+                        [(ResultCompilerBackend.Err message)
+                          (ResultCompilerBackend.Err message)])]
+                    [(ResultBackendReg.Err _)
+                      (ResultCompilerBackend.Err
+                        (box
+                          (compiler_diagnostic.compiler-diagnostic-at-start
+                            ""
+                            "backend: too many params")))]))]))])]))
 
 (define (compiler-backend-emit-param-spills
   [type-segment-bases : i64]
@@ -57233,6 +58128,7 @@
                       type-segment-bases
                       target
                       emit-blocks-list
+                      plan-types
                       program-index)]
                   [dynamic-frame-base : i64
                     (+

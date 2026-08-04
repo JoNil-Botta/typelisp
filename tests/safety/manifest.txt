@@ -399,3 +399,9 @@ hashmap_generated_float_key_reject|check-fail|tests/safety/hashmap_generated_flo
 hashmap_generated_nested_box_key_reject|check-fail|tests/safety/hashmap_generated_nested_box_key_reject.tl|-|eq: unsupported type box_i64
 imported_module_macro_bare_name_reject|check-fail|tests/safety/imported_module_macro_bare_name_reject.tl|-|typecheck: imported macro `vector` requires provider qualification; use `vector.vector`
 imported_module_macro_alias_bare_name_reject|check-fail|tests/safety/imported_module_macro_alias_bare_name_reject.tl|-|typecheck: imported macro `vector` requires provider qualification; use `v.vector`
+float_exponent_malformed_1e|check-fail|tests/safety/float_exponent_malformed_1e.tl.invalid|-|lexer: malformed number literal
+float_exponent_malformed_1e_plus|check-fail|tests/safety/float_exponent_malformed_1e_plus.tl.invalid|-|lexer: malformed number literal
+float_exponent_malformed_fraction|check-fail|tests/safety/float_exponent_malformed_fraction.tl.invalid|-|lexer: malformed number literal
+float_exponent_malformed_fraction_minus|check-fail|tests/safety/float_exponent_malformed_fraction_minus.tl.invalid|-|lexer: malformed number literal
+float_exponent_overflow_f64|check-fail|tests/safety/float_exponent_overflow_f64.tl|-|non-finite f64 literal is not supported
+float_exponent_overflow_f32|check-fail|tests/safety/float_exponent_overflow_f32.tl|-|non-finite f32 literal is not supported

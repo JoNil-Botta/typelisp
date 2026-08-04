@@ -385,6 +385,62 @@
         (tokens.format-token-tag (tokens.format-token-at stream 4))
         (tokens.fmt-tag-end)))))
 
+(define (format-cst-exponent-atoms-ok?) : bool
+  (let
+    [stream : tokens.FormatTokenStream
+      (tokens.format-lex "(1.5e-9 1e10 2.5E+3 -1e-5 0x1e5)")]
+    (and
+      (= (tokens.format-token-tag-count stream (tokens.fmt-tag-int)) 5)
+      (string.eq
+        (tokens.format-token-text (tokens.format-token-at stream 1))
+        "1.5e-9")
+      (string.eq
+        (tokens.format-token-text (tokens.format-token-at stream 2))
+        "1e10")
+      (string.eq
+        (tokens.format-token-text (tokens.format-token-at stream 3))
+        "2.5E+3")
+      (string.eq
+        (tokens.format-token-text (tokens.format-token-at stream 4))
+        "-1e-5")
+      (string.eq
+        (tokens.format-token-text (tokens.format-token-at stream 5))
+        "0x1e5")
+      (=
+        (tokens.format-token-tag (tokens.format-token-at stream 7))
+        (tokens.fmt-tag-end)))))
+
+(define (format-cst-malformed-number-at?
+  [src : String]
+  [line : i64]
+  [col : i64]
+  [expected : String]) : bool
+  (match (parse-format-source-result src)
+    [(ResultFormatCst.Ok _) false]
+    [(ResultFormatCst.Err err)
+      (and
+        (string.eq (tokens.format-source-error-message err) expected)
+        (tokens.format-source-span-eq?
+          (tokens.format-source-error-span err)
+          line
+          col
+          line
+          col))]))
+
+(define (format-cst-malformed-exponents-ok?) : bool
+  (let
+    [message : String "format lexer: malformed number literal"]
+    (and
+      (format-cst-malformed-number-at? "1e" 1 1 message)
+      (format-cst-malformed-number-at? "1e+" 1 1 message)
+      (format-cst-malformed-number-at? "1.5e" 1 1 message)
+      (format-cst-malformed-number-at? "1e2foo" 1 1 message)
+      (format-cst-malformed-number-at? "1.e2" 1 1 message)
+      (format-cst-malformed-number-at? "1_0e2" 1 1 message)
+      (format-cst-malformed-number-at? "1e2.3" 1 1 message)
+      (format-cst-malformed-number-at? "1e2_3" 1 1 message)
+      (format-cst-malformed-number-at? "\n  1.5e-" 2 3 message))))
+
 (define (format-cst-apostrophe-char-ok?) : bool
   (let
     [stream : tokens.FormatTokenStream (tokens.format-lex "'a' '\"' '('")]
@@ -451,8 +507,10 @@
         (return 5))
       (unless (format-cst-boxed-nested-ok?) (return 6))
       (unless (format-cst-prefixed-int-ok?) (return 7))
-      (unless (format-cst-apostrophe-char-ok?) (return 8))
-      (unless (format-cst-error-location-ok?) (return 9))
-      (unless (format-cst-legacy-char-rejected-ok?) (return 10))
-      (unless (format-cst-dense-storage-ok?) (return 11))
+      (unless (format-cst-exponent-atoms-ok?) (return 8))
+      (unless (format-cst-malformed-exponents-ok?) (return 9))
+      (unless (format-cst-apostrophe-char-ok?) (return 10))
+      (unless (format-cst-error-location-ok?) (return 11))
+      (unless (format-cst-legacy-char-rejected-ok?) (return 12))
+      (unless (format-cst-dense-storage-ok?) (return 13))
       42)))

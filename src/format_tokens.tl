@@ -387,6 +387,19 @@
           (set! keep false)))
       j)))
 
+(define (fmt-scan-decimal-digits-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
+  (let
+    [j : i64 start]
+    [keep : bool true]
+    (begin
+      (while keep
+        (if (< j n)
+          (if (fmt-char-class? (fmt-source-byte-bounds-proven data j) 2)
+            (set! j (+ j 1))
+            (set! keep false))
+          (set! keep false)))
+      j)))
+
 (define (fmt-scan-prefixed-number-end-result
   [src : String]
   [data : (Ptr u8)]
@@ -417,22 +430,69 @@
   (let
     [j : i64 start]
     [seen-dot : bool false]
+    [fraction-digit : bool false]
+    [mantissa-exp-ok : bool true]
     [keep : bool true]
     (begin
-      (if (and (< j n) (= (fmt-source-byte-bounds-proven data j) '-'))
-        (set! j (+ j 1))
-        (set! j j))
+      (if (< j n)
+        (if (= (fmt-source-byte-bounds-proven data j) '-')
+          (set! j (+ j 1))
+          unit)
+        unit)
       (while keep
         (if (< j n)
           (let
             [c : char (fmt-source-byte-bounds-proven data j)]
-            (if (and (= c '.') (not seen-dot))
-              (begin
-                (set! seen-dot true)
-                (set! j (+ j 1)))
-              (if (or (fmt-char-class? c 2) (= c '_'))
-                (set! j (+ j 1))
-                (set! keep false))))
+            (cond
+              [(and (= c '.') (not seen-dot))
+                (begin
+                  (set! seen-dot true)
+                  (set! j (+ j 1)))]
+              [(or (fmt-char-class? c 2) (= c '_'))
+                (begin
+                  (if (= c '_')
+                    (set! mantissa-exp-ok false)
+                    (if (and seen-dot (fmt-char-class? c 2))
+                      (set! fraction-digit true)
+                      unit))
+                  (set! j (+ j 1)))]
+              [(and
+                  mantissa-exp-ok
+                  (or (not seen-dot) fraction-digit)
+                  (or (= c 'e') (= c 'E')))
+                (let
+                  [exp-start : i64 j]
+                  [exp-digits : i64 (+ j 1)]
+                  (begin
+                    (if (< exp-digits n)
+                      (if (or
+                        (= (fmt-source-byte-bounds-proven data exp-digits) '+')
+                        (= (fmt-source-byte-bounds-proven data exp-digits) '-'))
+                        (set! exp-digits (+ exp-digits 1))
+                        unit)
+                      unit)
+                    (if (< exp-digits n)
+                      (if (fmt-char-class?
+                        (fmt-source-byte-bounds-proven data exp-digits)
+                        2)
+                        (begin
+                          (set!
+                            j
+                            (fmt-scan-decimal-digits-end data exp-digits n))
+                          ;; A valid exponent terminates the numeric token;
+                          ;; any following dot/underscore is rejected by the
+                          ;; trailing-symbol guard rather than absorbed here.
+                          (set! keep false))
+                        (begin
+                          ;; Leave an invalid marker at the scan end so the
+                          ;; result wrapper can report the error at the
+                          ;; numeric token start.
+                          (set! j exp-start)
+                          (set! keep false)))
+                      (begin
+                        (set! j exp-start)
+                        (set! keep false)))))]
+              [else (set! keep false)]))
           (set! keep false)))
       j)))
 
@@ -443,7 +503,19 @@
   [n : i64]) : result_fmt_i64.Result
   (if (fmt-number-prefixed? data start n)
     (fmt-scan-prefixed-number-end-result src data start n)
-    (result_fmt_i64.Ok (fmt-scan-decimal-number-end data start n))))
+    (let
+      [end : i64 (fmt-scan-decimal-number-end data start n)]
+      [malformed : bool
+        (if (< end n)
+          (fmt-char-class? (fmt-source-byte-bounds-proven data end) 4)
+          false)]
+      (if malformed
+        (result_fmt_i64.Err
+          (fmt-source-error-at
+            src
+            start
+            "format lexer: malformed number literal"))
+        (result_fmt_i64.Ok end)))))
 
 (define (fmt-scan-symbol-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let

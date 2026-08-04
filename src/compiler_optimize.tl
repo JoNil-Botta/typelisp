@@ -30398,31 +30398,45 @@
               (opt-switch-candidate-tail items)
               tag))])]))
 
+;; A tag inside [min-tag, max-tag] that the chain never compares (a HOLE) takes
+;; the chain's fall-through edge, exactly like an out-of-range tag: the chain
+;; means "if index = t_i goto arm_i, in order, else goto default", and the head
+;; is the only entry, so any tag the chain does not name reaches the default.
+;; Duplicate tags are rejected during collection, so the arm order carries no
+;; extra information. Filling a hole with `default-label` therefore preserves
+;; semantics and keeps the case list contiguous, which is the backend's
+;; requirement for a jump table.
 (define (opt-switch-build-cases-desc
   [items : OptSwitchCandidateList]
   [tag : i64]
   [min-tag : i64]
+  [default-label : i64]
   [acc : ir.CompilerIrSwitchCaseList]) : ir.CompilerIrSwitchCaseList
   (if (< tag min-tag)
     acc
-    (match (opt-switch-candidate-label-for-tag items tag)
-      [(OptSwitchMaybeLabel.SomeLabel label)
-        (opt-switch-build-cases-desc
-          items
-          (- tag 1)
-          min-tag
-          (ir.compiler-ir-switch-case-cons-linked tag label acc))]
-      [(OptSwitchMaybeLabel.NoLabel) acc])))
+    (opt-switch-build-cases-desc
+      items
+      (- tag 1)
+      min-tag
+      default-label
+      (ir.compiler-ir-switch-case-cons-linked
+        tag
+        (match (opt-switch-candidate-label-for-tag items tag)
+          [(OptSwitchMaybeLabel.SomeLabel label) label]
+          [(OptSwitchMaybeLabel.NoLabel) default-label])
+        acc))))
 
 (define (opt-switch-build-cases
   [items : OptSwitchCandidateList]
   [min-tag : i64]
-  [max-tag : i64]) : ir.CompilerIrSwitchCaseList
+  [max-tag : i64]
+  [default-label : i64]) : ir.CompilerIrSwitchCaseList
   (ir.compiler-ir-switch-case-list-compact
     (opt-switch-build-cases-desc
       items
       max-tag
       min-tag
+      default-label
       ir.CompilerIrSwitchCaseList.Nil)))
 
 (define (opt-switch-total-enum-trap-block [label : i64] [dst : i64]) : ir.CompilerIrBlock
@@ -30721,6 +30735,29 @@
     [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
     (and (= (opt-label-count preds) 1) (opt-label-contains preds pred))))
 
+;; Table-formation density floor, as a percentage of the [min, max] span that
+;; the chain's own tags must occupy. A gap tag costs one 8-byte table slot and
+;; saves nothing, so a chain that is mostly gaps would trade instructions for
+;; rodata and D-cache footprint; a compared tag replaces roughly (chain
+;; position) compares with one indexed jump. 50% is the standard floor and, on
+;; the self-compile, admits the wide AST/IR walkers (65 of 76 `AstExpr` tags,
+;; 64 of 67, ...) that an exact-density rule rejected over a handful of gaps.
+(define (opt-switch-density-percent) : i64
+  50)
+
+;; Hard ceiling on the emitted table's entry count. The density floor already
+;; bounds the span by twice the compare count, so this only fires for chains
+;; that are pathological in absolute size; it keeps a single match from
+;; emitting an unbounded rodata table (and bounds `opt-switch-build-cases-desc`
+;; recursion) regardless of the source program.
+(define (opt-switch-max-table-entries) : i64
+  1024)
+
+(define (opt-switch-span-admissible? [count : i64] [span : i64]) : bool
+  (and
+    (<= span (opt-switch-max-table-entries))
+    (<= (* span (opt-switch-density-percent)) (* count 100))))
+
 (define (opt-switch-finalize-chain
   [index : OptCfgIndex]
   [index-var : i64]
@@ -30735,7 +30772,7 @@
       [max-tag : i64 (opt-switch-candidate-max items)]
       (if (and
         (>= count 4)
-        (= (+ (- max-tag min-tag) 1) count)
+        (opt-switch-span-admissible? count (+ (- max-tag min-tag) 1))
         (opt-switch-targets-safe? index items default-label))
         (OptMaybeSwitchChain.Some
           index-var
@@ -30937,17 +30974,25 @@
               instrs
               0
               head-prefix
-              (if (opt-switch-candidates-total-enum? items)
+              ;; The total-enum proof says the chain's fall-through IS the last
+              ;; variant's arm, so the range check and the default edge can be
+              ;; dropped. A gap-filled table routes uncompared tags to that same
+              ;; fall-through, which is only sound while the default is a real
+              ;; default; a gapped chain therefore keeps the ordinary Switch
+              ;; with its range check even when the proof is present.
+              (if (and
+                (opt-switch-candidates-total-enum? items)
+                (= (+ (- max-tag min-tag) 1) (opt-switch-candidate-count items)))
                 (ir.CompilerIrInstr.TotalEnumSwitch
                   (ir.CompilerIrValue.Var index-var)
                   min-tag
-                  (opt-switch-build-cases items min-tag max-tag)
+                  (opt-switch-build-cases items min-tag max-tag default-label)
                   default-label
                   (ir.compiler-ir-label-none))
                 (ir.CompilerIrInstr.Switch
                   (ir.CompilerIrValue.Var index-var)
                   min-tag
-                  (opt-switch-build-cases items min-tag max-tag)
+                  (opt-switch-build-cases items min-tag max-tag default-label)
                   default-label))))]
         [(OptMaybeSwitchChain.No) block])]))
 

@@ -769,6 +769,8 @@
     [short : ir.CompilerIrFunction
       (opt.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-short-blocks)))]
+    ;; Gapped but above the density floor: tags 0,1,3,4 span five slots for four
+    ;; compares, so the table forms and tag 2 takes the chain's fall-through.
     [sparse : ir.CompilerIrFunction
       (opt.opt-switch-form-function
         (opt-switch-test-function
@@ -777,6 +779,25 @@
             1
             3
             4
+            (ir.compiler-ir-label "fallback"))))]
+    [sparse-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks sparse)]
+    [sparse-entry : ir.CompilerIrBlock
+      (match (opt.opt-cfg-find-block
+        sparse-blocks
+        (ir.compiler-ir-label "entry"))
+        [(opt.OptMaybeBlock.No)
+          (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
+        [(opt.OptMaybeBlock.Some block) block])]
+    ;; Below the density floor: four compares over a span of twenty-one would
+    ;; pay seventeen dead table slots, so the chain stays a compare chain.
+    [too-sparse : ir.CompilerIrFunction
+      (opt.opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-chain-blocks
+            0
+            1
+            2
+            20
             (ir.compiler-ir-label "fallback"))))]
     [duplicate : ir.CompilerIrFunction
       (opt.opt-switch-form-function
@@ -933,6 +954,19 @@
           (opt-switch-test-total-chain-blocks 0 1 3 4 marked-sparse-final-label)))]
     [marked-sparse-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks marked-sparse)]
+    [marked-sparse-late : ir.CompilerIrFunction
+      (opt.opt-late-total-switch-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        marked-sparse)]
+    [marked-sparse-late-blocks : ir.CompilerIrBlockList
+      (opt.opt-function-blocks marked-sparse-late)]
+    [marked-sparse-entry : ir.CompilerIrBlock
+      (match (opt.opt-cfg-find-block
+        marked-sparse-blocks
+        (ir.compiler-ir-label "entry"))
+        [(opt.OptMaybeBlock.No)
+          (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
+        [(opt.OptMaybeBlock.Some block) block])]
     [level1 : ir.CompilerIrFunction
       (opt.optimize-function-with-level
         (ast.ast-node-pool-reader-context-current)
@@ -968,8 +1002,27 @@
         7]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function dense))) 8]
       [(not (= (opt-count-switch-blocks (opt.opt-function-blocks short)) 0)) 9]
-      [(not (= (opt-count-switch-blocks (opt.opt-function-blocks sparse)) 0))
-        10]
+      ;; A gap inside an admissible span becomes a table slot pointing at the
+      ;; chain's own fall-through, which is where that tag went before.
+      [(not (= (opt-count-switch-blocks sparse-blocks) 1)) 10]
+      [(not (= (opt-switch-test-block-tail-case-count sparse-entry) 5)) 57]
+      [(not (= (opt-switch-test-block-tail-base sparse-entry) 0)) 58]
+      [(not
+          (opt-switch-test-block-tail-has-case?
+            sparse-entry
+            2
+            (ir.compiler-ir-label "fallback")))
+        59]
+      [(not
+          (opt-switch-test-block-tail-has-case?
+            sparse-entry
+            3
+            (ir.compiler-ir-label "case2")))
+        60]
+      [(not (opt.opt-verify-ok? (opt.opt-verify-function sparse))) 61]
+      [(not
+          (= (opt-count-switch-blocks (opt.opt-function-blocks too-sparse)) 0))
+        62]
       [(not (= (opt-count-switch-blocks (opt.opt-function-blocks duplicate)) 0))
         11]
       [(not (= (opt-count-switch-blocks (opt.opt-function-blocks extra)) 0)) 12]
@@ -1071,11 +1124,28 @@
           spoofed-blocks
           total-trap-label)
         56]
-      ;; An explicit proof alone is not enough: a sparse chain fails the
-      ;; pre-existing density criterion, so neither Switch nor trap is added.
-      [(not (= (opt-count-switch-blocks marked-sparse-blocks) 0)) 50]
+      ;; An explicit proof alone is not enough to drop the range check: a gapped
+      ;; chain routes its gaps to the fall-through, so the proof's "fall-through
+      ;; IS the final variant" reading no longer holds. The chain still forms a
+      ;; table, but as an ordinary checked Switch, and the late total pass must
+      ;; therefore add neither a final case nor a trap block.
+      [(not (= (opt-count-switch-blocks marked-sparse-blocks) 1)) 50]
+      [(opt-switch-test-block-tail-total? marked-sparse-entry) 63]
+      [(not (= (opt-switch-test-block-tail-case-count marked-sparse-entry) 5))
+        64]
+      [(not
+          (opt-switch-test-block-tail-has-case?
+            marked-sparse-entry
+            2
+            marked-sparse-final-label))
+        65]
+      [(not
+          (=
+            (opt-switch-test-block-tail-default marked-sparse-entry)
+            marked-sparse-final-label))
+        66]
       [(compiler_optimize_tests.opt-block-list-has-label?
-          marked-sparse-blocks
+          marked-sparse-late-blocks
           (ir.compiler-ir-label "match_total_trap__entry"))
         51]
       ;; Multiblock inlining preserves the closed proof variant while

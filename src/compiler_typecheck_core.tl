@@ -54229,34 +54229,33 @@
           [key : i64 (+ identity-id 1)]
           [steps : i64 0]
           [done : bool false]
-          (begin
-            (while (if done
-              false
-              (< steps additional-capacity))
-              (let
-                [slot : i64 (array-ref storage-identity-vars cursor)]
-                (cond
-                  [(= slot 0)
-                    (if (>= (* item-count 2) additional-capacity)
-                      (set! done true)
-                      (begin
-                        (array-set! function-names cursor (text-copy generator))
-                        (array-set! local-names cursor (text-copy item))
-                        (array-set! storage-identity-vars cursor key)
-                        (array-set! augmented-decls cursor decl)
-                        (set! item-count (+ item-count 1))
-                        (set! done true)))]
-                  [(and
-                      (string.eq (array-ref function-names cursor) generator)
-                      (string.eq (array-ref local-names cursor) item))
-                    (set! done true)]
-                  [else
+          (while (if done
+            false
+            (< steps additional-capacity))
+            (let
+              [slot : i64 (array-ref storage-identity-vars cursor)]
+              (cond
+                [(= slot 0)
+                  (if (>= (* item-count 2) additional-capacity)
+                    (set! done true)
                     (begin
-                      (set!
-                        cursor
-                        (bit-and (+ cursor 1) (- additional-capacity 1)))
-                      (set! steps (+ steps 1)))]))
-              unit)))))))
+                      (array-set! function-names cursor (text-copy generator))
+                      (array-set! local-names cursor (text-copy item))
+                      (array-set! storage-identity-vars cursor key)
+                      (array-set! augmented-decls cursor decl)
+                      (set! item-count (+ item-count 1))
+                      (set! done true)))]
+                [(and
+                    (string.eq (array-ref function-names cursor) generator)
+                    (string.eq (array-ref local-names cursor) item))
+                  (set! done true)]
+                [else
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and (+ cursor 1) (- additional-capacity 1)))
+                    (set! steps (+ steps 1)))]))
+            unit))))))
 
 (define (slot-index [generator : String] [item : String]) : i64
   (begin
@@ -54320,23 +54319,23 @@
   (set! scratch-count 0))
 
 (define (scratch-plan-result [type-key : String] [kind : String]) : unit
-  (if (< scratch-count 0)
-    unit
-    (if (or
-      (= (string.string-length type-key) 0)
-      (= (string.string-length kind) 0))
-      (set! scratch-count -1)
-      (if (>= scratch-count expected-count)
-        (set! scratch-count -1)
-        (let
-          [index : i64 scratch-count]
-          (begin
-            ;; Scratch is consumed by the immediately following note.  Keep
-            ;; caller Strings directly here; persistent rows copy them into
-            ;; the per-program proof key arena during commit.
-            (array-set! expected-key index type-key)
-            (array-set! expected-kind index kind)
-            (set! scratch-count (+ scratch-count 1))))))))
+  (cond
+    [(< scratch-count 0) unit]
+    [(or
+        (= (string.string-length type-key) 0)
+        (= (string.string-length kind) 0))
+      (set! scratch-count -1)]
+    [(>= scratch-count expected-count) (set! scratch-count -1)]
+    [else
+      (let
+        [index : i64 scratch-count]
+        (begin
+          ;; Scratch is consumed by the immediately following note.  Keep
+          ;; caller Strings directly here; persistent rows copy them into
+          ;; the per-program proof key arena during commit.
+          (array-set! expected-key index type-key)
+          (array-set! expected-kind index kind)
+          (set! scratch-count (+ scratch-count 1))))]))
 
 (define (scratch-reset-functions) : unit
   (begin
@@ -54484,39 +54483,38 @@
           [key : i64 (+ identity-id 1)]
           [steps : i64 0]
           [done : bool false]
-          (begin
-            (while (if done
-              false
-              (< steps store-capacity))
-              (let
-                [slot : i64 (array-ref identity-bytes cursor)]
-                (cond
-                  [(= slot 0)
-                    (if (>= (* identity-count 2) store-capacity)
-                      (set! done true)
-                      (begin
-                        (array-set! identity-bytes cursor key)
-                        (array-set! operand-count cursor scratch-count)
-                        (if (< scratch-count 0)
-                          unit
-                          (scratch-result cursor 0))
-                        (set! identity-count (+ identity-count 1))
-                        (set! done true)))]
-                  [(= slot key)
+          (while (if done
+            false
+            (< steps store-capacity))
+            (let
+              [slot : i64 (array-ref identity-bytes cursor)]
+              (cond
+                [(= slot 0)
+                  (if (>= (* identity-count 2) store-capacity)
+                    (set! done true)
                     (begin
-                      (if (or
-                        (< (array-ref operand-count cursor) 0)
-                        (< scratch-count 0)
-                        (not (= (array-ref operand-count cursor) scratch-count))
-                        (not (matches-signature cursor 0 scratch-count)))
-                        (array-set! operand-count cursor -1)
-                        unit)
-                      (set! done true))]
-                  [else
-                    (begin
-                      (set! cursor (bit-and (+ cursor 1) (- store-capacity 1)))
-                      (set! steps (+ steps 1)))]))
-              unit)))))))
+                      (array-set! identity-bytes cursor key)
+                      (array-set! operand-count cursor scratch-count)
+                      (if (< scratch-count 0)
+                        unit
+                        (scratch-result cursor 0))
+                      (set! identity-count (+ identity-count 1))
+                      (set! done true)))]
+                [(= slot key)
+                  (begin
+                    (if (or
+                      (< (array-ref operand-count cursor) 0)
+                      (< scratch-count 0)
+                      (not (= (array-ref operand-count cursor) scratch-count))
+                      (not (matches-signature cursor 0 scratch-count)))
+                      (array-set! operand-count cursor -1)
+                      unit)
+                    (set! done true))]
+                [else
+                  (begin
+                    (set! cursor (bit-and (+ cursor 1) (- store-capacity 1)))
+                    (set! steps (+ steps 1)))]))
+            unit))))))
 
 (define (tc-proof-reuse-session-identity-preflight-ids?
   [first-id : i64]
@@ -54883,35 +54881,33 @@
           ok)))))
 
 (define (exact-name [left-id : i64] [right-id : i64]) : bool
-  (if (or
-    active-invalid
-    (< first-key 0)
-    (< next-id 0)
-    (< identity-count2 1)
-    (> identity-count2 expected-count))
-    false
-    (if (= left-id right-id)
-      true
-      (if (or
+  (cond
+    [(or
+        active-invalid
+        (< first-key 0)
+        (< next-id 0)
+        (< identity-count2 1)
+        (> identity-count2 expected-count))
+      false]
+    [(= left-id right-id) true]
+    [(or
         (< left-id 0)
         (< right-id 0)
         (not (ci.intern-renderable-id? left-id))
         (not (ci.intern-renderable-id? right-id)))
-        false
-        (if (if (and
-          (ci.intern-qualified? left-id)
-          (ci.intern-qualified? right-id))
-          (and
-            (=
-              (ci.intern-qualified-base-id left-id)
-              (ci.intern-qualified-base-id right-id))
-            (= (ci.intern-qualified-module-id left-id) first-key)
-            (= (ci.intern-qualified-module-id right-id) next-id))
-          (and (= left-id first-key) (= right-id next-id)))
-          (begin
-            (set! portable-pair true)
-            true)
-          false)))))
+      false]
+    [(if (and (ci.intern-qualified? left-id) (ci.intern-qualified? right-id))
+        (and
+          (=
+            (ci.intern-qualified-base-id left-id)
+            (ci.intern-qualified-base-id right-id))
+          (= (ci.intern-qualified-module-id left-id) first-key)
+          (= (ci.intern-qualified-module-id right-id) next-id))
+        (and (= left-id first-key) (= right-id next-id)))
+      (begin
+        (set! portable-pair true)
+        true)]
+    [else false]))
 
 ;; Referenced names are declaration-local facts, not family identities.  A
 ;; direct per-declaration proof has no sibling declaration available to prove
@@ -54942,37 +54938,40 @@
   [ctx : TcContext]
   [left : ast.AstType]
   [right : ast.AstType]) : bool
-  (if (or
-    active-invalid
-    (< first-key 0)
-    (< next-id 0)
-    (< identity-count2 1)
-    (> identity-count2 expected-count))
-    false
-    (if (or
-      (tc-generated-type-dependent-construct? ctx left)
-      (tc-generated-type-dependent-construct? ctx right))
-      false
-      (if (ast.ast-type-eq-with-pools? (tc-context-pools ctx) left right)
-        (begin
-          (set! fixed-call true)
-          true)
-        (let
-          [key : String
-            (ctfe_support.ctfe-type-key-with-reflections-and-pools
-              (tc-context-pools ctx)
-              (ctfe_support.ctfe-reflect-info-list-empty)
-              left)]
-          [value : String
-            (ctfe_support.ctfe-type-key-with-reflections-and-pools
-              (tc-context-pools ctx)
-              (ctfe_support.ctfe-reflect-info-list-empty)
-              right)]
-          (if (string.eq key value)
+  (cond
+    [(or
+        active-invalid
+        (< first-key 0)
+        (< next-id 0)
+        (< identity-count2 1)
+        (> identity-count2 expected-count))
+      false]
+    [(or
+        (tc-generated-type-dependent-construct? ctx left)
+        (tc-generated-type-dependent-construct? ctx right))
+      false]
+    [(ast.ast-type-eq-with-pools? (tc-context-pools ctx) left right)
+      (begin
+        (set! fixed-call true)
+        true)]
+    [else
+      (let
+        [key : String
+          (ctfe_support.ctfe-type-key-with-reflections-and-pools
+            (tc-context-pools ctx)
+            (ctfe_support.ctfe-reflect-info-list-empty)
+            left)]
+        [value : String
+          (ctfe_support.ctfe-type-key-with-reflections-and-pools
+            (tc-context-pools ctx)
+            (ctfe_support.ctfe-reflect-info-list-empty)
+            right)]
+        (cond
+          [(string.eq key value)
             (begin
               (set! fixed-call true)
-              true)
-            (if (and
+              true)]
+          [(and
               (not
                 (or
                   active-invalid
@@ -54988,167 +54987,168 @@
                     (set! portable-pair true)
                     (set! active-mask (bit-or active-mask (shl 1 index)))
                     true))))
-              true
-              (match left
-                [(ast.AstType.Func args ret)
-                  (match right
-                    [(ast.AstType.Func other result)
-                      (let
-                        [list : ast.AstTypeList (box-get args)]
-                        [elems : ast.AstTypeList (box-get other)]
-                        [index : i64 0]
-                        [ok : bool true]
-                        (begin
-                          (while (and
-                            ok
-                            (< index (ast.ast-type-list-len (& list)))
-                            (< index (ast.ast-type-list-len (& elems))))
-                            (begin
-                              (if (tc-proof-reuse-session-ast-type-id-exact?
-                                ctx
-                                (ast.ast-type-list-get
-                                  (& list)
-                                  index
-                                  (ast.ast-type-id-fallback))
-                                (ast.ast-type-list-get
-                                  (& elems)
-                                  index
-                                  (ast.ast-type-id-fallback)))
-                                unit
-                                (set! ok false))
-                              (set! index (+ index 1))))
-                          (and
-                            ok
-                            (=
-                              (ast.ast-type-list-len (& list))
-                              (ast.ast-type-list-len (& elems)))
-                            (tc-proof-reuse-session-ast-type-exact?
+            true]
+          [else
+            (match left
+              [(ast.AstType.Func args ret)
+                (match right
+                  [(ast.AstType.Func other result)
+                    (let
+                      [list : ast.AstTypeList (box-get args)]
+                      [elems : ast.AstTypeList (box-get other)]
+                      [index : i64 0]
+                      [ok : bool true]
+                      (begin
+                        (while (and
+                          ok
+                          (< index (ast.ast-type-list-len (& list)))
+                          (< index (ast.ast-type-list-len (& elems))))
+                          (begin
+                            (if (tc-proof-reuse-session-ast-type-id-exact?
                               ctx
-                              (tc-context-type-get ctx ret)
-                              (tc-context-type-get ctx result)))))]
-                    [_ false])]
-                [(ast.AstType.Tuple first)
-                  (match right
-                    [(ast.AstType.Tuple second)
-                      (let
-                        [list : ast.AstTypeList (box-get first)]
-                        [elems : ast.AstTypeList (box-get second)]
-                        [index : i64 0]
-                        [ok : bool true]
-                        (begin
-                          (while (and
-                            ok
-                            (< index (ast.ast-type-list-len (& list)))
-                            (< index (ast.ast-type-list-len (& elems))))
-                            (begin
-                              (if (tc-proof-reuse-session-ast-type-id-exact?
-                                ctx
-                                (ast.ast-type-list-get
-                                  (& list)
-                                  index
-                                  (ast.ast-type-id-fallback))
-                                (ast.ast-type-list-get
-                                  (& elems)
-                                  index
-                                  (ast.ast-type-id-fallback)))
-                                unit
-                                (set! ok false))
-                              (set! index (+ index 1))))
-                          (and
-                            ok
-                            (=
-                              (ast.ast-type-list-len (& list))
-                              (ast.ast-type-list-len (& elems))))))]
-                    [_ false])]
-                [(ast.AstType.Array elem left-len)
-                  (match right
-                    [(ast.AstType.Array other right-len)
-                      (and
-                        (= left-len right-len)
-                        (tc-proof-reuse-session-ast-type-exact?
-                          ctx
-                          (tc-context-type-get ctx elem)
-                          (tc-context-type-get ctx other)))]
-                    [_ false])]
-                [(ast.AstType.DynArray elem)
-                  (match right
-                    [(ast.AstType.DynArray other)
+                              (ast.ast-type-list-get
+                                (& list)
+                                index
+                                (ast.ast-type-id-fallback))
+                              (ast.ast-type-list-get
+                                (& elems)
+                                index
+                                (ast.ast-type-id-fallback)))
+                              unit
+                              (set! ok false))
+                            (set! index (+ index 1))))
+                        (and
+                          ok
+                          (=
+                            (ast.ast-type-list-len (& list))
+                            (ast.ast-type-list-len (& elems)))
+                          (tc-proof-reuse-session-ast-type-exact?
+                            ctx
+                            (tc-context-type-get ctx ret)
+                            (tc-context-type-get ctx result)))))]
+                  [_ false])]
+              [(ast.AstType.Tuple first)
+                (match right
+                  [(ast.AstType.Tuple second)
+                    (let
+                      [list : ast.AstTypeList (box-get first)]
+                      [elems : ast.AstTypeList (box-get second)]
+                      [index : i64 0]
+                      [ok : bool true]
+                      (begin
+                        (while (and
+                          ok
+                          (< index (ast.ast-type-list-len (& list)))
+                          (< index (ast.ast-type-list-len (& elems))))
+                          (begin
+                            (if (tc-proof-reuse-session-ast-type-id-exact?
+                              ctx
+                              (ast.ast-type-list-get
+                                (& list)
+                                index
+                                (ast.ast-type-id-fallback))
+                              (ast.ast-type-list-get
+                                (& elems)
+                                index
+                                (ast.ast-type-id-fallback)))
+                              unit
+                              (set! ok false))
+                            (set! index (+ index 1))))
+                        (and
+                          ok
+                          (=
+                            (ast.ast-type-list-len (& list))
+                            (ast.ast-type-list-len (& elems))))))]
+                  [_ false])]
+              [(ast.AstType.Array elem left-len)
+                (match right
+                  [(ast.AstType.Array other right-len)
+                    (and
+                      (= left-len right-len)
                       (tc-proof-reuse-session-ast-type-exact?
                         ctx
                         (tc-context-type-get ctx elem)
-                        (tc-context-type-get ctx other))]
-                    [_ false])]
-                [(ast.AstType.Slice elem)
-                  (match right
-                    [(ast.AstType.Slice other)
-                      (tc-proof-reuse-session-ast-type-exact?
-                        ctx
-                        (tc-context-type-get ctx elem)
-                        (tc-context-type-get ctx other))]
-                    [_ false])]
-                [(ast.AstType.Box inner)
-                  (match right
-                    [(ast.AstType.Box result)
-                      (tc-proof-reuse-session-ast-type-exact?
-                        ctx
-                        (tc-context-type-get ctx inner)
-                        (tc-context-type-get ctx result))]
-                    [_ false])]
-                [(ast.AstType.Region name inner)
-                  (match right
-                    [(ast.AstType.Region other result)
-                      (and
-                        (qualified-name name other)
-                        (tc-proof-reuse-session-ast-type-exact?
-                          ctx
-                          (tc-context-type-get ctx inner)
-                          (tc-context-type-get ctx result)))]
-                    [_ false])]
-                [(ast.AstType.Ref name inner)
-                  (match right
-                    [(ast.AstType.Ref other result)
-                      (and
-                        (qualified-name name other)
-                        (tc-proof-reuse-session-ast-type-exact?
-                          ctx
-                          (tc-context-type-get ctx inner)
-                          (tc-context-type-get ctx result)))]
-                    [_ false])]
-                [(ast.AstType.MutRef name inner)
-                  (match right
-                    [(ast.AstType.MutRef other result)
-                      (and
-                        (qualified-name name other)
-                        (tc-proof-reuse-session-ast-type-exact?
-                          ctx
-                          (tc-context-type-get ctx inner)
-                          (tc-context-type-get ctx result)))]
-                    [_ false])]
-                [(ast.AstType.Ptr inner)
-                  (match right
-                    [(ast.AstType.Ptr result)
+                        (tc-context-type-get ctx other)))]
+                  [_ false])]
+              [(ast.AstType.DynArray elem)
+                (match right
+                  [(ast.AstType.DynArray other)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx elem)
+                      (tc-context-type-get ctx other))]
+                  [_ false])]
+              [(ast.AstType.Slice elem)
+                (match right
+                  [(ast.AstType.Slice other)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx elem)
+                      (tc-context-type-get ctx other))]
+                  [_ false])]
+              [(ast.AstType.Box inner)
+                (match right
+                  [(ast.AstType.Box result)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx inner)
+                      (tc-context-type-get ctx result))]
+                  [_ false])]
+              [(ast.AstType.Region name inner)
+                (match right
+                  [(ast.AstType.Region other result)
+                    (and
+                      (qualified-name name other)
                       (tc-proof-reuse-session-ast-type-exact?
                         ctx
                         (tc-context-type-get ctx inner)
-                        (tc-context-type-get ctx result))]
-                    [_ false])]
-                [(ast.AstType.MutPtr inner)
-                  (match right
-                    [(ast.AstType.MutPtr result)
+                        (tc-context-type-get ctx result)))]
+                  [_ false])]
+              [(ast.AstType.Ref name inner)
+                (match right
+                  [(ast.AstType.Ref other result)
+                    (and
+                      (qualified-name name other)
                       (tc-proof-reuse-session-ast-type-exact?
                         ctx
                         (tc-context-type-get ctx inner)
-                        (tc-context-type-get ctx result))]
-                    [_ false])]
-                [(ast.AstType.Consume inner)
-                  (match right
-                    [(ast.AstType.Consume result)
+                        (tc-context-type-get ctx result)))]
+                  [_ false])]
+              [(ast.AstType.MutRef name inner)
+                (match right
+                  [(ast.AstType.MutRef other result)
+                    (and
+                      (qualified-name name other)
                       (tc-proof-reuse-session-ast-type-exact?
                         ctx
                         (tc-context-type-get ctx inner)
-                        (tc-context-type-get ctx result))]
-                    [_ false])]
-                [_ false]))))))))
+                        (tc-context-type-get ctx result)))]
+                  [_ false])]
+              [(ast.AstType.Ptr inner)
+                (match right
+                  [(ast.AstType.Ptr result)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx inner)
+                      (tc-context-type-get ctx result))]
+                  [_ false])]
+              [(ast.AstType.MutPtr inner)
+                (match right
+                  [(ast.AstType.MutPtr result)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx inner)
+                      (tc-context-type-get ctx result))]
+                  [_ false])]
+              [(ast.AstType.Consume inner)
+                (match right
+                  [(ast.AstType.Consume result)
+                    (tc-proof-reuse-session-ast-type-exact?
+                      ctx
+                      (tc-context-type-get ctx inner)
+                      (tc-context-type-get ctx result))]
+                  [_ false])]
+              [_ false])]))]))
 
 ;; Exact generated-declaration comparison -----------------------------------
 ;;
@@ -55167,12 +55167,10 @@
   [left-id : i64]
   [right-id : i64]) : bool
   (and
-    (and
-      (>= left-id 0)
-      (< left-id (ast.ast-node-pool-context-expr-len (tc-context-pools ctx))))
-    (and
-      (>= right-id 0)
-      (< right-id (ast.ast-node-pool-context-expr-len (tc-context-pools ctx))))
+    (>= left-id 0)
+    (< left-id (ast.ast-node-pool-context-expr-len (tc-context-pools ctx)))
+    (>= right-id 0)
+    (< right-id (ast.ast-node-pool-context-expr-len (tc-context-pools ctx)))
     (tc-proof-reuse-session-ast-expr-exact?
       ctx
       (tc-context-expr-get ctx left-id)
@@ -55183,12 +55181,10 @@
   [left-id : i64]
   [right-id : i64]) : bool
   (and
-    (and
-      (>= left-id 0)
-      (< left-id (ast.ast-node-pool-context-type-len (tc-context-pools ctx))))
-    (and
-      (>= right-id 0)
-      (< right-id (ast.ast-node-pool-context-type-len (tc-context-pools ctx))))
+    (>= left-id 0)
+    (< left-id (ast.ast-node-pool-context-type-len (tc-context-pools ctx)))
+    (>= right-id 0)
+    (< right-id (ast.ast-node-pool-context-type-len (tc-context-pools ctx)))
     (tc-proof-reuse-session-ast-type-exact?
       ctx
       (tc-context-type-get ctx left-id)
@@ -89487,21 +89483,19 @@
                           ;; declarations and expressions fail closed there.
                           (if (begin
                             (scratch-reset-functions)
-                            (if (not
+                            (and
                               (tc-proof-reuse-session-identity-preflight-ids?
                                 left-id
-                                right-id))
-                              false
-                              (if (not
-                                (tc-proof-reuse-session-ast-decl-exact?
-                                  ctx
-                                  other
-                                  decl))
-                                false
-                                ;; Rule 4 is intentionally last: the exact walk
-                                ;; must finish before literal/operator/
-                                ;; reflection facts can authorize reuse.
-                                (if (or
+                                right-id)
+                              (tc-proof-reuse-session-ast-decl-exact?
+                                ctx
+                                other
+                                decl)
+                              ;; Rule 4 is intentionally last: the exact walk
+                              ;; must finish before literal/operator/
+                              ;; reflection facts can authorize reuse.
+                              (not
+                                (or
                                   active-invalid
                                   overflow-ok
                                   (and portable-pair local-use)
@@ -89512,95 +89506,87 @@
                                   (< first-key 0)
                                   (< next-id 0)
                                   (< identity-count2 1)
-                                  (> identity-count2 expected-count))
-                                  false
-                                  (let
-                                    [index : i64 0]
-                                    [ok : bool true]
+                                  (> identity-count2 expected-count)))
+                              (let
+                                [index : i64 0]
+                                [ok : bool true]
+                                (begin
+                                  ;; The identity metadata table is bounded
+                                  ;; to sixteen ordered operands.  Inspect
+                                  ;; only operand bits that exact type
+                                  ;; comparison actually marked as changed.
+                                  (while (and ok (< index expected-count))
                                     (begin
-                                      ;; The identity metadata table is bounded
-                                      ;; to sixteen ordered operands.  Inspect
-                                      ;; only operand bits that exact type
-                                      ;; comparison actually marked as changed.
-                                      (while (and ok (< index expected-count))
-                                        (begin
-                                          (if (=
-                                            (bit-and active-mask (shl 1 index))
-                                            0)
-                                            unit
-                                            (if (let
-                                              [key : String
-                                                (type-key-id first-slot index)]
-                                              [value : String
-                                                (type-key-id next-slots index)]
-                                              [kind : String
-                                                (kind-for-check
-                                                  first-slot
-                                                  index)]
-                                              [other : String
-                                                (kind-for-check
-                                                  next-slots
-                                                  index)]
-                                              [first : bool
-                                                (or
-                                                  (string.eq kind "f32")
-                                                  (string.eq kind "f64"))]
-                                              [second : bool
-                                                (or
-                                                  (string.eq other "f32")
-                                                  (string.eq other "f64"))]
-                                              [left : bool
-                                                (or
-                                                  (string.eq kind "struct")
-                                                  (string.eq kind "enum"))]
-                                              [right : bool
-                                                (or
-                                                  (string.eq other "struct")
-                                                  (string.eq other "enum"))]
-                                              [result : bool
-                                                (or
-                                                  (string.eq kind "string")
-                                                  (string.eq kind "bytes")
-                                                  (string.eq kind "array")
-                                                  (string.eq kind "dyn-array")
-                                                  (string.eq kind "box")
-                                                  (string.eq kind "tuple")
-                                                  (string.eq kind "struct")
-                                                  (string.eq kind "enum")
-                                                  (string.eq kind "expr")
-                                                  (string.eq kind "expr-list")
-                                                  (string.eq kind "function")
-                                                  (string.eq
-                                                    kind
-                                                    "consume-param"))]
-                                              [saved : bool
-                                                (or
-                                                  (string.eq other "string")
-                                                  (string.eq other "bytes")
-                                                  (string.eq other "array")
-                                                  (string.eq other "dyn-array")
-                                                  (string.eq other "box")
-                                                  (string.eq other "tuple")
-                                                  (string.eq other "struct")
-                                                  (string.eq other "enum")
-                                                  (string.eq other "expr")
-                                                  (string.eq other "expr-list")
-                                                  (string.eq other "function")
-                                                  (string.eq
-                                                    other
-                                                    "consume-param"))]
-                                              [state : bool
-                                                (or
-                                                  (string.eq other "i64")
-                                                  (string.eq other "i32")
-                                                  (string.eq other "i16")
-                                                  (string.eq other "i8")
-                                                  (string.eq other "u64")
-                                                  (string.eq other "u32")
-                                                  (string.eq other "u16")
-                                                  (string.eq other "u8")
-                                                  (string.eq other "char"))]
-                                              (if (or
+                                      (if (=
+                                        (bit-and active-mask (shl 1 index))
+                                        0)
+                                        unit
+                                        (if (let
+                                          [key : String
+                                            (type-key-id first-slot index)]
+                                          [value : String
+                                            (type-key-id next-slots index)]
+                                          [kind : String
+                                            (kind-for-check first-slot index)]
+                                          [other : String
+                                            (kind-for-check next-slots index)]
+                                          [first : bool
+                                            (or
+                                              (string.eq kind "f32")
+                                              (string.eq kind "f64"))]
+                                          [second : bool
+                                            (or
+                                              (string.eq other "f32")
+                                              (string.eq other "f64"))]
+                                          [left : bool
+                                            (or
+                                              (string.eq kind "struct")
+                                              (string.eq kind "enum"))]
+                                          [right : bool
+                                            (or
+                                              (string.eq other "struct")
+                                              (string.eq other "enum"))]
+                                          [result : bool
+                                            (or
+                                              (string.eq kind "string")
+                                              (string.eq kind "bytes")
+                                              (string.eq kind "array")
+                                              (string.eq kind "dyn-array")
+                                              (string.eq kind "box")
+                                              (string.eq kind "tuple")
+                                              (string.eq kind "struct")
+                                              (string.eq kind "enum")
+                                              (string.eq kind "expr")
+                                              (string.eq kind "expr-list")
+                                              (string.eq kind "function")
+                                              (string.eq kind "consume-param"))]
+                                          [saved : bool
+                                            (or
+                                              (string.eq other "string")
+                                              (string.eq other "bytes")
+                                              (string.eq other "array")
+                                              (string.eq other "dyn-array")
+                                              (string.eq other "box")
+                                              (string.eq other "tuple")
+                                              (string.eq other "struct")
+                                              (string.eq other "enum")
+                                              (string.eq other "expr")
+                                              (string.eq other "expr-list")
+                                              (string.eq other "function")
+                                              (string.eq other "consume-param"))]
+                                          [state : bool
+                                            (or
+                                              (string.eq other "i64")
+                                              (string.eq other "i32")
+                                              (string.eq other "i16")
+                                              (string.eq other "i8")
+                                              (string.eq other "u64")
+                                              (string.eq other "u32")
+                                              (string.eq other "u16")
+                                              (string.eq other "u8")
+                                              (string.eq other "char"))]
+                                          (cond
+                                            [(or
                                                 (= (string.string-length key) 0)
                                                 (=
                                                   (string.string-length value)
@@ -89611,34 +89597,32 @@
                                                 (=
                                                   (string.string-length other)
                                                   0))
-                                                false
-                                                (if (string.eq key value)
-                                                  true
-                                                  (if (or
-                                                    checked-context
-                                                    first
-                                                    second
-                                                    left
-                                                    right
-                                                    result
-                                                    saved
-                                                    shifted
-                                                    has-operands
-                                                    reflection-env
-                                                    negative-literal
-                                                    (and
-                                                      (> digit-count 0)
-                                                      (not state))
-                                                    (and
-                                                      conditional-operand
-                                                      (not
-                                                        (string.eq kind other))))
-                                                    false
-                                                    (type-dedup-ok? other 0)))))
-                                              unit
-                                              (set! ok false)))
-                                          (set! index (+ index 1))))
-                                      ok))))))
+                                              false]
+                                            [(string.eq key value) true]
+                                            [(or
+                                                checked-context
+                                                first
+                                                second
+                                                left
+                                                right
+                                                result
+                                                saved
+                                                shifted
+                                                has-operands
+                                                reflection-env
+                                                negative-literal
+                                                (and
+                                                  (> digit-count 0)
+                                                  (not state))
+                                                (and
+                                                  conditional-operand
+                                                  (not (string.eq kind other))))
+                                              false]
+                                            [else (type-dedup-ok? other 0)]))
+                                          unit
+                                          (set! ok false)))
+                                      (set! index (+ index 1))))
+                                  ok))))
                             (TcProofReuseGeneratedDeclSkip)
                             (TcProofReuseGeneratedDeclConcrete))))]
                     [(spec.SpecMaybeString.None)

@@ -54,7 +54,7 @@
     [identity-count : i64
       (compiler-typecheck-proof-reuse-identity-count identity)]
     (and
-      (and (= family-first-id identity-id))
+      (= family-first-id identity-id)
       (= identity-count 1)
       (string.eq (tc_core.type-key-id identity-slot 0) type-key)
       (string.eq (tc_core.kind-for-check identity-slot 0) kind)
@@ -1232,34 +1232,33 @@
                                               ""
                                               cbi.compiler-builtin-id-fix-empty
                                               (ast.ast-node-pool-context-capture-active))]
-                                          (let
-                                            [exact-ok : bool
-                                              (begin
-                                                (tc_core.scratch-reset-functions)
-                                                (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
-                                                  (tc_core.lookup-key-id
-                                                    "tc-walker-first")
-                                                  (tc_core.lookup-key-id
-                                                    "tc-walker-next"))
-                                                  (tc_core.tc-proof-reuse-session-ast-decl-exact?
-                                                    ctx
-                                                    first-decl
-                                                    next-decl)
-                                                  false))]
-                                            [context-ok : bool
-                                              (=
-                                                tc_core.checked-context
-                                                want-context)]
-                                            [safe-ok : bool
-                                              (tc_core.invalid-keeps-first)]
+                                          [exact-ok : bool
                                             (begin
-                                              (stdlib.io.print-bool exact-ok)
-                                              (stdlib.io.print-bool safe-ok)
-                                              (stdlib.io.print-bool context-ok)
-                                              (and
-                                                (= exact-ok want-exact)
-                                                (= safe-ok want-safe)
-                                                context-ok))))))]
+                                              (tc_core.scratch-reset-functions)
+                                              (if (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                                                (tc_core.lookup-key-id
+                                                  "tc-walker-first")
+                                                (tc_core.lookup-key-id
+                                                  "tc-walker-next"))
+                                                (tc_core.tc-proof-reuse-session-ast-decl-exact?
+                                                  ctx
+                                                  first-decl
+                                                  next-decl)
+                                                false))]
+                                          [context-ok : bool
+                                            (=
+                                              tc_core.checked-context
+                                              want-context)]
+                                          [safe-ok : bool
+                                            (tc_core.invalid-keeps-first)]
+                                          (begin
+                                            (stdlib.io.print-bool exact-ok)
+                                            (stdlib.io.print-bool safe-ok)
+                                            (stdlib.io.print-bool context-ok)
+                                            (and
+                                              (= exact-ok want-exact)
+                                              (= safe-ok want-safe)
+                                              context-ok)))))]
                                   [_ false])]
                               [_ false])))]
                       [_ false])]

@@ -4,7 +4,9 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_typecheck)
-(import tests.compiler_typecheck_proof_reuse_unit as proof_reuse_unit)
+(cfg
+  test
+  (import tests.compiler_typecheck_proof_reuse_unit as proof_reuse_unit))
 (import compiler_typecheck_api as tc_api)
 (import compiler_diagnostic as diagnostic)
 (import compiler_typecheck_core as tc_core)
@@ -5183,6 +5185,12 @@
     (compiler-typecheck-auto-borrow-tests-ok?)
     (io.panic "typecheck: auto-borrow call diagnostic inline test failed")))
 
+(test
+  compiler-typecheck-proof-reuse-exact-walker
+  (unless
+    (proof_reuse_unit.compiler-typecheck-proof-reuse-unit-tests-ok?)
+    (io.panic "typecheck: proof-reuse exact/walker unit tests failed")))
+
 (define (compiler-typecheck-smoke-body-state-diagnostic-reuse-ok?) : bool
   (let
     [failed : tc_core.ResultCompilerTypecheck
@@ -5257,6 +5265,7 @@
 
 (define (compiler-typecheck-smoke-installed-vector-profile-file-ok?
   [path : String]
+  ;; lint-allow: unused-variable -- used by test builds.
   [expected-skips : i64]) : bool
   (let
     [roots : svec.Vec (compiler-typecheck-smoke-installed-proof-reuse-roots)]
@@ -5282,7 +5291,10 @@
                 roots
                 cfgs))
               [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
-                (= (tc_core.tc-proof-reuse-skips-total-value) expected-skips)]
+                (cfg
+                  test
+                  (= (tc_core.tc-proof-reuse-skips-total-value) expected-skips)
+                  true)]
               [(tc_core.ResultCompilerTypecheckChecked.Err diagnostics)
                 (let
                   [message : String
@@ -5599,9 +5611,6 @@
         (return 0)
         (return 1)))
     (compiler_typecheck.compiler-typecheck-self-test)
-    (unless
-      (proof_reuse_unit.compiler-typecheck-proof-reuse-unit-tests-ok?)
-      (io.panic "typecheck: proof-reuse exact/walker unit tests failed"))
     (unless
       (compiler-typecheck-core-macro-bodies-observed?)
       (io.panic "typecheck: stdlib core macro body was bypassed"))

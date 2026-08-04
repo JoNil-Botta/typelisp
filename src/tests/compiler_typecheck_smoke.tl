@@ -4,6 +4,9 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_typecheck)
+(cfg
+  test
+  (import tests.compiler_typecheck_proof_reuse_unit as proof_reuse_unit))
 (import compiler_typecheck_api as tc_api)
 (import compiler_diagnostic as diagnostic)
 (import compiler_typecheck_core as tc_core)
@@ -5182,6 +5185,12 @@
     (compiler-typecheck-auto-borrow-tests-ok?)
     (io.panic "typecheck: auto-borrow call diagnostic inline test failed")))
 
+(test
+  compiler-typecheck-proof-reuse-exact-walker
+  (unless
+    (proof_reuse_unit.compiler-typecheck-proof-reuse-unit-tests-ok?)
+    (io.panic "typecheck: proof-reuse exact/walker unit tests failed")))
+
 (define (compiler-typecheck-smoke-body-state-diagnostic-reuse-ok?) : bool
   (let
     [failed : tc_core.ResultCompilerTypecheck
@@ -5203,6 +5212,262 @@
       (match reused
         [(tc_core.ResultCompilerTypecheck.Ok _) true]
         [(tc_core.ResultCompilerTypecheck.Err _) false]))))
+
+;; Engage the proof-reuse lane through the real installed-module loader.  The
+;; vector fixtures import stdlib.vector and instantiate the same generated
+;; catalog under one versus five concrete identities; keep each run isolated
+;; so the measured skip count cannot carry across programs.
+(define (compiler-typecheck-smoke-installed-proof-reuse-roots) : svec.Vec
+  (let
+    [roots : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut roots) "stdlib")
+      (svec.push (&mut roots) "src")
+      roots)))
+
+;; The public source-load adapter always prepends the core-macro prelude.  The
+;; path-aware installed fixture loader needs the same prelude explicitly so
+;; entry expressions such as `and` retain their macro bindings.
+(define (compiler-typecheck-smoke-installed-proof-load-file
+  [path : String]
+  [roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : load.ResultCompilerLoadWithPaths
+  (match (load.compiler-load-core-macro-prelude-with-roots-cfg
+    (sym_i64_env.sym-i64-empty)
+    roots
+    cfgs)
+    [(load.ResultCompilerLoadWithPaths.Ok
+        prelude-decls
+        prelude-paths
+        prelude-modules
+        prelude-seen)
+      (match (load.compiler-load-file-with-paths-and-roots-cfg
+        path
+        prelude-seen
+        roots
+        cfgs)
+        [(load.ResultCompilerLoadWithPaths.Ok
+            entry-decls
+            entry-paths
+            entry-modules
+            seen)
+          (load.ResultCompilerLoadWithPaths.Ok
+            (load.compiler-load-decl-list-append prelude-decls entry-decls)
+            (load.compiler-load-decl-path-list-append prelude-paths entry-paths)
+            (load.compiler-load-decl-module-list-append
+              prelude-modules
+              entry-modules)
+            seen)]
+        [(load.ResultCompilerLoadWithPaths.Err diag)
+          (load.ResultCompilerLoadWithPaths.Err diag)])]
+    [(load.ResultCompilerLoadWithPaths.Err diag)
+      (load.ResultCompilerLoadWithPaths.Err diag)]))
+
+(define (compiler-typecheck-smoke-installed-vector-profile-file-ok?
+  [path : String]
+  ;; lint-allow: unused-variable -- used by test builds.
+  [expected-skips : i64]) : bool
+  (let
+    [roots : svec.Vec (compiler-typecheck-smoke-installed-proof-reuse-roots)]
+    [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
+    [result : bool
+      (begin
+        (tc_api.compiler-typecheck-reset-load-session!)
+        (tc_core.compiler-typecheck-reset-file-state!)
+        (tc_core.tc-macro-abstract-proof-reset!)
+        (load.compiler-load-surface-summaries-reset!)
+        (tc_core.tc-prefix-snapshot-cache-clear!)
+        (match (compiler-typecheck-smoke-installed-proof-load-file
+          path
+          roots
+          cfgs)
+          [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
+              (ast.ast-program decls)
+              paths
+              roots
+              (tc_api.compiler-typecheck-prefix-cache-scope
+                "proof-reuse-smoke"
+                roots
+                cfgs))
+              [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
+                (cfg
+                  test
+                  (= (tc_core.tc-proof-reuse-skips-total-value) expected-skips)
+                  true)]
+              [(tc_core.ResultCompilerTypecheckChecked.Err diagnostics)
+                (let
+                  [message : String
+                    (diagnostic.compiler-diagnostic-message
+                      (diagnostic.compiler-diagnostic-list-first
+                        (box-get diagnostics)))]
+                  (begin
+                    (io.stderr-write (byte_buf.str-as-bytes (& message)))
+                    false))])]
+          [(load.ResultCompilerLoadWithPaths.Err load-diagnostic)
+            (let
+              [message : String
+                (diagnostic.compiler-diagnostic-message
+                  (box-get load-diagnostic))]
+              (begin
+                (io.stderr-write (byte_buf.str-as-bytes (& message)))
+                false))]))]
+    (begin
+      ;; Reset both loader/file state and proof/family counters after every
+      ;; fixture, including a failing one, before returning to later smoke.
+      (tc_core.compiler-typecheck-reset-file-state!)
+      (tc_core.tc-macro-abstract-proof-reset!)
+      (load.compiler-load-surface-summaries-reset!)
+      (tc_core.tc-prefix-snapshot-cache-clear!)
+      (tc_api.compiler-typecheck-reset-load-session!)
+      result)))
+
+(define (compiler-typecheck-smoke-installed-vector-proof-reuse-ok?) : bool
+  (if (compiler-typecheck-smoke-installed-vector-profile-file-ok?
+    "tests/integration/compile_profile_vector_one_core.tl"
+    0)
+    (compiler-typecheck-smoke-installed-vector-profile-file-ok?
+      "tests/integration/compile_profile_vector_five_core.tl"
+      16)
+    false))
+
+;; Run one installed-loader fixture that must fail, and require the concrete
+;; checker diagnostic to contain the packet's stable substring.  Load and proof
+;; state are reset both before and after every fixture so a failing identity
+;; cannot contaminate a later family.
+(define (compiler-typecheck-smoke-installed-proof-error-file-ok?
+  [path : String]
+  [expected-substring : String]) : bool
+  (let
+    [roots : svec.Vec (compiler-typecheck-smoke-installed-proof-reuse-roots)]
+    [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
+    [result : bool
+      (begin
+        (tc_api.compiler-typecheck-reset-load-session!)
+        (tc_core.compiler-typecheck-reset-file-state!)
+        (tc_core.tc-macro-abstract-proof-reset!)
+        (load.compiler-load-surface-summaries-reset!)
+        (tc_core.tc-prefix-snapshot-cache-clear!)
+        (match (compiler-typecheck-smoke-installed-proof-load-file
+          path
+          roots
+          cfgs)
+          [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
+              (ast.ast-program decls)
+              paths
+              roots
+              (tc_api.compiler-typecheck-prefix-cache-scope
+                "proof-reuse-smoke"
+                roots
+                cfgs))
+              [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) false]
+              [(tc_core.ResultCompilerTypecheckChecked.Err diagnostics)
+                (load.compiler-load-string-contains?
+                  (diagnostic.compiler-diagnostic-message
+                    (diagnostic.compiler-diagnostic-list-first
+                      (box-get diagnostics)))
+                  expected-substring)])]
+          [(load.ResultCompilerLoadWithPaths.Err load-diagnostic)
+            (load.compiler-load-string-contains?
+              (diagnostic.compiler-diagnostic-message (box-get load-diagnostic))
+              expected-substring)]))]
+    (begin
+      (tc_core.compiler-typecheck-reset-file-state!)
+      (tc_core.tc-macro-abstract-proof-reset!)
+      (load.compiler-load-surface-summaries-reset!)
+      (tc_core.tc-prefix-snapshot-cache-clear!)
+      (tc_api.compiler-typecheck-reset-load-session!)
+      result)))
+
+(define (compiler-typecheck-smoke-installed-proof-reuse-safety-ok?) : bool
+  (let
+    [hidden-invalid-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_hidden_invalid.tl"
+        "typecheck: integer literal 300 does not fit expected type u8")]
+    [literal-narrowing-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_literal_narrowing.tl"
+        "typecheck: integer literal 300 does not fit expected type u8")]
+    [bool-arithmetic-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_bool_arithmetic.tl"
+        "typecheck: integer operator expects matching integer operands")]
+    [uncloneable-clone-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_uncloneable_clone.tl"
+        "typecheck: clone unsupported type (-> i64 i64)")]
+    [equality-sensitive-ok : bool
+      (compiler-typecheck-smoke-installed-vector-profile-file-ok?
+        "tests/integration/proof_reuse_equality.tl"
+        0)]
+    [cleanup-substitution-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_cleanup_ownership.tl"
+        "field value stores cleanup-owning type FileHandle without :owned")]
+    [reflection-fixed-shape-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_reflection_fixed_shape.tl"
+        "typecheck: array elements must have same type: expected i64, found bool")]
+    [nested-generated-imports-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_nested_generated_imports.tl"
+        "typecheck: integer literal 300 does not fit expected type u8")]
+    [fixed-signature-call-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_fixed_signature_call.tl"
+        "typecheck: call `proof-reuse-fixed-signature-call-only-i64` argument 1 (parameter `x`) type mismatch: expected i64, found u8")]
+    [fixed-value-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_fixed_value.tl"
+        "typecheck: return type mismatch: expected u8, found i64")]
+    [fixed-local-annotation-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_fixed_local_annotation.tl"
+        "typecheck: let binding `y` type mismatch: expected i64, found u8")]
+    [fixed-return-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_fixed_return.tl"
+        "typecheck: return type mismatch: expected i64, found u8")]
+    [fixed-field-access-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_fixed_field_access.tl"
+        "typecheck: return type mismatch: expected u8, found i64")]
+    [substituted-condition-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_substituted_condition.tl"
+        "typecheck: if condition must be bool: expected bool, found u8")]
+    [fixed-constructor-argument-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_fixed_constructor_argument.tl"
+        "typecheck: call `Box` argument 1 (parameter `fixed`) type mismatch: expected i64, found u8")]
+    [partial-catalog-ok : bool
+      (compiler-typecheck-smoke-installed-vector-profile-file-ok?
+        "tests/integration/proof_reuse_partial_catalog.tl"
+        2)]
+    [sibling-value-dependency-ok : bool
+      (compiler-typecheck-smoke-installed-proof-error-file-ok?
+        "tests/integration/proof_reuse_sibling_value_dependency.tl"
+        "typecheck: integer operator expects matching integer operands")]
+    (and
+      hidden-invalid-ok
+      literal-narrowing-ok
+      bool-arithmetic-ok
+      uncloneable-clone-ok
+      equality-sensitive-ok
+      cleanup-substitution-ok
+      reflection-fixed-shape-ok
+      nested-generated-imports-ok
+      fixed-signature-call-ok
+      fixed-value-ok
+      fixed-local-annotation-ok
+      fixed-return-ok
+      fixed-field-access-ok
+      substituted-condition-ok
+      fixed-constructor-argument-ok
+      partial-catalog-ok
+      sibling-value-dependency-ok)))
 
 (cfg
   compile-profile
@@ -5530,5 +5795,11 @@
     (unless
       (compiler-typecheck-smoke-surface-macro-summary-ok?)
       (io.panic "typecheck: surface summary macro export smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-installed-vector-proof-reuse-ok?)
+      (io.panic "typecheck: installed vector proof-reuse smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-installed-proof-reuse-safety-ok?)
+      (io.panic "typecheck: installed proof-reuse safety matrix smoke failed"))
     (tc_core.macro-alias-cache-reset!)
     42))

@@ -4941,6 +4941,15 @@
   compile-profile
   (define compiler-tc-macro-generated-decl-checks-concrete-required : i64
     0))
+
+;; These proof-metadata top-level spellings deliberately reuse identifiers already
+;; interned as local binders in the compiler dependency graph to fit the legacy
+;; fixed pool; local-only spellings avoid imported top-level symbol collisions.
+;; #5211 should remove this constraint.
+(cfg
+  compile-profile
+  (define selected-count : i64
+    0))
 (cfg
   compile-profile
   (define compiler-tc-macro-abstract-proofs-recorded : i64
@@ -5180,6 +5189,7 @@
       (set! compiler-tc-macro-generated-decl-checks 0)
       (set! compiler-tc-macro-generated-decl-checks-invariant-eligible 0)
       (set! compiler-tc-macro-generated-decl-checks-concrete-required 0)
+      (set! selected-count 0)
       (set! compiler-tc-macro-abstract-proofs-recorded 0)
       (set! compiler-tc-macro-generated-module-memo-hits 0)
       (set! compiler-tc-macro-generated-module-catalog-builds 0)
@@ -5563,23 +5573,27 @@
       (match (ast.ast-decl-generated-meta decl)
         [(ast.AstGeneratedDeclMeta.Some generator _ _ _)
           (begin
-            (set!
-              compiler-tc-macro-generated-decl-checks
-              (+ compiler-tc-macro-generated-decl-checks 1))
-            ;; Report-only lane split for #5296: a generated declaration is an
-            ;; invariant-eligible candidate when its generator has a persisted
-            ;; abstract-validation proof and the declaration itself is free of
-            ;; substitution-dependent constructs. Checking behavior is
-            ;; unchanged; the totals still sum to generated_decl_checks.
+            ;; The lane split is independent of whether this success was
+            ;; concrete or proof-reused.  A declaration is invariant-eligible
+            ;; exactly when its generator proof is complete and the tightened
+            ;; dependency scan is clear; every other success is
+            ;; concrete-required.
             (if (and
-              (tc-macro-abstract-proof-exists-for-macro? generator)
+              (complete-key generator)
               (not (tc-generated-decl-dependent-construct? ctx decl)))
               (set!
                 compiler-tc-macro-generated-decl-checks-invariant-eligible
                 (+ compiler-tc-macro-generated-decl-checks-invariant-eligible 1))
               (set!
                 compiler-tc-macro-generated-decl-checks-concrete-required
-                (+ compiler-tc-macro-generated-decl-checks-concrete-required 1))))]
+                (+ compiler-tc-macro-generated-decl-checks-concrete-required 1)))
+            ;; Actual checker calls and proof reuses are mutually exclusive;
+            ;; count the latter from the dispatch bit set for this attempt.
+            (if next-skip
+              (set! selected-count (+ selected-count 1))
+              (set!
+                compiler-tc-macro-generated-decl-checks
+                (+ compiler-tc-macro-generated-decl-checks 1))))]
         [(ast.AstGeneratedDeclMeta.No) unit])
       (match decl
         [(ast.AstDecl.Def decl-meta _ _ _)
@@ -5823,6 +5837,9 @@
       (compiler-tc-macro-counter-profile-line
         "generated_decl_checks_concrete_required"
         compiler-tc-macro-generated-decl-checks-concrete-required)
+      (compiler-tc-macro-counter-profile-line
+        "generated_decl_checks_proof_reused"
+        selected-count)
       (compiler-tc-macro-counter-profile-line
         "generated_module_abstract_proofs"
         compiler-tc-macro-abstract-proofs-recorded)
@@ -53859,7 +53876,7 @@
 
 ;; --- persisted abstract-validation proofs (#5296) -----------------------------
 ;;
-;; Report-only instrumentation for the future generated-module skip lane.
+;; Persisted abstract-validation proofs for the live generated-module skip lane.
 ;; `tc-check-defmacro-abstract-param` validates every kind-constrained macro
 ;; type operand abstractly at definition time; this table keeps the successful
 ;; results instead of discarding them: one entry per (macro-key, param-name)
@@ -53867,14 +53884,16 @@
 ;; display string `macro-wrap-generated-decl` stamps into generated declaration
 ;; metadata (`macro-decl-name-display` over the definition module), so a
 ;; generated declaration can test whether its generator owns any persisted
-;; proof without re-resolving the macro. Entries hold only intern-table ids in
-;; startup-allocated arrays: nothing here points into per-compile arenas, so
-;; the table stays readable across the arena rewinds that end a typecheck. A
-;; repeated proof for the same key overwrites in place. The table resets at
-;; every per-program macro-expansion boundary next to
-;; `macro-generated-module-memo-reset!`; entries past the fixed capacity are
-;; dropped, which is the conservative direction (the generator then reports no
-;; proof and its declarations land in the concrete-required lane).
+;; proof without re-resolving the macro. Complete-generator entries are owned
+;; String keys rather than intern ids because their proof lifetime crosses
+;; compatibility-table installs inside one macro-expansion program. Fixed slot
+;; storage lives in the never-reset global table arena, while the bounded key
+;; bytes live in a per-program arena destroyed on reset. A repeated proof for
+;; the same key is a no-op. The table resets at every per-program
+;; macro-expansion boundary next to `macro-generated-module-memo-reset!`;
+;; entries past the fixed capacity are dropped, which is the conservative
+;; direction (the generator then reports no proof and its declarations land in
+;; the concrete-required lane).
 (define tc-macro-abstract-proof-capacity : i64
   4096)
 (define tc-macro-abstract-proof-macro-keys : (__tl_dyn-array i64)
@@ -53885,9 +53904,1789 @@
   (array.make-array i64 4096))
 (define tc-macro-abstract-proof-count : i64
   0)
+(define requested-capacity : i64
+  4096)
+(define qualified-key-id : (__tl_dyn-array String)
+  (array.make-array String 0))
+(define required-count : i64
+  0)
+(define map-ready : bool
+  false)
+(define persistent-arena : i64
+  0)
+(define any-active : bool
+  false)
+
+;; The first successful concrete declaration owns the family row's checked
+;; declaration and identity; duplicate notes preserve both values exactly.
+(define additional-capacity : i64
+  4096)
+(define function-names : (__tl_dyn-array String)
+  (array.make-array String 4096))
+(define local-names : (__tl_dyn-array String)
+  (array.make-array String 4096))
+(define storage-identity-vars : (__tl_dyn-array i64)
+  (array.make-array i64 4096))
+(define augmented-decls : (__tl_dyn-array ast.AstDecl)
+  (array.make-array ast.AstDecl 4096))
+(define item-count : i64
+  0)
+(define block-generation : i64
+  -1)
+(define table-cell : i64
+  -1)
+(define has-generated-decls : bool
+  false)
+(define store-capacity : i64
+  4096)
+(define expected-count : i64
+  16)
+(define identity-bytes : (__tl_dyn-array i64)
+  (array.make-array i64 4096))
+(define operand-count : (__tl_dyn-array i64)
+  (array.make-array i64 4096))
+(define declared-types : (__tl_dyn-array String)
+  (array.make-array String 65536))
+(define macro-type-kinds : (__tl_dyn-array String)
+  (array.make-array String 65536))
+(define identity-count : i64
+  0)
+(define generation-cell : i64
+  -1)
+(define next-table-id : i64
+  -1)
+(define identity-tail-forwarder? : bool
+  false)
+
+;; This fast path is set only after at least one usable complete-proof entry
+;; exists. Expansion precedes final defmacro proof persistence, so identity
+;; capture is admitted only for syntactically complete fixed-type candidates;
+;; the lane and all query paths remain gated by this bit and are non-inserting.
+(define active? : bool
+  false)
+(cfg
+  test
+  (define tc-proof-reuse-skips-total : i64
+    0))
+(define next-skip : bool
+  false)
+
+(cfg
+  test
+  (define (tc-proof-reuse-skips-total-value) : i64
+    tc-proof-reuse-skips-total))
+
+(define expected-key : (__tl_dyn-array String)
+  (array.make-array String 16))
+(define expected-kind : (__tl_dyn-array String)
+  (array.make-array String 16))
+(define scratch-count : i64
+  0)
+
+;; One bounded comparison session is shared by the generated-declaration proof
+;; lane.  The session owns only identity metadata and fixed comparison state;
+;; a failed or uninitialized session is never usable by the exact primitives.
+(define first-key : i64
+  -1)
+(define next-id : i64
+  -1)
+(define first-slot : i64
+  -1)
+(define next-slots : i64
+  -1)
+(define identity-count2 : i64
+  0)
+(define active-mask : i64
+  0)
+(define active-invalid : bool
+  false)
+
+;; Lexical locals are recorded as bounded first/next name pairs while one
+;; declaration is walked.  Equal names outside this table are fixed values
+;; (globals/helpers) rather than locals; the final Rule-4 guard rejects that
+;; combination whenever a generated identity substitution was observed.
+(define type-capacity : i64
+  128)
+(define local-alias-names : (__tl_dyn-array i64)
+  (array.make-array i64 128))
+(define next-locals : (__tl_dyn-array i64)
+  (array.make-array i64 128))
+(define local-ordinal : i64
+  0)
+(define local-shadow-updated? : bool
+  false)
+(define portable-pair : bool
+  false)
+(define local-use : bool
+  false)
+
+;; An unchanged complete type subtree beside a substitution is a fixed
+;; signature/annotation boundary.  Direct DefStruct field shapes may opt into
+;; the narrow exception below after their entire declaration compares exact.
+(define fixed-call : bool
+  false)
+(define allow-cleanup : bool
+  false)
+
+;; These expression forms rely on an implicit expected type or contextual
+;; relation that is not represented by an AstType node.  Exact syntax is still
+;; useful for catalog shape, but a changed recorded type operand must fall back
+;; to concrete checking whenever this bounded fact was observed.
+(define checked-context : bool
+  false)
+
+;; Literal facts are deliberately bounded.  The count, rather than the
+;; backing storage contents, is authoritative after a reset; an over-capacity
+;; append poisons the session so the final rule guard fails closed.
+(define seed-capacity : i64
+  128)
+(define uniform-values : (__tl_dyn-array i64)
+  (array.make-array i64 128))
+(define inject-texts : (__tl_dyn-array String)
+  (array.make-array String 128))
+(define digit-count : i64
+  0)
+(define overflow-ok : bool
+  false)
+(define conditional-operand : bool
+  false)
+(define shifted : bool
+  false)
+(define has-operands : bool
+  false)
+(define reflection-env : bool
+  false)
+(define negative-literal : bool
+  false)
+
+(define (text-copy [macro-key : String]) : String
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64
+      (if (= persistent-arena 0)
+        (begin
+          (set! persistent-arena (arena.tl_arena_make_small))
+          persistent-arena)
+        persistent-arena)]
+    [_set-owner : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [copied : String (string.copy macro-key)]
+    (begin
+      (let
+        [head : i64 (arena.tl_arena_current)]
+        (begin
+          (set! persistent-arena head)
+          (unsafe
+            (arena.tl_arena_set
+              (if (= previous owner)
+                head
+                previous)))))
+      copied)))
+
+(define (added-key [macro-key : String] [cursor : i64] [steps : i64]) : unit
+  (if (>= steps requested-capacity)
+    unit
+    (let
+      [slot : String (array-ref qualified-key-id cursor)]
+      (cond
+        [(= (string.string-length slot) 0)
+          (if (>= (* required-count 2) requested-capacity)
+            unit
+            (begin
+              (array-set! qualified-key-id cursor (text-copy macro-key))
+              (set! required-count (+ required-count 1))
+              (set! active? true)))]
+        [(string.eq slot macro-key) (set! active? true)]
+        [else
+          (added-key
+            macro-key
+            (bit-and (+ cursor 1) (- requested-capacity 1))
+            (+ steps 1))]))))
+
+(define (record-count [macro-key : String]) : unit
+  (if (= (string.string-length macro-key) 0)
+    unit
+    (begin
+      (if map-ready
+        unit
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [owner : i64 (tc-lazy-global-table-arena-ensure!)]
+          [_set-owner : unit
+            (unsafe
+              (arena.tl_arena_set owner))]
+          (begin
+            (set! qualified-key-id (array.make-array String requested-capacity))
+            (set! map-ready true)
+            (tc-lazy-global-table-arena-finish! previous owner))))
+      (if any-active
+        unit
+        (let
+          [index : i64 0]
+          (begin
+            (while (< index requested-capacity)
+              (begin
+                (array-set! qualified-key-id index "")
+                (set! index (+ index 1))))
+            (set! required-count 0)
+            (set! any-active true)
+            (set! active? false))))
+      (added-key
+        macro-key
+        (bit-and (ci.intern-hash macro-key) (- requested-capacity 1))
+        0))))
+
+(cfg
+  test
+  (define (reset-result) : unit
+    (begin
+      (if (= persistent-arena 0)
+        unit
+        (begin
+          (unsafe
+            (arena.tl_arena_destroy persistent-arena))
+          (set! persistent-arena 0)))
+      (set! any-active false)
+      (set! required-count 0)
+      (set! active? false))))
+
+(define (key-matches [macro-key : String] [cursor : i64] [steps : i64]) : bool
+  (if (>= steps requested-capacity)
+    false
+    (let
+      [slot : String (array-ref qualified-key-id cursor)]
+      (if (= (string.string-length slot) 0)
+        false
+        (if (string.eq slot macro-key)
+          true
+          (key-matches
+            macro-key
+            (bit-and (+ cursor 1) (- requested-capacity 1))
+            (+ steps 1)))))))
+
+(define (complete-key [macro-key : String]) : bool
+  (if (or (not active?) (= (string.string-length macro-key) 0))
+    false
+    (key-matches
+      macro-key
+      (bit-and (ci.intern-hash macro-key) (- requested-capacity 1))
+      0)))
+
+(define (bucket-name [generator : String] [item : String]) : i64
+  ;; Hashes only choose a probe start.  Stored textual keys are compared with
+  ;; `string.eq` below so collisions remain exact and collision-safe.
+  (bit-and
+    (*
+      (bit-xor
+        (* (ci.intern-hash generator) 2654435761)
+        (* (ci.intern-hash item) 2246822519))
+      3266489917)
+    (- additional-capacity 1)))
+
+(define (map-ready-cell) : unit
+  (if (and
+    has-generated-decls
+    (= block-generation (ci.intern-generation))
+    (= table-cell (ci.intern-active-table-id)))
+    unit
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index additional-capacity)
+          (begin
+            (array-set! function-names index "")
+            (array-set! local-names index "")
+            (array-set! storage-identity-vars index 0)
+            (set! index (+ index 1))))
+        (set! item-count 0)
+        (set! block-generation (ci.intern-generation))
+        (set! table-cell (ci.intern-active-table-id))
+        (set! has-generated-decls true)))))
+
+(cfg
+  test
+  (define (scratch-reset) : unit
+    (begin
+      (set! has-generated-decls false)
+      (set! item-count 0)
+      (set! block-generation -1)
+      (set! table-cell -1))))
+
+(define (record-slot
+  [generator : String]
+  [item : String]
+  [identity : String]
+  [decl : ast.AstDecl]) : unit
+  (let
+    [identity-id : i64 (tc-generated-module-name-id identity)]
+    (if (< identity-id 0)
+      unit
+      (begin
+        (map-ready-cell)
+        (let
+          [cursor : i64 (bucket-name generator item)]
+          [key : i64 (+ identity-id 1)]
+          [steps : i64 0]
+          [done : bool false]
+          (while (if done
+            false
+            (< steps additional-capacity))
+            (let
+              [slot : i64 (array-ref storage-identity-vars cursor)]
+              (cond
+                [(= slot 0)
+                  (if (>= (* item-count 2) additional-capacity)
+                    (set! done true)
+                    (begin
+                      (array-set! function-names cursor (text-copy generator))
+                      (array-set! local-names cursor (text-copy item))
+                      (array-set! storage-identity-vars cursor key)
+                      (array-set! augmented-decls cursor decl)
+                      (set! item-count (+ item-count 1))
+                      (set! done true)))]
+                [(and
+                    (string.eq (array-ref function-names cursor) generator)
+                    (string.eq (array-ref local-names cursor) item))
+                  (set! done true)]
+                [else
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and (+ cursor 1) (- additional-capacity 1)))
+                    (set! steps (+ steps 1)))]))
+            unit))))))
+
+(define (slot-index [generator : String] [item : String]) : i64
+  (begin
+    (map-ready-cell)
+    (let
+      [cursor : i64 (bucket-name generator item)]
+      [steps : i64 0]
+      [out : i64 -1]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< steps additional-capacity))
+          (let
+            [slot : i64 (array-ref storage-identity-vars cursor)]
+            (if (= slot 0)
+              (set! done true)
+              (if (and
+                (string.eq (array-ref function-names cursor) generator)
+                (string.eq (array-ref local-names cursor) item))
+                (begin
+                  (set! out cursor)
+                  (set! done true))
+                (begin
+                  (set! cursor (bit-and (+ cursor 1) (- additional-capacity 1)))
+                  (set! steps (+ steps 1)))))))
+        out))))
+
+(define (index-key [identity-id : i64]) : i64
+  (bit-and (* (+ identity-id 1) 2654435761) (- store-capacity 1)))
+
+(define (running-identity) : unit
+  (if (and
+    identity-tail-forwarder?
+    (= generation-cell (ci.intern-generation))
+    (= next-table-id (ci.intern-active-table-id)))
+    unit
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index store-capacity)
+          (begin
+            (array-set! identity-bytes index 0)
+            (array-set! operand-count index 0)
+            (set! index (+ index 1))))
+        (set! identity-count 0)
+        (set! generation-cell (ci.intern-generation))
+        (set! next-table-id (ci.intern-active-table-id))
+        (set! identity-tail-forwarder? true)))))
+
+(cfg
+  test
+  (define (scratch-reset-result) : unit
+    (begin
+      (set! identity-tail-forwarder? false)
+      (set! identity-count 0)
+      (set! generation-cell -1)
+      (set! next-table-id -1))))
+
+(define (scratch-reset-context) : unit
+  (set! scratch-count 0))
+
+(define (scratch-plan-result [type-key : String] [kind : String]) : unit
+  (match (< scratch-count 0)
+    [true unit]
+    [false
+      (match (or
+        (= (string.string-length type-key) 0)
+        (= (string.string-length kind) 0))
+        [true (set! scratch-count -1)]
+        [false
+          (match (>= scratch-count expected-count)
+            [true (set! scratch-count -1)]
+            [false
+              (let
+                [index : i64 scratch-count]
+                (begin
+                  ;; Scratch is consumed by the immediately following note.  Keep
+                  ;; caller Strings directly here; persistent rows copy them into
+                  ;; the per-program proof key arena during commit.
+                  (array-set! expected-key index type-key)
+                  (array-set! expected-kind index kind)
+                  (set! scratch-count (+ scratch-count 1))))])])]))
+
+(define (scratch-reset-functions) : unit
+  (begin
+    (set! first-key -1)
+    (set! next-id -1)
+    (set! first-slot -1)
+    (set! next-slots -1)
+    (set! identity-count2 0)
+    (set! active-mask 0)
+    (set! active-invalid false)
+    (set! local-ordinal 0)
+    (set! local-shadow-updated? false)
+    (set! portable-pair false)
+    (set! local-use false)
+    (set! fixed-call false)
+    (set! allow-cleanup false)
+    (set! checked-context false)
+    (set! digit-count 0)
+    (set! overflow-ok false)
+    (set! conditional-operand false)
+    (set! shifted false)
+    (set! has-operands false)
+    (set! reflection-env false)
+    (set! negative-literal false)))
+
+(define (pair-index [left-id : i64] [right-id : i64] [index : i64]) : i64
+  (if (>= index local-ordinal)
+    -1
+    (if (and
+      (= left-id (array-ref local-alias-names index))
+      (= right-id (array-ref next-locals index)))
+      index
+      (pair-index left-id right-id (+ index 1)))))
+
+(define (lookup-key-id [identity : String]) : i64
+  (match (ci.intern-lookup identity)
+    [(InternLookupFound source-id)
+      (match (ci.intern-generated-canonical-lookup identity)
+        [(InternLookupFound id) id]
+        [(InternLookupMissing) source-id])]
+    [(InternLookupMissing)
+      (match (ci.intern-generated-canonical-lookup identity)
+        [(InternLookupFound id) id]
+        [(InternLookupMissing) -1])]))
+
+(define (slot-id [identity-id : i64]) : i64
+  (if (< identity-id 0)
+    -1
+    (begin
+      (running-identity)
+      (let
+        [cursor : i64 (index-key identity-id)]
+        [key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [out : i64 -1]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps store-capacity))
+            (let
+              [slot : i64 (array-ref identity-bytes cursor)]
+              (if (= slot 0)
+                (set! done true)
+                (if (= slot key)
+                  (begin
+                    (set! out cursor)
+                    (set! done true))
+                  (begin
+                    (set! cursor (bit-and (+ cursor 1) (- store-capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          out)))))
+
+(define (type-key-id [slot : i64] [index : i64]) : String
+  (if (not
+    (and
+      (>= slot 0)
+      (< slot store-capacity)
+      (> (array-ref identity-bytes slot) 0)))
+    ""
+    (let
+      [count : i64 (array-ref operand-count slot)]
+      (if (and
+        (>= count 0)
+        (<= count expected-count)
+        (>= index 0)
+        (< index count)
+        (< index expected-count))
+        (array-ref declared-types (+ (* slot expected-count) index))
+        ""))))
+
+(define (kind-for-check [slot : i64] [index : i64]) : String
+  (if (not
+    (and
+      (>= slot 0)
+      (< slot store-capacity)
+      (> (array-ref identity-bytes slot) 0)))
+    ""
+    (let
+      [count : i64 (array-ref operand-count slot)]
+      (if (and
+        (>= count 0)
+        (<= count expected-count)
+        (>= index 0)
+        (< index count)
+        (< index expected-count))
+        (array-ref macro-type-kinds (+ (* slot expected-count) index))
+        ""))))
+
+(define (scratch-result [slot : i64] [index : i64]) : unit
+  (if (>= index scratch-count)
+    unit
+    (begin
+      (array-set!
+        declared-types
+        (+ (* slot expected-count) index)
+        (text-copy (array-ref expected-key index)))
+      (array-set!
+        macro-type-kinds
+        (+ (* slot expected-count) index)
+        (text-copy (array-ref expected-kind index)))
+      (scratch-result slot (+ index 1)))))
+
+(define (matches-signature [slot : i64] [index : i64] [count : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (string.eq
+        (array-ref declared-types (+ (* slot expected-count) index))
+        (array-ref expected-key index))
+      (string.eq
+        (array-ref macro-type-kinds (+ (* slot expected-count) index))
+        (array-ref expected-kind index))
+      (matches-signature slot (+ index 1) count))))
+
+(define (identity-remap [identity : String]) : unit
+  (let
+    [identity-id : i64 (tc-generated-module-name-id identity)]
+    (if (< identity-id 0)
+      unit
+      (begin
+        (running-identity)
+        (let
+          [cursor : i64 (index-key identity-id)]
+          [key : i64 (+ identity-id 1)]
+          [steps : i64 0]
+          [done : bool false]
+          (while (if done
+            false
+            (< steps store-capacity))
+            (let
+              [slot : i64 (array-ref identity-bytes cursor)]
+              (cond
+                [(= slot 0)
+                  (if (>= (* identity-count 2) store-capacity)
+                    (set! done true)
+                    (begin
+                      (array-set! identity-bytes cursor key)
+                      (array-set! operand-count cursor scratch-count)
+                      (if (< scratch-count 0)
+                        unit
+                        (scratch-result cursor 0))
+                      (set! identity-count (+ identity-count 1))
+                      (set! done true)))]
+                [(= slot key)
+                  (begin
+                    (if (or
+                      (< (array-ref operand-count cursor) 0)
+                      (< scratch-count 0)
+                      (not (= (array-ref operand-count cursor) scratch-count))
+                      (not (matches-signature cursor 0 scratch-count)))
+                      (array-set! operand-count cursor -1)
+                      unit)
+                    (set! done true))]
+                [else
+                  (begin
+                    (set! cursor (bit-and (+ cursor 1) (- store-capacity 1)))
+                    (set! steps (+ steps 1)))]))
+            unit))))))
+
+(define (tc-proof-reuse-session-identity-preflight-ids?
+  [first-id : i64]
+  [right-id : i64]) : bool
+  (begin
+    ;; Reset only identity comparison fields.  Literal facts and semantic
+    ;; notes belong to the surrounding declaration comparison and survive a
+    ;; preflight refresh; callers use the full session reset once per walk.
+    (begin
+      (set! first-key -1)
+      (set! next-id -1)
+      (set! first-slot -1)
+      (set! next-slots -1)
+      (set! identity-count2 0)
+      (set! active-mask 0)
+      (set! active-invalid false))
+    (let
+      [left : i64 (slot-id first-id)]
+      [right : i64 (slot-id right-id)]
+      [left-len : i64
+        (if (and
+          (>= left 0)
+          (< left store-capacity)
+          (> (array-ref identity-bytes left) 0))
+          (let
+            [count : i64 (array-ref operand-count left)]
+            (if (and (>= count 0) (<= count expected-count))
+              count
+              -1))
+          -1)]
+      [right-len : i64
+        (if (and
+          (>= right 0)
+          (< right store-capacity)
+          (> (array-ref identity-bytes right) 0))
+          (let
+            [count : i64 (array-ref operand-count right)]
+            (if (and (>= count 0) (<= count expected-count))
+              count
+              -1))
+          -1)]
+      [ok : bool
+        (and
+          (>= first-id 0)
+          (>= right-id 0)
+          (>= left 0)
+          (< left store-capacity)
+          (>= right 0)
+          (< right store-capacity)
+          (>= left-len 1)
+          (<= left-len expected-count)
+          (>= right-len 1)
+          (<= right-len expected-count)
+          (= left-len right-len))]
+      [index : i64 0]
+      [outer : i64 0]
+      [inner : i64 0]
+      (begin
+        ;; Metadata queries are non-inserting.  Every ordered type-key and
+        ;; kind fact must be present before the injective check can run.
+        (while (and ok (< index left-len))
+          (let
+            [key : String (type-key-id left index)]
+            [kind : String (kind-for-check left index)]
+            [value : String (type-key-id right index)]
+            [other : String (kind-for-check right index)]
+            (begin
+              (if (or
+                (= (string.string-length key) 0)
+                (= (string.string-length kind) 0)
+                (= (string.string-length value) 0)
+                (= (string.string-length other) 0))
+                (set! ok false)
+                unit)
+              (set! index (+ index 1)))))
+        ;; Fixed O(16^2) injectivity: duplicate first keys must map to the
+        ;; same next key, and duplicate next keys must map to the same first
+        ;; key.  Repeated identical pairs remain valid.
+        (set! outer 0)
+        (while (and ok (< outer left-len))
+          (begin
+            (set! inner 0)
+            (while (and ok (< inner left-len))
+              (begin
+                (if (and
+                  (string.eq (type-key-id left outer) (type-key-id left inner))
+                  (not
+                    (string.eq
+                      (type-key-id right outer)
+                      (type-key-id right inner))))
+                  (set! ok false)
+                  unit)
+                (if (and
+                  (string.eq
+                    (type-key-id right outer)
+                    (type-key-id right inner))
+                  (not
+                    (string.eq
+                      (type-key-id left outer)
+                      (type-key-id left inner))))
+                  (set! ok false)
+                  unit)
+                (set! inner (+ inner 1))))
+            (set! outer (+ outer 1))))
+        (if ok
+          (begin
+            (set! first-key first-id)
+            (set! next-id right-id)
+            (set! first-slot left)
+            (set! next-slots right)
+            (set! identity-count2 left-len)
+            (set! active-mask 0)
+            (set! active-invalid false)
+            true)
+          (begin
+            (set! active-invalid true)
+            false))))))
+
+(define (definition-index [value : i64] [text : String]) : bool
+  (if (or active-invalid overflow-ok)
+    false
+    (if (>= digit-count seed-capacity)
+      (begin
+        (set! overflow-ok true)
+        (set! active-invalid true)
+        false)
+      (begin
+        (array-set! uniform-values digit-count value)
+        (array-set! inject-texts digit-count text)
+        (set! digit-count (+ digit-count 1))
+        true))))
+
+;; These cfg-test wrappers preserve white-box proof-state coverage while
+;; production keeps the single-caller bodies inlined for fixed interner headroom.
+(cfg
+  test
+  (define (tc-proof-reuse-session-ast-literal-exact?
+    [literal : ast.AstLiteral]
+    [other : ast.AstLiteral]) : bool
+    (if active-invalid
+      false
+      (match literal
+        [(ast.AstLiteral.Int value text)
+          (match other
+            [(ast.AstLiteral.Int result repr)
+              (if (and (= value result) (string.eq text repr))
+                (definition-index result repr)
+                false)]
+            [_ false])]
+        [(ast.AstLiteral.Float text)
+          (match other
+            [(ast.AstLiteral.Float repr)
+              (if (string.eq text repr)
+                (begin
+                  (set! negative-literal true)
+                  true)
+                false)]
+            [_ false])]
+        [(ast.AstLiteral.Bool value)
+          (match other
+            [(ast.AstLiteral.Bool result)
+              (if (= value result)
+                (begin
+                  (set! negative-literal true)
+                  true)
+                false)]
+            [_ false])]
+        [(ast.AstLiteral.Char value)
+          (match other
+            [(ast.AstLiteral.Char result)
+              (let
+                [first : i64 (cast value : i64)]
+                [second : i64 (cast result : i64)]
+                (if (= first second)
+                  (definition-index second (string.int->string second))
+                  false))]
+            [_ false])]
+        [(ast.AstLiteral.String left-id)
+          (match other
+            [(ast.AstLiteral.String right-id)
+              (if (= left-id right-id)
+                (begin
+                  (set! negative-literal true)
+                  true)
+                false)]
+            [_ false])]
+        [(ast.AstLiteral.Unit)
+          (match other
+            [(ast.AstLiteral.Unit)
+              (begin
+                (set! negative-literal true)
+                true)]
+            [_ false])]))))
+
+(cfg
+  test
+  (define (recorded-maybe-ty) : unit
+    (set! reflection-env true)))
+
+(define (type-dedup-ok? [kind : String] [index : i64]) : bool
+  (if (>= index digit-count)
+    true
+    (let
+      [value : i64 (array-ref uniform-values index)]
+      [text : String (array-ref inject-texts index)]
+      (and
+        (if (= (string.string-length kind) 0)
+          false
+          (cond
+            [(string.eq kind "i64")
+              (tc-integer-literal-fits-value-or-text?
+                value
+                text
+                (ast.AstType.I64))]
+            [(string.eq kind "i32")
+              (tc-integer-literal-fits-value-or-text?
+                value
+                text
+                (ast.AstType.I32))]
+            [(string.eq kind "i16")
+              (tc-integer-literal-fits-value-or-text?
+                value
+                text
+                (ast.AstType.I16))]
+            [(string.eq kind "i8")
+              (tc-integer-literal-fits-value-or-text?
+                value
+                text
+                (ast.AstType.I8))]
+            [(string.eq kind "u64")
+              (tc-integer-literal-fits-value-or-text?
+                value
+                text
+                (ast.AstType.U64))]
+            [(string.eq kind "u32")
+              (tc-integer-literal-fits-value-or-text?
+                value
+                text
+                (ast.AstType.U32))]
+            [(string.eq kind "u16")
+              (tc-integer-literal-fits-value-or-text?
+                value
+                text
+                (ast.AstType.U16))]
+            [(string.eq kind "u8")
+              (tc-integer-literal-fits-value-or-text?
+                value
+                text
+                (ast.AstType.U8))]
+            ;; The existing integer-fit helper intentionally has no Char branch;
+            ;; keeping this conservative rejects a recorded fact when Char is the
+            ;; changed target instead of duplicating a character range check here.
+            [(string.eq kind "char")
+              (tc-integer-literal-fits-value-or-text?
+                value
+                text
+                (ast.AstType.Char))]
+            [else true]))
+        (type-dedup-ok? kind (+ index 1))))))
+
+(cfg
+  test
+  (define (invalid-keeps-first) : bool
+    (if (or
+      active-invalid
+      overflow-ok
+      (and portable-pair local-use)
+      (and portable-pair fixed-call (not allow-cleanup))
+      (< first-key 0)
+      (< next-id 0)
+      (< identity-count2 1)
+      (> identity-count2 expected-count))
+      false
+      (let
+        [index : i64 0]
+        [ok : bool true]
+        (begin
+          ;; The identity metadata table is bounded to sixteen ordered
+          ;; operands.  Inspect only operand bits that exact type comparison
+          ;; actually marked as changed.
+          (while (and ok (< index expected-count))
+            (begin
+              (if (= (bit-and active-mask (shl 1 index)) 0)
+                unit
+                (if (let
+                  [key : String (type-key-id first-slot index)]
+                  [value : String (type-key-id next-slots index)]
+                  [kind : String (kind-for-check first-slot index)]
+                  [other : String (kind-for-check next-slots index)]
+                  [first : bool
+                    (or (string.eq kind "f32") (string.eq kind "f64"))]
+                  [second : bool
+                    (or (string.eq other "f32") (string.eq other "f64"))]
+                  [left : bool
+                    (or (string.eq kind "struct") (string.eq kind "enum"))]
+                  [right : bool
+                    (or (string.eq other "struct") (string.eq other "enum"))]
+                  [result : bool
+                    (or
+                      (string.eq kind "string")
+                      (string.eq kind "bytes")
+                      (string.eq kind "array")
+                      (string.eq kind "dyn-array")
+                      (string.eq kind "box")
+                      (string.eq kind "tuple")
+                      (string.eq kind "struct")
+                      (string.eq kind "enum")
+                      (string.eq kind "expr")
+                      (string.eq kind "expr-list")
+                      (string.eq kind "function")
+                      (string.eq kind "consume-param"))]
+                  [saved : bool
+                    (or
+                      (string.eq other "string")
+                      (string.eq other "bytes")
+                      (string.eq other "array")
+                      (string.eq other "dyn-array")
+                      (string.eq other "box")
+                      (string.eq other "tuple")
+                      (string.eq other "struct")
+                      (string.eq other "enum")
+                      (string.eq other "expr")
+                      (string.eq other "expr-list")
+                      (string.eq other "function")
+                      (string.eq other "consume-param"))]
+                  [state : bool
+                    (or
+                      (string.eq other "i64")
+                      (string.eq other "i32")
+                      (string.eq other "i16")
+                      (string.eq other "i8")
+                      (string.eq other "u64")
+                      (string.eq other "u32")
+                      (string.eq other "u16")
+                      (string.eq other "u8")
+                      (string.eq other "char"))]
+                  (if (or
+                    (= (string.string-length key) 0)
+                    (= (string.string-length value) 0)
+                    (= (string.string-length kind) 0)
+                    (= (string.string-length other) 0))
+                    false
+                    (if (string.eq key value)
+                      true
+                      (if (or
+                        checked-context
+                        first
+                        second
+                        left
+                        right
+                        result
+                        saved
+                        shifted
+                        has-operands
+                        reflection-env
+                        negative-literal
+                        (and (> digit-count 0) (not state))
+                        (and conditional-operand (not (string.eq kind other))))
+                        false
+                        (type-dedup-ok? other 0)))))
+                  unit
+                  (set! ok false)))
+              (set! index (+ index 1))))
+          ok)))))
+
+(define (exact-name [left-id : i64] [right-id : i64]) : bool
+  (match (or
+    active-invalid
+    (< first-key 0)
+    (< next-id 0)
+    (< identity-count2 1)
+    (> identity-count2 expected-count))
+    [true false]
+    [false
+      (match (= left-id right-id)
+        [true true]
+        [false
+          (match (or
+            (< left-id 0)
+            (< right-id 0)
+            (not (ci.intern-renderable-id? left-id))
+            (not (ci.intern-renderable-id? right-id)))
+            [true false]
+            [false
+              (match (if (and
+                (ci.intern-qualified? left-id)
+                (ci.intern-qualified? right-id))
+                (and
+                  (=
+                    (ci.intern-qualified-base-id left-id)
+                    (ci.intern-qualified-base-id right-id))
+                  (= (ci.intern-qualified-module-id left-id) first-key)
+                  (= (ci.intern-qualified-module-id right-id) next-id))
+                (and (= left-id first-key) (= right-id next-id)))
+                [true
+                  (begin
+                    (set! portable-pair true)
+                    true)]
+                [false false])])])]))
+
+;; Referenced names are declaration-local facts, not family identities.  A
+;; direct per-declaration proof has no sibling declaration available to prove
+;; that a changed generated helper/value/type has the same shape, so every
+;; referenced name must be the exact same renderable intern id.  Keep this
+;; helper side-effect free: equal locals continue through the lexical-pair
+;; bookkeeping in the callers, while no reference can introduce a
+;; substitution fact.
+(define (qualified-name [left-id : i64] [right-id : i64]) : bool
+  (and
+    (not active-invalid)
+    (>= left-id 0)
+    (>= right-id 0)
+    (ci.intern-renderable-id? left-id)
+    (ci.intern-renderable-id? right-id)
+    (= left-id right-id)))
+
+(define (pair-id [key : String] [value : String] [index : i64]) : i64
+  (if (>= index identity-count2)
+    -1
+    (if (and
+      (string.eq (type-key-id first-slot index) key)
+      (string.eq (type-key-id next-slots index) value))
+      index
+      (pair-id key value (+ index 1)))))
+
+(define (tc-proof-reuse-session-ast-type-exact?
+  [ctx : TcContext]
+  [left : ast.AstType]
+  [right : ast.AstType]) : bool
+  (match (or
+    active-invalid
+    (< first-key 0)
+    (< next-id 0)
+    (< identity-count2 1)
+    (> identity-count2 expected-count))
+    [true false]
+    [false
+      (match (or
+        (tc-generated-type-dependent-construct? ctx left)
+        (tc-generated-type-dependent-construct? ctx right))
+        [true false]
+        [false
+          (match (ast.ast-type-eq-with-pools? (tc-context-pools ctx) left right)
+            [true
+              (begin
+                (set! fixed-call true)
+                true)]
+            [false
+              (let
+                [key : String
+                  (ctfe_support.ctfe-type-key-with-reflections-and-pools
+                    (tc-context-pools ctx)
+                    (ctfe_support.ctfe-reflect-info-list-empty)
+                    left)]
+                [value : String
+                  (ctfe_support.ctfe-type-key-with-reflections-and-pools
+                    (tc-context-pools ctx)
+                    (ctfe_support.ctfe-reflect-info-list-empty)
+                    right)]
+                (match (string.eq key value)
+                  [true
+                    (begin
+                      (set! fixed-call true)
+                      true)]
+                  [false
+                    (match (and
+                      (not
+                        (or
+                          active-invalid
+                          (< identity-count2 1)
+                          (> identity-count2 expected-count)
+                          (= (string.string-length key) 0)
+                          (= (string.string-length value) 0)))
+                      (let
+                        [index : i64 (pair-id key value 0)]
+                        (if (< index 0)
+                          false
+                          (begin
+                            (set! portable-pair true)
+                            (set!
+                              active-mask
+                              (bit-or active-mask (shl 1 index)))
+                            true))))
+                      [true true]
+                      [false
+                        (match left
+                          [(ast.AstType.Func args ret)
+                            (match right
+                              [(ast.AstType.Func other result)
+                                (let
+                                  [list : ast.AstTypeList (box-get args)]
+                                  [elems : ast.AstTypeList (box-get other)]
+                                  [index : i64 0]
+                                  [ok : bool true]
+                                  (begin
+                                    (while (and
+                                      ok
+                                      (< index (ast.ast-type-list-len (& list)))
+                                      (<
+                                        index
+                                        (ast.ast-type-list-len (& elems))))
+                                      (begin
+                                        (if (tc-proof-reuse-session-ast-type-id-exact?
+                                          ctx
+                                          (ast.ast-type-list-get
+                                            (& list)
+                                            index
+                                            (ast.ast-type-id-fallback))
+                                          (ast.ast-type-list-get
+                                            (& elems)
+                                            index
+                                            (ast.ast-type-id-fallback)))
+                                          unit
+                                          (set! ok false))
+                                        (set! index (+ index 1))))
+                                    (and
+                                      ok
+                                      (=
+                                        (ast.ast-type-list-len (& list))
+                                        (ast.ast-type-list-len (& elems)))
+                                      (tc-proof-reuse-session-ast-type-exact?
+                                        ctx
+                                        (tc-context-type-get ctx ret)
+                                        (tc-context-type-get ctx result)))))]
+                              [_ false])]
+                          [(ast.AstType.Tuple first)
+                            (match right
+                              [(ast.AstType.Tuple second)
+                                (let
+                                  [list : ast.AstTypeList (box-get first)]
+                                  [elems : ast.AstTypeList (box-get second)]
+                                  [index : i64 0]
+                                  [ok : bool true]
+                                  (begin
+                                    (while (and
+                                      ok
+                                      (< index (ast.ast-type-list-len (& list)))
+                                      (<
+                                        index
+                                        (ast.ast-type-list-len (& elems))))
+                                      (begin
+                                        (if (tc-proof-reuse-session-ast-type-id-exact?
+                                          ctx
+                                          (ast.ast-type-list-get
+                                            (& list)
+                                            index
+                                            (ast.ast-type-id-fallback))
+                                          (ast.ast-type-list-get
+                                            (& elems)
+                                            index
+                                            (ast.ast-type-id-fallback)))
+                                          unit
+                                          (set! ok false))
+                                        (set! index (+ index 1))))
+                                    (and
+                                      ok
+                                      (=
+                                        (ast.ast-type-list-len (& list))
+                                        (ast.ast-type-list-len (& elems))))))]
+                              [_ false])]
+                          [(ast.AstType.Array elem left-len)
+                            (match right
+                              [(ast.AstType.Array other right-len)
+                                (and
+                                  (= left-len right-len)
+                                  (tc-proof-reuse-session-ast-type-exact?
+                                    ctx
+                                    (tc-context-type-get ctx elem)
+                                    (tc-context-type-get ctx other)))]
+                              [_ false])]
+                          [(ast.AstType.DynArray elem)
+                            (match right
+                              [(ast.AstType.DynArray other)
+                                (tc-proof-reuse-session-ast-type-exact?
+                                  ctx
+                                  (tc-context-type-get ctx elem)
+                                  (tc-context-type-get ctx other))]
+                              [_ false])]
+                          [(ast.AstType.Slice elem)
+                            (match right
+                              [(ast.AstType.Slice other)
+                                (tc-proof-reuse-session-ast-type-exact?
+                                  ctx
+                                  (tc-context-type-get ctx elem)
+                                  (tc-context-type-get ctx other))]
+                              [_ false])]
+                          [(ast.AstType.Box inner)
+                            (match right
+                              [(ast.AstType.Box result)
+                                (tc-proof-reuse-session-ast-type-exact?
+                                  ctx
+                                  (tc-context-type-get ctx inner)
+                                  (tc-context-type-get ctx result))]
+                              [_ false])]
+                          [(ast.AstType.Region name inner)
+                            (match right
+                              [(ast.AstType.Region other result)
+                                (and
+                                  (qualified-name name other)
+                                  (tc-proof-reuse-session-ast-type-exact?
+                                    ctx
+                                    (tc-context-type-get ctx inner)
+                                    (tc-context-type-get ctx result)))]
+                              [_ false])]
+                          [(ast.AstType.Ref name inner)
+                            (match right
+                              [(ast.AstType.Ref other result)
+                                (and
+                                  (qualified-name name other)
+                                  (tc-proof-reuse-session-ast-type-exact?
+                                    ctx
+                                    (tc-context-type-get ctx inner)
+                                    (tc-context-type-get ctx result)))]
+                              [_ false])]
+                          [(ast.AstType.MutRef name inner)
+                            (match right
+                              [(ast.AstType.MutRef other result)
+                                (and
+                                  (qualified-name name other)
+                                  (tc-proof-reuse-session-ast-type-exact?
+                                    ctx
+                                    (tc-context-type-get ctx inner)
+                                    (tc-context-type-get ctx result)))]
+                              [_ false])]
+                          [(ast.AstType.Ptr inner)
+                            (match right
+                              [(ast.AstType.Ptr result)
+                                (tc-proof-reuse-session-ast-type-exact?
+                                  ctx
+                                  (tc-context-type-get ctx inner)
+                                  (tc-context-type-get ctx result))]
+                              [_ false])]
+                          [(ast.AstType.MutPtr inner)
+                            (match right
+                              [(ast.AstType.MutPtr result)
+                                (tc-proof-reuse-session-ast-type-exact?
+                                  ctx
+                                  (tc-context-type-get ctx inner)
+                                  (tc-context-type-get ctx result))]
+                              [_ false])]
+                          [(ast.AstType.Consume inner)
+                            (match right
+                              [(ast.AstType.Consume result)
+                                (tc-proof-reuse-session-ast-type-exact?
+                                  ctx
+                                  (tc-context-type-get ctx inner)
+                                  (tc-context-type-get ctx result))]
+                              [_ false])]
+                          [_ false])])]))])])]))
+
+;; Exact generated-declaration comparison -----------------------------------
+;;
+;; The dependency scanner deliberately answers only an over-approximation.  A
+;; proof reuse decision needs a pairwise walk of the two declarations instead:
+;; every name, type, literal, operator and child node must be the exact
+;; established first-identity -> next-identity substitution.  These helpers
+;; are intentionally read-only apart from the bounded comparison facts owned
+;; by the proof-reuse session above.  In particular, no fresh name/type map is
+;; constructed while walking.  An unchanged type subtree alongside a real
+;; identity substitution is a fixed local/return boundary and fails Rule 4;
+;; the sole mixed-shape exception is a successfully exact direct DefStruct,
+;; whose fields have no value-flow edge between them.
+(define (tc-proof-reuse-session-ast-expr-id-exact?
+  [ctx : TcContext]
+  [left-id : i64]
+  [right-id : i64]) : bool
+  (and
+    (>= left-id 0)
+    (< left-id (ast.ast-node-pool-context-expr-len (tc-context-pools ctx)))
+    (>= right-id 0)
+    (< right-id (ast.ast-node-pool-context-expr-len (tc-context-pools ctx)))
+    (tc-proof-reuse-session-ast-expr-exact?
+      ctx
+      (tc-context-expr-get ctx left-id)
+      (tc-context-expr-get ctx right-id))))
+
+(define (tc-proof-reuse-session-ast-type-id-exact?
+  [ctx : TcContext]
+  [left-id : i64]
+  [right-id : i64]) : bool
+  (and
+    (>= left-id 0)
+    (< left-id (ast.ast-node-pool-context-type-len (tc-context-pools ctx)))
+    (>= right-id 0)
+    (< right-id (ast.ast-node-pool-context-type-len (tc-context-pools ctx)))
+    (tc-proof-reuse-session-ast-type-exact?
+      ctx
+      (tc-context-type-get ctx left-id)
+      (tc-context-type-get ctx right-id))))
+
+(define (tc-proof-reuse-session-ast-expr-list-exact?
+  [ctx : TcContext]
+  [exprs : ast.AstExprList]
+  [other : ast.AstExprList]
+  [index : i64]) : bool
+  (let
+    [left-len : i64 (ast.ast-expr-list-len (& exprs))]
+    [right-len : i64 (ast.ast-expr-list-len (& other))]
+    (if (not (= left-len right-len))
+      false
+      (if (>= index left-len)
+        true
+        (and
+          (tc-proof-reuse-session-ast-expr-id-exact?
+            ctx
+            (ast.ast-expr-list-get (& exprs) index -1)
+            (ast.ast-expr-list-get (& other) index -1))
+          (tc-proof-reuse-session-ast-expr-list-exact?
+            ctx
+            exprs
+            other
+            (+ index 1)))))))
+
+(define (tc-proof-reuse-session-ast-param-list-exact?
+  [ctx : TcContext]
+  [params : ast.AstParamList]
+  [other : ast.AstParamList]
+  [index : i64]) : bool
+  (let
+    [left-len : i64 (ast.ast-param-list-len (& params))]
+    [right-len : i64 (ast.ast-param-list-len (& other))]
+    (if (not (= left-len right-len))
+      false
+      (if (>= index left-len)
+        true
+        (match (ast.ast-param-list-get
+          (& params)
+          index
+          (ast.ast-param-fallback))
+          [(ast.AstParam.Param name type first second)
+            (match (ast.ast-param-list-get
+              (& other)
+              index
+              (ast.ast-param-fallback))
+              [(ast.AstParam.Param name-id ty next result)
+                (let
+                  [ok : bool
+                    (and
+                      (qualified-name name name-id)
+                      (tc-proof-reuse-session-ast-type-exact? ctx type ty)
+                      (= first next)
+                      (= second result))]
+                  (if (not ok)
+                    false
+                    (and
+                      (if (or
+                        active-invalid
+                        local-shadow-updated?
+                        (< name 0)
+                        (< name-id 0))
+                        false
+                        (if (>= local-ordinal type-capacity)
+                          (begin
+                            (set! local-shadow-updated? true)
+                            (set! active-invalid true)
+                            false)
+                          (begin
+                            (array-set! local-alias-names local-ordinal name)
+                            (array-set! next-locals local-ordinal name-id)
+                            (set! local-ordinal (+ local-ordinal 1))
+                            true)))
+                      (tc-proof-reuse-session-ast-param-list-exact?
+                        ctx
+                        params
+                        other
+                        (+ index 1)))))]
+              [_ false])]
+          [_ false])))))
+
+(define (tc-proof-reuse-session-ast-field-def-list-exact?
+  [ctx : TcContext]
+  [fields : ast.AstFieldDefList]
+  [other : ast.AstFieldDefList]
+  [index : i64]) : bool
+  (let
+    [left-len : i64 (ast.ast-field-def-list-len (& fields))]
+    [right-len : i64 (ast.ast-field-def-list-len (& other))]
+    (if (not (= left-len right-len))
+      false
+      (if (>= index left-len)
+        true
+        (match (ast.ast-field-def-list-get
+          (& fields)
+          index
+          (ast.ast-field-def-fallback))
+          [(ast.AstFieldDef.Def name ty cleanup)
+            (match (ast.ast-field-def-list-get
+              (& other)
+              index
+              (ast.ast-field-def-fallback))
+              [(ast.AstFieldDef.Def name-id type saved)
+                (and
+                  (qualified-name name name-id)
+                  (tc-proof-reuse-session-ast-type-exact? ctx ty type)
+                  (match cleanup
+                    [(ast.AstFieldCleanup.No)
+                      (match saved
+                        [(ast.AstFieldCleanup.No) true]
+                        [_ false])]
+                    [_ false])
+                  (tc-proof-reuse-session-ast-field-def-list-exact?
+                    ctx
+                    fields
+                    other
+                    (+ index 1)))]
+              [_ false])]
+          [_ false])))))
+
+(define (tc-proof-reuse-session-clone-callee-expr-id?
+  [ctx : TcContext]
+  [expr-id : i64]) : bool
+  (if (not
+    (and
+      (>= expr-id 0)
+      (< expr-id (ast.ast-node-pool-context-expr-len (tc-context-pools ctx)))))
+    false
+    (match (tc-context-expr-get ctx expr-id)
+      [(ast.AstExpr.Spanned inner-id _)
+        (tc-proof-reuse-session-clone-callee-expr-id? ctx inner-id)]
+      [(ast.AstExpr.Var name-id)
+        (if (not (ci.intern-renderable-id? name-id))
+          false
+          (or
+            (cbi.compiler-builtin-typecheck-clone-id? name-id)
+            (if (ci.intern-qualified? name-id)
+              (let
+                [base-id : i64 (ci.intern-qualified-base-id name-id)]
+                (and
+                  (ci.intern-renderable-id? base-id)
+                  (string.eq (ci.intern-str base-id) "clone")))
+              (string.eq (ci.intern-str name-id) "clone"))))]
+      [_ false])))
+
+(define (tc-proof-reuse-session-ast-expr-exact?
+  [ctx : TcContext]
+  [expr : ast.AstExpr]
+  [other : ast.AstExpr]) : bool
+  ;; Literals, variables, Binary, and Unary forms remain structural.  Retained
+  ;; Call and StructGet forms are context-sensitive, so mark them while
+  ;; walking; unsupported expression forms fail closed.  Rule 4 vetoes
+  ;; changed recorded operands.  Referenced names are exact; only complete
+  ;; type-key operand pairs can admit a changed type subtree.
+  (if active-invalid
+    false
+    (match expr
+      ;; Spans are parser metadata and generated modules legitimately carry
+      ;; different source offsets.  Strip wrappers independently on each side.
+      [(ast.AstExpr.Spanned inner _)
+        (if (and
+          (>= inner 0)
+          (< inner (ast.ast-node-pool-context-expr-len (tc-context-pools ctx))))
+          (tc-proof-reuse-session-ast-expr-exact?
+            ctx
+            (tc-context-expr-get ctx inner)
+            other)
+          false)]
+      [_
+        (match other
+          [(ast.AstExpr.Spanned second _)
+            (if (and
+              (>= second 0)
+              (<
+                second
+                (ast.ast-node-pool-context-expr-len (tc-context-pools ctx))))
+              (tc-proof-reuse-session-ast-expr-exact?
+                ctx
+                expr
+                (tc-context-expr-get ctx second))
+              false)]
+          [(ast.AstExpr.Literal literal)
+            (match expr
+              [(ast.AstExpr.Literal value)
+                (if active-invalid
+                  false
+                  (match value
+                    [(ast.AstLiteral.Int value text)
+                      (match literal
+                        [(ast.AstLiteral.Int result repr)
+                          (if (and (= value result) (string.eq text repr))
+                            (definition-index result repr)
+                            false)]
+                        [_ false])]
+                    [(ast.AstLiteral.Float text)
+                      (match literal
+                        [(ast.AstLiteral.Float repr)
+                          (if (string.eq text repr)
+                            (begin
+                              (set! negative-literal true)
+                              true)
+                            false)]
+                        [_ false])]
+                    [(ast.AstLiteral.Bool value)
+                      (match literal
+                        [(ast.AstLiteral.Bool result)
+                          (if (= value result)
+                            (begin
+                              (set! negative-literal true)
+                              true)
+                            false)]
+                        [_ false])]
+                    [(ast.AstLiteral.Char value)
+                      (match literal
+                        [(ast.AstLiteral.Char result)
+                          (let
+                            [first : i64 (cast value : i64)]
+                            [second : i64 (cast result : i64)]
+                            (if (= first second)
+                              (definition-index
+                                second
+                                (string.int->string second))
+                              false))]
+                        [_ false])]
+                    [(ast.AstLiteral.String left-id)
+                      (match literal
+                        [(ast.AstLiteral.String right-id)
+                          (if (= left-id right-id)
+                            (begin
+                              (set! negative-literal true)
+                              true)
+                            false)]
+                        [_ false])]
+                    [(ast.AstLiteral.Unit)
+                      (match literal
+                        [(ast.AstLiteral.Unit)
+                          (begin
+                            (set! negative-literal true)
+                            true)]
+                        [_ false])]))]
+              [_ false])]
+          [(ast.AstExpr.Var name)
+            (match expr
+              [(ast.AstExpr.Var name-id)
+                (if (not (qualified-name name-id name))
+                  false
+                  (if (= name-id name)
+                    (if (>= (pair-index name-id name 0) 0)
+                      true
+                      (begin
+                        (set! local-use true)
+                        true))
+                    false))]
+              [_ false])]
+          [(ast.AstExpr.Binary value first second)
+            (match expr
+              [(ast.AstExpr.Binary op left right)
+                (if (not (ctfe_support.ctfe-binop-eq op value))
+                  false
+                  (begin
+                    (set! conditional-operand true)
+                    (match op
+                      [(ast.AstBinOp.Eq) (set! has-operands true)]
+                      [(ast.AstBinOp.Ne) (set! has-operands true)]
+                      [(ast.AstBinOp.Shl) (set! shifted true)]
+                      [(ast.AstBinOp.Shr) (set! shifted true)]
+                      [_ unit])
+                    (and
+                      (tc-proof-reuse-session-ast-expr-id-exact? ctx left first)
+                      (tc-proof-reuse-session-ast-expr-id-exact?
+                        ctx
+                        right
+                        second))))]
+              [_ false])]
+          [(ast.AstExpr.Unary value second)
+            (match expr
+              [(ast.AstExpr.Unary op inner)
+                (if (not (ctfe_support.ctfe-unop-eq op value))
+                  false
+                  (begin
+                    (set! conditional-operand true)
+                    (tc-proof-reuse-session-ast-expr-id-exact? ctx inner second)))]
+              [_ false])]
+          [(ast.AstExpr.Call right params)
+            (match expr
+              [(ast.AstExpr.Call left exprs)
+                (begin
+                  (set! checked-context true)
+                  (if (or
+                    (tc-proof-reuse-session-clone-callee-expr-id? ctx left)
+                    (tc-proof-reuse-session-clone-callee-expr-id? ctx right))
+                    (set! has-operands true)
+                    unit)
+                  (and
+                    (tc-proof-reuse-session-ast-expr-id-exact? ctx left right)
+                    (tc-proof-reuse-session-ast-expr-list-exact?
+                      ctx
+                      exprs
+                      params
+                      0)))]
+              [_ false])]
+          [(ast.AstExpr.StructGet right second)
+            (match expr
+              [(ast.AstExpr.StructGet left field)
+                (begin
+                  (set! checked-context true)
+                  (and
+                    (tc-proof-reuse-session-ast-expr-id-exact? ctx left right)
+                    (qualified-name field second)))]
+              [_ false])]
+          ;; Keep this audited surface deliberately small; every other
+          ;; expression constructor falls through to concrete checking.
+          [_ false])])))
+
+(define (tc-proof-reuse-session-ast-decl-exact?
+  [ctx : TcContext]
+  [decl : ast.AstDecl]
+  [other : ast.AstDecl]) : bool
+  (if active-invalid
+    false
+    (match decl
+      [(ast.AstDecl.DefStruct _ name repr cleanup fields)
+        (match other
+          [(ast.AstDecl.DefStruct _ name-id value saved list)
+            (let
+              [ok : bool
+                (and
+                  (exact-name name name-id)
+                  (match repr
+                    [(ast.AstStructRepr.Default)
+                      (match value
+                        [(ast.AstStructRepr.Default) true]
+                        [_ false])]
+                    [_ false])
+                  (match cleanup
+                    [(ast.AstStructCleanup.No)
+                      (match saved
+                        [(ast.AstStructCleanup.No) true]
+                        [_ false])]
+                    [_ false])
+                  (tc-proof-reuse-session-ast-field-def-list-exact?
+                    ctx
+                    fields
+                    list
+                    0))]
+              (begin
+                ;; Only a fully exact, direct DefStruct may authorize mixed
+                ;; fixed/substituted field types.  Rule 4 consumes this fact;
+                ;; failed/unsupported shapes leave it false.
+                (if ok
+                  (set! allow-cleanup true)
+                  unit)
+                ok))]
+          [_ false])]
+      [(ast.AstDecl.DefFn _ name params ret body meta)
+        (match other
+          [(ast.AstDecl.DefFn _ name-id list result value saved)
+            (and
+              (exact-name name name-id)
+              (let
+                [start : i64 local-ordinal]
+                [first : bool
+                  (tc-proof-reuse-session-ast-param-list-exact?
+                    ctx
+                    params
+                    list
+                    0)]
+                [second : bool
+                  (if (and
+                    first
+                    (tc-proof-reuse-session-ast-type-exact? ctx ret result))
+                    (tc-proof-reuse-session-ast-expr-id-exact? ctx body value)
+                    false)]
+                [ok : bool
+                  (if second
+                    (match meta
+                      [(ast.AstFnMetadata.No)
+                        (match saved
+                          [(ast.AstFnMetadata.No) true]
+                          [_ false])]
+                      [_ false])
+                    false)]
+                (begin
+                  (set! local-ordinal start)
+                  (and first second ok))))]
+          [_ false])]
+      [(ast.AstDecl.Def _ name type body)
+        (match other
+          [(ast.AstDecl.Def _ name-id ty value)
+            (and
+              (exact-name name name-id)
+              (match type
+                [(ast.AstMaybeType.No)
+                  (match ty
+                    [(ast.AstMaybeType.No) true]
+                    [_ false])]
+                [(ast.AstMaybeType.Some inner)
+                  (match ty
+                    [(ast.AstMaybeType.Some second)
+                      (tc-proof-reuse-session-ast-type-exact? ctx inner second)]
+                    [_ false])])
+              (tc-proof-reuse-session-ast-expr-id-exact? ctx body value))]
+          [_ false])]
+      [(ast.AstDecl.Unsafe left-box)
+        (match other
+          [(ast.AstDecl.Unsafe right-box)
+            (let
+              [saved : bool allow-cleanup]
+              [ok : bool
+                (tc-proof-reuse-session-ast-decl-exact?
+                  ctx
+                  (box-get left-box)
+                  (box-get right-box))]
+              (begin
+                ;; Keep the DefStruct exception scoped to a direct declaration;
+                ;; an unsafe wrapper remains concrete-only conservatively.
+                (set! allow-cleanup saved)
+                ok))]
+          [_ false])]
+      [_ false])))
+
+(cfg
+  test
+  (define (tc-proof-reuse-decl-safe-substitution-ids?
+    [ctx : TcContext]
+    [left-id : i64]
+    [right-id : i64]
+    [decl : ast.AstDecl]
+    [other : ast.AstDecl]) : bool
+    (begin
+      (scratch-reset-functions)
+      (if (not
+        (tc-proof-reuse-session-identity-preflight-ids? left-id right-id))
+        false
+        (if (not (tc-proof-reuse-session-ast-decl-exact? ctx decl other))
+          false
+          ;; Rule 4 is intentionally last: the exact walk must finish before
+          ;; literal/operator/reflection facts can authorize a reuse decision.
+          (invalid-keeps-first))))))
+
+(define (tc-defmacro-fixed-type-params-complete?
+  [params : (& params ast.AstMacroParamList)]
+  [index : i64]
+  [seen : bool]) : bool
+  (if (>= index (ast.ast-macro-param-list-len params))
+    seen
+    (match (ast.ast-macro-param-list-get
+      params
+      index
+      (ast.ast-macro-param-fallback))
+      [(ast.AstMacroParam.Param _ ty variadic type-kinds)
+        (if (tc-macro-type-param-kind? ty)
+          (if (or variadic (ast.ast-macro-type-kind-list-empty? (& type-kinds)))
+            false
+            (tc-defmacro-fixed-type-params-complete? params (+ index 1) true))
+          (tc-defmacro-fixed-type-params-complete? params (+ index 1) seen))])))
 
 (define (tc-macro-abstract-proof-reset!) : unit
-  (set! tc-macro-abstract-proof-count 0))
+  (begin
+    (set! tc-macro-abstract-proof-count 0)
+    (if (= persistent-arena 0)
+      unit
+      (begin
+        (unsafe
+          (arena.tl_arena_destroy persistent-arena))
+        (set! persistent-arena 0)))
+    (set! any-active false)
+    (set! required-count 0)
+    (set! active? false)
+    (set! has-generated-decls false)
+    (set! item-count 0)
+    (set! block-generation -1)
+    (set! table-cell -1)
+    (set! identity-tail-forwarder? false)
+    (set! identity-count 0)
+    (set! generation-cell -1)
+    (set! next-table-id -1)
+    (scratch-reset-context)
+    (cfg test (set! tc-proof-reuse-skips-total 0))
+    (set! next-skip false)
+    (set! active? false)))
 
 (define (tc-macro-abstract-proof-find
   [macro-key-id : i64]
@@ -54420,8 +56219,8 @@
             body)]
         (begin
           (tc-macro-abstract-state-restore! saved)
-          ;; Persist the validated proof (#5296 report-only instrumentation);
-          ;; the abstract result itself still drives only acceptance here.
+          ;; Persist the validated proof used by the generated-declaration
+          ;; proof-reuse lane; the abstract result still gates macro acceptance.
           (match result
             [(ResultTcUnit.Ok)
               (tc-macro-abstract-proof-note! macro-key param-name checked-mask)]
@@ -54473,22 +56272,33 @@
   [params : ast.AstMacroParamList]
   [body : ast.AstExpr]) : ResultTcUnit
   ;; The proof key is the same qualified display string the generated-module
-  ;; wrapper stamps into AstGeneratedDeclMeta, so the report-only
-  ;; classification lane can join a generated declaration back to this
-  ;; definition (#5296).
-  (tc-check-defmacro-abstract-type-params-at
-    ctx
-    env
-    (tc-env-key-name-text name)
-    (macro-decl-name-display name (tc-context-module-id ctx))
-    (& params)
-    0
-    body))
+  ;; wrapper stamps into AstGeneratedDeclMeta, so the live proof-reuse lane can
+  ;; join a generated declaration back to this definition.
+  (let
+    [macro-key : String
+      (macro-decl-name-display name (tc-context-module-id ctx))]
+    [result : ResultTcUnit
+      (tc-check-defmacro-abstract-type-params-at
+        ctx
+        env
+        (tc-env-key-name-text name)
+        macro-key
+        (& params)
+        0
+        body)]
+    (begin
+      (match result
+        [(ResultTcUnit.Ok)
+          (if (tc-defmacro-fixed-type-params-complete? (& params) 0 false)
+            (record-count macro-key)
+            unit)]
+        [(ResultTcUnit.Err _) unit])
+      result)))
 
 ;; --- generated-decl dependent-construct scan (#5296) --------------------------
 ;;
-;; Conservative syntactic scan backing the report-only lane split in
-;; `compiler-tc-decl-profile-record`. It answers one question: may this
+;; Conservative syntactic scan backing the generated-declaration proof-reuse
+;; lane. It answers one question: may this
 ;; generated declaration depend on the concrete substitution that produced it?
 ;; Returning true (dependent) means the declaration is counted
 ;; concrete-required; false means invariant-eligible candidate. The scan flags:
@@ -54496,7 +56306,9 @@
 ;;     cast targets) -- its length is substitution-chosen,
 ;;   - a cleanup/ownership annotation (AstFieldCleanup.Fn/Owned,
 ;;     AstStructCleanup.Fn, and the enum-level equivalents),
-;;   - a reference or raw-pointer type (Ref, MutRef, Ptr, MutPtr),
+;;   - Ref/MutRef/Ptr/MutPtr wrappers are invariant by themselves; the recurse
+;;     keeps a dependent construct nested beneath one (such as a fixed Array)
+;;     dependent,
 ;;   - a lifetime-parameterized nominal type with non-empty lifetime args
 ;;     (StructArgs/EnumArgs/VarArgs),
 ;;   - a cast expression anywhere in a body,
@@ -54505,22 +56317,25 @@
 ;; A `make-array` element type in expression position is NOT dependent: the
 ;; produced value is a length-erased dynamic array.
 ;;
-;; v1 soundness note: the scan deliberately does not track kind-polymorphic
-;; value operations (clone/eq/arithmetic) applied to arg-typed values, so
-;; eligibility is an over-approximation to be tightened by the future skip lane
-;; (first-instance isomorphism verification).
+;; The exact walker performs the additional first-instance isomorphism and
+;; kind-polymorphic operation checks before a declaration can actually skip;
+;; this scan remains a conservative dependency veto for forms that require
+;; concrete checking.  It has no sibling-catalog knowledge.
 (define (tc-generated-type-dependent-construct?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
   (match ty
     [(ast.AstType.Func args ret)
       (or
-        (tc-generated-type-list-dependent-construct? ctx (box-get args))
+        (tc-generated-type-list-dependent-construct-at?
+          ctx
+          (& (box-get args))
+          0)
         (tc-generated-type-dependent-construct?
           ctx
           (tc-context-type-get ctx ret)))]
     [(ast.AstType.Tuple elems)
-      (tc-generated-type-list-dependent-construct? ctx (box-get elems))]
+      (tc-generated-type-list-dependent-construct-at? ctx (& (box-get elems)) 0)]
     [(ast.AstType.Array _ _) true]
     [(ast.AstType.DynArray elem)
       (tc-generated-type-dependent-construct?
@@ -54538,10 +56353,26 @@
       (tc-generated-type-dependent-construct?
         ctx
         (tc-context-type-get ctx inner))]
-    [(ast.AstType.Ref _ _) true]
-    [(ast.AstType.MutRef _ _) true]
-    [(ast.AstType.Ptr _) true]
-    [(ast.AstType.MutPtr _) true]
+    ;; Reference/pointer wrappers themselves preserve the pointee's
+    ;; substitution invariance.  Recurse so a dependent construct nested
+    ;; beneath one (for example a fixed Array) still keeps the declaration in
+    ;; the concrete lane.
+    [(ast.AstType.Ref _ elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
+    [(ast.AstType.MutRef _ elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
+    [(ast.AstType.Ptr elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
+    [(ast.AstType.MutPtr elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
     [(ast.AstType.EnumArgs _ lifetimes)
       (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
     [(ast.AstType.StructArgs _ lifetimes)
@@ -54553,11 +56384,6 @@
         ctx
         (tc-context-type-get ctx inner))]
     [_ false]))
-
-(define (tc-generated-type-list-dependent-construct?
-  [ctx : TcContext]
-  [types : ast.AstTypeList]) : bool
-  (tc-generated-type-list-dependent-construct-at? ctx (& types) 0))
 
 (define (tc-generated-type-list-dependent-construct-at?
   [ctx : TcContext]
@@ -54573,731 +56399,758 @@
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
       (tc-generated-type-list-dependent-construct-at? ctx types (+ index 1)))))
 
-(define (tc-generated-maybe-type-dependent-construct?
-  [ctx : TcContext]
-  [maybe : ast.AstMaybeType]) : bool
-  (match maybe
-    [(ast.AstMaybeType.Some ty) (tc-generated-type-dependent-construct? ctx ty)]
-    [(ast.AstMaybeType.No) false]))
+;; The type-only dependency predicates stay unconditional for the normal exact
+;; proof walker; the full-AST classifier below is compile-profile/test-only.
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-maybe-type-dependent-construct?
+    [ctx : TcContext]
+    [maybe : ast.AstMaybeType]) : bool
+    (match maybe
+      [(ast.AstMaybeType.Some ty)
+        (tc-generated-type-dependent-construct? ctx ty)]
+      [(ast.AstMaybeType.No) false])))
 
-(define (tc-generated-param-list-dependent-construct?
-  [ctx : TcContext]
-  [params : ast.AstParamList]) : bool
-  (tc-generated-param-list-dependent-construct-at? ctx (& params) 0))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-param-list-dependent-construct-at?
+    [ctx : TcContext]
+    [params : (& params ast.AstParamList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-param-list-len params))
+      false
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(ast.AstParam.Param _ ty _ _)
+          (or
+            (tc-generated-type-dependent-construct? ctx ty)
+            (tc-generated-param-list-dependent-construct-at?
+              ctx
+              params
+              (+ index 1)))]))))
 
-(define (tc-generated-param-list-dependent-construct-at?
-  [ctx : TcContext]
-  [params : (& params ast.AstParamList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-param-list-len params))
-    false
-    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param _ ty _ _)
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-pattern-dependent-construct?
+    [ctx : TcContext]
+    [pattern : ast.AstPattern]) : bool
+    (match pattern
+      [(ast.AstPattern.Var _ maybe-ty)
+        (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)]
+      [(ast.AstPattern.Tuple items)
+        (tc-generated-pattern-list-dependent-construct-at?
+          ctx
+          (& (box-get items))
+          0)]
+      [(ast.AstPattern.Variant _ items)
+        (tc-generated-pattern-list-dependent-construct-at?
+          ctx
+          (& (box-get items))
+          0)]
+      [_ false])))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-pattern-list-dependent-construct-at?
+    [ctx : TcContext]
+    [items : (& items ast.AstPatternList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-pattern-list-len items))
+      false
+      (or
+        (tc-generated-pattern-dependent-construct?
+          ctx
+          (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback)))
+        (tc-generated-pattern-list-dependent-construct-at?
+          ctx
+          items
+          (+ index 1))))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-expr-list-dependent-construct-at?
+    [ctx : TcContext]
+    [exprs : (& exprs ast.AstExprList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-expr-list-len exprs))
+      false
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
+        (tc-generated-expr-list-dependent-construct-at? ctx exprs (+ index 1))))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-let-bindings-dependent-construct-at?
+    [ctx : TcContext]
+    [bindings : (& bindings ast.AstLetBindingList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-let-binding-list-len bindings))
+      false
+      (match (ast.ast-let-binding-list-get
+        bindings
+        index
+        (ast.ast-let-binding-fallback))
+        [(ast.AstLetBinding.Binding _ maybe-ty init-id)
+          (or
+            (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx init-id))
+            (tc-generated-let-bindings-dependent-construct-at?
+              ctx
+              bindings
+              (+ index 1)))]))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-match-arms-dependent-construct-at?
+    [ctx : TcContext]
+    [arms : (& arms ast.AstMatchArmList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-match-arm-list-len arms))
+      false
+      (match (ast.ast-match-arm-list-get
+        arms
+        index
+        (ast.ast-match-arm-fallback))
+        [(ast.AstMatchArm.Arm pattern body-id)
+          (or
+            (tc-generated-pattern-dependent-construct? ctx pattern)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx body-id))
+            (tc-generated-match-arms-dependent-construct-at?
+              ctx
+              arms
+              (+ index 1)))]))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-resource-bindings-dependent-construct-at?
+    [ctx : TcContext]
+    [bindings : (& bindings ast.AstResourceBindingList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-resource-binding-list-len bindings))
+      false
+      (match (ast.ast-resource-binding-list-get
+        bindings
+        index
+        (ast.ast-resource-binding-fallback))
+        [(ast.AstResourceBinding.Binding _ init-id cleanup-id _)
+          (or
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx init-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx cleanup-id))
+            (tc-generated-resource-bindings-dependent-construct-at?
+              ctx
+              bindings
+              (+ index 1)))]))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-expr-dependent-construct?
+    [ctx : TcContext]
+    [expr : ast.AstExpr]) : bool
+    (match expr
+      [(ast.AstExpr.Spanned inner-id _)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Literal _) false]
+      [(ast.AstExpr.Var _) false]
+      [(ast.AstExpr.Binary _ left-id right-id)
         (or
-          (tc-generated-type-dependent-construct? ctx ty)
-          (tc-generated-param-list-dependent-construct-at?
+          (tc-generated-expr-dependent-construct?
             ctx
-            params
-            (+ index 1)))])))
+            (tc-context-expr-get ctx left-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx right-id)))]
+      [(ast.AstExpr.Unary _ inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Call func-id args)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx func-id))
+          (tc-generated-expr-list-dependent-construct-at? ctx (& args) 0))]
+      [(ast.AstExpr.If cond-id then-id else-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx cond-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx then-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx else-id)))]
+      [(ast.AstExpr.Let let-box)
+        (match (box-get let-box)
+          [(ast.AstLet.Let bindings body-id)
+            (or
+              (tc-generated-let-bindings-dependent-construct-at?
+                ctx
+                (& bindings)
+                0)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx body-id)))])]
+      [(ast.AstExpr.Lambda lambda-box)
+        (match (box-get lambda-box)
+          [(ast.AstLambda.Lambda params ret body-id)
+            (or
+              (tc-generated-param-list-dependent-construct-at? ctx (& params) 0)
+              (tc-generated-maybe-type-dependent-construct? ctx ret)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx body-id)))])]
+      [(ast.AstExpr.Tuple items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      [(ast.AstExpr.TupleRef tuple-id _)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx tuple-id))]
+      [(ast.AstExpr.Array items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      [(ast.AstExpr.DynArray items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      ;; A make-array element type in expression position is not dependent; the
+      ;; produced value is a length-erased dynamic array.
+      [(ast.AstExpr.MakeArray _ len-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx len-id))]
+      [(ast.AstExpr.ArrayRef array-id index-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx array-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx index-id)))]
+      [(ast.AstExpr.ArraySet array-id index-id value-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx array-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx index-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.ArrayTake array-id live-id index-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx array-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx live-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx index-id)))]
+      [(ast.AstExpr.ArrayPush array-id value-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx array-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.StringRef str-id index-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx str-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx index-id)))]
+      [(ast.AstExpr.While cond-id body-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx cond-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx body-id)))]
+      [(ast.AstExpr.Begin items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      [(ast.AstExpr.Unsafe items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      [(ast.AstExpr.Set _ value-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx value-id))]
+      [(ast.AstExpr.Ann inner-id ty-id)
+        (or
+          (tc-generated-type-dependent-construct?
+            ctx
+            (tc-context-type-get ctx ty-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx inner-id)))]
+      [(ast.AstExpr.Cast _ _) true]
+      [(ast.AstExpr.Borrow _ _ place-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx place-id))]
+      [(ast.AstExpr.Match match-box)
+        (match (box-get match-box)
+          [(ast.AstMatch.Match scrutinee-id arms)
+            (or
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx scrutinee-id))
+              (tc-generated-match-arms-dependent-construct-at? ctx (& arms) 0))])]
+      [(ast.AstExpr.Foreach fe-box)
+        (match (box-get fe-box)
+          [(ast.AstForeach.Foreach _ elem-ty start-id end-id body-id)
+            (or
+              (tc-generated-type-dependent-construct? ctx elem-ty)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx start-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx end-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx body-id)))])]
+      [(ast.AstExpr.SpmdReduce reduce-box)
+        (match (box-get reduce-box)
+          [(ast.AstSpmdReduce.Reduce
+              _
+              _
+              elem-ty
+              start-id
+              end-id
+              init-id
+              value-id)
+            (or
+              (tc-generated-type-dependent-construct? ctx elem-ty)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx start-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx end-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx init-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx value-id)))])]
+      [(ast.AstExpr.SpmdScan scan-box)
+        (match (box-get scan-box)
+          [(ast.AstSpmdScan.Scan
+              _
+              _
+              elem-ty
+              start-id
+              end-id
+              _
+              init-ty
+              init-id
+              value-id
+              body-id)
+            (or
+              (tc-generated-type-dependent-construct? ctx elem-ty)
+              (tc-generated-type-dependent-construct? ctx init-ty)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx start-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx end-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx init-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx value-id))
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx body-id)))])]
+      [(ast.AstExpr.SpmdBroadcast value-id lane-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx lane-id)))]
+      [(ast.AstExpr.SpmdShuffle value-id lane-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx lane-id)))]
+      [(ast.AstExpr.SpmdProgramIndex) false]
+      [(ast.AstExpr.SpmdProgramCount) false]
+      [(ast.AstExpr.StructGet receiver-id _)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx receiver-id))]
+      [(ast.AstExpr.StructSet receiver-id _ value-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx receiver-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.WithRegion _ body)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0)]
+      [(ast.AstExpr.WithEscape scratch-id body)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx scratch-id))
+          (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))]
+      [(ast.AstExpr.WithScratch body)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0)]
+      [(ast.AstExpr.InArena arena-id body)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx arena-id))
+          (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))]
+      [(ast.AstExpr.WithResource wr-box)
+        (match (box-get wr-box)
+          [(ast.AstWithResource.WithResource bindings body)
+            (or
+              (tc-generated-resource-bindings-dependent-construct-at?
+                ctx
+                (& bindings)
+                0)
+              (tc-generated-expr-list-dependent-construct-at? ctx (& body) 0))])]
+      [(ast.AstExpr.Box inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.BoxGet inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.BoxTake inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.BoxSet inner-id value-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx inner-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.TypeLiteral ty-id)
+        (tc-generated-type-dependent-construct?
+          ctx
+          (tc-context-type-get ctx ty-id))]
+      [(ast.AstExpr.Init maybe-ty-id)
+        (tc-generated-maybe-type-dependent-construct?
+          ctx
+          (ast.ast-maybe-type-from-id-with-pools
+            (tc-context-pools ctx)
+            maybe-ty-id))]
+      [(ast.AstExpr.Comptime inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Quote inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Quasiquote inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Unquote inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.UnquoteSplicing inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.BracketClause items)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
+      [(ast.AstExpr.Try inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Return inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.Break) false]
+      [(ast.AstExpr.Continue) false]
+      [(ast.AstExpr.PtrNull ty-id)
+        (tc-generated-type-dependent-construct?
+          ctx
+          (tc-context-type-get ctx ty-id))]
+      [(ast.AstExpr.PtrNullCheck inner-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.PtrAddrOf place-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx place-id))]
+      [(ast.AstExpr.PtrRead ptr-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx ptr-id))]
+      [(ast.AstExpr.PtrWrite ptr-id value-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx ptr-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.PtrOffset ptr-id offset-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx ptr-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx offset-id)))]
+      [(ast.AstExpr.PtrCast ptr-id ty-id)
+        (or
+          (tc-generated-type-dependent-construct?
+            ctx
+            (tc-context-type-get ctx ty-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx ptr-id)))]
+      [(ast.AstExpr.PtrToInt ptr-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx ptr-id))]
+      [(ast.AstExpr.IntToPtr value-id ty-id)
+        (or
+          (tc-generated-type-dependent-construct?
+            ctx
+            (tc-context-type-get ctx ty-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx value-id)))]
+      [(ast.AstExpr.StringData str-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx str-id))]
+      [(ast.AstExpr.StringFromBytes ptr-id len-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx ptr-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx len-id)))]
+      [(ast.AstExpr.ArrayData array-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx array-id))]
+      [(ast.AstExpr.BinaryData _) false]
+      [(ast.AstExpr.ProgramArgc) false]
+      [(ast.AstExpr.ProgramArgv) false]
+      [(ast.AstExpr.ProgramEnvp) false]
+      [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx leaf-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx subleaf-id)))]
+      [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx leaf-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx subleaf-id)))]
+      [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx leaf-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx subleaf-id)))]
+      [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx leaf-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx subleaf-id)))]
+      [(ast.AstExpr.Xgetbv index-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx index-id))]
+      [(ast.AstExpr.Syscall args)
+        (tc-generated-expr-list-dependent-construct-at? ctx (& args) 0)])))
 
-(define (tc-generated-pattern-dependent-construct?
-  [ctx : TcContext]
-  [pattern : ast.AstPattern]) : bool
-  (match pattern
-    [(ast.AstPattern.Var _ maybe-ty)
-      (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)]
-    [(ast.AstPattern.Tuple items)
-      (tc-generated-pattern-list-dependent-construct? ctx (box-get items))]
-    [(ast.AstPattern.Variant _ items)
-      (tc-generated-pattern-list-dependent-construct? ctx (box-get items))]
-    [_ false]))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-field-cleanup-dependent?
+    [cleanup : ast.AstFieldCleanup]) : bool
+    (match cleanup
+      [(ast.AstFieldCleanup.No) false]
+      [_ true])))
 
-(define (tc-generated-pattern-list-dependent-construct?
-  [ctx : TcContext]
-  [items : ast.AstPatternList]) : bool
-  (tc-generated-pattern-list-dependent-construct-at? ctx (& items) 0))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-struct-cleanup-dependent?
+    [cleanup : ast.AstStructCleanup]) : bool
+    (match cleanup
+      [(ast.AstStructCleanup.No) false]
+      [_ true])))
 
-(define (tc-generated-pattern-list-dependent-construct-at?
-  [ctx : TcContext]
-  [items : (& items ast.AstPatternList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-pattern-list-len items))
-    false
-    (or
-      (tc-generated-pattern-dependent-construct?
-        ctx
-        (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback)))
-      (tc-generated-pattern-list-dependent-construct-at? ctx items (+ index 1)))))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-enum-cleanup-dependent? [cleanup : ast.AstEnumCleanup]) : bool
+    (match cleanup
+      [(ast.AstEnumCleanup.No) false]
+      [_ true])))
 
-(define (tc-generated-expr-list-dependent-construct?
-  [ctx : TcContext]
-  [exprs : ast.AstExprList]) : bool
-  (tc-generated-expr-list-dependent-construct-at? ctx (& exprs) 0))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-fields-dependent-construct-at?
+    [ctx : TcContext]
+    [fields : (& fields ast.AstFieldDefList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-field-def-list-len fields))
+      false
+      (match (ast.ast-field-def-list-get
+        fields
+        index
+        (ast.ast-field-def-fallback))
+        [(ast.AstFieldDef.Def _ ty cleanup)
+          (or
+            (tc-generated-field-cleanup-dependent? cleanup)
+            (tc-generated-type-dependent-construct? ctx ty)
+            (tc-generated-fields-dependent-construct-at? ctx fields (+ index 1)))]))))
 
-(define (tc-generated-expr-list-dependent-construct-at?
-  [ctx : TcContext]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-expr-list-len exprs))
-    false
-    (or
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (tc-generated-expr-list-dependent-construct-at? ctx exprs (+ index 1)))))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-payload-cleanups-dependent-at?
+    [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-variant-payload-cleanup-list-len cleanups))
+      false
+      (match (ast.ast-variant-payload-cleanup-list-get
+        cleanups
+        index
+        (ast.ast-variant-payload-cleanup-fallback))
+        [(ast.AstVariantPayloadCleanup.No)
+          (tc-generated-payload-cleanups-dependent-at? cleanups (+ index 1))]
+        [_ true]))))
 
-(define (tc-generated-let-bindings-dependent-construct?
-  [ctx : TcContext]
-  [bindings : ast.AstLetBindingList]) : bool
-  (tc-generated-let-bindings-dependent-construct-at? ctx (& bindings) 0))
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-variants-dependent-construct-at?
+    [ctx : TcContext]
+    [variants : (& variants ast.AstVariantDefList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-variant-def-list-len variants))
+      false
+      (match (ast.ast-variant-def-list-get
+        variants
+        index
+        (ast.ast-variant-def-fallback))
+        [(ast.AstVariantDef.Def _ payload-types payload-cleanups)
+          (or
+            (tc-generated-type-list-dependent-construct-at?
+              ctx
+              (& payload-types)
+              0)
+            (tc-generated-payload-cleanups-dependent-at? (& payload-cleanups) 0)
+            (tc-generated-variants-dependent-construct-at?
+              ctx
+              variants
+              (+ index 1)))]))))
 
-(define (tc-generated-let-bindings-dependent-construct-at?
-  [ctx : TcContext]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    false
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ maybe-ty init-id)
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-decl-dependent-construct?
+    [ctx : TcContext]
+    [decl : ast.AstDecl]) : bool
+    (match decl
+      [(ast.AstDecl.Def _ _ maybe-ty body-id)
         (or
           (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)
           (tc-generated-expr-dependent-construct?
             ctx
-            (tc-context-expr-get ctx init-id))
-          (tc-generated-let-bindings-dependent-construct-at?
-            ctx
-            bindings
-            (+ index 1)))])))
-
-(define (tc-generated-match-arms-dependent-construct?
-  [ctx : TcContext]
-  [arms : ast.AstMatchArmList]) : bool
-  (tc-generated-match-arms-dependent-construct-at? ctx (& arms) 0))
-
-(define (tc-generated-match-arms-dependent-construct-at?
-  [ctx : TcContext]
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-match-arm-list-len arms))
-    false
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm pattern body-id)
+            (tc-context-expr-get ctx body-id)))]
+      [(ast.AstDecl.DefFn _ _ params ret body-id _)
         (or
-          (tc-generated-pattern-dependent-construct? ctx pattern)
+          (tc-generated-param-list-dependent-construct-at? ctx (& params) 0)
+          (tc-generated-type-dependent-construct? ctx ret)
           (tc-generated-expr-dependent-construct?
             ctx
-            (tc-context-expr-get ctx body-id))
-          (tc-generated-match-arms-dependent-construct-at? ctx arms (+ index 1)))])))
-
-(define (tc-generated-resource-bindings-dependent-construct?
-  [ctx : TcContext]
-  [bindings : ast.AstResourceBindingList]) : bool
-  (tc-generated-resource-bindings-dependent-construct-at? ctx (& bindings) 0))
-
-(define (tc-generated-resource-bindings-dependent-construct-at?
-  [ctx : TcContext]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-resource-binding-list-len bindings))
-    false
-    (match (ast.ast-resource-binding-list-get
-      bindings
-      index
-      (ast.ast-resource-binding-fallback))
-      [(ast.AstResourceBinding.Binding _ init-id cleanup-id _)
+            (tc-context-expr-get ctx body-id)))]
+      ;; Macro declarations are compile-time only; they never reach the runtime
+      ;; checking lane this classification feeds.
+      [(ast.AstDecl.DefMacro _ _ _ _ _) false]
+      [(ast.AstDecl.Extern _ _ _ _ ty)
+        (tc-generated-type-dependent-construct? ctx ty)]
+      [(ast.AstDecl.DefEnum _ _ cleanup variants)
         (or
-          (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx init-id))
-          (tc-generated-expr-dependent-construct?
-            ctx
-            (tc-context-expr-get ctx cleanup-id))
-          (tc-generated-resource-bindings-dependent-construct-at?
-            ctx
-            bindings
-            (+ index 1)))])))
-
-(define (tc-generated-expr-dependent-construct?
-  [ctx : TcContext]
-  [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-id _)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Literal _) false]
-    [(ast.AstExpr.Var _) false]
-    [(ast.AstExpr.Binary _ left-id right-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx left-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx right-id)))]
-    [(ast.AstExpr.Unary _ inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Call func-id args)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx func-id))
-        (tc-generated-expr-list-dependent-construct? ctx args))]
-    [(ast.AstExpr.If cond-id then-id else-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx cond-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx then-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx else-id)))]
-    [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
-        [(ast.AstLet.Let bindings body-id)
-          (or
-            (tc-generated-let-bindings-dependent-construct? ctx bindings)
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx body-id)))])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
-        [(ast.AstLambda.Lambda params ret body-id)
-          (or
-            (tc-generated-param-list-dependent-construct? ctx params)
-            (tc-generated-maybe-type-dependent-construct? ctx ret)
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx body-id)))])]
-    [(ast.AstExpr.Tuple items)
-      (tc-generated-expr-list-dependent-construct? ctx items)]
-    [(ast.AstExpr.TupleRef tuple-id _)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx tuple-id))]
-    [(ast.AstExpr.Array items)
-      (tc-generated-expr-list-dependent-construct? ctx items)]
-    [(ast.AstExpr.DynArray items)
-      (tc-generated-expr-list-dependent-construct? ctx items)]
-    ;; A make-array element type in expression position is not dependent; the
-    ;; produced value is a length-erased dynamic array.
-    [(ast.AstExpr.MakeArray _ len-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx len-id))]
-    [(ast.AstExpr.ArrayRef array-id index-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx array-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx index-id)))]
-    [(ast.AstExpr.ArraySet array-id index-id value-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx array-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx index-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.ArrayTake array-id live-id index-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx array-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx live-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx index-id)))]
-    [(ast.AstExpr.ArrayPush array-id value-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx array-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.StringRef str-id index-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx str-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx index-id)))]
-    [(ast.AstExpr.While cond-id body-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx cond-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx body-id)))]
-    [(ast.AstExpr.Begin items)
-      (tc-generated-expr-list-dependent-construct? ctx items)]
-    [(ast.AstExpr.Unsafe items)
-      (tc-generated-expr-list-dependent-construct? ctx items)]
-    [(ast.AstExpr.Set _ value-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx value-id))]
-    [(ast.AstExpr.Ann inner-id ty-id)
-      (or
-        (tc-generated-type-dependent-construct?
-          ctx
-          (tc-context-type-get ctx ty-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id)))]
-    [(ast.AstExpr.Cast _ _) true]
-    [(ast.AstExpr.Borrow _ _ place-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx place-id))]
-    [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
-        [(ast.AstMatch.Match scrutinee-id arms)
-          (or
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx scrutinee-id))
-            (tc-generated-match-arms-dependent-construct? ctx arms))])]
-    [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
-        [(ast.AstForeach.Foreach _ elem-ty start-id end-id body-id)
-          (or
-            (tc-generated-type-dependent-construct? ctx elem-ty)
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx start-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx end-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx body-id)))])]
-    [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
-        [(ast.AstSpmdReduce.Reduce _ _ elem-ty start-id end-id init-id value-id)
-          (or
-            (tc-generated-type-dependent-construct? ctx elem-ty)
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx start-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx end-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx init-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx value-id)))])]
-    [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
-        [(ast.AstSpmdScan.Scan
-            _
-            _
-            elem-ty
-            start-id
-            end-id
-            _
-            init-ty
-            init-id
-            value-id
-            body-id)
-          (or
-            (tc-generated-type-dependent-construct? ctx elem-ty)
-            (tc-generated-type-dependent-construct? ctx init-ty)
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx start-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx end-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx init-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx value-id))
-            (tc-generated-expr-dependent-construct?
-              ctx
-              (tc-context-expr-get ctx body-id)))])]
-    [(ast.AstExpr.SpmdBroadcast value-id lane-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx lane-id)))]
-    [(ast.AstExpr.SpmdShuffle value-id lane-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx lane-id)))]
-    [(ast.AstExpr.SpmdProgramIndex) false]
-    [(ast.AstExpr.SpmdProgramCount) false]
-    [(ast.AstExpr.StructGet receiver-id _)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx receiver-id))]
-    [(ast.AstExpr.StructSet receiver-id _ value-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx receiver-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.WithRegion _ body)
-      (tc-generated-expr-list-dependent-construct? ctx body)]
-    [(ast.AstExpr.WithEscape scratch-id body)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx scratch-id))
-        (tc-generated-expr-list-dependent-construct? ctx body))]
-    [(ast.AstExpr.WithScratch body)
-      (tc-generated-expr-list-dependent-construct? ctx body)]
-    [(ast.AstExpr.InArena arena-id body)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx arena-id))
-        (tc-generated-expr-list-dependent-construct? ctx body))]
-    [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (or
-            (tc-generated-resource-bindings-dependent-construct? ctx bindings)
-            (tc-generated-expr-list-dependent-construct? ctx body))])]
-    [(ast.AstExpr.Box inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.BoxGet inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.BoxTake inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.BoxSet inner-id value-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx inner-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.TypeLiteral ty-id)
-      (tc-generated-type-dependent-construct?
-        ctx
-        (tc-context-type-get ctx ty-id))]
-    [(ast.AstExpr.Init maybe-ty-id)
-      (tc-generated-maybe-type-dependent-construct?
-        ctx
-        (ast.ast-maybe-type-from-id-with-pools
-          (tc-context-pools ctx)
-          maybe-ty-id))]
-    [(ast.AstExpr.Comptime inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Quote inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Quasiquote inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Unquote inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.UnquoteSplicing inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.BracketClause items)
-      (tc-generated-expr-list-dependent-construct? ctx items)]
-    [(ast.AstExpr.Try inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Return inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.Break) false]
-    [(ast.AstExpr.Continue) false]
-    [(ast.AstExpr.PtrNull ty-id)
-      (tc-generated-type-dependent-construct?
-        ctx
-        (tc-context-type-get ctx ty-id))]
-    [(ast.AstExpr.PtrNullCheck inner-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx inner-id))]
-    [(ast.AstExpr.PtrAddrOf place-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx place-id))]
-    [(ast.AstExpr.PtrRead ptr-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx ptr-id))]
-    [(ast.AstExpr.PtrWrite ptr-id value-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx ptr-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.PtrOffset ptr-id offset-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx ptr-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx offset-id)))]
-    [(ast.AstExpr.PtrCast ptr-id ty-id)
-      (or
-        (tc-generated-type-dependent-construct?
-          ctx
-          (tc-context-type-get ctx ty-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx ptr-id)))]
-    [(ast.AstExpr.PtrToInt ptr-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx ptr-id))]
-    [(ast.AstExpr.IntToPtr value-id ty-id)
-      (or
-        (tc-generated-type-dependent-construct?
-          ctx
-          (tc-context-type-get ctx ty-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx value-id)))]
-    [(ast.AstExpr.StringData str-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx str-id))]
-    [(ast.AstExpr.StringFromBytes ptr-id len-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx ptr-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx len-id)))]
-    [(ast.AstExpr.ArrayData array-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx array-id))]
-    [(ast.AstExpr.BinaryData _) false]
-    [(ast.AstExpr.ProgramArgc) false]
-    [(ast.AstExpr.ProgramArgv) false]
-    [(ast.AstExpr.ProgramEnvp) false]
-    [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx leaf-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx subleaf-id)))]
-    [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx leaf-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx subleaf-id)))]
-    [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx leaf-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx subleaf-id)))]
-    [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
-      (or
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx leaf-id))
-        (tc-generated-expr-dependent-construct?
-          ctx
-          (tc-context-expr-get ctx subleaf-id)))]
-    [(ast.AstExpr.Xgetbv index-id)
-      (tc-generated-expr-dependent-construct?
-        ctx
-        (tc-context-expr-get ctx index-id))]
-    [(ast.AstExpr.Syscall args)
-      (tc-generated-expr-list-dependent-construct? ctx args)]))
-
-(define (tc-generated-field-cleanup-dependent? [cleanup : ast.AstFieldCleanup]) : bool
-  (match cleanup
-    [(ast.AstFieldCleanup.No) false]
-    [_ true]))
-
-(define (tc-generated-struct-cleanup-dependent?
-  [cleanup : ast.AstStructCleanup]) : bool
-  (match cleanup
-    [(ast.AstStructCleanup.No) false]
-    [_ true]))
-
-(define (tc-generated-enum-cleanup-dependent? [cleanup : ast.AstEnumCleanup]) : bool
-  (match cleanup
-    [(ast.AstEnumCleanup.No) false]
-    [_ true]))
-
-(define (tc-generated-fields-dependent-construct?
-  [ctx : TcContext]
-  [fields : ast.AstFieldDefList]) : bool
-  (tc-generated-fields-dependent-construct-at? ctx (& fields) 0))
-
-(define (tc-generated-fields-dependent-construct-at?
-  [ctx : TcContext]
-  [fields : (& fields ast.AstFieldDefList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-field-def-list-len fields))
-    false
-    (match (ast.ast-field-def-list-get
-      fields
-      index
-      (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def _ ty cleanup)
+          (tc-generated-enum-cleanup-dependent? cleanup)
+          (tc-generated-variants-dependent-construct-at? ctx (& variants) 0))]
+      [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
         (or
-          (tc-generated-field-cleanup-dependent? cleanup)
-          (tc-generated-type-dependent-construct? ctx ty)
-          (tc-generated-fields-dependent-construct-at? ctx fields (+ index 1)))])))
-
-(define (tc-generated-payload-cleanups-dependent-at?
-  [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-variant-payload-cleanup-list-len cleanups))
-    false
-    (match (ast.ast-variant-payload-cleanup-list-get
-      cleanups
-      index
-      (ast.ast-variant-payload-cleanup-fallback))
-      [(ast.AstVariantPayloadCleanup.No)
-        (tc-generated-payload-cleanups-dependent-at? cleanups (+ index 1))]
-      [_ true])))
-
-(define (tc-generated-variants-dependent-construct?
-  [ctx : TcContext]
-  [variants : ast.AstVariantDefList]) : bool
-  (tc-generated-variants-dependent-construct-at? ctx (& variants) 0))
-
-(define (tc-generated-variants-dependent-construct-at?
-  [ctx : TcContext]
-  [variants : (& variants ast.AstVariantDefList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-variant-def-list-len variants))
-    false
-    (match (ast.ast-variant-def-list-get
-      variants
-      index
-      (ast.ast-variant-def-fallback))
-      [(ast.AstVariantDef.Def _ payload-types payload-cleanups)
+          (tc-generated-enum-cleanup-dependent? cleanup)
+          (tc-generated-variants-dependent-construct-at? ctx (& variants) 0))]
+      [(ast.AstDecl.DefStruct _ _ _ cleanup fields)
         (or
-          (tc-generated-type-list-dependent-construct? ctx payload-types)
-          (tc-generated-payload-cleanups-dependent-at? (& payload-cleanups) 0)
-          (tc-generated-variants-dependent-construct-at?
-            ctx
-            variants
-            (+ index 1)))])))
-
-(define (tc-generated-decl-dependent-construct?
-  [ctx : TcContext]
-  [decl : ast.AstDecl]) : bool
-  (match decl
-    [(ast.AstDecl.Def _ _ maybe-ty body-id)
-      (or
-        (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)
-        (tc-generated-expr-dependent-construct?
+          (tc-generated-struct-cleanup-dependent? cleanup)
+          (tc-generated-fields-dependent-construct-at? ctx (& fields) 0))]
+      [(ast.AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
+        (or
+          (tc-generated-struct-cleanup-dependent? cleanup)
+          (tc-generated-fields-dependent-construct-at? ctx (& fields) 0))]
+      ;; Nested generated-module imports keep their own concrete checks.
+      [(ast.AstDecl.Import _ _) true]
+      [(ast.AstDecl.Unsafe inner-box)
+        (tc-generated-decl-dependent-construct? ctx (box-get inner-box))]
+      [(ast.AstDecl.ModuleBody _ decls-box)
+        (tc-generated-decl-list-dependent-construct-at?
           ctx
-          (tc-context-expr-get ctx body-id)))]
-    [(ast.AstDecl.DefFn _ _ params ret body-id _)
+          (& (box-get decls-box))
+          0)]
+      [_ false])))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-generated-decl-list-dependent-construct-at?
+    [ctx : TcContext]
+    [decls : (& decls ast.AstDeclList)]
+    [index : i64]) : bool
+    (if (>= index (ast.ast-decl-list-len decls))
+      false
       (or
-        (tc-generated-param-list-dependent-construct? ctx params)
-        (tc-generated-type-dependent-construct? ctx ret)
-        (tc-generated-expr-dependent-construct?
+        (tc-generated-decl-dependent-construct?
           ctx
-          (tc-context-expr-get ctx body-id)))]
-    ;; Macro declarations are compile-time only; they never reach the runtime
-    ;; checking lane this classification feeds.
-    [(ast.AstDecl.DefMacro _ _ _ _ _) false]
-    [(ast.AstDecl.Extern _ _ _ _ ty)
-      (tc-generated-type-dependent-construct? ctx ty)]
-    [(ast.AstDecl.DefEnum _ _ cleanup variants)
-      (or
-        (tc-generated-enum-cleanup-dependent? cleanup)
-        (tc-generated-variants-dependent-construct? ctx variants))]
-    [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
-      (or
-        (tc-generated-enum-cleanup-dependent? cleanup)
-        (tc-generated-variants-dependent-construct? ctx variants))]
-    [(ast.AstDecl.DefStruct _ _ _ cleanup fields)
-      (or
-        (tc-generated-struct-cleanup-dependent? cleanup)
-        (tc-generated-fields-dependent-construct? ctx fields))]
-    [(ast.AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
-      (or
-        (tc-generated-struct-cleanup-dependent? cleanup)
-        (tc-generated-fields-dependent-construct? ctx fields))]
-    ;; Nested generated-module imports keep their own concrete checks.
-    [(ast.AstDecl.Import _ _) true]
-    [(ast.AstDecl.Unsafe inner-box)
-      (tc-generated-decl-dependent-construct? ctx (box-get inner-box))]
-    [(ast.AstDecl.ModuleBody _ decls-box)
-      (tc-generated-decl-list-dependent-construct? ctx (box-get decls-box))]
-    [_ false]))
-
-(define (tc-generated-decl-list-dependent-construct?
-  [ctx : TcContext]
-  [decls : ast.AstDeclList]) : bool
-  (tc-generated-decl-list-dependent-construct-at? ctx (& decls) 0))
-
-(define (tc-generated-decl-list-dependent-construct-at?
-  [ctx : TcContext]
-  [decls : (& decls ast.AstDeclList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-decl-list-len decls))
-    false
-    (or
-      (tc-generated-decl-dependent-construct?
-        ctx
-        (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
-      (tc-generated-decl-list-dependent-construct-at? ctx decls (+ index 1)))))
+          (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
+        (tc-generated-decl-list-dependent-construct-at? ctx decls (+ index 1))))))
 
 (define (tc-macro-param-list-needs-call-context?
   [params : ast.AstMacroParamList]) : bool
@@ -68513,7 +70366,6 @@
     (set! macro-live-prescan-visible-names (TcNameIdList.Nil))
     (ctfe_support.ctfe-module-macro-export-reset!)
     (macro-generated-module-memo-reset!)
-    (tc-macro-abstract-proof-reset!)
     (macro-generated-decls-memo-reset!)
     (tc-macro-helper-env-cache-reset!)
     (tc-macro-module-env-cache-clear!)
@@ -69839,11 +71691,23 @@
             (& type-kinds)
             head-expr)
             [(ResultMacroCheck.Ok)
-              (spec.ResultGenKey.Ok
-                (str_cat.str-cat
-                  "type_"
-                  (ctfe_support.ctfe-type-key resolved-ty))
-                fuel)]
+              (begin
+                (if (ast.ast-macro-type-kind-list-empty? (& type-kinds))
+                  unit
+                  (scratch-plan-result
+                    (ctfe_support.ctfe-type-key-with-reflections-and-pools
+                      (tc-context-pools ctx)
+                      (ctfe_support.ctfe-reflect-info-list-empty)
+                      resolved-ty)
+                    (ctfe_support.ctfe-type-kind-with-reflections-and-pools
+                      (tc-context-pools ctx)
+                      (ctfe_support.ctfe-reflect-info-list-empty)
+                      resolved-ty)))
+                (spec.ResultGenKey.Ok
+                  (str_cat.str-cat
+                    "type_"
+                    (ctfe_support.ctfe-type-key resolved-ty))
+                  fuel))]
             [(ResultMacroCheck.Err diag) (spec.ResultGenKey.Err diag)])]
         [(ResultMacroTypeArg.Err diag) (spec.ResultGenKey.Err diag)])]
     [(tc-macro-module-param-kind? ty)
@@ -70036,22 +71900,35 @@
   [args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]
   [call-expr : ast.AstExpr]) : spec.ResultGenKey
-  (match (macro-identity-key-params
-    ctx
-    decls
-    fallback-module
-    fallback-module-id
-    macro-name
-    params
-    args
-    env
-    (ctfe_support.ctfe-fuel-limit)
-    call-expr)
-    [(spec.ResultGenKey.Ok arg-key fuel)
-      (spec.ResultGenKey.Ok
-        (str_cat.str-cat definition-module ":" macro-name "(" arg-key ")")
-        fuel)]
-    [(spec.ResultGenKey.Err diag) (spec.ResultGenKey.Err diag)]))
+  (begin
+    ;; The scratch belongs to exactly one identity assembly. Failed key
+    ;; construction must not leak operands into a later successful call.
+    (scratch-reset-context)
+    (match (macro-identity-key-params
+      ctx
+      decls
+      fallback-module
+      fallback-module-id
+      macro-name
+      params
+      args
+      env
+      (ctfe_support.ctfe-fuel-limit)
+      call-expr)
+      [(spec.ResultGenKey.Ok arg-key fuel)
+        (let
+          [identity : String
+            (str_cat.str-cat definition-module ":" macro-name "(" arg-key ")")]
+          (begin
+            (if (tc-defmacro-fixed-type-params-complete? (& params) 0 false)
+              (identity-remap identity)
+              unit)
+            (scratch-reset-context)
+            (spec.ResultGenKey.Ok identity fuel)))]
+      [(spec.ResultGenKey.Err diag)
+        (begin
+          (scratch-reset-context)
+          (spec.ResultGenKey.Err diag))])))
 
 (define (macro-decls-generated-key [identity : String]) : String
   (string.append "decls:" identity))
@@ -87550,6 +89427,223 @@
           [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
       [_ (tc-check-decl-scoped ctx top-env global-env decl)])))
 
+;; Conservative proof-reuse lane for one generated declaration.  The first
+;; successful identity in a (generator,item) family remains concrete; only a
+;; later identity can reach the exact substitution walker after every bounded
+;; provenance, scan, identity, and Rule-4 gate succeeds.
+(defenum TcProofReuseGeneratedDeclDecision
+  (TcProofReuseGeneratedDeclConcrete)
+  (TcProofReuseGeneratedDeclConcreteSeed)
+  (TcProofReuseGeneratedDeclSkip))
+
+(define (tc-proof-reuse-generated-decl-decision
+  [ctx : TcContext]
+  [generator : String]
+  [item : String]
+  [identity : String]
+  [decl : ast.AstDecl]) : TcProofReuseGeneratedDeclDecision
+  ;; Keep the dark-lane fast path literal and outermost: before any metadata,
+  ;; visible-name, or family work, a session with no complete proof returns
+  ;; immediately.
+  (if (not active?)
+    (TcProofReuseGeneratedDeclConcrete)
+    (if (not (complete-key generator))
+      (TcProofReuseGeneratedDeclConcrete)
+      (let
+        ;; The caller has already destructured this declaration's immutable
+        ;; generated metadata and passes those exact values here.
+        [right-id : i64 (lookup-key-id identity)]
+        [slot : i64 (slot-id right-id)]
+        [count : i64
+          (if (and
+            (>= slot 0)
+            (< slot store-capacity)
+            (> (array-ref identity-bytes slot) 0))
+            (let
+              [count : i64 (array-ref operand-count slot)]
+              (if (and (>= count 0) (<= count expected-count))
+                count
+                -1))
+            -1)]
+        [ok : bool
+          (and
+            (>= right-id 0)
+            (>= slot 0)
+            (< slot store-capacity)
+            (> (array-ref identity-bytes slot) 0)
+            (>= count 1)
+            (<= count expected-count))]
+        (if (not ok)
+          (TcProofReuseGeneratedDeclConcrete)
+          (let
+            [key : i64 (slot-index generator item)]
+            (if (or (< key 0) (>= key additional-capacity))
+              ;; A missing family is still eligible to seed after a
+              ;; successful concrete check.  The exact walker below owns the
+              ;; declaration, expression, and dependent-type gates for skips.
+              (TcProofReuseGeneratedDeclConcreteSeed)
+              (let
+                [left-id : i64
+                  (if (> (array-ref storage-identity-vars key) 0)
+                    (- (array-ref storage-identity-vars key) 1)
+                    -1)]
+                (if (or (< left-id 0) (= left-id right-id))
+                  (TcProofReuseGeneratedDeclConcrete)
+                  (match (spec.gen-decl-visible-name decl)
+                    [(spec.SpecMaybeString.Some name)
+                      (if (not (string.eq name item))
+                        (TcProofReuseGeneratedDeclConcrete)
+                        (let
+                          [other : ast.AstDecl (array-ref augmented-decls key)]
+                          ;; The exact walker performs identity preflight,
+                          ;; declaration substitution, dependent-type vetoes,
+                          ;; and Rule 4 in one bounded proof. Unsupported
+                          ;; declarations and expressions fail closed there.
+                          (if (begin
+                            (scratch-reset-functions)
+                            (and
+                              (tc-proof-reuse-session-identity-preflight-ids?
+                                left-id
+                                right-id)
+                              (tc-proof-reuse-session-ast-decl-exact?
+                                ctx
+                                other
+                                decl)
+                              ;; Rule 4 is intentionally last: the exact walk
+                              ;; must finish before literal/operator/
+                              ;; reflection facts can authorize reuse.
+                              (not
+                                (or
+                                  active-invalid
+                                  overflow-ok
+                                  (and portable-pair local-use)
+                                  (and
+                                    portable-pair
+                                    fixed-call
+                                    (not allow-cleanup))
+                                  (< first-key 0)
+                                  (< next-id 0)
+                                  (< identity-count2 1)
+                                  (> identity-count2 expected-count)))
+                              (let
+                                [index : i64 0]
+                                [ok : bool true]
+                                (begin
+                                  ;; The identity metadata table is bounded
+                                  ;; to sixteen ordered operands.  Inspect
+                                  ;; only operand bits that exact type
+                                  ;; comparison actually marked as changed.
+                                  (while (and ok (< index expected-count))
+                                    (begin
+                                      (if (=
+                                        (bit-and active-mask (shl 1 index))
+                                        0)
+                                        unit
+                                        (if (let
+                                          [key : String
+                                            (type-key-id first-slot index)]
+                                          [value : String
+                                            (type-key-id next-slots index)]
+                                          [kind : String
+                                            (kind-for-check first-slot index)]
+                                          [other : String
+                                            (kind-for-check next-slots index)]
+                                          [first : bool
+                                            (or
+                                              (string.eq kind "f32")
+                                              (string.eq kind "f64"))]
+                                          [second : bool
+                                            (or
+                                              (string.eq other "f32")
+                                              (string.eq other "f64"))]
+                                          [left : bool
+                                            (or
+                                              (string.eq kind "struct")
+                                              (string.eq kind "enum"))]
+                                          [right : bool
+                                            (or
+                                              (string.eq other "struct")
+                                              (string.eq other "enum"))]
+                                          [result : bool
+                                            (or
+                                              (string.eq kind "string")
+                                              (string.eq kind "bytes")
+                                              (string.eq kind "array")
+                                              (string.eq kind "dyn-array")
+                                              (string.eq kind "box")
+                                              (string.eq kind "tuple")
+                                              (string.eq kind "struct")
+                                              (string.eq kind "enum")
+                                              (string.eq kind "expr")
+                                              (string.eq kind "expr-list")
+                                              (string.eq kind "function")
+                                              (string.eq kind "consume-param"))]
+                                          [saved : bool
+                                            (or
+                                              (string.eq other "string")
+                                              (string.eq other "bytes")
+                                              (string.eq other "array")
+                                              (string.eq other "dyn-array")
+                                              (string.eq other "box")
+                                              (string.eq other "tuple")
+                                              (string.eq other "struct")
+                                              (string.eq other "enum")
+                                              (string.eq other "expr")
+                                              (string.eq other "expr-list")
+                                              (string.eq other "function")
+                                              (string.eq other "consume-param"))]
+                                          [state : bool
+                                            (or
+                                              (string.eq other "i64")
+                                              (string.eq other "i32")
+                                              (string.eq other "i16")
+                                              (string.eq other "i8")
+                                              (string.eq other "u64")
+                                              (string.eq other "u32")
+                                              (string.eq other "u16")
+                                              (string.eq other "u8")
+                                              (string.eq other "char"))]
+                                          (match (or
+                                            (= (string.string-length key) 0)
+                                            (= (string.string-length value) 0)
+                                            (= (string.string-length kind) 0)
+                                            (= (string.string-length other) 0))
+                                            [true false]
+                                            [false
+                                              (match (string.eq key value)
+                                                [true true]
+                                                [false
+                                                  (match (or
+                                                    checked-context
+                                                    first
+                                                    second
+                                                    left
+                                                    right
+                                                    result
+                                                    saved
+                                                    shifted
+                                                    has-operands
+                                                    reflection-env
+                                                    negative-literal
+                                                    (and
+                                                      (> digit-count 0)
+                                                      (not state))
+                                                    (and
+                                                      conditional-operand
+                                                      (not
+                                                        (string.eq kind other))))
+                                                    [true false]
+                                                    [false
+                                                      (type-dedup-ok? other 0)])])]))
+                                          unit
+                                          (set! ok false)))
+                                      (set! index (+ index 1))))
+                                  ok))))
+                            (TcProofReuseGeneratedDeclSkip)
+                            (TcProofReuseGeneratedDeclConcrete))))]
+                    [(spec.SpecMaybeString.None)
+                      (TcProofReuseGeneratedDeclConcrete)]))))))))))
+
 (define (tc-check-nonfn-decl-with-global-env
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -87675,12 +89769,53 @@
         [template : ast.AstDecl
           (ast.ast-decl-with-meta ast.ast-decl-meta-runtime decl)]
         (match (ast.ast-decl-generated-meta decl)
-          [(ast.AstGeneratedDeclMeta.Some _ _ _ _)
-            (tc-check-decl-with-global-env-inner
-              ctx
-              top-env
-              global-env
-              template)]
+          [(ast.AstGeneratedDeclMeta.Some generator item _ identity)
+            (begin
+              ;; Every generated attempt starts concrete; the profile hook
+              ;; reads this bit only after the declaration succeeds.
+              (set! next-skip false)
+              (let
+                [result : TcProofReuseGeneratedDeclDecision
+                  (tc-proof-reuse-generated-decl-decision
+                    ctx
+                    generator
+                    item
+                    identity
+                    decl)]
+                (match result
+                  [(TcProofReuseGeneratedDeclSkip)
+                    (begin
+                      (set! next-skip true)
+                      (cfg
+                        test
+                        (set!
+                          tc-proof-reuse-skips-total
+                          (+ tc-proof-reuse-skips-total 1)))
+                      ResultTcUnit.Ok)]
+                  [(TcProofReuseGeneratedDeclConcrete)
+                    (tc-check-decl-with-global-env-inner
+                      ctx
+                      top-env
+                      global-env
+                      template)]
+                  [(TcProofReuseGeneratedDeclConcreteSeed)
+                    (let
+                      [result : ResultTcUnit
+                        (tc-check-decl-with-global-env-inner
+                          ctx
+                          top-env
+                          global-env
+                          template)]
+                      (begin
+                        ;; A family row is seeded only by a successful
+                        ;; concrete check.  The note operation preserves the
+                        ;; first row and is never repeated for ordinary
+                        ;; concrete decisions or failed checks.
+                        (match result
+                          [(ResultTcUnit.Ok)
+                            (record-slot generator item identity decl)]
+                          [(ResultTcUnit.Err _) unit])
+                        result))])))]
           [(ast.AstGeneratedDeclMeta.No)
             (match (tc-check-comptime-decl-purity ctx top-env template)
               [(ResultTcUnit.Ok)
@@ -88201,21 +90336,6 @@
           (tc-check-decls-with-paths-cold ctx top-env decls paths summary)])
       (tc-check-decls-with-paths-cold ctx top-env decls paths summary))))
 
-(define (tc-generated-clone-name? [name : String]) : bool
-  (if (>= (string.string-length name) 6)
-    (string.eq (string.substring name 0 6) "clone$")
-    false))
-
-(define (tc-generated-clone-decl-with-path?
-  [decl : ast.AstDecl]
-  [path : String]) : bool
-  (if (string.eq path "")
-    (match decl
-      [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-        (tc-generated-clone-name? (tc-env-key-name-text name))]
-      [_ false])
-    false))
-
 (define (tc-typecheck-diag-with-maybe-origin-and-path
   [origin : parser.CompilerParseMaybeDeclSpan]
   [decl : ast.AstDecl]
@@ -88486,7 +90606,18 @@
                                     diagnostics)))))
                           (set! done true))]))]
                 [_
-                  (if (tc-generated-clone-decl-with-path? decl decl-path)
+                  (if (and
+                    (string.eq decl-path "")
+                    (match decl
+                      [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
+                        (let
+                          [name-text : String (tc-env-key-name-text name)]
+                          (and
+                            (>= (string.string-length name-text) 6)
+                            (string.eq
+                              (string.substring name-text 0 6)
+                              "clone$")))]
+                      [_ false]))
                     (begin
                       (set! cur-decls rest)
                       (set! cur-paths rest-paths)
@@ -88901,7 +91032,6 @@
     (ctfe_support.ctfe-module-value-reset!)
     (set! ctfe-needs-metadata true)
     (macro-generated-module-memo-reset!)
-    (tc-macro-abstract-proof-reset!)
     (macro-generated-decls-memo-reset!)))
 
 (define (compiler-typecheck-reset-file-state!) : unit

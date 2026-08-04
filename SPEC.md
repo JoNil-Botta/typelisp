@@ -1282,7 +1282,23 @@ Constraint processing has two distinct times:
    compile-time `type` value as an unconstrained operand. A failing operand
    does not run the transformer and does not create or reuse generated output.
 
-The normal post-expansion typecheck remains mandatory. Kind constraints move
+Concrete transformer CTFE remains mandatory, and the first concrete
+instantiation of every generated-module family receives the normal full-body
+post-expansion typecheck. That check includes declarations that are unused or
+later removed by reachability; there is no demand pruning before this first
+check. A second-or-later distinct generated-module identity T1 may reuse a
+concrete declaration verdict from the already-checked identity T0 only when
+all of the following hold:
+
+1. The persisted abstract proof covers the parameter's concrete kind and every
+   fixed `type` operand.
+2. The declaration passes the tightened invariant/dependency scan.
+3. The declaration is the exact T0-to-T1 substitution of the checked T0
+   declaration, including nested generated-import identities.
+4. Every literal fits T1, and no width/kind-family, ownership/cleanup,
+   equality/clone, reflection/fixed-shape semantics change.
+
+Kind constraints move
 unsupported top-level shapes to the operand site; they do not by themselves
 prove a generated body correct for all nested concrete types. They are also
 the fact vocabulary used by the definition-time abstract macro-body checker.
@@ -1291,10 +1307,13 @@ reflection uses once over the declared kind set. A `type-kind` equality branch
 refines that set for its then/else bodies, and direct `let` aliases preserve
 the operand's facts; shape-specific reflection is accepted only when every
 remaining kind supports it. The checker does not infer unrelated capabilities.
-Concrete transformer CTFE and the normal post-expansion typecheck remain the
-safeguards for fixed-array lengths, reflection indexes, nested-type
-properties, cleanup ownership, and final substitutions. Unconstrained `type`
-operands retain the existing concrete-only behavior.
+Concrete transformer CTFE and the first identity's full-body typecheck remain
+the safeguards for fixed-array lengths, reflection indexes, nested-type
+properties, cleanup ownership, and final substitutions. If any proof, family,
+identity, lookup, or structural check is absent or mismatched, the compiler
+fails closed to normal concrete checking. The first identity is always checked
+concretely, and `:kind` alone never proves arbitrary generated-body safety.
+Unconstrained `type` operands retain the existing concrete-only behavior.
 
 A failed satisfaction diagnostic must point at the concrete type operand and
 name the canonical macro, parameter, rendered concrete type, and allowed kind

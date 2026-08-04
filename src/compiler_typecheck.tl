@@ -7841,10 +7841,10 @@
 
 ;; --- #5296 report-only generated-declaration lane instrumentation -----------
 ;;
-;; The proof table and the dependent-construct scan are ungated, so these
-;; tests exercise them directly without the compile-profile cfg: typecheck a
-;; constrained defmacro and inspect the persisted proof, and run the scan on
-;; parsed declarations.
+;; The abstract-proof checks remain directly available, while the full
+;; declaration scan fixture is test-only alongside the gated full classifier:
+;; typecheck a constrained defmacro and inspect the persisted proof, and run
+;; the scan on parsed declarations.
 (define (compiler-typecheck-macro-abstract-proof-source) : String
   "(defstruct Point (x i64) (y bool))
 (defenum Maybe (None) (Some i64))
@@ -7920,137 +7920,166 @@
         unit)
       ok)))
 
-(define (compiler-typecheck-generated-decl-scan?
-  [src : String]
-  [decl-index : i64]) : bool
-  (begin
-    (tc_core.tc-agg-caches-reset!)
-    (match (parser.parse-ast-source src)
-      [(parser.ResultAstProgram.Ok program)
-        (match (csym.build-compiler-symbols program)
-          [(csym.ResultCompilerSymbols.Ok symbols)
-            (match (csym.build-compiler-registries program)
-              [(csym.ResultCompilerRegistries.Ok registries)
-                (match program
-                  [(ast.AstProgram.Program decls-box)
-                    (let
-                      [decls : ast.AstDeclList (box-get decls-box)]
-                      [decl : ast.AstDecl
-                        (ast.ast-decl-list-get
-                          (& decls)
-                          decl-index
-                          (ast.ast-decl-fallback))]
-                      [ctx : tc_core.TcContext
-                        (tc_core.tc-context-new
-                          program
-                          symbols
-                          registries
-                          ""
-                          cbi.compiler-builtin-id-fix-empty
-                          (ast.ast-node-pool-context-capture-active))]
-                      (tc_core.tc-generated-decl-dependent-construct? ctx decl))])]
-              [(csym.ResultCompilerRegistries.Err _) false])]
-          [(csym.ResultCompilerSymbols.Err _) false])]
-      [(parser.ResultAstProgram.Err _) false])))
-
-(define (compiler-typecheck-generated-scan-tests-ok?) : bool
-  (let
-    [ok : bool true]
+(cfg
+  test
+  (define (compiler-typecheck-generated-decl-scan?
+    [src : String]
+    [decl-index : i64]) : bool
     (begin
-      ;; A fixed-size array field is substitution-dependent.
-      (if (compiler-typecheck-generated-decl-scan?
-        "(defstruct Fixed (buf (Array i64 8)))"
-        0)
-        unit
-        (set! ok false))
-      ;; A reference field is substitution-dependent.
-      (if (compiler-typecheck-generated-decl-scan?
-        "(defstruct RefBox (:lifetimes a) (value (& a i64)))"
-        0)
-        unit
-        (set! ok false))
-      ;; A struct-level cleanup function is substitution-dependent.
-      (if (compiler-typecheck-generated-decl-scan?
-        "(defstruct Cleaned (:cleanup drop-cleaned) (fd i64))"
-        0)
-        unit
-        (set! ok false))
-      ;; An :owned field annotation is substitution-dependent (the parser
-      ;; requires a struct-level :cleanup before field metadata, so the field
-      ;; predicate is also probed directly below).
-      (if (compiler-typecheck-generated-decl-scan?
-        "(defstruct Holds (:cleanup drop-holds) (fd i64 (:owned)))"
-        0)
-        unit
-        (set! ok false))
-      (if (tc_core.tc-generated-field-cleanup-dependent?
-        (ast.AstFieldCleanup.Owned))
-        unit
-        (set! ok false))
-      (if (tc_core.tc-generated-field-cleanup-dependent?
-        (ast.AstFieldCleanup.No))
-        (set! ok false)
-        unit)
-      ;; A cast anywhere in the body is substitution-dependent.
-      (if (compiler-typecheck-generated-decl-scan?
-        "(define (narrow [x : i64]) : i32 (cast x : i32))"
-        0)
-        unit
-        (set! ok false))
-      ;; A fixed array in a let annotation is substitution-dependent.
-      (if (compiler-typecheck-generated-decl-scan?
-        "(define (first-elt) : i64 (let [v : (Array i64 4) (array 1 2 3 4)] (array-ref v 0)))"
-        0)
-        unit
-        (set! ok false))
-      ;; A reference parameter type is substitution-dependent.
-      (if (compiler-typecheck-generated-decl-scan?
-        "(define (deref [p : (& caller i64)]) : i64 p)"
-        0)
-        unit
-        (set! ok false))
-      ;; A fixed array in a return type is substitution-dependent.
-      (if (compiler-typecheck-generated-decl-scan?
-        "(define (pair-array) : (Array i64 2) (array 7 9))"
-        0)
-        unit
-        (set! ok false))
-      ;; A nested generated-module import keeps its concrete checks.
-      (if (compiler-typecheck-generated-decl-scan? "(import dep)" 0)
-        unit
-        (set! ok false))
-      ;; A struct with only DynArray/i64 fields is free of dependent
-      ;; constructs, as is a body that only calls struct-get on it.
-      (if (compiler-typecheck-generated-decl-scan?
-        "(defstruct Plain (x i64) (ys (DynArray i64)))"
-        0)
-        (set! ok false)
-        unit)
-      (if (compiler-typecheck-generated-decl-scan?
-        "(defstruct Pair (x i64) (ys (DynArray i64)))
+      (tc_core.tc-agg-caches-reset!)
+      (match (parser.parse-ast-source src)
+        [(parser.ResultAstProgram.Ok program)
+          (match (csym.build-compiler-symbols program)
+            [(csym.ResultCompilerSymbols.Ok symbols)
+              (match (csym.build-compiler-registries program)
+                [(csym.ResultCompilerRegistries.Ok registries)
+                  (match program
+                    [(ast.AstProgram.Program decls-box)
+                      (let
+                        [decls : ast.AstDeclList (box-get decls-box)]
+                        [decl : ast.AstDecl
+                          (ast.ast-decl-list-get
+                            (& decls)
+                            decl-index
+                            (ast.ast-decl-fallback))]
+                        [ctx : tc_core.TcContext
+                          (tc_core.tc-context-new
+                            program
+                            symbols
+                            registries
+                            ""
+                            cbi.compiler-builtin-id-fix-empty
+                            (ast.ast-node-pool-context-capture-active))]
+                        (tc_core.tc-generated-decl-dependent-construct?
+                          ctx
+                          decl))])]
+                [(csym.ResultCompilerRegistries.Err _) false])]
+            [(csym.ResultCompilerSymbols.Err _) false])]
+        [(parser.ResultAstProgram.Err _) false]))))
+
+(cfg
+  test
+  (define (compiler-typecheck-generated-scan-tests-ok?) : bool
+    (let
+      [ok : bool true]
+      (begin
+        ;; A fixed-size array field is substitution-dependent.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(defstruct Fixed (buf (Array i64 8)))"
+          0)
+          unit
+          (set! ok false))
+        ;; A reference wrapper around an invariant pointee is invariant itself.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(defstruct RefBox (:lifetimes a) (value (& a i64)))"
+          0)
+          (set! ok false)
+          unit)
+        ;; A dependent fixed array remains dependent beneath a reference.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(defstruct RefArray (:lifetimes a) (value (& a (Array i64 4))))"
+          0)
+          unit
+          (set! ok false))
+        ;; Raw pointers follow the same invariant-wrapper rule.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(define (ptr-id [p : (Ptr i64)]) : (Ptr i64) p)"
+          0)
+          (set! ok false)
+          unit)
+        (if (compiler-typecheck-generated-decl-scan?
+          "(define (ptr-array [p : (Ptr (Array i64 4))]) : (Ptr (Array i64 4)) p)"
+          0)
+          unit
+          (set! ok false))
+        ;; A struct-level cleanup function is substitution-dependent.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(defstruct Cleaned (:cleanup drop-cleaned) (fd i64))"
+          0)
+          unit
+          (set! ok false))
+        ;; An :owned field annotation is substitution-dependent (the parser
+        ;; requires a struct-level :cleanup before field metadata, so the field
+        ;; predicate is also probed directly below).
+        (if (compiler-typecheck-generated-decl-scan?
+          "(defstruct Holds (:cleanup drop-holds) (fd i64 (:owned)))"
+          0)
+          unit
+          (set! ok false))
+        (if (tc_core.tc-generated-field-cleanup-dependent?
+          (ast.AstFieldCleanup.Owned))
+          unit
+          (set! ok false))
+        (if (tc_core.tc-generated-field-cleanup-dependent?
+          (ast.AstFieldCleanup.No))
+          (set! ok false)
+          unit)
+        ;; A cast anywhere in the body is substitution-dependent.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(define (narrow [x : i64]) : i32 (cast x : i32))"
+          0)
+          unit
+          (set! ok false))
+        ;; A fixed array in a let annotation is substitution-dependent.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(define (first-elt) : i64 (let [v : (Array i64 4) (array 1 2 3 4)] (array-ref v 0)))"
+          0)
+          unit
+          (set! ok false))
+        ;; A reference parameter around an invariant pointee is invariant.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(define (deref [p : (& caller i64)]) : i64 p)"
+          0)
+          (set! ok false)
+          unit)
+        ;; A fixed array in a return type is substitution-dependent.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(define (pair-array) : (Array i64 2) (array 7 9))"
+          0)
+          unit
+          (set! ok false))
+        ;; A nested generated-module import keeps its concrete checks.
+        (if (compiler-typecheck-generated-decl-scan? "(import dep)" 0)
+          unit
+          (set! ok false))
+        ;; A struct with only DynArray/i64 fields is free of dependent
+        ;; constructs, as is a body that only calls struct-get on it.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(defstruct Plain (x i64) (ys (DynArray i64)))"
+          0)
+          (set! ok false)
+          unit)
+        (if (compiler-typecheck-generated-decl-scan?
+          "(defstruct Pair (x i64) (ys (DynArray i64)))
 (define (sum [p : Pair]) : i64 (struct-get p x))"
-        1)
-        (set! ok false)
-        unit)
-      ;; A body that only calls array-ref on a DynArray is not dependent.
-      (if (compiler-typecheck-generated-decl-scan?
-        "(define (head [v : (DynArray i64)]) : i64 (array-ref v 0))"
-        0)
-        (set! ok false)
-        unit)
-      ;; A make-array element type in expression position is not dependent:
-      ;; the produced value is a length-erased dynamic array.
-      (if (compiler-typecheck-generated-decl-scan?
-        "(define (scratch) : i64 (begin (make-array (Array i64 2) 3) 0))"
-        0)
-        (set! ok false)
-        unit)
-      ok)))
+          1)
+          (set! ok false)
+          unit)
+        ;; A body that only calls array-ref on a DynArray is not dependent.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(define (head [v : (DynArray i64)]) : i64 (array-ref v 0))"
+          0)
+          (set! ok false)
+          unit)
+        ;; A make-array element type in expression position is not dependent:
+        ;; the produced value is a length-erased dynamic array.
+        (if (compiler-typecheck-generated-decl-scan?
+          "(define (scratch) : i64 (begin (make-array (Array i64 2) 3) 0))"
+          0)
+          (set! ok false)
+          unit)
+        ok))))
 
 (define (compiler-typecheck-generated-lanes-tests-ok?) : bool
-  (and
-    (compiler-typecheck-macro-abstract-proof-tests-ok?)
-    (compiler-typecheck-generated-scan-tests-ok?)))
+  (let
+    [ok : bool (compiler-typecheck-macro-abstract-proof-tests-ok?)]
+    (begin
+      (cfg
+        test
+        (if (compiler-typecheck-generated-scan-tests-ok?)
+          unit
+          (set! ok false)))
+      ok)))
 
 (define (compiler-typecheck-defmacro-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool

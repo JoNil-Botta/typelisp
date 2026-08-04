@@ -243,7 +243,9 @@
                 (lower-symbol-smoke-extern-metadata link-id true))]
             (unless (not (= module-symbol link-id)) (set! ok false))
             (unless
-              (string.eq (ci.intern-str module-symbol) module-name)
+              (string.eq
+                (compiler_ir_types.compiler-ir-symbol-text module-symbol)
+                module-name)
               (set! ok false)))
           (unless
             (=
@@ -282,7 +284,9 @@
                 (unless (= logical-id opaque-logical-id) (set! ok false))
                 (unless (not (= symbol-id opaque-logical-id)) (set! ok false))
                 (unless
-                  (string.eq (ci.intern-str symbol-id) "same-name")
+                  (string.eq
+                    (compiler_ir_types.compiler-ir-symbol-text symbol-id)
+                    "same-name")
                   (set! ok false)))]
             [_ (set! ok false)])))
       (ci.intern-compat-state-install! state-b)
@@ -305,12 +309,53 @@
       (cbi.compiler-builtin-initialize-for-parse!)
       ok)))
 
+(define (lower-symbol-generated-lane-budget-source) : String
+  "(define (shared [x : i64]) : i64 (+ x 1))
+(define (first [x : i64]) : i64 (shared x))
+(define (second [x : i64]) : i64 (shared (first x)))
+(define (main) : i64 (+ (first 1) (second 2)))")
+
+;; Derived logical symbols used to dominate the intern pool's generated lane:
+;; 50,409 of the 51,482 generated names a whole-program self-compile allocated,
+;; which met the pool's fixed 131,072-slot ceiling and aborted the
+;; profile-enabled CLI build with a bare out-of-bounds three stages downstream
+;; (#6293). They are minted into the IR's own growable table now, so a compile's
+;; generated lane must stay a small fraction of the pool -- the self-compile's
+;; lane fell to about 1,073 names, well under capacity/64. Pin both halves of
+;; that here: a real front-to-back emit stays inside the budget, and the derived
+;; mint itself costs the lane nothing. Moving the mint back into the pool fails
+;; as a named smoke instead of as a later bootstrap stage's bare abort.
+(define (lower-symbol-generated-lane-budget-ok?) : bool
+  (let
+    [emitted : bool
+      (match (compiler_backend.compiler-backend-emit-source
+        (lower-symbol-generated-lane-budget-source))
+        [(compiler_backend.ResultCompilerBackend.Ok _) true]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+    [lane-after-compile : i64 (ci.intern-generated-count)]
+    [derived-after-compile : i64
+      (compiler_ir_types.compiler-ir-symbol-count-value)]
+    [minted : i64
+      (compiler_lower.lower-derived-symbol-id "lower-symbol-budget/probe")]
+    [lane-after-mint : i64 (ci.intern-generated-count)]
+    [derived-after-mint : i64
+      (compiler_ir_types.compiler-ir-symbol-count-value)]
+    (and
+      emitted
+      (< lane-after-compile (/ (ci.intern-capacity) 64))
+      (compiler_ir_types.compiler-ir-symbol-owned? minted)
+      (= lane-after-mint lane-after-compile)
+      (= derived-after-mint (+ derived-after-compile 1)))))
+
 (define (compiler-lower-symbol-identity-smoke-main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (unless
       (lower-symbol-smoke-ok?)
       (io.panic "lower: typed symbol identity smoke mismatch"))
+    (unless
+      (lower-symbol-generated-lane-budget-ok?)
+      (io.panic "lower: derived symbol generated-lane budget exceeded"))
     42))
 
 (define (compiler-driver-pic-smoke-roots) : svec.Vec

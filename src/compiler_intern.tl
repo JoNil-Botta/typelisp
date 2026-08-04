@@ -2405,6 +2405,57 @@
         -1
         -1))))
 
+(define (intern-generated-canonical-name-existing-at
+  [name : String]
+  [hash : i64]
+  [cursor : i64]
+  [steps : i64]) : i64
+  (if (>= steps intern-generated-map-capacity)
+    -1
+    (let
+      [stored-id : InternSlotId
+        (array-ref intern-generated-map-id-slots cursor)]
+      (if (intern-id-slot-empty? stored-id)
+        -1
+        (let
+          [slot-id : i64 (intern-id-slot-decode stored-id)]
+          [slot-hash : i64 (array-ref intern-generated-map-hash-slots cursor)]
+          (if (and
+            (= slot-hash hash)
+            (intern-private-string-eq-places
+              (array-ref intern-pool-slots slot-id)
+              name)
+            (not (intern-qualified? slot-id))
+            (< (intern-first-dot slot-id) 0))
+            slot-id
+            (intern-generated-canonical-name-existing-at
+              name
+              hash
+              (intern-bucket (+ cursor 1) intern-generated-map-capacity)
+              (+ steps 1))))))))
+
+;: The canonical generated id `name` already has, or -1. This probes; it never
+;: allocates, never resets the table, and matches on exactly the identity
+;: `intern-generated-canonical-name` would have matched on.
+;:
+;: The canonical generated namespace is one namespace, so two mints of one
+;: spelling used to be one id however far apart they were -- which is how a
+;: derived symbol spelled like a runtime builtin (`tl_arena_current`, say) came
+;: out equal to that builtin's id, and why the backend can decide "the runtime
+;: provides this" with an integer compare. The IR's derived symbol table mints
+;: outside this pool, so it asks here first and defers to an identity that
+;: already exists rather than minting a second one for the same spelling.
+(define (intern-generated-canonical-name-existing [name : String]) : i64
+  (if intern-map-ready
+    (let
+      [hash : i64 (intern-hash name)]
+      (intern-generated-canonical-name-existing-at
+        name
+        hash
+        (intern-bucket hash intern-generated-map-capacity)
+        0))
+    -1))
+
 ;: Canonicalize a generated qualified symbol by both its display spelling and
 ;: structural module/base identities. The kind bit keeps an opaque generated
 ;: name with the same display text in a distinct canonical domain.

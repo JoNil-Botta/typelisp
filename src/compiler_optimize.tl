@@ -66773,7 +66773,7 @@
         [_ false])]
     [(ir.CompilerIrInstr.Call _ name _ _)
       (let
-        [text : String (ci.intern-str name)]
+        [text : String (ir.compiler-ir-symbol-text name)]
         (or
           (string.eq text "stdlib/io.tl::stdlib.io/panic")
           (string.eq text "stdlib\\io.tl::stdlib.io/panic")))]

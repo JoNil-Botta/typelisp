@@ -20067,6 +20067,17 @@
             (compiler_ir_types.CompilerIrCallArgs.Nil)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstrList.Nil))]
+      ;; An indirect call through the raw parameter. There is no callee name to
+      ;; resolve, so no clean map can describe it: the LICM store summaries take
+      ;; `call-or-unknown?` unconditionally here.
+      [(= mode 3)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.CallIndirect
+            11
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrCallArgs.Nil)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstrList.Nil))]
       [else (compiler_ir_types.CompilerIrInstrList.Nil)])))
 
 (cfg
@@ -20539,6 +20550,44 @@
             (opt-licm-checked-root-blocks 1 2 2)))]
       [call-blocks : compiler_ir_types.CompilerIrBlockList
         (compiler_optimize.opt-function-blocks call-func)]
+      ;; The clean-callee refinement of opt-licm-memory-safe?: the same
+      ;; direct-call barrier as `call-blocks`, but with the callee named in the
+      ;; direct-call-clean map. `call-blocks` above keeps the absent-summary
+      ;; negative (nothing proves `touch` clean, so the load stays put); this
+      ;; arm is the positive, and `clean-indirect` shows the map cannot rescue a
+      ;; call site with no callee name to look up.
+      [clean-touch-map : opt_i64_i64_map.Map
+        (let
+          [map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+          (begin
+            (opt_i64_i64_map.insert-ref!
+              (&mut map)
+              (compiler_ir_types.compiler-ir-symbol-id
+                (opt-test-symbol "touch"))
+              1)
+            map))]
+      [clean-call-func : compiler_ir_types.CompilerIrFunction
+        (compiler_optimize.opt-licm-function-with-direct-call-clean
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 2 2))
+          clean-touch-map)]
+      [clean-call : compiler_ir_types.CompilerIrBlockList
+        (compiler_optimize.opt-function-blocks clean-call-func)]
+      [clean-indirect-func : compiler_ir_types.CompilerIrFunction
+        (compiler_optimize.opt-licm-function-with-direct-call-clean
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 2 3))
+          clean-touch-map)]
+      [clean-indirect : compiler_ir_types.CompilerIrBlockList
+        (compiler_optimize.opt-function-blocks clean-indirect-func)]
       [fresh-func : compiler_ir_types.CompilerIrFunction
         (compiler_optimize.opt-licm-function
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -20744,6 +20793,42 @@
                 (compiler_ir_types.compiler-ir-label "loop"))
               0))
           25]
+        [(not
+            (compiler_optimize.opt-verify-ok?
+              (compiler_optimize.opt-verify-function clean-call-func)))
+          26]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                clean-call
+                (compiler_ir_types.compiler-ir-label "entry"))
+              1))
+          27]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                clean-call
+                (compiler_ir_types.compiler-ir-label "loop"))
+              0))
+          28]
+        [(not
+            (compiler_optimize.opt-verify-ok?
+              (compiler_optimize.opt-verify-function clean-indirect-func)))
+          29]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                clean-indirect
+                (compiler_ir_types.compiler-ir-label "entry"))
+              0))
+          30]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                clean-indirect
+                (compiler_ir_types.compiler-ir-label "loop"))
+              1))
+          31]
         [else 42]))))
 
 (define (compiler-optimize-licm-self-test) : i64
@@ -20886,6 +20971,19 @@
       (compiler_optimize.opt-loop-bce-direct-call-clean-map
         (opt-licm-direct-call-clean-test-functions symbols)
         8)]
+    ;; The call-memory union that feeds the clean-callee LICM refinement. Over
+    ;; the same three fixtures: `leaf` writes no memory at all, so its packed
+    ;; summary is exactly 0 and the union admits it; `writer` carries a StorePtr
+    ;; and does not; `probe` is self-recursive, so the deliberately partial
+    ;; fixpoint never resolves it and an absent summary stays opaque.
+    [direct-clean-union : opt_i64_i64_map.Map
+      (compiler_optimize.opt-loop-bce-direct-call-clean-add-memory-clean
+        (opt-licm-direct-call-clean-test-functions symbols)
+        (compiler_optimize.opt-call-memory-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-licm-direct-call-clean-test-functions symbols)
+          8)
+        (opt_i64_i64_map.with-capacity 8))]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -21309,6 +21407,19 @@
               (compiler_ir_types.compiler-ir-label "loop"))
             2))
         81]
+      [(not
+          (opt_i64_i64_map.contains?
+            (& direct-clean-union)
+            (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols leaf))))
+        82]
+      [(opt_i64_i64_map.contains?
+          (& direct-clean-union)
+          (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols writer)))
+        83]
+      [(opt_i64_i64_map.contains?
+          (& direct-clean-union)
+          (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols probe)))
+        84]
       [else 42])))
 
 (define (opt-licm-unswitch-test-params) : compiler_ir_types.CompilerIrParamList

@@ -18696,7 +18696,21 @@
       (or (opt-licm-store-summary-clean? legacy-summary) legacy-special-safe?)]
     [_
       (and
-        (not any-call?)
+        ;; A call in the body used to close this path outright. That is what a
+        ;; call whose effects are unknown demands, but a DIRECT call already
+        ;; proven memory-clean contributes `opt-licm-store-summary-empty` (see
+        ;; opt-licm-store-summary-for-direct-call), so it can write neither the
+        ;; loaded root nor any other object: nothing it does can invalidate a
+        ;; load the summaries already certify. Recognizing that is the same
+        ;; refinement the Gep arm of opt-licm-candidate? already applies, moved
+        ;; here so the Load arm shares it. `any-call?` still closes the path for
+        ;; indirect, C-ABI and SPMD calls, which set call-or-unknown? in both
+        ;; summaries and therefore fail this disjunct.
+        (or
+          (not any-call?)
+          (and
+            (not (struct-get root-summary call-or-unknown?))
+            (not (struct-get legacy-summary call-or-unknown?))))
         (or
           ;; Root identity is a coarse object-level fact. Preserve the older,
           ;; more precise descriptor-header proof when stores touch only data
@@ -69410,6 +69424,47 @@
   ;; tiny. Keep the fixpoint summary pass bounded, but high enough for those cases.
   1024)
 
+;; Every function whose call-memory summary is exactly 0 writes no memory at
+;; all: no parameter-rooted write (bits 0..59), no global storage write
+;; (bit 60), no unknown effect (bit 61). That is exactly the fact
+;; `direct-call-clean` stands for at a LICM call site, and the call-memory
+;; builder proves it with a callgraph fixpoint whose deliberately partial map
+;; leaves recursive cycles and over-limit programs unresolved -- so unioning it
+;; in can only ADD leaves that provably write nothing, never relax a callee the
+;; older syntactic walk had already rejected on effects.
+;;
+;; Only functions of the program's own list are considered: a name absent from
+;; the map is unresolved and stays opaque, and indirect/C-ABI/SPMD call sites
+;; have no callee name to look up and keep their unconditional
+;; `opt-licm-store-summary-call-or-unknown`.
+(define (opt-loop-bce-direct-call-clean-add-memory-clean
+  [functions : ir.CompilerIrFunctionList]
+  [call-memory : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) out]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ _)
+          (let
+            [name-id : i64 (ir.compiler-ir-symbol-id name)]
+            [_record : unit
+              (match (opt_i64_i64_map.get (& call-memory) name-id)
+                [(opt_i64_i64_map.LookupFound summary)
+                  (if (= summary 0)
+                    (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)
+                    unit)]
+                [(opt_i64_i64_map.LookupMissing) unit])]
+            (opt-loop-bce-direct-call-clean-add-memory-clean
+              (box-get rest)
+              call-memory
+              out))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-loop-bce-direct-call-clean-add-memory-clean
+        (ir.compiler-ir-function-seq-to-list seq)
+        call-memory
+        out)]))
+
 (define (opt-loop-bce-build-summaries-with-direct-call-clean
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionList]
@@ -69429,13 +69484,19 @@
         functions
         (opt_i64_i64_map.with-capacity capacity))
         [(OptLoopBceCleanPass.Pass clean _) clean])]
-    [direct-call-clean : opt_i64_i64_map.Map
-      (if build-direct-call-clean
-        (opt-loop-bce-direct-call-clean-map functions capacity)
-        (opt_i64_i64_map.with-capacity 1))]
     [call-memory : opt_i64_i64_map.Map
       (if build-call-memory
         (opt-call-memory-build type-segment-bases functions capacity)
+        (opt_i64_i64_map.with-capacity 1))]
+    ;; `call-memory` is built first so the clean map can union in its
+    ;; provably-write-nothing leaves. `build-direct-call-clean` is the level>=2
+    ;; gate, so opt0/opt1 keep an empty map and stay byte-identical.
+    [direct-call-clean : opt_i64_i64_map.Map
+      (if build-direct-call-clean
+        (opt-loop-bce-direct-call-clean-add-memory-clean
+          functions
+          call-memory
+          (opt-loop-bce-direct-call-clean-map functions capacity))
         (opt_i64_i64_map.with-capacity 1))]
     (OptLoopBceSummaries
       true

@@ -55,11 +55,23 @@ tl_current_arena:
 ;; `.size` closes the symbol after the recipe's last emitted byte. The wrapper
 ;; contributes these two lines and nothing else, so deleting every `.type` /
 ;; `.size` line restores the recipe's text byte for byte.
+;;
+;; The recipe call keeps its own helper because `compiler-backend-current-arena-load`
+;; is also the name of the two-argument target dispatcher in compiler_backend.tl.
+;; When that module is itself the compile root -- the selfhost compile manifest
+;; builds every top-level source standalone -- a `str-cat` operand anywhere in a
+;; function body makes this module's unqualified names resolve against the root
+;; module's bindings, so the wrapper would type "%rax" against
+;; `CompilerBackendTarget` and fail with E0206. Keeping the shadowed call in a
+;; macro-free function sidesteps that; the emitted text is unchanged either way.
+(define (compiler-backend-runtime-region-mark-recipe) : String
+  (runtime_common.compiler-backend-runtime-region-mark-functions
+    (compiler-backend-current-arena-load "%rax")))
+
 (define (compiler-backend-runtime-region-mark-functions) : String
   (str_cat.str-cat
     "    .type tl_region_mark,@function\n"
-    (runtime_common.compiler-backend-runtime-region-mark-functions
-      (compiler-backend-current-arena-load "%rax"))
+    (compiler-backend-runtime-region-mark-recipe)
     "    .size tl_region_mark, . - tl_region_mark\n"))
 
 (define (compiler-backend-runtime-data

@@ -104,8 +104,11 @@
 ;; so the pool is reset per program parse (see compiler_parse_core.tl). Start
 ;; empty and retain geometrically grown storage: small compile commands should
 ;; not construct 262,144 enum slots before argv dispatch. Growth uses one
-;; dedicated arena that is created once and never reset, keeping the long-lived
-;; global valid across transient driver arenas.
+;; dedicated arena per pool, created on first growth and never reset, keeping
+;; the long-lived global valid across transient driver arenas. The unspanned
+;; pool's arena can additionally be retired outright once a load has finished
+;; (`sexpr-node-pool-release!`); the spanned pool's cannot, because its origin
+;; records outlive parsing.
 (define sp-node-pool-slots : (__tl_dyn-array SpannedSexpr)
   (make-array SpannedSexpr 0))
 
@@ -128,6 +131,17 @@
   (make-array Sexpr 0))
 (define sexpr-builder-count : i64
   0)
+
+;; Permanent zero-length replacements installed by `sexpr-node-pool-release!`.
+;; Both are materialized once during global initialization, in the process
+;; entry arena, so the pool globals still name live storage after the shared
+;; growth arena is unmapped and the next push grows from zero into a fresh
+;; arena. The spanned pool has no counterpart on purpose: its records outlive
+;; parsing (see `sexpr-node-pool-release!`).
+(define sexpr-node-pool-released-slots : (__tl_dyn-array Sexpr)
+  (make-array Sexpr 0))
+(define sexpr-builder-released-slots : (__tl_dyn-array Sexpr)
+  (make-array Sexpr 0))
 
 (define (sp-node-pool-base-arena-handle-value) : i64
   sp-node-pool-base-arena)
@@ -356,6 +370,47 @@
   (begin
     (sexpr-node-pool-truncate! 0)
     (set! sexpr-builder-count 0)))
+
+;; Unmap the unspanned pool's shared growth arena and reinstall zero-length
+;; slot arrays. Both `sexpr-node-pool-slots` and `sexpr-builder-slots` grow
+;; into `sexpr-node-pool-base-arena`, so both are reinstalled here.
+;;
+;; No-dangling argument:
+;;
+;;   - An `Sexpr` is a value enum. Only `Sexpr.List` names pool storage, and it
+;;     names it as an (id, count) range - valid only while the array is live
+;;     and the range is below `sexpr-node-pool-count`. This release zeroes that
+;;     count, so it is exactly a stronger `sexpr-node-pool-reset!`.
+;;   - No `defstruct` in the tree has an `Sexpr` field, and no global, session
+;;     cache, or driver state stores one. Every unspanned consumer converts to
+;;     owned data before returning: `tlci_core` walks a form into `String`/i64
+;;     `TlciMetadata` fields, `package_lock_core.package-lock-parse` and the
+;;     `typelisp.pkg` manifest walkers in `compiler_load.tl` return `String`s.
+;;   - Every unspanned producer is already bracketed by the pool discipline
+;;     this release strengthens: `compiler_parse_core.tl` resets the pool per
+;;     program parse, the loader resets it per session, and typecheck's macro
+;;     expansion marks `sexpr-node-pool-len` and truncates back to that mark.
+;;   - TLCI text is read during module load (dependency `.tlci` interfaces) and
+;;     during artifact emission, never lazily from typecheck or lower.
+;;
+;; Callers must only prove that no read/parse is in flight. Later pushes are
+;; fine: the pool regrows geometrically from zero.
+(define (sexpr-node-pool-release!) : unit
+  (if (= sexpr-node-pool-base-arena 0)
+    unit
+    (let
+      [retire-arena : i64 sexpr-node-pool-base-arena]
+      [retained-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (set! sexpr-node-pool-slots sexpr-node-pool-released-slots)
+        (set! sexpr-builder-slots sexpr-builder-released-slots)
+        (set! sexpr-node-pool-count 0)
+        (set! sexpr-builder-count 0)
+        (set! sexpr-node-pool-base-arena 0)
+        (unsafe
+          (begin
+            (arena.tl_arena_destroy retire-arena)
+            (arena.tl_arena_set retained-arena)))))))
 
 (define (sp-node-pool-arena-ownership-self-test) : i64
   (let

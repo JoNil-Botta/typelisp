@@ -42,12 +42,6 @@
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 
-(unsafe
-  (extern (compiler-backend-runtime-index-of-byte
-    [ptr : (Ptr u8)]
-    [len : i64]
-    [byte : u8]) : i64 (:symbol "tl_memchr")))
-
 ;; Raw active-arena bytes for the assembly-text builder below -- the same
 ;; allocator `stdlib.string`'s concat helpers use for every String they build.
 (unsafe
@@ -51294,37 +51288,31 @@
         [else compiler-backend-control-mnemonic-none]))))
 
 ;; Index of the first "(%rbp" occurrence in [start,end), or -1. Jumps between
-;; '(' bytes with memchr instead of stepping every byte.
+;; '(' bytes a word at a time instead of stepping every byte.
 (define (compiler-backend-rsp-rebase-find-rbp
   [data : (Ptr u8)]
   [start : i64]
   [end : i64]) : i64
   (let
+    [stop : i64 (- end 4)]
     [i : i64 start]
     [found : i64 -1]
     [done : bool false]
     (begin
       (while (and (not done) (<= (+ i 5) end))
         (let
-          [offset : i64
-            (unsafe
-              (compiler-backend-runtime-index-of-byte
-                (ptr-offset data i)
-                (- (- end 4) i)
-                (cast 40 : u8)))]
-          (if (< offset 0)
+          [pos : i64 (compiler-backend-peephole-scan-byte-range data i stop 40)]
+          (if (>= pos stop)
             (set! done true)
-            (let
-              [pos : i64 (+ i offset)]
-              (if (and
-                (= (compiler-backend-peephole-byte-at data (+ pos 1)) 37)
-                (= (compiler-backend-peephole-byte-at data (+ pos 2)) 114)
-                (= (compiler-backend-peephole-byte-at data (+ pos 3)) 98)
-                (= (compiler-backend-peephole-byte-at data (+ pos 4)) 112))
-                (begin
-                  (set! found pos)
-                  (set! done true))
-                (set! i (+ pos 1)))))))
+            (if (and
+              (= (compiler-backend-peephole-byte-at data (+ pos 1)) 37)
+              (= (compiler-backend-peephole-byte-at data (+ pos 2)) 114)
+              (= (compiler-backend-peephole-byte-at data (+ pos 3)) 98)
+              (= (compiler-backend-peephole-byte-at data (+ pos 4)) 112))
+              (begin
+                (set! found pos)
+                (set! done true))
+              (set! i (+ pos 1))))))
       found)))
 
 ;; Start index of the signed decimal immediately preceding `pos`, or -1 when
@@ -51720,7 +51708,8 @@
     (begin
       (while (and ok (< i n))
         (let
-          [end : i64 (compiler-backend-peephole-line-end data i n)]
+          ;; The line ends at its newline, or at the text end.
+          [end : i64 (compiler-backend-peephole-scan-byte-range data i n 10)]
           [nl : bool (< end n)]
           [m : i64 i]
           (begin
@@ -52592,6 +52581,7 @@
   [m : i64]
   [end : i64]) : i64
   (let
+    [stop : i64 (- end 1)]
     [w : i64 0]
     [j : i64 m]
     [b0 : i64 (compiler-backend-peephole-byte-at data m)]
@@ -52599,16 +52589,11 @@
     (begin
       (while (and (not done) (< (+ j 1) end))
         (let
-          [offset : i64
-            (unsafe
-              (compiler-backend-runtime-index-of-byte
-                (ptr-offset data j)
-                (- (- end 1) j)
-                (cast 37 : u8)))]
-          (if (< offset 0)
+          [hit : i64 (compiler-backend-peephole-scan-byte-range data j stop 37)]
+          (if (>= hit stop)
             (set! done true)
             (begin
-              (set! j (+ j offset))
+              (set! j hit)
               (let
                 [nb : i64 (compiler-backend-peephole-byte-at data (+ j 1))]
                 ;; lint-allow: nested-if-ladder
@@ -52632,21 +52617,17 @@
           8)))))
 
 ;; First '%' index in [start, end-4], or -1: every position that can start a
-;; four-byte "%rsp" reference. Jumps straight to it with memchr.
+;; four-byte "%rsp" reference. Jumps straight to it a word at a time.
 (define (compiler-backend-sweep-next-percent
   [data : (Ptr u8)]
   [start : i64]
   [end : i64]) : i64
   (let
-    [offset : i64
-      (unsafe
-        (compiler-backend-runtime-index-of-byte
-          (ptr-offset data start)
-          (- (- end 3) start)
-          (cast 37 : u8)))]
-    (if (< offset 0)
+    [stop : i64 (- end 3)]
+    [hit : i64 (compiler-backend-peephole-scan-byte-range data start stop 37)]
+    (if (>= hit stop)
       -1
-      (+ start offset))))
+      hit)))
 
 ;; If line [m,end) (mnemonic token ending at te) is exactly
 ;; `movq SRC, N(%rsp)` with SRC a single %reg (not %rsp) or $imm token and a
@@ -62534,22 +62515,71 @@
       (ptr-read (ptr-offset data index)))
     : i64))
 
-(define (compiler-backend-peephole-line-end
-  [asm-data : (Ptr u8)]
+;; First index of `target` in [start, end), or `end` when the byte is absent.
+;;
+;; Every pass over emitted assembly asks this question of the same bytes: where
+;; is the next line end, token end, `%` or `(`? All of them used to ask
+;; `tl_memchr`, whose loop compares ONE byte per iteration -- five instructions
+;; per byte of assembly text, paid again by the line walk, the token split, the
+;; sweep's memory-operand probe and the rsp-rebase frame-reference probe. This
+;; reads the text a 64-bit word at a time instead, so a whole word of text costs
+;; about what a single byte used to.
+;;
+;; `end` is the not-found answer (not -1) because that is what the line walk
+;; wants -- an unterminated last line ends at the text end -- and every other
+;; caller already carries the same bound it passed in, so it tests `>= stop`
+;; exactly where it used to test `< 0`.
+;;
+;; `(x - ones) & ~x & highs` is non-zero exactly when some byte of `x` is zero,
+;; so xoring the word with the broadcast target turns "byte equals target" into
+;; "byte is zero". The word loop stops eight bytes short of `end` and the tail
+;; runs byte-wise, so no load ever reaches past the caller's range. Both loops
+;; read only bytes the byte-at-a-time scan would have read.
+;;
+;; The hit position needs no second scan: the lowest set bit of the mask sits at
+;; bit 8k+7 of the first matching byte k, and multiplying that isolated bit
+;; (shifted down to 2^8k, masked because the arithmetic shift of the k=7 case
+;; smears the sign) by the descending byte-index table 0x0001020304050607 lifts
+;; that table's byte 7-k -- which holds exactly k -- into the product's top byte.
+(define (compiler-backend-peephole-scan-byte-range
+  [data : (Ptr u8)]
   [start : i64]
-  [n : i64]) : i64
+  [end : i64]
+  [target : i64]) : i64
   (let
-    [offset : i64
-      (if (< start n)
-        (unsafe
-          (compiler-backend-runtime-index-of-byte
-            (ptr-offset asm-data start)
-            (- n start)
-            (cast 10 : u8)))
-        -1)]
-    (if (< offset 0)
-      n
-      (+ start offset))))
+    ;; 0x0101010101010101, 0x8080808080808080, 2^57-1, 0x0001020304050607
+    [ones : i64 72340172838076673]
+    [highs : i64 -9187201950435737472]
+    [low-bit-mask : i64 144115188075855871]
+    [byte-index : i64 283686952306183]
+    [broadcast : i64 (* target ones)]
+    [limit : i64 (- end 8)]
+    [i : i64 start]
+    (begin
+      (while (<= i limit)
+        (let
+          [word : i64
+            (unsafe
+              (ptr-read (ptr-cast (ptr-offset data i) : (Ptr i64))))]
+          [x : i64 (bit-xor word broadcast)]
+          [hits : i64 (bit-and (bit-and (- x ones) (bit-xor x -1)) highs)]
+          (begin
+            (when
+              (not (= hits 0))
+              (return
+                (+
+                  i
+                  (shr
+                    (*
+                      (bit-and (shr (bit-and hits (- 0 hits)) 7) low-bit-mask)
+                      byte-index)
+                    56))))
+            (set! i (+ i 8)))))
+      (while (< i end)
+        (if (= (compiler-backend-peephole-byte-at data i) target)
+          (return i)
+          (set! i (+ i 1))))
+      end)))
 
 (define (compiler-backend-peephole-append-line
   [buf : (text_buf_borrowed.TextBufBorrowed asm)]
@@ -62639,34 +62669,29 @@
       (= (compiler-backend-peephole-byte-at asm-data (+ start 7)) 113)
       (= (compiler-backend-peephole-byte-at asm-data (+ start 8)) 32))))
 
-;; First ", " in [start, end), or -1. Jumps between ',' bytes with memchr
+;; First ", " in [start, end), or -1. Jumps between ',' bytes a word at a time
 ;; instead of stepping every byte.
 (define (compiler-backend-peephole-find-comma-space-range
   [asm-data : (Ptr u8)]
   [start : i64]
   [end : i64]) : i64
   (let
+    [stop : i64 (- end 1)]
     [i : i64 start]
     [found : i64 -1]
     [done : bool false]
     (begin
       (while (and (not done) (< (+ i 1) end))
         (let
-          [offset : i64
-            (unsafe
-              (compiler-backend-runtime-index-of-byte
-                (ptr-offset asm-data i)
-                (- (- end 1) i)
-                (cast 44 : u8)))]
-          (if (< offset 0)
+          [pos : i64
+            (compiler-backend-peephole-scan-byte-range asm-data i stop 44)]
+          (if (>= pos stop)
             (set! done true)
-            (let
-              [pos : i64 (+ i offset)]
-              (if (= (compiler-backend-peephole-byte-at asm-data (+ pos 1)) 32)
-                (begin
-                  (set! found pos)
-                  (set! done true))
-                (set! i (+ pos 1)))))))
+            (if (= (compiler-backend-peephole-byte-at asm-data (+ pos 1)) 32)
+              (begin
+                (set! found pos)
+                (set! done true))
+              (set! i (+ pos 1))))))
       found)))
 
 (define (compiler-backend-peephole-movq-range
@@ -63130,7 +63155,9 @@
         (< result 0)
         (< k compiler-backend-peephole-r10-dead-scan-line-cap))
         (let
-          [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
+          ;; The line ends at its newline, or at the chunk end.
+          [end : i64
+            (compiler-backend-peephole-scan-byte-range asm-data i n 10)]
           (begin
             (if (compiler-backend-peephole-range-mentions-r10? asm i end)
               (if (compiler-backend-peephole-line-clean-writes-r10?
@@ -63559,24 +63586,15 @@
     [else (compiler-backend-peephole-owners-empty)]))
 
 ;; Length of the leading token at `i`: bytes up to the next space or `end`.
-;; Uses memchr to jump straight to the next space byte instead of stepping
-;; every byte.
+;; Jumps straight to the next space byte a word at a time instead of stepping
+;; every byte. Callers scan from the mnemonic start, which never runs past `end`, so the
+;; not-found answer `end` is exactly the "token runs to the line end" length and
+;; an empty range answers 0 without a separate guard.
 (define (compiler-backend-peephole-token-len
   [data : (Ptr u8)]
   [i : i64]
   [end : i64]) : i64
-  (if (>= i end)
-    0
-    (let
-      [offset : i64
-        (unsafe
-          (compiler-backend-runtime-index-of-byte
-            (ptr-offset data i)
-            (- end i)
-            (cast 32 : u8)))]
-      (if (< offset 0)
-        (- end i)
-        offset))))
+  (- (compiler-backend-peephole-scan-byte-range data i end 32) i))
 
 ;; True iff byte `b` is a movq-style size suffix: q, l, w, or b.
 (define (compiler-backend-peephole-size-suffix-byte? [b : i64]) : bool
@@ -63808,8 +63826,9 @@
 ;; forms place them mid-operand where the end-anchored memory-base probe
 ;; cannot see them): bit 1 = has "(%rbp)", bit 2 = has "(%rsp)". Replaces up
 ;; to three separate substring searches per operand with the same existence
-;; answers. Jumps between '(' bytes with memchr instead of stepping every
-;; byte (the same form compiler-backend-rsp-rebase-find-rbp uses).
+;; answers. Jumps between '(' bytes a word at a time instead of stepping every
+;; byte (the same form compiler-backend-rsp-rebase-find-rbp uses). The absent
+;; answer `end` fails the six-byte room test, so it needs no separate arm.
 (define (compiler-backend-peephole-stack-parens-range
   [data : (Ptr u8)]
   [start : i64]
@@ -63821,31 +63840,23 @@
     (begin
       (while (and (not done) (< bits 3) (<= (+ i 6) end))
         (let
-          [offset : i64
-            (unsafe
-              (compiler-backend-runtime-index-of-byte
-                (ptr-offset data i)
-                (- end i)
-                (cast 40 : u8)))]
-          (if (or (< offset 0) (> (+ i offset 6) end))
+          [pos : i64 (compiler-backend-peephole-scan-byte-range data i end 40)]
+          (if (> (+ pos 6) end)
             (set! done true)
-            (let
-              [pos : i64 (+ i offset)]
-              (begin
-                (if (and
-                  (= (compiler-backend-peephole-byte-at data (+ pos 1)) 37)
-                  (= (compiler-backend-peephole-byte-at data (+ pos 2)) 114)
-                  (= (compiler-backend-peephole-byte-at data (+ pos 4)) 112)
-                  (= (compiler-backend-peephole-byte-at data (+ pos 5)) 41))
-                  (let
-                    [b3 : i64
-                      (compiler-backend-peephole-byte-at data (+ pos 3))]
-                    (cond
-                      [(= b3 98) (set! bits (bit-or bits 1))]
-                      [(= b3 115) (set! bits (bit-or bits 2))]
-                      [else unit]))
-                  unit)
-                (set! i (+ pos 1)))))))
+            (begin
+              (if (and
+                (= (compiler-backend-peephole-byte-at data (+ pos 1)) 37)
+                (= (compiler-backend-peephole-byte-at data (+ pos 2)) 114)
+                (= (compiler-backend-peephole-byte-at data (+ pos 4)) 112)
+                (= (compiler-backend-peephole-byte-at data (+ pos 5)) 41))
+                (let
+                  [b3 : i64 (compiler-backend-peephole-byte-at data (+ pos 3))]
+                  (cond
+                    [(= b3 98) (set! bits (bit-or bits 1))]
+                    [(= b3 115) (set! bits (bit-or bits 2))]
+                    [else unit]))
+                unit)
+              (set! i (+ pos 1))))))
       bits)))
 
 (define compiler-backend-peephole-op-register-flag : i64
@@ -65236,7 +65247,9 @@
               [asm-data : (Ptr u8)
                 (unsafe
                   (string-data asm))]
-              [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
+              ;; The line ends at its newline, or at the chunk end.
+              [end : i64
+                (compiler-backend-peephole-scan-byte-range asm-data i n 10)]
               [next-start : i64
                 (if (< end n)
                   (+ end 1)
@@ -66177,7 +66190,9 @@
           (begin
             (while (< i n)
               (let
-                [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
+                ;; The line ends at its newline, or at the chunk end.
+                [end : i64
+                  (compiler-backend-peephole-scan-byte-range asm-data i n 10)]
                 [next-start : i64
                   (if (< end n)
                     (+ end 1)

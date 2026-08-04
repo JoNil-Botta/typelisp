@@ -25641,6 +25641,15 @@
   (No)
   (Some ir.CompilerIrInstrSeq i64 ir.CompilerIrInstr bool))
 
+;; Where the branch that consumes a merge phi actually lives: the block holding
+;; it, the variable it tests, and its two successors. The block is the phi's own
+;; block in the shape the fuser was written for, and some later block reached
+;; through pure fallthrough in the shape `opt-bool-branch-resolve-branch-site`
+;; recovers.
+(defenum OptBoolBranchBranchSite
+  (No)
+  (Some i64 i64 i64 i64))
+
 (define (opt-bool-branch-compare-op? [op : ir.CompilerIrBinOp]) : bool
   (ir.compiler-ir-binop-compare? op))
 
@@ -26640,12 +26649,17 @@
             (opt-label-tail preds)
             target-label)))]))
 
+;; `merge-label` is the block holding the phi, whose predecessors are the edges
+;; being retargeted; `branch-label` is the block holding the branch, whose label
+;; is the one the successors' phis record for this edge. They are the same block
+;; unless the site was reached through a fallthrough chain.
 (define (opt-bool-branch-fuse-constant-phi!
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (__tl_dyn-array i64)]
   [merge-label : i64]
+  [branch-label : i64]
   [dst : i64]
   [inputs : ir.CompilerIrPhiInputList]
   [ty : ast.AstType]
@@ -26686,20 +26700,20 @@
                 (opt-bool-branch-target-phis-repairable?
                   blocks
                   true-label
-                  merge-label
+                  branch-label
                   all-preds))
               (or
                 (not
                   (opt-bool-branch-target-phis-repairable?
                     blocks
                     true-label
-                    merge-label
+                    branch-label
                     true-preds))
                 (not
                   (opt-bool-branch-target-phis-repairable?
                     blocks
                     false-label
-                    merge-label
+                    branch-label
                     false-preds)))))
             false
             (begin
@@ -26715,18 +26729,18 @@
                 (opt-bool-branch-repair-target-phis!
                   blocks
                   true-label
-                  merge-label
+                  branch-label
                   all-preds)
                 (begin
                   (opt-bool-branch-repair-target-phis!
                     blocks
                     true-label
-                    merge-label
+                    branch-label
                     true-preds)
                   (opt-bool-branch-repair-target-phis!
                     blocks
                     false-label
-                    merge-label
+                    branch-label
                     false-preds)))
               true)))])))
 
@@ -26878,6 +26892,7 @@
   [index : OptCfgIndex]
   [uses : (__tl_dyn-array i64)]
   [merge-label : i64]
+  [branch-label : i64]
   [dst : i64]
   [inputs : ir.CompilerIrPhiInputList]
   [ty : ast.AstType]
@@ -26890,6 +26905,7 @@
     index
     uses
     merge-label
+    branch-label
     dst
     inputs
     ty
@@ -26910,6 +26926,82 @@
       true-label
       false-label)))
 
+;; A merge phi and the branch that consumes it do not have to share a block. The
+;; front end routinely emits the boolean merge and the `if` it feeds as two
+;; blocks -- the phi block falls through into a merge block that holds nothing
+;; but the branch -- and longer runs of fallthrough appear where nested merges
+;; land on the same join. In the emitted assembly that reads as two labels in a
+;; row followed by `test %r,%r; jcc`, with the phi's constants materialized by
+;; the predecessors: exactly the sequence this pass exists to delete, rejected
+;; only because the branch sat one block further on.
+;;
+;; Those sites are the same rewrite. What the fuser needs is the branch's
+;; condition and successors, and that the whole run from the phi block to the
+;; branch block dies when the phi block's predecessors are retargeted. The walk
+;; below only continues through a block that is a pure fallthrough owned by the
+;; run: exactly one instruction, an unconditional jump, and exactly one
+;; predecessor, which can only be the block that got us here. A block reached
+;; from anywhere else, a block carrying real instructions, and the function
+;; entry (reachable with no edge at all) each stop the walk, because each would
+;; leave a reader of the phi's result alive after the phi block is gone.
+;;
+;; This widens the match only. No block on the chain is collapsed, merged, or
+;; removed here -- the run is left for the normal unreachable-block cleanup --
+;; so the fallthrough block structure that later passes and the backend depend
+;; on is not disturbed.
+(define (opt-bool-branch-resolve-branch-site
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [merge-label : i64]
+  [label : i64]
+  [fuel : i64]) : OptBoolBranchBranchSite
+  (if (or
+    (<= fuel 0)
+    (= label merge-label)
+    (= label (opt-cfg-entry-label blocks))
+    (not (= (opt-label-count (opt-cfg-index-predecessors index label)) 1)))
+    (OptBoolBranchBranchSite.No)
+    (match (opt-cfg-find-block blocks label)
+      [(OptMaybeBlock.No) (OptBoolBranchBranchSite.No)]
+      [(OptMaybeBlock.Some block)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (if (not (= (ir.compiler-ir-instr-seq-count instrs) 1))
+              (OptBoolBranchBranchSite.No)
+              (match (ir.compiler-ir-instr-seq-ref instrs 0)
+                [(ir.CompilerIrInstr.Branch
+                    (ir.CompilerIrValue.Var cond-var)
+                    true-label
+                    false-label)
+                  (OptBoolBranchBranchSite.Some
+                    label
+                    cond-var
+                    true-label
+                    false-label)]
+                [(ir.CompilerIrInstr.Jump next)
+                  (opt-bool-branch-resolve-branch-site
+                    blocks
+                    index
+                    merge-label
+                    next
+                    (- fuel 1))]
+                [_ (OptBoolBranchBranchSite.No)]))])])))
+
+(define (opt-bool-branch-branch-site
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [merge-label : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : OptBoolBranchBranchSite
+  (match (ir.compiler-ir-instr-seq-ref instrs 1)
+    [(ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var cond-var)
+        true-label
+        false-label)
+      (OptBoolBranchBranchSite.Some merge-label cond-var true-label false-label)]
+    [(ir.CompilerIrInstr.Jump next)
+      (opt-bool-branch-resolve-branch-site blocks index merge-label next 8)]
+    [_ (OptBoolBranchBranchSite.No)]))
+
 (define (opt-bool-branch-fuse-block!
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -26922,9 +27014,11 @@
         false
         (match (ir.compiler-ir-instr-seq-ref instrs 0)
           [(ir.CompilerIrInstr.Phi dst inputs ty)
-            (match (ir.compiler-ir-instr-seq-ref instrs 1)
-              [(ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Var cond-var)
+            (match (opt-bool-branch-branch-site blocks index merge-label instrs)
+              [(OptBoolBranchBranchSite.No) false]
+              [(OptBoolBranchBranchSite.Some
+                  branch-label
+                  cond-var
                   true-label
                   false-label)
                 (opt-bool-branch-fuse-phi!
@@ -26933,13 +27027,13 @@
                   index
                   uses
                   merge-label
+                  branch-label
                   dst
                   inputs
                   ty
                   cond-var
                   true-label
-                  false-label)]
-              [_ false])]
+                  false-label)])]
           [_ false]))]))
 
 (define (opt-bool-branch-fuse-first-list!
@@ -27049,7 +27143,9 @@
     frame
     remaining))
 
-(define (opt-bool-branch-block-candidate?
+;; `[bool phi, branch on that phi]` -- the shape the fuser was originally
+;; written for, and the only one decidable from a single block.
+(define (opt-bool-branch-block-direct-candidate?
   [type-segment-bases : i64]
   [block : ir.CompilerIrBlock]) : bool
   (match block
@@ -27069,21 +27165,144 @@
                 [_ false]))]
           [_ false]))]))
 
-(define (opt-bool-branch-blocks-have-candidate?
+;; `[bool phi, jump L]` -- a fallthrough chain can start here, and L is the one
+;; block worth looking at for it. `label-none` when the block is not that shape.
+(define (opt-bool-branch-block-chain-start
   [type-segment-bases : i64]
-  [blocks : ir.CompilerIrBlockList]) : bool
+  [block : ir.CompilerIrBlock]) : i64
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (if (not (= (ir.compiler-ir-instr-seq-count instrs) 2))
+        (ir.compiler-ir-label-none)
+        (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          [(ir.CompilerIrInstr.Phi _ _ ty)
+            (if (not (opt-type-eq type-segment-bases ty (ast.AstType.Bool)))
+              (ir.compiler-ir-label-none)
+              (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                [(ir.CompilerIrInstr.Jump target) target]
+                [_ (ir.compiler-ir-label-none)]))]
+          [_ (ir.compiler-ir-label-none)]))]))
+
+(define (opt-bool-branch-gate-collect-start
+  [type-segment-bases : i64]
+  [starts : OptLabelSet]
+  [block : ir.CompilerIrBlock]) : OptLabelSet
+  (let
+    [start : i64 (opt-bool-branch-block-chain-start type-segment-bases block)]
+    (if (ir.compiler-ir-label-some? start)
+      (opt-label-add starts start)
+      starts)))
+
+;; Pass one's answer: either a block already carries phi and branch together, or
+;; these are the jump targets a chain could start from.
+(defenum OptBoolBranchGateScan
+  (Direct)
+  (Starts OptLabelSet))
+
+(define (opt-bool-branch-gate-scan
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [starts : OptLabelSet]) : OptBoolBranchGateScan
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (OptBoolBranchGateScan.Starts starts)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (opt-bool-branch-block-direct-candidate? type-segment-bases block)
+        (OptBoolBranchGateScan.Direct)
+        (opt-bool-branch-gate-scan
+          type-segment-bases
+          (box-get rest)
+          (opt-bool-branch-gate-collect-start type-segment-bases starts block)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [pos : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [found : OptLabelSet starts]
+        (begin
+          (while (< pos count)
+            (let
+              [block : ir.CompilerIrBlock
+                (ir.compiler-ir-block-seq-ref seq pos)]
+              (if (opt-bool-branch-block-direct-candidate?
+                type-segment-bases
+                block)
+                (return (OptBoolBranchGateScan.Direct))
+                (begin
+                  (set!
+                    found
+                    (opt-bool-branch-gate-collect-start
+                      type-segment-bases
+                      found
+                      block))
+                  (set! pos (+ pos 1))))))
+          (OptBoolBranchGateScan.Starts found)))]))
+
+;; A chain can only continue into a block that is nothing but an unconditional
+;; jump or nothing but a branch, so one of the collected starts has to name such
+;; a block. `starts` holds one or two labels in the functions that reach here at
+;; all, which is why it is walked linearly instead of indexed.
+(define (opt-bool-branch-gate-step-block?
+  [starts : OptLabelSet]
+  [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (and
+        (= (ir.compiler-ir-instr-seq-count instrs) 1)
+        (opt-label-contains starts label)
+        (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          [(ir.CompilerIrInstr.Jump _) true]
+          [(ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var _) _ _) true]
+          [_ false]))]))
+
+(define (opt-bool-branch-gate-starts-open?
+  [blocks : ir.CompilerIrBlockList]
+  [starts : OptLabelSet]) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Nil) false]
     [(ir.CompilerIrBlockList.Cons block rest)
-      (if (opt-bool-branch-block-candidate? type-segment-bases block)
+      (if (opt-bool-branch-gate-step-block? starts block)
         true
-        (opt-bool-branch-blocks-have-candidate?
-          type-segment-bases
-          (box-get rest)))]
+        (opt-bool-branch-gate-starts-open? (box-get rest) starts))]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-bool-branch-blocks-have-candidate?
-        type-segment-bases
-        (ir.compiler-ir-block-seq-to-list seq))]))
+      (let
+        [pos : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (begin
+          (while (< pos count)
+            (if (opt-bool-branch-gate-step-block?
+              starts
+              (ir.compiler-ir-block-seq-ref seq pos))
+              (return true)
+              (set! pos (+ pos 1))))
+          false))]))
+
+;; Cheap admission test for the whole pass, run over every block of every
+;; function. Resolving a fallthrough chain needs `opt-cfg-find-block`, and one
+;; linear block search per candidate would make the gate quadratic -- the exact
+;; cost the `and`-chain gate below was rewritten to remove. So the gate is two
+;; sequential passes over the same dense block array and no lookups at all:
+;;
+;;   1. A block that already carries the phi and the branch together answers yes
+;;      outright. Otherwise collect the jump targets of the `[bool phi, jump]`
+;;      blocks -- the only places a chain can begin. That set is empty in almost
+;;      every function, and the walk stops there without allocating.
+;;   2. A chain can only continue into a single-jump or single-branch block, so
+;;      answer yes only when a collected target names one.
+;;
+;; Everything past that first hop -- the predecessor counts, the branch's
+;; condition, the phi's inputs -- belongs to `opt-bool-branch-branch-site` and
+;; the fusers, which by then have the CFG index this gate deliberately does not
+;; build. Admitting a function the matcher then declines is only wasted work,
+;; never a wrong answer; rejecting one it would have fused would be a miss, so
+;; both passes stay strictly weaker than what the matcher checks.
+(define (opt-bool-branch-blocks-have-candidate?
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match (opt-bool-branch-gate-scan type-segment-bases blocks (OptLabelSet.Nil))
+    [(OptBoolBranchGateScan.Direct) true]
+    [(OptBoolBranchGateScan.Starts starts)
+      (and
+        (> (opt-label-count starts) 0)
+        (opt-bool-branch-gate-starts-open? blocks starts))]))
 
 (define (opt-bool-branch-function-with-context-result
   [type-segment-bases : i64]

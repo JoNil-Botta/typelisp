@@ -16996,6 +16996,179 @@
                   (compiler_ir_types.CompilerIrInstrList.Nil)))
               (compiler_ir_types.CompilerIrBlockList.Nil))))))))
 
+;; A bool merge whose consuming branch sits past the merge block: `merge` holds
+;; the phi and falls through to `gap`, `gap` falls through to `branch-site`, and
+;; only `branch-site` tests the phi. That is what the front end emits whenever a
+;; boolean merge and the `if` reading it land on separate joins, and the fuser
+;; has to look through the run to see the same rewrite. Modes:
+;;   0 -- `gap` is a pure fallthrough owned by the merge: fusible.
+;;   1 -- `gap` carries a real instruction, so the run cannot simply die.
+;;   2 -- `side` also reaches `gap`, so the run is not the merge's to retarget.
+(define (opt-bool-branch-merge-chain-gap-instrs [mode : i64]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [tail : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "branch-site"))
+        (compiler_ir_types.CompilerIrInstrList.Nil))]
+    (if (= mode 1)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          7
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        tail)
+      tail)))
+
+(define (opt-bool-branch-merge-chain-tail [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "true-left")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "merge"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "false-middle")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "true-right")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "merge"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Phi
+                4
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Bool true)
+                  (compiler_ir_types.compiler-ir-label "true-left")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Bool false)
+                    (compiler_ir_types.compiler-ir-label "false-middle")
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "true-right")
+                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "gap"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "gap")
+              (opt-bool-branch-merge-chain-gap-instrs mode))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "branch-site")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ir_types.compiler-ir-label "yes")
+                    (compiler_ir_types.compiler-ir-label "no"))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "yes")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      5
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 11)
+                        (compiler_ir_types.compiler-ir-label "branch-site")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 5)))
+                      (compiler_ir_types.CompilerIrInstrList.Nil))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "no")
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        6
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 22)
+                          (compiler_ir_types.compiler-ir-label "branch-site")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Return
+                          (compiler_ir_types.CompilerIrMaybeValue.Some
+                            (compiler_ir_types.CompilerIrValue.Var 6)))
+                        (compiler_ir_types.CompilerIrInstrList.Nil))))
+                  (if (= mode 2)
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.compiler-ir-block
+                        (compiler_ir_types.compiler-ir-label "side")
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Jump
+                            (compiler_ir_types.compiler-ir-label "gap"))
+                          (compiler_ir_types.CompilerIrInstrList.Nil)))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))
+                    (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))
+
+(define (opt-bool-branch-merge-chain-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (if (= mode 2)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "spread")
+            (compiler_ir_types.compiler-ir-label "choose"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "spread")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "true-left")
+              (compiler_ir_types.compiler-ir-label "side"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "choose")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "false-middle")
+                (compiler_ir_types.compiler-ir-label "true-right"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (opt-bool-branch-merge-chain-tail mode))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "true-left")
+            (compiler_ir_types.compiler-ir-label "choose"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "choose")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "false-middle")
+              (compiler_ir_types.compiler-ir-label "true-right"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (opt-bool-branch-merge-chain-tail mode)))))
+
 (define (opt-bool-branch-constant-test-function
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -31751,6 +31924,68 @@
     [multi-phi-changed : bool
       (match multi-phi-result
         [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [chain-merge-source : compiler_ir_types.CompilerIrBlockList
+      (opt-bool-branch-merge-chain-blocks 0)]
+    [chain-merge-function : compiler_ir_types.CompilerIrFunction
+      (opt-bool-branch-constant-test-function chain-merge-source)]
+    [chain-merge-result : compiler_optimize.OptFunctionPassResult
+      (compiler_optimize.opt-bool-branch-function-with-context-result
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build chain-merge-source)
+        false
+        chain-merge-function)]
+    [chain-merge-optimized : compiler_ir_types.CompilerIrFunction
+      (match chain-merge-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+    [chain-merge-changed : bool
+      (match chain-merge-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [chain-merge-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks chain-merge-optimized)]
+    [chain-busy-source : compiler_ir_types.CompilerIrBlockList
+      (opt-bool-branch-merge-chain-blocks 1)]
+    [chain-busy-function : compiler_ir_types.CompilerIrFunction
+      (opt-bool-branch-constant-test-function chain-busy-source)]
+    [chain-busy-result : compiler_optimize.OptFunctionPassResult
+      (compiler_optimize.opt-bool-branch-function-with-context-result
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build chain-busy-source)
+        false
+        chain-busy-function)]
+    [chain-busy-optimized : compiler_ir_types.CompilerIrFunction
+      (match chain-busy-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+    [chain-busy-changed : bool
+      (match chain-busy-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    ;; The same shape past the admission gate, which rejects it on the
+    ;; intermediate block's instruction count before the matcher ever sees it.
+    ;; This entry point has no gate, so it is what holds the matcher's own
+    ;; fallthrough test.
+    [chain-busy-raw-result : compiler_optimize.OptBlockListPassResult
+      (compiler_optimize.opt-bool-branch-fuse-blocks
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-bool-branch-merge-chain-blocks 1)
+        16
+        16)]
+    [chain-busy-raw-blocks : compiler_ir_types.CompilerIrBlockList
+      (match chain-busy-raw-result
+        [(compiler_optimize.OptBlockListPassResult.Result blocks _) blocks])]
+    [chain-busy-raw-changed : bool
+      (match chain-busy-raw-result
+        [(compiler_optimize.OptBlockListPassResult.Result _ changed) changed])]
+    [chain-shared-result : compiler_optimize.OptBlockListPassResult
+      (compiler_optimize.opt-bool-branch-fuse-blocks
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-bool-branch-merge-chain-blocks 2)
+        16
+        16)]
+    [chain-shared-blocks : compiler_ir_types.CompilerIrBlockList
+      (match chain-shared-result
+        [(compiler_optimize.OptBlockListPassResult.Result blocks _) blocks])]
+    [chain-shared-changed : bool
+      (match chain-shared-result
+        [(compiler_optimize.OptBlockListPassResult.Result _ changed) changed])]
     [and-chain-result : compiler_optimize.OptFunctionPassResult
       (opt-bool-branch-chain-test-run 0)]
     [and-chain-function : compiler_ir_types.CompilerIrFunction
@@ -32023,6 +32258,91 @@
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function multi-phi-optimized)))
         (return 44))
+      ;; The branch sits two blocks past the phi: the phi block falls through to
+      ;; `gap`, `gap` to `branch-site`. Fusing it retargets the merge's own
+      ;; predecessors, and the successors' phis record the edge under the
+      ;; BRANCH block's label -- repairing them against the phi block's label
+      ;; instead finds nothing to repair and rejects the site.
+      (unless chain-merge-changed (return 69))
+      (unless
+        (and
+          (not
+            (opt-block-list-has-label?
+              chain-merge-blocks
+              (compiler_ir_types.compiler-ir-label "merge")))
+          (not
+            (opt-block-list-has-label?
+              chain-merge-blocks
+              (compiler_ir_types.compiler-ir-label "gap")))
+          (not
+            (opt-block-list-has-label?
+              chain-merge-blocks
+              (compiler_ir_types.compiler-ir-label "branch-site"))))
+        (return 70))
+      (unless
+        (and
+          (=
+            (opt-count-jump-to-blocks
+              chain-merge-blocks
+              (compiler_ir_types.compiler-ir-label "yes"))
+            2)
+          (=
+            (opt-count-jump-to-blocks
+              chain-merge-blocks
+              (compiler_ir_types.compiler-ir-label "no"))
+            1))
+        (return 71))
+      (unless (= (opt-count-phi-blocks chain-merge-blocks) 1) (return 72))
+      (unless
+        (and
+          (opt-bool-branch-first-phi-has-label?
+            chain-merge-blocks
+            (compiler_ir_types.compiler-ir-label "yes")
+            (compiler_ir_types.compiler-ir-label "true-left"))
+          (opt-bool-branch-first-phi-has-label?
+            chain-merge-blocks
+            (compiler_ir_types.compiler-ir-label "yes")
+            (compiler_ir_types.compiler-ir-label "true-right")))
+        (return 73))
+      (unless
+        (compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function chain-merge-optimized))
+        (return 74))
+      ;; An intermediate block that carries a real instruction is not free to
+      ;; disappear with the edge, so the run is not a fallthrough chain.
+      (unless (not chain-busy-changed) (return 75))
+      (unless
+        (and
+          (opt-block-list-has-label?
+            (compiler_optimize.opt-function-blocks chain-busy-optimized)
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_optimize.opt-function-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            chain-busy-function
+            chain-busy-optimized))
+        (return 76))
+      (unless (not chain-busy-raw-changed) (return 79))
+      (unless
+        (and
+          (opt-block-list-has-label?
+            chain-busy-raw-blocks
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (opt-block-list-has-label?
+            chain-busy-raw-blocks
+            (compiler_ir_types.compiler-ir-label "branch-site")))
+        (return 80))
+      ;; An intermediate block reached from outside the run survives the
+      ;; retargeting, and would then branch on a phi whose block is gone.
+      (unless (not chain-shared-changed) (return 77))
+      (unless
+        (and
+          (opt-block-list-has-label?
+            chain-shared-blocks
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (opt-block-list-has-label?
+            chain-shared-blocks
+            (compiler_ir_types.compiler-ir-label "branch-site")))
+        (return 78))
       (unless and-chain-changed (return 46))
       (unless
         (= (compiler_ir_types.compiler-ir-block-list-count and-chain-blocks) 5)

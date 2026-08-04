@@ -10542,10 +10542,98 @@
                 text))))
         (string.append (string.int->string offset) "(%rbp)")))))
 
+;; "Does this function's plan home a value in register R" is a per-function,
+;; per-REGISTER constant: the emitted assignment list is fixed before body
+;; emission (every re-plan stage -- caller-save, loop-split, remat, scratch-vreg,
+;; slot coloring -- is already folded into it, exactly as for the dense operand
+;; index above). The prologue/epilogue, frame layout, callee-save and FPO paths
+;; ask it tens of times per function, and each ask used to re-walk the whole
+;; list through `compiler-reg-location-uses-register?` (two ownership-id folds
+;; per node). Fold the list ONCE per function into a register bitmask instead.
+;;
+;; The bit index is the register's OWNERSHIP id (`compiler-abi-registers-overlap?`'s
+;; equivalence class: a vec id folds onto its xmm sibling), so the mask answers
+;; exactly what the walk answered, overlap included. Ownership ids live in
+;; 0..15 (GP) and 32..63 (XMM family); mask registers (96..) fall outside the
+;; word, so they are simply not recorded -- sound, because a location whose
+;; ownership id is outside the word can never equal a query inside it, and a
+;; query outside the word falls back to the walk.
+;;
+;; Ownership folding is the IDENTITY on every id the word covers -- GP ids are
+;; their own class and an xmm id is its own class representative -- so ids
+;; already inside 0..63 take the bit directly and only a vec id (64..95) pays
+;; the fold onto its xmm sibling.
+(define (compiler-backend-plan-reg-id-bit [reg : i64]) : i64
+  (if (and (>= reg 0) (< reg 64))
+    (shl 1 reg)
+    (let
+      [own : i64 (compiler_abi.compiler-abi-register-ownership-id reg)]
+      (if (and (>= own 0) (< own 64))
+        (shl 1 own)
+        0))))
+
+(define (compiler-backend-plan-location-reg-mask
+  [location : compiler_regalloc.CompilerRegLocation]) : i64
+  (match location
+    [(compiler_regalloc.CompilerRegLocation.Register reg)
+      (compiler-backend-plan-reg-id-bit reg)]
+    [(compiler_regalloc.CompilerRegLocation.RegisterPair a b)
+      (bit-or
+        (compiler-backend-plan-reg-id-bit a)
+        (compiler-backend-plan-reg-id-bit b))]
+    [_ 0]))
+
+(define (compiler-backend-plan-reg-mask-of
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [mask : i64]) : i64
+  (match assignments
+    [(compiler_regalloc.CompilerRegAssignmentList.Nil) mask]
+    [(compiler_regalloc.CompilerRegAssignmentList.Cons item rest)
+      (compiler-backend-plan-reg-mask-of
+        (box-get rest)
+        (bit-or
+          mask
+          (compiler-backend-plan-location-reg-mask (struct-get item location))))]))
+
+(define compiler-backend-emit-plan-reg-mask : i64
+  0)
+
+;; `active` gates the fast path exactly as the dense operand index does, and it
+;; has the same lifetime: installed from the final list alongside that index and
+;; cleared with it in compiler-backend-clear-function-emit-state!. Clearing is
+;; REQUIRED, not tidiness -- the backend self-test calls the callee-save helpers
+;; directly with their own lists, and a mask left active from the previously
+;; emitted function would answer for that function instead.
+(define compiler-backend-emit-plan-reg-mask-active : bool
+  false)
+
+(define (compiler-backend-set-emit-plan-reg-mask!
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : unit
+  (begin
+    (set!
+      compiler-backend-emit-plan-reg-mask
+      (compiler-backend-plan-reg-mask-of assignments 0))
+    (set! compiler-backend-emit-plan-reg-mask-active true)))
+
 (define (compiler-backend-plan-uses-reg?
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [reg : i64]) : bool
-  (compiler_regalloc.compiler-reg-assignments-use-register? assignments reg))
+  (match assignments
+    ;; An empty plan homes nothing, whatever the installed mask describes: this
+    ;; is the exact list answer, and it keeps out-of-emission callers correct.
+    [(compiler_regalloc.CompilerRegAssignmentList.Nil) false]
+    [(compiler_regalloc.CompilerRegAssignmentList.Cons _ _)
+      (if compiler-backend-emit-plan-reg-mask-active
+        (let
+          [bit : i64 (compiler-backend-plan-reg-id-bit reg)]
+          (if (= bit 0)
+            (compiler_regalloc.compiler-reg-assignments-use-register?
+              assignments
+              reg)
+            (not (= (bit-and compiler-backend-emit-plan-reg-mask bit) 0))))
+        (compiler_regalloc.compiler-reg-assignments-use-register?
+          assignments
+          reg))]))
 
 (define (compiler-backend-plan-uses-callee-regs?
   [assignments : compiler_regalloc.CompilerRegAssignmentList]) : bool
@@ -54597,6 +54685,12 @@
                     scratch-vars))
                 (set! compiler-backend-emit-assignment-index-active true))
               (set! compiler-backend-emit-assignment-index-active false))
+            ;; Same list, same "fixed before body emission" guarantee: fold the
+            ;; plan's register homes into the per-function mask that
+            ;; compiler-backend-plan-uses-reg? answers from. Unlike the dense
+            ;; index this is installed for EVERY function -- it is one machine
+            ;; word, so there is no size threshold to trade against.
+            (compiler-backend-set-emit-plan-reg-mask! assignments)
             (set! compiler-backend-rax-override-var -1)
             (set! compiler-backend-rax-forward-pending-var -1)
             (compiler-backend-emit-home-overrides-disable!))]
@@ -55402,6 +55496,7 @@
   (begin
     (compiler-backend-slot-cache-epoch-bump!)
     (set! compiler-backend-emit-assignment-index-active false)
+    (set! compiler-backend-emit-plan-reg-mask-active false)
     (set! compiler-backend-rax-override-var -1)
     (set! compiler-backend-rax-forward-pending-var -1)
     (compiler-backend-set-scavenge-ctx!

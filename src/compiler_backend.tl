@@ -1511,64 +1511,63 @@
     (let
       [data : CompilerBackendStateData (compiler-backend-state-data state)]
       [capacity : i64 (array-length (struct-get data user-symbol-cache-keys))]
-      (begin
-        (if (= capacity 0)
+      (if (= capacity 0)
+        (begin
+          (compiler-backend-state-user-symbol-cache-allocate! state 16)
+          (compiler-backend-state-user-symbol-id state name-id))
+        (let
+          [keys : (Array i64) (struct-get data user-symbol-cache-keys)]
+          [values : (Array String) (struct-get data user-symbol-cache-values)]
+          [epochs : (Array i64) (struct-get data user-symbol-cache-epochs)]
+          [epoch : i64 (struct-get data user-symbol-cache-epoch)]
+          [slot : i64
+            (compiler-backend-state-user-symbol-cache-hash name-id capacity)]
+          [steps : i64 0]
+          [found : bool false]
+          [insert-slot : i64 -1]
           (begin
-            (compiler-backend-state-user-symbol-cache-allocate! state 16)
-            (compiler-backend-state-user-symbol-id state name-id))
-          (let
-            [keys : (Array i64) (struct-get data user-symbol-cache-keys)]
-            [values : (Array String) (struct-get data user-symbol-cache-values)]
-            [epochs : (Array i64) (struct-get data user-symbol-cache-epochs)]
-            [epoch : i64 (struct-get data user-symbol-cache-epoch)]
-            [slot : i64
-              (compiler-backend-state-user-symbol-cache-hash name-id capacity)]
-            [steps : i64 0]
-            [found : bool false]
-            [insert-slot : i64 -1]
-            (begin
-              (while (and (not found) (< steps capacity))
-                (let
-                  [key : i64 (array-ref keys slot)]
-                  (if (or (< key 0) (not (= (array-ref epochs slot) epoch)))
+            (while (and (not found) (< steps capacity))
+              (let
+                [key : i64 (array-ref keys slot)]
+                (if (or (< key 0) (not (= (array-ref epochs slot) epoch)))
+                  (begin
+                    (set! insert-slot slot)
+                    (set! found true))
+                  (if (= key name-id)
                     (begin
                       (set! insert-slot slot)
                       (set! found true))
-                    (if (= key name-id)
-                      (begin
-                        (set! insert-slot slot)
-                        (set! found true))
-                      (begin
-                        (set! slot (% (+ slot 1) capacity))
-                        (set! steps (+ steps 1)))))))
-              (if (and
-                (= insert-slot slot)
-                (>= (array-ref keys insert-slot) 0)
-                (= (array-ref epochs insert-slot) epoch)
-                (= (array-ref keys insert-slot) name-id))
-                (array-ref values insert-slot)
-                (if (>
-                  (* (+ (struct-get data user-symbol-cache-count) 1) 4)
-                  (* capacity 3))
-                  (begin
-                    (compiler-backend-state-user-symbol-cache-rehash!
-                      state
-                      (* capacity 2))
-                    (compiler-backend-state-user-symbol-id state name-id))
-                  (let
-                    [mangled : String
-                      (in-arena
-                        (arena.Arena (struct-get data owner-arena))
-                        (compiler-backend-user-symbol-uncached
-                          (compiler-backend-symbol-text-state state name-id)))]
-                    (array-set! keys insert-slot name-id)
-                    (array-set! values insert-slot mangled)
-                    (array-set! epochs insert-slot epoch)
-                    (set!
-                      (struct-get data user-symbol-cache-count)
-                      (+ (struct-get data user-symbol-cache-count) 1))
-                    (compiler-backend-state-data-set! state data)
-                    mangled))))))))))
+                    (begin
+                      (set! slot (% (+ slot 1) capacity))
+                      (set! steps (+ steps 1)))))))
+            (if (and
+              (= insert-slot slot)
+              (>= (array-ref keys insert-slot) 0)
+              (= (array-ref epochs insert-slot) epoch)
+              (= (array-ref keys insert-slot) name-id))
+              (array-ref values insert-slot)
+              (if (>
+                (* (+ (struct-get data user-symbol-cache-count) 1) 4)
+                (* capacity 3))
+                (begin
+                  (compiler-backend-state-user-symbol-cache-rehash!
+                    state
+                    (* capacity 2))
+                  (compiler-backend-state-user-symbol-id state name-id))
+                (let
+                  [mangled : String
+                    (in-arena
+                      (arena.Arena (struct-get data owner-arena))
+                      (compiler-backend-user-symbol-uncached
+                        (compiler-backend-symbol-text-state state name-id)))]
+                  (array-set! keys insert-slot name-id)
+                  (array-set! values insert-slot mangled)
+                  (array-set! epochs insert-slot epoch)
+                  (set!
+                    (struct-get data user-symbol-cache-count)
+                    (+ (struct-get data user-symbol-cache-count) 1))
+                  (compiler-backend-state-data-set! state data)
+                  mangled)))))))))
 
 ;; Compatibility adapter: capture the active exact intern view for this
 ;; synchronous operation.  Explicit backend paths call the state-taking twin.
@@ -17742,7 +17741,7 @@
           value
           ty
           "%xmm0"
-          (struct-get program-index backend-state))])
+          backend-state)])
     (match value
       [(compiler_ir_types.CompilerIrValue.Var id)
         (match (compiler-backend-emit-assignment-lookup assignments id)
@@ -17767,7 +17766,7 @@
                   (compiler-backend-emit-load-memory
                     type-segment-bases
                     (compiler-backend-frame-offset-with-backend-state
-                      (struct-get program-index backend-state)
+                      backend-state
                       offset)
                     ty))]
               ;; Rematerialise into %rax (this loader's implicit destination, as the
@@ -17777,14 +17776,12 @@
                   compiler_regalloc.CompilerRegAssignmentList.Nil
                   value
                   "%rax"
-                  (struct-get program-index backend-state))])]
+                  backend-state)])]
           [(compiler_regalloc.CompilerRegMaybeLocation.No)
             (ResultCompilerBackend.Ok
               (compiler-backend-emit-load-memory
                 type-segment-bases
-                (compiler-backend-slot-with-backend-state
-                  (struct-get program-index backend-state)
-                  id)
+                (compiler-backend-slot-with-backend-state backend-state id)
                 ty))])]
       [(compiler_ir_types.CompilerIrValue.Global name)
         (ResultCompilerBackend.Ok
@@ -17808,7 +17805,7 @@
           assignments
           value
           "%rax"
-          (struct-get program-index backend-state))])))
+          backend-state)])))
 
 (define (compiler-backend-emit-load-typed-value-to-reg-with-plan
   [type-segment-bases : i64]
@@ -38979,7 +38976,7 @@
       instr-diag
       program-index
       vars
-      (struct-get program-index backend-state))
+      backend-state)
       [(ResultCompilerBackend.Ok args-asm)
         (match (compiler-backend-emit-call-result-store
           type-segment-bases
@@ -57729,8 +57726,7 @@
           crt-entry
           true
           true))]
-    (begin
-      result)))
+    result))
 
 ;; Keep the direct path available for A/B experiments by raising
 ;; `compiler-backend-direct-emit-instr-limit`; normal builds route emitted

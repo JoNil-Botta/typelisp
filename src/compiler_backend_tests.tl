@@ -1038,31 +1038,30 @@
 
 (define (compiler-backend-runtime-atomic-linux-wrapper-asm-ok? [asm : String]) : bool
   (and
-    (and
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i64_load_ptr:\n    movq (%rdi), %rax\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i64_store_ptr:\n    xchgq %rsi, (%rdi)\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i64_add_ptr:\n    lock addq %rsi, (%rdi)\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i64_fetch_add_ptr:\n    movq %rsi, %rax\n    lock xaddq %rax, (%rdi)\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i64_cas_ptr:\n    movq %rsi, %rax\n    lock cmpxchgq %rdx, (%rdi)\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i32_load_ptr:\n    movl (%rdi), %eax\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i32_store_ptr:\n    xchgl %esi, (%rdi)\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i32_add_ptr:\n    lock addl %esi, (%rdi)\n    ret\n"))
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i64_load_ptr:\n    movq (%rdi), %rax\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i64_store_ptr:\n    xchgq %rsi, (%rdi)\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i64_add_ptr:\n    lock addq %rsi, (%rdi)\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i64_fetch_add_ptr:\n    movq %rsi, %rax\n    lock xaddq %rax, (%rdi)\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i64_cas_ptr:\n    movq %rsi, %rax\n    lock cmpxchgq %rdx, (%rdi)\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i32_load_ptr:\n    movl (%rdi), %eax\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i32_store_ptr:\n    xchgl %esi, (%rdi)\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i32_add_ptr:\n    lock addl %esi, (%rdi)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
       asm
       "tl_atomic_i32_fetch_add_ptr:\n    movl %esi, %eax\n    lock xaddl %eax, (%rdi)\n    ret\n")
@@ -1072,31 +1071,30 @@
 
 (define (compiler-backend-runtime-atomic-windows-wrapper-asm-ok? [asm : String]) : bool
   (and
-    (and
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i64_load_ptr:\n    movq (%rcx), %rax\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i64_store_ptr:\n    xchgq %rdx, (%rcx)\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i64_add_ptr:\n    lock addq %rdx, (%rcx)\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i64_fetch_add_ptr:\n    movq %rdx, %rax\n    lock xaddq %rax, (%rcx)\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i64_cas_ptr:\n    movq %rdx, %rax\n    lock cmpxchgq %r8, (%rcx)\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i32_load_ptr:\n    movl (%rcx), %eax\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i32_store_ptr:\n    xchgl %edx, (%rcx)\n    ret\n")
-      (compiler_backend.compiler-backend-string-contains?
-        asm
-        "tl_atomic_i32_add_ptr:\n    lock addl %edx, (%rcx)\n    ret\n"))
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i64_load_ptr:\n    movq (%rcx), %rax\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i64_store_ptr:\n    xchgq %rdx, (%rcx)\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i64_add_ptr:\n    lock addq %rdx, (%rcx)\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i64_fetch_add_ptr:\n    movq %rdx, %rax\n    lock xaddq %rax, (%rcx)\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i64_cas_ptr:\n    movq %rdx, %rax\n    lock cmpxchgq %r8, (%rcx)\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i32_load_ptr:\n    movl (%rcx), %eax\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i32_store_ptr:\n    xchgl %edx, (%rcx)\n    ret\n")
+    (compiler_backend.compiler-backend-string-contains?
+      asm
+      "tl_atomic_i32_add_ptr:\n    lock addl %edx, (%rcx)\n    ret\n")
     (compiler_backend.compiler-backend-string-contains?
       asm
       "tl_atomic_i32_fetch_add_ptr:\n    movl %edx, %eax\n    lock xaddl %eax, (%rcx)\n    ret\n")
@@ -6356,7 +6354,7 @@
         index
         8
         ""
-        (struct-get index backend-state))
+        backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    xorl %r12d, %r12d\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -6369,7 +6367,7 @@
         index
         8
         ""
-        (struct-get index backend-state))
+        backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq $7, -16(%rbp)\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
@@ -12531,7 +12529,7 @@
               (= (compiler_ast_types.ast-source-span-start-line span) 12)
               (= (compiler_ast_types.ast-source-span-start-col span) 3))]
           [(compiler_ir_types.CompilerMaybeSourceSpan.No) false]))]
-    [restore : unit
+    [_restore : unit
       (compiler_ir_types.compiler-debug-info-set-enabled! previous-debug)]
     (and disabled-ok enabled-ok)))
 
@@ -29959,7 +29957,7 @@
       index
       2
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-      (struct-get index backend-state))))
+      backend-state)))
 
 (define (compiler-backend-dynamic-indirect-call-emit
   [target : compiler_backend.CompilerBackendTarget]) : compiler_backend.ResultCompilerBackend
@@ -29986,7 +29984,7 @@
       index
       2
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-      (struct-get index backend-state))))
+      backend-state)))
 
 (define (compiler-backend-known-function-indirect-call-target-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -31437,47 +31435,47 @@
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-a)]
-    [symbol-b : String
+    [_symbol-b : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-b)]
-    [symbol-c : String
+    [_symbol-c : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-c)]
-    [symbol-d : String
+    [_symbol-d : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-d)]
-    [symbol-e : String
+    [_symbol-e : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-e)]
-    [symbol-f : String
+    [_symbol-f : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-f)]
-    [symbol-g : String
+    [_symbol-g : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-g)]
-    [symbol-h : String
+    [_symbol-h : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-h)]
-    [symbol-i : String
+    [_symbol-i : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-i)]
-    [symbol-j : String
+    [_symbol-j : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-j)]
-    [symbol-k : String
+    [_symbol-k : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-k)]
-    [symbol-l : String
+    [_symbol-l : String
       (compiler_backend.compiler-backend-state-user-symbol-id
         backend-state
         id-l)]
@@ -31570,7 +31568,7 @@
       (compiler_backend.compiler-backend-state-user-symbol-cache-count state-a)]
     [count-b : i64
       (compiler_backend.compiler-backend-state-user-symbol-cache-count state-b)]
-    [restore : unit (ci.intern-compat-state-install! active-before)]
+    [_restore : unit (ci.intern-compat-state-install! active-before)]
     (and
       (= id-a id-b)
       (string.eq symbol-a1 "_tl_persistent_a")
@@ -37649,7 +37647,7 @@
       0
       index
       5
-      (struct-get index backend-state))
+      backend-state)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?

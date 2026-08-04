@@ -3513,6 +3513,33 @@
         symbol-id
         names))))
 
+;; The module-local alias fanout resolves every (import, declaration) pair
+;; through the base module's name cache. That cache holds the pair's symbol on
+;; every visit of a whole-compiler input (measured 467,682 of 467,682 lookups),
+;; so the display name rendered to derive the miss fallback -- and the fallback
+;; itself -- were pure waste: the callee below ignores the rendered name (its
+;; parameter is `_`), and the lookup never returned the derived id. Rendering
+;; only on an actual miss keeps the same result while dropping ~32 MB of
+;; throwaway module-key strings per compile. Presence is decided with the same
+;; `>= 0` test the render helper itself uses on this API.
+(define (lower-name-cache-alias-symbol-id-or-derived
+  [base-cache : LowerNameCache]
+  [logical-id : i64]
+  [module : String]
+  [source-name : String]
+  [source-id : i64]) : i64
+  (let
+    [cached : i64
+      (lower-name-cache-lookup-symbol-id (& base-cache) logical-id -1)]
+    (if (>= cached 0)
+      cached
+      (lower-derived-symbol-id
+        (lower-current-decl-logical-name-cache-id
+          base-cache
+          module
+          source-name
+          source-id)))))
+
 (define (lower-name-env-add-import-alias-binding-base-cache-id
   [names : LowerNameEnv]
   [base-cache : LowerNameCache]
@@ -3522,7 +3549,9 @@
   [base-name : String]
   [base-id : i64]
   [logical-id : i64]
-  [logical-name : String]) : LowerNameEnv
+  [module : String]
+  [source-name : String]
+  [source-id : i64]) : LowerNameEnv
   (lower-name-env-add-import-alias-binding-base-cache-symbol-id
     names
     base-cache
@@ -3532,11 +3561,14 @@
     base-name
     base-id
     logical-id
-    logical-name
-    (lower-name-cache-lookup-symbol-id
-      (& base-cache)
+    ;; The callee ignores this rendered name; only the symbol id is consumed.
+    ""
+    (lower-name-cache-alias-symbol-id-or-derived
+      base-cache
       logical-id
-      (lower-derived-symbol-id logical-name))))
+      module
+      source-name
+      source-id)))
 
 (define (lower-module-name-key-id-by-id [module-id : i64] [name-id : i64]) : i64
   (if (csym.compiler-symbol-root-module-id? module-id)
@@ -4502,14 +4534,14 @@
   [source-name : String]
   [source-id : i64]) : String
   (let
-    [key : String (csym.compiler-symbol-module-key module source-name)]
     [key-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
     [symbol-id : i64 (lower-name-env-lookup-symbol-id names key-id -1)]
+    ;; Same pure-render deferral as the cache-backed twin above.
     (if (>= symbol-id 0)
       (ir.compiler-ir-symbol-text symbol-id)
       (if (and (string.eq module "main") (string.eq source-name "main"))
         "main"
-        key))))
+        (csym.compiler-symbol-module-key module source-name)))))
 
 (define (lower-current-decl-logical-name-cache-id
   [names : LowerNameCache]
@@ -4517,15 +4549,17 @@
   [source-name : String]
   [source-id : i64]) : String
   (let
-    [key : String (csym.compiler-symbol-module-key module source-name)]
     [key-id : i64
       (lower-module-name-key-id-by-id (struct-get names module-id) source-id)]
     [symbol-id : i64 (lower-name-cache-lookup-symbol-id (& names) key-id -1)]
+    ;; `compiler-symbol-module-key` is a pure render (no interning), and the two
+    ;; branches above it discard the result. Building it eagerly allocated a
+    ;; module-key string for every cache hit; render only where it is returned.
     (if (>= symbol-id 0)
       (ir.compiler-ir-symbol-text symbol-id)
       (if (and (string.eq module "main") (string.eq source-name "main"))
         "main"
-        key))))
+        (csym.compiler-symbol-module-key module source-name)))))
 
 (define (lower-name-env-add-decl-in-module
   [names : LowerNameEnv]
@@ -5084,11 +5118,9 @@
           name-str
           name
           (lower-module-name-key-id-by-id module-id name)
-          (lower-current-decl-logical-name-cache-id
-            base-cache
-            module
-            name-str
-            name)))]
+          module
+          name-str
+          name))]
     [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
       (let
         [name-str : String (tc_core.tc-env-key-name-text name)]
@@ -5101,11 +5133,9 @@
           name-str
           name
           (lower-module-name-key-id-by-id module-id name)
-          (lower-current-decl-logical-name-cache-id
-            base-cache
-            module
-            name-str
-            name)))]
+          module
+          name-str
+          name))]
     [(ast.AstDecl.DefDispatch decl-meta name _)
       (let
         [name-str : String (tc_core.tc-env-key-name-text name)]
@@ -5118,11 +5148,9 @@
           name-str
           name
           (lower-module-name-key-id-by-id module-id name)
-          (lower-current-decl-logical-name-cache-id
-            base-cache
-            module
-            name-str
-            name)))]
+          module
+          name-str
+          name))]
     [(ast.AstDecl.Extern decl-meta name _ metadata _)
       (let
         [name-str : String (tc_core.tc-env-key-name-text name)]
@@ -5157,11 +5185,9 @@
               cleanup-str
               cleanup-name
               (lower-module-name-key-id-by-id module-id cleanup-name)
-              (lower-current-decl-logical-name-cache-id
-                base-cache
-                module
-                cleanup-str
-                cleanup-name)))])]
+              module
+              cleanup-str
+              cleanup-name))])]
     [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup _)
       (match cleanup
         [(ast.AstEnumCleanup.No) names]
@@ -5177,11 +5203,9 @@
               cleanup-str
               cleanup-name
               (lower-module-name-key-id-by-id module-id cleanup-name)
-              (lower-current-decl-logical-name-cache-id
-                base-cache
-                module
-                cleanup-str
-                cleanup-name)))])]
+              module
+              cleanup-str
+              cleanup-name))])]
     [(ast.AstDecl.DefStruct decl-meta _ _ cleanup _)
       (match cleanup
         [(ast.AstStructCleanup.No) names]
@@ -5197,11 +5221,9 @@
               cleanup-str
               cleanup-name
               (lower-module-name-key-id-by-id module-id cleanup-name)
-              (lower-current-decl-logical-name-cache-id
-                base-cache
-                module
-                cleanup-str
-                cleanup-name)))])]
+              module
+              cleanup-str
+              cleanup-name))])]
     [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup _)
       (match cleanup
         [(ast.AstStructCleanup.No) names]
@@ -5217,11 +5239,9 @@
               cleanup-str
               cleanup-name
               (lower-module-name-key-id-by-id module-id cleanup-name)
-              (lower-current-decl-logical-name-cache-id
-                base-cache
-                module
-                cleanup-str
-                cleanup-name)))])]
+              module
+              cleanup-str
+              cleanup-name))])]
     [(ast.AstDecl.Unsafe inner-box)
       (let
         [inner : ast.AstDecl (box-get inner-box)]

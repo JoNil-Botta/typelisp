@@ -17,6 +17,7 @@
 (import compiler_ir_types)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_profile_state as profile_state)
 (import stdlib.arena)
 
 (extern (compiler-driver-smoke-runtime-alloc [bytes : i64]) : i64 (:symbol "tl_alloc"))
@@ -527,18 +528,69 @@
     (io.print-string "\n")
     false))
 
+(define (compiler-driver-reader-context-smoke-mirror-intern-state-ok?
+  [intern-a : ci.InternCompatState]
+  [intern-b : ci.InternCompatState]) : bool
+  (let
+    [source-count-a : i64 (ci.intern-compat-state-pool-len intern-a)]
+    [generated-count-a : i64 (ci.intern-compat-state-generated-count intern-a)]
+    [source-count-b : i64 (ci.intern-compat-state-pool-len intern-b)]
+    [generated-count-b : i64 (ci.intern-compat-state-generated-count intern-b)]
+    [ok : bool (and (= source-count-b 0) (= generated-count-b 0))]
+    [source-index : i64 0]
+    [generated-index : i64 0]
+    (begin
+      ;; The cloned IR retains A's numeric symbol identities. Rebuild those
+      ;; spellings in B's still-fresh capability without installing either
+      ;; table, so B remains an independently owned backend job.
+      (while (and ok (< source-index source-count-a))
+        (let
+          [source-id : i64 source-index]
+          [mirrored-id : i64
+            (ci.intern-compat-state-intern
+              intern-b
+              (ci.intern-compat-state-str intern-a source-id))]
+          (begin
+            (if (= mirrored-id source-id)
+              unit
+              (set! ok false))
+            (set! source-index (+ source-index 1)))))
+      (while (and ok (< generated-index generated-count-a))
+        (let
+          [source-id : i64 (- (- (ci.intern-capacity) 1) generated-index)]
+          [mirrored-id : i64
+            (ci.intern-compat-state-generated-name
+              intern-b
+              (ci.intern-compat-state-str intern-a source-id))]
+          (begin
+            (if (= mirrored-id source-id)
+              unit
+              (set! ok false))
+            (set! generated-index (+ generated-index 1)))))
+      (and
+        ok
+        (= source-count-a (ci.intern-compat-state-pool-len intern-b))
+        (= generated-count-a (ci.intern-compat-state-generated-count intern-b))
+        (not
+          (=
+            (ci.intern-compat-state-table-id intern-a)
+            (ci.intern-compat-state-table-id intern-b)))))))
+
 (define (compiler-driver-reader-context-smoke-emit
+  [backend-state : compiler_backend.CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]) : compiler_backend.ResultCompilerBackend
-  (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt
+  (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+    backend-state
     pools
     program
     (compiler_backend.CompilerBackendTarget.Linux)
     (compiler_backend.CompilerBackendMode.Scalar)
     spans
     true
-    false))
+    false
+    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-driver-reader-context-smoke-backends-ok?
   [pools-a : compiler_ast_types.AstNodePoolContext]
@@ -547,12 +599,18 @@
   [pools-b : compiler_ast_types.AstNodePoolContext]
   [program-b : compiler_ir_types.CompilerIrProgram]
   [spans-b : compiler_ir_types.CompilerSourceSpans]
+  [backend-state-a : compiler_backend.CompilerBackendState]
+  [backend-state-b : compiler_backend.CompilerBackendState]
   [expr-segment-bases : i64]
   [type-segment-bases : i64]
   [base-arena : i64]) : bool
   ;; Emit in the opposite order from optimization. Register allocation runs
   ;; inside each backend call.
-  (match (compiler-driver-reader-context-smoke-emit pools-b program-b spans-b)
+  (match (compiler-driver-reader-context-smoke-emit
+    backend-state-b
+    pools-b
+    program-b
+    spans-b)
     [(compiler_backend.ResultCompilerBackend.Ok asm-b)
       (if (not
         (compiler-driver-reader-context-smoke-installed?
@@ -562,6 +620,7 @@
         (compiler-driver-reader-context-smoke-fail
           "reader changed during state B backend")
         (match (compiler-driver-reader-context-smoke-emit
+          backend-state-a
           pools-a
           program-a
           spans-a)
@@ -577,6 +636,14 @@
               [(not (string.eq asm-a asm-b))
                 (compiler-driver-reader-context-smoke-fail
                   "state assemblies differ")]
+              [(not
+                  (and
+                    (compiler_backend.compiler-backend-state-scalar-registers-enabled?
+                      backend-state-a)
+                    (compiler_backend.compiler-backend-state-scalar-registers-enabled?
+                      backend-state-b)))
+                (compiler-driver-reader-context-smoke-fail
+                  "backend scalar options changed")]
               [else true])]
           [(compiler_backend.ResultCompilerBackend.Err diag)
             (compiler-driver-reader-context-smoke-fail
@@ -596,6 +663,8 @@
   [pools-b : compiler_ast_types.AstNodePoolContext]
   [program-b : compiler_ir_types.CompilerIrProgram]
   [spans-b : compiler_ir_types.CompilerSourceSpans]
+  [backend-state-a : compiler_backend.CompilerBackendState]
+  [backend-state-b : compiler_backend.CompilerBackendState]
   [expr-segment-bases : i64]
   [type-segment-bases : i64]
   [base-arena : i64]) : bool
@@ -636,6 +705,8 @@
                 pools-b
                 optimized-b
                 optimized-spans-b
+                backend-state-a
+                backend-state-b
                 expr-segment-bases
                 type-segment-bases
                 base-arena))]))]))
@@ -648,14 +719,26 @@
         program-a
         spans-a
         pools-a
-        _profile-a)
+        _profile-a
+        backend-state-a)
       (match lowered-b
         [(compiler_driver_core.ResultCompilerDriverLowered.Ok
             program-b
             spans-b
             pools-b
-            _profile-b)
+            _profile-b
+            backend-state-b)
           (let
+            [intern-a : ci.InternCompatState
+              (compiler_backend.compiler-backend-state-exact-intern
+                backend-state-a)]
+            [intern-b : ci.InternCompatState
+              (compiler_backend.compiler-backend-state-exact-intern
+                backend-state-b)]
+            [interns-ok? : bool
+              (compiler-driver-reader-context-smoke-mirror-intern-state-ok?
+                intern-a
+                intern-b)]
             [restore-reader : compiler_ast_types.AstNodePoolContext
               (compiler_ast_types.ast-node-pool-reader-context-current)]
             [sentinel : compiler_ast_types.AstNodePoolContext
@@ -671,18 +754,28 @@
             [_install-sentinel : unit
               (compiler_ast_types.ast-node-pool-reader-use! sentinel)]
             [ok : bool
-              (begin
-                (compiler_backend.compiler-backend-set-scalar-registers! true)
-                (compiler-driver-reader-context-smoke-optimized-ok?
-                  pools-a
-                  program-a
-                  spans-a
-                  pools-b
-                  program-b
-                  spans-b
-                  expr-segment-bases
-                  type-segment-bases
-                  base-arena))]
+              (if (not interns-ok?)
+                (compiler-driver-reader-context-smoke-fail
+                  "intern capabilities could not be mirrored")
+                (begin
+                  (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                    backend-state-a
+                    true)
+                  (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                    backend-state-b
+                    true)
+                  (compiler-driver-reader-context-smoke-optimized-ok?
+                    pools-a
+                    program-a
+                    spans-a
+                    pools-b
+                    program-b
+                    spans-b
+                    backend-state-a
+                    backend-state-b
+                    expr-segment-bases
+                    type-segment-bases
+                    base-arena)))]
             (begin
               (compiler_ast_types.ast-node-pool-reader-use! restore-reader)
               ok))]
@@ -696,6 +789,72 @@
         (string.append
           "state A lower failed: "
           (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]))
+
+(define (compiler-driver-reader-context-smoke-backend-state-idle?
+  [state : compiler_driver_core.CompilerDriverState]) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_driver_core.compiler-driver-state-backend state)]
+    [intern-state : ci.InternCompatState
+      (compiler_driver_core.compiler-driver-state-owned-interns state)]
+    (and
+      (= (compiler_backend.compiler-backend-state-size) 8)
+      (> (compiler_backend.compiler-backend-state-owner-arena backend-state) 0)
+      (=
+        (compiler_backend.compiler-backend-state-owner-arena backend-state)
+        (compiler_driver_core.compiler-driver-state-surface-arena state))
+      (=
+        (compiler_backend.compiler-backend-state-intern-table-id backend-state)
+        (ci.intern-compat-state-table-id intern-state))
+      (=
+        (compiler_backend.compiler-backend-state-intern-generation
+          backend-state)
+        (ci.intern-compat-state-generation intern-state))
+      (=
+        (compiler_backend.compiler-backend-state-lazy-table-arena backend-state)
+        0)
+      (=
+        (compiler_backend.compiler-backend-state-slot-cache-capacity
+          backend-state)
+        0)
+      (=
+        (compiler_backend.compiler-backend-state-frame-offset-cache-capacity
+          backend-state)
+        0)
+      (=
+        (compiler_backend.compiler-backend-state-immediate-cache-capacity
+          backend-state)
+        0)
+      (=
+        (compiler_backend.compiler-backend-state-operand-cache-retained-bytes
+          backend-state)
+        0)
+      (=
+        (compiler_backend.compiler-backend-state-user-symbol-cache-count
+          backend-state)
+        0)
+      (=
+        (compiler_backend.compiler-backend-state-user-symbol-cache-capacity
+          backend-state)
+        0)
+      (=
+        (compiler_backend.compiler-backend-state-user-symbol-cache-retained-bytes
+          backend-state)
+        0)
+      (not
+        (compiler_backend.compiler-backend-state-scalar-registers-enabled?
+          backend-state)))))
+
+(define (compiler-driver-reader-context-smoke-backend-states-idle?
+  [state-a : compiler_driver_core.CompilerDriverState]
+  [state-b : compiler_driver_core.CompilerDriverState]) : bool
+  (and
+    (compiler-driver-reader-context-smoke-backend-state-idle? state-a)
+    (compiler-driver-reader-context-smoke-backend-state-idle? state-b)
+    (not
+      (=
+        (compiler_driver_core.compiler-driver-state-surface-arena state-a)
+        (compiler_driver_core.compiler-driver-state-surface-arena state-b)))))
 
 (define (compiler-driver-reader-context-smoke-prepare-state!
   [state : compiler_driver_core.CompilerDriverState]) : unit
@@ -723,56 +882,69 @@
     [mode : compiler_backend.CompilerBackendMode
       (compiler_backend.CompilerBackendMode.Scalar)]
     [roots-a : svec.Vec (compiler-driver-pic-smoke-roots)]
-    (begin
-      (compiler-driver-reader-context-smoke-prepare-state! state-a)
-      (let
-        [lowered-a : compiler_driver_core.ResultCompilerDriverLowered
-          (compiler_driver_core.compiler-driver-load-and-lower-pic-image-with-state-and-retirement
-            state-a
-            source
-            target
-            roots-a
-            mode
-            (compiler_driver_core.compiler-driver-state-target-cfgs
+    [idle-backend-state-ok? : bool
+      (compiler-driver-reader-context-smoke-backend-states-idle?
+        state-a
+        state-b)]
+    (if (not idle-backend-state-ok?)
+      (compiler-driver-reader-context-smoke-fail
+        "fresh backend state is not idle/owned")
+      (begin
+        (compiler-driver-reader-context-smoke-prepare-state! state-a)
+        (let
+          [lowered-a : compiler_driver_core.ResultCompilerDriverLowered
+            (compiler_driver_core.compiler-driver-load-and-lower-pic-image-with-state-and-retirement
               state-a
+              source
               target
-              (compiler_cfg_core.compiler-cfg-empty))
-            true)]
-        ;; The frontend still has separately tracked state-isolation work
-        ;; (#4723, #4960-#4962). Fork the completed lower result into a second
-        ;; state-owned reader context here, then interleave the phases covered
-        ;; by this smoke: optimizer, regalloc, and backend.
-        (match lowered-a
-          [(compiler_driver_core.ResultCompilerDriverLowered.Ok
-              program-a
-              spans-a
-              pools-a
-              _profile-a)
-            (let
-              [pools-b : compiler_ast_types.AstNodePoolContext
-                (compiler_ast_types.ast-node-pool-context-clone-types-only
-                  pools-a)]
-              [program-b : compiler_ir_types.CompilerIrProgram
-                (compiler_ir_types.compiler-ir-clone-program-shell
-                  pools-b
-                  program-a)]
-              [spans-b : compiler_ir_types.CompilerSourceSpans (clone spans-a)]
-              (begin
-                (compiler_driver_core.compiler-driver-state-adopt-pools!
-                  state-b
-                  pools-b)
-                (compiler-driver-reader-context-smoke-lowered-ok?
-                  lowered-a
-                  (compiler_driver_core.ResultCompilerDriverLowered.Ok
-                    program-b
-                    spans-b
+              roots-a
+              mode
+              (compiler_driver_core.compiler-driver-state-target-cfgs
+                state-a
+                target
+                (compiler_cfg_core.compiler-cfg-empty))
+              true)]
+          ;; The frontend still has separately tracked state-isolation work
+          ;; (#4723, #4960-#4962). Fork the completed lower result into a second
+          ;; state-owned reader context here, then interleave the phases covered
+          ;; by this smoke: optimizer, regalloc, and backend.
+          (match lowered-a
+            [(compiler_driver_core.ResultCompilerDriverLowered.Ok
+                program-a
+                spans-a
+                pools-a
+                _profile-a
+                _backend-a)
+              (let
+                [pools-b : compiler_ast_types.AstNodePoolContext
+                  (compiler_ast_types.ast-node-pool-context-clone-types-only
+                    pools-a)]
+                [program-b : compiler_ir_types.CompilerIrProgram
+                  (compiler_ir_types.compiler-ir-clone-program-shell
                     pools-b
-                    (compiler_driver_core.compiler-driver-state-profile state-b)))))]
-          [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
-            (compiler-driver-reader-context-smoke-fail
-              (string.append
-                "state A lower failed: "
-                (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))])))))
+                    program-a)]
+                [spans-b : compiler_ir_types.CompilerSourceSpans
+                  (clone spans-a)]
+                (begin
+                  (compiler_driver_core.compiler-driver-state-adopt-pools!
+                    state-b
+                    pools-b)
+                  (compiler-driver-reader-context-smoke-lowered-ok?
+                    lowered-a
+                    (compiler_driver_core.ResultCompilerDriverLowered.Ok
+                      program-b
+                      spans-b
+                      pools-b
+                      (compiler_driver_core.compiler-driver-state-profile
+                        state-b)
+                      (compiler_driver_core.compiler-driver-state-backend
+                        state-b)))))]
+            [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
+              (compiler-driver-reader-context-smoke-fail
+                (string.append
+                  "state A lower failed: "
+                  (compiler_diagnostic.compiler-diagnostic-render
+                    (box-get diag))))]))))))
 
 (define (compiler-driver-reader-context-smoke-main) : i64
   (begin

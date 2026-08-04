@@ -61,7 +61,8 @@
     compiler_ir_types.CompilerIrProgram
     compiler_ir_types.CompilerSourceSpans
     compiler_ast_types.AstNodePoolContext
-    profile_state.CompilerProfileState)
+    profile_state.CompilerProfileState
+    compiler_backend.CompilerBackendState)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
 (define compiler-driver-pending-retired-source-arena : i64
@@ -88,6 +89,7 @@
   (lower-arenas (__tl_dyn-array compiler_lower.CompilerLowerArenaState))
   (load-session compiler_load.CompilerLoadSessionState)
   (typecheck-state compiler_typecheck_core.TcJobState)
+  (backend-state compiler_backend.CompilerBackendState)
   (typecheck-prefix-cache compiler_typecheck_core.TcPrefixSnapshotCacheState)
   (pool-arena (__tl_dyn-array i64))
   (surface-arena i64)
@@ -109,6 +111,10 @@
     [lower-cell : (__tl_dyn-array compiler_lower.CompilerLowerArenaState)
       (array.make-array compiler_lower.CompilerLowerArenaState 1)]
     [pool-arena-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    ;; Intern capability identity is shared by parser, lowering, and backend.
+    ;; Create it before switching arenas; the backend's own state data is
+    ;; allocated below while the driver's surface arena is current.
+    [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
     [surface-arena : i64 (arena.tl_arena_make)]
     ;; The typecheck caches share the driver's lifetime with hydrated surface
     ;; data. Allocate them in that already-reserved arena instead of extending
@@ -119,13 +125,15 @@
         (arena.tl_arena_set surface-arena))]
     [typecheck-state : compiler_typecheck_core.TcJobState
       (compiler_typecheck_core.tc-job-state-new)]
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
     [_restore-previous-arena : unit
       (unsafe
         (arena.tl_arena_set previous-arena))]
     (begin
       (array-set! expr-cell 0 expr-pool)
       (array-set! type-cell 0 type-pool)
-      (array-set! intern-cell 0 (ci.intern-compat-state-new))
+      (array-set! intern-cell 0 intern-state)
       (array-set! builtin-cell 0 (cbi.state-new))
       (array-set! lower-cell 0 (compiler_lower.compiler-lower-arena-state-new))
       (array-set! pool-arena-cell 0 pool-arena)
@@ -139,6 +147,7 @@
         lower-cell
         (compiler_load.compiler-load-session-state-new)
         typecheck-state
+        backend-state
         (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
         pool-arena-cell
         surface-arena
@@ -207,6 +216,9 @@
 
 (define (compiler-driver-state-profile [state : CompilerDriverState]) : profile_state.CompilerProfileState
   (struct-get state profile-state))
+
+(define (compiler-driver-state-backend [state : CompilerDriverState]) : compiler_backend.CompilerBackendState
+  (struct-get state backend-state))
 
 (define (compiler-driver-state-typecheck-prefix-cache
   [state : CompilerDriverState]) : compiler_typecheck_core.TcPrefixSnapshotCacheState
@@ -547,11 +559,12 @@
       (set!
         compiler-driver-pending-retired-source-type-storage-arena
         old-type-storage-arena)
-      (compiler-driver-lowered-from-pools-and-profile-state
+      (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
         program
         spans
         retained
-        (compiler-driver-state-profile state)))))
+        (compiler-driver-state-profile state)
+        (compiler-driver-state-backend state)))))
 
 (define (compiler-driver-state-clear-pool-backed-caches-for-state!
   [state : CompilerDriverState]) : unit
@@ -738,34 +751,73 @@
     (compiler-driver-state-capture-active-interns! state)
     (compiler-driver-state-capture-active-transients! state)))
 
-(define (compiler-driver-lowered-from-active-pools-and-profile-state
+(define (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
+  [profile-state : profile_state.CompilerProfileState]
+  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverLowered
   (ResultCompilerDriverLowered.Ok
     program
     spans
     (compiler_ast_types.ast-node-pool-context-capture-active)
-    profile-state))
+    profile-state
+    backend-state))
+
+(define (compiler-driver-lowered-from-active-pools-and-profile-state
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
+      program
+      spans
+      profile-state
+      backend-state)))
 
 (define (compiler-driver-lowered-from-active-pools
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]) : ResultCompilerDriverLowered
-  (compiler-driver-lowered-from-active-pools-and-profile-state
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
+      program
+      spans
+      (profile_state.compiler-profile-state-new)
+      backend-state)))
+
+(define (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [profile-state : profile_state.CompilerProfileState]
+  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverLowered
+  (ResultCompilerDriverLowered.Ok
     program
     spans
-    (profile_state.compiler-profile-state-new)))
+    (compiler_ast_types.ast-node-pool-context-snapshot pools)
+    profile-state
+    backend-state))
 
 (define (compiler-driver-lowered-from-pools-and-profile-state
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [pools : compiler_ast_types.AstNodePoolContext]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
-  (ResultCompilerDriverLowered.Ok
-    program
-    spans
-    (compiler_ast_types.ast-node-pool-context-snapshot pools)
-    profile-state))
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
+      program
+      spans
+      pools
+      profile-state
+      backend-state)))
 
 (define (compiler-driver-runtime-prelude-cache-lookup-with-state
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -1765,7 +1817,7 @@
     false
     (profile_state.compiler-profile-state-new)))
 
-(define (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state
+(define (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
@@ -1776,7 +1828,8 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriver
+  [profile-state : profile_state.CompilerProfileState]
+  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriver
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -1803,13 +1856,15 @@
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
-                (compiler_backend.compiler-backend-set-scalar-registers!
+                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                  backend-state
                   (>= opt-level 2))
                 (cfg
                   compile-profile
                   (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
-                  (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state
+                  (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                    backend-state
                     pools
                     optimized
                     target
@@ -1818,7 +1873,8 @@
                     emit-entry
                     crt-entry
                     profile-state)
-                  (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state
+                  (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                    backend-state
                     pools
                     optimized
                     (compiler_backend.CompilerBackendTarget.Linux)
@@ -1848,7 +1904,7 @@
                             (box-get diag)
                             input-path))))]))))]))))
 
-(define (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state
+(define (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
@@ -1859,7 +1915,38 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverBuffer
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriver
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+      pools
+      input-path
+      program
+      spans
+      target
+      has-target
+      mode
+      opt-level
+      emit-entry
+      crt-entry
+      profile-state
+      backend-state)))
+
+(define (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [input-path : String]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [target : compiler_backend.CompilerBackendTarget]
+  [has-target : bool]
+  [mode : compiler_backend.CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]
+  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverBuffer
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriverBuffer.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -1887,13 +1974,15 @@
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
-                (compiler_backend.compiler-backend-set-scalar-registers!
+                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                  backend-state
                   (>= opt-level 2))
                 (cfg
                   compile-profile
                   (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
-                  (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
+                  (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
+                    backend-state
                     pools
                     optimized
                     target
@@ -1902,7 +1991,8 @@
                     emit-entry
                     crt-entry
                     profile-state)
-                  (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
+                  (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
+                    backend-state
                     pools
                     optimized
                     (compiler_backend.CompilerBackendTarget.Linux)
@@ -1936,7 +2026,7 @@
                             (box-get diag)
                             input-path))))]))))]))))
 
-(define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state
+(define (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
@@ -1947,7 +2037,38 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverObject
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverBuffer
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+      pools
+      input-path
+      program
+      spans
+      target
+      has-target
+      mode
+      opt-level
+      emit-entry
+      crt-entry
+      profile-state
+      backend-state)))
+
+(define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [input-path : String]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [target : compiler_backend.CompilerBackendTarget]
+  [has-target : bool]
+  [mode : compiler_backend.CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]
+  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverObject
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriverObject.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -1974,13 +2095,15 @@
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
-                (compiler_backend.compiler-backend-set-scalar-registers!
+                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                  backend-state
                   (>= opt-level 2))
                 (cfg
                   compile-profile
                   (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
-                  (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
+                  (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                    backend-state
                     pools
                     optimized
                     target
@@ -1989,7 +2112,8 @@
                     emit-entry
                     crt-entry
                     profile-state)
-                  (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
+                  (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                    backend-state
                     pools
                     optimized
                     (compiler_backend.CompilerBackendTarget.Linux)
@@ -2019,7 +2143,7 @@
                             (box-get diag)
                             input-path))))]))))]))))
 
-(define (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state
+(define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
@@ -2030,7 +2154,38 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverPic
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverObject
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+      pools
+      input-path
+      program
+      spans
+      target
+      has-target
+      mode
+      opt-level
+      emit-entry
+      crt-entry
+      profile-state
+      backend-state)))
+
+(define (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [input-path : String]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [target : compiler_backend.CompilerBackendTarget]
+  [has-target : bool]
+  [mode : compiler_backend.CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]
+  [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverPic
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriverPic.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -2057,13 +2212,15 @@
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
-                (compiler_backend.compiler-backend-set-scalar-registers!
+                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                  backend-state
                   (>= opt-level 2))
                 (cfg
                   compile-profile
                   (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
-                  (compiler_backend.compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state
+                  (compiler_backend.compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                    backend-state
                     pools
                     optimized
                     target
@@ -2072,7 +2229,8 @@
                     emit-entry
                     crt-entry
                     profile-state)
-                  (compiler_backend.compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state
+                  (compiler_backend.compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                    backend-state
                     pools
                     optimized
                     (compiler_backend.CompilerBackendTarget.Linux)
@@ -2101,6 +2259,36 @@
                           (compiler_diagnostic.compiler-diagnostic-with-path
                             (box-get diag)
                             input-path))))]))))]))))
+
+(define (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [input-path : String]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [target : compiler_backend.CompilerBackendTarget]
+  [has-target : bool]
+  [mode : compiler_backend.CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverPic
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+      pools
+      input-path
+      program
+      spans
+      target
+      has-target
+      mode
+      opt-level
+      emit-entry
+      crt-entry
+      profile-state
+      backend-state)))
 
 ;; Serial/test compatibility adapters. Driver-owned compile paths carry the
 ;; state from ResultCompilerDriverLowered into the explicit variants above.
@@ -2232,7 +2420,12 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
   (match lowered
-    [(ResultCompilerDriverLowered.Ok program spans pools profile-state)
+    [(ResultCompilerDriverLowered.Ok
+        program
+        spans
+        pools
+        profile-state
+        backend-state)
       (let
         [_profile-program-start : unit
           (cfg
@@ -2278,7 +2471,7 @@
               (compiler-driver-profile-finish-phase
                 profile-state
                 "retain.release"))
-            (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state
+            (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
               pools
               input-path
               emit-program
@@ -2289,7 +2482,8 @@
               opt-level
               emit-entry
               crt-entry
-              profile-state))]
+              profile-state
+              backend-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -2311,7 +2505,12 @@
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
   (match lowered
-    [(ResultCompilerDriverLowered.Ok program spans pools profile-state)
+    [(ResultCompilerDriverLowered.Ok
+        program
+        spans
+        pools
+        profile-state
+        backend-state)
       (let
         [_profile-program-start : unit
           (cfg
@@ -2357,7 +2556,7 @@
               (compiler-driver-profile-finish-phase
                 profile-state
                 "retain.release"))
-            (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state
+            (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
               pools
               input-path
               emit-program
@@ -2368,7 +2567,8 @@
               opt-level
               emit-entry
               false
-              profile-state))]
+              profile-state
+              backend-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -2391,7 +2591,12 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverObject
   (match lowered
-    [(ResultCompilerDriverLowered.Ok program spans pools profile-state)
+    [(ResultCompilerDriverLowered.Ok
+        program
+        spans
+        pools
+        profile-state
+        backend-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -2407,7 +2612,7 @@
             (if (>= opt-level 1)
               (compiler-driver-retire-lowered-source-arena!)
               unit)
-            (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state
+            (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
               pools
               input-path
               emit-program
@@ -2418,7 +2623,8 @@
               opt-level
               emit-entry
               crt-entry
-              profile-state))]
+              profile-state
+              backend-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -2441,7 +2647,12 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPic
   (match lowered
-    [(ResultCompilerDriverLowered.Ok program spans pools profile-state)
+    [(ResultCompilerDriverLowered.Ok
+        program
+        spans
+        pools
+        profile-state
+        backend-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -2457,7 +2668,7 @@
             (if (>= opt-level 1)
               (compiler-driver-retire-lowered-source-arena!)
               unit)
-            (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state
+            (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
               pools
               input-path
               emit-program
@@ -2468,7 +2679,8 @@
               opt-level
               emit-entry
               crt-entry
-              profile-state))]
+              profile-state
+              backend-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -3572,11 +3784,12 @@
                           program
                           spans
                           result-pools))
-                      (compiler-driver-lowered-from-pools-and-profile-state
+                      (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
                         program
                         spans
                         result-pools
-                        (compiler-driver-state-profile state)))))]
+                        (compiler-driver-state-profile state)
+                        (compiler-driver-state-backend state)))))]
               [(compiler_lower.ResultCompilerLower.Err diag)
                 (begin
                   ;; A lower-phase failure can leave the state's checked pool
@@ -3791,11 +4004,12 @@
                         program
                         spans
                         result-pools)
-                      (compiler-driver-lowered-from-pools-and-profile-state
+                      (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
                         program
                         spans
                         result-pools
-                        (compiler-driver-state-profile state)))))]
+                        (compiler-driver-state-profile state)
+                        (compiler-driver-state-backend state)))))]
               [(compiler_lower.ResultCompilerLower.Err diag)
                 (begin
                   ;; See the matching note in
@@ -4288,7 +4502,12 @@
   [lowered : ResultCompilerDriverLowered]
   [opt-level : i64]) : ResultCompilerDriver
   (match lowered
-    [(ResultCompilerDriverLowered.Ok program spans pools profile-state)
+    [(ResultCompilerDriverLowered.Ok
+        program
+        spans
+        pools
+        profile-state
+        _backend-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -4424,7 +4643,12 @@
   [opt-level : i64]
   [dump-pass : String]) : ResultCompilerDriver
   (match lowered
-    [(ResultCompilerDriverLowered.Ok program spans pools profile-state)
+    [(ResultCompilerDriverLowered.Ok
+        program
+        spans
+        pools
+        profile-state
+        _backend-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)

@@ -183,9 +183,37 @@
   (let
     [digits-start : i64 (number-digits-start src start)]
     [int-end : i64 (scan-int-end src digits-start n)]
-    (if (float-tail? src int-end n)
-      (scan-int-end src (+ int-end 1) n)
-      int-end)))
+    [j : i64 int-end]
+    (begin
+      ;; A decimal fraction is accepted only when the dot is followed by at
+      ;; least one digit.  The exponent is scanned after the complete
+      ;; mantissa, so both integer and fraction forms share the same path.
+      (if (float-tail? src int-end n)
+        (set! j (scan-int-end src (+ int-end 1) n))
+        unit)
+      (if (< j n)
+        (if (or (= (__tl_string_ref src j) 'e') (= (__tl_string_ref src j) 'E'))
+          (let
+            [mark : i64 j]
+            [exp-digits : i64 (+ j 1)]
+            (begin
+              (if (< exp-digits n)
+                (if (or
+                  (= (__tl_string_ref src exp-digits) '+')
+                  (= (__tl_string_ref src exp-digits) '-'))
+                  (set! exp-digits (+ exp-digits 1))
+                  unit)
+                unit)
+              ;; Leave an exponent marker with no digits unconsumed.  The
+              ;; result-producing wrapper below diagnoses it at the token start.
+              (if (< exp-digits n)
+                (if (is-digit (__tl_string_ref src exp-digits))
+                  (set! j (scan-int-end src exp-digits n))
+                  (set! j mark))
+                (set! j mark))))
+          unit)
+        unit)
+      j)))
 
 (define (number-digits-start [src : String] [start : i64]) : i64
   (if (= (__tl_string_ref src start) '-')
@@ -227,7 +255,30 @@
 (define (scan-number-end-result [src : String] [start : i64] [n : i64]) : result_lex_i64.Result
   (if (number-prefixed? src start n)
     (scan-prefixed-int-end-result src start n)
-    (result_lex_i64.Ok (scan-number-end src start n))))
+    (let
+      [end : i64 (scan-number-end src start n)]
+      ;; Decimal exponent markers are part of a number only when followed by
+      ;; an optional sign and at least one digit.  Once a decimal token is
+      ;; complete, a symbol byte cannot begin a second token: rejecting that
+      ;; fusion keeps malformed literals recoverable and source-located.
+      [malformed : bool
+        (or
+          (if (< end n)
+            (or
+              (= (__tl_string_ref src end) 'e')
+              (= (__tl_string_ref src end) 'E'))
+            false)
+          (if (< end n)
+            (is-symbol-char (__tl_string_ref src end))
+            false))]
+      (if malformed
+        (result_lex_i64.Err
+          (string.append
+            (string.substring "lexer: malformed integer literal" 0 17)
+            (string.append
+              "number"
+              (string.substring "lexer: malformed integer literal" 24 8))))
+        (result_lex_i64.Ok end)))))
 
 (define (parse-based-int [src : String] [start : i64] [end : i64] [base : i64]) : i64
   (let
@@ -296,10 +347,21 @@
     (string.substring src start (- end start))
     ""))
 
-(define (number-float? [src : String] [start : i64] [n : i64]) : bool
+(define (number-float? [src : String] [start : i64] [end : i64] [n : i64]) : bool
   (if (number-prefixed? src start n)
     false
-    (float-tail? src (scan-int-end src (number-digits-start src start) n) n)))
+    (let
+      [i : i64 (number-digits-start src start)]
+      [found : bool false]
+      (begin
+        (while (and (< i end) (not found))
+          (let
+            [c : char (__tl_string_ref src i)]
+            (if (or (= c '.') (= c 'e') (= c 'E'))
+              (set! found true)
+              unit)
+            (set! i (+ i 1))))
+        found))))
 
 (define (negative-number-start? [src : String] [start : i64] [n : i64]) : bool
   (if (= (__tl_string_ref src start) '-')
@@ -699,7 +761,7 @@
                 [(result_lex_i64.Ok end)
                   (begin
                     (array-set! starts count i)
-                    (if (number-float? src i n)
+                    (if (number-float? src i end n)
                       (array-set!
                         toks
                         count
@@ -973,7 +1035,7 @@
                       [token-line : i64 line]
                       [token-col : i64 col]
                       (begin
-                        (if (number-float? src i n)
+                        (if (number-float? src i end n)
                           (array-set!
                             stoks
                             count

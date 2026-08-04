@@ -128,7 +128,7 @@ kinds does not describe this lexer.
 | `LBracket` | `[` | Binding clauses, parameter lists, `cond` arms |
 | `RBracket` | `]` | |
 | `Int` | `[-]?([0-9]+ \| 0[xX][0-9a-fA-F]+ \| 0[bB][01]+)` | Integer literal; carries the original text |
-| `Float` | `[-]?[0-9]+\.[0-9]+` | `f64` literal; carries the original text |
+| `Float` | `[-]?[0-9]+\.[0-9]+` or `[-]?[0-9]+(\.[0-9]+)?[eE][+-]?[0-9]+` | `f64` literal; carries the exact original text |
 | `Str` | `"..."` | String literal, interned |
 | `Char` | `'x'`, `'
 '`, `'''` | Character literal |
@@ -242,10 +242,15 @@ truncation/wrapping behavior for supported numeric casts.
 For binary operators, an integer literal operand may adopt the other integer
 operand's type; two unconstrained integer literal operands use the `i32`
 default. Floating-point literals are always `f64` unless a contextual `f32`
-expected type is present. Source float constants are finite-only: decimal
-float literal text that parses to non-finite `f64`, or that rounds to
-non-finite `f32` in a contextual `f32` position, is rejected during
-typechecking. There is no source syntax for infinities or NaN: `NaN`, `nan`,
+expected type is present. Exponent-only forms such as `1e10` are `Float`
+tokens, and exponent/fraction spellings retain their source bytes through
+formatting. An exponent marker must have an optional sign and at least one
+digit; malformed markers are lexical errors. Exponent notation participates in
+the same deterministic parsing and range checks as other decimal floats.
+Source float constants are finite-only: decimal float literal text that parses
+to non-finite `f64`, or that rounds to non-finite `f32` in a contextual `f32`
+position, is rejected during typechecking. There is no source syntax for
+infinities or NaN: `NaN`, `nan`,
 `Infinity`, `inf`, and similar spellings are ordinary identifiers and remain
 unbound unless a program declares such names.
 

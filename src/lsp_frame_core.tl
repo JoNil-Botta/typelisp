@@ -7668,22 +7668,11 @@
     [cached : lsp_decl_vec.Vec (struct-get doc decls)]
     (if (struct-get doc decls-valid)
       cached
-      (let
-        [active-arena : i64 (arena.tl_arena_current)]
-        (begin
-          (if (> lsp-document-cache-arena 0)
-            (unsafe
-              (arena.tl_arena_set lsp-document-cache-arena))
-            unit)
-          (let
-            [scanned : lsp_decl_vec.Vec
-              (lsp-document-decls-cache-on-current-arena doc docs)]
-            (begin
-              (if (> lsp-document-cache-arena 0)
-                (unsafe
-                  (arena.tl_arena_set active-arena))
-                unit)
-              scanned)))))))
+      (if (> lsp-document-cache-arena 0)
+        (in-arena
+          (arena.Arena lsp-document-cache-arena)
+          (lsp-document-decls-cache-on-current-arena doc docs))
+        (lsp-document-decls-cache-on-current-arena doc docs)))))
 
 ;; Helper: build a json.Json array of names from the canonical declaration vector.
 (define (lsp-decls-to-name-list [decls : lsp_decl_vec.Vec] [idx : i64]) : json.JsonSeq
@@ -8440,16 +8429,7 @@
 
 (define (lsp-cache-string-copy [text : String]) : String
   (if (> lsp-document-cache-arena 0)
-    (let
-      [active-arena : i64 (arena.tl_arena_current)]
-      [copied : String ""]
-      (begin
-        (unsafe
-          (arena.tl_arena_set lsp-document-cache-arena))
-        (set! copied (string.copy (& text)))
-        (unsafe
-          (arena.tl_arena_set active-arena))
-        copied))
+    (in-arena (arena.Arena lsp-document-cache-arena) (string.copy (& text)))
     (string.copy (& text))))
 
 (define (lsp-diagnostic-uris-copy
@@ -8470,17 +8450,9 @@
 (define (lsp-cache-diagnostic-uris-copy
   [uris : lsp_vector_families.LspDiagnosticUris]) : lsp_vector_families.LspDiagnosticUris
   (if (> lsp-document-cache-arena 0)
-    (let
-      [active-arena : i64 (arena.tl_arena_current)]
-      [copied : lsp_vector_families.LspDiagnosticUris
-        (lsp-diagnostic-uris-empty)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set lsp-document-cache-arena))
-        (set! copied (lsp-diagnostic-uris-copy uris))
-        (unsafe
-          (arena.tl_arena_set active-arena))
-        copied))
+    (in-arena
+      (arena.Arena lsp-document-cache-arena)
+      (lsp-diagnostic-uris-copy uris))
     (lsp-diagnostic-uris-copy uris)))
 
 (define (lsp-tl-save-doc

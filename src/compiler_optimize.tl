@@ -8257,16 +8257,14 @@
     unit
     (let
       [size : i64 (array-length opt-cfg-label-slot)]
-      [previous-arena : i64 (arena.tl_arena_current)]
       (begin
         (while (< size count)
           (set! size (* size 2)))
-        (unsafe
-          (arena.tl_arena_set (ir.compiler-ir-label-arena)))
-        (set! opt-cfg-label-slot (array.make-array i64 size))
-        (set! opt-cfg-label-stamp (array.make-array i64 size))
-        (unsafe
-          (arena.tl_arena_set previous-arena))
+        (in-arena
+          (arena.Arena (ir.compiler-ir-label-arena))
+          (begin
+            (set! opt-cfg-label-slot (array.make-array i64 size))
+            (set! opt-cfg-label-stamp (array.make-array i64 size))))
         ;; A fresh stamp array reads as generation 0, so restart the counter
         ;; above it rather than leaving stale entries live.
         (set! opt-cfg-label-generation 0)))))

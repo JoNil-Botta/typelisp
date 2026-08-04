@@ -49,10 +49,8 @@
     [len : i64 (struct-get store len)]
     [capacity : i64 (array-length (struct-get store slots))]
     [owner : i64 (struct-get store arena)]
-    [previous-arena : i64 (arena.tl_arena_current)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set owner))
+    (in-arena
+      (arena.Arena owner)
       (let
         [bigger : (__tl_dyn-array SymI64Binding)
           (make-array
@@ -66,9 +64,7 @@
             (& (struct-get store slots))
             0
             len)
-          (set! (struct-get store slots) bigger)))
-      (unsafe
-        (arena.tl_arena_set previous-arena)))))
+          (set! (struct-get store slots) bigger))))))
 
 (define (sym-i64-store-push!
   [store : (&mut store SymI64Store)]

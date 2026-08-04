@@ -206,17 +206,13 @@
 (define (compiler-ir-label-seed!) : unit
   (if compiler-ir-label-seeded
     unit
-    (let
-      [previous-arena : i64 (arena.tl_arena_current)]
+    (in-arena
+      (arena.Arena (compiler-ir-label-arena))
       (begin
-        (unsafe
-          (arena.tl_arena_set (compiler-ir-label-arena)))
         (set! compiler-ir-label-slots (array.make-array String 1024))
         (set! compiler-ir-label-ids (ir_label_map.with-capacity 2048))
         (set! compiler-ir-label-count 0)
-        (set! compiler-ir-label-seeded true)
-        (unsafe
-          (arena.tl_arena_set previous-arena))))))
+        (set! compiler-ir-label-seeded true)))))
 
 (define (compiler-ir-label [name : String]) : i64
   (begin
@@ -229,25 +225,22 @@
     [(ir_label_map.LookupMissing)
       (let
         [id : i64 compiler-ir-label-count]
-        [previous-arena : i64 (arena.tl_arena_current)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set (compiler-ir-label-arena)))
-          (if (< id (array-length compiler-ir-label-slots))
-            unit
-            (compiler-ir-label-grow!))
-          (let
-            [owned : String (string.copy (& name))]
-            (begin
-              (array-set! compiler-ir-label-slots id owned)
-              (ir_label_map.insert-ref!
-                (&mut compiler-ir-label-ids)
-                (array-ref compiler-ir-label-slots id)
-                id)))
-          (set! compiler-ir-label-count (+ id 1))
-          (unsafe
-            (arena.tl_arena_set previous-arena))
-          id))]))
+        (in-arena
+          (arena.Arena (compiler-ir-label-arena))
+          (begin
+            (if (< id (array-length compiler-ir-label-slots))
+              unit
+              (compiler-ir-label-grow!))
+            (let
+              [owned : String (string.copy (& name))]
+              (begin
+                (array-set! compiler-ir-label-slots id owned)
+                (ir_label_map.insert-ref!
+                  (&mut compiler-ir-label-ids)
+                  (array-ref compiler-ir-label-slots id)
+                  id)))
+            (set! compiler-ir-label-count (+ id 1))
+            id)))]))
 
 ;: Number of distinct labels interned so far. Ids are dense in [0, count),
 ;: so a side table indexed by label id needs exactly this many slots.

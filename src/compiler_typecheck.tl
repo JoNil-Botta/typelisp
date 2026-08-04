@@ -9511,6 +9511,10 @@
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
+    (if (ci.intern-id-space-capacity-tests-ok?)
+      unit
+      (io.panic
+        "typecheck: intern id space layout exceeds the intern capacity budget"))
     (if (ci.intern-qualified-metadata-tests-ok?)
       unit
       (io.panic "typecheck: intern qualified metadata tests failed"))
@@ -9524,6 +9528,10 @@
     (if (tc_core.tc-spmd-env-box-smoke?)
       unit
       (io.panic "typecheck: boxed spmd env smoke mismatch"))
+    (if (tc_core.macro-hygiene-id-space-budget-ok?)
+      unit
+      (io.panic
+        "typecheck: hygienic id space overflows the intern capacity budget"))
     (if (tc_core.macro-hygiene-local-id-declaration-stable?)
       unit
       (io.panic

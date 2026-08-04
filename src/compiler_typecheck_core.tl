@@ -73694,6 +73694,42 @@
           (macro-hygiene-local-id early 2 source-name-id)))
       (macro-hygiene-local-id? (macro-hygiene-local-id early 1 source-name-id)))))
 
+;: The hygienic-local range is the widest structural symbol family in the
+;: compiler: `macro-hygiene-local-id` packs a sparse macro identity
+;: (module * capacity + macro name, so capacity^2 of them), a depth below 1024,
+;: and a source name below the capacity, which spans 1024 * capacity^3. At the
+;: fixed capacity of 2^17 that is 2^61, already two thirds of the 3*2^60 window
+;: below `intern-structural-local-base`, so the family cannot absorb a larger
+;: capacity: doubling it multiplies this span by eight, past the whole positive
+;: i64 range.
+;: Nothing downstream notices that directly. A hygiene id built past the window
+;: lands in another family's range, decodes as a pool id, and the failure
+;: surfaces as a bare `tl: array index out of bounds` from `intern-str` in a
+;: later bootstrap stage. Check the budget here instead, where the encoding that
+;: owns it lives. Refs #6258.
+(define (macro-hygiene-id-space-budget-ok?) : bool
+  (let
+    [stride : i64 (ci.intern-capacity)]
+    [stride2 : i64 (* stride stride)]
+    [global-base : i64 (macro-hygiene-structural-base)]
+    [local-base : i64 (macro-hygiene-local-base)]
+    [local-top : i64
+      (+ local-base (* 1024 (* stride (+ stride2 (+ stride 1)))))]
+    (and
+      ;; No bound overflowed into a negative i64 ...
+      (> global-base 0)
+      (> local-base global-base)
+      (> local-top local-base)
+      ;; ... the globals lane ends exactly where the locals lane starts ...
+      (= local-base (+ global-base (* 2 stride2)))
+      ;; ... and the whole hygiene range clears the next family above it.
+      (<= local-top (ci.intern-structural-local-base))
+      (< (ci.intern-structural-local-base) (ci.intern-template-source-base))
+      ;; A hygiene id is never mistaken for a pool id.
+      (>= global-base stride)
+      (macro-hygiene-local-id? (+ local-base (* 1024 (* stride (- stride2 1)))))
+      (not (macro-hygiene-local-id? local-top)))))
+
 (define (macro-hygiene-local-id? [name-id : i64]) : bool
   (let
     [stride : i64 (ci.intern-capacity)]

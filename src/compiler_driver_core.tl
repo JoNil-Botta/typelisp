@@ -344,6 +344,11 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
+        "ir-symbols"
+        (compiler_ir_types.compiler-ir-symbol-arena-handle-value))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
         "load-provenance"
         (compiler_load.compiler-load-provenance-arena-handle-value))
       (allocation_profile.compiler-allocation-profile-control!

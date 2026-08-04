@@ -2072,7 +2072,7 @@
   (let
     [symbol-id : i64 (lower-name-env-lookup-symbol-id names source-id -1)]
     (if (>= symbol-id 0)
-      (tc_core.TcMaybeString.Some (tc_core.tc-env-key-name-text symbol-id))
+      (tc_core.TcMaybeString.Some (ir.compiler-ir-symbol-text symbol-id))
       (tc_core.TcMaybeString.No))))
 
 (define (lower-name-env-resolve-with-id
@@ -2219,8 +2219,15 @@
     (ci.intern-str logical-id)
     display))
 
+;; A derived symbol is minted into the IR's own growable symbol table, not into
+;; the fixed intern pool. These logical spellings are by far the largest
+;; generated-name population -- about 50,000 of the ~51,500 generated names a
+;; whole-program self-compile allocates -- and the pool's 131,072 slots cannot
+;; hold them alongside the source lane (refs #6293). The table keys on the full
+;; display string exactly as `intern-generated-canonical-name` did, so a
+;; definition and every call to it still resolve to one id and one spelling.
 (define (lower-derived-symbol-id [logical-name : String]) : i64
-  (ci.intern-generated-canonical-name logical-name))
+  (ir.compiler-ir-symbol logical-name))
 
 (define (lower-logical-symbol-id-select
   [logical-name : String]
@@ -2576,7 +2583,7 @@
         (compiler-lower-profile-name-cache-lookup (>= index 0)))
       (if (>= index 0)
         (tc_core.TcMaybeString.Some
-          (tc_core.tc-env-key-name-text
+          (ir.compiler-ir-symbol-text
             (array-ref (struct-get cache symbol-ids) index)))
         (match (struct-get cache parent)
           [(LowerNameParent.None) (tc_core.TcMaybeString.No)]
@@ -4499,7 +4506,7 @@
     [key-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
     [symbol-id : i64 (lower-name-env-lookup-symbol-id names key-id -1)]
     (if (>= symbol-id 0)
-      (tc_core.tc-env-key-name-text symbol-id)
+      (ir.compiler-ir-symbol-text symbol-id)
       (if (and (string.eq module "main") (string.eq source-name "main"))
         "main"
         key))))
@@ -4515,7 +4522,7 @@
       (lower-module-name-key-id-by-id (struct-get names module-id) source-id)]
     [symbol-id : i64 (lower-name-cache-lookup-symbol-id (& names) key-id -1)]
     (if (>= symbol-id 0)
-      (tc_core.tc-env-key-name-text symbol-id)
+      (ir.compiler-ir-symbol-text symbol-id)
       (if (and (string.eq module "main") (string.eq source-name "main"))
         "main"
         key))))
@@ -12107,7 +12114,7 @@
         [_ false])]
     [(ir.CompilerIrInstr.Call _ name _ _)
       (let
-        [text : String (ci.intern-str name)]
+        [text : String (ir.compiler-ir-symbol-text name)]
         (or
           (string.eq text "stdlib/io.tl::stdlib.io/panic")
           (string.eq text "stdlib\\io.tl::stdlib.io/panic")))]

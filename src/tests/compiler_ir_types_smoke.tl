@@ -727,6 +727,125 @@
               [_ false]))]
         [_ false]))))
 
+;; The derived-symbol table exists because the fixed intern pool ran out of
+;; generated ids on a whole-program self-compile (refs #6293), so what has to
+;; hold is: one id per spelling and that spelling back unchanged, growth past
+;; the initial slab without losing earlier entries, ids inside the free window
+;; the interner's own budget self-tests pin, and no cost at all to the intern
+;; lanes -- the budget the table exists to buy back.
+(define (compiler-ir-smoke-derived-symbol-table-ok?) : bool
+  (let
+    [pool-id : i64 (ci.intern "ir-smoke-pool-name")]
+    [pool-before : i64 (ci.intern-pool-len)]
+    [generated-before : i64 (ci.intern-generated-count)]
+    [capacity : i64 (ci.intern-capacity)]
+    [base : i64 (compiler_ir_types.compiler-ir-symbol-base)]
+    [count-before : i64 (compiler_ir_types.compiler-ir-symbol-count-value)]
+    [first : i64 (compiler_ir_types.compiler-ir-symbol "ir-smoke/one")]
+    [second : i64 (compiler_ir_types.compiler-ir-symbol "ir-smoke/two")]
+    [first-again : i64 (compiler_ir_types.compiler-ir-symbol "ir-smoke/one")]
+    [last-grown : i64 0]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      ;; Equal spellings are one id; distinct spellings are distinct ids.
+      (unless (= first first-again) (set! ok false))
+      (unless (not (= first second)) (set! ok false))
+      (unless
+        (=
+          (compiler_ir_types.compiler-ir-symbol-count-value)
+          (+ count-before 2))
+        (set! ok false))
+      ;; Round trip, through the raw render and through the typed handle.
+      (unless
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text first)
+          "ir-smoke/one")
+        (set! ok false))
+      (unless
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text second)
+          "ir-smoke/two")
+        (set! ok false))
+      (unless
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-id-text
+            (compiler_ir_types.compiler-ir-symbol-typed-id second))
+          "ir-smoke/two")
+        (set! ok false))
+      ;; Ids are dense in the free window [4*capacity, capacity^2) ...
+      (unless (= base (* 4 capacity)) (set! ok false))
+      (unless (= first (+ base count-before)) (set! ok false))
+      (unless (= second (+ first 1)) (set! ok false))
+      (unless (< second (* capacity capacity)) (set! ok false))
+      (unless
+        (= (compiler_ir_types.compiler-ir-symbol-slot first) (- first base))
+        (set! ok false))
+      (unless
+        (compiler_ir_types.compiler-ir-symbol-owned? first)
+        (set! ok false))
+      ;; ... which neither a pool id nor a cfg key id reaches, and which no pool
+      ;; render API claims.
+      (unless
+        (not (compiler_ir_types.compiler-ir-symbol-owned? (- capacity 1)))
+        (set! ok false))
+      (unless
+        (not
+          (compiler_ir_types.compiler-ir-symbol-owned?
+            (+ capacity (- capacity 1))))
+        (set! ok false))
+      (unless (not (ci.intern-renderable-id? first)) (set! ok false))
+      ;; Unminted ids in the window, and the negative sentinel, render empty
+      ;; rather than aborting: diagnostics reach this path with whatever the IR
+      ;; is holding.
+      (unless
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text
+            (+ base (compiler_ir_types.compiler-ir-symbol-count-value)))
+          "")
+        (set! ok false))
+      (unless
+        (string.eq (compiler_ir_types.compiler-ir-symbol-text (- 0 1)) "")
+        (set! ok false))
+      ;; Pool ids still render from the pool through the same entry point.
+      (unless
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text pool-id)
+          "ir-smoke-pool-name")
+        (set! ok false))
+      ;; Growth: mint past the initial 1024-slot slab, then re-read the first
+      ;; spelling, which the doubling copy has to have carried over.
+      (while (< index 2048)
+        (begin
+          (set!
+            last-grown
+            (compiler_ir_types.compiler-ir-symbol
+              (string.append "ir-smoke/grow-" (string.int->string index))))
+          (set! index (+ index 1))))
+      (unless
+        (=
+          (compiler_ir_types.compiler-ir-symbol-count-value)
+          (+ count-before 2050))
+        (set! ok false))
+      (unless (= last-grown (+ base (+ count-before 2049))) (set! ok false))
+      (unless
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text first)
+          "ir-smoke/one")
+        (set! ok false))
+      (unless
+        (= (compiler_ir_types.compiler-ir-symbol "ir-smoke/one") first)
+        (set! ok false))
+      (unless
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text last-grown)
+          "ir-smoke/grow-2047")
+        (set! ok false))
+      ;; The whole batch cost the intern pool nothing in either lane.
+      (unless (= (ci.intern-generated-count) generated-before) (set! ok false))
+      (unless (= (ci.intern-pool-len) pool-before) (set! ok false))
+      ok)))
+
 (define (main) : i64
   (begin
     (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
@@ -737,4 +856,5 @@
     (unless (compiler-ir-smoke-access-helpers-ok?) (return 6))
     (unless (compiler-ir-smoke-runtime-effect-self-test-ok?) (return 7))
     (unless (compiler-ir-smoke-slice-type-render-clone-ok?) (return 8))
+    (unless (compiler-ir-smoke-derived-symbol-table-ok?) (return 9))
     (compiler_ir_types.compiler-ir-effect-self-test)))

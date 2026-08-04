@@ -27492,7 +27492,7 @@
       ;; a RETURN-SHAPED side exit (early-return probe that does bounded
       ;; gep/load/store work then returns -- the put! shape) suppresses the
       ;; load hoist: short trips make it pure register pressure (see the
-      ;; measured note at compiler_optimize.opt-licm-apply-loop).
+      ;; measured note at opt-licm-apply-loop).
       [(not
           (=
             (opt-licm-multi-exit-count-loads
@@ -27528,7 +27528,7 @@
 
 ;; --- descriptor-header hoist past the return-shaped suppression ---------------
 ;;
-;; The probe-shaped side-exit suppression (compiler_optimize.opt-licm-apply-loop) is a
+;; The probe-shaped side-exit suppression (opt-licm-apply-loop) is a
 ;; profitability gate: descriptor header loads (data-pointer and length slots
 ;; of a loop-invariant array handle) are excepted from it in the late licm
 ;; when the loop body cannot write a descriptor header. This shape mirrors
@@ -28125,7 +28125,7 @@
     (compiler_ir_types.CompilerIrBlockList.Nil)))
 
 ;; Full-pipeline integration fixture: `while (i < n) { acc = acc*5 + 3; i++ }`
-;; in SSA form. After compiler_optimize.optimize-function the x16 unroller versions the loop and
+;; in SSA form. After optimize-function the x16 unroller versions the loop and
 ;; the affine pass must collapse the sixteen chained pairs so the unrolled body
 ;; multiplies by 5^16 = 152587890625 exactly once.
 (define (opt-affine-lcg-loop-blocks) : compiler_ir_types.CompilerIrBlockList
@@ -34165,7 +34165,8 @@
             (compiler_ast_types.AstType.I64))
           (opt-lc-compose-test-nest (- i 1)))))))
 
-;; kind: 0 = Load u8, 1 = Load i64, 2 = BoundsCheck, 3 = Phi, 4 = Branch.
+;; kind: 0 = Load u8, 1 = Load i64, 2 = BoundsCheck, 3 = Phi, 4 = Branch,
+;; 5 = BinOp typed u64, 6 = BinOp And, 7 = BinOp Gt.
 (define (opt-lc-test-count-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
@@ -34189,6 +34190,21 @@
               [(= kind 1)
                 (match ty
                   [(compiler_ast_types.AstType.I64) 1]
+                  [_ 0])]
+              [else 0])]
+          [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ ty)
+            (cond
+              [(= kind 5)
+                (match ty
+                  [(compiler_ast_types.AstType.U64) 1]
+                  [_ 0])]
+              [(= kind 6)
+                (match op
+                  [(compiler_ir_types.CompilerIrBinOp.And) 1]
+                  [_ 0])]
+              [(= kind 7)
+                (match op
+                  [(compiler_ir_types.CompilerIrBinOp.Gt) 1]
                   [_ 0])]
               [else 0])]
           [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _)
@@ -34314,6 +34330,56 @@
       (opt-lc-test-has-add-lit-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
         lit)]))
+
+(define (opt-uce-test-has-add-lit-block
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [lit : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-lc-test-has-add-lit-seq instrs 0 lit)])]))
+
+;; Count `gt <lhs>, <lit>` instructions in one block: the guard's span
+;; condition spells out as `(u64)(length - gmin) > (u64)S`.
+(define (opt-uce-test-count-gt-lit-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [lit : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-uce-test-count-gt-lit-seq
+      instrs
+      (+ index 1)
+      lit
+      (+
+        acc
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ rhs _)
+            (match op
+              [(compiler_ir_types.CompilerIrBinOp.Gt)
+                (match rhs
+                  [(compiler_ir_types.CompilerIrValue.I64 k)
+                    (if (= k lit)
+                      1
+                      0)]
+                  [_ 0])]
+              [_ 0])]
+          [_ 0])))))
+
+(define (opt-uce-test-count-gt-lit-block
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [lit : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-uce-test-count-gt-lit-seq instrs 0 lit 0)])]))
 
 (define (opt-lc-test-has-shl-lit-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -34491,6 +34557,10 @@
     [word-out : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks word-func)]
     [word-body : i64 (compiler_ir_types.compiler-ir-label "lc_body")]
+    [word-guard : i64
+      (compiler_ir_types.compiler-ir-label "lc_body__bce_guard")]
+    [word-fast : i64 (compiler_ir_types.compiler-ir-label "lc_body__bce_fast")]
+    [word-exit : i64 (compiler_ir_types.compiler-ir-label "lc_exit")]
     [asc-func : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-unroll-function bases (opt-lc-asc-test-function 4))]
     [asc-out : compiler_ir_types.CompilerIrBlockList
@@ -34520,49 +34590,67 @@
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function word-func)))
         1]
-      ;; entry, straight-line body, exit: no guard, no remainder loop.
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count word-out) 3)) 2]
-      ;; 8 copies x 10 cloned body instructions + the closing jump.
-      [(not (= (opt-lc-test-block-instr-count word-out word-body) 81)) 3]
-      [(not (= (opt-lc-test-count-in-block word-out word-body 3) 0)) 4]
-      [(not (= (opt-lc-test-count-in-block word-out word-body 4) 0)) 5]
-      ;; Eight byte loads and all eight bounds checks survive the unroll.
-      [(not (= (opt-lc-test-count-blocks word-out 0) 8)) 6]
-      [(not (= (opt-lc-test-count-blocks word-out 2) 8)) 7]
-      ;; The counter reads literals 7..0 across the copies.
-      [(not (opt-lc-test-has-add-lit-blocks word-out 7)) 8]
-      [(not (opt-lc-test-has-add-lit-blocks word-out 0)) 9]
-      ;; The deleted phis are gone; the exit's last-trip defs survive.
-      [(not (= (opt-lc-test-def-dst-count-blocks word-out 28) 0)) 10]
-      [(not (= (opt-lc-test-def-dst-count-blocks word-out 30) 0)) 11]
-      [(not (= (opt-lc-test-def-dst-count-blocks word-out 21) 1)) 12]
-      [(not (= (opt-lc-test-def-dst-count-blocks word-out 36) 1)) 13]
+      ;; The affine check family consolidates: entry, a one-block guard with
+      ;; two conditions, the check-free fast body, the original slow loop,
+      ;; and the exit with the last-trip merge phi.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count word-out) 5)) 2]
+      [(not (= (opt-lc-test-block-instr-count word-out word-guard) 6)) 3]
+      [(not (= (opt-lc-test-count-in-block word-out word-guard 5) 2)) 4]
+      [(not (= (opt-lc-test-count-in-block word-out word-guard 6) 1)) 5]
+      [(not (= (opt-lc-test-count-in-block word-out word-guard 4) 1)) 6]
+      ;; 8 copies x 9 cloned body instructions + the closing jump, no checks.
+      [(not (= (opt-lc-test-block-instr-count word-out word-fast) 73)) 7]
+      [(not (= (opt-lc-test-count-in-block word-out word-fast 2) 0)) 8]
+      [(not (= (opt-lc-test-count-in-block word-out word-fast 3) 0)) 9]
+      [(not (= (opt-lc-test-count-in-block word-out word-fast 4) 0)) 10]
+      ;; The slow loop is the original body: one check, two phis, the latch.
+      [(not (= (opt-lc-test-block-instr-count word-out word-body) 14)) 11]
+      [(not (= (opt-lc-test-count-in-block word-out word-body 2) 1)) 12]
+      [(not (= (opt-lc-test-count-in-block word-out word-body 3) 2)) 13]
+      [(not (= (opt-lc-test-count-in-block word-out word-body 4) 1)) 14]
+      ;; One check survives in total; eight byte loads in the fast body plus
+      ;; the slow loop's one. The counter reads literals 7..0 in the copies.
+      [(not (= (opt-lc-test-count-blocks word-out 2) 1)) 15]
+      [(not (= (opt-lc-test-count-blocks word-out 0) 9)) 16]
+      [(not (opt-lc-test-has-add-lit-blocks word-out 7)) 17]
+      [(not (opt-lc-test-has-add-lit-blocks word-out 0)) 18]
+      ;; The guard computes the group's kmin off the same base (kmin = 0)
+      ;; and tests the span against length - gmin (S = 7).
+      [(not (opt-uce-test-has-add-lit-block word-out word-guard 0)) 19]
+      [(not (= (opt-uce-test-count-gt-lit-block word-out word-guard 7) 1)) 20]
+      ;; The last-trip word reaches the exit through a fresh merge phi, and
+      ;; the slow loop is now the sole definition site of the original vars.
+      [(not (= (opt-lc-test-count-in-block word-out word-exit 3) 1)) 21]
+      [(not (= (opt-lc-test-def-dst-count-blocks word-out 28) 1)) 22]
+      [(not (= (opt-lc-test-def-dst-count-blocks word-out 30) 1)) 23]
+      [(not (= (opt-lc-test-def-dst-count-blocks word-out 21) 1)) 24]
+      [(not (= (opt-lc-test-def-dst-count-blocks word-out 36) 1)) 25]
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function asc-func)))
-        14]
-      ;; The exact arm beats the guarded x16 arm: 3 blocks, no guard, and
-      ;; 5 copies x 4 cloned instructions + the closing jump.
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count asc-out) 3)) 15]
-      [(not (= (opt-lc-test-block-instr-count asc-out word-body) 21)) 16]
-      [(not (= (opt-lc-test-count-in-block asc-out word-body 3) 0)) 17]
-      [(not (opt-lc-test-has-add-lit-blocks asc-out 4)) 18]
+        26]
+      ;; A check-free body still takes the exact unguarded arm: 3 blocks, no
+      ;; guard, 5 copies x 4 cloned instructions + the closing jump, and the
+      ;; last copy keeps the original destinations for the exit's dataflow.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count asc-out) 3)) 27]
+      [(not (= (opt-lc-test-block-instr-count asc-out word-body) 21)) 28]
+      [(not (= (opt-lc-test-count-in-block asc-out word-body 3) 0)) 29]
+      [(not (opt-lc-test-has-add-lit-blocks asc-out 4)) 30]
+      [(not (= (opt-lc-test-def-dst-count-blocks asc-out 9) 1)) 31]
+      [(not (= (opt-lc-test-def-dst-count-blocks asc-out 36) 1)) 32]
       ;; 21 trips exceeds the 16-trip cap: the loop stays rolled.
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count long-out) 3)) 19]
-      [(not (= (opt-lc-test-block-instr-count long-out word-body) 14)) 20]
-      [(not (= (opt-lc-test-count-in-block long-out word-body 4) 1)) 21]
-      [(not (= (opt-lc-test-count-in-block long-out word-body 3) 2)) 22]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count long-out) 3)) 33]
+      [(not (= (opt-lc-test-block-instr-count long-out word-body) 14)) 34]
+      [(not (= (opt-lc-test-count-in-block long-out word-body 4) 1)) 35]
+      [(not (= (opt-lc-test-count-in-block long-out word-body 3) 2)) 36]
       ;; A non-literal bound is not statically decidable: rolled as well.
-      [(not (= (opt-lc-test-block-instr-count varbound-out word-body) 14)) 23]
-      [(not (= (opt-lc-test-count-in-block varbound-out word-body 4) 1)) 24]
+      [(not (= (opt-lc-test-block-instr-count varbound-out word-body) 14)) 37]
+      [(not (= (opt-lc-test-count-in-block varbound-out word-body 4) 1)) 38]
       ;; StorePtr bodies are excluded like the x16 arm.
       [(not (= (compiler_ir_types.compiler-ir-block-list-count store-out) 3))
-        25]
-      [(not (= (opt-lc-test-block-instr-count store-out word-body) 12)) 26]
-      [(not (= (opt-lc-test-count-in-block store-out word-body 4) 1)) 27]
-      ;; The last copy is the original body: its compose chain names the
-      ;; original destinations (the exit's dataflow stays intact).
-      [(not (opt-lc-test-last-copy-exact-blocks word-out)) 28]
+        39]
+      [(not (= (opt-lc-test-block-instr-count store-out word-body) 12)) 40]
+      [(not (= (opt-lc-test-count-in-block store-out word-body 4) 1)) 41]
       [else 42])))
 
 (define (compiler-optimize-load-combine-self-test) : i64
@@ -34622,7 +34710,7 @@
         (compiler_optimize.opt-function-blocks word-func))]
     (cond
       ;; The exact compose folds: one i64 load, the chain elements deleted by
-      ;; the pass itself (shifts are trapping per `compiler_optimize.opt-binop-traps?`, so DCE
+      ;; the pass itself (shifts are trapping per `opt-binop-traps?`, so DCE
       ;; could never retire them), and ALL eight bounds checks retained.
       [(not (= (opt-lc-test-count-blocks m0 1) 1)) 1]
       [(not (= (opt-lc-test-count-blocks m0 0) 0)) 2]
@@ -34654,12 +34742,13 @@
       ;; The mul-by-256 / add spelling folds too.
       [(not (= (opt-lc-test-count-blocks m7 1) 1)) 13]
       [(not (= (opt-lc-test-count-blocks m7 0) 0)) 14]
-      ;; The unrolled word loop folds end to end; the wide load reuses the
-      ;; original body's min-offset gep (var 18).
+      ;; The guarded unrolled word loop folds end to end on its fast path;
+      ;; the wide load reuses the last copy's min-offset gep (the renamed
+      ;; var 105), and the slow loop's one byte load and one check remain.
       [(not (= (opt-lc-test-count-blocks word-combined 1) 1)) 15]
-      [(not (= (opt-lc-test-wide-load-src-blocks word-combined) 18)) 16]
-      [(not (= (opt-lc-test-count-blocks word-combined 2) 8)) 17]
-      [(not (= (opt-lc-test-count-blocks word-combined 0) 0)) 18]
+      [(not (= (opt-lc-test-wide-load-src-blocks word-combined) 105)) 16]
+      [(not (= (opt-lc-test-count-blocks word-combined 2) 1)) 17]
+      [(not (= (opt-lc-test-count-blocks word-combined 0) 1)) 18]
       ;; A trapping `shl 0, 64` siblinged with an exact compose: the compose's
       ;; own inner root still folds (that rewrite is trap-free), but the
       ;; siblinged outer root is rejected -- the shl-64 and the outer or
@@ -34705,13 +34794,342 @@
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function func)))
         1]
-      ;; The whole function optimizes to straight-line code: no phis, no
-      ;; branches, no byte loads, and exactly one i64 load remains.
-      [(not (= (opt-lc-test-count-blocks out 3) 0)) 2]
-      [(not (= (opt-lc-test-count-blocks out 4) 0)) 3]
-      [(not (= (opt-lc-test-count-blocks out 0) 0)) 4]
-      [(not (= (opt-lc-test-count-blocks out 1) 1)) 5]
+      ;; The pipeline emits the guarded form: a check-free fast body whose
+      ;; compose folds to one wide load, the original slow loop keeping its
+      ;; single check, and no second-round re-versioning of either block.
+      [(match (compiler_optimize.opt-cfg-find-block
+          out
+          (compiler_ir_types.compiler-ir-label "lc_body__bce_fast"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        2]
+      [(not
+          (=
+            (opt-lc-test-count-in-block
+              out
+              (compiler_ir_types.compiler-ir-label "lc_body__bce_fast")
+              2)
+            0))
+        3]
+      [(not (= (opt-lc-test-count-blocks out 2) 1)) 4]
+      [(not (= (opt-lc-test-count-blocks out 0) 1)) 5]
+      [(not (= (opt-lc-test-count-blocks out 1) 1)) 6]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out
+          (compiler_ir_types.compiler-ir-label "lc_body__bce_fast__bce_fast"))
+          [(compiler_optimize.OptMaybeBlock.No) false]
+          [(compiler_optimize.OptMaybeBlock.Some _) true])
+        7]
       [else 42])))
+
+;; --- check-consolidation fixtures ---------------------------------------------
+;;
+;; The descending word-compose loop with a second per-trip check: mode 0
+;; reads the same affine index against a second length (a second derivable
+;; group), mode 1 checks the accumulator phi (underivable: it stays in the
+;; fast copies), mode 2 replaces the affine check with the phi check (no
+;; derivable group at all: the arm unrolls unguarded, exactly as today).
+(define (opt-uce-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "base"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "at"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "len"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "len2"
+            (compiler_ast_types.AstType.I64)
+            3)
+          (compiler_ir_types.CompilerIrParamList.Nil))))))
+
+(define (opt-uce-dual-test-body [mode : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      30
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "lc_entry")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 36)
+          (compiler_ir_types.compiler-ir-label "lc_body")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        28
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ir_types.compiler-ir-label "lc_entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 37)
+            (compiler_ir_types.compiler-ir-label "lc_body")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          9
+          (compiler_ir_types.CompilerIrBinOp.Shl
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrValue.Var 30)
+          (compiler_ir_types.CompilerIrValue.I64 8)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            10
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.Var 28)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (if (= mode 2)
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 30)
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "lc_bounds"))
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 10)
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "lc_bounds")))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (if (= mode 0)
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 10)
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.compiler-ir-label "lc_bounds2"))
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 30)
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.compiler-ir-label "lc_bounds2")))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  18
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.CompilerIrValue.Var 10)
+                  (compiler_ast_types.AstType.U8))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Load
+                    19
+                    (compiler_ir_types.CompilerIrValue.Var 18)
+                    (compiler_ast_types.AstType.U8))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Cast
+                      20
+                      (compiler_ir_types.CompilerIrValue.Var 19)
+                      (compiler_ast_types.AstType.U8)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.BinOp
+                        21
+                        (compiler_ir_types.CompilerIrBinOp.BitOr)
+                        (compiler_ir_types.CompilerIrValue.Var 9)
+                        (compiler_ir_types.CompilerIrValue.Var 20)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Mov
+                          36
+                          (compiler_ir_types.CompilerIrValue.Var 21)
+                          (compiler_ast_types.AstType.I64))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.BinOp
+                            23
+                            (compiler_ir_types.CompilerIrBinOp.Sub)
+                            (compiler_ir_types.CompilerIrValue.Var 28)
+                            (compiler_ir_types.CompilerIrValue.I64 1)
+                            (compiler_ast_types.AstType.I64))
+                          (compiler_ir_types.compiler-ir-instr-cons
+                            (compiler_ir_types.CompilerIrInstr.Mov
+                              37
+                              (compiler_ir_types.CompilerIrValue.Var 23)
+                              (compiler_ast_types.AstType.I64))
+                            (compiler_ir_types.compiler-ir-instr-cons
+                              (compiler_ir_types.CompilerIrInstr.BinOp
+                                39
+                                (compiler_ir_types.CompilerIrBinOp.Ge)
+                                (compiler_ir_types.CompilerIrValue.Var 23)
+                                (compiler_ir_types.CompilerIrValue.I64 0)
+                                (compiler_ast_types.AstType.I64))
+                              (compiler_ir_types.compiler-ir-instr-cons
+                                (compiler_ir_types.CompilerIrInstr.Branch
+                                  (compiler_ir_types.CompilerIrValue.Var 39)
+                                  (compiler_ir_types.compiler-ir-label
+                                    "lc_body")
+                                  (compiler_ir_types.compiler-ir-label
+                                    "lc_exit"))
+                                (compiler_ir_types.CompilerIrInstrList.Nil)))))))))))))))))
+
+(define (opt-uce-dual-test-function [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "lc_dual_fixture")
+    (opt-uce-test-params)
+    (compiler_ast_types.AstType.I64)
+    40
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "lc_entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "lc_body"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "lc_body")
+          (opt-uce-dual-test-body mode))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "lc_exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 21)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; (b) Two derivable groups consolidate into one guard with two conditions
+;; per group; a phi-indexed check is underivable and stays in the fast
+;; copies, covered by the guard only for the grouped check.
+(define (compiler-optimize-unroll-const-guard-groups-self-test) : i64
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [dual-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        bases
+        (opt-uce-dual-test-function 0))]
+    [dual-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks dual-func)]
+    [mixed-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        bases
+        (opt-uce-dual-test-function 1))]
+    [mixed-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks mixed-func)]
+    [guard : i64 (compiler_ir_types.compiler-ir-label "lc_body__bce_guard")]
+    [fast : i64 (compiler_ir_types.compiler-ir-label "lc_body__bce_fast")]
+    [body : i64 (compiler_ir_types.compiler-ir-label "lc_body")]
+    [exit : i64 (compiler_ir_types.compiler-ir-label "lc_exit")]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function dual-func)))
+        1]
+      ;; Two groups: 2 x (gmin, c1, t, c2, and) + the combining and + branch.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count dual-out) 5)) 2]
+      [(not (= (opt-lc-test-block-instr-count dual-out guard) 12)) 3]
+      [(not (= (opt-lc-test-count-in-block dual-out guard 5) 4)) 4]
+      [(not (= (opt-lc-test-count-in-block dual-out guard 6) 3)) 5]
+      [(not (= (opt-lc-test-count-in-block dual-out guard 4) 1)) 6]
+      ;; 8 copies x (11 - 2 grouped checks) + the closing jump, no checks.
+      [(not (= (opt-lc-test-block-instr-count dual-out fast) 73)) 7]
+      [(not (= (opt-lc-test-count-in-block dual-out fast 2) 0)) 8]
+      ;; The slow loop keeps both original checks.
+      [(not (= (opt-lc-test-block-instr-count dual-out body) 15)) 9]
+      [(not (= (opt-lc-test-count-in-block dual-out body 2) 2)) 10]
+      [(not (= (opt-lc-test-count-blocks dual-out 2) 2)) 11]
+      [(not (= (opt-lc-test-count-in-block dual-out exit 3) 1)) 12]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function mixed-func)))
+        13]
+      ;; Mixed: one group (2 conditions); the phi check stays in the copies.
+      [(not (= (opt-lc-test-block-instr-count mixed-out guard) 6)) 14]
+      [(not (= (opt-lc-test-count-in-block mixed-out guard 5) 2)) 15]
+      [(not (= (opt-lc-test-count-in-block mixed-out guard 6) 1)) 16]
+      ;; 8 copies x (11 - 1 grouped check) + the closing jump, 8 kept checks.
+      [(not (= (opt-lc-test-block-instr-count mixed-out fast) 81)) 17]
+      [(not (= (opt-lc-test-count-in-block mixed-out fast 2) 8)) 18]
+      [(not (= (opt-lc-test-count-in-block mixed-out body 2) 2)) 19]
+      [(not (= (opt-lc-test-count-blocks mixed-out 2) 10)) 20]
+      [(not (= (opt-lc-test-count-in-block mixed-out exit 3) 1)) 21]
+      [else 42])))
+
+;; (c) With no derivable group the arm falls back to today's unguarded
+;; unroll: 3 blocks, every check in the single straight-line body.
+(define (compiler-optimize-unroll-const-guard-fallback-self-test) : i64
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        bases
+        (opt-uce-dual-test-function 2))]
+    [out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks func)]
+    [body : i64 (compiler_ir_types.compiler-ir-label "lc_body")]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function func)))
+        1]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out
+          (compiler_ir_types.compiler-ir-label "lc_body__bce_guard"))
+          [(compiler_optimize.OptMaybeBlock.No) false]
+          [(compiler_optimize.OptMaybeBlock.Some _) true])
+        2]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count out) 3)) 3]
+      ;; 8 copies x 11 cloned body instructions + the closing jump.
+      [(not (= (opt-lc-test-block-instr-count out body) 89)) 4]
+      [(not (= (opt-lc-test-count-in-block out body 2) 16)) 5]
+      [(not (= (opt-lc-test-count-in-block out body 3) 0)) 6]
+      [(not (= (opt-lc-test-def-dst-count-blocks out 21) 1)) 7]
+      [(not (= (opt-lc-test-def-dst-count-blocks out 36) 1)) 8]
+      [else 42])))
+
+;; (e) The guarded form is inert to a second application (the generated
+;; labels make the slow loop ineligible to every loop scan) and to the full
+;; pipeline's second iteration.
+(define (compiler-optimize-unroll-const-guard-idempotent-self-test) : i64
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [once : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        bases
+        (opt-lc-word-test-function
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ir_types.CompilerIrValue.I64 0)))]
+    [twice : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function bases once)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function twice)))
+        1]
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            bases
+            (compiler_optimize.opt-function-blocks once)
+            (compiler_optimize.opt-function-blocks twice)))
+        2]
+      [else 42])))
+
+(test
+  unroll-const-guard-groups
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-const-guard-groups-self-test)
+    42
+    "multi-group checks consolidate into one guard; underivable checks stay in the fast copies"))
+
+(test
+  unroll-const-guard-fallback
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-const-guard-fallback-self-test)
+    42
+    "a body with no derivable check group unrolls unguarded, exactly as before"))
+
+(test
+  unroll-const-guard-idempotent
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-const-guard-idempotent-self-test)
+    42
+    "a second unroll application leaves the guarded form untouched"))
 
 ;; Runtime witnesses: the two compose spellings compute the little-endian
 ;; word of the eight bytes at `at`.
@@ -34765,7 +35183,38 @@
   (test.assert-i64-eq
     (compiler-optimize-unroll-const-pipeline-self-test)
     42
-    "the pipeline leaves the word loop as straight-line code with one i64 load"))
+    "the pipeline versions the word loop into a guard, a check-free fast path, and the original slow loop"))
+
+;; Guard-boundary witnesses: base at 0 and base+max exactly at len-1 both
+;; take the fast path (the guard passes with no slack on one side). base+max
+;; at len fails the guard and takes the slow loop, whose original checks
+;; abort identically -- aborts are not assertable in this harness, so the
+;; witnesses pin the passing boundaries and the tightest exact fits.
+(test
+  unroll-const-guard-runtime-boundaries
+  (let
+    [data : (Array u8) (array.make-array u8 16)]
+    [tight : (Array u8) (array.make-array u8 8)]
+    (begin
+      (opt-lc-runtime-fill! data 0 0)
+      (test.assert-i64-eq
+        (opt-lc-runtime-word data 0)
+        578437695752307201
+        "compose at base 0 returns the little-endian word value")
+      (opt-lc-runtime-fill! data 8 0)
+      (test.assert-i64-eq
+        (opt-lc-runtime-word data 8)
+        578437695752307201
+        "compose with base+max exactly at len-1 returns the same word")
+      (test.assert-i64-eq
+        (opt-lc-runtime-word-muladd data 8)
+        578437695752307201
+        "the mul/add spelling agrees at the boundary")
+      (opt-lc-runtime-fill! tight 0 0)
+      (test.assert-i64-eq
+        (opt-lc-runtime-word tight 0)
+        578437695752307201
+        "an exact-fit 8-byte array stays on the fast path"))))
 
 (test
   load-combine-runtime-word
@@ -36112,3 +36561,731 @@
     (compiler-optimize-inline-dense-input-ok?)
     true
     "inline extraction and expansion preserve dense order for Cons and compact Array inputs"))
+
+;; --- multi-application scheduling budget (unroll + bce_version) ----------------
+;;
+;; The unroller and the single-block and multi-block bce_version drivers apply
+;; to eligible loops in scan order while a per-invocation budget
+;; (opt-loop-apply-budget) lasts, instead of transforming only the first
+;; eligible loop. These fixtures chain N independent counted loops so one
+;; invocation must schedule across loop boundaries.
+(define (opt-loop-budget-label [prefix : String] [k : i64]) : i64
+  (compiler_ir_types.compiler-ir-label
+    (string.append prefix (string.int->string k))))
+
+;; loop_k of the unroll fixture: i/acc phis, acc += i, i += 1, i' < n -- the
+;; canonical counted self-loop the guarded x16 arm rewrites.
+(define (opt-loop-budget-unroll-loop-block [k : i64] [exit-label : i64]) : compiler_ir_types.CompilerIrBlock
+  (let
+    [c : i64 (+ 2 (* 5 k))]
+    [a : i64 (+ 3 (* 5 k))]
+    [s : i64 (+ 4 (* 5 k))]
+    [n : i64 (+ 5 (* 5 k))]
+    [cd : i64 (+ 6 (* 5 k))]
+    [self : i64 (opt-loop-budget-label "loop" k)]
+    [pred : i64
+      (if (= k 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-loop-budget-label "mid" (- k 1)))]
+    (compiler_ir_types.compiler-ir-block
+      self
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          c
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            pred
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var n)
+              self
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            a
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              pred
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var s)
+                self
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              s
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var a)
+              (compiler_ir_types.CompilerIrValue.Var c)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                n
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var c)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  cd
+                  (compiler_ir_types.CompilerIrBinOp.Lt)
+                  (compiler_ir_types.CompilerIrValue.Var n)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ast_types.AstType.Bool))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var cd)
+                    self
+                    exit-label)
+                  (compiler_ir_types.CompilerIrInstrList.Nil))))))))))
+
+(define (opt-loop-budget-unroll-mid-block [k : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-loop-budget-label "mid" k)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (opt-loop-budget-label "loop" (+ k 1)))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; When malformed? the done block defines one var twice, so every rewrite's
+;; post-application whole-function verify rejects it.
+(define (opt-loop-budget-unroll-done-block [n : i64] [malformed? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "done")
+    (if malformed?
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          (+ 2 (* 5 n))
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            (+ 2 (* 5 n))
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.I64 0)))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-loop-budget-unroll-tail-blocks
+  [k : i64]
+  [n : i64]
+  [malformed? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (if (= k (- n 1))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-loop-budget-unroll-loop-block
+        k
+        (compiler_ir_types.compiler-ir-label "done"))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-loop-budget-unroll-done-block n malformed?)
+        (compiler_ir_types.CompilerIrBlockList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-loop-budget-unroll-loop-block k (opt-loop-budget-label "mid" k))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-loop-budget-unroll-mid-block k)
+        (opt-loop-budget-unroll-tail-blocks (+ k 1) n malformed?)))))
+
+(define (opt-loop-budget-unroll-function [n : i64] [malformed? : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "loop_budget_unroll_fixture")
+    (opt-unroll-test-params)
+    (compiler_ast_types.AstType.I64)
+    (+ 3 (* 5 n))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (opt-loop-budget-label "loop" 0))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (opt-loop-budget-unroll-tail-blocks 0 n malformed?))))
+
+;; loop_k of the single-block bce fixture: i/acc phis, acc += i, one derivable
+;; counter BoundsCheck, i += 1, i' < n -- the shape the pass versions
+;; check-free (variant 1 of opt-bce-version-test-blocks).
+(define (opt-loop-budget-bce-loop-block [k : i64] [exit-label : i64]) : compiler_ir_types.CompilerIrBlock
+  (let
+    [c : i64 (+ 3 (* 6 k))]
+    [a : i64 (+ 4 (* 6 k))]
+    [s : i64 (+ 5 (* 6 k))]
+    [n : i64 (+ 6 (* 6 k))]
+    [cd : i64 (+ 7 (* 6 k))]
+    [self : i64 (opt-loop-budget-label "loop" k)]
+    [pred : i64
+      (if (= k 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-loop-budget-label "mid" (- k 1)))]
+    (compiler_ir_types.compiler-ir-block
+      self
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          c
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            pred
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var n)
+              self
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            a
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              pred
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var s)
+                self
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              s
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var a)
+              (compiler_ir_types.CompilerIrValue.Var c)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var c)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (opt-loop-budget-label "ok" k))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  n
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrValue.Var c)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    cd
+                    (compiler_ir_types.CompilerIrBinOp.Lt)
+                    (compiler_ir_types.CompilerIrValue.Var n)
+                    (compiler_ir_types.CompilerIrValue.Var 0)
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Branch
+                      (compiler_ir_types.CompilerIrValue.Var cd)
+                      self
+                      exit-label)
+                    (compiler_ir_types.CompilerIrInstrList.Nil)))))))))))
+
+(define (opt-loop-budget-bce-mid-block [k : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-loop-budget-label "mid" k)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        (+ 8 (* 6 k))
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var (+ 5 (* 6 k)))
+          (opt-loop-budget-label "loop" k)
+          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (opt-loop-budget-label "loop" (+ k 1)))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-loop-budget-bce-done-block [n : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "done")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        (+ 8 (* 6 (- n 1)))
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var (+ 5 (* 6 (- n 1))))
+          (opt-loop-budget-label "loop" (- n 1))
+          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var (+ 8 (* 6 (- n 1))))))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-loop-budget-bce-tail-blocks [k : i64] [n : i64]) : compiler_ir_types.CompilerIrBlockList
+  (if (= k (- n 1))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-loop-budget-bce-loop-block
+        k
+        (compiler_ir_types.compiler-ir-label "done"))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-loop-budget-bce-done-block n)
+        (compiler_ir_types.CompilerIrBlockList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-loop-budget-bce-loop-block k (opt-loop-budget-label "mid" k))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-loop-budget-bce-mid-block k)
+        (opt-loop-budget-bce-tail-blocks (+ k 1) n)))))
+
+(define (opt-loop-budget-bce-function [n : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "loop_budget_bce_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    (+ 3 (* 6 n))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (opt-loop-budget-label "loop" 0))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (opt-loop-budget-bce-tail-blocks 0 n))))
+
+;; Two chained multi-block counted loops: a header carrying the counter phi
+;; and one derivable check, one body jump block, and a latch with the step and
+;; the back-edge test -- three loop blocks each, flat and under the
+;; multi-block cap.
+(define (opt-loop-budget-mb-header-block [k : i64] [pred : i64]) : compiler_ir_types.CompilerIrBlock
+  (let
+    [c : i64 (+ 3 (* 3 k))]
+    [n : i64 (+ 4 (* 3 k))]
+    [self : i64 (opt-loop-budget-label "head" k)]
+    (compiler_ir_types.compiler-ir-block
+      self
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          c
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            pred
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var n)
+              (opt-loop-budget-label "latch" k)
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var c)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (opt-loop-budget-label "mbok" k))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (opt-loop-budget-label "blk" k))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+(define (opt-loop-budget-mb-latch-block [k : i64] [exit-label : i64]) : compiler_ir_types.CompilerIrBlock
+  (let
+    [c : i64 (+ 3 (* 3 k))]
+    [n : i64 (+ 4 (* 3 k))]
+    [cd : i64 (+ 5 (* 3 k))]
+    (compiler_ir_types.compiler-ir-block
+      (opt-loop-budget-label "latch" k)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          n
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var c)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            cd
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var n)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var cd)
+              (opt-loop-budget-label "head" k)
+              exit-label)
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+(define (opt-loop-budget-mb-jump-block [label : i64] [target : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump target)
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-loop-budget-mb-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "loop_budget_mb_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    9
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-loop-budget-mb-jump-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-loop-budget-label "head" 0))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-loop-budget-mb-header-block
+          0
+          (compiler_ir_types.compiler-ir-label "entry"))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-loop-budget-mb-jump-block
+            (opt-loop-budget-label "blk" 0)
+            (opt-loop-budget-label "latch" 0))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-loop-budget-mb-latch-block
+              0
+              (compiler_ir_types.compiler-ir-label "mid0"))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-loop-budget-mb-jump-block
+                (compiler_ir_types.compiler-ir-label "mid0")
+                (opt-loop-budget-label "head" 1))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-loop-budget-mb-header-block
+                  1
+                  (compiler_ir_types.compiler-ir-label "mid0"))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-loop-budget-mb-jump-block
+                    (opt-loop-budget-label "blk" 1)
+                    (opt-loop-budget-label "latch" 1))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-loop-budget-mb-latch-block
+                      1
+                      (compiler_ir_types.compiler-ir-label "done"))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.compiler-ir-block
+                        (compiler_ir_types.compiler-ir-label "done")
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Return
+                            (compiler_ir_types.CompilerIrMaybeValue.Some
+                              (compiler_ir_types.CompilerIrValue.I64 0)))
+                          (compiler_ir_types.CompilerIrInstrList.Nil)))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))
+
+(define (compiler-optimize-loop-budget-unroll-self-test) : i64
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        bases
+        (opt-loop-budget-unroll-function 3 false))]
+    [out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks func)]
+    [round2 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function bases func)]
+    [round2-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks round2)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function func)))
+        1]
+      ;; All THREE loops unrolled in one invocation (previously only the
+      ;; first): 7 original blocks + 2 per rewrite.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count out) 13)) 2]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out
+          (compiler_ir_types.compiler-ir-label "loop0__unroll_body"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        3]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out
+          (compiler_ir_types.compiler-ir-label "loop1__unroll_body"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        4]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out
+          (compiler_ir_types.compiler-ir-label "loop2__unroll_body"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        5]
+      ;; Idempotence: the next pipeline iteration's invocation rewrites
+      ;; nothing (the generated labels and the body-size cap reject every
+      ;; remainder and unrolled body).
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function round2)))
+        6]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count round2-out) 13))
+        7]
+      [else 42])))
+
+(define (compiler-optimize-loop-budget-bce-self-test) : i64
+  (let
+    [versioned3 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-loop-budget-bce-function 3))]
+    [out3 : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks versioned3)]
+    [round2-3-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function versioned3))]
+    [capped : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-loop-budget-bce-function 5))]
+    [out5 : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks capped)]
+    [round5 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function capped)]
+    [round5-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks round5)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function versioned3)))
+        1]
+      ;; Three loops versioned in ONE invocation: 7 originals + 2 per loop.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count out3) 13)) 2]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out3
+              (compiler_ir_types.compiler-ir-label "loop0__bce_fast"))
+            0))
+        3]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out3
+              (compiler_ir_types.compiler-ir-label "loop1__bce_fast"))
+            0))
+        4]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out3
+              (compiler_ir_types.compiler-ir-label "loop2__bce_fast"))
+            0))
+        5]
+      ;; the slow loops keep their checks.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out3
+              (compiler_ir_types.compiler-ir-label "loop2"))
+            1))
+        6]
+      ;; Idempotence on the fully transformed function.
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count round2-3-out) 13))
+        7]
+      ;; Budget cap: five eligible loops, exactly (opt-loop-apply-budget)
+      ;; transform, in scan order -- loop4 is the one left behind.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function capped)))
+        8]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count out5) 19)) 9]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out5
+          (compiler_ir_types.compiler-ir-label "loop3__bce_fast"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        10]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out5
+          (compiler_ir_types.compiler-ir-label "loop4__bce_fast"))
+          [(compiler_optimize.OptMaybeBlock.No) false]
+          [(compiler_optimize.OptMaybeBlock.Some _) true])
+        11]
+      ;; ... and loop4 keeps its check this invocation.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out5
+              (compiler_ir_types.compiler-ir-label "loop4"))
+            1))
+        12]
+      ;; The next pipeline iteration's invocation picks up exactly loop4.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function round5)))
+        13]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count round5-out) 21))
+        14]
+      [(match (compiler_optimize.opt-cfg-find-block
+          round5-out
+          (compiler_ir_types.compiler-ir-label "loop4__bce_fast"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        15]
+      [else 42])))
+
+(define (compiler-optimize-loop-budget-mb-self-test) : i64
+  (let
+    [versioned : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function (opt-loop-budget-mb-function))]
+    [out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks versioned)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function versioned)))
+        1]
+      ;; Both multi-block loops version in ONE invocation: 9 originals + one
+      ;; guard and three fast clones per loop.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count out) 17)) 2]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out
+          (compiler_ir_types.compiler-ir-label "head0__bce_guard"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        3]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out
+          (compiler_ir_types.compiler-ir-label "head1__bce_guard"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        4]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "head0__bce_fast"))
+            0))
+        5]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "head1__bce_fast"))
+            0))
+        6]
+      ;; the slow loops keep their checks.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "head0"))
+            1))
+        7]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "head1"))
+            1))
+        8]
+      [else 42])))
+
+(define (compiler-optimize-loop-budget-verify-stop-self-test) : i64
+  (let
+    [clean-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-unroll-function
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-loop-budget-unroll-function 2 false)))]
+    [broken : compiler_ir_types.CompilerIrFunction
+      (opt-loop-budget-unroll-function 2 true)]
+    [stopped : compiler_ir_types.CompilerIrFunction
+      (match (compiler_optimize.opt-unroll-function-budget-result
+        (compiler_optimize.opt-cfg-context-build
+          (compiler_optimize.opt-function-blocks broken))
+        broken
+        (compiler_optimize.opt-loop-apply-budget))
+        [(compiler_optimize.OptFunctionCtxResult.Result result _) result])]
+    [stopped-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks stopped)]
+    (cond
+      ;; control: both loops of the clean fixture unroll.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count clean-out) 9)) 1]
+      ;; The first loop's rewrite fails the post-application verify (an
+      ;; unrelated duplicate var definition), so the pass stops
+      ;; conservatively: the failed application rolls back whole and the
+      ;; second loop is never attempted -- the original blocks return
+      ;; untouched, with no partial rewrite left behind.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count stopped-out) 5))
+        2]
+      [(match (compiler_optimize.opt-cfg-find-block
+          stopped-out
+          (compiler_ir_types.compiler-ir-label "loop0__unroll_body"))
+          [(compiler_optimize.OptMaybeBlock.No) false]
+          [(compiler_optimize.OptMaybeBlock.Some _) true])
+        3]
+      [else 42])))
+
+(define (compiler-optimize-loop-budget-pipeline-self-test) : i64
+  (let
+    [piped : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.optimize-function
+        (compiler_ast_types.ast-node-pool-reader-context-current)
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-loop-budget-bce-function 3))]
+    (if (compiler_optimize.opt-verify-ok?
+      (compiler_optimize.opt-verify-final-function piped))
+      42
+      1)))
+
+(test
+  loop-budget-unroll-multi-application
+  (test.assert-i64-eq
+    (compiler-optimize-loop-budget-unroll-self-test)
+    42
+    "three eligible loops unroll in one invocation; second invocation is a no-op"))
+
+(test
+  loop-budget-bce-multi-application
+  (test.assert-i64-eq
+    (compiler-optimize-loop-budget-bce-self-test)
+    42
+    "three loops version in one invocation; five loops cap at the budget in scan order; round two picks up the fifth"))
+
+(test
+  loop-budget-mb-multi-application
+  (test.assert-i64-eq
+    (compiler-optimize-loop-budget-mb-self-test)
+    42
+    "both multi-block loops version in one invocation"))
+
+(test
+  loop-budget-verify-stop
+  (test.assert-i64-eq
+    (compiler-optimize-loop-budget-verify-stop-self-test)
+    42
+    "a verifier rejection stops the pass with the last verified state, no partial rewrite"))
+
+(test
+  loop-budget-pipeline
+  (test.assert-i64-eq
+    (compiler-optimize-loop-budget-pipeline-self-test)
+    42
+    "the full pipeline keeps a multi-loop function verifiable"))
+
+;; Runtime witness: three sequential loops over one table (a fill+sum loop, a
+;; strided read loop, and a descending read loop) compiled by the pipeline
+;; carrying the multi-application scheduler must compute exact results.
+(define opt-loop-budget-runtime-table : (Array i64)
+  (array.make-array i64 64))
+
+(define (opt-loop-budget-runtime-run [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [a : i64 0]
+    [b : i64 1]
+    [c : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! opt-loop-budget-runtime-table i (+ i 1))
+          (set! a (+ a (array-ref opt-loop-budget-runtime-table i)))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i n)
+        (begin
+          (set! b (+ b (array-ref opt-loop-budget-runtime-table i)))
+          (set! i (+ i 2))))
+      (set! i n)
+      (while (> i 0)
+        (begin
+          (set! c (+ c (array-ref opt-loop-budget-runtime-table (- i 1))))
+          (set! i (- i 1))))
+      (+ a (+ b c)))))
+
+(test
+  loop-budget-runtime-multi-loop
+  (begin
+    (test.assert-i64-eq
+      (opt-loop-budget-runtime-run 8)
+      89
+      "three sequential loops compute exact results")
+    (test.assert-i64-eq
+      (opt-loop-budget-runtime-run 1)
+      4
+      "single-element trip counts stay exact")))

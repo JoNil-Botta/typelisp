@@ -139,10 +139,21 @@
 (define (compiler-ir-symbol-id [symbol : i64]) : i64
   symbol)
 
+;: Render a symbol id. This is the one choke point every emission and
+;: diagnostic path goes through, so it is where the two symbol id spaces meet:
+;: ids the IR's own derived-symbol table minted (see `compiler-ir-symbol` below)
+;: render from that table, everything else is a front-end pool id. Ids outside
+;: both -- negative sentinels, and the unallocated tail of the derived window --
+;: render as the empty string rather than aborting, matching
+;: `compiler-ir-label-text`: diagnostics reach this path with whatever the IR
+;: happens to hold.
 (define (compiler-ir-symbol-text [symbol : i64]) : String
-  (if (< symbol 0)
-    ""
-    (ci.intern-str symbol)))
+  (cond
+    [(< symbol 0) ""]
+    [(compiler-ir-symbol-owned? symbol)
+      (array-ref compiler-ir-symbol-slots (compiler-ir-symbol-slot symbol))]
+    [(>= symbol (compiler-ir-symbol-base)) ""]
+    [else (ci.intern-str symbol)]))
 
 (define (compiler-ir-symbol-eq? [left : i64] [right : i64]) : bool
   (= left right))
@@ -151,7 +162,7 @@
   symbol)
 
 (define (compiler-ir-test-symbol [name : String]) : i64
-  (ci.intern-generated-canonical-name name))
+  (compiler-ir-symbol name))
 
 ;; Block labels are interned, but into a table the IR owns rather than into the
 ;; front end's `intern` pool. That pool is a fixed 131,072 slots sized for source
@@ -257,6 +268,163 @@
 
 (define (compiler-ir-label-some? [label : i64]) : bool
   (>= label 0))
+
+;; Derived symbols -- the `<module>/<name>` and `<path>::<module>/<name>`
+;; logical spellings lowering mints for every function, global and call target
+;; whose identity is not a parsed source symbol -- are interned into a table the
+;; IR owns rather than into the front end's `intern` pool, for exactly the reason
+;; block labels are (above). That pool is a fixed 131,072 slots sized for source
+;; identifiers and aborts when generated names exhaust it, and a whole-program
+;; self-compile mints ~50,000 derived spellings, the bulk of the generated lane.
+;; This table grows, so the id space is bounded by the symbols actually created
+;; (refs #6293).
+;;
+;; Ids are `compiler-ir-symbol-base + dense-index`, placed in the free window
+;; [4*capacity, capacity^2): above `compiler-cfg-key-id`'s [capacity,
+;; 2*capacity) and far below every structural symbol family, so each
+;; `(< id (intern-capacity))` pool-id test and each hygiene/composite predicate
+;; reads false for these ids -- which is the answer those tests want, since a
+;; derived symbol is not a pool id and carries no structural decoding.
+;;
+;; Two invariants this table owns:
+;;
+;; * Sole spelling authority. This table owns the spelling of every symbol it
+;;   mints. The first-writer-wins `intern-composite-rendered-name` cache is
+;;   neither consulted nor written on this path; that cache stays exclusively
+;;   `ast-nominal-name-id-display`'s.
+;; * Definition and call sites agree by construction. The key is the full
+;;   display string, exactly as `intern-generated-canonical-name` keyed it, so
+;;   two renders of one spelling return the same id no matter which call site
+;;   produced it or how its components were split -- which is why emitted
+;;   spellings stay byte-identical.
+;;
+;; What the table does not own is a spelling the intern pool's canonical
+;; generated namespace already holds. That namespace is shared: a runtime name
+;; like `tl_arena_current` is minted there at parse start and the backend then
+;; decides "the runtime provides this" by comparing ids, so a derived symbol
+;; spelled the same has to *be* that id. `compiler-ir-symbol-lookup` therefore
+;; defers to an existing canonical generated id before minting one of its own.
+(define (compiler-ir-symbol-base) : i64
+  (* 4 (ci.intern-capacity)))
+
+(define compiler-ir-symbol-slots : (Array String)
+  (array.make-array String 1024))
+(define compiler-ir-symbol-count : i64
+  0)
+(define compiler-ir-symbol-ids : ir_label_map.Map
+  (ir_label_map.with-capacity 2048))
+(define compiler-ir-symbol-seeded : bool
+  false)
+
+(define (compiler-ir-symbol-grow!) : unit
+  (let
+    [old-slots : (Array String) compiler-ir-symbol-slots]
+    [old-len : i64 (array-length old-slots)]
+    [next : (Array String) (array.make-array String (* old-len 2))]
+    [index : i64 0]
+    (begin
+      (while (< index old-len)
+        (begin
+          (array-set! next index (array-ref old-slots index))
+          (set! index (+ index 1))))
+      (set! compiler-ir-symbol-slots next))))
+
+;; Same arena rationale as the label table above: a symbol id handed to the
+;; backend must still render after every lowering/optimizer scratch arena is
+;; dropped and after every intern floor reset, so the slots, the map and the
+;; copies of the spellings live in a dedicated arena created once that only
+;; grows.
+(define compiler-ir-symbol-arena-handle : i64
+  0)
+
+(define (compiler-ir-symbol-arena-handle-value) : i64
+  compiler-ir-symbol-arena-handle)
+
+(define (compiler-ir-symbol-arena) : i64
+  (begin
+    (if (= compiler-ir-symbol-arena-handle 0)
+      (set! compiler-ir-symbol-arena-handle (arena.tl_arena_make))
+      unit)
+    compiler-ir-symbol-arena-handle))
+
+(define (compiler-ir-symbol-seed!) : unit
+  (if compiler-ir-symbol-seeded
+    unit
+    (let
+      [previous-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set (compiler-ir-symbol-arena)))
+        (set! compiler-ir-symbol-slots (array.make-array String 1024))
+        (set! compiler-ir-symbol-ids (ir_label_map.with-capacity 2048))
+        (set! compiler-ir-symbol-count 0)
+        (set! compiler-ir-symbol-seeded true)
+        (unsafe
+          (arena.tl_arena_set previous-arena))))))
+
+(define (compiler-ir-symbol [name : String]) : i64
+  (begin
+    (compiler-ir-symbol-seed!)
+    (compiler-ir-symbol-lookup name)))
+
+;; Resolution order, and the reason for it: this table's own answer first, so a
+;; spelling it has already answered for never changes id; then the intern pool's
+;; canonical generated namespace, so a spelling that namespace already owns --
+;; every runtime and builtin name, minted at parse start, and every string
+;; literal -- keeps the id the rest of the compiler compares against; only then
+;; a fresh id of this table's own. Deferring is not memoized: the pool is
+;; re-seeded on every intern reset, and the probe re-reads whatever the live
+;; pool says.
+(define (compiler-ir-symbol-lookup [name : String]) : i64
+  (match (ir_label_map.get (& compiler-ir-symbol-ids) name)
+    [(ir_label_map.LookupFound id) id]
+    [(ir_label_map.LookupMissing)
+      (let
+        [pooled : i64 (ci.intern-generated-canonical-name-existing name)]
+        (if (>= pooled 0)
+          pooled
+          (compiler-ir-symbol-mint! name)))]))
+
+(define (compiler-ir-symbol-mint! [name : String]) : i64
+  (let
+    [index : i64 compiler-ir-symbol-count]
+    [id : i64 (+ (compiler-ir-symbol-base) index)]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set (compiler-ir-symbol-arena)))
+      (if (< index (array-length compiler-ir-symbol-slots))
+        unit
+        (compiler-ir-symbol-grow!))
+      (let
+        [owned : String (string.copy (& name))]
+        (begin
+          (array-set! compiler-ir-symbol-slots index owned)
+          (ir_label_map.insert-ref!
+            (&mut compiler-ir-symbol-ids)
+            (array-ref compiler-ir-symbol-slots index)
+            id)))
+      (set! compiler-ir-symbol-count (+ index 1))
+      (unsafe
+        (arena.tl_arena_set previous-arena))
+      id)))
+
+;: Number of distinct derived symbols interned so far. Dense indices cover
+;: [0, count), so a side table indexed by derived symbol needs this many slots.
+(define (compiler-ir-symbol-count-value) : i64
+  compiler-ir-symbol-count)
+
+;: True for the ids this table minted, and only those: the window above it is
+;: unallocated and every id below it belongs to the intern pool or to a
+;: structural family.
+(define (compiler-ir-symbol-owned? [symbol : i64]) : bool
+  (and
+    (>= symbol (compiler-ir-symbol-base))
+    (< symbol (+ (compiler-ir-symbol-base) compiler-ir-symbol-count))))
+
+;: Dense index of a symbol this table minted, for callers keeping a side table.
+(define (compiler-ir-symbol-slot [symbol : i64]) : i64
+  (- symbol (compiler-ir-symbol-base)))
 
 (defenum CompilerIrValue
   (Var i64)

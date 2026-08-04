@@ -30,7 +30,6 @@
 (import compiler_ir_types as ir)
 (import compiler_ast_types as ast)
 (import compiler_float as cfloat)
-(import compiler_intern as ci)
 (import stdlib.arena)
 (import stdlib.hash)
 (import stdlib.hashmap)
@@ -11023,7 +11022,7 @@
 
 (import (vector.vector OptSsaVarTypeEntry core) as opt_ssa_var_type_vec)
 
-;; Dense SSA var -> ast.AstType table. Function-local vreg ids are dense, so the
+;; Dense SSA var -> AstType table. Function-local vreg ids are dense, so the
 ;; table is a direct-index vector; lookup is O(1) by construction instead of a
 ;; linear chain walk. The insertion-order sidecar preserves the retired
 ;; chain's newest-first walk order exactly (#5731).
@@ -31860,10 +31859,10 @@
 ;; Program facts for function-scope global-cell invariance (the "global_cell"
 ;; pass): which globals can have their cell loaded once at a function's entry
 ;; and have every in-function use rewritten to that SSA var. `addr-taken`
-;; holds every global whose `ir.CompilerIrValue.GlobalAddr` appears anywhere in the
+;; holds every global whose `CompilerIrValue.GlobalAddr` appears anywhere in the
 ;; program (a store_ptr/syscall/callee could write the cell through such a
 ;; pointer); `type-index`/`types` map a global's symbol id to its declared
-;; ast.AstType so the entry load's Mov carries the exact cell type; `word-cell` is
+;; AstType so the entry load's Mov carries the exact cell type; `word-cell` is
 ;; the count of globals that pass both the not-address-taken and the
 ;; single-word-cell filters (a cheap per-function skip when zero). Built once
 ;; per program at level 2; empty (and the pass a no-op) elsewhere.
@@ -38200,10 +38199,13 @@
 ;; whenever its header is entered: the branch sits at the end of the block, so
 ;; entering the loop implies at least one trip, and every trip's continue
 ;; decision is a pure function of the simulated counter. Such a loop is
-;; replaced by its `trips` straight-line body copies -- no entry guard, no
-;; remainder loop. Unlike the x16 arm this is exact rather than a profitability
-;; bet: the trip count is invariant, so the copies are precisely the
-;; iterations the loop would have run.
+;; replaced by its `trips` straight-line body copies -- no remainder loop --
+;; plus, when the body's BoundsChecks form derivable counter-affine groups,
+;; a pre-body guard replacing the grouped checks (the "consolidated
+;; bounds-check guard" section below; the plain form described here is the
+;; fallback when no group derives). Unlike the x16 arm this is exact rather
+;; than a profitability bet: the trip count is invariant, so the copies are
+;; precisely the iterations the loop would have run.
 ;;
 ;; Soundness:
 ;; - The trip count is simulated with the counter's own integer type
@@ -38240,7 +38242,8 @@
   (step i64)
   (trips i64)
   (ity ast.AstType)
-  (others OptUnrollPhiList))
+  (others OptUnrollPhiList)
+  (pred-label i64))
 
 (defenum OptUnrollConstMaybeShape
   (No)
@@ -38693,7 +38696,8 @@
                                           step
                                           trips
                                           ity
-                                          others))
+                                          others
+                                          pred-label))
                                       (opt-unroll-const-phi-scan
                                         blocks
                                         label
@@ -38976,25 +38980,31 @@
   [index : i64]
   [last : i64]
   [skip : i64]
+  [skips : (& skips opt_dense_i64_vec.Vec)]
+  [full-rename? : bool]
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [cell : (__tl_dyn-array i64)]
   [copy : i64]
   [trips : i64]) : ir.CompilerIrInstrList
   (if (>= index last)
     (ir.CompilerIrInstrList.Nil)
-    (if (= index skip)
+    (if (or
+      (= index skip)
+      (opt-unroll-const-guard-skips-contains? skips index 0))
       (opt-unroll-const-copy-body
         instrs
         (+ index 1)
         last
         skip
+        skips
+        full-rename?
         remap
         cell
         copy
         trips)
       (let
         [cloned : ir.CompilerIrInstr
-          (if (= copy (- trips 1))
+          (if (and (= copy (- trips 1)) (not full-rename?))
             (opt-unroll-const-keep-clone-instr
               remap
               (ir.compiler-ir-instr-seq-ref instrs index))
@@ -39010,6 +39020,8 @@
             (+ index 1)
             last
             skip
+            skips
+            full-rename?
             remap
             cell
             copy
@@ -39039,6 +39051,8 @@
   [step : i64]
   [ity : ast.AstType]
   [others : OptUnrollPhiList]
+  [skips : (& skips opt_dense_i64_vec.Vec)]
+  [full-rename? : bool]
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [cell : (__tl_dyn-array i64)]
   [copy : i64]
@@ -39055,7 +39069,7 @@
       [_seed-others : unit
         (opt-unroll-write-phi-seeds remap others other-seeds)]
       [_reseed : unit
-        (if (= copy (- trips 1))
+        (if (and (= copy (- trips 1)) (not full-rename?))
           (opt-unroll-const-reseed-body-defs instrs phi-count last remap)
           unit)]
       [body : ir.CompilerIrInstrList
@@ -39064,6 +39078,8 @@
           phi-count
           last
           cond-index
+          skips
+          full-rename?
           remap
           cell
           copy
@@ -39080,6 +39096,8 @@
           step
           ity
           others
+          skips
+          full-rename?
           remap
           cell
           (+ copy 1)
@@ -39105,6 +39123,1063 @@
         loop-label
         new-block)]))
 
+;; --- constant-trip unroll: consolidated bounds-check guard --------------------
+;;
+;; When the exact arm above unrolls a loop whose body carries BoundsCheck
+;; instructions on indices affine in the loop counter, every trip copy keeps
+;; its own check. For checks of the family `base + scale*counter + offset`
+;; (Add/Sub/Mul-by-literal i64 chains; Mov copies and i64<->u64 reinterpret
+;; casts transparent) with a loop-invariant base and a loop-invariant length,
+;; the per-trip probes are ONE contiguous index family: trip j reads
+;; `base + k_j` with k_j = scale*c_j + offset, and the simulated counter
+;; literals c_j make every k_j known exactly (overflowing k arithmetic, an
+;; underivable index, or a body-defined base/length makes the check
+;; ungroupable instead). The arm then emits, on the loop's entry edge:
+;;
+;;   GUARD (one block): per distinct (base, length) group with k-range
+;;     [kmin..kmax] and span S = kmax - kmin:
+;;       gmin = base + kmin    (wrapping i64 add of the same base value,
+;;       t    = length - gmin   matching the body's own wrapping ops)
+;;       c1   = (u64)gmin < (u64)length
+;;       c2   = (u64)t > (u64)S     (omitted when S = 0: it restates c1)
+;;     gok  = the and of all group conditions; Branch gok FAST SLOW
+;;   FAST: the trip copies with the grouped checks REMOVED. Checks that do
+;;     not belong to a derivable group stay in the copies exactly as today
+;;     (the guard never speaks for them). All copy destinations are fresh,
+;;     so the slow loop below is the sole definition site of the original
+;;     body vars.
+;;   SLOW: the original loop, untouched apart from its phis' entry-edge
+;;     inputs now naming the guard block, with all original checks and
+;;     messages.
+;;
+;; Exactness: the guard passes IFF every point of the whole interval
+;; [gmin, gmin + S] (mod 2^64) would pass the original u64 check, and the
+;; grouped probes are a subset of that interval:
+;;   * wrap(base + k_j) = wrap(gmin + (k_j - kmin)) with 0 <= k_j - kmin <= S
+;;     (k_j, kmin, and kmax are exact i64 arithmetic, so S = kmax - kmin >= 0
+;;     and the emitted i64 literal S reads as the same u64 span);
+;;   * c1 && c2  =>  (u64)gmin < len, so t = len - gmin cannot wrap and c2
+;;     gives len - gmin > S; every interval point then satisfies
+;;     (u64)(gmin + d) = (u64)gmin + d <= (u64)gmin + S < len with no wrap in
+;;     between. This direction needs NO assumption on length: a wrapped
+;;     (negative-i64) base or length lands at huge u64 values and fails c1,
+;;     or satisfies c1 only when the whole interval is in range.
+;; So a passing guard implies no grouped check can abort, and the fast path
+;; differs from the original only in checks that provably pass. A failing
+;; guard runs the original loop, so every original check executes in
+;; original order with its original abort message. Ungrouped checks left in
+;; the fast copies abort exactly where they aborted originally: a passing
+;; guard excludes aborts from earlier grouped checks, so the first aborting
+;; check and its message are unchanged.
+;;
+;; The guard runs where the original first check would run (the entry edge),
+;; is pure wrapping arithmetic (no traps, no side effects), and its
+;; base/length uses dominate it: both are loop-invariant values whose defs
+;; dominate the loop header, and the header's single outside edge is the one
+;; being split. Body values used after the loop merge through fresh phis
+;; prepended to the exit block (fast edge reads the last copy's renamed def,
+;; slow edge reads the original); the loop block dominates every such use in
+;; the input, and both new paths reach the exit only through the exit block,
+;; so the phi block dominates every rewritten use. The `__bce_guard` /
+;; `__bce_fast` labels make the rewritten loop ineligible to the const-trip,
+;; x16, and bce_version scans on later pipeline rounds (their shared
+;; freshness rule), so the slow loop is never re-versioned. Consolidation is
+;; an economics call: the guard costs a handful of instructions per entry
+;; while each removed check saves its compare per call, so the arm requires
+;; trips >= 4, a phi-free exit block (the fast path adds a new exit
+;; predecessor, and pre-existing phis would need fast-edge inputs this arm
+;; does not synthesize), subst-rewritable exit instructions, and no
+;; non-exit-block use of a body def.
+;; Overflow-checked literal arithmetic for the recovery below: the
+;; coefficients must stay mathematical (a wrapped scale or offset could
+;; disguise an index expression the guard's interval argument does not
+;; cover), so an overflow rejects the derivation.
+(defenum OptUceKSum
+  (No)
+  (Some i64))
+
+(define (opt-unroll-const-guard-k-add [a : i64] [b : i64]) : OptUceKSum
+  (let
+    [minimum : i64 (- (- 0 9223372036854775807) 1)]
+    (if (or
+      (and (> b 0) (> a (- 9223372036854775807 b)))
+      (and (< b 0) (< a (- minimum b))))
+      (OptUceKSum.No)
+      (OptUceKSum.Some (+ a b)))))
+
+(define (opt-unroll-const-guard-k-sub [a : i64] [b : i64]) : OptUceKSum
+  (if (= b (- (- 0 9223372036854775807) 1))
+    ;; a - INT_MIN = a + 2^63 is representable exactly when a < 0, and the
+    ;; wrapping subtraction computes it.
+    (if (< a 0)
+      (OptUceKSum.Some (- a b))
+      (OptUceKSum.No))
+    (opt-unroll-const-guard-k-add a (- 0 b))))
+
+(define (opt-unroll-const-guard-k-mul [a : i64] [b : i64]) : OptUceKSum
+  (let
+    [minimum : i64 (- (- 0 9223372036854775807) 1)]
+    (cond
+      [(= a 0) (OptUceKSum.Some 0)]
+      [(= b 0) (OptUceKSum.Some 0)]
+      [(= a 1) (OptUceKSum.Some b)]
+      [(= b 1) (OptUceKSum.Some a)]
+      [(= a minimum) (OptUceKSum.No)]
+      [(= b minimum) (OptUceKSum.No)]
+      [(= a (- 0 1)) (OptUceKSum.Some (- 0 b))]
+      [(= b (- 0 1)) (OptUceKSum.Some (- 0 a))]
+      [else
+        (let
+          [r : i64 (* a b)]
+          (if (= (/ r a) b)
+            (OptUceKSum.Some r)
+            (OptUceKSum.No)))])))
+
+;; Affine recovery result: invariant base var (-1 when the expression is a
+;; pure counter/literal form), counter scale, literal offset.
+(defenum OptUceAffine
+  (No)
+  (Some i64 i64 i64))
+
+(define (opt-unroll-const-guard-reinterpret-cast?
+  [from-ty : ast.AstType]
+  [to-ty : ast.AstType]) : bool
+  (match from-ty
+    [(ast.AstType.I64)
+      (match to-ty
+        [(ast.AstType.U64) true]
+        [_ false])]
+    [(ast.AstType.U64)
+      (match to-ty
+        [(ast.AstType.I64) true]
+        [_ false])]
+    [_ false]))
+
+;; Two resolved subexpressions each contribute at most one base var; the sum
+;; keeps the single base and rejects a second one (`2*base + counter` is not
+;; a form the guard can rebuild). -2 reports the conflict.
+(define (opt-unroll-const-guard-base-merge [left : i64] [right : i64]) : i64
+  (if (< left 0)
+    right
+    (if (< right 0)
+      left
+      (- 0 2))))
+
+(define (opt-unroll-const-guard-affine-binop
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [iphi : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [fuel : i64]) : OptUceAffine
+  (match (opt-unroll-const-guard-affine instrs phi-count last iphi lhs fuel)
+    [(OptUceAffine.No) (OptUceAffine.No)]
+    [(OptUceAffine.Some base-l scale-l offset-l)
+      (match (opt-unroll-const-guard-affine instrs phi-count last iphi rhs fuel)
+        [(OptUceAffine.No) (OptUceAffine.No)]
+        [(OptUceAffine.Some base-r scale-r offset-r)
+          (match op
+            [(ir.CompilerIrBinOp.Add)
+              (let
+                [base : i64 (opt-unroll-const-guard-base-merge base-l base-r)]
+                (if (< base (- 0 1))
+                  (OptUceAffine.No)
+                  (match (opt-unroll-const-guard-k-add scale-l scale-r)
+                    [(OptUceKSum.No) (OptUceAffine.No)]
+                    [(OptUceKSum.Some scale)
+                      (match (opt-unroll-const-guard-k-add offset-l offset-r)
+                        [(OptUceKSum.No) (OptUceAffine.No)]
+                        [(OptUceKSum.Some offset)
+                          (OptUceAffine.Some base scale offset)])])))]
+            [(ir.CompilerIrBinOp.Sub)
+              (if (>= base-r 0)
+                (OptUceAffine.No)
+                (match (opt-unroll-const-guard-k-sub scale-l scale-r)
+                  [(OptUceKSum.No) (OptUceAffine.No)]
+                  [(OptUceKSum.Some scale)
+                    (match (opt-unroll-const-guard-k-sub offset-l offset-r)
+                      [(OptUceKSum.No) (OptUceAffine.No)]
+                      [(OptUceKSum.Some offset)
+                        (OptUceAffine.Some base-l scale offset)])]))]
+            [(ir.CompilerIrBinOp.Mul)
+              (cond
+                [(and (< base-l 0) (= scale-l 0))
+                  (if (< base-r 0)
+                    (match (opt-unroll-const-guard-k-mul scale-r offset-l)
+                      [(OptUceKSum.No) (OptUceAffine.No)]
+                      [(OptUceKSum.Some scale)
+                        (match (opt-unroll-const-guard-k-mul offset-r offset-l)
+                          [(OptUceKSum.No) (OptUceAffine.No)]
+                          [(OptUceKSum.Some offset)
+                            (OptUceAffine.Some (- 0 1) scale offset)])])
+                    (OptUceAffine.No))]
+                [(and (< base-r 0) (= scale-r 0))
+                  (if (< base-l 0)
+                    (match (opt-unroll-const-guard-k-mul scale-l offset-r)
+                      [(OptUceKSum.No) (OptUceAffine.No)]
+                      [(OptUceKSum.Some scale)
+                        (match (opt-unroll-const-guard-k-mul offset-l offset-r)
+                          [(OptUceKSum.No) (OptUceAffine.No)]
+                          [(OptUceKSum.Some offset)
+                            (OptUceAffine.Some (- 0 1) scale offset)])])
+                    (OptUceAffine.No))]
+                [else (OptUceAffine.No)])]
+            [_ (OptUceAffine.No)])])]))
+
+;; Decompose a check index into `base + scale*counter + offset`. Counter
+;; reads resolve to the counter phi (through same-block Mov copies); any
+;; other var with no definition in the loop block is a loop-invariant base;
+;; anything else (a phi, a load, a non-i64 op, a non-Add/Sub/Mul op)
+;; rejects.
+(define (opt-unroll-const-guard-affine
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [iphi : i64]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]) : OptUceAffine
+  (if (<= fuel 0)
+    (OptUceAffine.No)
+    (match value
+      [(ir.CompilerIrValue.I64 k) (OptUceAffine.Some (- 0 1) 0 k)]
+      [(ir.CompilerIrValue.Var raw)
+        (let
+          [id : i64 (opt-unroll-resolve-copy instrs phi-count last raw 16)]
+          (if (= id iphi)
+            (OptUceAffine.Some (- 0 1) 1 0)
+            (let
+              [slots : (__tl_dyn-array ir.CompilerIrInstr)
+                (struct-get instrs slots)]
+              [def-index : i64 (opt-unroll-def-index slots 0 last id)]
+              (if (< def-index 0)
+                (OptUceAffine.Some id 0 0)
+                (match (array-ref slots def-index)
+                  [(ir.CompilerIrInstr.Mov _ src _)
+                    (match src
+                      [(ir.CompilerIrValue.I64 k)
+                        (OptUceAffine.Some (- 0 1) 0 k)]
+                      [_ (OptUceAffine.No)])]
+                  [(ir.CompilerIrInstr.Cast _ src from-ty to-ty)
+                    (if (opt-unroll-const-guard-reinterpret-cast? from-ty to-ty)
+                      (opt-unroll-const-guard-affine
+                        instrs
+                        phi-count
+                        last
+                        iphi
+                        src
+                        (- fuel 1))
+                      (OptUceAffine.No))]
+                  [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                    (match ty
+                      [(ast.AstType.I64)
+                        (opt-unroll-const-guard-affine-binop
+                          instrs
+                          phi-count
+                          last
+                          iphi
+                          op
+                          lhs
+                          rhs
+                          (- fuel 1))]
+                      [_ (OptUceAffine.No)])]
+                  [_ (OptUceAffine.No)])))))]
+      [_ (OptUceAffine.No)])))
+
+;; The check's length operand resolved through Mov copies and reinterpret
+;; casts to its root value: an i64 literal, or an invariant var (no
+;; definition in the loop block). Anything body-defined rejects.
+(define (opt-unroll-const-guard-length-root
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]) : ir.CompilerIrMaybeValue
+  (if (<= fuel 0)
+    (ir.CompilerIrMaybeValue.No)
+    (match value
+      [(ir.CompilerIrValue.I64 _) (ir.CompilerIrMaybeValue.Some value)]
+      [(ir.CompilerIrValue.Var raw)
+        (let
+          [id : i64 (opt-unroll-resolve-copy instrs phi-count last raw 16)]
+          [slots : (__tl_dyn-array ir.CompilerIrInstr)
+            (struct-get instrs slots)]
+          [def-index : i64 (opt-unroll-def-index slots 0 last id)]
+          (if (< def-index 0)
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var id))
+            (match (array-ref slots def-index)
+              [(ir.CompilerIrInstr.Mov _ src _)
+                (match src
+                  [(ir.CompilerIrValue.I64 _)
+                    (ir.CompilerIrMaybeValue.Some src)]
+                  [_ (ir.CompilerIrMaybeValue.No)])]
+              [(ir.CompilerIrInstr.Cast _ src from-ty to-ty)
+                (if (opt-unroll-const-guard-reinterpret-cast? from-ty to-ty)
+                  (opt-unroll-const-guard-length-root
+                    instrs
+                    phi-count
+                    last
+                    src
+                    (- fuel 1))
+                  (ir.CompilerIrMaybeValue.No))]
+              [_ (ir.CompilerIrMaybeValue.No)])))]
+      [_ (ir.CompilerIrMaybeValue.No)])))
+
+;; Exact min and max of scale*c_j + offset over the simulated counters, or
+;; No when the literal arithmetic overflows (a wrapped k would break the
+;; interval argument).
+(defenum OptUceRange
+  (No)
+  (Some i64 i64))
+
+(define (opt-unroll-const-guard-range
+  [counters : (__tl_dyn-array i64)]
+  [trips : i64]
+  [scale : i64]
+  [offset : i64]
+  [index : i64]
+  [kmin : i64]
+  [kmax : i64]) : OptUceRange
+  (if (>= index trips)
+    (OptUceRange.Some kmin kmax)
+    (match (opt-unroll-const-guard-k-mul scale (array-ref counters index))
+      [(OptUceKSum.No) (OptUceRange.No)]
+      [(OptUceKSum.Some scaled)
+        (match (opt-unroll-const-guard-k-add scaled offset)
+          [(OptUceKSum.No) (OptUceRange.No)]
+          [(OptUceKSum.Some k)
+            (opt-unroll-const-guard-range
+              counters
+              trips
+              scale
+              offset
+              (+ index 1)
+              (if (< k kmin)
+                k
+                kmin)
+              (if (> k kmax)
+                k
+                kmax))])])))
+
+(define (opt-unroll-const-guard-range-start
+  [counters : (__tl_dyn-array i64)]
+  [trips : i64]
+  [scale : i64]
+  [offset : i64]) : OptUceRange
+  (match (opt-unroll-const-guard-k-mul scale (array-ref counters 0))
+    [(OptUceKSum.No) (OptUceRange.No)]
+    [(OptUceKSum.Some scaled)
+      (match (opt-unroll-const-guard-k-add scaled offset)
+        [(OptUceKSum.No) (OptUceRange.No)]
+        [(OptUceKSum.Some k)
+          (opt-unroll-const-guard-range counters trips scale offset 1 k k)])]))
+
+;; The per-trip counter literals, simulated with the same wrapping
+;; normalize-add the trip simulation and the copy substitution use.
+(define (opt-unroll-const-guard-counters
+  [counters : (__tl_dyn-array i64)]
+  [index : i64]
+  [trips : i64]
+  [step : i64]
+  [ity : ast.AstType]) : unit
+  (if (>= index trips)
+    unit
+    (begin
+      (array-set!
+        counters
+        index
+        (opt-normalize-int-to-i64 (+ (array-ref counters (- index 1)) step) ity))
+      (opt-unroll-const-guard-counters counters (+ index 1) trips step ity))))
+
+(defstruct OptUceGroup
+  (base i64)
+  (length ir.CompilerIrValue)
+  (kmin i64)
+  (kmax i64))
+
+(import (vector.vector OptUceGroup core) as opt_uce_group_vec)
+
+(define (opt-unroll-const-guard-value-eq?
+  [a : ir.CompilerIrValue]
+  [b : ir.CompilerIrValue]) : bool
+  (match a
+    [(ir.CompilerIrValue.Var av)
+      (match b
+        [(ir.CompilerIrValue.Var bv) (= av bv)]
+        [_ false])]
+    [(ir.CompilerIrValue.I64 ak)
+      (match b
+        [(ir.CompilerIrValue.I64 bk) (= ak bk)]
+        [_ false])]
+    [_ false]))
+
+;; Fold one derived check into the group list: same (base, length) groups
+;; merge their k-ranges (each group's interval argument is independent of
+;; the others, so a second group with the same key would also be sound);
+;; otherwise append a new group.
+(define (opt-unroll-const-guard-merge-into
+  [groups : (&mut groups opt_uce_group_vec.Vec)]
+  [base : i64]
+  [length : ir.CompilerIrValue]
+  [kmin : i64]
+  [kmax : i64]
+  [index : i64]) : unit
+  (if (>= index (opt_uce_group_vec.len groups))
+    (opt_uce_group_vec.push groups (OptUceGroup base length kmin kmax))
+    (let
+      [g : OptUceGroup (array-ref (opt_uce_group_vec.slots groups) index)]
+      (if (and
+        (= (struct-get g base) base)
+        (opt-unroll-const-guard-value-eq? (struct-get g length) length))
+        (opt_uce_group_vec.set
+          groups
+          index
+          (OptUceGroup
+            base
+            length
+            (if (< kmin (struct-get g kmin))
+              kmin
+              (struct-get g kmin))
+            (if (> kmax (struct-get g kmax))
+              kmax
+              (struct-get g kmax))))
+        (opt-unroll-const-guard-merge-into
+          groups
+          base
+          length
+          kmin
+          kmax
+          (+ index 1))))))
+
+(define (opt-unroll-const-guard-skips-contains?
+  [skips : (& skips opt_dense_i64_vec.Vec)]
+  [index : i64]
+  [at : i64]) : bool
+  (if (>= at (opt_dense_i64_vec.len skips))
+    false
+    (if (= (array-ref (opt_dense_i64_vec.slots skips) at) index)
+      true
+      (opt-unroll-const-guard-skips-contains? skips index (+ at 1)))))
+
+;; Derivation walk over the body: derived checks fold their (base, length)
+;; group into `groups` and their body index into `skips` (dropped from the
+;; fast copies); the returned count is the grouped total (zero means nothing
+;; consolidates and the arm unrolls as today).
+(define (opt-unroll-const-guard-scan
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [iphi : i64]
+  [counters : (__tl_dyn-array i64)]
+  [trips : i64]
+  [index : i64]
+  [groups : (&mut groups opt_uce_group_vec.Vec)]
+  [skips : (&mut skips opt_dense_i64_vec.Vec)]
+  [groupable : i64]) : i64
+  (if (>= index last)
+    groupable
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.BoundsCheck check-index check-length _)
+        (match (opt-unroll-const-guard-length-root
+          instrs
+          phi-count
+          last
+          check-length
+          16)
+          [(ir.CompilerIrMaybeValue.No)
+            (opt-unroll-const-guard-scan
+              instrs
+              phi-count
+              last
+              iphi
+              counters
+              trips
+              (+ index 1)
+              groups
+              skips
+              groupable)]
+          [(ir.CompilerIrMaybeValue.Some length-root)
+            (match (opt-unroll-const-guard-affine
+              instrs
+              phi-count
+              last
+              iphi
+              check-index
+              16)
+              [(OptUceAffine.No)
+                (opt-unroll-const-guard-scan
+                  instrs
+                  phi-count
+                  last
+                  iphi
+                  counters
+                  trips
+                  (+ index 1)
+                  groups
+                  skips
+                  groupable)]
+              [(OptUceAffine.Some base scale offset)
+                (match (opt-unroll-const-guard-range-start
+                  counters
+                  trips
+                  scale
+                  offset)
+                  [(OptUceRange.No)
+                    (opt-unroll-const-guard-scan
+                      instrs
+                      phi-count
+                      last
+                      iphi
+                      counters
+                      trips
+                      (+ index 1)
+                      groups
+                      skips
+                      groupable)]
+                  [(OptUceRange.Some kmin kmax)
+                    (begin
+                      (opt-unroll-const-guard-merge-into
+                        groups
+                        base
+                        length-root
+                        kmin
+                        kmax
+                        0)
+                      (opt_dense_i64_vec.push skips index)
+                      (opt-unroll-const-guard-scan
+                        instrs
+                        phi-count
+                        last
+                        iphi
+                        counters
+                        trips
+                        (+ index 1)
+                        groups
+                        skips
+                        (+ groupable 1)))])])])]
+      [_
+        (opt-unroll-const-guard-scan
+          instrs
+          phi-count
+          last
+          iphi
+          counters
+          trips
+          (+ index 1)
+          groups
+          skips
+          groupable)])))
+
+;; Outside-used body defs merge at the exit through fresh phis; the records
+;; carry (def dst, phi type). Def kinds outside the scalar set below have no
+;; unambiguous phi type and reject the guarded form.
+(defenum OptUceExitRecs
+  (Nil)
+  (Cons i64 ast.AstType (Box OptUceExitRecs)))
+
+(defenum OptUceDefTy
+  (No)
+  (Some ast.AstType))
+
+(define (opt-unroll-const-guard-def-ty [instr : ir.CompilerIrInstr]) : OptUceDefTy
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ _ ty) (OptUceDefTy.Some ty)]
+    [(ir.CompilerIrInstr.Cast _ _ _ to-ty) (OptUceDefTy.Some to-ty)]
+    [(ir.CompilerIrInstr.Bitcast _ _ _ to-ty) (OptUceDefTy.Some to-ty)]
+    [(ir.CompilerIrInstr.BinOp _ op _ _ ty)
+      (OptUceDefTy.Some (ir.compiler-ir-binop-result-type op ty))]
+    [(ir.CompilerIrInstr.UnOp _ _ _ ty) (OptUceDefTy.Some ty)]
+    [(ir.CompilerIrInstr.Gep _ _ _ ty) (OptUceDefTy.Some ty)]
+    [(ir.CompilerIrInstr.Load _ _ ty) (OptUceDefTy.Some ty)]
+    [_ (OptUceDefTy.No)]))
+
+;; Uses of a body def are permitted only in the exit block: every other
+;; block (the loop apart) must be clean. Uses in blocks the exit does not
+;; dominate could not be rewired to the merge phi.
+(define (opt-unroll-const-guard-foreign-uses
+  [blocks : ir.CompilerIrBlockList]
+  [loop-label : i64]
+  [exit-label : i64]
+  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (opt-unroll-const-guard-foreign-uses
+            (box-get rest)
+            loop-label
+            exit-label
+            (if (or (= label loop-label) (= label exit-label))
+              acc
+              (opt-unroll-const-outside-uses-instrs instrs 0 acc)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-unroll-const-guard-foreign-uses
+        (ir.compiler-ir-block-seq-to-list seq)
+        loop-label
+        exit-label
+        acc)]))
+
+(define (opt-unroll-const-guard-defs-disjoint?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [uses : opt_i64_i64_map.Map]) : bool
+  (if (>= index last)
+    true
+    (let
+      [dst : i64
+        (opt-unroll-const-instr-dst-or
+          (ir.compiler-ir-instr-seq-ref instrs index)
+          (- 0 1))]
+      (if (and (>= dst 0) (opt-used-contains uses dst))
+        false
+        (opt-unroll-const-guard-defs-disjoint? instrs (+ index 1) last uses)))))
+
+(defenum OptUceExitRecsMaybe
+  (No)
+  (Some OptUceExitRecs))
+
+(define (opt-unroll-const-guard-exit-recs
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [exit-uses : opt_i64_i64_map.Map]
+  [index : i64]
+  [acc : OptUceExitRecs]) : OptUceExitRecsMaybe
+  (if (>= index last)
+    (OptUceExitRecsMaybe.Some acc)
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      [dst : i64 (opt-unroll-const-instr-dst-or instr (- 0 1))]
+      (if (and (>= dst 0) (opt-used-contains exit-uses dst))
+        (match (opt-unroll-const-guard-def-ty instr)
+          [(OptUceDefTy.No) (OptUceExitRecsMaybe.No)]
+          [(OptUceDefTy.Some ty)
+            (opt-unroll-const-guard-exit-recs
+              instrs
+              phi-count
+              last
+              exit-uses
+              (+ index 1)
+              (OptUceExitRecs.Cons dst ty (box acc)))])
+        (opt-unroll-const-guard-exit-recs
+          instrs
+          phi-count
+          last
+          exit-uses
+          (+ index 1)
+          acc)))))
+
+;; The exit block gets a new predecessor (the fast path), so it must have no
+;; phis of its own, and every one of its instructions must be rewritable by
+;; opt-copy-subst-instr for the merge-phi use rewrite (vector payloads,
+;; masks, slot addressing, and entry values are not).
+(define (opt-unroll-const-guard-exit-instr-ok? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.VectorBinOp _) false]
+    [(ir.CompilerIrInstr.VectorPrefix _) false]
+    [(ir.CompilerIrInstr.VectorReduce _ _ _ _ _) false]
+    [(ir.CompilerIrInstr.VectorCompare _) false]
+    [(ir.CompilerIrInstr.Select _) false]
+    [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) false]
+    [(ir.CompilerIrInstr.VectorStore _) false]
+    [(ir.CompilerIrInstr.PredicatedStore _) false]
+    [(ir.CompilerIrInstr.PredicatedLoad _) false]
+    [(ir.CompilerIrInstr.GatherLoad _) false]
+    [(ir.CompilerIrInstr.VectorShuffle _) false]
+    [(ir.CompilerIrInstr.TailMask _ _ _ _) false]
+    [(ir.CompilerIrInstr.AddrOf _ _) false]
+    [(ir.CompilerIrInstr.Alloc _ _) false]
+    [(ir.CompilerIrInstr.LaneId _ _ _) false]
+    [(ir.CompilerIrInstr.MaskBinOp _ _ _ _ _) false]
+    [(ir.CompilerIrInstr.MaskNot _ _ _) false]
+    [(ir.CompilerIrInstr.MaskReduce _ _ _ _) false]
+    [(ir.CompilerIrInstr.SpmdCall _) false]
+    [(ir.CompilerIrInstr.EntryArgc _) false]
+    [(ir.CompilerIrInstr.EntryArgv _) false]
+    [(ir.CompilerIrInstr.EntryEnvp _) false]
+    [_ true]))
+
+(define (opt-unroll-const-guard-exit-instrs-ok?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (and
+      (opt-unroll-const-guard-exit-instr-ok?
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      (opt-unroll-const-guard-exit-instrs-ok? instrs (+ index 1)))))
+
+(define (opt-unroll-const-guard-exit-ok?
+  [blocks : ir.CompilerIrBlockList]
+  [exit-label : i64]) : bool
+  (match (opt-cfg-find-block blocks exit-label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (and
+            (opt-unroll-no-phi-from? instrs 0)
+            (opt-unroll-const-guard-exit-instrs-ok? instrs 0))])]))
+
+;; The consolidation plan: merged guard groups, the grouped checks' body
+;; indices, and the exit merge records. No means the arm unrolls exactly as
+;; today (no guard, copies keep the original destinations).
+(defenum OptUcePlan
+  (No)
+  (Some opt_uce_group_vec.Vec opt_dense_i64_vec.Vec OptUceExitRecs))
+
+(define (opt-unroll-const-guard-plan
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [last : i64]
+  [shape : OptUnrollConstShape]) : OptUcePlan
+  (let
+    [trips : i64 (struct-get shape trips)]
+    [ity : ast.AstType (struct-get shape ity)]
+    [exit-label : i64 (struct-get shape exit-label)]
+    (if (or
+      (< trips 4)
+      (not
+        (match ity
+          [(ast.AstType.I64) true]
+          [_ false]))
+      (not (opt-unroll-pred-retargetable? blocks (struct-get shape pred-label)))
+      (opt-cfg-block-exists?
+        blocks
+        (ir.compiler-ir-label
+          (string.append (ir.compiler-ir-label-text label) "__bce_guard")))
+      (not (opt-unroll-const-guard-exit-ok? blocks exit-label)))
+      (OptUcePlan.No)
+      (let
+        [counters : (__tl_dyn-array i64) (array.make-array i64 trips)]
+        [_c0 : unit (array-set! counters 0 (struct-get shape seed))]
+        [_fill : unit
+          (opt-unroll-const-guard-counters
+            counters
+            1
+            trips
+            (struct-get shape step)
+            ity)]
+        [groups : opt_uce_group_vec.Vec (opt_uce_group_vec.with-capacity 4)]
+        [skips : opt_dense_i64_vec.Vec (opt_dense_i64_vec.with-capacity 4)]
+        [groupable : i64
+          (opt-unroll-const-guard-scan
+            instrs
+            (struct-get shape phi-count)
+            last
+            (struct-get shape iphi)
+            counters
+            trips
+            (struct-get shape phi-count)
+            (&mut groups)
+            (&mut skips)
+            0)]
+        (if (= groupable 0)
+          (OptUcePlan.No)
+          (match (opt-cfg-find-block blocks exit-label)
+            [(OptMaybeBlock.No) (OptUcePlan.No)]
+            [(OptMaybeBlock.Some exit-block)
+              (match exit-block
+                [(ir.CompilerIrBlock.Block _ exit-instrs)
+                  (let
+                    [exit-uses : opt_i64_i64_map.Map
+                      (opt-unroll-const-outside-uses-instrs
+                        exit-instrs
+                        0
+                        (opt_i64_i64_map.with-capacity 64))]
+                    [foreign-uses : opt_i64_i64_map.Map
+                      (opt-unroll-const-guard-foreign-uses
+                        blocks
+                        label
+                        exit-label
+                        (opt_i64_i64_map.with-capacity 64))]
+                    (if (not
+                      (opt-unroll-const-guard-defs-disjoint?
+                        instrs
+                        (struct-get shape phi-count)
+                        last
+                        foreign-uses))
+                      (OptUcePlan.No)
+                      (match (opt-unroll-const-guard-exit-recs
+                        instrs
+                        (struct-get shape phi-count)
+                        last
+                        exit-uses
+                        (struct-get shape phi-count)
+                        (OptUceExitRecs.Nil))
+                        [(OptUceExitRecsMaybe.No) (OptUcePlan.No)]
+                        [(OptUceExitRecsMaybe.Some recs)
+                          (OptUcePlan.Some groups skips recs)])))])]))))))
+
+;; Guard emission result: the instructions in evaluation order and the var
+;; holding the and of all group conditions.
+(defstruct OptUceEmit
+  (instrs ir.CompilerIrInstrList)
+  (cond-var i64))
+
+(define (opt-unroll-const-guard-emit
+  [groups : (& groups opt_uce_group_vec.Vec)]
+  [index : i64]
+  [cell : (__tl_dyn-array i64)]
+  [cond-var : i64]
+  [acc : ir.CompilerIrInstrList]) : OptUceEmit
+  (if (>= index (opt_uce_group_vec.len groups))
+    (OptUceEmit acc cond-var)
+    (let
+      [g : OptUceGroup (array-ref (opt_uce_group_vec.slots groups) index)]
+      [base : i64 (struct-get g base)]
+      [length : ir.CompilerIrValue (struct-get g length)]
+      [kmin : i64 (struct-get g kmin)]
+      [span : i64 (- (struct-get g kmax) kmin)]
+      [gmin : i64
+        (if (>= base 0)
+          (opt-unroll-alloc-var cell)
+          (- 0 1))]
+      [min-value : ir.CompilerIrValue
+        (if (>= base 0)
+          (ir.CompilerIrValue.Var gmin)
+          (ir.CompilerIrValue.I64 kmin))]
+      [min-instrs : ir.CompilerIrInstrList
+        (if (>= base 0)
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.BinOp
+              gmin
+              (ir.CompilerIrBinOp.Add)
+              (ir.CompilerIrValue.Var base)
+              (ir.CompilerIrValue.I64 kmin)
+              (ast.AstType.I64))
+            (ir.CompilerIrInstrList.Nil))
+          (ir.CompilerIrInstrList.Nil))]
+      [c1 : i64 (opt-unroll-alloc-var cell)]
+      [t : i64
+        (if (= span 0)
+          (- 0 1)
+          (opt-unroll-alloc-var cell))]
+      [c2 : i64
+        (if (= span 0)
+          (- 0 1)
+          (opt-unroll-alloc-var cell))]
+      [gand : i64
+        (if (= span 0)
+          (- 0 1)
+          (opt-unroll-alloc-var cell))]
+      [group-cond : i64
+        (if (= span 0)
+          c1
+          gand)]
+      [group-instrs : ir.CompilerIrInstrList
+        (opt-aggregate-instr-list-append
+          min-instrs
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.BinOp
+              c1
+              (ir.CompilerIrBinOp.Lt)
+              min-value
+              length
+              (ast.AstType.U64))
+            (if (= span 0)
+              (ir.CompilerIrInstrList.Nil)
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  t
+                  (ir.CompilerIrBinOp.Sub)
+                  length
+                  min-value
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    c2
+                    (ir.CompilerIrBinOp.Gt)
+                    (ir.CompilerIrValue.Var t)
+                    (ir.CompilerIrValue.I64 span)
+                    (ast.AstType.U64))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.BinOp
+                      gand
+                      (ir.CompilerIrBinOp.And)
+                      (ir.CompilerIrValue.Var c1)
+                      (ir.CompilerIrValue.Var c2)
+                      (ast.AstType.Bool))
+                    (ir.CompilerIrInstrList.Nil)))))))]
+      (if (< cond-var 0)
+        (opt-unroll-const-guard-emit
+          groups
+          (+ index 1)
+          cell
+          group-cond
+          (opt-aggregate-instr-list-append acc group-instrs))
+        (let
+          [combined : i64 (opt-unroll-alloc-var cell)]
+          (opt-unroll-const-guard-emit
+            groups
+            (+ index 1)
+            cell
+            combined
+            (opt-aggregate-instr-list-append
+              acc
+              (opt-aggregate-instr-list-append
+                group-instrs
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    combined
+                    (ir.CompilerIrBinOp.And)
+                    (ir.CompilerIrValue.Var cond-var)
+                    (ir.CompilerIrValue.Var group-cond)
+                    (ast.AstType.Bool))
+                  (ir.CompilerIrInstrList.Nil))))))))))
+
+;; The slow loop keeps the original body verbatim; only the phis' entry-edge
+;; input labels move from the original predecessor to the guard block.
+;; The slow loop keeps the original body verbatim; only the phis' entry-edge
+;; input labels move from the original predecessor to the guard block.
+(define (opt-unroll-const-guard-relabel-inputs
+  [inputs : ir.CompilerIrPhiInputList]
+  [from-label : i64]
+  [to-label : i64]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-unroll-const-guard-relabel-inputs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        from-label
+        to-label)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (ir.compiler-ir-phi-input-cons
+        value
+        (if (= label from-label)
+          to-label
+          label)
+        (opt-unroll-const-guard-relabel-inputs
+          (box-get rest)
+          from-label
+          to-label))]))
+
+(define (opt-unroll-const-guard-relabel-phis
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [from-label : i64]
+  [to-label : i64]) : ir.CompilerIrInstrList
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (ir.CompilerIrInstrList.Nil)
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(ir.CompilerIrInstr.Phi dst inputs ty)
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Phi
+              dst
+              (opt-unroll-const-guard-relabel-inputs inputs from-label to-label)
+              ty)
+            (opt-unroll-const-guard-relabel-phis
+              instrs
+              (+ index 1)
+              from-label
+              to-label))]
+        [_
+          (ir.compiler-ir-instr-cons
+            instr
+            (opt-unroll-const-guard-relabel-phis
+              instrs
+              (+ index 1)
+              from-label
+              to-label))]))))
+
+;; Exit merge phis: one per outside-used body def, reading the last fast
+;; copy's renamed def on the fast edge and the original def on the slow
+;; edge, plus the destination remap for the exit-block use rewrite.
+(defenum OptUceExitBuild
+  (Result ir.CompilerIrInstrList OptCopyEnv))
+
+(define (opt-unroll-const-guard-exit-phis
+  [recs : OptUceExitRecs]
+  [remap : (__tl_dyn-array ir.CompilerIrValue)]
+  [loop-label : i64]
+  [fast-label : i64]
+  [cell : (__tl_dyn-array i64)]
+  [acc : ir.CompilerIrInstrList]
+  [env : OptCopyEnv]) : OptUceExitBuild
+  (match recs
+    [(OptUceExitRecs.Nil) (OptUceExitBuild.Result acc env)]
+    [(OptUceExitRecs.Cons dst ty rest)
+      (let
+        [merged : i64 (opt-unroll-alloc-var cell)]
+        [fast-value : ir.CompilerIrValue
+          (opt-unroll-subst-value remap (ir.CompilerIrValue.Var dst))]
+        (opt-unroll-const-guard-exit-phis
+          (box-get rest)
+          remap
+          loop-label
+          fast-label
+          cell
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Phi
+              merged
+              (ir.compiler-ir-phi-input-cons
+                fast-value
+                fast-label
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var dst)
+                  loop-label
+                  (ir.CompilerIrPhiInputList.Nil)))
+              ty)
+            acc)
+          (OptCopyEnv.Cons dst (ir.CompilerIrValue.Var merged) (box env))))]))
+
+(define (opt-unroll-const-guard-subst-seq
+  [env : OptCopyEnv]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-unroll-const-guard-subst-seq
+      env
+      instrs
+      (+ index 1)
+      (ir.compiler-ir-instr-cons
+        (opt-rotate-ssa-subst-instr
+          env
+          (ir.compiler-ir-instr-seq-ref instrs index))
+        acc))))
+
+(define (opt-unroll-const-guard-rewrite-exit
+  [blocks : ir.CompilerIrBlockList]
+  [exit-label : i64]
+  [phis : ir.CompilerIrInstrList]
+  [env : OptCopyEnv]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (ir.compiler-ir-block-cons
+            (if (= label exit-label)
+              (ir.compiler-ir-block
+                label
+                (opt-aggregate-instr-list-append
+                  phis
+                  (opt-unroll-const-guard-subst-seq
+                    env
+                    instrs
+                    0
+                    (ir.CompilerIrInstrList.Nil))))
+              block)
+            (opt-unroll-const-guard-rewrite-exit
+              (box-get rest)
+              exit-label
+              phis
+              env))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-unroll-const-guard-rewrite-exit
+        (ir.compiler-ir-block-seq-to-list seq)
+        exit-label
+        phis
+        env)]))
+
 ;; The loop block keeps its label and its predecessor edges; only its contents
 ;; become the straight-line trip copies ending in a jump to the old exit.
 (define (opt-unroll-const-apply
@@ -39122,33 +40197,128 @@
         [_fill : unit (opt-unroll-remap-fill remap 0)]
         [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
         [_cell : unit (array-set! cell 0 frame)]
-        [copies : ir.CompilerIrInstrList
-          (opt-unroll-const-copies
-            instrs
-            (struct-get shape phi-count)
-            last
-            (struct-get shape cond-index)
-            (struct-get shape iphi)
-            (struct-get shape seed)
-            (struct-get shape step)
-            (struct-get shape ity)
-            (struct-get shape others)
-            remap
-            cell
-            0
-            (struct-get shape trips))]
-        [new-block : ir.CompilerIrBlock
-          (ir.compiler-ir-block
-            label
-            (opt-aggregate-instr-list-append
-              copies
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Jump (struct-get shape exit-label))
-                (ir.CompilerIrInstrList.Nil))))]
-        (OptUnrollResult.Result
-          (opt-unroll-const-replace-block blocks label new-block)
-          (array-ref cell 0)
-          true))]))
+        (match (opt-unroll-const-guard-plan blocks label instrs last shape)
+          [(OptUcePlan.Some groups skips exit-recs)
+            (let
+              [pred-label : i64 (struct-get shape pred-label)]
+              [guard-label : i64
+                (ir.compiler-ir-label
+                  (string.append
+                    (ir.compiler-ir-label-text label)
+                    "__bce_guard"))]
+              [fast-label : i64
+                (ir.compiler-ir-label
+                  (string.append (ir.compiler-ir-label-text label) "__bce_fast"))]
+              [copies : ir.CompilerIrInstrList
+                (opt-unroll-const-copies
+                  instrs
+                  (struct-get shape phi-count)
+                  last
+                  (struct-get shape cond-index)
+                  (struct-get shape iphi)
+                  (struct-get shape seed)
+                  (struct-get shape step)
+                  (struct-get shape ity)
+                  (struct-get shape others)
+                  (& skips)
+                  true
+                  remap
+                  cell
+                  0
+                  (struct-get shape trips))]
+              [emitted : OptUceEmit
+                (opt-unroll-const-guard-emit
+                  (& groups)
+                  0
+                  cell
+                  (- 0 1)
+                  (ir.CompilerIrInstrList.Nil))]
+              [exit-label : i64 (struct-get shape exit-label)]
+              [exit-build : OptUceExitBuild
+                (opt-unroll-const-guard-exit-phis
+                  exit-recs
+                  remap
+                  label
+                  fast-label
+                  cell
+                  (ir.CompilerIrInstrList.Nil)
+                  (OptCopyEnv.Nil))]
+              [guard-block : ir.CompilerIrBlock
+                (ir.compiler-ir-block
+                  guard-label
+                  (opt-aggregate-instr-list-append
+                    (struct-get emitted instrs)
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Branch
+                        (ir.CompilerIrValue.Var (struct-get emitted cond-var))
+                        fast-label
+                        label)
+                      (ir.CompilerIrInstrList.Nil))))]
+              [fast-block : ir.CompilerIrBlock
+                (ir.compiler-ir-block
+                  fast-label
+                  (opt-aggregate-instr-list-append
+                    copies
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Jump exit-label)
+                      (ir.CompilerIrInstrList.Nil))))]
+              [slow-block : ir.CompilerIrBlock
+                (ir.compiler-ir-block
+                  label
+                  (opt-unroll-const-guard-relabel-phis
+                    instrs
+                    0
+                    pred-label
+                    guard-label))]
+              (match exit-build
+                [(OptUceExitBuild.Result exit-phis exit-env)
+                  (OptUnrollResult.Result
+                    (opt-unroll-const-guard-rewrite-exit
+                      (opt-unroll-rewrite-blocks
+                        blocks
+                        pred-label
+                        label
+                        guard-block
+                        fast-block
+                        slow-block
+                        guard-label)
+                      exit-label
+                      exit-phis
+                      exit-env)
+                    (array-ref cell 0)
+                    true)]))]
+          [(OptUcePlan.No)
+            (let
+              [empty-skips : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+              [copies : ir.CompilerIrInstrList
+                (opt-unroll-const-copies
+                  instrs
+                  (struct-get shape phi-count)
+                  last
+                  (struct-get shape cond-index)
+                  (struct-get shape iphi)
+                  (struct-get shape seed)
+                  (struct-get shape step)
+                  (struct-get shape ity)
+                  (struct-get shape others)
+                  (& empty-skips)
+                  false
+                  remap
+                  cell
+                  0
+                  (struct-get shape trips))]
+              [new-block : ir.CompilerIrBlock
+                (ir.compiler-ir-block
+                  label
+                  (opt-aggregate-instr-list-append
+                    copies
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Jump (struct-get shape exit-label))
+                      (ir.CompilerIrInstrList.Nil))))]
+              (OptUnrollResult.Result
+                (opt-unroll-const-replace-block blocks label new-block)
+                (array-ref cell 0)
+                true))]))]))
 
 ;; The mutable SIMD path additionally admits an ordinary canonical VectorStore.
 ;; The generic SSA cloner remains store-free. BoundsCheck is excluded because
@@ -40078,10 +41248,23 @@
           (array-ref cell 0)
           true))]))
 
-;; Apply at most one unroll per invocation (the pipeline fixpoint picks up
-;; further loops on later iterations), bounding growth. The exact constant-trip
-;; arm is tried first: when it applies it strictly dominates the guarded x16
-;; rewrite (no guard, no remainder loop).
+;; Per-invocation application budget shared by the loop passes (the unroller
+;; and the single-block and multi-block bce_version drivers). A pass's driver
+;; repeats its scan and applies to each eligible loop in scan order while its
+;; budget lasts, verifying every application on its own. 2 pipeline iterations
+;; x 4 = up to 8 applications per pass per function (2 today): enough to pick
+;; up the hot loops the single-slot scheduler displaced in measured workloads
+;; (the first eligible loop absorbed the whole invocation, leaving later loops
+;; to the next pipeline iteration or stranded at the iteration cap), while
+;; bounding code growth and the extra verify/context-rebuild cost.
+(define (opt-loop-apply-budget) : i64
+  4)
+
+;; One scan applies at most one unroll; the driver repeats the scan while the
+;; invocation's budget (opt-loop-apply-budget) lasts, and the pipeline fixpoint
+;; picks up further loops on later iterations, bounding growth. The exact
+;; constant-trip arm is tried first: when it applies it strictly dominates the
+;; guarded x16 rewrite (no guard, no remainder loop).
 (define (opt-unroll-blocks-scan
   [blocks : ir.CompilerIrBlockList]
   [remaining : ir.CompilerIrBlockList]
@@ -40267,73 +41450,95 @@
                 (OptFunctionCtxResult.Result func context))]))
         (OptFunctionCtxResult.Result func context))]))
 
+;; Budgeted multi-application: each round scans for the first eligible loop,
+;; rewrites it, rebuilds the function around the rewrite, and verifies that
+;; rewrite on its own. A verified application spends one budget and the next
+;; round runs on the new function; a verifier rejection stops the pass and
+;; returns the last verified state, so a failed loop rolls back whole and
+;; never consumes the run (the single-slot fallback, applied per loop). The
+;; generated `__unroll_guard`/`__unroll_body` labels and the body-size cap
+;; make a rewritten loop ineligible to its own shape scan, so later rounds
+;; never re-process it.
+(define (opt-unroll-function-budget-result
+  [context : OptCfgContext]
+  [func : ir.CompilerIrFunction]
+  [budget : i64]) : OptFunctionCtxResult
+  ;; `context` must be valid for `func`'s current blocks.
+  (if (<= budget 0)
+    (OptFunctionCtxResult.Result func context)
+    (match func
+      [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+        (match (opt-unroll-blocks-scan
+          blocks
+          blocks
+          (opt-cfg-entry-label blocks)
+          frame)
+          [(OptUnrollResult.Result next-blocks next-frame changed)
+            (if changed
+              (let
+                [next : ir.CompilerIrFunction
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    next-frame
+                    next-blocks)]
+                ;; Unrolling rewrites the CFG, so build one fresh context for
+                ;; the new blocks, reuse it for this round's verify, and hand
+                ;; it to the next round.
+                [next-context : OptCfgContext
+                  (opt-cfg-context-build next-blocks)]
+                (match (opt-verify-function-with-context next next-context)
+                  [(ResultCompilerOptimizeVerify.Ok)
+                    (opt-unroll-function-budget-result
+                      next-context
+                      next
+                      (- budget 1))]
+                  [(ResultCompilerOptimizeVerify.Err _)
+                    (OptFunctionCtxResult.Result func context)]))
+              ;; The original unroller's prescan and shape scanner only admit
+              ;; a self-loop whose header is also its latch. A versioned
+              ;; conditional body instead has a separate merge latch, so try
+              ;; the conservative x2 diamond path over the natural-loop
+              ;; records when the straight-line scan misses. That path keeps
+              ;; its single slot per invocation.
+              (let
+                [loops : OptNaturalLoopList
+                  (opt-cfg-natural-loops-with-context blocks context)]
+                (match (opt-unroll-mb-loops-scan
+                  blocks
+                  loops
+                  loops
+                  (opt-cfg-entry-label blocks)
+                  frame)
+                  [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
+                    (if mb-changed
+                      (let
+                        [mb-next : ir.CompilerIrFunction
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            mb-frame
+                            mb-blocks)]
+                        [mb-context : OptCfgContext
+                          (opt-cfg-context-build mb-blocks)]
+                        (match (opt-verify-function-with-context
+                          mb-next
+                          mb-context)
+                          [(ResultCompilerOptimizeVerify.Ok)
+                            (OptFunctionCtxResult.Result mb-next mb-context)]
+                          [(ResultCompilerOptimizeVerify.Err _)
+                            (OptFunctionCtxResult.Result func context)]))
+                      (OptFunctionCtxResult.Result func context))])))])])))
+
 (define (opt-unroll-function-verified-with-context-result
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
-      (match func
-        [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-          (match (opt-unroll-blocks-scan
-            blocks
-            blocks
-            (opt-cfg-entry-label blocks)
-            frame)
-            [(OptUnrollResult.Result next-blocks next-frame changed)
-              (if changed
-                (let
-                  [next : ir.CompilerIrFunction
-                    (ir.CompilerIrFunction.Function
-                      name
-                      params
-                      ret-ty
-                      next-frame
-                      next-blocks)]
-                  ;; Unrolling rewrites the CFG, so build one fresh context
-                  ;; for the new blocks, reuse it for the post-pass verify,
-                  ;; and hand it back for the next pass.
-                  [next-context : OptCfgContext
-                    (opt-cfg-context-build next-blocks)]
-                  (match (opt-verify-function-with-context next next-context)
-                    [(ResultCompilerOptimizeVerify.Ok)
-                      (OptFunctionCtxResult.Result next next-context)]
-                    [(ResultCompilerOptimizeVerify.Err _)
-                      (OptFunctionCtxResult.Result func context)]))
-                ;; The original unroller's prescan and shape scanner only
-                ;; admit a self-loop whose header is also its latch. A
-                ;; versioned conditional body instead has a separate merge
-                ;; latch, so try the conservative x2 diamond path over the
-                ;; natural-loop records when the straight-line scan misses.
-                (let
-                  [loops : OptNaturalLoopList
-                    (opt-cfg-natural-loops-with-context blocks context)]
-                  (match (opt-unroll-mb-loops-scan
-                    blocks
-                    loops
-                    loops
-                    (opt-cfg-entry-label blocks)
-                    frame)
-                    [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
-                      (if mb-changed
-                        (let
-                          [mb-next : ir.CompilerIrFunction
-                            (ir.CompilerIrFunction.Function
-                              name
-                              params
-                              ret-ty
-                              mb-frame
-                              mb-blocks)]
-                          [mb-context : OptCfgContext
-                            (opt-cfg-context-build mb-blocks)]
-                          (match (opt-verify-function-with-context
-                            mb-next
-                            mb-context)
-                            [(ResultCompilerOptimizeVerify.Ok)
-                              (OptFunctionCtxResult.Result mb-next mb-context)]
-                            [(ResultCompilerOptimizeVerify.Err _)
-                              (OptFunctionCtxResult.Result func context)]))
-                        (OptFunctionCtxResult.Result func context))])))])])]
+      (opt-unroll-function-budget-result context func (opt-loop-apply-budget))]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -43493,7 +44698,8 @@
             (opt-unroll-clone-dst remap cell dst)
             (opt-bce-version-alloc-other-phis remap cell (box-get rest)))])]))
 
-;; Apply at most one versioning per invocation, like the unroller.
+;; One scan applies at most one versioning; the driver repeats the scan while
+;; the invocation's budget (opt-loop-apply-budget) lasts, like the unroller.
 (define (opt-bce-version-blocks-scan
   [blocks : ir.CompilerIrBlockList]
   [remaining : ir.CompilerIrBlockList]
@@ -48424,7 +49630,8 @@
                 cell
                 frame)))]))))
 
-;; Apply at most one multi-block versioning per invocation, like the
+;; One scan applies at most one multi-block versioning; the driver repeats the
+;; scan while its invocation budget (opt-loop-apply-budget) lasts, like the
 ;; single-block pass.
 (define (opt-bce-mb-loops-scan
   [descriptor : OptBceMbDescriptor]
@@ -48485,29 +49692,125 @@
 (define (opt-bce-mb-blocks-have-candidate? [blocks : ir.CompilerIrBlockList]) : bool
   (and (opt-bce-mb-blocks-have-check? blocks) (opt-ssa-blocks-have-phi? blocks)))
 
-;; Rebuild the function around a versioned block list and verify it, falling
-;; back to the original function when the verifier rejects the rewrite.
-(define (opt-bce-version-finish-with-context
+;; Budgeted multi-application, like the unroller: the single-block scan runs
+;; first each round and spends from its own budget; when it finds nothing, the
+;; multi-block scan runs over the natural-loop records with its own budget.
+;; Every application rebuilds the function around the rewrite and is verified
+;; on its own; a verifier rejection stops the pass with the last verified
+;; state, so a failed loop rolls back whole and never consumes the run (the
+;; single-slot fallback, applied per loop). The generated `__bce_guard` /
+;; `__bce_fast` labels make a versioned loop ineligible to both scans, so
+;; later rounds never re-process it.
+(define (opt-bce-version-function-budget-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]
-  [next-blocks : ir.CompilerIrBlockList]
-  [next-frame : i64]) : OptFunctionCtxResult
+  [single-budget : i64]
+  [mb-budget : i64]) : OptFunctionCtxResult
+  ;; `context` must be valid for `func`'s current blocks.
   (match func
-    [(ir.CompilerIrFunction.Function name params ret-ty _ _)
-      (let
-        [next : ir.CompilerIrFunction
-          (ir.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            next-frame
-            next-blocks)]
-        [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
-        (match (opt-verify-function-with-context next next-context)
-          [(ResultCompilerOptimizeVerify.Ok)
-            (OptFunctionCtxResult.Result next next-context)]
-          [(ResultCompilerOptimizeVerify.Err _)
-            (OptFunctionCtxResult.Result func context)]))]))
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (> single-budget 0)
+        (match (opt-bce-version-blocks-scan
+          blocks
+          blocks
+          (opt-cfg-entry-label blocks)
+          frame)
+          [(OptUnrollResult.Result next-blocks next-frame changed)
+            (if changed
+              (let
+                [next : ir.CompilerIrFunction
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    next-frame
+                    next-blocks)]
+                [next-context : OptCfgContext
+                  (opt-cfg-context-build next-blocks)]
+                (match (opt-verify-function-with-context next next-context)
+                  [(ResultCompilerOptimizeVerify.Ok)
+                    (opt-bce-version-function-budget-result
+                      type-segment-bases
+                      next-context
+                      next
+                      (- single-budget 1)
+                      mb-budget)]
+                  [(ResultCompilerOptimizeVerify.Err _)
+                    (OptFunctionCtxResult.Result func context)]))
+              ;; no single-block self-loop matched: try multi-block counted
+              ;; loops over the natural-loop back edges.
+              (opt-bce-mb-function-budget-result
+                type-segment-bases
+                context
+                func
+                single-budget
+                mb-budget))])
+        (opt-bce-mb-function-budget-result
+          type-segment-bases
+          context
+          func
+          single-budget
+          mb-budget))]))
+
+(define (opt-bce-mb-function-budget-result
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [func : ir.CompilerIrFunction]
+  [single-budget : i64]
+  [mb-budget : i64]) : OptFunctionCtxResult
+  (if (<= mb-budget 0)
+    (OptFunctionCtxResult.Result func context)
+    (match func
+      [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+        (let
+          [loops : OptNaturalLoopList
+            (opt-cfg-natural-loops-with-context blocks context)]
+          ;; A negative bases value disables descriptor-length recognition (no
+          ;; type-pool access); a real one classifies the function's
+          ;; descriptor handles for it.
+          [descriptor : OptBceMbDescriptor
+            (if (< type-segment-bases 0)
+              (OptBceMbDescriptor.No)
+              (OptBceMbDescriptor.Some
+                type-segment-bases
+                (opt-load-header-set-from-function
+                  type-segment-bases
+                  params
+                  blocks)))]
+          (match (opt-bce-mb-loops-scan
+            descriptor
+            (struct-get context pred-map)
+            blocks
+            loops
+            loops
+            (opt-cfg-entry-label blocks)
+            frame)
+            [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
+              (if mb-changed
+                (let
+                  [next : ir.CompilerIrFunction
+                    (ir.CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      mb-frame
+                      mb-blocks)]
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build mb-blocks)]
+                  (match (opt-verify-function-with-context next next-context)
+                    [(ResultCompilerOptimizeVerify.Ok)
+                      ;; The next round retries the single-block scan first,
+                      ;; like the next pipeline iteration would.
+                      (opt-bce-version-function-budget-result
+                        type-segment-bases
+                        next-context
+                        next
+                        single-budget
+                        (- mb-budget 1))]
+                    [(ResultCompilerOptimizeVerify.Err _)
+                      (OptFunctionCtxResult.Result func context)]))
+                (OptFunctionCtxResult.Result func context))]))])))
 
 (define (opt-bce-version-function-verified-with-context-result
   [type-segment-bases : i64]
@@ -48516,53 +49819,12 @@
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
-      (match func
-        [(ir.CompilerIrFunction.Function _ params _ frame blocks)
-          (match (opt-bce-version-blocks-scan
-            blocks
-            blocks
-            (opt-cfg-entry-label blocks)
-            frame)
-            [(OptUnrollResult.Result next-blocks next-frame changed)
-              (if changed
-                (opt-bce-version-finish-with-context
-                  context
-                  func
-                  next-blocks
-                  next-frame)
-                ;; no single-block self-loop matched: try multi-block
-                ;; counted loops over the natural-loop back edges.
-                (let
-                  [loops : OptNaturalLoopList
-                    (opt-cfg-natural-loops-with-context blocks context)]
-                  ;; A negative bases value disables descriptor-length
-                  ;; recognition (no type-pool access); a real one classifies
-                  ;; the function's descriptor handles for it.
-                  [descriptor : OptBceMbDescriptor
-                    (if (< type-segment-bases 0)
-                      (OptBceMbDescriptor.No)
-                      (OptBceMbDescriptor.Some
-                        type-segment-bases
-                        (opt-load-header-set-from-function
-                          type-segment-bases
-                          params
-                          blocks)))]
-                  (match (opt-bce-mb-loops-scan
-                    descriptor
-                    (struct-get context pred-map)
-                    blocks
-                    loops
-                    loops
-                    (opt-cfg-entry-label blocks)
-                    frame)
-                    [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
-                      (if mb-changed
-                        (opt-bce-version-finish-with-context
-                          context
-                          func
-                          mb-blocks
-                          mb-frame)
-                        (OptFunctionCtxResult.Result func context))])))])])]
+      (opt-bce-version-function-budget-result
+        type-segment-bases
+        context
+        func
+        (opt-loop-apply-budget)
+        (opt-loop-apply-budget))]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -63774,7 +65036,7 @@
 ;; scalar operand positions. For an ordinary operand this lets the backend fold
 ;; the literal instead of emitting a per-use rip-relative load (the
 ;; opt_crc32/opt_quicksort mask-load win). For a div/mod divisor it produces a
-;; literal `ir.CompilerIrValue.I64`, which `compiler-backend-binop-literal-divmod-asm`
+;; literal `CompilerIrValue.I64`, which `compiler-backend-binop-literal-divmod-asm`
 ;; strength-reduces with the existing magic-multiply path (matching clang).
 ;; (The map is named `const-divisors` for historical reasons but now holds every
 ;; proven-constant global, not only divisors.)
@@ -64056,7 +65318,7 @@
 
 ;; --- function-scope global-cell invariance (global_cell pass) ----------------
 ;;
-;; A `ir.CompilerIrValue.Global name` operand is a hidden LOAD of the global's cell:
+;; A `CompilerIrValue.Global name` operand is a hidden LOAD of the global's cell:
 ;; the backend emits a fresh rip-relative read at every use, and because that
 ;; operand is neither a literal nor an SSA var it is invisible to GVN/LICM and
 ;; unacceptable to the versioning machinery as a loop bound or check length.
@@ -64074,9 +65336,9 @@
 ;;
 ;; SOUNDNESS. G's cell cannot change value during this function's execution
 ;; when all of the following hold:
-;;   (a) no `ir.CompilerIrInstr.Store G` (set!) appears in THIS function's blocks
+;;   (a) no `CompilerIrInstr.Store G` (set!) appears in THIS function's blocks
 ;;       (a function that stores G keeps direct per-use cell semantics);
-;;   (b) `ir.CompilerIrValue.GlobalAddr G` appears NOWHERE in the whole program, so
+;;   (b) `CompilerIrValue.GlobalAddr G` appears NOWHERE in the whole program, so
 ;;       no store_ptr/syscall/callee can reach the cell through a pointer. This
 ;;       set is derived from the const-global disqualify walk -- which records
 ;;       exactly Store targets and GlobalAddr operands, arm-for-arm so a new IR
@@ -64578,7 +65840,7 @@
 
 ;; The address-taken set is exactly the const-global disqualified set minus the
 ;; program's direct-store targets: the disqualify walk records a global on a
-;; `ir.CompilerIrInstr.Store name` OR a `ir.CompilerIrValue.GlobalAddr name` operand and
+;; `CompilerIrInstr.Store name` OR a `CompilerIrValue.GlobalAddr name` operand and
 ;; nothing else, so subtracting the former leaves precisely the latter. Both
 ;; walks are total matches over the IR, so the derivation cannot drift when the
 ;; IR grows an instruction variant.
@@ -65508,7 +66770,7 @@
         [_ false])]
     [(ir.CompilerIrInstr.Call _ name _ _)
       (let
-        [text : String (ci.intern-str name)]
+        [text : String (ir.compiler-ir-symbol-text name)]
         (or
           (string.eq text "stdlib/io.tl::stdlib.io/panic")
           (string.eq text "stdlib\\io.tl::stdlib.io/panic")))]

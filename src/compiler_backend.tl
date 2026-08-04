@@ -1137,6 +1137,17 @@
   (array.make-array String (ci.intern-capacity)))
 (define compiler-backend-user-symbol-cache-epochs : (Array i64)
   (array.make-array i64 (ci.intern-capacity)))
+
+;; Derived IR symbols are not pool ids, so they cannot share the pool-indexed
+;; lane above: their ids start at four times the pool capacity, so every
+;; occurrence would fall past its length and re-mangle uncached. They get a
+;; second lane under the same epoch, keyed by the dense slot the IR's derived
+;; symbol table hands out and sized by that table's count instead of by the pool
+;; capacity.
+(define compiler-backend-user-symbol-derived-values : (Array String)
+  (array.make-array String 1024))
+(define compiler-backend-user-symbol-derived-epochs : (Array i64)
+  (array.make-array i64 1024))
 (define compiler-backend-user-symbol-cache-epoch : i64
   1)
 (define compiler-backend-user-symbol-cache-count-value : i64
@@ -1166,6 +1177,53 @@
 
 (define (compiler-backend-user-symbol-cache-count) : i64
   compiler-backend-user-symbol-cache-count-value)
+
+;; The derived lane is the only part of this cache that is reallocated, and it
+;; is reallocated in the middle of emission, so its storage cannot come from
+;; whatever scratch arena happens to be current. Bind it in a dedicated arena
+;; created once that only grows -- the same ownership rule the IR's derived
+;; symbol table itself follows.
+(define compiler-backend-user-symbol-derived-arena-handle : i64
+  0)
+
+(define (compiler-backend-user-symbol-derived-arena) : i64
+  (begin
+    (if (= compiler-backend-user-symbol-derived-arena-handle 0)
+      (set!
+        compiler-backend-user-symbol-derived-arena-handle
+        (arena.tl_arena_make))
+      unit)
+    compiler-backend-user-symbol-derived-arena-handle))
+
+(define (compiler-backend-user-symbol-derived-reserve! [slot : i64]) : unit
+  (let
+    [old-values : (Array String) compiler-backend-user-symbol-derived-values]
+    [old-epochs : (Array i64) compiler-backend-user-symbol-derived-epochs]
+    [old-len : i64 (array-length old-values)]
+    (if (< slot old-len)
+      unit
+      (let
+        [next-len : i64 old-len]
+        [previous-arena : i64 (arena.tl_arena_current)]
+        (begin
+          (while (<= next-len slot)
+            (set! next-len (* next-len 2)))
+          (unsafe
+            (arena.tl_arena_set (compiler-backend-user-symbol-derived-arena)))
+          (let
+            [values : (Array String) (array.make-array String next-len)]
+            [epochs : (Array i64) (array.make-array i64 next-len)]
+            [index : i64 0]
+            (begin
+              (while (< index old-len)
+                (begin
+                  (array-set! values index (array-ref old-values index))
+                  (array-set! epochs index (array-ref old-epochs index))
+                  (set! index (+ index 1))))
+              (set! compiler-backend-user-symbol-derived-values values)
+              (set! compiler-backend-user-symbol-derived-epochs epochs)))
+          (unsafe
+            (arena.tl_arena_set previous-arena)))))))
 
 (define compiler-backend-addr-of-forwarding-enabled : bool
   false)
@@ -12740,33 +12798,61 @@
     "main"
     (string.append "_tl_" (compiler-backend-user-symbol-body name))))
 
-(define (compiler-backend-user-symbol-id [name-id : i64]) : String
-  (begin
-    (compiler-backend-user-symbol-cache-ensure-current!)
-    (if (and
-      (>= name-id 0)
-      (< name-id (array-length compiler-backend-user-symbol-cache-values)))
+(define (compiler-backend-user-symbol-derived-id [name-id : i64]) : String
+  (let
+    [slot : i64 (compiler_ir_types.compiler-ir-symbol-slot name-id)]
+    (begin
+      (compiler-backend-user-symbol-derived-reserve! slot)
       (if (=
-        (array-ref compiler-backend-user-symbol-cache-epochs name-id)
+        (array-ref compiler-backend-user-symbol-derived-epochs slot)
         compiler-backend-user-symbol-cache-epoch)
-        (array-ref compiler-backend-user-symbol-cache-values name-id)
+        (array-ref compiler-backend-user-symbol-derived-values slot)
         (let
           [symbol : String
-            (compiler-backend-user-symbol-uncached (ci.intern-str name-id))]
+            (compiler-backend-user-symbol-uncached
+              (compiler_ir_types.compiler-ir-symbol-text name-id))]
           (begin
+            (array-set! compiler-backend-user-symbol-derived-values slot symbol)
             (array-set!
-              compiler-backend-user-symbol-cache-values
-              name-id
-              symbol)
-            (array-set!
-              compiler-backend-user-symbol-cache-epochs
-              name-id
+              compiler-backend-user-symbol-derived-epochs
+              slot
               compiler-backend-user-symbol-cache-epoch)
             (set!
               compiler-backend-user-symbol-cache-count-value
               (+ compiler-backend-user-symbol-cache-count-value 1))
-            symbol)))
-      (compiler-backend-user-symbol-uncached (ci.intern-str name-id)))))
+            symbol))))))
+
+(define (compiler-backend-user-symbol-id [name-id : i64]) : String
+  (begin
+    (compiler-backend-user-symbol-cache-ensure-current!)
+    (if (compiler_ir_types.compiler-ir-symbol-owned? name-id)
+      (compiler-backend-user-symbol-derived-id name-id)
+      (if (and
+        (>= name-id 0)
+        (< name-id (array-length compiler-backend-user-symbol-cache-values)))
+        (if (=
+          (array-ref compiler-backend-user-symbol-cache-epochs name-id)
+          compiler-backend-user-symbol-cache-epoch)
+          (array-ref compiler-backend-user-symbol-cache-values name-id)
+          (let
+            [symbol : String
+              (compiler-backend-user-symbol-uncached
+                (compiler_ir_types.compiler-ir-symbol-text name-id))]
+            (begin
+              (array-set!
+                compiler-backend-user-symbol-cache-values
+                name-id
+                symbol)
+              (array-set!
+                compiler-backend-user-symbol-cache-epochs
+                name-id
+                compiler-backend-user-symbol-cache-epoch)
+              (set!
+                compiler-backend-user-symbol-cache-count-value
+                (+ compiler-backend-user-symbol-cache-count-value 1))
+              symbol)))
+        (compiler-backend-user-symbol-uncached
+          (compiler_ir_types.compiler-ir-symbol-text name-id))))))
 
 (define (compiler-backend-symbol-leaf [name : String]) : String
   (let
@@ -13459,7 +13545,7 @@
 
 (define (compiler-backend-stdlib-io-panic-name? [name : i64]) : bool
   (let
-    [text : String (ci.intern-str name)]
+    [text : String (compiler_ir_types.compiler-ir-symbol-text name)]
     (and
       (string.eq (compiler-backend-symbol-leaf text) "panic")
       (or

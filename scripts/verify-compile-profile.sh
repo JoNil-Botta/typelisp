@@ -2317,9 +2317,9 @@ assert_profile_counter_eq_in \
 
 # The constrained vector type operand is validated once at definition time.
 # The first concrete identity still checks all eleven generated declarations.
-# Later distinct identities may reuse the persisted proof for the five
-# substitution-invariant declarations; all other declarations stay on the
-# ordinary check path.
+# Later distinct identities may reuse persisted proofs for the four declarations
+# admitted as proven safe by the exact guard; all remaining declarations stay
+# on the ordinary check path.
 assert_profile_counter_eq_in \
     "$VECTOR_ONE_STDERR" \
     "typecheck.macro.generated_module_abstract_proofs" \
@@ -2365,7 +2365,7 @@ assert_profile_counter_eq_in \
 assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_decl_checks_proof_reused" \
-    20 \
+    16 \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 
@@ -2378,7 +2378,7 @@ assert_profile_counter_eq_in \
 assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_decl_checks" \
-    35 \
+    39 \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 

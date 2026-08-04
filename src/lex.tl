@@ -1201,13 +1201,23 @@
 ;; caller consumes the token array immediately (lex -> read -> parse,
 ;; sequentially per module) and never lexes again while one is live, so a
 ;; single program-lifetime buffer backs them all. The backing allocations live
-;; in one dedicated arena that is created once and never reset, so a grow while
-;; a transient driver arena is active cannot leave this global pointing at
-;; reclaimed storage.
+;; in one dedicated arena that is created on first growth and never reset, so a
+;; grow while a transient driver arena is active cannot leave this global
+;; pointing at reclaimed storage. A caller that can prove no parse is in flight
+;; may retire that arena outright with `spanned-token-buffer-release!`; the next
+;; scan simply grows a fresh one from zero.
 (define lex-spanned-token-buffer : (__tl_dyn-array token.SpannedToken)
   (make-array token.SpannedToken 0))
 (define lex-spanned-token-buffer-arena : i64
   0)
+
+;; Permanent zero-length buffer installed by `spanned-token-buffer-release!`.
+;; It is materialized once during global initialization, in the process entry
+;; arena, exactly like the initial buffer above - so the global still names
+;; live storage after the dedicated growth arena has been unmapped, and the
+;; next `spanned-token-buffer-ensure!` grows from zero into a fresh arena.
+(define lex-spanned-token-buffer-released : (__tl_dyn-array token.SpannedToken)
+  (make-array token.SpannedToken 0))
 
 (define (spanned-token-buffer-arena-handle-value) : i64
   lex-spanned-token-buffer-arena)
@@ -1262,6 +1272,50 @@
   (if (> required (array-length lex-spanned-token-buffer))
     (spanned-token-buffer-grow-to! required used)
     unit))
+
+;; Unmap the dedicated growth arena and reinstall the zero-length buffer.
+;;
+;; No-dangling argument (the buffer array is aliased, so this needs one):
+;;
+;;   - `spanned-result` is the ONLY entry point that hands out this global; the
+;;     plain `result`/`lex` entries allocate a fresh `token.Token` array per
+;;     call (see `result` above) and never observe this storage.
+;;   - No `(__tl_dyn-array token.SpannedToken)` is ever a struct field anywhere
+;;     in the tree: every occurrence outside this module is a parameter or a
+;;     `let` local of the reader/parser (`read.tl` `form-spanned-result` and
+;;     friends, `compiler_parse_core.tl` `parse-ast-program*`). No state,
+;;     session cache, or driver struct retains one. `CompilerParseState` holds
+;;     only i64/env/intern cells.
+;;   - Consumption is synchronous: `spanned-result` -> `parse-ast-program*` ->
+;;     `reader.form-spanned-result`, which copies tags, interned ids, literal
+;;     `String` handles, and `token.SourceSpan` line/col VALUES out of each
+;;     record into pooled `SpannedSexpr` nodes. Nothing keeps a token index.
+;;   - Diagnostics render eagerly: lexer errors build message plus span at the
+;;     failure point (`source-error-at`), parser error spans are stored as four
+;;     i64 line/col fields, and the reader formats mismatched-delimiter text
+;;     with the span already in hand. There is no deferred slice of token text.
+;;   - The `token.Token.Int`/`Token.Float` payload `String`s and every interned
+;;     lexeme live elsewhere: interning copies bytes into the intern-persistent
+;;     arena, and literal spellings are `string.substring` copies in whatever
+;;     arena was current while lexing. This arena is made current only around
+;;     the `make-array` inside `spanned-token-buffer-grow-to!`, so it backs the
+;;     record array and nothing else.
+;;
+;; Callers must therefore only prove that no parse is in flight. Re-lexing
+;; after a release is fine: the buffer regrows geometrically from zero.
+(define (spanned-token-buffer-release!) : unit
+  (if (= lex-spanned-token-buffer-arena 0)
+    unit
+    (let
+      [retire-arena : i64 lex-spanned-token-buffer-arena]
+      [retained-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (set! lex-spanned-token-buffer lex-spanned-token-buffer-released)
+        (set! lex-spanned-token-buffer-arena 0)
+        (unsafe
+          (begin
+            (arena.tl_arena_destroy retire-arena)
+            (arena.tl_arena_set retained-arena)))))))
 
 (define (spanned-token-buffer-arena-ownership-ok?) : bool
   (let

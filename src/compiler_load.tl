@@ -64,6 +64,25 @@
 (define (compiler-load-reader-sexpr-pool-arena-handle) : i64
   (reader.sexpr-node-pool-base-arena-handle-value))
 
+;; Retire the frontend scanning storage once a whole-program load has returned
+;; its `ast.AstDeclList`. Both owners are pure scan scratch whose contents were
+;; already copied out by value; see the no-dangling arguments at their release
+;; sites in `lex.tl` and `read.tl`. Only single-entry compile paths call this:
+;; a session that reuses loader state across jobs would just pay the regrow.
+;;
+;; The spanned reader pool (`reader-node-pool`) is deliberately NOT released
+;; here. It doubles as the declaration/member origin side table: the parser
+;; compacts `__tl_decl_origin` and `__tl_member_origin` runs below each form's
+;; mark, and `compiler_symbols.tl`, `compiler_semantic_index.tl`, and the
+;; `tc-typecheck-diag-with-*path` error paths in `compiler_typecheck_core.tl`
+;; scan those records long after load. Releasing it would silently downgrade
+;; every origin lookup to `None`, so those records must live as long as the
+;; declarations they describe.
+(define (compiler-load-release-frontend-scan-arenas!) : unit
+  (begin
+    (lexer.spanned-token-buffer-release!)
+    (reader.sexpr-node-pool-release!)))
+
 (defenum ResultCompilerLoad
   (Ok ast.AstDeclList sym_i64_env.SymI64Env)
   (Err (Box cdiag.CompilerDiagnostic)))

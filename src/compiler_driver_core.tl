@@ -3392,6 +3392,15 @@
             compile-profile
             (compiler_lower.compiler-lower-profile-pools "source_load" pools)
             unit)
+          ;; Load has returned its declaration list, so the lexer token buffer
+          ;; and the unspanned reader pool are dead scan scratch that would
+          ;; otherwise sit on the retain.program/retain.release peak for the
+          ;; rest of the process. Retire them here, on the same uncached
+          ;; single-entry gate the source-arena retirement uses, so a session
+          ;; that reuses loader state across jobs keeps its warm capacity.
+          (if route-source-allocations?
+            (compiler_load.compiler-load-release-frontend-scan-arenas!)
+            unit)
           (cfg
             compile-profile
             (compiler-driver-profile-start-phase
@@ -3521,6 +3530,14 @@
                       "macro_detach"
                       result-pools)
                     unit)
+                  ;; Typecheck re-enters the loader for macro-materialized
+                  ;; imports and surface-summary refreshes, so both scan owners
+                  ;; can have regrown a fresh arena since the load boundary.
+                  ;; Retire them again now that no frontend work remains: the
+                  ;; optimizer, backend, and writer never lex or read.
+                  (if route-source-allocations?
+                    (compiler_load.compiler-load-release-frontend-scan-arenas!)
+                    unit)
                   (compiler-driver-state-prefix-cache-allocation-profile-snapshot!
                     state
                     "lower")
@@ -3628,6 +3645,14 @@
           (cfg
             compile-profile
             (compiler_lower.compiler-lower-profile-pools "source_load" pools)
+            unit)
+          ;; Same frontend scan-scratch retirement as the escaping path above,
+          ;; on the same uncached single-entry gate.
+          (if (and
+            retire-after-lower?
+            (compiler-driver-state-can-release-checked-lower-source-pools?
+              state))
+            (compiler_load.compiler-load-release-frontend-scan-arenas!)
             unit)
           (cfg
             compile-profile
@@ -3749,6 +3774,10 @@
                     (compiler_lower.compiler-lower-profile-pools
                       "macro_detach"
                       result-pools)
+                    unit)
+                  ;; Same post-lower retirement as the escaping path above.
+                  (if (and retire-after-lower? release-source-pools?)
+                    (compiler_load.compiler-load-release-frontend-scan-arenas!)
                     unit)
                   (if (compiler_ast_types.ast-node-pool-context-type-exhausted?
                     pools)

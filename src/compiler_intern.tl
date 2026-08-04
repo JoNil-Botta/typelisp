@@ -453,6 +453,63 @@
   (InternLookupMissing)
   (InternLookupFound i64))
 
+;: Canonical macro-hygiene name prefixes. The interner owns the spellings
+;: because it classifies every pool entry against them once, when the entry is
+;: recorded; downstream phases read the stored class instead of re-deriving it
+;: from the rendered string on every visit.
+(define (intern-macro-global-prefix) : String
+  "__tl_macro_global$")
+
+(define (intern-macro-local-prefix) : String
+  "__tl_macro_local$")
+
+(define (intern-macro-template-prefix) : String
+  "__tl_macro_template$")
+
+;; Prefix classes stored per pool entry. The three prefixes differ at index 11
+;; (`g`/`l`/`t`) and none is a prefix of another, so one class per entry is
+;; exact rather than a summary.
+(define (intern-macro-prefix-class-none) : i64
+  0)
+
+(define (intern-macro-prefix-class-global) : i64
+  1)
+
+(define (intern-macro-prefix-class-local) : i64
+  2)
+
+(define (intern-macro-prefix-class-template) : i64
+  3)
+
+(define (intern-private-string-prefix? [text : String] [prefix : String]) : bool
+  (let
+    [text-len : i64 (intern-private-string-length text)]
+    [prefix-len : i64 (intern-private-string-length prefix)]
+    [i : i64 0]
+    [same : bool true]
+    (if (< text-len prefix-len)
+      false
+      (begin
+        (while (and same (< i prefix-len))
+          (if (=
+            (intern-private-string-ref text i)
+            (intern-private-string-ref prefix i))
+            (set! i (+ i 1))
+            (set! same false)))
+        same))))
+
+;; Runs once per recorded pool entry, so a plain byte scan is the right shape:
+;; the query side is what has to be cheap, and it becomes a single array read.
+(define (intern-private-macro-prefix-class [name : String]) : u8
+  (cond
+    [(intern-private-string-prefix? name (intern-macro-global-prefix))
+      (cast (intern-macro-prefix-class-global) : u8)]
+    [(intern-private-string-prefix? name (intern-macro-local-prefix))
+      (cast (intern-macro-prefix-class-local) : u8)]
+    [(intern-private-string-prefix? name (intern-macro-template-prefix))
+      (cast (intern-macro-prefix-class-template) : u8)]
+    [else (cast (intern-macro-prefix-class-none) : u8)]))
+
 (define intern-pool-slots : (__tl_dyn-array String)
   (make-array String (intern-capacity)))
 (define intern-pool-qualified-slots : (__tl_dyn-array bool)
@@ -469,6 +526,8 @@
   (make-array InternSlotId (intern-capacity)))
 (define intern-pool-base-id-slots : (__tl_dyn-array InternSlotId)
   (make-array InternSlotId (intern-capacity)))
+(define intern-pool-macro-prefix-class-slots : (__tl_dyn-array u8)
+  (make-array u8 (intern-capacity)))
 (define intern-pool-count : i64
   0)
 (define intern-generated-next-id : i64
@@ -958,6 +1017,7 @@
   (pool-dotted-prefix-id-slots (__tl_dyn-array InternSlotId))
   (pool-module-id-slots (__tl_dyn-array InternSlotId))
   (pool-base-id-slots (__tl_dyn-array InternSlotId))
+  (pool-macro-prefix-class-slots (__tl_dyn-array u8))
   (pool-count (__tl_dyn-array i64))
   (generated-next-id (__tl_dyn-array i64))
   (map-id-slots (__tl_dyn-array InternSlotId))
@@ -1029,6 +1089,7 @@
         (make-array InternSlotId (intern-capacity))
         (make-array InternSlotId (intern-capacity))
         (make-array InternSlotId (intern-capacity))
+        (make-array u8 (intern-capacity))
         pool-count
         generated-next-id
         (make-array InternSlotId (intern-capacity))
@@ -1077,6 +1138,7 @@
         intern-pool-dotted-prefix-id-slots
         intern-pool-module-id-slots
         intern-pool-base-id-slots
+        intern-pool-macro-prefix-class-slots
         pool-count
         generated-next-id
         intern-map-id-slots
@@ -1538,6 +1600,9 @@
         (struct-get state pool-dotted-prefix-id-slots))
       (set! intern-pool-module-id-slots (struct-get state pool-module-id-slots))
       (set! intern-pool-base-id-slots (struct-get state pool-base-id-slots))
+      (set!
+        intern-pool-macro-prefix-class-slots
+        (struct-get state pool-macro-prefix-class-slots))
       (set! intern-pool-count (array-ref (struct-get state pool-count) 0))
       (set!
         intern-generated-next-id
@@ -2226,6 +2291,10 @@
         (array-set! intern-pool-slots id persistent-name)
         (array-set! intern-pool-qualified-slots id qualified)
         (array-set!
+          intern-pool-macro-prefix-class-slots
+          id
+          (intern-private-macro-prefix-class persistent-name))
+        (array-set!
           intern-pool-last-slash-slots
           id
           (if qualified
@@ -2612,6 +2681,10 @@
             (set! i (+ i 1)))))
       (array-set! intern-pool-last-slash-slots id (cast slash : i32))
       (array-set! intern-pool-first-dot-slots id (cast dot : i32))
+      (array-set!
+        intern-pool-macro-prefix-class-slots
+        id
+        (intern-private-macro-prefix-class name))
       (array-set!
         intern-pool-leading-dot-id-slots
         id
@@ -3106,6 +3179,24 @@
 ;: same generation, so generation-aware side caches must include this value.
 (define (intern-qualified? [id : i64]) : bool
   (array-ref intern-pool-qualified-slots id))
+
+;: Macro-hygiene prefix classification of a pool id, recorded when the entry
+;: was stored. Equivalent to testing the recorded spelling against the matching
+;: `intern-macro-*-prefix`, without rendering the string on every visit.
+(define (intern-macro-global-name-id? [id : i64]) : bool
+  (=
+    (array-ref intern-pool-macro-prefix-class-slots id)
+    (cast (intern-macro-prefix-class-global) : u8)))
+
+(define (intern-macro-local-name-id? [id : i64]) : bool
+  (=
+    (array-ref intern-pool-macro-prefix-class-slots id)
+    (cast (intern-macro-prefix-class-local) : u8)))
+
+(define (intern-macro-template-name-id? [id : i64]) : bool
+  (=
+    (array-ref intern-pool-macro-prefix-class-slots id)
+    (cast (intern-macro-prefix-class-template) : u8)))
 
 (define (intern-qualified-last-slash [id : i64]) : i64
   (cast (array-ref intern-pool-last-slash-slots id) : i64))

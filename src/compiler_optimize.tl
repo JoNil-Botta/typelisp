@@ -7912,17 +7912,24 @@
             (array-set! bigger (+ len 1) label)
             (OptLabelSet.Dense bigger (+ len 1)))))]))
 
+;; Membership walks the backing array directly rather than through
+;; `opt-label-count` plus one `opt-label-ref` per element. The sets are tiny --
+;; on a self-compile 45% of the queries are against the empty set and 88% see two
+;; labels or fewer -- so the dispatch per element, not the element count, is what
+;; this loop costs. Slot `len` down to slot 1 is exactly `opt-label-ref`'s index
+;; 0 up to `count - 1`, newest label first.
 (define (opt-label-contains [set : OptLabelSet] [label : i64]) : bool
-  (let
-    [index : i64 0]
-    [count : i64 (opt-label-count set)]
-    [found : bool false]
-    (begin
-      (while (and (< index count) (not found))
-        (if (= (opt-label-ref set index) label)
-          (set! found true)
-          (set! index (+ index 1))))
-      found)))
+  (match set
+    [(OptLabelSet.Nil) false]
+    [(OptLabelSet.Dense items len)
+      (let
+        [slot : i64 len]
+        (begin
+          (while (> slot 0)
+            (if (= (array-ref items slot) label)
+              (return true)
+              (set! slot (- slot 1))))
+          false))]))
 
 (define (opt-label-add [set : OptLabelSet] [label : i64]) : OptLabelSet
   (if (opt-label-contains set label)
@@ -8240,6 +8247,12 @@
 ;; label id answers the query directly. A per-build generation stamp makes
 ;; "belongs to this CFG" a compare instead of a clear, so a rebuild costs one
 ;; counter bump rather than a pass over the table (refs #5718, proposal 3).
+;;
+;; The table holds exactly one build, so it only serves the build itself --
+;; resolving successor labels while the rows are filled. A finished index answers
+;; `opt-cfg-index-id` from its own table instead (see `opt-cfg-index-id-map`),
+;; because a later build stamps over this one and passes routinely query an
+;; index that is no longer the newest.
 (define opt-cfg-label-slot : (__tl_dyn-array i64)
   (array.make-array i64 1))
 (define opt-cfg-label-stamp : (__tl_dyn-array i64)
@@ -8299,9 +8312,13 @@
 ;; they replace rebuilding a label map and rehashing every label and every
 ;; successor edge, once per verified function (refs #5718).
 (defstruct OptCfgIndex
-  (label-generation i64)
   (labels-unique bool)
   (labels (__tl_dyn-array i64))
+  ;; Open-addressed label -> id table owned by this index, so a lookup stays a
+  ;; probe after a later build has taken over the shared stamp table. Slots hold
+  ;; `id + 1` (zero is the empty slot ZII leaves behind) and the id identifies
+  ;; its own key through `labels`, so one word per slot is enough.
+  (id-map (__tl_dyn-array i64))
   ;; Dense block values share CFG id order. Passes that reuse a topology
   ;; context after replacing block values refresh this array once from their
   ;; exact current list before indexed reads.
@@ -8673,6 +8690,50 @@
       (array-set! rpo-num (array-ref rpo slot) slot)
       (opt-cfg-index-fill-rpo-num! rpo rpo-num reach-count (+ slot 1)))))
 
+;; Power-of-two capacity with room for at least one empty slot at every size, so
+;; a probe that misses always terminates on a zero word.
+(define (opt-cfg-index-id-map-capacity [count : i64]) : i64
+  (let
+    [size : i64 2]
+    (begin
+      (while (< size (* count 2))
+        (set! size (* size 2)))
+      size)))
+
+;; Labels inside one function are near-contiguous, so masking alone already
+;; spreads them; folding the high bits down first keeps a pruned, strided label
+;; set from collapsing onto one slot.
+(define (opt-cfg-index-id-slot [label : i64] [mask : i64]) : i64
+  (bit-and (bit-xor label (shr label 5)) mask))
+
+;; Ids are inserted in block order and an occupied slot whose label matches is
+;; left alone, so a duplicate-label CFG resolves to its first block -- the same
+;; answer the legacy list scan gave before the verifier rejects it.
+(define (opt-cfg-index-fill-id-map!
+  [slots : (__tl_dyn-array i64)]
+  [labels : (__tl_dyn-array i64)]
+  [count : i64]) : unit
+  (let
+    [mask : i64 (- (array-length slots) 1)]
+    [id : i64 0]
+    (while (< id count)
+      (let
+        [label : i64 (array-ref labels id)]
+        [slot : i64 (opt-cfg-index-id-slot label mask)]
+        [placed : bool false]
+        (begin
+          (while (not placed)
+            (let
+              [entry : i64 (array-ref slots slot)]
+              (if (= entry 0)
+                (begin
+                  (array-set! slots slot (+ id 1))
+                  (set! placed true))
+                (if (= (array-ref labels (- entry 1)) label)
+                  (set! placed true)
+                  (set! slot (bit-and (+ slot 1) mask))))))
+          (set! id (+ id 1)))))))
+
 (define (opt-cfg-index-build [blocks : ir.CompilerIrBlockList]) : OptCfgIndex
   (let
     [count : i64 (ir.compiler-ir-block-list-count blocks)]
@@ -8682,6 +8743,8 @@
     [generation : i64 (opt-cfg-label-table-begin!)]
     [labels-unique : bool
       (opt-cfg-index-fill-labels! blocks generation labels dense-blocks 0)]
+    [id-map : (__tl_dyn-array i64)
+      (array.make-array i64 (opt-cfg-index-id-map-capacity count))]
     [succ-rows : (__tl_dyn-array OptI64List)
       (array.make-array OptI64List count)]
     [pred-rows : (__tl_dyn-array OptI64List)
@@ -8693,6 +8756,7 @@
     [reach-count : i64 0]
     [targets-known : bool true]
     (begin
+      (opt-cfg-index-fill-id-map! id-map labels count)
       (set!
         targets-known
         (opt-cfg-index-fill-rows! blocks generation succ-rows pred-rows 0))
@@ -8711,9 +8775,9 @@
           (opt-cfg-index-fill-rpo! postorder rpo reach-count 0)
           (opt-cfg-index-fill-rpo-num! rpo rpo-num reach-count 0)
           (OptCfgIndex
-            generation
             labels-unique
             labels
+            id-map
             dense-blocks
             succ-csr
             pred-csr
@@ -8738,27 +8802,28 @@
     (array-ref (struct-get index labels) id)
     (ir.compiler-ir-label-none)))
 
-;; The shared table holds one build at a time. An index that is still live when
-;; a later build stamps over it therefore misses, and falls back to scanning its
-;; own id -> label array -- correct either way, because the fast path is only
-;; taken when the stamp proves the slot belongs to this build.
-(define (opt-cfg-index-id-scan
-  [labels : (__tl_dyn-array i64)]
-  [label : i64]
-  [id : i64]) : option_i64.Option
-  (if (>= id (array-length labels))
-    (option_i64.None)
-    (if (= (array-ref labels id) label)
-      (option_i64.Some id)
-      (opt-cfg-index-id-scan labels label (+ id 1)))))
-
+;; Probing this index's own table answers the query whether or not a later build
+;; has stamped over the shared one, so a stale index costs the same as the newest
+;; one. An unknown label lands on an empty slot, which the capacity rule
+;; guarantees exists.
 (define (opt-cfg-index-id [index : OptCfgIndex] [label : i64]) : option_i64.Option
   (let
-    [id : i64
-      (opt-cfg-label-table-get label (struct-get index label-generation))]
-    (if (>= id 0)
-      (option_i64.Some id)
-      (opt-cfg-index-id-scan (struct-get index labels) label 0))))
+    [slots : (__tl_dyn-array i64) (struct-get index id-map)]
+    [labels : (__tl_dyn-array i64) (struct-get index labels)]
+    [mask : i64 (- (array-length slots) 1)]
+    [slot : i64 (opt-cfg-index-id-slot label mask)]
+    (begin
+      (while true
+        (let
+          [entry : i64 (array-ref slots slot)]
+          (if (= entry 0)
+            (return (option_i64.None))
+            (let
+              [id : i64 (- entry 1)]
+              (if (= (array-ref labels id) label)
+                (return (option_i64.Some id))
+                (set! slot (bit-and (+ slot 1) mask)))))))
+      (option_i64.None))))
 
 (define (opt-cfg-index-refresh-block-seq!
   [out : (__tl_dyn-array ir.CompilerIrBlock)]
@@ -30398,31 +30463,45 @@
               (opt-switch-candidate-tail items)
               tag))])]))
 
+;; A tag inside [min-tag, max-tag] that the chain never compares (a HOLE) takes
+;; the chain's fall-through edge, exactly like an out-of-range tag: the chain
+;; means "if index = t_i goto arm_i, in order, else goto default", and the head
+;; is the only entry, so any tag the chain does not name reaches the default.
+;; Duplicate tags are rejected during collection, so the arm order carries no
+;; extra information. Filling a hole with `default-label` therefore preserves
+;; semantics and keeps the case list contiguous, which is the backend's
+;; requirement for a jump table.
 (define (opt-switch-build-cases-desc
   [items : OptSwitchCandidateList]
   [tag : i64]
   [min-tag : i64]
+  [default-label : i64]
   [acc : ir.CompilerIrSwitchCaseList]) : ir.CompilerIrSwitchCaseList
   (if (< tag min-tag)
     acc
-    (match (opt-switch-candidate-label-for-tag items tag)
-      [(OptSwitchMaybeLabel.SomeLabel label)
-        (opt-switch-build-cases-desc
-          items
-          (- tag 1)
-          min-tag
-          (ir.compiler-ir-switch-case-cons-linked tag label acc))]
-      [(OptSwitchMaybeLabel.NoLabel) acc])))
+    (opt-switch-build-cases-desc
+      items
+      (- tag 1)
+      min-tag
+      default-label
+      (ir.compiler-ir-switch-case-cons-linked
+        tag
+        (match (opt-switch-candidate-label-for-tag items tag)
+          [(OptSwitchMaybeLabel.SomeLabel label) label]
+          [(OptSwitchMaybeLabel.NoLabel) default-label])
+        acc))))
 
 (define (opt-switch-build-cases
   [items : OptSwitchCandidateList]
   [min-tag : i64]
-  [max-tag : i64]) : ir.CompilerIrSwitchCaseList
+  [max-tag : i64]
+  [default-label : i64]) : ir.CompilerIrSwitchCaseList
   (ir.compiler-ir-switch-case-list-compact
     (opt-switch-build-cases-desc
       items
       max-tag
       min-tag
+      default-label
       ir.CompilerIrSwitchCaseList.Nil)))
 
 (define (opt-switch-total-enum-trap-block [label : i64] [dst : i64]) : ir.CompilerIrBlock
@@ -30623,9 +30702,15 @@
         (ir.compiler-ir-block-seq-to-list seq)
         tail)]))
 
-(define (opt-late-total-switch-function
+;; A late per-function rewrite paired with whether it changed anything. `false`
+;; means the pass left the function's IR alone, so a fused traversal may keep
+;; the caller's input instead of materializing the pass output.
+(defenum OptLateRewriteResult
+  (Result ir.CompilerIrFunction bool))
+
+(define (opt-late-total-switch-function-rewrite
   [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  [func : ir.CompilerIrFunction]) : OptLateRewriteResult
   (match func
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
@@ -30641,6 +30726,12 @@
             (ir.compiler-ir-param-list-count params))]
         [blocks-result : OptLateTotalSwitchBlocks
           (opt-late-total-switch-blocks blocks occupied frame-cell)]
+        ;; One trap block is appended per rewritten switch, so an empty trap
+        ;; list is exactly "no switch in this function was rewritten".
+        [trap-count : i64
+          (match blocks-result
+            [(OptLateTotalSwitchBlocks.Result _ trap-blocks)
+              (ir.compiler-ir-block-list-count trap-blocks)])]
         [next-blocks : ir.CompilerIrBlockList
           (match blocks-result
             [(OptLateTotalSwitchBlocks.Result main-blocks trap-blocks)
@@ -30653,24 +30744,18 @@
             ret-ty
             (array-ref frame-cell 0)
             next-blocks)]
-        (compiler-opt-debug-observe-function
-          type-segment-bases
-          "total_switch"
-          rewritten))]))
+        (OptLateRewriteResult.Result
+          (compiler-opt-debug-observe-function
+            type-segment-bases
+            "total_switch"
+            rewritten)
+          (> trap-count 0)))]))
 
-(define (opt-late-total-switch-function-list
+(define (opt-late-total-switch-function
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) ir.CompilerIrFunctionList.Nil]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (ir.compiler-ir-function-cons
-        (opt-late-total-switch-function type-segment-bases func)
-        (opt-late-total-switch-function-list type-segment-bases (box-get rest)))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-late-total-switch-function-list
-        type-segment-bases
-        (ir.compiler-ir-function-seq-to-list seq))]))
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-late-total-switch-function-rewrite type-segment-bases func)
+    [(OptLateRewriteResult.Result rewritten _) rewritten]))
 
 (define (opt-switch-block-starts-with-phi? [index : OptCfgIndex] [label : i64]) : bool
   (match (opt-cfg-index-find-block index label)
@@ -30721,6 +30806,29 @@
     [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
     (and (= (opt-label-count preds) 1) (opt-label-contains preds pred))))
 
+;; Table-formation density floor, as a percentage of the [min, max] span that
+;; the chain's own tags must occupy. A gap tag costs one 8-byte table slot and
+;; saves nothing, so a chain that is mostly gaps would trade instructions for
+;; rodata and D-cache footprint; a compared tag replaces roughly (chain
+;; position) compares with one indexed jump. 50% is the standard floor and, on
+;; the self-compile, admits the wide AST/IR walkers (65 of 76 `AstExpr` tags,
+;; 64 of 67, ...) that an exact-density rule rejected over a handful of gaps.
+(define (opt-switch-density-percent) : i64
+  50)
+
+;; Hard ceiling on the emitted table's entry count. The density floor already
+;; bounds the span by twice the compare count, so this only fires for chains
+;; that are pathological in absolute size; it keeps a single match from
+;; emitting an unbounded rodata table (and bounds `opt-switch-build-cases-desc`
+;; recursion) regardless of the source program.
+(define (opt-switch-max-table-entries) : i64
+  1024)
+
+(define (opt-switch-span-admissible? [count : i64] [span : i64]) : bool
+  (and
+    (<= span (opt-switch-max-table-entries))
+    (<= (* span (opt-switch-density-percent)) (* count 100))))
+
 (define (opt-switch-finalize-chain
   [index : OptCfgIndex]
   [index-var : i64]
@@ -30735,7 +30843,7 @@
       [max-tag : i64 (opt-switch-candidate-max items)]
       (if (and
         (>= count 4)
-        (= (+ (- max-tag min-tag) 1) count)
+        (opt-switch-span-admissible? count (+ (- max-tag min-tag) 1))
         (opt-switch-targets-safe? index items default-label))
         (OptMaybeSwitchChain.Some
           index-var
@@ -30937,17 +31045,25 @@
               instrs
               0
               head-prefix
-              (if (opt-switch-candidates-total-enum? items)
+              ;; The total-enum proof says the chain's fall-through IS the last
+              ;; variant's arm, so the range check and the default edge can be
+              ;; dropped. A gap-filled table routes uncompared tags to that same
+              ;; fall-through, which is only sound while the default is a real
+              ;; default; a gapped chain therefore keeps the ordinary Switch
+              ;; with its range check even when the proof is present.
+              (if (and
+                (opt-switch-candidates-total-enum? items)
+                (= (+ (- max-tag min-tag) 1) (opt-switch-candidate-count items)))
                 (ir.CompilerIrInstr.TotalEnumSwitch
                   (ir.CompilerIrValue.Var index-var)
                   min-tag
-                  (opt-switch-build-cases items min-tag max-tag)
+                  (opt-switch-build-cases items min-tag max-tag default-label)
                   default-label
                   (ir.compiler-ir-label-none))
                 (ir.CompilerIrInstr.Switch
                   (ir.CompilerIrValue.Var index-var)
                   min-tag
-                  (opt-switch-build-cases items min-tag max-tag)
+                  (opt-switch-build-cases items min-tag max-tag default-label)
                   default-label))))]
         [(OptMaybeSwitchChain.No) block])]))
 
@@ -49765,9 +49881,9 @@
         [(OptLateBoundsPairResult.No)
           (opt-late-bounds-pair-scan-loops blocks frame (box-get rest))])]))
 
-(define (opt-late-bounds-pair-function
+(define (opt-late-bounds-pair-function-rewrite
   [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  [func : ir.CompilerIrFunction]) : OptLateRewriteResult
   ;; Late pass outside the verified fixpoint: scan first, and only when a
   ;; rewrite candidate exists pay for verification. Rejection keeps the input.
   (match func
@@ -49776,7 +49892,7 @@
         blocks
         frame
         (opt-cfg-natural-loops blocks))
-        [(OptLateBoundsPairResult.No) func]
+        [(OptLateBoundsPairResult.No) (OptLateRewriteResult.Result func false)]
         [(OptLateBoundsPairResult.Some next-blocks next-frame)
           (let
             [candidate : ir.CompilerIrFunction
@@ -49791,25 +49907,20 @@
             ;; verify against a fresh view and keep the input on rejection.
             (match (opt-verify-function candidate)
               [(ResultCompilerOptimizeVerify.Ok)
-                (compiler-opt-debug-observe-function
-                  type-segment-bases
-                  "paired_bounds"
-                  candidate)]
-              [(ResultCompilerOptimizeVerify.Err _) func]))])]))
+                (OptLateRewriteResult.Result
+                  (compiler-opt-debug-observe-function
+                    type-segment-bases
+                    "paired_bounds"
+                    candidate)
+                  true)]
+              [(ResultCompilerOptimizeVerify.Err _)
+                (OptLateRewriteResult.Result func false)]))])]))
 
-(define (opt-late-bounds-pair-function-list
+(define (opt-late-bounds-pair-function
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) ir.CompilerIrFunctionList.Nil]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (ir.compiler-ir-function-cons
-        (opt-late-bounds-pair-function type-segment-bases func)
-        (opt-late-bounds-pair-function-list type-segment-bases (box-get rest)))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-late-bounds-pair-function-list
-        type-segment-bases
-        (ir.compiler-ir-function-seq-to-list seq))]))
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-late-bounds-pair-function-rewrite type-segment-bases func)
+    [(OptLateRewriteResult.Result rewritten _) rewritten]))
 
 ;; Derivation fold state: the guard accumulator (conditions for REMOVED
 ;; checks), the kept-check set, how many checks derived -- partial
@@ -57101,6 +57212,70 @@
             label
             (ir.compiler-ir-instr-builder-to-seq builder))))]))
 
+;; The same dead-Pack test `opt-successor-sink-strip-dead-packs-block` applies,
+;; asked as a question instead of answered by rebuilding. The strip rebuilds
+;; every block of every function on every run of this pass to delete a Pack
+;; that is almost never there (1.1K of 57.8K opt2 self-compile runs plan any
+;; move at all), and the rebuilt list -- structurally identical to its input in
+;; the no-strip case -- then forces a fresh CFG context build and a second full
+;; SSA verify downstream. Asking first keeps the input list itself as the
+;; answer, which is what the whole no-strip path needs: same blocks, so the
+;; caller's context stays valid and its entry verify's verdict still binds.
+(define (opt-successor-sink-instrs-have-dead-pack?
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Pack dst _ _)
+        (if (and (>= dst 0) (< dst frame) (<= (array-ref uses dst) 0))
+          true
+          (opt-successor-sink-instrs-have-dead-pack?
+            frame
+            uses
+            instrs
+            (+ index 1)))]
+      [_
+        (opt-successor-sink-instrs-have-dead-pack?
+          frame
+          uses
+          instrs
+          (+ index 1))])))
+
+(define (opt-successor-sink-block-seq-has-dead-pack?
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    false
+    (if (match (ir.compiler-ir-block-seq-ref blocks index)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (opt-successor-sink-instrs-have-dead-pack? frame uses instrs 0)])
+      true
+      (opt-successor-sink-block-seq-has-dead-pack?
+        frame
+        uses
+        blocks
+        (+ index 1)))))
+
+(define (opt-successor-sink-blocks-have-dead-pack?
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-successor-sink-instrs-have-dead-pack? frame uses instrs 0)])
+        true
+        (opt-successor-sink-blocks-have-dead-pack? frame uses (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-successor-sink-block-seq-has-dead-pack? frame uses seq 0)]))
+
 (define (opt-successor-sink-strip-dead-packs
   [frame : i64]
   [uses : (__tl_dyn-array i64)]
@@ -57155,28 +57330,53 @@
         (ir.compiler-ir-block-seq-to-list seq)
         leaves)]))
 
-(define (opt-successor-sink-blocks-result
+;; `blocks-result` plus the one extra fact its caller needs: whether the block
+;; list it hands back is the very list it was given. `unchanged` is true only
+;; when nothing was stripped AND no move was planned, which makes the result
+;; blocks, the result context and the caller's `func` all identical to the
+;; inputs -- enough for the caller to reuse the entry verify's verdict.
+(defenum OptSuccessorSinkBlocksResult
+  (Result ir.CompilerIrBlockList OptCfgContext bool bool))
+
+;; `context` must be valid for `blocks`. When no dead Pack is present the strip
+;; is the identity, so `ready` IS `blocks` and that same context is already the
+;; context this pass would have rebuilt for it.
+(define (opt-successor-sink-blocks-result-with-context
   [type-segment-bases : i64]
   [frame : i64]
   [frame-cell : (__tl_dyn-array i64)]
-  [blocks : ir.CompilerIrBlockList]) : OptBlockCtxResult
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]) : OptSuccessorSinkBlocksResult
   (let
     [initial-uses : (__tl_dyn-array i64)
       (opt-collect-blocks-uses-array frame blocks)]
+    [stripped : bool
+      (opt-successor-sink-blocks-have-dead-pack? frame initial-uses blocks)]
     [ready : ir.CompilerIrBlockList
-      (opt-successor-sink-strip-dead-packs frame initial-uses blocks)]
+      (if stripped
+        (opt-successor-sink-strip-dead-packs frame initial-uses blocks)
+        blocks)]
     ;; The natural-loop scan needs the pred-map/reachable/dominator view of the
     ;; SAME block list this pass already indexes, and `opt-cfg-natural-loops`
     ;; builds a whole context (index included) internally. Build the context
-    ;; once and take its index instead of indexing `ready` twice.
-    [cfg-context : OptCfgContext (opt-cfg-context-build ready)]
+    ;; once and take its index instead of indexing `ready` twice -- and when
+    ;; the strip was the identity, the caller's context already is that build.
+    [cfg-context : OptCfgContext
+      (if stripped
+        (opt-cfg-context-build ready)
+        context)]
     [cfg : OptCfgIndex (struct-get cfg-context index)]
     [loops : OptNaturalLoopList
       (opt-cfg-natural-loops-with-context ready cfg-context)]
     [all-defs : (__tl_dyn-array i64) (opt-used-array-new frame)]
     [_all-defs : unit (opt-successor-sink-fill-all-defs! frame ready all-defs)]
+    ;; `initial-uses` counted uses over `blocks` and is dead once the strip
+    ;; decision is made, so it already is the count over `ready` whenever the
+    ;; strip did not run.
     [total-uses : (__tl_dyn-array i64)
-      (opt-collect-blocks-uses-array frame ready)]
+      (if stripped
+        (opt-collect-blocks-uses-array frame ready)
+        initial-uses)]
     [loop-phi-leaves : (__tl_dyn-array i64) (opt-used-array-new frame)]
     [_loop-phi-leaves : unit
       (opt-successor-sink-mark-phis! frame ready loop-phi-leaves)]
@@ -57202,12 +57402,31 @@
     ;; runs and saves the caller a whole CFG context build.
     (match moves
       [(OptSuccessorSinkMoves.Nil)
-        (OptBlockCtxResult.Result ready cfg-context true)]
+        (OptSuccessorSinkBlocksResult.Result
+          ready
+          cfg-context
+          true
+          (not stripped))]
       [_
-        (OptBlockCtxResult.Result
+        (OptSuccessorSinkBlocksResult.Result
           (opt-successor-sink-rewrite-blocks moves ready)
           cfg-context
+          false
           false)])))
+
+(define (opt-successor-sink-blocks-result
+  [type-segment-bases : i64]
+  [frame : i64]
+  [frame-cell : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : OptBlockCtxResult
+  (match (opt-successor-sink-blocks-result-with-context
+    type-segment-bases
+    frame
+    frame-cell
+    blocks
+    (opt-cfg-context-build blocks))
+    [(OptSuccessorSinkBlocksResult.Result out ctx reusable _)
+      (OptBlockCtxResult.Result out ctx reusable)]))
 
 (define (opt-successor-sink-blocks
   [type-segment-bases : i64]
@@ -57244,15 +57463,16 @@
           (let
             [frame-cell : (__tl_dyn-array i64) (opt-used-array-new 1)]
             [_frame-init : unit (array-set! frame-cell 0 frame)]
-            [sink-result : OptBlockCtxResult
-              (opt-successor-sink-blocks-result
+            [sink-result : OptSuccessorSinkBlocksResult
+              (opt-successor-sink-blocks-result-with-context
                 type-segment-bases
                 frame
                 frame-cell
-                blocks)]
+                blocks
+                context)]
             [next-blocks : ir.CompilerIrBlockList
               (match sink-result
-                [(OptBlockCtxResult.Result b _ _) b])]
+                [(OptSuccessorSinkBlocksResult.Result b _ _ _) b])]
             [next : ir.CompilerIrFunction
               (ir.CompilerIrFunction.Function
                 name
@@ -57262,15 +57482,25 @@
                 next-blocks)]
             [next-context : OptCfgContext
               (match sink-result
-                [(OptBlockCtxResult.Result _ ctx reusable)
+                [(OptSuccessorSinkBlocksResult.Result _ ctx reusable _)
                   (if reusable
                     ctx
                     (opt-cfg-context-build next-blocks))])]
-            (match (opt-verify-function-with-context next next-context)
-              [(ResultCompilerOptimizeVerify.Ok)
-                (OptFunctionCtxResult.Result next next-context)]
-              [(ResultCompilerOptimizeVerify.Err _)
-                (OptFunctionCtxResult.Result func context)]))])]))
+            ;; Nothing stripped, nothing moved and no new vreg means `next` is
+            ;; the same name/params/return type/frame/block list as `func` and
+            ;; `next-context` is the very context just verified against, so the
+            ;; entry verify above already decided this exit verify: it is the
+            ;; same pure query on the same values and can only answer Ok. Half
+            ;; of every SSA verify in the opt2 self-compile is this one.
+            (if (match sink-result
+              [(OptSuccessorSinkBlocksResult.Result _ _ _ unchanged)
+                (and unchanged (= (array-ref frame-cell 0) frame))])
+              (OptFunctionCtxResult.Result next next-context)
+              (match (opt-verify-function-with-context next next-context)
+                [(ResultCompilerOptimizeVerify.Ok)
+                  (OptFunctionCtxResult.Result next next-context)]
+                [(ResultCompilerOptimizeVerify.Err _)
+                  (OptFunctionCtxResult.Result func context)])))])]))
 
 (define (opt-successor-sink-function
   [type-segment-bases : i64]
@@ -60065,6 +60295,65 @@
     func
     level
     (opt-loop-bce-empty-summaries)))
+
+;; Optimizer input carrier (opt2 only).
+;;
+;; The whole-program inline stage runs in a dedicated arena, and by the time it
+;; returns only its final rewritten bodies are still read: the devirtualized
+;; function index, the call graph, the SCC and census tables, every superseded
+;; caller generation, and every superseded spans array are already dead. Those
+;; leftovers are the majority of that arena (measured on the self-compile: 460
+;; MiB committed, of which a deep copy of the surviving reachable functions is
+;; 204 MiB), and a bump arena cannot release them piecewise. The per-function
+;; optimizer loop then reads the surviving functions from end to end, so the
+;; whole arena -- dead generations included -- would otherwise stay resident
+;; across the loop, which is where the opt2 process peak forms.
+;;
+;; So copy just the surviving functions into a carrier arena, release the inline
+;; arena before the loop starts, and release the carrier once the loop has
+;; escaped every optimized function into the enclosing arena. The copy costs one
+;; transient overlap of the two arenas before the loop -- cheaper than carrying
+;; the dead generations through it, because the loop's own scratch peak lands on
+;; top of whatever the input costs.
+;;
+;; Level 1 keeps the direct path: its inline stage is the cheap tiny-leaf pass,
+;; whose arena is a fraction of the level-2 one, and the cheap self-compile path
+;; must not pay for a whole-program copy.
+(define (opt-optimizer-input-carrier [level : i64]) : i64
+  (if (< level 2)
+    0
+    (arena.tl_arena_make)))
+
+(define (opt-optimizer-input-carry
+  [pools : ast.AstNodePoolContext]
+  [carrier : i64]
+  [funcs : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
+  (if (= carrier 0)
+    funcs
+    (let
+      [home : i64 (arena.tl_arena_current)]
+      [_enter : unit
+        (unsafe
+          (arena.tl_arena_set carrier))]
+      [carried : ir.CompilerIrFunctionList
+        (ir.compiler-ir-clone-function-list pools funcs)]
+      [_leave : unit
+        (unsafe
+          (arena.tl_arena_set home))]
+      carried)))
+
+;; Both optimizer-input arenas report under the same mid-phase label: each is
+;; read at its high-water mark and destroyed before the "optimize" phase
+;; snapshot, so neither belongs in that snapshot's unique-root total.
+(define (opt-release-optimizer-input-arena [owner : String] [handle : i64]) : unit
+  (begin
+    (allocation_profile.compiler-allocation-profile-control!
+      2
+      "optimize.inline"
+      owner
+      handle)
+    (unsafe
+      (arena.tl_arena_destroy handle))))
 
 ;; Per-function arena escape. The optimizer fixpoint allocates up to
 ;; ~80 throwaway IR copies per function (10 iterations x ~8 passes), none freed
@@ -70514,6 +70803,12 @@
         ;; Levels 1 (cheap) and 2 (quality) both prune unreachable functions;
         ;; opt-inline-program-functions runs the full inliner at level 2 and
         ;; the call-free tiny-leaf pass at level 1.
+        ;;
+        ;; This spans-free entry keeps the inline stage in the enclosing arena.
+        ;; The dedicated inline arena lives on the spans variant below, which is
+        ;; the one the driver compiles through; adding it here would buy nothing
+        ;; (no caller of this entry compiles a whole program) and would need the
+        ;; same escape argument re-made for a second control flow.
         (begin
           (cfg compile-profile (compiler-opt-profile-start profile-state))
           (let
@@ -70581,31 +70876,19 @@
                       (opt-pruned-program-globals final-pruned)]
                     [final-functions : ir.CompilerIrFunctionList
                       (opt-pruned-program-functions final-pruned)]
-                    [scratch-reset-functions : ir.CompilerIrFunctionList
-                      (opt-scratch-reset-function-list-with-level
+                    [late-functions : ir.CompilerIrFunctionList
+                      (opt-late-function-list-with-level
+                        pools
                         type-segment-bases
                         final-functions
                         level)]
-                    [paired-bounds-functions : ir.CompilerIrFunctionList
-                      (if (< level 2)
-                        scratch-reset-functions
-                        (opt-late-bounds-pair-function-list
-                          type-segment-bases
-                          scratch-reset-functions))]
-                    [total-switch-functions : ir.CompilerIrFunctionList
-                      (if (< level 2)
-                        paired-bounds-functions
-                        (opt-late-total-switch-function-list
-                          type-segment-bases
-                          paired-bounds-functions))]
                     (begin
                       (cfg
                         compile-profile
                         (compiler-opt-profile-finish profile-state "post_prune"))
                       (ir.CompilerIrProgram.Program
                         final-globals
-                        (ir.compiler-ir-function-list-compact
-                          total-switch-functions)
+                        (ir.compiler-ir-function-list-compact late-functions)
                         externs)))))))))]))
 
 (define (optimize-program-with-reader-context-and-level
@@ -70948,106 +71231,166 @@
           (opt-remap-spans-program spans program))
         (begin
           (cfg compile-profile (compiler-opt-profile-start profile-state))
-          (match (opt-inline-program-functions-with-spans
-            type-segment-bases
-            functions
-            level
-            spans)
-            [(OptInlineSpanProgram.Program reachable-functions inline-spans)
+          ;; Everything the inline stage builds -- the devirtualized function
+          ;; index, the call graph, the SCC and census tables, every rewritten
+          ;; caller body, and every superseded spans array -- is dead once
+          ;; `optimize-function-list-with-level-and-summaries` below has escaped
+          ;; each optimized function into this arena. Running the stage in a
+          ;; dedicated arena lets that whole generation be released there
+          ;; instead of riding the compiler-entry arena through the backend.
+          (let
+            [enclosing : i64 (arena.tl_arena_current)]
+            [inline-arena : i64 (arena.tl_arena_make)]
+            [_enter-inline-arena : unit
+              (unsafe
+                (arena.tl_arena_set inline-arena))]
+            [inlined : OptInlineSpanProgram
+              (opt-inline-program-functions-with-spans
+                type-segment-bases
+                functions
+                level
+                spans)]
+            [_leave-inline-arena : unit
+              (unsafe
+                (arena.tl_arena_set enclosing))]
+            ;; The inline stage rebinds its two module-level tables on the way
+            ;; out, and it does so while its own arena is current. Rebind them
+            ;; again here so neither global names storage inside the arena this
+            ;; function is about to destroy.
+            [_rebind-inline-globals : unit
               (begin
-                (cfg
-                  compile-profile
-                  (compiler-opt-profile-finish profile-state "pre_prune"))
-                (cfg compile-profile (compiler-opt-profile-start profile-state))
-                (let
-                  [pruned : OptPrunedProgram
-                    (opt-prune-unreachable-program
-                      globals
-                      reachable-functions
-                      externs)]
-                  [pruned-globals : ir.CompilerIrGlobalList
-                    (opt-pruned-program-globals pruned)]
-                  [pruned-functions : ir.CompilerIrFunctionList
-                    (opt-pruned-program-functions pruned)]
-                  [summaries : OptLoopBceSummaries
-                    (opt-loop-bce-summaries-set-profile-state
-                      (opt-build-program-summaries
-                        type-segment-bases
-                        pruned-globals
-                        pruned-functions
-                        level)
-                      profile-state)]
-                  [_load-cse-profile-reset : unit
-                    (cfg
-                      compile-profile
-                      (compiler-opt-load-cse-profile-reset)
-                      unit)]
-                  [optimized-functions : ir.CompilerIrFunctionList
-                    (optimize-function-list-with-level-and-summaries
-                      pools
-                      type-segment-bases
-                      pruned-functions
-                      level
-                      summaries)]
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-opt-profile-finish profile-state "functions"))
-                    (cfg
-                      compile-profile-summary
-                      (compiler-opt-profile-summary-emit
-                        (struct-get summaries profile-state)))
-                    (cfg compile-profile (compiler-opt-load-cse-profile-emit))
-                    (cfg
-                      compile-profile
-                      (compiler-opt-profile-start profile-state))
-                    (let
-                      [final-pruned
-                        : OptPrunedProgram
-                        ;; Keep scanning the original global initializers so a
-                        ;; function referenced only from one still follows the
-                        ;; existing reachability rule even if that global is
-                        ;; later filtered from the emitted program.
-                        (opt-prune-unreachable-program
-                          globals
-                          optimized-functions
-                          externs)]
-                      [final-globals : ir.CompilerIrGlobalList
-                        (opt-pruned-program-globals final-pruned)]
-                      [final-functions : ir.CompilerIrFunctionList
-                        (opt-pruned-program-functions final-pruned)]
-                      [scratch-reset-functions : ir.CompilerIrFunctionList
-                        (opt-scratch-reset-function-list-with-level
+                (opt-inline-multiblock-ok-memo-reset!)
+                (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
+            (match inlined
+              [(OptInlineSpanProgram.Program
+                  reachable-functions
+                  inline-arena-spans)
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-opt-profile-finish profile-state "pre_prune"))
+                  (cfg
+                    compile-profile
+                    (compiler-opt-profile-start profile-state))
+                  (let
+                    ;; The one inline-stage result that must survive the arena:
+                    ;; the spans table is consumed after the destroy, by
+                    ;; `opt-remap-spans-program` at the tail of this function.
+                    [inline-spans : ir.CompilerSourceSpans
+                      (ir.compiler-source-spans-escape inline-arena-spans)]
+                    [pruned : OptPrunedProgram
+                      (opt-prune-unreachable-program
+                        globals
+                        reachable-functions
+                        externs)]
+                    [pruned-globals : ir.CompilerIrGlobalList
+                      (opt-pruned-program-globals pruned)]
+                    [pruned-functions : ir.CompilerIrFunctionList
+                      (opt-pruned-program-functions pruned)]
+                    ;; Copy the surviving functions out of the inline arena and
+                    ;; release it before the loop; see `opt-optimizer-input-carrier`.
+                    ;; `pruned-globals` names the driver's globals, which live in
+                    ;; the lower-IR arena and are untouched by this release.
+                    [carrier : i64 (opt-optimizer-input-carrier level)]
+                    [optimizer-functions : ir.CompilerIrFunctionList
+                      (opt-optimizer-input-carry pools carrier pruned-functions)]
+                    [_release-inline-arena-early : unit
+                      (if (= carrier 0)
+                        unit
+                        (opt-release-optimizer-input-arena
+                          "optimize-inline"
+                          inline-arena))]
+                    [summaries : OptLoopBceSummaries
+                      (opt-loop-bce-summaries-set-profile-state
+                        (opt-build-program-summaries
                           type-segment-bases
-                          final-functions
-                          level)]
-                      [paired-bounds-functions : ir.CompilerIrFunctionList
-                        (if (< level 2)
-                          scratch-reset-functions
-                          (opt-late-bounds-pair-function-list
+                          pruned-globals
+                          optimizer-functions
+                          level)
+                        profile-state)]
+                    [_load-cse-profile-reset : unit
+                      (cfg
+                        compile-profile
+                        (compiler-opt-load-cse-profile-reset)
+                        unit)]
+                    [optimized-functions : ir.CompilerIrFunctionList
+                      (optimize-function-list-with-level-and-summaries
+                        pools
+                        type-segment-bases
+                        optimizer-functions
+                        level
+                        summaries)]
+                    ;; No live pointer into the optimizer-input arena remains
+                    ;; here. Every function in `optimized-functions` was
+                    ;; deep-cloned into the enclosing arena on its way out of the
+                    ;; escaping optimizer -- level 2 through
+                    ;; `compiler-ir-clone-function`, level 1 through the
+                    ;; equivalent DCE block escape -- `inline-spans` was copied
+                    ;; out above, and `globals`/`externs` are the driver's program
+                    ;; shell, which the inline stage only reads. That leaves
+                    ;; `reachable-functions`, `pruned`/`pruned-functions`,
+                    ;; `optimizer-functions`, `summaries`, the function index and
+                    ;; the census as the arena's only referents, and all of them
+                    ;; are dead from here on: nothing below this binding reads
+                    ;; them. `summaries` carries only i64/i64 maps and the
+                    ;; profile-state struct, never a body pointer, so the
+                    ;; compile-profile-summary emit below stays valid.
+                    [_release-optimizer-input : unit
+                      (if (= carrier 0)
+                        (opt-release-optimizer-input-arena
+                          "optimize-inline"
+                          inline-arena)
+                        (opt-release-optimizer-input-arena
+                          "optimizer-input"
+                          carrier))]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-opt-profile-finish profile-state "functions"))
+                      (cfg
+                        compile-profile-summary
+                        (compiler-opt-profile-summary-emit
+                          (struct-get summaries profile-state)))
+                      (cfg compile-profile (compiler-opt-load-cse-profile-emit))
+                      (cfg
+                        compile-profile
+                        (compiler-opt-profile-start profile-state))
+                      (let
+                        [final-pruned
+                          : OptPrunedProgram
+                          ;; Keep scanning the original global initializers so a
+                          ;; function referenced only from one still follows the
+                          ;; existing reachability rule even if that global is
+                          ;; later filtered from the emitted program.
+                          (opt-prune-unreachable-program
+                            globals
+                            optimized-functions
+                            externs)]
+                        [final-globals : ir.CompilerIrGlobalList
+                          (opt-pruned-program-globals final-pruned)]
+                        [final-functions : ir.CompilerIrFunctionList
+                          (opt-pruned-program-functions final-pruned)]
+                        [late-functions : ir.CompilerIrFunctionList
+                          (opt-late-function-list-with-level
+                            pools
                             type-segment-bases
-                            scratch-reset-functions))]
-                      [total-switch-functions : ir.CompilerIrFunctionList
-                        (if (< level 2)
-                          paired-bounds-functions
-                          (opt-late-total-switch-function-list
-                            type-segment-bases
-                            paired-bounds-functions))]
-                      [optimized : ir.CompilerIrProgram
-                        (ir.CompilerIrProgram.Program
-                          final-globals
-                          (ir.compiler-ir-function-list-compact
-                            total-switch-functions)
-                          externs)]
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-finish
-                            profile-state
-                            "post_prune"))
-                        (CompilerOptimizedProgram.Program
-                          (compiler-opt-debug-finish-program optimized)
-                          (opt-remap-spans-program inline-spans optimized)))))))])))]))
+                            final-functions
+                            level)]
+                        [optimized : ir.CompilerIrProgram
+                          (ir.CompilerIrProgram.Program
+                            final-globals
+                            (ir.compiler-ir-function-list-compact
+                              late-functions)
+                            externs)]
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-opt-profile-finish
+                              profile-state
+                              "post_prune"))
+                          (CompilerOptimizedProgram.Program
+                            (compiler-opt-debug-finish-program optimized)
+                            (opt-remap-spans-program inline-spans optimized)))))))]))))]))
 
 (define (optimize-program-with-spans-and-reader-context-and-level
   [pools : ast.AstNodePoolContext]
@@ -72841,32 +73184,6 @@
           frame
           (box-get rest)))]))
 
-(define (opt-scratch-reset-function-unchecked-with-context-result
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match func
-    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-      (match (opt-scratch-reset-apply-loops
-        type-segment-bases
-        context
-        blocks
-        frame
-        (opt-cfg-natural-loops-with-context blocks context))
-        [(OptScratchResetApplyResult.Result next-blocks next-frame changed)
-          (if changed
-            (let
-              [next : ir.CompilerIrFunction
-                (ir.CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  next-frame
-                  next-blocks)]
-              [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
-              (OptFunctionCtxResult.Result next next-context))
-            (OptFunctionCtxResult.Result func context))])]))
-
 (define (opt-scratch-reset-function-with-context-result
   [type-segment-bases : i64]
   [context : OptCfgContext]
@@ -72915,45 +73232,150 @@
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
-(define (opt-scratch-reset-function-unchecked
+(define (opt-scratch-reset-function-unchecked-rewrite
   [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  [func : ir.CompilerIrFunction]) : OptLateRewriteResult
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (if (<=
         (ir.compiler-ir-block-list-count blocks)
         (opt-heavy-pass-block-limit))
-        (match (opt-scratch-reset-function-unchecked-with-context-result
-          type-segment-bases
-          (opt-cfg-context-build blocks)
-          func)
-          [(OptFunctionCtxResult.Result next _) next])
-        func)]))
+        (let
+          [context : OptCfgContext (opt-cfg-context-build blocks)]
+          (match (opt-scratch-reset-apply-loops
+            type-segment-bases
+            context
+            blocks
+            frame
+            (opt-cfg-natural-loops-with-context blocks context))
+            [(OptScratchResetApplyResult.Result next-blocks next-frame changed)
+              (if changed
+                (OptLateRewriteResult.Result
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    next-frame
+                    next-blocks)
+                  true)
+                (OptLateRewriteResult.Result func false))]))
+        (OptLateRewriteResult.Result func false))]))
 
-(define (opt-scratch-reset-function-list-unchecked
+;; --- fused late (post-prune) function pass -----------------------------------
+;;
+;; The three post-prune rewrites -- scratch-reset, paired bounds and total
+;; switch -- are independent per-function maps: none of them reads another
+;; function, keeps state between functions, or observes an intermediate whole
+;; program list. Run as three whole-program traversals they left three complete
+;; generations of rewritten functions plus all of their CFG/loop/verify analysis
+;; in the compiler-entry arena, none of it reachable once the next traversal had
+;; run.
+;;
+;; So compose them per function instead, inside one reusable scratch arena that
+;; is rewound after every function. Only a function some rewrite actually
+;; changed is deep-cloned back into the enclosing arena; an untouched function
+;; is already owned there, so it is returned as-is and costs nothing. That keeps
+;; the enclosing arena's growth at "the functions this stage rewrote" rather
+;; than "three copies of the whole program".
+(define (opt-late-function-escaping
+  [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
+  [func : ir.CompilerIrFunction]
+  [scratch : i64]) : ir.CompilerIrFunction
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        (match (opt-scratch-reset-function-unchecked-rewrite
+          type-segment-bases
+          func)
+          [(OptLateRewriteResult.Result reset-func reset-changed)
+            (match (opt-late-bounds-pair-function-rewrite
+              type-segment-bases
+              reset-func)
+              [(OptLateRewriteResult.Result paired-func paired-changed)
+                (match (opt-late-total-switch-function-rewrite
+                  type-segment-bases
+                  paired-func)
+                  [(OptLateRewriteResult.Result switched-func switched-changed)
+                    (let
+                      [changed : bool
+                        (or reset-changed paired-changed switched-changed)]
+                      [scratch-head : i64 (arena.tl_arena_current)]
+                      (begin
+                        (unsafe
+                          (arena.tl_arena_set enclosing))
+                        (let
+                          ;; The rewritten function is built from a mix of
+                          ;; scratch nodes and shared input nodes, so escaping
+                          ;; it is a full deep clone. An unchanged function
+                          ;; never entered the scratch generation at all.
+                          [escaped : ir.CompilerIrFunction
+                            (if changed
+                              (ir.compiler-ir-clone-function
+                                pools
+                                switched-func)
+                              func)]
+                          [new-enclosing : i64 (arena.tl_arena_current)]
+                          [_restore : unit
+                            (unsafe
+                              (arena.tl_arena_set scratch-head)
+                              (arena.tl_region_reset mark)
+                              (arena.tl_arena_set new-enclosing))]
+                          escaped)))])])])))))
+
+(define (opt-late-function-list-escaping
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionList]
+  [scratch : i64]) : ir.CompilerIrFunctionList
   (match functions
     [(ir.CompilerIrFunctionList.Nil) (ir.CompilerIrFunctionList.Nil)]
     [(ir.CompilerIrFunctionList.Cons func rest)
       (ir.compiler-ir-function-cons
-        (opt-scratch-reset-function-unchecked type-segment-bases func)
-        (opt-scratch-reset-function-list-unchecked
+        (opt-late-function-escaping pools type-segment-bases func scratch)
+        (opt-late-function-list-escaping
+          pools
           type-segment-bases
-          (box-get rest)))]
+          (box-get rest)
+          scratch))]
     [(ir.CompilerIrFunctionList.Array seq)
-      (ir.compiler-ir-function-list-compact
-        (opt-scratch-reset-function-list-unchecked
-          type-segment-bases
-          (ir.compiler-ir-function-seq-to-list seq)))]))
+      (opt-late-function-list-escaping
+        pools
+        type-segment-bases
+        (ir.compiler-ir-function-seq-to-list seq)
+        scratch)]))
 
-(define (opt-scratch-reset-function-list-with-level
+(define (opt-late-function-list-with-level
+  [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionList]
   [level : i64]) : ir.CompilerIrFunctionList
   (if (< level 2)
     functions
-    (opt-scratch-reset-function-list-unchecked type-segment-bases functions)))
+    (let
+      [scratch : i64 (arena.tl_arena_make)]
+      [result : ir.CompilerIrFunctionList
+        (opt-late-function-list-escaping
+          pools
+          type-segment-bases
+          functions
+          scratch)]
+      (begin
+        ;; Every function in `result` is owned by the enclosing arena: escaped
+        ;; by clone when a rewrite changed it, otherwise never copied out of
+        ;; the enclosing arena in the first place. Nothing points into scratch.
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "optimize"
+          "optimizer-late-scratch"
+          scratch)
+        (unsafe
+          (arena.tl_arena_destroy scratch))
+        result))))
 
 (define (opt-scratch-reset-pre-ssa-function-with-context-result
   [pools : ast.AstNodePoolContext]

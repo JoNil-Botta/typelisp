@@ -23,7 +23,7 @@ benchmark/typelisp/spmd_reduce	1477213867
 benchmark/c-scalar/spmd_reduce	3381322973
 benchmark/typelisp/cfg_domloops	1067741583
 benchmark/c-scalar/cfg_domloops	423136951
-benchmark/typelisp/gvn_table	1478882266
+benchmark/typelisp/gvn_table	1463191388
 benchmark/c-scalar/gvn_table	625075892
 benchmark/typelisp/intern_table	719949264
 benchmark/c-scalar/intern_table	296287351
@@ -31,6 +31,6 @@ benchmark/typelisp/lex_source	876146764
 benchmark/c-scalar/lex_source	481142664
 benchmark/typelisp/liveness_scan	692704906
 benchmark/c-scalar/liveness_scan	433553439
-benchmark/typelisp/peephole_lines	1073131009
+benchmark/typelisp/peephole_lines	1071673393
 benchmark/c-scalar/peephole_lines	464527258
-self_compile/compile_cli_opt1	64425831498
+self_compile/compile_cli_opt1	60679805974

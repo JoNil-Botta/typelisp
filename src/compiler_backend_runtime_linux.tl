@@ -47,9 +47,32 @@ tl_current_arena:
     next-reg
     profile))
 
-(define (compiler-backend-runtime-region-mark-functions) : String
+;; tl_region_mark's body is the target-neutral recipe, which also feeds the
+;; Windows COFF leaf, so its ELF symbol directives are added by this Linux
+;; wrapper instead of inside the shared emitter. `.type` ahead of the recipe's
+;; own `.globl` is equivalent to the adjacent-to-label placement used for every
+;; other helper, and needs no anchor text that could silently stop matching;
+;; `.size` closes the symbol after the recipe's last emitted byte. The wrapper
+;; contributes these two lines and nothing else, so deleting every `.type` /
+;; `.size` line restores the recipe's text byte for byte.
+;;
+;; The recipe call keeps its own helper because `compiler-backend-current-arena-load`
+;; is also the name of the two-argument target dispatcher in compiler_backend.tl.
+;; When that module is itself the compile root -- the selfhost compile manifest
+;; builds every top-level source standalone -- a `str-cat` operand anywhere in a
+;; function body makes this module's unqualified names resolve against the root
+;; module's bindings, so the wrapper would type "%rax" against
+;; `CompilerBackendTarget` and fail with E0206. Keeping the shadowed call in a
+;; macro-free function sidesteps that; the emitted text is unchanged either way.
+(define (compiler-backend-runtime-region-mark-recipe) : String
   (runtime_common.compiler-backend-runtime-region-mark-functions
     (compiler-backend-current-arena-load "%rax")))
+
+(define (compiler-backend-runtime-region-mark-functions) : String
+  (str_cat.str-cat
+    "    .type tl_region_mark,@function\n"
+    (compiler-backend-runtime-region-mark-recipe)
+    "    .size tl_region_mark, . - tl_region_mark\n"))
 
 (define (compiler-backend-runtime-data
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
@@ -89,6 +112,7 @@ tl_current_arena:
       (str_cat.str-cat
         (compiler-backend-runtime-fast-alloc-functions "%rdi" "%rcx" profile)
         "    .globl tl_alloc
+    .type tl_alloc,@function
 tl_alloc:
     addq $7, %rdi
     jc .L_tl_alloc_abort
@@ -246,9 +270,13 @@ tl_alloc:
     movq %r9, %fs:tl_current_arena@tpoff
     movq %r8, %rax
 "]
-    [tail-asm : String "    ret
+    ;; `.L_tl_alloc_abort` is tl_alloc's own out-of-line stub, so the symbol
+    ;; extent closes after it -- the last byte this block emits.
+    [tail-asm : String
+      "    ret
 .L_tl_alloc_abort:
     jmp tl_oom_abort
+    .size tl_alloc, . - tl_alloc
 
 "]
     (str_cat.str-cat
@@ -298,6 +326,7 @@ tl_alloc:
 (define (compiler-backend-runtime-linux-arena-functions-base [profile : bool]) : String
   (string.append
     "    .globl tl_thread_init
+    .type tl_thread_init,@function
 tl_thread_init:
     movq $4096, %rsi
     xorq %rdi, %rdi
@@ -322,16 +351,20 @@ tl_thread_init:
     movq $60, %rax
     movq $134, %rdi
     syscall
+    .size tl_thread_init, . - tl_thread_init
 
     .globl tl_arena_current
+    .type tl_arena_current,@function
 tl_arena_current:
 "
     (string.append
       (compiler-backend-current-arena-load "%rax")
       (string.append
         "    ret
+    .size tl_arena_current, . - tl_arena_current
 
     .globl tl_arena_set
+    .type tl_arena_set,@function
 tl_arena_set:
 "
         (string.append
@@ -347,18 +380,24 @@ tl_arena_set:
             (compiler-backend-current-arena-store "%rdi")
             (string.append
               "    ret
+    .size tl_arena_set, . - tl_arena_set
 
     .globl tl_arena_poison_enable
+    .type tl_arena_poison_enable,@function
 tl_arena_poison_enable:
     movq $1, .L_tl_arena_poison_enabled(%rip)
     ret
+    .size tl_arena_poison_enable, . - tl_arena_poison_enable
 
     .globl tl_arena_make
+    .type tl_arena_make,@function
 tl_arena_make:
     movq $0x4000000, %rsi
     jmp .L_tl_arena_make_sized
+    .size tl_arena_make, . - tl_arena_make
 
     .globl tl_arena_make_small
+    .type tl_arena_make_small,@function
 tl_arena_make_small:
     movq $0x1000000, %rsi
 .L_tl_arena_make_sized:
@@ -387,8 +426,10 @@ tl_arena_make_small:
     movq $60, %rax
     movq $134, %rdi
     syscall
+    .size tl_arena_make_small, . - tl_arena_make_small
 
     .globl tl_arena_make_atomic
+    .type tl_arena_make_atomic,@function
 tl_arena_make_atomic:
     movq $0x4000000, %rsi
     xorq %rdi, %rdi
@@ -416,8 +457,10 @@ tl_arena_make_atomic:
     movq $60, %rax
     movq $134, %rdi
     syscall
+    .size tl_arena_make_atomic, . - tl_arena_make_atomic
 
     .globl tl_arena_destroy
+    .type tl_arena_destroy,@function
 tl_arena_destroy:
     push %rbx
     push %r12
@@ -491,6 +534,7 @@ tl_arena_destroy:
     pop %r12
     pop %rbx
     ret
+    .size tl_arena_destroy, . - tl_arena_destroy
 
 "))))))))
 
@@ -532,6 +576,7 @@ tl_arena_destroy:
     ret
 
     .globl tl_arena_debug_protect_never_reset
+    .type tl_arena_debug_protect_never_reset,@function
 tl_arena_debug_protect_never_reset:
     testq %rdi, %rdi
     jz .L_tl_arena_debug_protect_invalid
@@ -553,8 +598,10 @@ tl_arena_debug_protect_never_reset:
     ret
 .L_tl_arena_debug_protect_invalid:
     jmp tl_arena_debug_protect_abort
+    .size tl_arena_debug_protect_never_reset, . - tl_arena_debug_protect_never_reset
 
     .globl tl_arena_debug_assert_pool_install
+    .type tl_arena_debug_assert_pool_install,@function
 tl_arena_debug_assert_pool_install:
     testq %rdi, %rdi
     jz .L_tl_arena_debug_pool_install_done
@@ -565,6 +612,7 @@ tl_arena_debug_assert_pool_install:
     jnz tl_arena_debug_pool_install_abort
 .L_tl_arena_debug_pool_install_done:
     ret
+    .size tl_arena_debug_assert_pool_install, . - tl_arena_debug_assert_pool_install
 
 ")
 
@@ -632,6 +680,7 @@ tl_arena_debug_assert_pool_install:
 (define (compiler-backend-runtime-region-reset-functions-base [profile : bool]) : String
   (string.append
     "    .globl tl_region_reset
+    .type tl_region_reset,@function
 tl_region_reset:
     push %rbx
     push %r12
@@ -789,6 +838,7 @@ tl_region_reset:
     ret
 .L_tl_region_reset_invalid:
     jmp tl_region_abort
+    .size tl_region_reset, . - tl_region_reset
 
 ")))))))
 
@@ -842,6 +892,7 @@ tl_region_reset:
 
 (define (compiler-backend-runtime-memcpy-functions) : String
   "    .globl tl_memcpy
+    .type tl_memcpy,@function
 tl_memcpy:
     movq %rdx, %rcx
     cmpq %rsi, %rdi
@@ -864,10 +915,12 @@ tl_memcpy:
     andq $7, %rcx
     rep movsb
     ret
+    .size tl_memcpy, . - tl_memcpy
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String
   "    .globl tl_memchr
+    .type tl_memchr,@function
 tl_memchr:
     testq %rsi, %rsi
     jle .Ltl_memchr_not_found
@@ -883,6 +936,7 @@ tl_memchr:
     movq $-1, %rax
 .Ltl_memchr_found:
     ret
+    .size tl_memchr, . - tl_memchr
 ")
 
 ;; Arena pages arrive zeroed from the OS and the bump allocator only moves
@@ -894,6 +948,7 @@ tl_memchr:
 ;; gates fills of 64 bytes or more.
 (define (compiler-backend-runtime-array-zero-functions) : String
   "    .globl tl_array_zero
+    .type tl_array_zero,@function
 tl_array_zero:
     cmpq $64, %rsi
     jb .Ltl_array_zero_fill
@@ -915,10 +970,12 @@ tl_array_zero:
     andq $7, %rcx
     rep stosb
     ret
+    .size tl_array_zero, . - tl_array_zero
 ")
 
 (define (compiler-backend-runtime-tlci-entry-functions) : String
   "    .globl tl_tlci_call_image_entry
+    .type tl_tlci_call_image_entry,@function
 tl_tlci_call_image_entry:
     movq %rdi, %rax
     movq %rsi, %rdi
@@ -927,11 +984,13 @@ tl_tlci_call_image_entry:
     call *%rax
     addq $8, %rsp
     ret
+    .size tl_tlci_call_image_entry, . - tl_tlci_call_image_entry
 
 ")
 
 (define (compiler-backend-runtime-tlci-macro-entry-functions) : String
   "    .globl tl_tlci_call_macro_entry
+    .type tl_tlci_call_macro_entry,@function
 tl_tlci_call_macro_entry:
     movq %rdi, %rax
     movq %rsi, %rdi
@@ -944,6 +1003,7 @@ tl_tlci_call_macro_entry:
     call *%rax
     addq $8, %rsp
     ret
+    .size tl_tlci_call_macro_entry, . - tl_tlci_call_macro_entry
 
 ")
 

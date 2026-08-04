@@ -1081,6 +1081,10 @@ fi
 # load-CSE source crossed the expr typecheck boundary from 26 to 27 segments.
 # #5670's finer-grained diagnostic spans crossed it from 27 to 28; the same
 # Windows probe measured 58720256 physical payload bytes.
+# #5841's dense text-buffer generated implementation crossed the expr
+# macro_expand boundary from 48 to 49; the authoritative Windows probe
+# measured 3145809 used nodes, 3211264 capacity, and 102760448 physical
+# payload bytes.
 #
 # type typecheck DID cross on the AstExpr row narrowing, 6 -> 7 segments. That
 # commit moves nine variants' inline AstType payloads into the type pool, so the

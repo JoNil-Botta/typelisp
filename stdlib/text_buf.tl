@@ -1,13 +1,13 @@
 ;# Arena-aware text buffer utilities for incremental string construction.
 ;#
-;# `TextBuf` is a byte-oriented text builder backed by active-arena chunk
-;# nodes. Appending records owned chunks without concatenating the accumulated
-;# prefix on every step; mutable `append!` helpers update a builder
-;# in place, and `render` is the single operation that materializes an
-;# owned `String` in the active arena.
+;# `TextBuf` is a byte-oriented text builder backed by persistent snapshots.
+;# Empty and one-chunk values stay inline; later appends use chronological
+;# String prefixes with copy-on-write snapshots. Mutable `append!` helpers
+;# update a latest snapshot in place, and `render` is the single operation
+;# that materializes an owned `String` in the active arena.
 ;#
 ;# The owned and borrowed TextBuf declaration bodies are generated from
-;# `stdlib/text_buf_family.tl`. This module keeps the flat owned compatibility
+;# `stdlib/text_buf_family.tl`. This module keeps the owned compatibility
 ;# namespace and the public mutable macro shims; the borrowed-chunk companion
 ;# surface lives in `stdlib/text_buf_borrowed.tl`.
 ;#
@@ -31,6 +31,9 @@
 (import stdlib.array)
 
 ;; lint-allow: unused-import
+(import stdlib.arena)
+
+;; lint-allow: unused-import
 (import stdlib.byte_buf)
 (import stdlib.comptime)
 
@@ -39,22 +42,14 @@
 (import stdlib.string)
 (import stdlib.text_buf_family)
 
+;# Emit the complete owned family in one declaration splice.
 (text_buf_family.owned)
 
 ;: Mutably append `chunk` to the owned `buf` place without rendering its prefix.
 (defmacro (append! [buf : comptime.Expr] [chunk : String]) : unit
   `(let
     [text-buf-append-chunk : String ,chunk]
-    [text-buf-append-chunk-len : i64 (string-length text-buf-append-chunk)]
-    (if (= text-buf-append-chunk-len 0)
-      unit
-      (begin
-        (set!
-          (struct-get ,buf chunks)
-          (chunk-cons text-buf-append-chunk (struct-get ,buf chunks)))
-        (set!
-          (struct-get ,buf len)
-          (+ (struct-get ,buf len) text-buf-append-chunk-len))))))
+    (set! ,buf (append ,buf text-buf-append-chunk))))
 
 ;: Mutably append one char byte to `buf`.
 (defmacro (append-char! [buf : comptime.Expr] [c : char]) : unit
@@ -201,7 +196,59 @@
           (stdlib.text_buf.text-buf-test-assert-text-buf
             buf
             "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-            "balanced repeated append")))
+            "dense chunk order crosses capacity boundary")
+          (test.assert-i64-eq
+            (stdlib.text_buf.chunk-count (struct-get buf chunks) 0)
+            40
+            "dense chunk count crosses capacity boundary")))
+      (let
+        [base : TextBuf (stdlib.text_buf.append (stdlib.text_buf.empty) "base")]
+        [left : TextBuf (stdlib.text_buf.append base "-left")]
+        [right : TextBuf (stdlib.text_buf.append base "-right")]
+        (begin
+          (stdlib.text_buf.text-buf-test-assert-text-buf
+            base
+            "base"
+            "functional base snapshot remains unchanged")
+          (stdlib.text_buf.text-buf-test-assert-text-buf
+            left
+            "base-left"
+            "functional left branch remains independent")
+          (stdlib.text_buf.text-buf-test-assert-text-buf
+            right
+            "base-right"
+            "functional right branch remains independent")))
+      (let
+        [base : TextBuf (stdlib.text_buf.empty)]
+        [i : i64 0]
+        (begin
+          (while (< i 32)
+            (begin
+              (set! base (stdlib.text_buf.append base "o"))
+              (set! i (+ i 1))))
+          (let
+            [outer-arena : arena.Arena (arena.make)]
+            [child-ok : bool
+              (with-escape
+                outer-arena
+                (let
+                  [child : TextBuf (stdlib.text_buf.append base "-inner")]
+                  (string.eq
+                    (stdlib.text_buf.render child)
+                    "oooooooooooooooooooooooooooooooo-inner")))]
+            [sibling-ok : bool
+              (with-escape
+                outer-arena
+                (let
+                  [sibling : TextBuf (stdlib.text_buf.append base "-sibling")]
+                  (string.eq
+                    (stdlib.text_buf.render sibling)
+                    "oooooooooooooooooooooooooooooooo-sibling")))]
+            (begin
+              (test.assert-true child-ok "nested arena child growth renders")
+              (test.assert-true
+                sibling-ok
+                "nested arena retained snapshot growth renders")))))
       (stdlib.text_buf.text-buf-test-assert-text-buf
         (stdlib.text_buf.append
           (stdlib.text_buf.append

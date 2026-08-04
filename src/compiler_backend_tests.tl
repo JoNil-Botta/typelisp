@@ -36366,16 +36366,19 @@
     [_set-home : unit
       (unsafe
         (arena.set! home))]
-    ;; Leave eight bytes in the Linux root segment. Appending even this
-    ;; one-byte retained chunk must advance the home chain without touching
-    ;; 64 MiB of pages, making the stale-handle regression cheap to exercise.
+    ;; Leave eight bytes in the Linux root segment. The first retained chunk
+    ;; stays Inline; appending the second chunk forces dense-store materialization
+    ;; and advances the home chain without touching 64 MiB of pages,
+    ;; making the stale-handle regression cheap to exercise.
     [_fill-home : i64 (compiler-backend-test-runtime-alloc 67108792)]
     [home-before-copy : arena.Arena (arena.current)]
     [_set-scratch : unit
       (unsafe
         (arena.set! scratch))]
     [copied : text_buf.TextBuf
-      (in-arena home-before-copy (text_buf.append (text_buf.empty) "x"))]
+      (in-arena
+        home-before-copy
+        (text_buf.append (text_buf.append (text_buf.empty) "x") "y"))]
     [_carry-home : unit
       (compiler_backend.compiler-backend-assembly-stream-carry-home-current!
         home-before-copy)]
@@ -36384,7 +36387,7 @@
     [ok : bool
       (and
         (arena.eq? (arena.current) scratch)
-        (not (text_buf.empty? copied))
+        (string.eq (text_buf.render copied) "xy")
         (not (arena.eq? carried-home home-before-copy)))]
     (begin
       (compiler_backend.compiler-backend-test-set-compiler-backend-assembly-stream-home-arena!

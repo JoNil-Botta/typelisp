@@ -1,15 +1,23 @@
 ;# Borrowed text buffer companion surface.
 ;#
 ;# `TextBufBorrowed` stores `(& text str)` chunks without copying at append
-;# time, plus owned chunks for explicit copy boundaries. Rendering copies
-;# borrowed chunks at the materialization boundary, then delegates final ordered
-;# chunk rendering to `text_buf.tl`.
+;# time, plus owned chunks for explicit copy boundaries. Empty and one-chunk
+;# values stay inline; dense values reuse the owned TextBufChunkList as their
+;# committed prefix and carry one clone-visible String tail plus a bool merge
+;# flag. Borrowed tails are String view headers retained by the lifetime
+;# anchor; rendering materializes independent output bytes.
+;# Rendering and `chunks-to-owned` delegate to the owned TextBuf machinery;
+;# rendering materializes ordered bytes, while `chunks-to-owned` copies at the
+;# explicit ownership boundary.
 ;#
 ;# The borrowed and owned TextBuf declaration bodies are generated from
-;# `stdlib/text_buf_family.tl`; this module keeps the flat borrowed
-;# compatibility namespace and inline test surface.
+;# `stdlib/text_buf_family.tl`; this module keeps the borrowed compatibility
+;# namespace and small inline API test surface.
 ;; lint-allow: unused-import
 (import stdlib.array)
+
+;; lint-allow: unused-import
+(import stdlib.arena)
 (import stdlib.string)
 
 ;; lint-allow: unused-import
@@ -19,6 +27,7 @@
 (import stdlib.text_buf)
 (import stdlib.text_buf_family)
 
+;# Emit the complete borrowed family in one declaration splice.
 (text_buf_family.borrowed)
 
 ;: Inline test helper that forces a borrowed text buffer test failure.
@@ -77,9 +86,76 @@
       (if (string.eq (render sliced-two) sliced-source)
         unit
         (test-fail))
+      (if (string.eq (render sliced-one) "alpha\n")
+        unit
+        (test-fail))
       (if (= (chunk-count mixed) 3)
         unit
         (test-fail))
       (if (string.eq mixed-rendered "alpha\nbeta-!")
         unit
-        (test-fail)))))
+        (test-fail))
+      (let
+        [many-source : String "x"]
+        [many : (TextBufBorrowed many-source) (empty-like (& many-source))]
+        [many-index : i64 0]
+        (begin
+          (while (< many-index 40)
+            (begin
+              (set! many (append many (& many-source)))
+              (set! many-index (+ many-index 1))))
+          (if (= (chunk-count many) 40)
+            unit
+            (test-fail))
+          (if (= (length many) 40)
+            unit
+            (test-fail))
+          (if (string.eq
+            (render many)
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+            unit
+            (test-fail))))
+      (let
+        [branch-source : String "branch"]
+        [branch-base : (TextBufBorrowed branch-source)
+          (empty-like (& branch-source))]
+        [branch-left : (TextBufBorrowed branch-source)
+          (append-char branch-base '!')]
+        [branch-right : (TextBufBorrowed branch-source)
+          (append-owned branch-base "?")]
+        (begin
+          (if (= (chunk-count branch-base) 0)
+            unit
+            (test-fail))
+          (if (string.eq (render branch-left) "!")
+            unit
+            (test-fail))
+          (if (string.eq (render branch-right) "?")
+            unit
+            (test-fail))))
+      (let
+        [mixed-source : String "abc"]
+        [mixed-empty : (TextBufBorrowed mixed-source)
+          (empty-like (& mixed-source))]
+        [mixed-left : (TextBufBorrowed mixed-source)
+          (append-slice mixed-empty (& mixed-source) 0 2)]
+        [mixed-right : (TextBufBorrowed mixed-source)
+          (append-char
+            (append-owned (append-slice mixed-empty (& mixed-source) 2 1) "-")
+            '!')]
+        [joined : (TextBufBorrowed mixed-source)
+          (append-buffer mixed-left mixed-right)]
+        [owned-rendered : String
+          (match joined
+            [(TextBufBorrowed joined-chunks joined-len)
+              (let
+                [owned : text_buf.TextBuf
+                  (text_buf.TextBuf (chunks-to-owned joined-chunks) joined-len)]
+                (text_buf.render owned))])]
+        (begin
+          (if (string.eq (render joined) "abc-!")
+            unit
+            (test-fail))
+          (if (string.eq owned-rendered (render joined))
+            unit
+            (test-fail)))))))

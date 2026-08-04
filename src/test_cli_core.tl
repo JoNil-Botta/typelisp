@@ -3930,7 +3930,7 @@
       (process.env-cons
         "TYPELISP_STDLIB_TEST_PATH"
         (tltest-stdlib-env-fixture-path target)
-        (process.ProcessEnvNil)))))
+        (process.env-empty)))))
 
 (define (tltest-run-harness-output
   [source : String]

@@ -9,20 +9,20 @@
 ;# storage companion. Runtime wrappers validate borrowed commands and copy once
 ;# at the owned `ProcessCommand` boundary before calling `process.tl`.
 ;#
-;# Owned argv/env builders also expose vector-backed construction paths. The
-;# borrowed surface deliberately stays list-backed until there is a checked-in
-;# borrowed vector representation: routing borrowed text through owned vectors
-;# would copy before the `ProcessCommand` boundary. Ordered append helpers below
-;# provide vector-style construction while preserving borrowed lifetimes and the
-;# single owned-copy boundary.
+;# Owned argv/env builders also expose vector-backed construction paths. Borrowed
+;# builders use dense dynamic arrays of opaque one-word borrowed-reference
+;# records plus an explicit checked lifetime anchor. Bytes are not copied before
+;# the explicit owned boundary. The opaque representation is audited at the two
+;# conversion helpers below: every stored word is produced from a typed
+;# `(& text str)` through a one-element reference array, and every recovered
+;# reference uses the same named lifetime carried by the list anchor.
 ;: Borrowed process argument strings in argv order. All entries in one list
 ;: share one lifetime; use owned conversion to join independently scoped text.
-(defenum ProcessBorrowedStringList
+(defstruct ProcessBorrowedStringList
   (:lifetimes text)
-  (ProcessBorrowedStringNil)
-  (ProcessBorrowedStringCons
-    (& text str)
-    (Box (ProcessBorrowedStringList text))))
+  (slots (__tl_dyn-array u64))
+  (anchor (& text str))
+  (len i64))
 
 ;: Optional borrowed string value used for cwd and stdin configuration.
 (defenum ProcessBorrowedMaybeString
@@ -30,15 +30,20 @@
   (ProcessBorrowedNoString)
   (ProcessBorrowedSomeString (& text str)))
 
-;: Borrowed environment override list stored as name/value pairs. All entries
-;: in one list share one lifetime.
-(defenum ProcessBorrowedEnvList
+;: Borrowed environment name/value pair. Both strings share the `text` lifetime.
+(defstruct ProcessBorrowedEnvEntry
   (:lifetimes text)
-  (ProcessBorrowedEnvNil)
-  (ProcessBorrowedEnvCons
-    (& text str)
-    (& text str)
-    (Box (ProcessBorrowedEnvList text))))
+  (name (& text str))
+  (value (& text str)))
+
+;: Dense borrowed environment override list. All entries share the `text`
+;: lifetime; names and values are stored as opaque words with one checked anchor.
+(defstruct ProcessBorrowedEnvList
+  (:lifetimes text)
+  (name-slots (__tl_dyn-array u64))
+  (value-slots (__tl_dyn-array u64))
+  (anchor (& text str))
+  (len i64))
 
 ;: Borrowed process command data. The process runtime still receives owned
 ;: `ProcessCommand` values; borrowed commands copy at that explicit boundary.
@@ -50,22 +55,60 @@
   (env (ProcessBorrowedEnvList env))
   (stdin (ProcessBorrowedMaybeString stdin)))
 
+;: Store one borrowed string as its opaque machine-word representation. The
+;: caller must ensure the word remains paired with the same named lifetime;
+;: `borrowed-string-from-word` below enforces that lifetime at recovery sites.
+(define (borrowed-string-word [value : (& text str)]) : u64
+  (let
+    [cell : (Array (& text str) 1) (array value)]
+    (unsafe
+      (ptr-read (ptr-cast (array-data cell) : (Ptr u64))))))
+
+;: Recover a borrowed string from a word produced by `borrowed-string-word`.
+;: `_anchor` is intentionally runtime-unused; its type carries the checked
+;: lifetime that every stored word originated with.
+(define (borrowed-string-from-word [_anchor : (& text str)] [word : u64]) : (&
+    text
+    str)
+  (let
+    [cell : (Array u64 1) (array word)]
+    (unsafe
+      (ptr-read (ptr-cast (array-data cell) : (Ptr (& text str)))))))
+
 ;: Return an empty borrowed argument list tied to `text` without storing it.
 (define (args-empty-like [_text : (& text str)]) : (ProcessBorrowedStringList
     text)
-  ProcessBorrowedStringNil)
+  (let
+    [slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
+    (ProcessBorrowedStringList slots _text 0)))
 
 ;: Return the number of borrowed argv entries in `args`.
 (define (args-count [args : (ProcessBorrowedStringList text)]) : i64
-  (match args
-    [(ProcessBorrowedStringNil) 0]
-    [(ProcessBorrowedStringCons _ rest) (+ 1 (args-count (box-get rest)))]))
+  (struct-get args len))
+
+;: Return the borrowed argv entry at a valid `index`. Callers must validate
+;: indexes against `args-count`; no owned string is created.
+(define (args-ref [args : (ProcessBorrowedStringList text)] [index : i64]) : (&
+    text
+    str)
+  (borrowed-string-from-word
+    (struct-get args anchor)
+    (array-ref (struct-get args slots) index)))
 
 ;: Prepend a borrowed argument string to an argv list without copying bytes.
 (define (args-cons
   [value : (& text str)]
   [rest : (ProcessBorrowedStringList text)]) : (ProcessBorrowedStringList text)
-  (ProcessBorrowedStringCons value (box rest)))
+  (let
+    [slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
+    [i : i64 0]
+    (begin
+      (array-push! slots (borrowed-string-word value))
+      (while (< i (struct-get rest len))
+        (begin
+          (array-push! slots (array-ref (struct-get rest slots) i))
+          (set! i (+ i 1))))
+      (ProcessBorrowedStringList slots value (+ 1 (struct-get rest len))))))
 
 ;: Return a one-element borrowed argument list.
 (define (args-single [value : (& text str)]) : (ProcessBorrowedStringList text)
@@ -75,27 +118,80 @@
 (define (args-append
   [left : (ProcessBorrowedStringList text)]
   [right : (ProcessBorrowedStringList text)]) : (ProcessBorrowedStringList text)
-  (match left
-    [(ProcessBorrowedStringNil) right]
-    [(ProcessBorrowedStringCons value rest)
-      (ProcessBorrowedStringCons value (box (args-append (box-get rest) right)))]))
+  (let
+    [slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
+    [i : i64 0]
+    [n-left : i64 (struct-get left len)]
+    [n-right : i64 (struct-get right len)]
+    (begin
+      (while (< i n-left)
+        (begin
+          (array-push! slots (array-ref (struct-get left slots) i))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i n-right)
+        (begin
+          (array-push! slots (array-ref (struct-get right slots) i))
+          (set! i (+ i 1))))
+      (ProcessBorrowedStringList
+        slots
+        (struct-get left anchor)
+        (+ n-left n-right)))))
 
 ;: Return an empty borrowed environment override list tied to `text`.
 (define (env-empty-like [_text : (& text str)]) : (ProcessBorrowedEnvList text)
-  ProcessBorrowedEnvNil)
+  (let
+    [name-slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
+    [value-slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
+    (ProcessBorrowedEnvList name-slots value-slots _text 0)))
 
 ;: Return the number of borrowed env overrides in `env`.
 (define (env-count [env : (ProcessBorrowedEnvList text)]) : i64
-  (match env
-    [(ProcessBorrowedEnvNil) 0]
-    [(ProcessBorrowedEnvCons _ _ rest) (+ 1 (env-count (box-get rest)))]))
+  (struct-get env len))
+
+;: Return a borrowed environment entry at a valid `index`.
+(define (env-entry-ref [env : (ProcessBorrowedEnvList text)] [index : i64]) : (ProcessBorrowedEnvEntry
+    text)
+  (ProcessBorrowedEnvEntry (env-name-ref env index) (env-value-ref env index)))
+
+;: Return a borrowed environment name at a valid `index`.
+(define (env-name-ref [env : (ProcessBorrowedEnvList text)] [index : i64]) : (&
+    text
+    str)
+  (borrowed-string-from-word
+    (struct-get env anchor)
+    (array-ref (struct-get env name-slots) index)))
+
+;: Return a borrowed environment value at a valid `index`.
+(define (env-value-ref [env : (ProcessBorrowedEnvList text)] [index : i64]) : (&
+    text
+    str)
+  (borrowed-string-from-word
+    (struct-get env anchor)
+    (array-ref (struct-get env value-slots) index)))
 
 ;: Prepend borrowed environment override strings without copying bytes.
 (define (env-cons
   [name : (& text str)]
   [value : (& text str)]
   [rest : (ProcessBorrowedEnvList text)]) : (ProcessBorrowedEnvList text)
-  (ProcessBorrowedEnvCons name value (box rest)))
+  (let
+    [name-slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
+    [value-slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
+    [i : i64 0]
+    (begin
+      (array-push! name-slots (borrowed-string-word name))
+      (array-push! value-slots (borrowed-string-word value))
+      (while (< i (struct-get rest len))
+        (begin
+          (array-push! name-slots (array-ref (struct-get rest name-slots) i))
+          (array-push! value-slots (array-ref (struct-get rest value-slots) i))
+          (set! i (+ i 1))))
+      (ProcessBorrowedEnvList
+        name-slots
+        value-slots
+        name
+        (+ 1 (struct-get rest len))))))
 
 ;: Return a one-element borrowed environment override list.
 (define (env-single [name : (& text str)] [value : (& text str)]) : (ProcessBorrowedEnvList
@@ -107,13 +203,29 @@
 (define (env-append
   [left : (ProcessBorrowedEnvList text)]
   [right : (ProcessBorrowedEnvList text)]) : (ProcessBorrowedEnvList text)
-  (match left
-    [(ProcessBorrowedEnvNil) right]
-    [(ProcessBorrowedEnvCons name value rest)
-      (ProcessBorrowedEnvCons
-        name
-        value
-        (box (env-append (box-get rest) right)))]))
+  (let
+    [name-slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
+    [value-slots : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
+    [i : i64 0]
+    [n-left : i64 (struct-get left len)]
+    [n-right : i64 (struct-get right len)]
+    (begin
+      (while (< i n-left)
+        (begin
+          (array-push! name-slots (array-ref (struct-get left name-slots) i))
+          (array-push! value-slots (array-ref (struct-get left value-slots) i))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i n-right)
+        (begin
+          (array-push! name-slots (array-ref (struct-get right name-slots) i))
+          (array-push! value-slots (array-ref (struct-get right value-slots) i))
+          (set! i (+ i 1))))
+      (ProcessBorrowedEnvList
+        name-slots
+        value-slots
+        (struct-get left anchor)
+        (+ n-left n-right)))))
 
 ;: Return a borrowed stdin/cwd value that stores no string but keeps the target
 ;: type lifetime anchored to `text`.
@@ -125,26 +237,55 @@
 (define (some-string [value : (& text str)]) : (ProcessBorrowedMaybeString text)
   (ProcessBorrowedSomeString value))
 
-;: Return `args` through an aggregate return path so stage0 can match it after
-;: this module imports process/string.
+;: Return `args` through an aggregate return path for imported callers.
 (define (args-normalize [args : (ProcessBorrowedStringList text)]) : (ProcessBorrowedStringList
     text)
   args)
 
-;: Return `env` through an aggregate return path so stage0 can match it after
-;: this module imports process/string.
+;: Return `env` through an aggregate return path for imported callers.
 (define (env-normalize [env : (ProcessBorrowedEnvList text)]) : (ProcessBorrowedEnvList
     text)
   env)
 
-;: Return `value` through an aggregate return path so stage0 can match it after
-;: this module imports process/string.
+;: Return `value` through an aggregate return path for imported callers.
 (define (maybe-normalize [value : (ProcessBorrowedMaybeString text)]) : (ProcessBorrowedMaybeString
     text)
   value)
 
+;: Return the borrowed executable path from `command`.
+(define (command-executable
+  [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (&
+    executable
+    str)
+  (struct-get command executable))
+
+;: Return the borrowed argv list from `command`.
+(define (command-argv
+  [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedStringList
+    argv)
+  (struct-get command argv))
+
+;: Return the borrowed cwd setting from `command`.
+(define (command-cwd
+  [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedMaybeString
+    cwd)
+  (struct-get command cwd))
+
+;: Return the borrowed env override list from `command`.
+(define (command-env
+  [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedEnvList
+    env)
+  (struct-get command env))
+
+;: Return the borrowed stdin setting from `command`.
+(define (command-stdin
+  [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedMaybeString
+    stdin)
+  (struct-get command stdin))
+
 (import stdlib.process)
 (import stdlib.string)
+(import stdlib.array)
 
 ;: Copy a borrowed string into active-arena owned storage.
 (define (string-owned [value : (& value str)]) : String
@@ -152,20 +293,31 @@
 
 ;: Copy borrowed argv storage to the owned process argv representation.
 (define (args-owned [args : (ProcessBorrowedStringList text)]) : process.ProcessStringList
-  (match (args-normalize args)
-    [(ProcessBorrowedStringNil) (process.args-empty)]
-    [(ProcessBorrowedStringCons value rest)
-      (process.args-cons (string-owned value) (args-owned (box-get rest)))]))
+  (let
+    [n : i64 (args-count args)]
+    [slots : (Array String) (array.make-array String n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! slots i (string-owned (args-ref args i)))
+          (set! i (+ i 1))))
+      (process.ProcessStringList slots n))))
 
 ;: Copy borrowed env storage to the owned process env representation.
 (define (env-owned [env : (ProcessBorrowedEnvList text)]) : process.ProcessEnvList
-  (match (env-normalize env)
-    [(ProcessBorrowedEnvNil) (process.env-empty)]
-    [(ProcessBorrowedEnvCons name value rest)
-      (process.env-cons
-        (string-owned name)
-        (string-owned value)
-        (env-owned (box-get rest)))]))
+  (let
+    [n : i64 (env-count env)]
+    [names : (Array String) (array.make-array String n)]
+    [values : (Array String) (array.make-array String n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! names i (string-owned (env-name-ref env i)))
+          (array-set! values i (string-owned (env-value-ref env i)))
+          (set! i (+ i 1))))
+      (process.ProcessEnvList names values n))))
 
 ;: Copy a borrowed optional string to the owned process representation.
 (define (maybe-owned [value : (ProcessBorrowedMaybeString text)]) : process.ProcessMaybeString
@@ -312,37 +464,6 @@
     (command-env command)
     (some-string stdin-value)))
 
-;: Return the borrowed executable path from `command`.
-(define (command-executable
-  [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (&
-    executable
-    str)
-  (struct-get command executable))
-
-;: Return the borrowed argv list from `command`.
-(define (command-argv
-  [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedStringList
-    argv)
-  (struct-get command argv))
-
-;: Return the borrowed cwd setting from `command`.
-(define (command-cwd
-  [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedMaybeString
-    cwd)
-  (struct-get command cwd))
-
-;: Return the borrowed env override list from `command`.
-(define (command-env
-  [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedEnvList
-    env)
-  (struct-get command env))
-
-;: Return the borrowed stdin setting from `command`.
-(define (command-stdin
-  [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : (ProcessBorrowedMaybeString
-    stdin)
-  (struct-get command stdin))
-
 ;: Copy borrowed command storage to the owned runtime command representation.
 (define (command-owned
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : process.ProcessCommand
@@ -354,16 +475,23 @@
     (maybe-owned (command-stdin command))))
 
 ;: Return the first borrowed env validation error, or `ProcessNoString`.
-(define (env-validation-error [env : (ProcessBorrowedEnvList env)]) : process.ProcessMaybeString
-  (match (env-normalize env)
-    [(ProcessBorrowedEnvNil) (process.no-stdin)]
-    [(ProcessBorrowedEnvCons name _ rest)
+(define (env-validation-error-from
+  [env : (ProcessBorrowedEnvList env)]
+  [index : i64]) : process.ProcessMaybeString
+  (if (>= index (env-count env))
+    (process.no-stdin)
+    (let
+      [name : (& env str) (env-name-ref env index)]
       (if (= (string-length name) 0)
         (process.stdin-string "process: environment variable name is empty")
         (if (process.string-contains-char? name '=')
           (process.stdin-string
             "process: environment variable name contains '='")
-          (env-validation-error (box-get rest))))]))
+          (env-validation-error-from env (+ index 1)))))))
+
+;: Return the first borrowed environment validation error, or `ProcessNoString`.
+(define (env-validation-error [env : (ProcessBorrowedEnvList env)]) : process.ProcessMaybeString
+  (env-validation-error-from env 0))
 
 ;: Return the first borrowed command validation error, or `ProcessNoString`.
 (define (command-validation-error
@@ -503,13 +631,9 @@
 (define (test-assert-borrowed-string-list1
   [items : (ProcessBorrowedStringList text)]
   [expected : String]) : unit
-  (match (args-normalize items)
-    [(ProcessBorrowedStringCons actual rest)
-      (match (args-normalize (box-get rest))
-        [(ProcessBorrowedStringNil)
-          (test-assert-true (string.eq actual (& expected)))]
-        [_ (test-fail)])]
-    [(ProcessBorrowedStringNil) (test-fail)]))
+  (begin
+    (test-assert-i64-eq (args-count items) 1)
+    (test-assert-true (string.eq (args-ref items 0) (& expected)))))
 
 ;: Inline test assertion for a borrowed optional process string.
 (define (test-assert-borrowed-some-string
@@ -575,12 +699,10 @@
   [env : (ProcessBorrowedEnvList text)]
   [expected-name : String]
   [expected-value : String]) : unit
-  (match (env-normalize env)
-    [(ProcessBorrowedEnvCons name value _)
-      (begin
-        (test-assert-true (string.eq name (& expected-name)))
-        (test-assert-true (string.eq value (& expected-value))))]
-    [(ProcessBorrowedEnvNil) (test-fail)]))
+  (begin
+    (test-assert-true (> (env-count env) 0))
+    (test-assert-true (string.eq (env-name-ref env 0) (& expected-name)))
+    (test-assert-true (string.eq (env-value-ref env 0) (& expected-value)))))
 
 ;: Inline test assertion for invalid borrowed process output results.
 (define (test-assert-invalid-output
@@ -659,9 +781,14 @@
       [first-arg : (& argv-pack str) (string.substring-view (& argv-pack) 0 5)]
       [second-arg : (& argv-pack str) (string.substring-view (& argv-pack) 5 6)]
       [third-arg : (& argv-pack str) (string.substring-view (& argv-pack) 11 5)]
+      [empty-args : (ProcessBorrowedStringList argv-pack)
+        (args-empty-like first-arg)]
       [env-name : (& env-pack str) (string.substring-view (& env-pack) 0 6)]
       [env-first : (& env-pack str) (string.substring-view (& env-pack) 6 5)]
       [env-second : (& env-pack str) (string.substring-view (& env-pack) 11 6)]
+      [empty-env : (ProcessBorrowedEnvList env-pack) (env-empty-like env-name)]
+      [single-env : (ProcessBorrowedEnvList env-pack)
+        (env-single env-name env-first)]
       [tail-argv : (ProcessBorrowedStringList argv-pack)
         (args-append (args-single second-arg) (args-single third-arg))]
       [env : (ProcessBorrowedEnvList env-pack)
@@ -676,6 +803,14 @@
           env)]
       [owned : process.ProcessCommand (command-owned cmd)]
       (begin
+        (test-assert-i64-eq (args-count empty-args) 0)
+        (test-assert-i64-eq (args-count (args-single first-arg)) 1)
+        (test-assert-true
+          (string.eq (args-ref (args-single first-arg) 0) first-arg))
+        (test-assert-i64-eq (env-count empty-env) 0)
+        (test-assert-i64-eq (env-count single-env) 1)
+        (test-assert-true (string.eq (env-name-ref single-env 0) env-name))
+        (test-assert-true (string.eq (env-value-ref single-env 0) env-first))
         (test-assert-i64-eq (args-count (command-argv cmd)) 3)
         (test-assert-process-string-list3
           (process.command-argv owned)

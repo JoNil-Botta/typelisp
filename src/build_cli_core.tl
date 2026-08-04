@@ -4254,6 +4254,39 @@
                 (ResultBuildPackageTlciText.Ok
                   (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])))))))
 
+;; This producer load is disposable; only the caller-owned TLCI text crosses
+;; the reset before the final lowering load.
+(define (build-package-tlci-text-loaded
+  [manifest-path : String]
+  [manifest : load.CompilerPkgManifest]
+  [mode : backend.CompilerBackendMode]
+  [entry-path : String]
+  [stdlib-roots : cli_svec.Vec]
+  [manifest-dir : String]
+  [deps : load.CompilerPkgDeps]
+  [emit-entry : bool]
+  [compile-cfgs : sym_i64_env.SymI64Env]
+  [producer-identity : String]) : ResultBuildPackageTlciText
+  (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime-cfg
+    entry-path
+    stdlib-roots
+    manifest-dir
+    deps
+    emit-entry
+    compile-cfgs)
+    [(load.ResultCompilerLoadWithPaths.Err diag)
+      (ResultBuildPackageTlciText.Err
+        (compiler_driver_core.compiler-driver-render-source-diagnostic
+          (box-get diag)))]
+    [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+      (build-package-tlci-text
+        manifest-path
+        manifest
+        mode
+        decls
+        paths
+        producer-identity)]))
+
 (define (build-package-write-tlci [path : String] [text : String]) : build_run_core.SourceToolCommandStatus
   (build_run_core.source-tool-write-file
     path
@@ -4609,7 +4642,10 @@
                 (compiler_driver_core.compiler-driver-reset-file-state!)
                 (ci.intern-persistent-arena-reset!))]
             (if (= pre-emit-doctest-status 0)
-              (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime-cfg
+              (match (build-package-tlci-text-loaded
+                manifest-path
+                manifest
+                mode
                 entry-path
                 stdlib-roots
                 manifest-dir
@@ -4617,55 +4653,62 @@
                 emit-entry
                 (build-package-compile-cfgs
                   target
-                  (struct-get compile-context root-compiler)))
-                [(load.ResultCompilerLoadWithPaths.Err diag)
+                  (struct-get compile-context root-compiler))
+                producer-identity)
+                [(ResultBuildPackageTlciText.Err message)
                   (begin
-                    (io.print-error
-                      (compiler_driver_core.compiler-driver-render-source-diagnostic
-                        (box-get diag)))
+                    (io.print-error message)
                     1)]
-                [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-                  (let
-                    [owned-paths : ast.AstDeclPathList
-                      (load.compiler-load-package-owned-paths-for-decls
-                        name
-                        manifest-dir
-                        stdlib-roots
-                        entry-path
-                        decls
-                        paths)]
-                    [metadata-link-inputs : build_run_core.SourceToolLinkInputs
-                      (build_run_core.source-tool-link-inputs-from-decls
-                        decls
-                        (build_run_core.source-tool-link-inputs-empty))]
-                    ;; Merge order: manifest all-target/target inputs, source extern
-                    ;; metadata, then dependency archives (kept positional after the
-                    ;; requested libraries/args).
-                    [effective-link-inputs : build_run_core.SourceToolLinkInputs
-                      (build_run_core.source-tool-link-inputs-merge
-                        (build_run_core.source-tool-link-inputs-merge
-                          manifest-link-inputs
-                          metadata-link-inputs)
-                        dep-link-inputs)]
-                    [crt-entry : bool
-                      (and
-                        emit-entry
-                        (build_run_core.source-tool-linux-crt-entry?
-                          target
-                          effective-link-inputs))]
-                    (match (build-package-tlci-text
-                      manifest-path
-                      manifest
-                      mode
-                      decls
-                      paths
-                      producer-identity)
-                      [(ResultBuildPackageTlciText.Err message)
+                [(ResultBuildPackageTlciText.Ok tlci-text)
+                  (begin
+                    ;; Producer-created intern ids must not remain live into
+                    ;; lowering; tlci-text is allocated in the caller arena.
+                    (compiler_driver_core.compiler-driver-reset-file-state!)
+                    (ci.intern-persistent-arena-reset!)
+                    (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime-cfg
+                      entry-path
+                      stdlib-roots
+                      manifest-dir
+                      (struct-get manifest deps)
+                      emit-entry
+                      (build-package-compile-cfgs
+                        target
+                        (struct-get compile-context root-compiler)))
+                      [(load.ResultCompilerLoadWithPaths.Err diag)
                         (begin
-                          (io.print-error message)
+                          (io.print-error
+                            (compiler_driver_core.compiler-driver-render-source-diagnostic
+                              (box-get diag)))
                           1)]
-                      [(ResultBuildPackageTlciText.Ok tlci-text)
+                      [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
                         (let
+                          [owned-paths : ast.AstDeclPathList
+                            (load.compiler-load-package-owned-paths-for-decls
+                              name
+                              manifest-dir
+                              stdlib-roots
+                              entry-path
+                              decls
+                              paths)]
+                          [metadata-link-inputs : build_run_core.SourceToolLinkInputs
+                            (build_run_core.source-tool-link-inputs-from-decls
+                              decls
+                              (build_run_core.source-tool-link-inputs-empty))]
+                          ;; Merge order: manifest all-target/target inputs, source extern
+                          ;; metadata, then dependency archives (kept positional after the
+                          ;; requested libraries/args).
+                          [effective-link-inputs : build_run_core.SourceToolLinkInputs
+                            (build_run_core.source-tool-link-inputs-merge
+                              (build_run_core.source-tool-link-inputs-merge
+                                manifest-link-inputs
+                                metadata-link-inputs)
+                              dep-link-inputs)]
+                          [crt-entry : bool
+                            (and
+                              emit-entry
+                              (build_run_core.source-tool-linux-crt-entry?
+                                target
+                                effective-link-inputs))]
                           ;; Emit linkable ELF before assembly so memory-tight
                           ;; selfhost package builds do not fork `as` while
                           ;; holding the full package assembly string.

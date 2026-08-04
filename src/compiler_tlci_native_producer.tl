@@ -374,6 +374,11 @@
 (define embedded-native-ops-cap : i64
   4096)
 
+;; Large native arms use bounded chunks only when necessary; ordinary entries
+;; retain their exact legacy nested source shape.
+(define embedded-native-op-chunk-cap : i64
+  256)
+
 (define (embedded-native-ops-push!
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]
@@ -385,30 +390,40 @@
       (array-set! ops slot line)
       (array-set! ops-count 0 (+ slot 1)))))
 
-(define (embedded-native-op-open
-  [status-index : i64]
+(define (embedded-native-op-call
   [op : String]
   [arg-a : String]
   [arg-b : String]
   [arg-c : String]) : String
+  (str_cat.str-cat
+    "(comptime-host-"
+    op
+    " host session "
+    arg-a
+    " "
+    arg-b
+    " "
+    arg-c
+    ")"))
+
+;; Render a neutral callback call as one link in the legacy nested data-probe
+;; chain. The data-value paths still close one let/if pair per operation.
+(define (embedded-native-op-open-from-call [status-index : i64] [call : String]) : String
   (let
     [sname : String (str_cat.str-cat "q" (string.int->string status-index))]
     (str_cat.str-cat
       "  (let ["
       sname
-      " : i64 (comptime-host-"
-      op
-      " host session "
-      arg-a
-      " "
-      arg-b
-      " "
-      arg-c
-      ")] (if (not (= "
+      " : i64 "
+      call
+      "] (if (not (= "
       sname
       " 0)) "
       sname
       "\n")))
+
+(define (embedded-native-fuel-open) : String
+  "  (let [q99 : i64 (comptime-host-fuel-check host session 0 0 0)] (if (not (= q99 0)) q99\n")
 
 (define (embedded-native-name-arg [name : String]) : String
   (str_cat.str-cat
@@ -450,8 +465,8 @@
               "0")
             1))))))
 
-;; Emit the op-call chain for one eligible body into `ops`; returns the count
-;; of opened let/if pairs, or -1 when the body is outside the subset.
+;; Emit neutral callback calls for one eligible body into `ops`; returns the
+;; count of emitted operations, or -1 when the body is outside the subset.
 ;; Quasiquoted bodies go through the general template walker; plain bodies may
 ;; be a macro parameter (the identity transformer), a `(comptime.expr-var
 ;; "name")` builder call, or one of the expr-list fold intrinsics.
@@ -510,8 +525,7 @@
                   (embedded-native-ops-push!
                     ops
                     ops-count
-                    (embedded-native-op-open
-                      0
+                    (embedded-native-op-call
                       tlci_core.tlci-host-callback-name-expr-var
                       (embedded-native-name-arg missing-name)
                       (string.int->string (string.string-length missing-name))
@@ -519,8 +533,7 @@
                   (embedded-native-ops-push!
                     ops
                     ops-count
-                    (embedded-native-op-open
-                      1
+                    (embedded-native-op-call
                       tlci_core.tlci-host-callback-name-expr-var
                       (embedded-native-name-arg else-not-final-name)
                       (string.int->string
@@ -529,8 +542,7 @@
                   (embedded-native-ops-push!
                     ops
                     ops-count
-                    (embedded-native-op-open
-                      2
+                    (embedded-native-op-call
                       tlci_core.tlci-host-callback-name-expr-clause-list-fold-if
                       (string.int->string clauses-index)
                       "0"
@@ -567,8 +579,7 @@
                     (embedded-native-ops-push!
                       ops
                       ops-count
-                      (embedded-native-op-open
-                        0
+                      (embedded-native-op-call
                         tlci_core.tlci-host-callback-name-expr-bool-literal
                         (string.int->string when-true)
                         "0"
@@ -576,8 +587,7 @@
                     (embedded-native-ops-push!
                       ops
                       ops-count
-                      (embedded-native-op-open
-                        1
+                      (embedded-native-op-call
                         tlci_core.tlci-host-callback-name-expr-bool-literal
                         (string.int->string when-false)
                         "0"
@@ -585,8 +595,7 @@
                     (embedded-native-ops-push!
                       ops
                       ops-count
-                      (embedded-native-op-open
-                        2
+                      (embedded-native-op-call
                         tlci_core.tlci-host-callback-name-expr-list-fold-if
                         (string.int->string items-index)
                         (string.int->string continue-flag)
@@ -684,8 +693,8 @@
             (set! index (+ index 1)))))
       out)))
 
-;; Push one host-op call whose status let name matches the current op slot,
-;; keeping generated status bindings unique across the whole entry.
+;; Push one neutral host-op call, keeping operation order stable across the
+;; whole entry; consumers choose nested-data or flat-status rendering later.
 (define (embedded-native-template-push!
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]
@@ -696,7 +705,7 @@
   (embedded-native-ops-push!
     ops
     ops-count
-    (embedded-native-op-open (array-ref ops-count 0) op arg-a arg-b arg-c)))
+    (embedded-native-op-call op arg-a arg-b arg-c)))
 
 ;; AstBinOp ordinal contract shared with the host callback consumer; the
 ;; embedded image and its consumer are always the same source-bound binary.
@@ -2083,30 +2092,77 @@
                       (+ init-opened binding-opened 1 rest-opened))))))))]
       [_ -1])))
 
-;; Full source for the native package: the host extern plus one entry function
-;; per identity in catalog order.
-;; A complete, balanced arm expression: the op lets, the status-sum return
-;; (q99 is the enclosing fuel status), and one closing paren per op let.
-(define (embedded-native-arm-block-with-final
+;; Preserve the exact legacy nested source shape for ordinary-sized arms.
+(define (embedded-native-arm-block-legacy
   [ops : (__tl_dyn-array String)]
   [ops-count : i64]
   [opened : i64]
   [final : String]) : String
   (let
-    [out : String ""]
-    [index : i64 0]
+    [out : String (embedded-native-ops-open-text ops ops-count)]
+    (str_cat.str-cat out final (embedded-native-closing-parens (* 2 opened)))))
+
+;; Bound lowering depth only for the rare arms whose callback count exceeds the
+;; legacy chain cap. Each chunk remains a balanced nested chain; the outer
+;; status block sequences those chunks without constructing one giant AST.
+(define (embedded-native-arm-block-chunked
+  [ops : (__tl_dyn-array String)]
+  [ops-count : i64]
+  [final : String]) : String
+  (let
+    [out : String "  (let [qstatus : i64 0]\n    (begin\n"]
+    [start : i64 0]
+    [chunk-index : i64 0]
     (begin
-      (while (< index ops-count)
-        (begin
-          (set! out (str_cat.str-cat out (array-ref ops index)))
-          (set! index (+ index 1))))
-      (set! out (str_cat.str-cat out final))
-      (set! index 0)
-      (while (< index (* opened 2))
-        (begin
-          (set! out (str_cat.str-cat out ")"))
-          (set! index (+ index 1))))
+      (while (< start ops-count)
+        (let
+          [remaining : i64 (- ops-count start)]
+          [chunk-count : i64
+            (if (< remaining embedded-native-op-chunk-cap)
+              remaining
+              embedded-native-op-chunk-cap)]
+          [chunk : String
+            (str_cat.str-cat
+              (embedded-native-ops-open-text-range ops start chunk-count)
+              "0\n"
+              (embedded-native-closing-parens (* 2 chunk-count)))]
+          (begin
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                (if (= chunk-index 0)
+                  (str_cat.str-cat "      (set! qstatus " chunk ")\n")
+                  (str_cat.str-cat
+                    "      (if (= qstatus 0)\n"
+                    "        (set! qstatus "
+                    chunk
+                    ")\n"
+                    "        unit)\n"))))
+            (set! start (+ start chunk-count))
+            (set! chunk-index (+ chunk-index 1)))))
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          "      (if (not (= qstatus 0))\n"
+          "        qstatus\n"
+          "        "
+          final
+          "      )))\n"))
       out)))
+
+;; Full source for the native package: the host extern plus one entry function
+;; per identity in catalog order. Keep small entries byte-shaped as before and
+;; use bounded status chunks only when the old chain would be too deep.
+(define (embedded-native-arm-block-with-final
+  [ops : (__tl_dyn-array String)]
+  [ops-count : i64]
+  [opened : i64]
+  [final : String]) : String
+  (if (<= ops-count embedded-native-op-chunk-cap)
+    (embedded-native-arm-block-legacy ops ops-count opened final)
+    (embedded-native-arm-block-chunked ops ops-count final)))
 
 (define (embedded-native-arm-block
   [ops : (__tl_dyn-array String)]
@@ -3291,19 +3347,31 @@
       name
       1)))
 
-;; Concatenate the still-open host-op let/if chain emitted into `ops`.
-(define (embedded-native-ops-open-text
+;; Render a contiguous neutral-call range as the still-open host-op let/if
+;; chain used by data-returning probes and legacy-sized arm blocks.
+(define (embedded-native-ops-open-text-range
   [ops : (__tl_dyn-array String)]
+  [start : i64]
   [count : i64]) : String
   (let
     [out : String ""]
-    [index : i64 0]
+    [index : i64 start]
+    [limit : i64 (+ start count)]
     (begin
-      (while (< index count)
+      (while (< index limit)
         (begin
-          (set! out (str_cat.str-cat out (array-ref ops index)))
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (embedded-native-op-open-from-call index (array-ref ops index))))
           (set! index (+ index 1))))
       out)))
+
+(define (embedded-native-ops-open-text
+  [ops : (__tl_dyn-array String)]
+  [count : i64]) : String
+  (embedded-native-ops-open-text-range ops 0 count))
 
 ;; A data-returning reflection op first consumes a computed type stack value,
 ;; then returns its count directly. Keep both open chains visible to the
@@ -6227,12 +6295,7 @@
                     out
                     (str_cat.str-cat
                       out
-                      (embedded-native-op-open
-                        99
-                        tlci_core.tlci-host-callback-name-fuel-check
-                        "0"
-                        "0"
-                        "0")
+                      (embedded-native-fuel-open)
                       body-text
                       ")))\n")))))
             (set! index (+ index 1)))))

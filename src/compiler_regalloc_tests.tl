@@ -5277,66 +5277,79 @@
                 (ir.CompilerIrValue.Var 2)
                 (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
                 (ast.AstType.I64)))]
+          [pair-conflicts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [pair-conflict-count : i64
+            (reg.compiler-reg-group-pair-conflict-vars!
+              interval-index
+              members
+              1
+              vars
+              pair-conflicts)]
           [shadow-cost : i64
             (reg.compiler-reg-group-pair-component-register-cost
               assignments
               interval-index
               members
               1
+              pair-conflicts
+              pair-conflict-count
               weights
               10
               true
               shadow-split
-              cabi.compiler-reg-id-r8
-              vars)]
+              cabi.compiler-reg-id-r8)]
           [free-r8-cost : i64
             (reg.compiler-reg-group-pair-component-register-cost
               nonoccupying
               interval-index
               members
               1
+              pair-conflicts
+              pair-conflict-count
               weights
               10
               true
               empty-split
-              cabi.compiler-reg-id-r8
-              vars)]
+              cabi.compiler-reg-id-r8)]
           [occupied-r8-cost : i64
             (reg.compiler-reg-group-pair-component-register-cost
               caller-occupied
               interval-index
               members
               1
+              pair-conflicts
+              pair-conflict-count
               weights
               10
               true
               empty-split
-              cabi.compiler-reg-id-r8
-              vars)]
+              cabi.compiler-reg-id-r8)]
           [csr-evict-cost : i64
             (reg.compiler-reg-group-pair-component-register-cost
               assignments
               interval-index
               members
               1
+              pair-conflicts
+              pair-conflict-count
               weights
               10
               false
               empty-split
-              cabi.compiler-reg-id-r12
-              vars)]
+              cabi.compiler-reg-id-r12)]
           [blocked-r12-cost : i64
             (reg.compiler-reg-group-pair-component-register-cost
               nonoccupying
               interval-index
               members
               1
+              pair-conflicts
+              pair-conflict-count
               weights
               10
               false
               empty-split
-              cabi.compiler-reg-id-r12
-              vars)]
+              cabi.compiler-reg-id-r12)]
           (let
             [_caller-placed : unit
               (reg.compiler-reg-assign-group-pair-component

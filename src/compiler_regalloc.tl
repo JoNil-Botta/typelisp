@@ -3510,13 +3510,227 @@
 ;; phi-out live-out. The phi result is still a def at the phi point, and live-after
 ;; bridging is unchanged. This drops the spurious phi-input segments that make a
 ;; loop carry falsely interfere with itself.
+;;
+;; The single consumer (`compiler-reg-hybrid-coalesce-index`) reads ONLY the
+;; per-var segment rows of the phi-touched vars, and takes the coarse
+;; start/end arrays from the CONSERVATIVE index -- so the EP build's coarse
+;; interval work is dead, and so is every segment row of a var the mask does
+;; not select (3.16% of vars are phi-touched in an opt2 self-compile). This
+;; build therefore takes the mask up front and writes only the rows that will
+;; be read.
+;;
+;; Row equivalence: every step of the walk reads and writes only the slots of
+;; the variable it is handling (`segment-starts` / `segment-ends` / `segments`
+;; are var-indexed and `compiler-reg-segment-flush-var!` touches one row), so
+;; steps for different variables commute and dropping the unselected ones
+;; leaves each selected variable seeing exactly the same ordered sequence of
+;; touches -- def/use at `point`, then the live-after span `point`/`point + 1`,
+;; in ascending word then ascending bit order -- that the unmasked walk gave
+;; it. The rows the mask drops are the rows the consumer discards.
 ;; ---------------------------------------------------------------------------
-(define (compiler-reg-extend-segment-instr-ep!
-  [starts : (__tl_dyn-array i64)]
-  [ends : (__tl_dyn-array i64)]
+;; Pack the 0/1 phi-touched mask into live-set-shaped words so the live-after
+;; bridge can select its bits with one AND. Returns the word array; the count
+;; of words up to and including the last non-empty one is taken separately so
+;; the bridge can stop early.
+(define (compiler-reg-ep-mask-words [mask : (__tl_dyn-array i64)] [vars : i64]) : (__tl_dyn-array
+    i64)
+  (let
+    [word-count : i64
+      (if (< vars 1)
+        1
+        (+ (live.compiler-live-set-word-index (- vars 1)) 1))]
+    [words : (__tl_dyn-array i64) (array.make-array i64 word-count)]
+    [v : i64 0]
+    [limit : i64
+      (if (< vars (array-length mask))
+        vars
+        (array-length mask))]
+    (begin
+      (while (< v limit)
+        (begin
+          (if (= (array-ref mask v) 1)
+            (let
+              [w : i64 (live.compiler-live-set-word-index v)]
+              (array-set!
+                words
+                w
+                (bit-or (array-ref words w) (live.compiler-live-set-bit-mask v))))
+            unit)
+          (set! v (+ v 1))))
+      words)))
+
+(define (compiler-reg-ep-mask-word-limit [words : (__tl_dyn-array i64)]) : i64
+  (let
+    [i : i64 (array-length words)]
+    (begin
+      (while (and (> i 0) (= (array-ref words (- i 1)) 0))
+        (set! i (- i 1)))
+      i)))
+
+(define (compiler-reg-ep-selected? [mask : (__tl_dyn-array i64)] [var : i64]) : bool
+  (and (>= var 0) (< var (array-length mask)) (= (array-ref mask var) 1)))
+
+(define (compiler-reg-ep-touch!
   [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
   [segment-starts : (__tl_dyn-array i64)]
   [segment-ends : (__tl_dyn-array i64)]
+  [mask : (__tl_dyn-array i64)]
+  [var : i64]
+  [point : i64]) : unit
+  (if (compiler-reg-ep-selected? mask var)
+    (compiler-reg-segment-note-point!
+      segments
+      segment-starts
+      segment-ends
+      var
+      point)
+    unit))
+
+(define (compiler-reg-ep-touch-ids!
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [mask : (__tl_dyn-array i64)]
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [point : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index id-count)
+      (begin
+        (compiler-reg-ep-touch!
+          segments
+          segment-starts
+          segment-ends
+          mask
+          (array-ref ids index)
+          point)
+        (set! index (+ index 1))))))
+
+;; The `compiler-reg-segment-note-span!` body is spelled out here rather than
+;; called: that helper has exactly ONE other call site (the conservative
+;; `compiler-reg-extend-segment-after-words!`), where it is inlined into the
+;; per-live-bit loop, and adding a second caller would push it out of line and
+;; charge the conservative walk a call per live bit. The steps and their order
+;; are identical to the helper's -- open the segment when none is open,
+;; otherwise raise its end when `point` still adjoins it, and otherwise flush
+;; and reopen -- so the rows produced are the same.
+(define (compiler-reg-ep-after-words!
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [live-after : live.CompilerLiveI64Set]
+  [mask-words : (__tl_dyn-array i64)]
+  [mask-limit : i64]
+  [point : i64]) : unit
+  (let
+    [after-words : i64 (live.compiler-live-set-word-count live-after)]
+    [limit : i64
+      (if (< after-words mask-limit)
+        after-words
+        mask-limit)]
+    [next : i64 (+ point 1)]
+    [index : i64 0]
+    (while (< index limit)
+      (let
+        [base : i64 (* index (live.compiler-live-set-word-bits))]
+        [after-bits : i64
+          (bit-and
+            (live.compiler-live-set-word-at-bounded live-after index)
+            (array-ref mask-words index))]
+        (begin
+          (while (not (= after-bits 0))
+            (let
+              [item-var : i64
+                (+ base (compiler-reg-low-bit-index32 after-bits))]
+              [open-start : i64 (array-ref segment-starts item-var)]
+              (begin
+                (if (< open-start 0)
+                  (begin
+                    (array-set! segment-starts item-var point)
+                    (array-set! segment-ends item-var next))
+                  (let
+                    [open-end : i64 (array-ref segment-ends item-var)]
+                    (if (<= point (+ open-end 1))
+                      (if (> next open-end)
+                        (array-set! segment-ends item-var next)
+                        unit)
+                      (begin
+                        (compiler-reg-segment-flush-var!
+                          segments
+                          segment-starts
+                          segment-ends
+                          item-var)
+                        (array-set! segment-starts item-var point)
+                        (array-set! segment-ends item-var next)))))
+                (set! after-bits (bit-and after-bits (- after-bits 1))))))
+          (set! index (+ index 1)))))))
+
+(define (compiler-reg-ep-sets!
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [defs : live.CompilerLiveI64Set]
+  [uses : live.CompilerLiveI64Set]
+  [live-after : live.CompilerLiveI64Set]
+  [mask-words : (__tl_dyn-array i64)]
+  [mask-limit : i64]
+  [point : i64]) : unit
+  (let
+    [defs-words : i64 (live.compiler-live-set-word-count defs)]
+    [uses-words : i64 (live.compiler-live-set-word-count uses)]
+    [widest : i64
+      (if (>= defs-words uses-words)
+        defs-words
+        uses-words)]
+    [word-count : i64
+      (if (< widest mask-limit)
+        widest
+        mask-limit)]
+    [index : i64 0]
+    (begin
+      (while (< index word-count)
+        (let
+          [base : i64 (* index (live.compiler-live-set-word-bits))]
+          [touched : i64
+            (bit-and
+              (bit-or
+                (if (< index defs-words)
+                  (live.compiler-live-set-word-at-bounded defs index)
+                  0)
+                (if (< index uses-words)
+                  (live.compiler-live-set-word-at-bounded uses index)
+                  0))
+              (array-ref mask-words index))]
+          (begin
+            (while (not (= touched 0))
+              (let
+                [item-var : i64 (+ base (compiler-reg-low-bit-index32 touched))]
+                (begin
+                  (compiler-reg-segment-note-point!
+                    segments
+                    segment-starts
+                    segment-ends
+                    item-var
+                    point)
+                  (set! touched (bit-and touched (- touched 1))))))
+            (set! index (+ index 1)))))
+      (compiler-reg-ep-after-words!
+        segments
+        segment-starts
+        segment-ends
+        live-after
+        mask-words
+        mask-limit
+        point))))
+
+(define (compiler-reg-extend-segment-instr-ep!
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [mask : (__tl_dyn-array i64)]
+  [mask-words : (__tl_dyn-array i64)]
+  [mask-limit : i64]
   [live-after : live.CompilerLiveI64Set]
   [point : i64]
   [instr : ir.CompilerIrInstr]) : unit
@@ -3524,37 +3738,51 @@
     [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
     [id-count : i64 (live.compiler-live-instr-use-ids-nophi! instr)]
     (if (< id-count 0)
-      (compiler-reg-extend-segment-sets!
-        starts
-        ends
+      (compiler-reg-ep-sets!
         segments
         segment-starts
         segment-ends
         (live.compiler-live-instr-defs instr)
         (live.compiler-live-instr-uses-nophi instr)
         live-after
+        mask-words
+        mask-limit
         point)
-      (compiler-reg-extend-segment-ids!
-        starts
-        ends
-        segments
-        segment-starts
-        segment-ends
-        (live.compiler-live-instr-def-var instr)
-        ids
-        id-count
-        live-after
-        point))))
+      (begin
+        (compiler-reg-ep-touch!
+          segments
+          segment-starts
+          segment-ends
+          mask
+          (live.compiler-live-instr-def-var instr)
+          point)
+        (compiler-reg-ep-touch-ids!
+          segments
+          segment-starts
+          segment-ends
+          mask
+          ids
+          id-count
+          point)
+        (compiler-reg-ep-after-words!
+          segments
+          segment-starts
+          segment-ends
+          live-after
+          mask-words
+          mask-limit
+          point)))))
 
 (define (compiler-reg-live-interval-selection-ep-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
   [live-afters : live.CompilerLiveInstrSetVec]
   [point : i64]
-  [starts : (__tl_dyn-array i64)]
-  [ends : (__tl_dyn-array i64)]
   [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
   [segment-starts : (__tl_dyn-array i64)]
-  [segment-ends : (__tl_dyn-array i64)]) : i64
+  [segment-ends : (__tl_dyn-array i64)]
+  [mask : (__tl_dyn-array i64)]
+  [mask-words : (__tl_dyn-array i64)]
+  [mask-limit : i64]) : i64
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
@@ -3572,11 +3800,12 @@
           [instr : ir.CompilerIrInstr (array-ref slots index)]
           (begin
             (compiler-reg-extend-segment-instr-ep!
-              starts
-              ends
               segments
               segment-starts
               segment-ends
+              mask
+              mask-words
+              mask-limit
               live-after
               out-point
               instr)
@@ -3588,11 +3817,12 @@
   [blocks : ir.CompilerIrBlockList]
   [liveness : live.CompilerFunctionLiveness]
   [point : i64]
-  [starts : (__tl_dyn-array i64)]
-  [ends : (__tl_dyn-array i64)]
   [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
   [segment-starts : (__tl_dyn-array i64)]
-  [segment-ends : (__tl_dyn-array i64)]) : i64
+  [segment-ends : (__tl_dyn-array i64)]
+  [mask : (__tl_dyn-array i64)]
+  [mask-words : (__tl_dyn-array i64)]
+  [mask-limit : i64]) : i64
   (match blocks
     [(ir.CompilerIrBlockList.Nil) point]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -3608,16 +3838,18 @@
                 instrs
                 live-afters
                 point
-                starts
-                ends
                 segments
                 segment-starts
-                segment-ends)
-              starts
-              ends
+                segment-ends
+                mask
+                mask-words
+                mask-limit)
               segments
               segment-starts
-              segment-ends))])]
+              segment-ends
+              mask
+              mask-words
+              mask-limit))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -3637,51 +3869,62 @@
                         instrs
                         live-afters
                         out-point
-                        starts
-                        ends
                         segments
                         segment-starts
-                        segment-ends)))])
+                        segment-ends
+                        mask
+                        mask-words
+                        mask-limit)))])
               (set! i (+ i 1))))
           out-point))]))
 
-(define (compiler-reg-live-interval-selection-ep
+;; Returns just the per-var EP segment rows for the masked vars; every other
+;; row is the empty sequence the consumer would have discarded anyway.
+(define (compiler-reg-live-interval-selection-ep-segments
   [func : ir.CompilerIrFunction]
-  [liveness : live.CompilerFunctionLiveness]) : CompilerRegIntervalIndex
+  [liveness : live.CompilerFunctionLiveness]
+  [mask : (__tl_dyn-array i64)]) : (__tl_dyn-array CompilerRegIntervalSeq)
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [segments : (__tl_dyn-array CompilerRegIntervalSeq)
           (array.make-array CompilerRegIntervalSeq vars)]
         [segment-starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [segment-ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [mask-words : (__tl_dyn-array i64)
+          (compiler-reg-ep-mask-words mask vars)]
+        [mask-limit : i64 (compiler-reg-ep-mask-word-limit mask-words)]
         (begin
-          (compiler-reg-fill-i64-array starts -1)
-          (compiler-reg-fill-i64-array ends -1)
           (compiler-reg-fill-i64-array segment-starts -1)
           (compiler-reg-fill-i64-array segment-ends -1)
-          (compiler-reg-live-interval-selection-ep-blocks
-            blocks
-            liveness
-            0
-            starts
-            ends
-            segments
-            segment-starts
-            segment-ends)
+          (if (> mask-limit 0)
+            (let
+              [_end-point : i64
+                (compiler-reg-live-interval-selection-ep-blocks
+                  blocks
+                  liveness
+                  0
+                  segments
+                  segment-starts
+                  segment-ends
+                  mask
+                  mask-words
+                  mask-limit)]
+              unit)
+            unit)
           (let
             [index : i64 0]
             (while (< index vars)
               (begin
-                (compiler-reg-segment-flush-var!
-                  segments
-                  segment-starts
-                  segment-ends
-                  index)
+                (if (compiler-reg-ep-selected? mask index)
+                  (compiler-reg-segment-flush-var!
+                    segments
+                    segment-starts
+                    segment-ends
+                    index)
+                  unit)
                 (set! index (+ index 1)))))
-          (CompilerRegIntervalIndex starts ends segments)))]))
+          segments))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Hybrid coalescing interference index (SOUND containment of edge-precise).
@@ -3940,15 +4183,13 @@
 ;; Hybrid segments: EP segments for phi-touched vars, conservative otherwise.
 (define (compiler-reg-hybrid-coalesce-index
   [cons-index : CompilerRegIntervalIndex]
-  [ep-index : CompilerRegIntervalIndex]
+  [ep-segs : (__tl_dyn-array CompilerRegIntervalSeq)]
   [mask : (__tl_dyn-array i64)]) : CompilerRegIntervalIndex
   (let
     [cons-starts : (__tl_dyn-array i64) (struct-get cons-index starts)]
     [cons-ends : (__tl_dyn-array i64) (struct-get cons-index ends)]
     [cons-segs : (__tl_dyn-array CompilerRegIntervalSeq)
       (struct-get cons-index segments)]
-    [ep-segs : (__tl_dyn-array CompilerRegIntervalSeq)
-      (struct-get ep-index segments)]
     [n : i64 (array-length cons-starts)]
     [hybrid-segs : (__tl_dyn-array CompilerRegIntervalSeq)
       (array.make-array CompilerRegIntervalSeq n)]
@@ -19268,32 +19509,109 @@
         false
         (< a b)))))
 
-(define (compiler-reg-greedy-sort-insert!
-  [arr : (__tl_dyn-array i64)]
+;; Merge two adjacent sorted runs `[lo, mid)` and `[mid, hi)` of `src` into
+;; `dst`, taking from the RIGHT run only when its head is strictly
+;; `compiler-reg-greedy-weight-before?` the left head. That tie rule makes the
+;; merge stable.
+(define (compiler-reg-greedy-merge-run!
+  [src : (__tl_dyn-array i64)]
+  [dst : (__tl_dyn-array i64)]
   [ref-counts : (__tl_dyn-array i64)]
-  [j : i64]) : unit
-  (if (<= j 0)
-    unit
-    (let
-      [cur : i64 (array-ref arr j)]
-      [prev : i64 (array-ref arr (- j 1))]
-      (if (compiler-reg-greedy-weight-before? ref-counts cur prev)
+  [lo : i64]
+  [mid : i64]
+  [hi : i64]) : unit
+  (let
+    [i : i64 lo]
+    [j : i64 mid]
+    [k : i64 lo]
+    (while (< k hi)
+      (let
+        ;; Take the right run when the left is exhausted, and otherwise only
+        ;; when its head is STRICTLY before the left head -- the tie goes left,
+        ;; which is what makes the merge stable. `k < hi` guarantees at least
+        ;; one run still has an element, so `j >= hi` implies `i < mid`.
+        [from-right : bool
+          (and
+            (< j hi)
+            (or
+              (>= i mid)
+              (compiler-reg-greedy-weight-before?
+                ref-counts
+                (array-ref src j)
+                (array-ref src i))))]
         (begin
-          (array-set! arr j prev)
-          (array-set! arr (- j 1) cur)
-          (compiler-reg-greedy-sort-insert! arr ref-counts (- j 1)))
-        unit))))
+          (if from-right
+            (begin
+              (array-set! dst k (array-ref src j))
+              (set! j (+ j 1)))
+            (begin
+              (array-set! dst k (array-ref src i))
+              (set! i (+ i 1))))
+          (set! k (+ k 1)))))))
 
+(define (compiler-reg-greedy-merge-pass!
+  [src : (__tl_dyn-array i64)]
+  [dst : (__tl_dyn-array i64)]
+  [ref-counts : (__tl_dyn-array i64)]
+  [count : i64]
+  [width : i64]) : unit
+  (let
+    [lo : i64 0]
+    (while (< lo count)
+      (let
+        [mid : i64
+          (if (< (+ lo width) count)
+            (+ lo width)
+            count)]
+        [hi : i64
+          (if (< (+ lo (+ width width)) count)
+            (+ lo (+ width width))
+            count)]
+        (begin
+          (compiler-reg-greedy-merge-run! src dst ref-counts lo mid hi)
+          (set! lo hi))))))
+
+(define (compiler-reg-greedy-copy-range!
+  [src : (__tl_dyn-array i64)]
+  [dst : (__tl_dyn-array i64)]
+  [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (array-set! dst i (array-ref src i))
+        (set! i (+ i 1))))))
+
+;; Order the first `count` entries of `arr` by
+;; `compiler-reg-greedy-weight-before?`. This was an insertion sort, whose
+;; quadratic comparison count is charged entirely to the few hundred-to-
+;; thousand-candidate functions (491,190 sorted entries cost 8.44M comparisons
+;; in an opt2 self-compile). The comparator is a strict total order and both
+;; insertion sort and this bottom-up merge are STABLE, so they agree on the
+;; permutation for every input -- including one with repeated ids, where the
+;; comparator reports neither element before the other. The eviction order the
+;; greedy then walks is therefore bit-identical.
 (define (compiler-reg-greedy-sort!
   [arr : (__tl_dyn-array i64)]
   [ref-counts : (__tl_dyn-array i64)]
-  [i : i64]
   [count : i64]) : unit
-  (if (>= i count)
+  (if (< count 2)
     unit
-    (begin
-      (compiler-reg-greedy-sort-insert! arr ref-counts i)
-      (compiler-reg-greedy-sort! arr ref-counts (+ i 1) count))))
+    (let
+      [buf : (__tl_dyn-array i64) (array.make-array i64 count)]
+      [width : i64 1]
+      [flipped : bool false]
+      (begin
+        (while (< width count)
+          (begin
+            (if flipped
+              (compiler-reg-greedy-merge-pass! buf arr ref-counts count width)
+              (compiler-reg-greedy-merge-pass! arr buf ref-counts count width))
+            (set! flipped (not flipped))
+            (set! width (+ width width))))
+        (if flipped
+          (compiler-reg-greedy-copy-range! buf arr count)
+          unit)))))
 
 ;; Combine the remat-DISCOUNTED spill weight (primary eviction priority) with the
 ;; RAW (undiscounted) use-density (secondary tie-break) into a single key:
@@ -20929,7 +21247,7 @@
       (let
         [count : i64 (compiler-reg-greedy-collect-vars candidates order 0)]
         (begin
-          (compiler-reg-greedy-sort! order ref-counts 0 count)
+          (compiler-reg-greedy-sort! order ref-counts count)
           (compiler-reg-greedy-alloc-all!
             order
             0
@@ -21364,113 +21682,42 @@
 ;; unavailable. A zero cost is an already-free register.
 (define (compiler-reg-group-pair-reg-evict-cost
   [assignments : CompilerRegAssignmentTable]
-  [interval-index : CompilerRegIntervalIndex]
-  [members : (__tl_dyn-array i64)]
-  [count : i64]
+  [conflicts : (__tl_dyn-array i64)]
+  [conflict-count : i64]
   [weights : (__tl_dyn-array i64)]
   [component-weight : i64]
-  [reg : i64]
-  [vars : i64]
-  [idx : i64]
-  [cost : i64]) : i64
-  (if (>= idx vars)
-    cost
-    (if (compiler-reg-group-pair-component-conflicts-var?
-      interval-index
-      members
-      count
-      idx)
-      (match (compiler-reg-assignment-table-lookup assignments idx)
-        [(CompilerRegMaybeLocation.Some location)
-          (match location
-            [(CompilerRegLocation.Register held)
-              (if (= held reg)
-                (let
-                  [weight : i64 (compiler-reg-group-pair-weight weights idx)]
-                  (if (< weight component-weight)
-                    (compiler-reg-group-pair-reg-evict-cost
-                      assignments
-                      interval-index
-                      members
-                      count
-                      weights
-                      component-weight
-                      reg
-                      vars
-                      (+ idx 1)
-                      (+ cost (+ weight 1)))
-                    (- 0 1)))
-                (compiler-reg-group-pair-reg-evict-cost
-                  assignments
-                  interval-index
-                  members
-                  count
-                  weights
-                  component-weight
-                  reg
-                  vars
-                  (+ idx 1)
-                  cost))]
-            [(CompilerRegLocation.RegisterPair first second)
-              (if (or (= first reg) (= second reg))
-                (- 0 1)
-                (compiler-reg-group-pair-reg-evict-cost
-                  assignments
-                  interval-index
-                  members
-                  count
-                  weights
-                  component-weight
-                  reg
-                  vars
-                  (+ idx 1)
-                  cost))]
-            [(CompilerRegLocation.Spill _)
-              (compiler-reg-group-pair-reg-evict-cost
-                assignments
-                interval-index
-                members
-                count
-                weights
-                component-weight
-                reg
-                vars
-                (+ idx 1)
-                cost)]
-            [(CompilerRegLocation.Remat _)
-              (compiler-reg-group-pair-reg-evict-cost
-                assignments
-                interval-index
-                members
-                count
-                weights
-                component-weight
-                reg
-                vars
-                (+ idx 1)
-                cost)])]
-        [(CompilerRegMaybeLocation.No)
-          (compiler-reg-group-pair-reg-evict-cost
-            assignments
-            interval-index
-            members
-            count
-            weights
-            component-weight
-            reg
-            vars
-            (+ idx 1)
-            cost)])
-      (compiler-reg-group-pair-reg-evict-cost
-        assignments
-        interval-index
-        members
-        count
-        weights
-        component-weight
-        reg
-        vars
-        (+ idx 1)
+  [reg : i64]) : i64
+  (let
+    [i : i64 0]
+    [cost : i64 0]
+    [blocked : bool false]
+    (begin
+      (while (and (< i conflict-count) (not blocked))
+        (let
+          [idx : i64 (array-ref conflicts i)]
+          (begin
+            (match (compiler-reg-assignment-table-lookup assignments idx)
+              [(CompilerRegMaybeLocation.Some location)
+                (match location
+                  [(CompilerRegLocation.Register held)
+                    (if (= held reg)
+                      (let
+                        [weight : i64
+                          (compiler-reg-group-pair-weight weights idx)]
+                        (if (< weight component-weight)
+                          (set! cost (+ cost (+ weight 1)))
+                          (set! blocked true)))
+                      unit)]
+                  [(CompilerRegLocation.RegisterPair first second)
+                    (if (or (= first reg) (= second reg))
+                      (set! blocked true)
+                      unit)]
+                  [(CompilerRegLocation.Spill _) unit]
+                  [(CompilerRegLocation.Remat _) unit])]
+              [(CompilerRegMaybeLocation.No) unit])
+            (set! i (+ i 1)))))
+      (if blocked
+        (- 0 1)
         cost))))
 
 (define (compiler-reg-group-pair-component-conflicts-var?
@@ -21493,17 +21740,50 @@
           (set! i (+ i 1))))
       hit)))
 
+;; The ascending list of vars that interfere with ANY component member. Both
+;; the per-register evict COST and the accepted pair's eviction walk used to
+;; recompute this predicate per register, over every var, even though it reads
+;; only `interval-index` and the (fixed) member list -- neither of which the
+;; register search touches. Collecting it once per component leaves each of
+;; those walks visiting exactly the same vars in the same ascending order, so
+;; every cost and every eviction is unchanged; only the 19x repetition of the
+;; interference scan is gone.
+(define (compiler-reg-group-pair-conflict-vars!
+  [interval-index : CompilerRegIntervalIndex]
+  [members : (__tl_dyn-array i64)]
+  [count : i64]
+  [vars : i64]
+  [out : (__tl_dyn-array i64)]) : i64
+  (let
+    [idx : i64 0]
+    [at : i64 0]
+    (begin
+      (while (< idx vars)
+        (begin
+          (if (compiler-reg-group-pair-component-conflicts-var?
+            interval-index
+            members
+            count
+            idx)
+            (begin
+              (array-set! out at idx)
+              (set! at (+ at 1)))
+            unit)
+          (set! idx (+ idx 1))))
+      at)))
+
 (define (compiler-reg-group-pair-component-register-cost
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
   [members : (__tl_dyn-array i64)]
   [count : i64]
+  [conflicts : (__tl_dyn-array i64)]
+  [conflict-count : i64]
   [weights : (__tl_dyn-array i64)]
   [component-weight : i64]
   [caller-saved? : bool]
   [split : CompilerRegCallSplit]
-  [reg : i64]
-  [vars : i64]) : i64
+  [reg : i64]) : i64
   (if (and
     caller-saved?
     (compiler-reg-group-pair-shadow-reg-conflicts?
@@ -21515,57 +21795,40 @@
     (- 0 1)
     (compiler-reg-group-pair-reg-evict-cost
       assignments
-      interval-index
-      members
-      count
+      conflicts
+      conflict-count
       weights
       component-weight
-      reg
-      vars
-      0
-      0)))
+      reg)))
 
 (define (compiler-reg-group-pair-evict-reg-conflicts!
   [assignments : CompilerRegAssignmentTable]
-  [interval-index : CompilerRegIntervalIndex]
-  [members : (__tl_dyn-array i64)]
-  [count : i64]
-  [reg : i64]
-  [vars : i64]
-  [idx : i64]) : unit
-  (if (>= idx vars)
-    unit
-    (begin
-      (if (compiler-reg-group-pair-component-conflicts-var?
-        interval-index
-        members
-        count
-        idx)
-        (match (compiler-reg-assignment-table-lookup assignments idx)
-          [(CompilerRegMaybeLocation.Some location)
-            (match location
-              [(CompilerRegLocation.Register held)
-                (if (= held reg)
-                  (let
-                    [_spill : CompilerRegAssignmentTable
-                      (compiler-reg-assignment-table-insert
-                        assignments
-                        idx
-                        (CompilerRegLocation.Spill
-                          (compiler-reg-stack-slot-offset idx)))]
-                    unit)
-                  unit)]
-              [_ unit])]
-          [(CompilerRegMaybeLocation.No) unit])
-        unit)
-      (compiler-reg-group-pair-evict-reg-conflicts!
-        assignments
-        interval-index
-        members
-        count
-        reg
-        vars
-        (+ idx 1)))))
+  [conflicts : (__tl_dyn-array i64)]
+  [conflict-count : i64]
+  [reg : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i conflict-count)
+      (let
+        [idx : i64 (array-ref conflicts i)]
+        (begin
+          (match (compiler-reg-assignment-table-lookup assignments idx)
+            [(CompilerRegMaybeLocation.Some location)
+              (match location
+                [(CompilerRegLocation.Register held)
+                  (if (= held reg)
+                    (let
+                      [_spill : CompilerRegAssignmentTable
+                        (compiler-reg-assignment-table-insert
+                          assignments
+                          idx
+                          (CompilerRegLocation.Spill
+                            (compiler-reg-stack-slot-offset idx)))]
+                      unit)
+                    unit)]
+                [_ unit])]
+            [(CompilerRegMaybeLocation.No) unit])
+          (set! i (+ i 1)))))))
 
 ;; Union-find root with full-path compression (iterative).
 (define (compiler-reg-group-pair-find
@@ -21753,80 +22016,90 @@
   [weights : (__tl_dyn-array i64)]
   [call-points : live.CompilerLiveI64Set]
   [split : CompilerRegCallSplit]) : CompilerRegAssignmentTable
-  (match func
-    [(ir.CompilerIrFunction.Function _ params _ _ blocks)
-      (let
-        [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-        [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
-        [vars : i64 (array-length starts)]
-        [excluded : live.CompilerLiveI64Set
-          (compiler-reg-group-pair-excluded-blocks
-            (compiler-reg-ineligible-memory
+  ;; A function with NO group values can never place a pair: every component
+  ;; below is gated on `compiler-reg-group-pair-member-ok?`, whose first
+  ;; conjunct is `group-vars` membership, so no component is entered and the
+  ;; incoming table is returned untouched. Everything the body computes first
+  ;; (the excluded / caller-unsafe point sets, the def counts, the Mov-edge
+  ;; union-find and the two per-var walks) writes only to locals, so returning
+  ;; `assignments` here yields the identical table by construction. Group-free
+  ;; functions are 91.4% of the calls in an opt2 self-compile.
+  (if (= (live.compiler-live-set-word-count group-vars) 0)
+    assignments
+    (match func
+      [(ir.CompilerIrFunction.Function _ params _ _ blocks)
+        (let
+          [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
+          [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+          [vars : i64 (array-length starts)]
+          [excluded : live.CompilerLiveI64Set
+            (compiler-reg-group-pair-excluded-blocks
+              (compiler-reg-ineligible-memory
+                blocks
+                (compiler-reg-ineligible-params
+                  params
+                  (live.compiler-live-set-empty)))
               blocks
-              (compiler-reg-ineligible-params
-                params
-                (live.compiler-live-set-empty)))
-            blocks
-            group-vars)]
-        [caller-unsafe : live.CompilerLiveI64Set
-          (compiler-reg-group-pair-caller-unsafe-blocks
-            (live.compiler-live-set-empty)
-            blocks)]
-        [def-counts : (__tl_dyn-array i64)
-          (compiler-reg-function-def-counts func)]
-        [parents : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [poisoned : (__tl_dyn-array bool) (array.make-array bool vars)]
-        [members : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [v : i64 0]
-        (begin
-          (while (< v vars)
-            (begin
-              (array-set! parents v v)
-              (array-set! poisoned v false)
-              (set! v (+ v 1))))
-          (compiler-reg-group-pair-mov-edges-blocks
-            blocks
-            group-vars
-            excluded
-            starts
-            def-counts
-            parents
-            poisoned)
-          (set! v 0)
-          (while (< v vars)
-            (begin
-              (if (and
-                (= (compiler-reg-group-pair-find parents v) v)
-                (compiler-reg-group-pair-member-ok?
-                  type-segment-bases
-                  v
-                  type-info
-                  group-vars
-                  excluded
-                  starts
-                  poisoned
-                  assignments))
-                (compiler-reg-assign-group-pair-component
-                  type-segment-bases
-                  v
-                  vars
-                  type-info
-                  group-vars
-                  excluded
-                  caller-unsafe
-                  starts
-                  ends
-                  poisoned
-                  parents
-                  members
-                  interval-index
-                  assignments
-                  weights
-                  call-points
-                  split)
-                unit)
-              (set! v (+ v 1))))
-          assignments))]))
+              group-vars)]
+          [caller-unsafe : live.CompilerLiveI64Set
+            (compiler-reg-group-pair-caller-unsafe-blocks
+              (live.compiler-live-set-empty)
+              blocks)]
+          [def-counts : (__tl_dyn-array i64)
+            (compiler-reg-function-def-counts func)]
+          [parents : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [poisoned : (__tl_dyn-array bool) (array.make-array bool vars)]
+          [members : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [v : i64 0]
+          (begin
+            (while (< v vars)
+              (begin
+                (array-set! parents v v)
+                (array-set! poisoned v false)
+                (set! v (+ v 1))))
+            (compiler-reg-group-pair-mov-edges-blocks
+              blocks
+              group-vars
+              excluded
+              starts
+              def-counts
+              parents
+              poisoned)
+            (set! v 0)
+            (while (< v vars)
+              (begin
+                (if (and
+                  (= (compiler-reg-group-pair-find parents v) v)
+                  (compiler-reg-group-pair-member-ok?
+                    type-segment-bases
+                    v
+                    type-info
+                    group-vars
+                    excluded
+                    starts
+                    poisoned
+                    assignments))
+                  (compiler-reg-assign-group-pair-component
+                    type-segment-bases
+                    v
+                    vars
+                    type-info
+                    group-vars
+                    excluded
+                    caller-unsafe
+                    starts
+                    ends
+                    poisoned
+                    parents
+                    members
+                    interval-index
+                    assignments
+                    weights
+                    call-points
+                    split)
+                  unit)
+                (set! v (+ v 1))))
+            assignments))])))
 
 ;; Place ONE component (root r): collect members, prove every member sound
 ;; (the single-def Mov-edge relation guarantees the component carries ONE
@@ -21899,6 +22172,16 @@
                 count))]
           [candidate-count : i64
             (compiler-reg-group-pair-candidate-count caller-saved-ok?)]
+          ;; The member-interference scan is the same for every candidate
+          ;; register, so collect the interfering vars once here.
+          [conflicts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [conflict-count : i64
+            (compiler-reg-group-pair-conflict-vars!
+              interval-index
+              members
+              count
+              vars
+              conflicts)]
           [best0 : i64 (- 0 1)]
           [best1 : i64 (- 0 1)]
           [best-cost : i64 (- 0 1)]
@@ -21916,12 +22199,13 @@
                     interval-index
                     members
                     count
+                    conflicts
+                    conflict-count
                     weights
                     component-weight
                     (and caller-saved-ok? (< i0 2))
                     split
-                    reg0
-                    vars)]
+                    reg0)]
                 (begin
                   (if (>= cost0 0)
                     (let
@@ -21938,12 +22222,13 @@
                               interval-index
                               members
                               count
+                              conflicts
+                              conflict-count
                               weights
                               component-weight
                               (and caller-saved-ok? (< i1 2))
                               split
-                              reg1
-                              vars)]
+                              reg1)]
                           (begin
                             (if (and
                               (>= cost1 0)
@@ -21968,20 +22253,14 @@
                 (begin
                   (compiler-reg-group-pair-evict-reg-conflicts!
                     assignments
-                    interval-index
-                    members
-                    count
-                    reg0
-                    vars
-                    0)
+                    conflicts
+                    conflict-count
+                    reg0)
                   (compiler-reg-group-pair-evict-reg-conflicts!
                     assignments
-                    interval-index
-                    members
-                    count
-                    reg1
-                    vars
-                    0)
+                    conflicts
+                    conflict-count
+                    reg1)
                   (cfg
                     regalloc-census
                     (io.print-error
@@ -22262,19 +22541,28 @@
           (let
             [ep-liveness : live.CompilerFunctionLiveness
               (compiler-reg-liveness-handle-edge-precise liveness-handle)]
-            (compiler-reg-hybrid-coalesce-index
-              interval-index
-              (compiler-reg-live-interval-selection-ep func ep-liveness)
-              ;; Exclude unsafe live-out inputs while admitting proven self-loop
-              ;; back-edge-only values. Fixed div/mod or variable-shift functions
-              ;; retain the conservative guard: relaxing an otherwise unrelated
-              ;; carry can reshape fixed-home pressure differently on SysV/Win64.
+            ;; Exclude unsafe live-out inputs while admitting proven self-loop
+            ;; back-edge-only values. Fixed div/mod or variable-shift functions
+            ;; retain the conservative guard: relaxing an otherwise unrelated
+            ;; carry can reshape fixed-home pressure differently on SysV/Win64.
+            ;; Built BEFORE the EP segment walk (both are pure reads of `func`
+            ;; and `ep-liveness` into their own fresh arrays, so the order does
+            ;; not change either result) so the walk can restrict itself to the
+            ;; rows the hybrid index will actually read.
+            [phi-touched : (__tl_dyn-array i64)
               (compiler-reg-function-phi-touched-safe-mode
                 func
                 ep-liveness
                 (=
                   (live.compiler-live-set-word-count destructive-fixed-points)
-                  0))))
+                  0))]
+            (compiler-reg-hybrid-coalesce-index
+              interval-index
+              (compiler-reg-live-interval-selection-ep-segments
+                func
+                ep-liveness
+                phi-touched)
+              phi-touched))
           interval-index))]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call

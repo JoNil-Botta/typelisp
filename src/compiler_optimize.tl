@@ -22676,8 +22676,10 @@
 ;;
 ;; Placed between `induction` and `bce_version`. Conversion only shrinks what
 ;; the versioner has to fit: the clearing arm leaves the loop, so a converted
-;; body loses a block (seven labels to six on `it-slice-eq?`, against an
-;; `opt-bce-mb-block-max` of eight), and the top-tested shape the versioner
+;; body loses a block and everything in it (seven labels to six on
+;; `it-slice-eq?`, and the dropped instructions come straight off the
+;; versioner's `opt-bce-mb-instr-max` growth budget), and the top-tested
+;; shape the versioner
 ;; matches survives untouched -- the header still ends `Branch c, body, exit`
 ;; with the body target inside the loop. In practice a lowered `while` spends
 ;; pipeline iteration 1 with its flag still live at a non-phi reader (C4), so
@@ -47611,7 +47613,9 @@
 ;;   seed >= 0 && seed < bound && bound <= len.
 ;; This pass recognizes such a loop from its natural-loop back edge (header
 ;; dominating latch, a single dedicated preheader whose only successor is the
-;; header, <= (opt-bce-mb-block-max) blocks, clonable whitelist instructions
+;; header, a clone that fits the growth budget -- <= (opt-bce-mb-instr-max)
+;; non-phi instructions across the loop, with (opt-bce-mb-block-max) only a
+;; bookkeeping safety bound -- clonable whitelist instructions
 ;; only, Jump/Branch/Switch or intra-loop fallthrough terminators only) and versions
 ;; like the single-block pass: a guard block on the preheader edge branches
 ;; to a fast clone of the whole loop when the guard conjunction holds and to
@@ -47708,8 +47712,27 @@
   (No)
   (Some OptBceMbShape))
 
+;; Growth budget for the clone, measured the way the clone actually grows:
+;; in INSTRUCTIONS. Block count is the wrong metric here. A `when (and a b c)`
+;; body lowers to a fan of one-armed forwarders and merges -- `mov false` +
+;; `jump`, or a bare `jump` -- so a counting loop whose real work is ~30
+;; instructions can span thirteen blocks. Under a block cap those loops were
+;; rejected while the single-block pass happily versions a 48-instruction
+;; body, which is backwards: the and-chain loop clones LESS code. The cap
+;; counts every non-phi instruction across the loop's blocks (terminators
+;; included -- an empty forwarder still costs its jump) and phis are excluded
+;; for the same reason the single-block pass's `opt-bce-version-body-max`
+;; excludes them: a phi is register-transfer bookkeeping the backend
+;; coalesces, not per-iteration work the clone duplicates.
+(define (opt-bce-mb-instr-max) : i64
+  96)
+
+;; Safety bound on the loop's block count. NOT the growth metric (the
+;; instruction budget above is): this only keeps the per-loop bookkeeping --
+;; label sets, remap maps, the repeated whole-loop def scans, the exit-wiring
+;; walks -- inside the sizes those structures are tuned for.
 (define (opt-bce-mb-block-max) : i64
-  8)
+  24)
 
 ;; The (SSA single-def) instruction defining var anywhere in the loop.
 (define (opt-bce-mb-find-def-instrs
@@ -48185,6 +48208,26 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-mb-body-checks (ir.compiler-ir-block-seq-to-list seq) acc)]))
 
+;; Non-phi instructions across the loop: exactly what the fast clone
+;; duplicates, and the quantity (opt-bce-mb-instr-max) budgets. Cheap enough
+;; to run ahead of the string-building admission checks, so it doubles as an
+;; early rejection for the loops that would never fit.
+(define (opt-bce-mb-body-instrs [blocks : ir.CompilerIrBlockList] [acc : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-body-instrs
+            (box-get rest)
+            (+
+              acc
+              (-
+                (ir.compiler-ir-instr-seq-count instrs)
+                (opt-unroll-phi-prefix-count instrs 0))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-body-instrs (ir.compiler-ir-block-seq-to-list seq) acc)]))
+
 ;; Exhaustive enum dispatches carry an explicit TotalEnumSwitch proof until the
 ;; dedicated late rewrite. Cloning one of these high-fanout
 ;; interpreter loops duplicates every arm, pushes the combined CFG over the
@@ -48320,6 +48363,7 @@
     (if (or
       (< (opt-label-count body-labels) 2)
       (> (opt-label-count body-labels) (opt-bce-mb-block-max))
+      (> (opt-bce-mb-body-instrs body-blocks 0) (opt-bce-mb-instr-max))
       (opt-cfg-block-exists?
         blocks
         (ir.compiler-ir-label
@@ -59695,7 +59739,7 @@
                       ;; output and ahead of versioning: the loop it hands the
                       ;; versioner has lost its flag test and its clearing arm,
                       ;; so the clone the versioner has to fit inside
-                      ;; `opt-bce-mb-block-max` is strictly smaller.
+                      ;; `opt-bce-mb-instr-max` is strictly smaller.
                       [_t-flag-exit : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [flag-exit-result : OptFunctionCtxResult

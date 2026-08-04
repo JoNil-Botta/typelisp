@@ -25665,9 +25665,43 @@
       (compiler_ir_types.CompilerIrInstr.Jump target)
       (compiler_ir_types.CompilerIrInstrList.Nil))))
 
-;; Nine loop blocks -- one over the multi-block cap -- so even a fully
-;; derivable counted loop must stay unversioned.
-(define (opt-bce-mb-test-chain-blocks) : compiler_ir_types.CompilerIrBlockList
+;; `pad` dead movs ahead of a forwarder's jump: the knob that sizes the chain
+;; fixture against the versioner's INSTRUCTION budget without changing its
+;; block count. Each mov takes its own var, counting up from `var`.
+(define (opt-bce-mb-test-pad-instrs
+  [pad : i64]
+  [var : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (if (<= pad 0)
+    tail
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        var
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (opt-bce-mb-test-pad-instrs (- pad 1) (+ var 1) tail))))
+
+(define (opt-bce-mb-test-chain-block
+  [label : i64]
+  [target : i64]
+  [pad : i64]
+  [var : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (opt-bce-mb-test-pad-instrs
+      pad
+      var
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump target)
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+;; Nine loop blocks -- ONE OVER the old eight-block cap -- reached through
+;; seven forwarders, the shape an `(and a b c)` body lowers to. `pad` sets
+;; each forwarder's instruction count, so the same fixture drives both sides
+;; of the instruction budget: pad 1 costs 19 cloned instructions and must
+;; version (block count is not the growth metric), pad 13 costs 103 and must
+;; not (that IS the growth metric).
+(define (opt-bce-mb-test-chain-blocks [pad : i64]) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (opt-bce-mb-test-jump-block
       (compiler_ir_types.compiler-ir-label "entry")
@@ -25696,33 +25730,47 @@
                 (compiler_ir_types.compiler-ir-label "b1"))
               (compiler_ir_types.CompilerIrInstrList.Nil)))))
       (compiler_ir_types.compiler-ir-block-cons
-        (opt-bce-mb-test-jump-block
+        (opt-bce-mb-test-chain-block
           (compiler_ir_types.compiler-ir-label "b1")
-          (compiler_ir_types.compiler-ir-label "b2"))
+          (compiler_ir_types.compiler-ir-label "b2")
+          pad
+          (+ 10 (* 0 pad)))
         (compiler_ir_types.compiler-ir-block-cons
-          (opt-bce-mb-test-jump-block
+          (opt-bce-mb-test-chain-block
             (compiler_ir_types.compiler-ir-label "b2")
-            (compiler_ir_types.compiler-ir-label "b3"))
+            (compiler_ir_types.compiler-ir-label "b3")
+            pad
+            (+ 10 (* 1 pad)))
           (compiler_ir_types.compiler-ir-block-cons
-            (opt-bce-mb-test-jump-block
+            (opt-bce-mb-test-chain-block
               (compiler_ir_types.compiler-ir-label "b3")
-              (compiler_ir_types.compiler-ir-label "b4"))
+              (compiler_ir_types.compiler-ir-label "b4")
+              pad
+              (+ 10 (* 2 pad)))
             (compiler_ir_types.compiler-ir-block-cons
-              (opt-bce-mb-test-jump-block
+              (opt-bce-mb-test-chain-block
                 (compiler_ir_types.compiler-ir-label "b4")
-                (compiler_ir_types.compiler-ir-label "b5"))
+                (compiler_ir_types.compiler-ir-label "b5")
+                pad
+                (+ 10 (* 3 pad)))
               (compiler_ir_types.compiler-ir-block-cons
-                (opt-bce-mb-test-jump-block
+                (opt-bce-mb-test-chain-block
                   (compiler_ir_types.compiler-ir-label "b5")
-                  (compiler_ir_types.compiler-ir-label "b6"))
+                  (compiler_ir_types.compiler-ir-label "b6")
+                  pad
+                  (+ 10 (* 4 pad)))
                 (compiler_ir_types.compiler-ir-block-cons
-                  (opt-bce-mb-test-jump-block
+                  (opt-bce-mb-test-chain-block
                     (compiler_ir_types.compiler-ir-label "b6")
-                    (compiler_ir_types.compiler-ir-label "b7"))
+                    (compiler_ir_types.compiler-ir-label "b7")
+                    pad
+                    (+ 10 (* 5 pad)))
                   (compiler_ir_types.compiler-ir-block-cons
-                    (opt-bce-mb-test-jump-block
+                    (opt-bce-mb-test-chain-block
                       (compiler_ir_types.compiler-ir-label "b7")
-                      (compiler_ir_types.compiler-ir-label "latch"))
+                      (compiler_ir_types.compiler-ir-label "latch")
+                      pad
+                      (+ 10 (* 6 pad)))
                     (compiler_ir_types.compiler-ir-block-cons
                       (compiler_ir_types.compiler-ir-block
                         (compiler_ir_types.compiler-ir-label "latch")
@@ -25756,6 +25804,16 @@
                             (compiler_ir_types.CompilerIrInstrList.Nil)))
                         (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))))
 
+;; Frame leaves room for the pad movs (vars 10 up); everything else the chain
+;; uses lives below 10.
+(define (opt-bce-mb-test-chain-function [pad : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_mb_chain_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    (+ 10 (* 7 pad))
+    (opt-bce-mb-test-chain-blocks pad)))
+
 (define (compiler-optimize-bce-version-mb-self-test) : i64
   (let
     [versioned : compiler_ir_types.CompilerIrFunction
@@ -25768,6 +25826,11 @@
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 13)))]
     [scaled-out : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks scaled)]
+    [chain : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-mb-test-chain-function 1))]
+    [chain-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks chain)]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -25854,6 +25917,45 @@
               (compiler_ir_types.CompilerIrBinOp.Div))
             1))
         14]
+      ;; NINE loop blocks -- over the old eight-block cap -- but only 19
+      ;; cloned instructions, so the growth budget admits it and the counted
+      ;; check versions. This is the and-chain counting-loop shape: block
+      ;; count says "too big", instruction count says "cheaper than a
+      ;; single-block body".
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function chain)))
+        15]
+      ;; entry + guard + nine fast clones + nine slow blocks + exit
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count chain-out) 21))
+        16]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              chain-out
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        17]
+      [(match (compiler_optimize.opt-cfg-find-block
+          chain-out
+          (compiler_ir_types.compiler-ir-label "body__bce_guard"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        18]
+      [(match (compiler_optimize.opt-cfg-find-block
+          chain-out
+          (compiler_ir_types.compiler-ir-label "b7__bce_fast"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        19]
+      ;; the slow loop is untouched and keeps its check.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              chain-out
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        20]
       [else 42])))
 
 (define (opt-bce-mb-test-cloned-switch-cases-ok?
@@ -26324,15 +26426,14 @@
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-bce-version-function
           (opt-bce-mb-test-function (opt-bce-mb-test-blocks 3))))]
+    ;; The same nine-block chain the positive fixture versions, with each
+    ;; forwarder padded to fourteen instructions: 103 cloned instructions
+    ;; against a budget of 96, so the growth cap -- and nothing else --
+    ;; rejects it.
     [too-big : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-bce-version-function
-          (compiler_ir_types.CompilerIrFunction.Function
-            (opt-test-symbol "bce_version_mb_chain_fixture")
-            (opt-bce-version-test-params)
-            (compiler_ast_types.AstType.I64)
-            10
-            (opt-bce-mb-test-chain-blocks))))]
+          (opt-bce-mb-test-chain-function 13)))]
     (cond
       ;; every rejection leaves the function untouched.
       [(not (= (compiler_ir_types.compiler-ir-block-list-count with-call) 6)) 1]

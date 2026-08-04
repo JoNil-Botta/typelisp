@@ -9,7 +9,7 @@ Issue #5609 measures the proof-guided skip lane for five distinct compact
 
 The comparison is current main commit
 `fd19fade1ae04bb49fde42275480a652037e9912` versus branch commit
-`048ab051872f2b88668be9136b2f76bf2078ecc5`. The Cachegrind and self-compile
+`63acfbbf3fdc943d1b11cf53ad8a5da8ecdb18d6`. The Cachegrind and self-compile
 comparisons below are one paired local run, not the checked global baseline.
 Cachegrind used equal-length compiler executable and output paths; the
 self-compile gate used the exact archived main source with equal-length output
@@ -40,11 +40,11 @@ one-to-five difference within each revision.
 | revision | one identity | five identities | incremental delta |
 | --- | ---: | ---: | ---: |
 | current main | 146,569,462 | 187,449,041 | 40,879,579 |
-| branch | 146,601,164 | 187,380,637 | 40,779,473 |
-| branch minus main (absolute) | +31,702 | -68,404 | -100,106 |
+| branch | 146,601,172 | 187,381,329 | 40,780,157 |
+| branch minus main (absolute) | +31,710 | -67,712 | -99,422 |
 
-The branch saves 100,106 `Ir` on the one-to-five increment, or 0.2448802% of
-main's increment. The one-identity absolute compile is +31,702 `Ir`; this is
+The branch saves 99,422 `Ir` on the one-to-five increment, or 0.2432070% of
+main's increment. The one-identity absolute compile is +31,710 `Ir`; this is
 not a claim of an absolute one-identity improvement.
 
 ## Concrete typecheck and allocation
@@ -56,10 +56,10 @@ five minus one.
 
 | measurement | current main | branch | branch minus main (absolute) | incremental savings |
 | --- | ---: | ---: | ---: | ---: |
-| `lower.typecheck` bytes | 2,298,192 / 2,700,168 | 2,332,088 / 2,702,224 | +33,896 / +2,056 | 31,840 (7.92087%) |
-| total allocation bytes | 71,496,872 / 77,625,248 | 71,531,568 / 77,628,456 | +34,696 / +3,208 | 31,488 (0.5138066%) |
-| one-to-five increment | 401,976 | 370,136 | -31,840 | — |
-| one-to-five increment (total) | 6,128,376 | 6,096,888 | -31,488 | — |
+| `lower.typecheck` bytes | 2,298,192 / 2,700,168 | 2,332,168 / 2,701,816 | +33,976 / +1,648 | 32,328 (8.0422712%) |
+| total allocation bytes | 71,496,872 / 77,625,248 | 71,531,576 / 77,627,536 | +34,704 / +2,288 | 32,416 (0.5289493%) |
+| one-to-five increment | 401,976 | 369,648 | -32,328 | — |
+| one-to-five increment (total) | 6,128,376 | 6,095,960 | -32,416 | — |
 
 ## Proof-reuse counters
 
@@ -106,10 +106,10 @@ fixtures.
 
 The exact archived main source was self-compiled on the same host, with
 equal-length output directories and compiler executable names. Main measured
-61,776,694,992 `Ir`; the branch measured 62,035,339,915 `Ir`.
+61,776,694,992 `Ir`; the branch measured 62,043,310,180 `Ir`.
 
-The delta is +258,644,923 (`+0.4186772%`). The unchanged +0.5% gate allows
-308,883,474 `Ir`, leaving 50,238,551 `Ir` of headroom. This is a gate check,
+The delta is +266,615,188 (`+0.4315789%`). The unchanged +0.5% gate allows
+308,883,474 `Ir`, leaving 42,268,286 `Ir` of headroom. This is a gate check,
 not a stable elapsed-time or cross-host benchmark; the checked global
 instruction baseline was not edited.
 
@@ -117,8 +117,8 @@ instruction baseline was not edited.
 
 | assembly metric | current main | branch | branch delta |
 | --- | ---: | ---: | ---: |
-| bytes | 54,355,503 | 54,239,595 | -115,908 (-0.2132406%) |
-| lines | 1,719,167 | 1,716,916 | -2,251 |
+| bytes | 54,355,503 | 54,241,083 | -114,420 (-0.2105031%) |
+| lines | 1,719,167 | 1,716,963 | -2,204 |
 | defined symbols | 18,287 | 18,231 | -56 |
 
 The Linux bootstrap fixpoint passed (`stage2 == stage3`) and embedded-stdlib
@@ -134,16 +134,23 @@ gate.
 | opt | run | elapsed ms | working bytes | private bytes | job bytes (% of cap) |
 | --- | --- | ---: | ---: | ---: | ---: |
 | opt1 | main | 87,500 | 1,035,603,968 | 1,149,198,336 | 1,167,265,792 (27.1775%) |
-| opt1 | branch | 81,009 | 1,008,459,776 | 1,124,282,368 | 1,142,337,536 (26.5971%) |
+| opt1 | branch | 89,896 | 1,008,685,056 | 1,124,286,464 | 1,142,353,920 (26.5975%) |
 | opt2 | main | 97,533 | 1,565,081,600 | 1,695,494,144 | 1,700,941,824 (39.6031%) |
-| opt2 | branch | 104,555 | 1,576,976,384 | 1,712,603,136 | 1,713,848,320 (39.9036%) |
+| opt2 | branch | 106,539 | 1,575,899,136 | 1,712,599,040 | 1,713,848,320 (39.9036%) |
 
-For opt1, branch job memory is -24,928,256 bytes (-2.13561%) versus main. For
+For opt1, branch job memory is -24,911,872 bytes (-2.134207%) versus main. For
 opt2, it is +12,906,496 bytes (+0.758785%). Both branch runs complete under
 the hard cap.
 
-The exact legacy Windows fixed symbol-pool census after local-only proof-state
-name compaction is: pool 79,334; generated next 87,562; generated count
-51,701; normal mapped capacity/headroom +36. The +36 is symbol-pool capacity,
-not memory headroom. The fixed capacity/layout is unchanged here; #5211 owns
-the growable-interner replacement.
+The actual normal `intern-capacity()` is 131,072 slots, and the final
+Windows-target compiler compiled `src/main.tl`, assembled, and linked
+successfully at that fixed capacity. The resulting artifacts are 68,760,044
+bytes of assembly, 16,664,894 bytes of object code, and 13,627,392 bytes of
+executable. Expanded-capacity results cannot be projected linearly onto fixed
+capacity; the direct fixed-capacity compile/link is authoritative. In a
+controlled A/B using the exact same expanded compiler, flags, build identity,
+and embedded artifact against archived pre-lint commit `33a5c9629`, both
+pre-lint and final source produced exactly `pool=79,334`, `generated_next=79,370`,
+`generated_count=59,893`, and nominal mapped `-8,156`. This demonstrates
+source neutrality only; the earlier +36 comparison was environment-confounded
+and is not final evidence. #5211 owns the growable interner replacement.

@@ -163,6 +163,21 @@
                   false)))))))))
 
 ;: Capacity must stay a power of two so the bucket index is a mask, not a modulo.
+;: It also bounds one compile's live ids: source ids grow up from 0 and generated
+;: ids grow down from capacity-1, so the two lanes together must fit or
+;: `intern-generated-id-allocate!` aborts with no diagnostic.
+;: It CANNOT simply be raised. Every structural symbol range is a polynomial in
+;: this capacity, and the widest of them --
+;: `tc_core.macro-hygiene-local-id`, which spans 1024*capacity^3 -- already uses
+;: 2^61 of the 3*2^60 window below `intern-structural-local-base`. Doubling the
+;: capacity multiplies that span by eight, past the whole positive i64 range, and
+;: the symptom is silent: hygiene ids decode into the pool range and
+;: `intern-str` bounds-aborts three build stages later. See
+;: `intern-id-space-capacity-tests-ok?` here and
+;: `tc_core.macro-hygiene-id-space-budget-ok?`, which fail fast on that attempt.
+;: Growing the budget means making a symbol lane cheaper (derived symbols are the
+;: bulk of the generated lane) or making the hygiene macro identity dense, not
+;: moving this number. Refs #6258.
 (define (intern-capacity) : i64
   131072)
 
@@ -321,6 +336,9 @@
 ;; Quasiquoted source symbols keep their parsed identity without allocating a
 ;; second intern entry. This range sits above the compiler's other structural
 ;; symbol ranges and remains within signed i64 at the fixed intern capacity.
+;; The cube is what pins the capacity: at 2^17 this is exactly 2^62, one owner
+;; stride below the first composite structural key, and it overflows signed i64
+;; the moment the capacity moves up. Refs #6258.
 (define (intern-template-source-base) : i64
   (let
     [stride : i64 (intern-capacity)]
@@ -906,6 +924,10 @@
   (make-array InternSlotId (intern-capacity)))
 (define intern-map-hash-slots : (__tl_dyn-array i64)
   (make-array i64 (intern-capacity)))
+
+;; Sized with the pool: every generated id is a pool id, so a compile that fills
+;; the generated lane must still find a free bucket here rather than exhaust the
+;; probe budget in `intern-generated-canonical-name-at`.
 (define intern-generated-map-capacity : i64
   131072)
 (define intern-generated-map-id-slots : (__tl_dyn-array InternSlotId)
@@ -3110,6 +3132,123 @@
     (= (intern-qualified? id) qualified)
     (intern-private-string-eq (intern-qualified-module id) module-name)
     (intern-private-string-eq (intern-qualified-base id) base-name)))
+
+;; The capacity is not just the pool length: every structural symbol range is
+;; keyed off it, so moving it moves those ranges too. A range that overflows or
+;; overlaps fails SILENTLY -- ids decode into the wrong lane rather than abort.
+;; The quasiquoted-source and structural-local bases are capacity^3 multiples,
+;; so both overflow signed i64 the first time the capacity passes 2^17. These
+;; are the relations the capacity is free to move within, checked here so that a
+;; capacity change fails as a named self-test rather than as a bare
+;; `tl: array index out of bounds` in a later bootstrap stage. Refs #6258.
+(define (intern-id-space-capacity-tests-ok?) : bool
+  (begin
+    (intern-reset!)
+    (let
+      [capacity : i64 (intern-capacity)]
+      [template-base : i64 (intern-template-source-base)]
+      [local-base : i64 (intern-structural-local-base)]
+      [macro-base : i64 (intern-macro-global-structural-base)]
+      [ok : bool true]
+      (begin
+        ;; A power of two, so `intern-bucket` masks instead of dividing.
+        (unless (> capacity 0) (set! ok false))
+        (unless (= (bit-and capacity (- capacity 1)) 0) (set! ok false))
+        ;; Each dedup map has to outsize the lane it indexes. A map smaller than
+        ;; its lane cannot hold a full lane, and the overflow is an abort inside
+        ;; the probe loop, not a resize.
+        (unless
+          (>= (array-length intern-map-id-slots) capacity)
+          (set! ok false))
+        (unless (>= intern-generated-map-capacity capacity) (set! ok false))
+        ;; No base overflowed into a negative i64 ...
+        (unless (> macro-base 0) (set! ok false))
+        (unless (> local-base 0) (set! ok false))
+        (unless (> template-base 0) (set! ok false))
+        ;; ... the ranges stay ordered, with the macro-global range clearing the
+        ;; structural-local base ...
+        (unless
+          (< (+ macro-base (* 2 (* capacity capacity))) local-base)
+          (set! ok false))
+        (unless (< local-base template-base) (set! ok false))
+        ;; ... the quasiquoted range stays below the first composite structural
+        ;; key, whose owner ids start at one ...
+        (unless
+          (<=
+            (+ template-base capacity)
+            (+
+              (intern-structural-key-base)
+              (intern-structural-key-owner-stride)))
+          (set! ok false))
+        ;; ... and each base stays a multiple of the capacity, which is what lets
+        ;; the remainder-based decoders recover a source name id.
+        (unless (= (% template-base capacity) 0) (set! ok false))
+        (unless (= (% local-base capacity) 0) (set! ok false))
+        (unless (= (% macro-base capacity) 0) (set! ok false))
+        ;; The range predicates hold at both edges and reject one past each.
+        (unless (intern-template-source-id? template-base) (set! ok false))
+        (unless
+          (intern-template-source-id? (+ template-base (- capacity 1)))
+          (set! ok false))
+        (unless
+          (not (intern-template-source-id? (- template-base 1)))
+          (set! ok false))
+        (unless
+          (not (intern-template-source-id? (+ template-base capacity)))
+          (set! ok false))
+        ;; A source name id survives every structural encoding round trip.
+        (unless
+          (= (intern-template-source-name-id (intern-template-source-id 0)) 0)
+          (set! ok false))
+        (unless
+          (=
+            (intern-template-source-name-id
+              (intern-template-source-id (- capacity 1)))
+            (- capacity 1))
+          (set! ok false))
+        (unless
+          (=
+            (intern-structural-local-source-name-id
+              (intern-structural-local-id 0 (- capacity 1)))
+            (- capacity 1))
+          (set! ok false))
+        (unless
+          (=
+            (intern-structural-local-source-name-id
+              (intern-structural-local-id 7 3))
+            3)
+          (set! ok false))
+        (unless
+          (intern-structural-local-id? (intern-structural-local-id 7 3))
+          (set! ok false))
+        (unless
+          (= (intern-macro-global-source-name-id (+ macro-base 3)) 3)
+          (set! ok false))
+        (unless
+          (intern-macro-global-structural-id? (+ macro-base 3))
+          (set! ok false))
+        ;; A renderable id is a pool id and nothing else.
+        (unless (intern-renderable-id? (- capacity 1)) (set! ok false))
+        (unless (not (intern-renderable-id? capacity)) (set! ok false))
+        (unless (not (intern-renderable-id? macro-base)) (set! ok false))
+        (unless (not (intern-renderable-id? local-base)) (set! ok false))
+        (unless (not (intern-renderable-id? template-base)) (set! ok false))
+        ;; Both lanes address the one pool: source ids grow up from zero and
+        ;; generated ids grow down from capacity-1, so the capacity is the sum
+        ;; the two lanes must fit in, and they meet only when it is exhausted.
+        (unless (= (intern-pool-len) 0) (set! ok false))
+        (unless (= (intern-generated-count) 0) (set! ok false))
+        (unless (= (intern "id-space-lane-probe") 0) (set! ok false))
+        (unless
+          (= (intern-generated-name "id-space-lane-probe") (- capacity 1))
+          (set! ok false))
+        (unless
+          (= (intern-generated-id-at-allocation-index 0) (- capacity 1))
+          (set! ok false))
+        (unless (= (intern-pool-len) 1) (set! ok false))
+        (unless (= (intern-generated-count) 1) (set! ok false))
+        (intern-reset!)
+        ok))))
 
 (define (intern-generated-name-tests-ok?) : bool
   (begin

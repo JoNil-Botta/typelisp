@@ -22545,6 +22545,1788 @@
         (opt-cfg-context-build blocks)
         func)]))
 
+;; --- monotone-flag loop-exit conversion (flag_exit) ---------------------------
+;;
+;; `(while (and (< i n) ok) ... (set! ok false) ...)` carries `ok` around the
+;; back edge and re-tests it at the top of every iteration, so the loop pays a
+;; `test`/`jcc` per iteration for a flag that is only ever CLEARED. C compiles
+;; the same source to a direct branch out of the loop at the mismatch site --
+;; `benchmarks/intern_table`'s `it-slice-eq?` byte compare spends two of its ten
+;; instructions per byte on the re-test and its C twin spends none.
+;;
+;; The flag is monotone: it starts at a constant K in the preheader and the only
+;; value the body can give it is the opposite constant C, which makes the gate
+;; branch leave the loop. Redirecting each clear edge straight to the gate's
+;; exit arm therefore preserves meaning and makes the header's flag test
+;; vacuous: nothing can leave the flag at C while continuing, so the gate always
+;; continues and becomes an unconditional jump. The flag phis then have no
+;; readers left and the pipeline's SCCP/DCE retire them.
+;;
+;; Exit phis and the phi-web budget. An earlier phi-block-collapse experiment on
+;; this tree regressed 10% by duplicating phi copies, so any rewrite near a loop
+;; exit has to pay for its edges. This one adds none. The clear edges adopt the
+;; gate's own exit arm rather than the shared exit block, so no block gains a
+;; predecessor it did not already have from the gate: the exit block's
+;; predecessor count is IDENTICAL before and after (4 -> 4 on `it-slice-eq?`)
+;; and only the values on those edges change. And every changed value becomes a
+;; literal -- an exit phi input reached through the gate arm becomes C, one
+;; reached through any other edge out of the loop becomes K. Since
+;; `compiler-reg-phi-touched-add-inputs!` (src/compiler_regalloc.tl) marks only
+;; `Value.Var` inputs, replacing Var inputs with literals strictly shrinks the
+;; phi-touched set and the live-out-input exclusion riding on it, so phi-web
+;; coalescing can only improve.
+;;
+;; Placed between `induction` and `bce_version`. Conversion only shrinks what
+;; the versioner has to fit: the clearing arm leaves the loop, so a converted
+;; body loses a block (seven labels to six on `it-slice-eq?`, against an
+;; `opt-bce-mb-block-max` of eight), and the top-tested shape the versioner
+;; matches survives untouched -- the header still ends `Branch c, body, exit`
+;; with the body target inside the loop. In practice a lowered `while` spends
+;; pipeline iteration 1 with its flag still live at a non-phi reader (C4), so
+;; versioning usually happens first and this pass converts both clones on
+;; iteration 2; the ordering is what keeps the two cases from fighting.
+;;
+;; Conditions, all required:
+;;   C1 monotone seed: a header phi `f = phi [K, preheader], [v, latch]` with
+;;      exactly one input from outside the loop carrying a bool literal K and
+;;      exactly one from inside it carrying `v`. C is the opposite literal.
+;;   C2 monotone closure: descending from `v` through phis and Movs defined in
+;;      the loop, every leaf is `f` itself or the literal C, and at least one is
+;;      C. A leaf of K would re-establish the continuing value and is rejected;
+;;      so is a Mov of C, whose clear happens mid-block with no edge to redirect.
+;;   C3 gate: some block G in the loop ends `Branch g, T, X` with g in the
+;;      closure, T inside the loop, X outside it, and C selecting X.
+;;   C4 uses: the flag and every closure var are read only by the closure, by
+;;      the gate branch, and by phis outside the loop keyed on one of the loop's
+;;      exit blocks. Anything else could observe the value this rewrite retires,
+;;      and a phi keyed on a NON-exit block has no reachable exit to fold to.
+;;   C5 dominance: G dominates the latch, so every path from a clear edge to the
+;;      back edge passes the gate and none can slip round again. G must also
+;;      dominate every clear predecessor, so everything the gate's exit arm can
+;;      read is equally available on the redirected edge.
+;;   C6 transparency: every block on a path from a clear-edge target to G
+;;      carries only pure instructions, and G itself holds nothing but phis and
+;;      its branch. Those are what the redirect skips.
+;;   C7 exit shape: X's only predecessor is G and X has no phis, so the clear
+;;      edges can adopt it without adding a predecessor anywhere; every phi
+;;      outside the loop that reads a closure var on one edge out of the loop
+;;      reads one on all of them; and where a cleared path could ALSO have left
+;;      the loop by a different exit -- the last iteration reaching the counter
+;;      test with the flag already down -- that alternate exit and X must both be
+;;      jump-only into one common merge block whose phis agree across them,
+;;      since otherwise swapping which exit a cleared path takes is observable.
+;;   C8 escapes: no value defined in the loop may be read outside it except the
+;;      closure vars, because the redirect skips the rest of the cleared
+;;      iteration. `rotate_ssa` has already collapsed exit phis into movs, so a
+;;      scan loop that returns its counter is rejected right here.
+;; Each clear predecessor must also end in a Jump (no edge split at rewrite
+;; time) and leave its clear target with at least one surviving predecessor;
+;; every clear edge is redirected or the whole loop is left alone.
+;;
+;; The rewrite is: retarget each clear edge's Jump to X; drop those predecessors
+;; from the phis they fed; replace the gate branch with `Jump T`; fold the
+;; closure inputs of phis outside the loop to C on X's edge and to K on every
+;; other exit edge; and pin the closure's own definitions to K, which is what
+;; every remaining path into them now carries.
+;;
+;; C4 and C8 count EFFECTIVE uses (`opt-gep-offset-effective-uses`). At this
+;; slot the dead Casts that removed BoundsChecks strand are still in the IR --
+;; the pipeline DCE is far below -- and counting them would reject loops whose
+;; only outside reader is already retired.
+(defenum OptFlagExitEdgeList
+  (Nil)
+  ;; the clearing predecessor, then the phi block its edge flows into.
+  (Cons i64 i64 (Box OptFlagExitEdgeList)))
+
+(defenum OptFlagExitMaybeInstr
+  (No)
+  (Some ir.CompilerIrInstr))
+
+;; gate label, the arm inside the loop, the arm outside it.
+(defenum OptFlagExitGate
+  (No)
+  (Some i64 i64 i64))
+
+(defenum OptFlagExitMaybeLabel
+  (No)
+  (Some i64))
+
+;; the continuing literal K, then the latch value the closure walk starts from.
+(defenum OptFlagExitSeed
+  (No)
+  (Some bool i64))
+
+(defstruct OptFlagExitPlan
+  (gate i64)
+  (continue-label i64)
+  (exit-label i64)
+  (keep bool)
+  (closure (__tl_dyn-array i64))
+  (clear-preds OptLabelSet)
+  (clear-targets OptLabelSet)
+  (exits OptLabelSet))
+
+(defenum OptFlagExitMaybePlan
+  (No)
+  (Some OptFlagExitPlan))
+
+(define (opt-flag-exit-bool-value [flag : bool]) : ir.CompilerIrValue
+  (if flag
+    (ir.CompilerIrValue.Bool true)
+    (ir.CompilerIrValue.Bool false)))
+
+(define (opt-flag-exit-value-is-bool?
+  [value : ir.CompilerIrValue]
+  [want : bool]) : bool
+  (match value
+    [(ir.CompilerIrValue.Bool literal)
+      (if want
+        literal
+        (not literal))]
+    [_ false]))
+
+(define (opt-flag-exit-closure-var?
+  [value : ir.CompilerIrValue]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (and
+        (>= var 0)
+        (< var (array-length closure))
+        (= (array-ref closure var) 1))]
+    [_ false]))
+
+;; --- prescan -----------------------------------------------------------------
+;;
+;; Runs on every function on every pipeline iteration, so it stays one
+;; allocation-free instruction walk: without a phi carrying a bool literal there
+;; is no monotone seed anywhere in the function.
+(define (opt-flag-exit-phi-inputs-have-bool?
+  [inputs : ir.CompilerIrPhiInputList]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) false]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-phi-inputs-have-bool?
+        (ir.compiler-ir-phi-input-seq-to-list seq))]
+    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+      (or
+        (match value
+          [(ir.CompilerIrValue.Bool _) true]
+          [_ false])
+        (opt-flag-exit-phi-inputs-have-bool? (box-get rest)))]))
+
+(define (opt-flag-exit-instrs-have-candidate?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (match (ir.compiler-ir-instr-seq-ref instrs index)
+        [(ir.CompilerIrInstr.Phi _ inputs _)
+          (opt-flag-exit-phi-inputs-have-bool? inputs)]
+        [_ false])
+      (opt-flag-exit-instrs-have-candidate? instrs (+ index 1)))))
+
+(define (opt-flag-exit-block-seq-has-candidate?
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    false
+    (or
+      (match (ir.compiler-ir-block-seq-ref blocks index)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-flag-exit-instrs-have-candidate? instrs 0)])
+      (opt-flag-exit-block-seq-has-candidate? blocks (+ index 1)))))
+
+(define (opt-flag-exit-blocks-have-candidate? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (or
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-flag-exit-instrs-have-candidate? instrs 0)])
+        (opt-flag-exit-blocks-have-candidate? (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-flag-exit-block-seq-has-candidate? seq 0)]))
+
+;; --- definition sites ---------------------------------------------------------
+(define (opt-flag-exit-def-labels-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [label : i64]
+  [def-label : (__tl_dyn-array i64)]) : unit
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (begin
+      (match (opt-instr-def-var (ir.compiler-ir-instr-seq-ref instrs index))
+        [(option_i64.Some dst)
+          (if (and (>= dst 0) (< dst (array-length def-label)))
+            (begin
+              (array-set! def-label dst label)
+              unit)
+            unit)]
+        [(option_i64.None) unit])
+      (opt-flag-exit-def-labels-instrs! instrs (+ index 1) label def-label))))
+
+(define (opt-flag-exit-def-labels-seq!
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [def-label : (__tl_dyn-array i64)]) : unit
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    unit
+    (begin
+      (match (ir.compiler-ir-block-seq-ref blocks index)
+        [(ir.CompilerIrBlock.Block label instrs)
+          (opt-flag-exit-def-labels-instrs! instrs 0 label def-label)])
+      (opt-flag-exit-def-labels-seq! blocks (+ index 1) def-label))))
+
+(define (opt-flag-exit-def-labels!
+  [blocks : ir.CompilerIrBlockList]
+  [def-label : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block label instrs)
+            (opt-flag-exit-def-labels-instrs! instrs 0 label def-label)])
+        (opt-flag-exit-def-labels! (box-get rest) def-label))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-flag-exit-def-labels-seq! seq 0 def-label)]))
+
+(define (opt-flag-exit-instr-at-scan
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]) : OptFlagExitMaybeInstr
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (OptFlagExitMaybeInstr.No)
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some found)
+          (if (= found dst)
+            (OptFlagExitMaybeInstr.Some instr)
+            (opt-flag-exit-instr-at-scan instrs (+ index 1) dst))]
+        [(option_i64.None) (opt-flag-exit-instr-at-scan instrs (+ index 1) dst)]))))
+
+(define (opt-flag-exit-instr-at
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]
+  [dst : i64]) : OptFlagExitMaybeInstr
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (OptFlagExitMaybeInstr.No)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-flag-exit-instr-at-scan instrs 0 dst)])]))
+
+;; --- C2: the monotone closure ------------------------------------------------
+;;
+;; Descend the phi/Mov web that feeds the header flag from the latch. Every leaf
+;; must be the flag itself or the clearing literal; a clear leaf records the edge
+;; that carries it. `bad` latches any other shape.
+(define (opt-flag-exit-walk-inputs
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [def-label : (__tl_dyn-array i64)]
+  [flag : i64]
+  [clear-const : bool]
+  [at-label : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [closure : (__tl_dyn-array i64)]
+  [bad : (__tl_dyn-array i64)]
+  [acc : OptFlagExitEdgeList]) : OptFlagExitEdgeList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) acc]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-walk-inputs
+        blocks
+        body
+        index
+        def-label
+        flag
+        clear-const
+        at-label
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        closure
+        bad
+        acc)]
+    [(ir.CompilerIrPhiInputList.Cons value input-label rest)
+      (opt-flag-exit-walk-inputs
+        blocks
+        body
+        index
+        def-label
+        flag
+        clear-const
+        at-label
+        (box-get rest)
+        closure
+        bad
+        (if (opt-flag-exit-value-is-bool? value clear-const)
+          (OptFlagExitEdgeList.Cons input-label at-label (box acc))
+          (match value
+            [(ir.CompilerIrValue.Var var)
+              (opt-flag-exit-walk
+                blocks
+                body
+                index
+                def-label
+                flag
+                clear-const
+                var
+                closure
+                bad
+                acc)]
+            [_
+              (begin
+                (array-set! bad 0 1)
+                acc)])))]))
+
+(define (opt-flag-exit-walk
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [def-label : (__tl_dyn-array i64)]
+  [flag : i64]
+  [clear-const : bool]
+  [var : i64]
+  [closure : (__tl_dyn-array i64)]
+  [bad : (__tl_dyn-array i64)]
+  [acc : OptFlagExitEdgeList]) : OptFlagExitEdgeList
+  (cond
+    [(= var flag) acc]
+    [(or (< var 0) (>= var (array-length closure)))
+      (begin
+        (array-set! bad 0 1)
+        acc)]
+    [(= (array-ref closure var) 1) acc]
+    [else
+      (let
+        [label : i64 (array-ref def-label var)]
+        (if (or
+          (< label 0)
+          (not (opt-loop-body-label-member? body index label)))
+          (begin
+            (array-set! bad 0 1)
+            acc)
+          (match (opt-flag-exit-instr-at blocks label var)
+            [(OptFlagExitMaybeInstr.No)
+              (begin
+                (array-set! bad 0 1)
+                acc)]
+            [(OptFlagExitMaybeInstr.Some instr)
+              (begin
+                (array-set! closure var 1)
+                (match instr
+                  [(ir.CompilerIrInstr.Phi _ inputs _)
+                    (opt-flag-exit-walk-inputs
+                      blocks
+                      body
+                      index
+                      def-label
+                      flag
+                      clear-const
+                      label
+                      inputs
+                      closure
+                      bad
+                      acc)]
+                  [(ir.CompilerIrInstr.Mov _ src _)
+                    (match src
+                      [(ir.CompilerIrValue.Var source)
+                        (opt-flag-exit-walk
+                          blocks
+                          body
+                          index
+                          def-label
+                          flag
+                          clear-const
+                          source
+                          closure
+                          bad
+                          acc)]
+                      [_
+                        (begin
+                          (array-set! bad 0 1)
+                          acc)])]
+                  [_
+                    (begin
+                      (array-set! bad 0 1)
+                      acc)]))])))]))
+
+(define (opt-flag-exit-edges-empty? [edges : OptFlagExitEdgeList]) : bool
+  (match edges
+    [(OptFlagExitEdgeList.Nil) true]
+    [(OptFlagExitEdgeList.Cons _ _ _) false]))
+
+(define (opt-flag-exit-edge-preds
+  [edges : OptFlagExitEdgeList]
+  [acc : OptLabelSet]) : OptLabelSet
+  (match edges
+    [(OptFlagExitEdgeList.Nil) acc]
+    [(OptFlagExitEdgeList.Cons pred _ rest)
+      (opt-flag-exit-edge-preds (box-get rest) (opt-label-add acc pred))]))
+
+(define (opt-flag-exit-edge-targets
+  [edges : OptFlagExitEdgeList]
+  [acc : OptLabelSet]) : OptLabelSet
+  (match edges
+    [(OptFlagExitEdgeList.Nil) acc]
+    [(OptFlagExitEdgeList.Cons _ target rest)
+      (opt-flag-exit-edge-targets (box-get rest) (opt-label-add acc target))]))
+
+;; --- C3: the gate -------------------------------------------------------------
+(define (opt-flag-exit-block-gate
+  [instrs : ir.CompilerIrInstrSeq]
+  [label : i64]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [closure : (__tl_dyn-array i64)]
+  [clear-const : bool]) : OptFlagExitGate
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (= count 0)
+      (OptFlagExitGate.No)
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Branch condition true-label false-label)
+          (if (not (opt-flag-exit-closure-var? condition closure))
+            (OptFlagExitGate.No)
+            (let
+              [exit-label : i64
+                (if clear-const
+                  true-label
+                  false-label)]
+              [continue-label : i64
+                (if clear-const
+                  false-label
+                  true-label)]
+              (if (and
+                (opt-loop-body-label-member? body index continue-label)
+                (not (opt-loop-body-label-member? body index exit-label)))
+                (OptFlagExitGate.Some label continue-label exit-label)
+                (OptFlagExitGate.No))))]
+        [_ (OptFlagExitGate.No)]))))
+
+(define (opt-flag-exit-find-gate
+  [body-blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [closure : (__tl_dyn-array i64)]
+  [clear-const : bool]) : OptFlagExitGate
+  (match body-blocks
+    [(ir.CompilerIrBlockList.Nil) (OptFlagExitGate.No)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (let
+        [here : OptFlagExitGate
+          (match block
+            [(ir.CompilerIrBlock.Block label instrs)
+              (opt-flag-exit-block-gate
+                instrs
+                label
+                body
+                index
+                closure
+                clear-const)])]
+        (match here
+          [(OptFlagExitGate.Some gate continue-label exit-label)
+            (OptFlagExitGate.Some gate continue-label exit-label)]
+          [(OptFlagExitGate.No)
+            (opt-flag-exit-find-gate
+              (box-get rest)
+              body
+              index
+              closure
+              clear-const)]))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-flag-exit-find-gate
+        (ir.compiler-ir-block-seq-to-list seq)
+        body
+        index
+        closure
+        clear-const)]))
+
+;; --- C6: the skipped path -----------------------------------------------------
+(define (opt-flag-exit-pure-instr? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Phi _ _ _) true]
+    [(ir.CompilerIrInstr.Mov _ _ _) true]
+    [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+      (match op
+        [(ir.CompilerIrBinOp.Div) false]
+        [(ir.CompilerIrBinOp.Mod) false]
+        [_ true])]
+    [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
+    [(ir.CompilerIrInstr.Cast _ _ _ _) true]
+    [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(ir.CompilerIrInstr.Gep _ _ _ _) true]
+    [(ir.CompilerIrInstr.AddrOf _ _) true]
+    [_ false]))
+
+(define (opt-flag-exit-block-pure?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (>= index count)
+      true
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        (if (and (= index (- count 1)) (opt-cfg-terminator-instr? instr))
+          true
+          (if (opt-flag-exit-pure-instr? instr)
+            (opt-flag-exit-block-pure? instrs (+ index 1))
+            false))))))
+
+;; G may hold phis and its branch and nothing else: the redirect jumps past it.
+(define (opt-flag-exit-gate-block-clean?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (- (ir.compiler-ir-instr-seq-count instrs) 1))
+    true
+    (if (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Phi _ _ _) true]
+      [_ false])
+      (opt-flag-exit-gate-block-clean? instrs (+ index 1))
+      false)))
+
+;; Blocks the redirect skips: everything reachable inside the loop from a clear
+;; edge's target, stopping at the gate. Loop exits met on the way are recorded in
+;; `alt` -- those are the exits a cleared path could have taken instead of X.
+(define (opt-flag-exit-mark-path!
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [pred-map : OptPredMap]
+  [gate : i64]
+  [label : i64]
+  [seen : (__tl_dyn-array i64)]
+  [alt : (__tl_dyn-array i64)]) : unit
+  (if (= label gate)
+    unit
+    (match (opt-cfg-index-id index label)
+      [(option_i64.None) unit]
+      [(option_i64.Some id)
+        (if (or (< id 0) (>= id (array-length seen)))
+          unit
+          (if (opt-loop-body-contains-id? body id)
+            (if (= (array-ref seen id) 1)
+              unit
+              (begin
+                (array-set! seen id 1)
+                (opt-flag-exit-mark-path-successors!
+                  body
+                  index
+                  pred-map
+                  gate
+                  (opt-pred-map-successors pred-map label)
+                  seen
+                  alt)))
+            (begin
+              (array-set! alt id 1)
+              unit)))])))
+
+(define (opt-flag-exit-mark-path-successors!
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [pred-map : OptPredMap]
+  [gate : i64]
+  [successors : OptLabelSet]
+  [seen : (__tl_dyn-array i64)]
+  [alt : (__tl_dyn-array i64)]) : unit
+  (match successors
+    [(OptLabelSet.Nil) unit]
+    [(OptLabelSet.Dense _ _)
+      (begin
+        (opt-flag-exit-mark-path!
+          body
+          index
+          pred-map
+          gate
+          (opt-label-ref successors 0)
+          seen
+          alt)
+        (opt-flag-exit-mark-path-successors!
+          body
+          index
+          pred-map
+          gate
+          (opt-label-tail successors)
+          seen
+          alt))]))
+
+(define (opt-flag-exit-mark-clears!
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [pred-map : OptPredMap]
+  [gate : i64]
+  [edges : OptFlagExitEdgeList]
+  [seen : (__tl_dyn-array i64)]
+  [alt : (__tl_dyn-array i64)]) : unit
+  (match edges
+    [(OptFlagExitEdgeList.Nil) unit]
+    [(OptFlagExitEdgeList.Cons _ target rest)
+      (begin
+        (opt-flag-exit-mark-path! body index pred-map gate target seen alt)
+        (opt-flag-exit-mark-clears!
+          body
+          index
+          pred-map
+          gate
+          (box-get rest)
+          seen
+          alt))]))
+
+(define (opt-flag-exit-marked-pure?
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [seen : (__tl_dyn-array i64)]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (and
+        (match block
+          [(ir.CompilerIrBlock.Block label instrs)
+            (match (opt-cfg-index-id index label)
+              [(option_i64.None) true]
+              [(option_i64.Some id)
+                (if (and
+                  (>= id 0)
+                  (< id (array-length seen))
+                  (= (array-ref seen id) 1))
+                  (opt-flag-exit-block-pure? instrs 0)
+                  true)])])
+        (opt-flag-exit-marked-pure? (box-get rest) index seen))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-flag-exit-marked-pure?
+        (ir.compiler-ir-block-seq-to-list seq)
+        index
+        seen)]))
+
+;; The alternate exits, minus X itself.
+(define (opt-flag-exit-alt-labels
+  [index : OptCfgIndex]
+  [alt : (__tl_dyn-array i64)]
+  [id : i64]
+  [exit-label : i64]
+  [acc : OptLabelSet]) : OptLabelSet
+  (if (>= id (array-length alt))
+    acc
+    (opt-flag-exit-alt-labels
+      index
+      alt
+      (+ id 1)
+      exit-label
+      (let
+        [label : i64 (opt-cfg-index-label index id)]
+        (if (and (= (array-ref alt id) 1) (not (= label exit-label)))
+          (opt-label-add acc label)
+          acc)))))
+
+;; --- exits and the merge block -------------------------------------------------
+(define (opt-flag-exit-outside-successors
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [successors : OptLabelSet]
+  [acc : OptLabelSet]) : OptLabelSet
+  (match successors
+    [(OptLabelSet.Nil) acc]
+    [(OptLabelSet.Dense _ _)
+      (opt-flag-exit-outside-successors
+        body
+        index
+        (opt-label-tail successors)
+        (let
+          [label : i64 (opt-label-ref successors 0)]
+          (if (opt-loop-body-label-member? body index label)
+            acc
+            (opt-label-add acc label))))]))
+
+(define (opt-flag-exit-exit-labels-from
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [pred-map : OptPredMap]
+  [labels : OptLabelSet]
+  [acc : OptLabelSet]) : OptLabelSet
+  (match labels
+    [(OptLabelSet.Nil) acc]
+    [(OptLabelSet.Dense _ _)
+      (opt-flag-exit-exit-labels-from
+        body
+        index
+        pred-map
+        (opt-label-tail labels)
+        (opt-flag-exit-outside-successors
+          body
+          index
+          (opt-pred-map-successors pred-map (opt-label-ref labels 0))
+          acc))]))
+
+;; A block whose whole body is one Jump: the only shape an alternate exit and X
+;; may take, so that swapping between them is invisible past the merge.
+(define (opt-flag-exit-jump-only-target
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]) : OptFlagExitMaybeLabel
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (OptFlagExitMaybeLabel.No)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (not (= (ir.compiler-ir-instr-seq-count instrs) 1))
+            (OptFlagExitMaybeLabel.No)
+            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+              [(ir.CompilerIrInstr.Jump target)
+                (OptFlagExitMaybeLabel.Some target)]
+              [_ (OptFlagExitMaybeLabel.No)]))])]))
+
+(define (opt-flag-exit-all-jump-only-to?
+  [blocks : ir.CompilerIrBlockList]
+  [labels : OptLabelSet]
+  [merge : i64]) : bool
+  (match labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (and
+        (match (opt-flag-exit-jump-only-target blocks (opt-label-ref labels 0))
+          [(OptFlagExitMaybeLabel.No) false]
+          [(OptFlagExitMaybeLabel.Some target) (= target merge)])
+        (opt-flag-exit-all-jump-only-to? blocks (opt-label-tail labels) merge))]))
+
+(define (opt-flag-exit-first-keyed-value
+  [inputs : ir.CompilerIrPhiInputList]
+  [keys : OptLabelSet]) : ir.CompilerIrMaybeValue
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrMaybeValue.No)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-first-keyed-value
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        keys)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (if (opt-label-contains keys label)
+        (ir.CompilerIrMaybeValue.Some value)
+        (opt-flag-exit-first-keyed-value (box-get rest) keys))]))
+
+(define (opt-flag-exit-keyed-any-closure?
+  [inputs : ir.CompilerIrPhiInputList]
+  [keys : OptLabelSet]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) false]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-keyed-any-closure?
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        keys
+        closure)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (or
+        (and
+          (opt-label-contains keys label)
+          (opt-flag-exit-closure-var? value closure))
+        (opt-flag-exit-keyed-any-closure? (box-get rest) keys closure))]))
+
+(define (opt-flag-exit-keyed-all-closure?
+  [inputs : ir.CompilerIrPhiInputList]
+  [keys : OptLabelSet]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) true]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-keyed-all-closure?
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        keys
+        closure)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (and
+        (or
+          (not (opt-label-contains keys label))
+          (opt-flag-exit-closure-var? value closure))
+        (opt-flag-exit-keyed-all-closure? (box-get rest) keys closure))]))
+
+(define (opt-flag-exit-keyed-all-eq?
+  [inputs : ir.CompilerIrPhiInputList]
+  [keys : OptLabelSet]
+  [want : ir.CompilerIrValue]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) true]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-keyed-all-eq?
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        keys
+        want)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (and
+        (or (not (opt-label-contains keys label)) (opt-value-eq value want))
+        (opt-flag-exit-keyed-all-eq? (box-get rest) keys want))]))
+
+;; Every phi of the merge block must give the same answer whichever of the
+;; interchangeable exits a cleared path arrives on: either a closure var on all
+;; of them (rewritten to the same literal below) or one identical value.
+(define (opt-flag-exit-merge-phis-agree?
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [keys : OptLabelSet]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (match (ir.compiler-ir-instr-seq-ref instrs pos)
+      [(ir.CompilerIrInstr.Phi _ inputs _)
+        (and
+          (or
+            (opt-flag-exit-keyed-all-closure? inputs keys closure)
+            (match (opt-flag-exit-first-keyed-value inputs keys)
+              [(ir.CompilerIrMaybeValue.No) true]
+              [(ir.CompilerIrMaybeValue.Some first)
+                (opt-flag-exit-keyed-all-eq? inputs keys first)]))
+          (opt-flag-exit-merge-phis-agree? instrs (+ pos 1) keys closure))]
+      [_ true])))
+
+(define (opt-flag-exit-merge-ok?
+  [blocks : ir.CompilerIrBlockList]
+  [keys : OptLabelSet]
+  [merge : i64]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (match (opt-cfg-find-block blocks merge)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-flag-exit-merge-phis-agree? instrs 0 keys closure)])]))
+
+;; C7's alternate-exit clause. With no alternate exit, a cleared path always left
+;; through X already and there is nothing to reconcile.
+(define (opt-flag-exit-alt-exits-ok?
+  [blocks : ir.CompilerIrBlockList]
+  [alt-labels : OptLabelSet]
+  [exit-label : i64]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (match alt-labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (match (opt-flag-exit-jump-only-target blocks exit-label)
+        [(OptFlagExitMaybeLabel.No) false]
+        [(OptFlagExitMaybeLabel.Some merge)
+          (and
+            (opt-flag-exit-all-jump-only-to? blocks alt-labels merge)
+            (opt-flag-exit-merge-ok?
+              blocks
+              (opt-label-add alt-labels exit-label)
+              merge
+              closure))])]))
+
+;; --- C4/C7b: where the closure may be read ------------------------------------
+(define (opt-flag-exit-note-keyed-uses!
+  [inputs : ir.CompilerIrPhiInputList]
+  [keys : OptLabelSet]
+  [allowed : (__tl_dyn-array i64)]) : unit
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) unit]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-note-keyed-uses!
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        keys
+        allowed)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (begin
+        (if (opt-label-contains keys label)
+          (opt-collect-value-uses-array allowed value)
+          unit)
+        (opt-flag-exit-note-keyed-uses! (box-get rest) keys allowed))]))
+
+(define (opt-flag-exit-defines-closure?
+  [instr : ir.CompilerIrInstr]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (match (opt-instr-def-var instr)
+    [(option_i64.Some dst)
+      (and
+        (>= dst 0)
+        (< dst (array-length closure))
+        (= (array-ref closure dst) 1))]
+    [(option_i64.None) false]))
+
+(define (opt-flag-exit-allowed-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [in-body? : bool]
+  [gate? : bool]
+  [exits : OptLabelSet]
+  [closure : (__tl_dyn-array i64)]
+  [allowed : (__tl_dyn-array i64)]) : unit
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
+      (begin
+        (cond
+          ;; the closure's own phis and copies
+          [(opt-flag-exit-defines-closure? instr closure)
+            (opt-collect-instr-uses-array allowed instr)]
+          ;; the gate branch
+          [(and
+              gate?
+              (match instr
+                [(ir.CompilerIrInstr.Branch _ _ _) true]
+                [_ false]))
+            (opt-collect-instr-uses-array allowed instr)]
+          [in-body? unit]
+          ;; a phi outside the loop, on an edge out of the loop
+          [else
+            (match instr
+              [(ir.CompilerIrInstr.Phi _ inputs _)
+                (opt-flag-exit-note-keyed-uses! inputs exits allowed)]
+              [_ unit])])
+        (opt-flag-exit-allowed-instrs!
+          instrs
+          (+ pos 1)
+          in-body?
+          gate?
+          exits
+          closure
+          allowed)))))
+
+(define (opt-flag-exit-allowed-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [gate : i64]
+  [exits : OptLabelSet]
+  [closure : (__tl_dyn-array i64)]
+  [allowed : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block label instrs)
+            (opt-flag-exit-allowed-instrs!
+              instrs
+              0
+              (opt-loop-body-label-member? body index label)
+              (= label gate)
+              exits
+              closure
+              allowed)])
+        (opt-flag-exit-allowed-blocks!
+          (box-get rest)
+          body
+          index
+          gate
+          exits
+          closure
+          allowed))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-flag-exit-allowed-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        body
+        index
+        gate
+        exits
+        closure
+        allowed)]))
+
+;; --- C8: nothing else escapes the loop ----------------------------------------
+(define (opt-flag-exit-body-uses-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [defined : (__tl_dyn-array i64)]
+  [inside : (__tl_dyn-array i64)]) : unit
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
+      (begin
+        (opt-collect-instr-uses-array inside instr)
+        (match (opt-instr-def-var instr)
+          [(option_i64.Some dst)
+            (if (and (>= dst 0) (< dst (array-length defined)))
+              (begin
+                (array-set! defined dst 1)
+                unit)
+              unit)]
+          [(option_i64.None) unit])
+        (opt-flag-exit-body-uses-instrs! instrs (+ pos 1) defined inside)))))
+
+(define (opt-flag-exit-body-uses!
+  [body-blocks : ir.CompilerIrBlockList]
+  [defined : (__tl_dyn-array i64)]
+  [inside : (__tl_dyn-array i64)]) : unit
+  (match body-blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-flag-exit-body-uses-instrs! instrs 0 defined inside)])
+        (opt-flag-exit-body-uses! (box-get rest) defined inside))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-flag-exit-body-uses!
+        (ir.compiler-ir-block-seq-to-list seq)
+        defined
+        inside)]))
+
+;; C8 exempts the closure itself: C4 above already accounts for every read of it.
+(define (opt-flag-exit-clear-closure!
+  [defined : (__tl_dyn-array i64)]
+  [closure : (__tl_dyn-array i64)]) : unit
+  (let
+    [var : i64 0]
+    (begin
+      (while (< var (array-length defined))
+        (begin
+          (if (= (array-ref closure var) 1)
+            (begin
+              (array-set! defined var 0)
+              unit)
+            unit)
+          (set! var (+ var 1))))
+      unit)))
+
+;; `uses` already has the DCE-retired chains subtracted, so a stale reader cannot
+;; make a settled value look like an escape.
+(define (opt-flag-exit-covered?
+  [uses : (__tl_dyn-array i64)]
+  [allowed : (__tl_dyn-array i64)]
+  [select : (__tl_dyn-array i64)]
+  [var : i64]) : bool
+  (if (>= var (array-length select))
+    true
+    (if (and
+      (= (array-ref select var) 1)
+      (> (array-ref uses var) (array-ref allowed var)))
+      false
+      (opt-flag-exit-covered? uses allowed select (+ var 1)))))
+
+;; --- clear-edge shape ---------------------------------------------------------
+(define (opt-flag-exit-block-jumps-to?
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]
+  [target : i64]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            (if (= count 0)
+              false
+              (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+                [(ir.CompilerIrInstr.Jump found) (= found target)]
+                [_ false])))])]))
+
+(define (opt-flag-exit-block-starts-with-phi?
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (= (ir.compiler-ir-instr-seq-count instrs) 0)
+            false
+            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+              [(ir.CompilerIrInstr.Phi _ _ _) true]
+              [_ false]))])]))
+
+(define (opt-flag-exit-gate-clean-at?
+  [blocks : ir.CompilerIrBlockList]
+  [gate : i64]) : bool
+  (match (opt-cfg-find-block blocks gate)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-flag-exit-gate-block-clean? instrs 0)])]))
+
+;; Each clear predecessor sits inside the loop, ends in a plain Jump into the phi
+;; block (so the redirect splits no edge), and is dominated by the gate (so
+;; everything the gate's exit arm can read is live on the redirected edge too).
+(define (opt-flag-exit-clear-edges-ok?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [gate : i64]
+  [edges : OptFlagExitEdgeList]) : bool
+  (match edges
+    [(OptFlagExitEdgeList.Nil) true]
+    [(OptFlagExitEdgeList.Cons pred target rest)
+      (and
+        (opt-loop-body-label-member? body index pred)
+        (opt-flag-exit-block-jumps-to? blocks pred target)
+        (opt-dom-dominates? doms gate pred)
+        (opt-flag-exit-clear-edges-ok?
+          blocks
+          body
+          index
+          doms
+          gate
+          (box-get rest)))]))
+
+(define (opt-flag-exit-preds-survive?
+  [pred-map : OptPredMap]
+  [clear-preds : OptLabelSet]
+  [targets : OptLabelSet]) : bool
+  (match targets
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (and
+        (let
+          [preds : OptLabelSet
+            (opt-pred-map-lookup pred-map (opt-label-ref targets 0))]
+          (>
+            (opt-label-count preds)
+            (opt-label-count (opt-label-intersection preds clear-preds))))
+        (opt-flag-exit-preds-survive?
+          pred-map
+          clear-preds
+          (opt-label-tail targets)))]))
+
+;; --- C7b over the whole function ----------------------------------------------
+(define (opt-flag-exit-block-phis-uniform?
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [exits : OptLabelSet]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (and
+      (match (ir.compiler-ir-instr-seq-ref instrs pos)
+        [(ir.CompilerIrInstr.Phi _ inputs _)
+          (or
+            (not (opt-flag-exit-keyed-any-closure? inputs exits closure))
+            (opt-flag-exit-keyed-all-closure? inputs exits closure))]
+        [_ true])
+      (opt-flag-exit-block-phis-uniform? instrs (+ pos 1) exits closure))))
+
+(define (opt-flag-exit-outside-phis-uniform?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [exits : OptLabelSet]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (and
+        (match block
+          [(ir.CompilerIrBlock.Block label instrs)
+            (if (opt-loop-body-label-member? body index label)
+              true
+              (opt-flag-exit-block-phis-uniform? instrs 0 exits closure))])
+        (opt-flag-exit-outside-phis-uniform?
+          (box-get rest)
+          body
+          index
+          exits
+          closure))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-flag-exit-outside-phis-uniform?
+        (ir.compiler-ir-block-seq-to-list seq)
+        body
+        index
+        exits
+        closure)]))
+
+;; --- rewrite ------------------------------------------------------------------
+(define (opt-flag-exit-drop-inputs
+  [inputs : ir.CompilerIrPhiInputList]
+  [preds : OptLabelSet]) : ir.CompilerIrPhiInputList
+  (match preds
+    [(OptLabelSet.Nil) inputs]
+    [(OptLabelSet.Dense _ _)
+      (opt-flag-exit-drop-inputs
+        (opt-thread-phi-inputs-drop inputs (opt-label-ref preds 0))
+        (opt-label-tail preds))]))
+
+(define (opt-flag-exit-literalize-inputs
+  [inputs : ir.CompilerIrPhiInputList]
+  [plan : OptFlagExitPlan]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-literalize-inputs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        plan)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (ir.compiler-ir-phi-input-cons
+        (if (and
+          (opt-label-contains (struct-get plan exits) label)
+          (opt-flag-exit-closure-var? value (struct-get plan closure)))
+          (opt-flag-exit-bool-value
+            (if (= label (struct-get plan exit-label))
+              (not (struct-get plan keep))
+              (struct-get plan keep)))
+          value)
+        label
+        (opt-flag-exit-literalize-inputs (box-get rest) plan))]))
+
+;; Step 5. Once the clear edges are gone, every remaining path into a closure
+;; definition carries K, so pin each one to that literal. The phis are left in
+;; place (a Mov among them would break the block's phi prefix) with all their
+;; inputs constant, which breaks the flag's phi <-> phi CYCLE: the pipeline DCE
+;; retires dead chains, not cycles, so without this the retired flag would still
+;; cost its `mov $K` and a loop-live register.
+(define (opt-flag-exit-const-inputs
+  [inputs : ir.CompilerIrPhiInputList]
+  [keep : bool]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-const-inputs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        keep)]
+    [(ir.CompilerIrPhiInputList.Cons _ label rest)
+      (ir.compiler-ir-phi-input-cons
+        (opt-flag-exit-bool-value keep)
+        label
+        (opt-flag-exit-const-inputs (box-get rest) keep))]))
+
+(define (opt-flag-exit-closure-dst? [dst : i64] [plan : OptFlagExitPlan]) : bool
+  (let
+    [closure : (__tl_dyn-array i64) (struct-get plan closure)]
+    (and
+      (>= dst 0)
+      (< dst (array-length closure))
+      (= (array-ref closure dst) 1))))
+
+(define (opt-flag-exit-rewrite-instr
+  [instr : ir.CompilerIrInstr]
+  [in-body? : bool]
+  [clear-target? : bool]
+  [clear-pred? : bool]
+  [gate? : bool]
+  [last? : bool]
+  [plan : OptFlagExitPlan]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Phi dst inputs ty)
+      (cond
+        ;; a flag definition: pinned to the continuing constant
+        [(opt-flag-exit-closure-dst? dst plan)
+          (ir.CompilerIrInstr.Phi
+            dst
+            (opt-flag-exit-const-inputs
+              (if clear-target?
+                (opt-flag-exit-drop-inputs inputs (struct-get plan clear-preds))
+                inputs)
+              (struct-get plan keep))
+            ty)]
+        ;; a phi the redirected edge no longer reaches
+        [clear-target?
+          (ir.CompilerIrInstr.Phi
+            dst
+            (opt-flag-exit-drop-inputs inputs (struct-get plan clear-preds))
+            ty)]
+        [in-body? instr]
+        ;; a phi outside the loop: closure inputs become the exit's literal
+        [else
+          (ir.CompilerIrInstr.Phi
+            dst
+            (opt-flag-exit-literalize-inputs inputs plan)
+            ty)])]
+    [(ir.CompilerIrInstr.Mov dst _ ty)
+      (if (opt-flag-exit-closure-dst? dst plan)
+        (ir.CompilerIrInstr.Mov
+          dst
+          (opt-flag-exit-bool-value (struct-get plan keep))
+          ty)
+        instr)]
+    [_
+      (cond
+        [(not last?) instr]
+        [clear-pred? (ir.CompilerIrInstr.Jump (struct-get plan exit-label))]
+        [gate? (ir.CompilerIrInstr.Jump (struct-get plan continue-label))]
+        [else instr])]))
+
+(define (opt-flag-exit-rewrite-instrs-from
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [in-body? : bool]
+  [clear-target? : bool]
+  [clear-pred? : bool]
+  [gate? : bool]
+  [plan : OptFlagExitPlan]) : ir.CompilerIrInstrList
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (>= pos count)
+      (ir.CompilerIrInstrList.Nil)
+      (ir.compiler-ir-instr-cons
+        (opt-flag-exit-rewrite-instr
+          (ir.compiler-ir-instr-seq-ref instrs pos)
+          in-body?
+          clear-target?
+          clear-pred?
+          gate?
+          (= pos (- count 1))
+          plan)
+        (opt-flag-exit-rewrite-instrs-from
+          instrs
+          (+ pos 1)
+          in-body?
+          clear-target?
+          clear-pred?
+          gate?
+          plan)))))
+
+(define (opt-flag-exit-rewrite-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [plan : OptFlagExitPlan]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (match block
+          [(ir.CompilerIrBlock.Block label instrs)
+            (ir.compiler-ir-block
+              label
+              (opt-flag-exit-rewrite-instrs-from
+                instrs
+                0
+                (opt-loop-body-label-member? body index label)
+                (opt-label-contains (struct-get plan clear-targets) label)
+                (opt-label-contains (struct-get plan clear-preds) label)
+                (= label (struct-get plan gate))
+                plan))])
+        (opt-flag-exit-rewrite-blocks (box-get rest) body index plan))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-flag-exit-rewrite-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        body
+        index
+        plan)]))
+
+;; --- per-candidate plan -------------------------------------------------------
+;; C5, C6 and C7 in one place: everything that only needs the CFG and the block
+;; shapes, checked before the two use-accounting sweeps below pay for themselves.
+(define (opt-flag-exit-structure-ok?
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [body : OptLoopBody]
+  [latch : i64]
+  [gate : i64]
+  [exit-label : i64]
+  [clears : OptFlagExitEdgeList]
+  [clear-preds : OptLabelSet]
+  [clear-targets : OptLabelSet]
+  [alt-labels : OptLabelSet]
+  [exits : OptLabelSet]
+  [seen : (__tl_dyn-array i64)]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [pred-map : OptPredMap (struct-get context pred-map)]
+    [doms : OptDomInfo (struct-get context doms)]
+    (and
+      (opt-dom-dominates? doms gate latch)
+      (opt-flag-exit-clear-edges-ok? blocks body index doms gate clears)
+      (opt-flag-exit-preds-survive? pred-map clear-preds clear-targets)
+      (opt-flag-exit-marked-pure? blocks index seen)
+      (opt-flag-exit-gate-clean-at? blocks gate)
+      (= (opt-label-count (opt-pred-map-lookup pred-map exit-label)) 1)
+      (not (opt-flag-exit-block-starts-with-phi? blocks exit-label))
+      (opt-flag-exit-outside-phis-uniform? blocks body index exits closure)
+      (opt-flag-exit-alt-exits-ok? blocks alt-labels exit-label closure))))
+
+;; C4 and C8: the two effective-use sweeps.
+(define (opt-flag-exit-uses-ok?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [gate : i64]
+  [exits : OptLabelSet]
+  [closure : (__tl_dyn-array i64)]) : bool
+  (let
+    [allowed : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [defined : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [inside : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [_allow : unit
+      (opt-flag-exit-allowed-blocks!
+        blocks
+        body
+        index
+        gate
+        exits
+        closure
+        allowed)]
+    [_inside : unit
+      (opt-flag-exit-body-uses! (opt-loop-body-blocks body) defined inside)]
+    [_exempt : unit (opt-flag-exit-clear-closure! defined closure)]
+    (and
+      (opt-flag-exit-covered? uses allowed closure 0)
+      (opt-flag-exit-covered? uses inside defined 0))))
+
+(define (opt-flag-exit-plan-gated
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [latch : i64]
+  [keep : bool]
+  [closure : (__tl_dyn-array i64)]
+  [clears : OptFlagExitEdgeList]
+  [gate : i64]
+  [continue-label : i64]
+  [exit-label : i64]) : OptFlagExitMaybePlan
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [pred-map : OptPredMap (struct-get context pred-map)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    [seen : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [alt : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [_mark : unit
+      (opt-flag-exit-mark-clears! body index pred-map gate clears seen alt)]
+    [alt-labels : OptLabelSet
+      (opt-flag-exit-alt-labels index alt 0 exit-label (OptLabelSet.Nil))]
+    [clear-preds : OptLabelSet
+      (opt-flag-exit-edge-preds clears (OptLabelSet.Nil))]
+    [clear-targets : OptLabelSet
+      (opt-flag-exit-edge-targets clears (OptLabelSet.Nil))]
+    [exits : OptLabelSet
+      (opt-flag-exit-exit-labels-from
+        body
+        index
+        pred-map
+        (opt-loop-body-labels body)
+        (OptLabelSet.Nil))]
+    (if (and
+      (opt-flag-exit-structure-ok?
+        blocks
+        context
+        body
+        latch
+        gate
+        exit-label
+        clears
+        clear-preds
+        clear-targets
+        alt-labels
+        exits
+        seen
+        closure)
+      (opt-flag-exit-uses-ok? blocks body index frame uses gate exits closure))
+      (OptFlagExitMaybePlan.Some
+        (OptFlagExitPlan
+          gate
+          continue-label
+          exit-label
+          keep
+          closure
+          clear-preds
+          clear-targets
+          exits))
+      (OptFlagExitMaybePlan.No))))
+
+(define (opt-flag-exit-plan-candidate
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [def-label : (__tl_dyn-array i64)]
+  [loop : OptNaturalLoop]
+  [flag : i64]
+  [keep : bool]
+  [seed : i64]) : OptFlagExitMaybePlan
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [body : OptLoopBody (opt-natural-loop-body-info loop)]
+    [closure : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [bad : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [clears : OptFlagExitEdgeList
+      (opt-flag-exit-walk
+        blocks
+        body
+        index
+        def-label
+        flag
+        (not keep)
+        seed
+        closure
+        bad
+        (OptFlagExitEdgeList.Nil))]
+    (if (or (= (array-ref bad 0) 1) (opt-flag-exit-edges-empty? clears))
+      (OptFlagExitMaybePlan.No)
+      (begin
+        (array-set! closure flag 1)
+        (match (opt-flag-exit-find-gate
+          (opt-loop-body-blocks body)
+          body
+          index
+          closure
+          (not keep))
+          [(OptFlagExitGate.No) (OptFlagExitMaybePlan.No)]
+          [(OptFlagExitGate.Some gate continue-label exit-label)
+            (opt-flag-exit-plan-gated
+              blocks
+              context
+              frame
+              uses
+              body
+              (opt-natural-loop-latch loop)
+              keep
+              closure
+              clears
+              gate
+              continue-label
+              exit-label)])))))
+
+;; --- per-loop scan ------------------------------------------------------------
+;; C1: exactly one input from outside the loop carrying a bool literal, exactly
+;; one from inside it carrying a var.
+(define (opt-flag-exit-seed-scan
+  [inputs : ir.CompilerIrPhiInputList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [outside : i64]
+  [inside : i64]
+  [keep : bool]
+  [seed : i64]) : OptFlagExitSeed
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil)
+      (if (and (= outside 1) (= inside 1))
+        (OptFlagExitSeed.Some keep seed)
+        (OptFlagExitSeed.No))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-seed-scan
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        body
+        index
+        outside
+        inside
+        keep
+        seed)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (if (opt-loop-body-label-member? body index label)
+        (match value
+          [(ir.CompilerIrValue.Var var)
+            (opt-flag-exit-seed-scan
+              (box-get rest)
+              body
+              index
+              outside
+              (+ inside 1)
+              keep
+              var)]
+          [_ (OptFlagExitSeed.No)])
+        (match value
+          [(ir.CompilerIrValue.Bool literal)
+            (opt-flag-exit-seed-scan
+              (box-get rest)
+              body
+              index
+              (+ outside 1)
+              inside
+              literal
+              seed)]
+          [_ (OptFlagExitSeed.No)]))]))
+
+(define (opt-flag-exit-scan-header
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [def-label : (__tl_dyn-array i64)]
+  [loop : OptNaturalLoop]
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]) : OptFlagExitMaybePlan
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    (OptFlagExitMaybePlan.No)
+    (let
+      [here : OptFlagExitMaybePlan
+        (match (ir.compiler-ir-instr-seq-ref instrs pos)
+          [(ir.CompilerIrInstr.Phi dst inputs _)
+            (match (opt-flag-exit-seed-scan
+              inputs
+              (opt-natural-loop-body-info loop)
+              (struct-get context index)
+              0
+              0
+              false
+              (- 0 1))
+              [(OptFlagExitSeed.No) (OptFlagExitMaybePlan.No)]
+              [(OptFlagExitSeed.Some keep seed)
+                (opt-flag-exit-plan-candidate
+                  blocks
+                  context
+                  frame
+                  uses
+                  def-label
+                  loop
+                  dst
+                  keep
+                  seed)])]
+          [_ (OptFlagExitMaybePlan.No)])]
+      (match here
+        [(OptFlagExitMaybePlan.Some plan) (OptFlagExitMaybePlan.Some plan)]
+        [(OptFlagExitMaybePlan.No)
+          (opt-flag-exit-scan-header
+            blocks
+            context
+            frame
+            uses
+            def-label
+            loop
+            instrs
+            (+ pos 1))]))))
+
+(define (opt-flag-exit-plan-loop
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [def-label : (__tl_dyn-array i64)]
+  [loop : OptNaturalLoop]) : OptFlagExitMaybePlan
+  (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
+    [(OptMaybeBlock.No) (OptFlagExitMaybePlan.No)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-flag-exit-scan-header
+            blocks
+            context
+            frame
+            uses
+            def-label
+            loop
+            instrs
+            0)])]))
+
+(define (opt-flag-exit-convert-loops
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [def-label : (__tl_dyn-array i64)]
+  [loops : OptNaturalLoopList]) : OptBlockListPassResult
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-flag-exit-plan-loop blocks context frame uses def-label loop)
+        [(OptFlagExitMaybePlan.Some plan)
+          (OptBlockListPassResult.Result
+            (opt-flag-exit-rewrite-blocks
+              blocks
+              (opt-natural-loop-body-info loop)
+              (struct-get context index)
+              plan)
+            true)]
+        [(OptFlagExitMaybePlan.No)
+          (opt-flag-exit-convert-loops
+            blocks
+            context
+            frame
+            uses
+            def-label
+            (box-get rest))])]))
+
+;; --- driver -------------------------------------------------------------------
+(define (opt-flag-exit-blocks-once-with-context
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]) : OptBlockListPassResult
+  (if (not (opt-flag-exit-blocks-have-candidate? blocks))
+    (OptBlockListPassResult.Result blocks false)
+    (let
+      [loops : OptNaturalLoopList
+        (opt-cfg-natural-loops-with-context blocks context)]
+      (match loops
+        [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
+        [(OptNaturalLoopList.Cons _ _)
+          (let
+            [uses : (__tl_dyn-array i64)
+              (opt-gep-offset-effective-uses blocks frame)]
+            [def-label : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [_fill : unit (opt-cfg-fill-i64! def-label frame (- 0 1))]
+            [_defs : unit (opt-flag-exit-def-labels! blocks def-label)]
+            (opt-flag-exit-convert-loops
+              blocks
+              context
+              frame
+              uses
+              def-label
+              loops))]))))
+
+;; One conversion per round, then a fresh context: the rewrite changes the CFG,
+;; so the loop set and the dominance facts have to be rebuilt before the next
+;; loop is considered. Fuel-bounded by the block count.
+(define (opt-flag-exit-blocks-fixed-result
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [remaining : i64]
+  [any-changed : bool]
+  [first-round? : bool]) : OptBlockListPassResult
+  (if (<= remaining 0)
+    (OptBlockListPassResult.Result blocks any-changed)
+    (match (if first-round?
+      (opt-flag-exit-blocks-once-with-context blocks context frame)
+      (opt-flag-exit-blocks-once-with-context
+        blocks
+        (opt-cfg-context-build blocks)
+        frame))
+      [(OptBlockListPassResult.Result next changed)
+        (if changed
+          (opt-flag-exit-blocks-fixed-result
+            next
+            context
+            frame
+            (- remaining 1)
+            true
+            false)
+          (OptBlockListPassResult.Result next any-changed))])))
+
+;; `context` must be valid for `func`'s blocks (its entry verify reuses it). The
+;; rewrite changes the CFG, so a converted function gets a fresh context; a
+;; verifier rejection falls back to the byte-identical input.
+(define (opt-flag-exit-function-with-context-result
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
+  (match (opt-verify-gate verified? func context)
+    [(ResultCompilerOptimizeVerify.Ok)
+      (match func
+        [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+          (match (opt-flag-exit-blocks-fixed-result
+            blocks
+            context
+            frame
+            (+ 1 (ir.compiler-ir-block-list-count blocks))
+            false
+            true)
+            [(OptBlockListPassResult.Result next-blocks changed)
+              (if (not changed)
+                (OptFunctionCtxResult.Result func context)
+                (let
+                  [next : ir.CompilerIrFunction
+                    (ir.CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      frame
+                      next-blocks)]
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build next-blocks)]
+                  (match (opt-verify-function-with-context next next-context)
+                    [(ResultCompilerOptimizeVerify.Ok)
+                      (OptFunctionCtxResult.Result next next-context)]
+                    [(ResultCompilerOptimizeVerify.Err _)
+                      (OptFunctionCtxResult.Result func context)])))])])]
+    [(ResultCompilerOptimizeVerify.Err _)
+      (OptFunctionCtxResult.Result func context)]))
+
+;; Standalone driver for tests and ad-hoc runs: builds its own CFG context and
+;; keeps the defensive entry verify.
+(define (opt-flag-exit-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-flag-exit-function-with-context-result
+    (opt-cfg-context-build (opt-function-blocks func))
+    false
+    func)
+    [(OptFunctionCtxResult.Result next _) next]))
+
 ;; --- linear-function test replacement (LFTR) -------------------------------
 ;;
 ;; The induction slice above strength-reduces a loop's derived addresses into
@@ -26261,6 +28043,518 @@
                       [(ResultCompilerOptimizeVerify.Err _)
                         (OptFunctionPassResult.Result func false)]))
                   (OptFunctionPassResult.Result func false))])]))]))
+
+;; --- forwarding-block straightening ----------------------------------------
+;;
+;; `if` / `cond` / `while` lowering gives every arm its own block, so an arm
+;; that does no work of its own still reaches the join through a block that is
+;; nothing but `jump join`. Nothing removed them. `opt-cfg-simplify-blocks`
+;; folds constant branches and drops unreachable blocks, but it never redirects
+;; a live predecessor, and `opt-thread-apply-edge!` above only fires once a
+;; merge's branch condition is already known constant. They are lowering
+;; artifacts, not something a late pass reintroduces -- they are present in the
+;; `--opt-level 0` dump -- and they survive to the backend, where each one costs
+;; a taken `jmp` every time it executes: 4.48M of them in gvn_table's
+;; `gvn-facts-slot` probe loop and 15.23M in intern_table's `it-slice-eq?` byte
+;; loop, in both cases on the hottest path in the benchmark. The backend already
+;; elides a `jmp` to the next block and already inverts a branch to fall through,
+;; so removing the block is the whole fix; no emitter change is involved.
+;;
+;; The rails are narrow on purpose. A block forwards only when it is EXACTLY one
+;; `Jump`, which rules out phis and side effects in a single test, and a
+;; destination is accepted only when its phis already carry an input for the last
+;; forwarding block on the chain. That input is the value the new predecessor
+;; inherits, and `opt-thread-repair-target-phis!` installs it under the new
+;; predecessor's label.
+;;
+;; The rewrite that must be refused is the diamond whose two arms are both
+;; trampolines onto the same join: threading both would give the join two inputs
+;; under one predecessor label, and they generally disagree -- in `it-slice-eq?`
+;; they are the incoming `%72` and a literal `false`. Each terminator therefore
+;; carries the set of labels its earlier edges have already been pointed at, and
+;; a repeat is left alone. The first arm threads, the second keeps its block, and
+;; the loop still loses its `jmp`.
+;;
+;; `TotalEnumBranch` / `TotalEnumSwitch` are deliberately not rewritten: the
+;; latter's `trap-label` is provenance rather than a CFG edge, so leaving both
+;; shapes alone keeps this pass out of that invariant entirely.
+;; The block a chain of `jump`-only blocks finally lands on, plus the last
+;; forwarding block on the way -- the label whose phi input the new predecessor
+;; takes over.
+(defenum OptCfgStraightenChain
+  (No)
+  (Some i64 i64))
+
+(define (opt-cfg-straighten-block-forward [block : ir.CompilerIrBlock]) : i64
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (if (not (= (ir.compiler-ir-instr-seq-count instrs) 1))
+        (ir.compiler-ir-label-none)
+        (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          [(ir.CompilerIrInstr.Jump target) target]
+          [_ (ir.compiler-ir-label-none)]))]))
+
+;; A forwarding block whose target is the block right after it in the list costs
+;; nothing: the backend already elides that `jmp` and falls through
+;; (`compiler-backend-jump-target-is-fallthrough?`). Removing it therefore wins
+;; no instruction, and it can lose several. Two backend features want exactly
+;; that shape -- a jump-only block sitting immediately before the code it
+;; guards. `opt-loop-preheaders` emits one per loop, and M-F loop-hoisted
+;; backend constants (compiler_backend.tl:17419) only fire for a loop "whose
+;; single out-of-loop predecessor P lies before the loop and ends in an
+;; unconditional Jump to the header". Straightening arith_loop's
+;; `while_body.1__preheader` away cost the two hoisted `movabsq` a register home
+;; and put them back inside the 16x-unrolled body: +40% on that benchmark, and
+;; +36.8% each on opt_arithmetic_loops and opt_function_calls. Skipping
+;; already-fallthrough blocks preserves every preheader and keeps every arm
+;; trampoline, because an arm's join never sits directly behind it.
+;;
+;; Block ids are assigned in list order by `opt-cfg-index-fill-labels!`, so
+;; id + 1 is the lexically next block.
+(define (opt-cfg-straighten-falls-through?
+  [index : OptCfgIndex]
+  [label : i64]
+  [target : i64]) : bool
+  (match (opt-cfg-index-id index label)
+    [(option_i64.None) false]
+    [(option_i64.Some id) (= (opt-cfg-index-label index (+ id 1)) target)]))
+
+;; The entry block stays reachable as block 0 no matter what happens to its
+;; predecessors, so straightening through it would strand it rather than remove
+;; it. Leave it out of the forwarding set.
+(define (opt-cfg-straighten-label-forward
+  [index : OptCfgIndex]
+  [entry-label : i64]
+  [label : i64]) : i64
+  (if (= label entry-label)
+    (ir.compiler-ir-label-none)
+    (match (opt-cfg-index-find-block index label)
+      [(OptMaybeBlock.No) (ir.compiler-ir-label-none)]
+      [(OptMaybeBlock.Some block)
+        (let
+          [target : i64 (opt-cfg-straighten-block-forward block)]
+          (if (opt-cfg-straighten-falls-through? index label target)
+            (ir.compiler-ir-label-none)
+            target))])))
+
+;; Bounded by the block count, so a ring of trampolines -- unreachable in
+;; practice but representable -- reports no chain instead of spinning.
+(define (opt-cfg-straighten-resolve
+  [index : OptCfgIndex]
+  [entry-label : i64]
+  [label : i64]
+  [via : i64]
+  [fuel : i64]) : OptCfgStraightenChain
+  (if (<= fuel 0)
+    (OptCfgStraightenChain.No)
+    (let
+      [next : i64 (opt-cfg-straighten-label-forward index entry-label label)]
+      (if (= next (ir.compiler-ir-label-none))
+        (if (= via (ir.compiler-ir-label-none))
+          (OptCfgStraightenChain.No)
+          (OptCfgStraightenChain.Some label via))
+        (opt-cfg-straighten-resolve index entry-label next label (- fuel 1))))))
+
+(define (opt-cfg-straighten-cases-contain?
+  [cases : ir.CompilerIrSwitchCaseList]
+  [label : i64]) : bool
+  (match (ir.compiler-ir-switch-case-list-force-cons cases)
+    [(ir.CompilerIrSwitchCaseList.Nil) false]
+    [(ir.CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(ir.CompilerIrSwitchCase.Case _ case-label)
+          (if (= case-label label)
+            true
+            (opt-cfg-straighten-cases-contain? (box-get rest) label))])]
+    [(ir.CompilerIrSwitchCaseList.Array seq)
+      (opt-cfg-straighten-cases-contain?
+        (ir.compiler-ir-switch-case-seq-to-list seq)
+        label)]))
+
+(define (opt-cfg-straighten-instr-contains?
+  [instr : ir.CompilerIrInstr]
+  [label : i64]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Jump target) (= target label)]
+    [(ir.CompilerIrInstr.Branch _ true-label false-label)
+      (or (= true-label label) (= false-label label))]
+    [(ir.CompilerIrInstr.Switch _ _ cases default-label)
+      (or
+        (= default-label label)
+        (opt-cfg-straighten-cases-contain? cases label))]
+    [_ false]))
+
+;; A one-slot cell. The edge rewriter sits several calls inside a switch-case
+;; walk, and a flag is cheaper to thread down than a second return value.
+(define (opt-cfg-straighten-mark! [flag : (__tl_dyn-array i64)]) : unit
+  (array-set! flag 0 1))
+
+;; Retarget one successor edge, or hand back the label unchanged. `original` is
+;; the terminator as it stood before this block was touched, and `accepted`
+;; holds the labels its earlier edges have already been pointed at; a
+;; destination named by either would make this block a duplicate predecessor of
+;; that destination, which a phi input list cannot express.
+(define (opt-cfg-straighten-edge
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [pred-label : i64]
+  [original : ir.CompilerIrInstr]
+  [accepted : OptLabelSet]
+  [flag : (__tl_dyn-array i64)]
+  [successor : i64]
+  [fuel : i64]) : i64
+  (match (opt-cfg-straighten-resolve
+    index
+    entry-label
+    successor
+    (ir.compiler-ir-label-none)
+    fuel)
+    [(OptCfgStraightenChain.No) successor]
+    [(OptCfgStraightenChain.Some target via)
+      (if (or
+        (= target successor)
+        (= target pred-label)
+        (opt-label-contains accepted target)
+        (opt-cfg-straighten-instr-contains? original target))
+        successor
+        (match (opt-cfg-index-find-block index target)
+          [(OptMaybeBlock.No) successor]
+          [(OptMaybeBlock.Some target-block)
+            (match target-block
+              [(ir.CompilerIrBlock.Block _ target-instrs)
+                (if (not
+                  (opt-thread-target-phis-repairable? target-instrs 0 via))
+                  successor
+                  (begin
+                    (opt-thread-repair-target-phis!
+                      target-instrs
+                      0
+                      uses
+                      via
+                      pred-label)
+                    (opt-cfg-straighten-mark! flag)
+                    target))])]))]))
+
+;; The default edge is decided first so the case walk can see it in `accepted`.
+(define (opt-cfg-straighten-switch
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [pred-label : i64]
+  [original : ir.CompilerIrInstr]
+  [flag : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]
+  [base : i64]
+  [cases : ir.CompilerIrSwitchCaseList]
+  [default-label : i64]
+  [fuel : i64]) : ir.CompilerIrInstr
+  (let
+    [accepted : OptLabelSet (OptLabelSet.Nil)]
+    [next-default : i64
+      (opt-cfg-straighten-edge
+        index
+        uses
+        entry-label
+        pred-label
+        original
+        accepted
+        flag
+        default-label
+        fuel)]
+    [seq : ir.CompilerIrSwitchCaseSeq
+      (ir.compiler-ir-switch-case-seq-from-list cases)]
+    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) (struct-get seq slots)]
+    [count : i64 (struct-get seq len)]
+    [out : (__tl_dyn-array ir.CompilerIrSwitchCase)
+      (array.make-array ir.CompilerIrSwitchCase count)]
+    [pos : i64 0]
+    (begin
+      (unless
+        (= next-default default-label)
+        (set! accepted (opt-label-add accepted next-default)))
+      (while (< pos count)
+        (begin
+          (match (array-ref slots pos)
+            [(ir.CompilerIrSwitchCase.Case tag case-label)
+              (let
+                [next-label : i64
+                  (opt-cfg-straighten-edge
+                    index
+                    uses
+                    entry-label
+                    pred-label
+                    original
+                    accepted
+                    flag
+                    case-label
+                    fuel)]
+                (begin
+                  (unless
+                    (= next-label case-label)
+                    (set! accepted (opt-label-add accepted next-label)))
+                  (array-set!
+                    out
+                    pos
+                    (ir.CompilerIrSwitchCase.Case tag next-label))))])
+          (set! pos (+ pos 1))))
+      (ir.CompilerIrInstr.Switch
+        value
+        base
+        (ir.CompilerIrSwitchCaseList.Array
+          (ir.CompilerIrSwitchCaseSeq out count))
+        next-default))))
+
+(define (opt-cfg-straighten-terminator
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [pred-label : i64]
+  [flag : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]
+  [fuel : i64]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Jump target)
+      (ir.CompilerIrInstr.Jump
+        (opt-cfg-straighten-edge
+          index
+          uses
+          entry-label
+          pred-label
+          instr
+          (OptLabelSet.Nil)
+          flag
+          target
+          fuel))]
+    [(ir.CompilerIrInstr.Branch cond true-label false-label)
+      (let
+        [next-true : i64
+          (opt-cfg-straighten-edge
+            index
+            uses
+            entry-label
+            pred-label
+            instr
+            (OptLabelSet.Nil)
+            flag
+            true-label
+            fuel)]
+        [accepted : OptLabelSet
+          (if (= next-true true-label)
+            (OptLabelSet.Nil)
+            (opt-label-add (OptLabelSet.Nil) next-true))]
+        [next-false : i64
+          (opt-cfg-straighten-edge
+            index
+            uses
+            entry-label
+            pred-label
+            instr
+            accepted
+            flag
+            false-label
+            fuel)]
+        (ir.CompilerIrInstr.Branch cond next-true next-false))]
+    [(ir.CompilerIrInstr.Switch value base cases default-label)
+      (opt-cfg-straighten-switch
+        index
+        uses
+        entry-label
+        pred-label
+        instr
+        flag
+        value
+        base
+        cases
+        default-label
+        fuel)]
+    [_ instr]))
+
+;; The working list is a clone, so writing the terminator back unconditionally
+;; costs nothing and keeps the change report in one place: `flag`.
+(define (opt-cfg-straighten-block!
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [flag : (__tl_dyn-array i64)]
+  [fuel : i64]
+  [block : ir.CompilerIrBlock]) : unit
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (= count 0)
+          unit
+          (let
+            [slot : i64 (- count 1)]
+            (ir.compiler-ir-instr-seq-set!
+              instrs
+              slot
+              (opt-cfg-straighten-terminator
+                index
+                uses
+                entry-label
+                label
+                flag
+                (ir.compiler-ir-instr-seq-ref instrs slot)
+                fuel)))))]))
+
+(define (opt-cfg-straighten-round!
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [flag : (__tl_dyn-array i64)]
+  [fuel : i64]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (opt-cfg-straighten-block! index uses entry-label flag fuel block)
+        (opt-cfg-straighten-round!
+          index
+          uses
+          entry-label
+          flag
+          fuel
+          (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [slot : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (while (< slot count)
+          (begin
+            (opt-cfg-straighten-block!
+              index
+              uses
+              entry-label
+              flag
+              fuel
+              (ir.compiler-ir-block-seq-ref seq slot))
+            (set! slot (+ slot 1)))))]))
+
+;; Also serves as "the label of the block after this one" when applied to a
+;; list tail.
+(define (opt-cfg-straighten-head-label [blocks : ir.CompilerIrBlockList]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.compiler-ir-label-none)]
+    [(ir.CompilerIrBlockList.Cons block _)
+      (match block
+        [(ir.CompilerIrBlock.Block label _) label])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (if (= (ir.compiler-ir-block-seq-count seq) 0)
+        (ir.compiler-ir-label-none)
+        (match (ir.compiler-ir-block-seq-ref seq 0)
+          [(ir.CompilerIrBlock.Block label _) label]))]))
+
+(define (opt-cfg-straighten-candidate-block?
+  [block : ir.CompilerIrBlock]
+  [next-label : i64]) : bool
+  (let
+    [target : i64 (opt-cfg-straighten-block-forward block)]
+    (and
+      (not (= target (ir.compiler-ir-label-none)))
+      (not (= target next-label)))))
+
+;; One cheap linear scan keeps the clone, the CFG index and the use census off
+;; every function with nothing to straighten. It applies the same lexical-next
+;; test the rewrite does, so a function whose only trampolines are loop
+;; preheaders -- the common shape -- costs one walk and nothing else.
+(define (opt-cfg-straighten-blocks-have-candidate?
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (opt-cfg-straighten-candidate-block?
+        block
+        (opt-cfg-straighten-head-label (box-get rest)))
+        true
+        (opt-cfg-straighten-blocks-have-candidate? (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [slot : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (begin
+          (while (< slot count)
+            (if (opt-cfg-straighten-candidate-block?
+              (ir.compiler-ir-block-seq-ref seq slot)
+              (if (< (+ slot 1) count)
+                (match (ir.compiler-ir-block-seq-ref seq (+ slot 1))
+                  [(ir.CompilerIrBlock.Block label _) label])
+                (ir.compiler-ir-label-none)))
+              (return true)
+              (set! slot (+ slot 1))))
+          false))]))
+
+;; The rewrite mutates instruction sequences, so it works on a deep clone and
+;; hands back the untouched input list when it changes nothing. `blocks` may
+;; still be aliased by the pipeline head. The trailing `opt-cfg-simplify-blocks`
+;; is what actually deletes the blocks this pass orphaned, and what drops the
+;; phi inputs they leave behind: `opt-cfg-filter-clean-blocks` filters every phi
+;; against the destination's REACHABLE predecessor set, so an input from a
+;; forwarding block that still has a predecessor of its own correctly survives.
+(define (opt-cfg-straighten-forwarding-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]) : OptBlockListPassResult
+  (if (not (opt-cfg-straighten-blocks-have-candidate? blocks))
+    (OptBlockListPassResult.Result blocks false)
+    (let
+      [work : ir.CompilerIrBlockList (opt-bool-branch-clone-blocks blocks)]
+      [index : OptCfgIndex (opt-cfg-index-build work)]
+      (if (not (opt-cfg-index-labels-unique? index))
+        (OptBlockListPassResult.Result blocks false)
+        (let
+          [uses : (__tl_dyn-array i64)
+            (opt-collect-blocks-uses-array frame work)]
+          [flag : (__tl_dyn-array i64) (array.make-array i64 1)]
+          [entry-label : i64 (opt-cfg-straighten-head-label work)]
+          [fuel : i64 (+ (ir.compiler-ir-block-list-count work) 1)]
+          (begin
+            (array-set! flag 0 0)
+            (opt-cfg-straighten-round! index uses entry-label flag fuel work)
+            (if (= (array-ref flag 0) 0)
+              (OptBlockListPassResult.Result blocks false)
+              (OptBlockListPassResult.Result
+                (opt-cfg-simplify-blocks work)
+                true))))))))
+
+(define (opt-cfg-straighten-final-pass
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (match (opt-cfg-straighten-forwarding-blocks blocks frame)
+        [(OptBlockListPassResult.Result next-blocks changed)
+          (if (not changed)
+            (OptFunctionPassResult.Result
+              (compiler-opt-debug-observe-function
+                type-segment-bases
+                "cfg_straighten"
+                func)
+              false)
+            (let
+              [candidate : ir.CompilerIrFunction
+                (ir.CompilerIrFunction.Function
+                  name
+                  params
+                  ret-ty
+                  frame
+                  next-blocks)]
+              (match (opt-verify-function candidate)
+                [(ResultCompilerOptimizeVerify.Ok)
+                  (OptFunctionPassResult.Result
+                    (compiler-opt-debug-observe-function
+                      type-segment-bases
+                      "cfg_straighten"
+                      candidate)
+                    true)]
+                [(ResultCompilerOptimizeVerify.Err _)
+                  (OptFunctionPassResult.Result
+                    (compiler-opt-debug-observe-function
+                      type-segment-bases
+                      "cfg_straighten"
+                      func)
+                    false)])))])]))
 
 ;; --- sparse conditional constant propagation -------------------------------
 ;;
@@ -42362,10 +44656,24 @@
 ;;     phi (invariant init, literal step > 1) -> a wrap-safe quotient guard
 ;;     over the trip range; the variable-base forms synthesize the derived
 ;;     seed in the guard (see opt-bce-version-var-base-scaled-guard and
-;;     opt-bce-version-var-base-derived-guard). Scale-1 variable-base indices
-;;     stay OUT of this pass on purpose: one guard per loop entry cannot pay
-;;     for one removed check per trip on pico-trip loops (measured on
-;;     intern_table's tail and miss-copy loops);
+;;     opt-bce-version-var-base-derived-guard);
+;;   * idx == B + counter + k with B a loop-invariant VARIABLE base (SCALE 1,
+;;     either Add operand order) -> the no-division scale-1 specialization
+;;     `B_eff >= 0 && bound-1 <= len-1-B_eff` (opt-bce-version-var-base-guard,
+;;     shared with the multi-block pass), admitted ONLY when at least TWO of
+;;     the loop's checks are eliminable. That gate is guard economics, not
+;;     soundness. One guard per loop ENTRY buys `2 * checks` instructions per
+;;     TRIP, and a measured scale-1 guard is ~12 instructions for one array
+;;     and ~17 for two, so break-even sits near 8 trips at one removed check
+;;     and 4 at two. Measured on intern_table: it-hash-words' tail loop is
+;;     one check at 3.5 trips/entry (a 7M-instruction LOSS -- it stays out
+;;     under the gate), while it-intern-slice's miss-copy loop is two checks
+;;     at 21 trips/entry (+2.8M) and stdlib's byte-buf slot copy is two
+;;     checks at a whole-buffer trip count (+5.9M). Requiring two eliminable
+;;     checks is the cheapest static proxy that separates them: it doubles
+;;     the per-trip return while the guard grows by well under 2x. The
+;;     multi-block pass admits scale 1 unconditionally because its clone
+;;     already amortizes a whole multi-block body per entry;
 ;;   * idx loop-invariant          -> `idx >= 0 && idx < len`.
 ;; The loop is VERSIONED on the conjunction: a fresh guard block on the entry
 ;; edge branches to a check-free fast clone when every condition holds and to
@@ -43137,7 +45445,10 @@
 
 ;; One Add side as the strided part: the literal-coefficient recovery first
 ;; (it sees through Add/Sub/Mul chains over the counter), then the
-;; derived-induction form for the strength-reduced shape.
+;; derived-induction form for the strength-reduced shape. Scale 1 (the plain
+;; `base + counter`) is recovered here and routed by the caller to the
+;; no-division scale-1 guard under the profitability gate; scale 0 and
+;; negative scales still reject.
 (define (opt-bce-version-strided-side
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -43160,7 +45471,7 @@
         value
         fuel)]
     [(OptBceCounterAffine.Some scale k)
-      (if (> scale 1)
+      (if (>= scale 1)
         (OptBceVarBaseStrided.Scaled scale k)
         (OptBceVarBaseStrided.No))]))
 
@@ -43295,6 +45606,11 @@
 ;; index coincide with the body's own wrapped computation). The INT64_MIN
 ;; offset rejection is shared caution with the literal affine guard, not a
 ;; soundness requirement of this construction.
+;;
+;; Scale 1 does NOT come here: both callers route it to
+;; opt-bce-version-var-base-guard, whose scale-1 specialization needs no
+;; mul and no division. The `scale <= 1` rejection below therefore stays as
+;; a defensive gate rather than becoming reachable policy.
 (define (opt-bce-version-var-base-scaled-guard
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
@@ -43412,9 +45728,109 @@
               values
               counter-seen)))])))
 
+;; Prove `base + counter + offset` stays in [0, length) for every counter in
+;; [seed, bound), with `base` loop-invariant. This is the existing literal
+;; affine guard with scale 1 and the variable `base + offset` folded in for
+;; the literal offset; the division is exact at scale 1 and needs no
+;; instruction. The conditions are
+;;
+;;   cond A: base_eff >= 0                    (base_eff = base + offset)
+;;   cond B: bound - 1 <= length - 1 - base_eff
+;;
+;; alongside the once-only primary `seed >= 0 && seed < bound`. Every emitted
+;; instruction wraps like the body's own arithmetic, and the conjunction can
+;; be true only where every index is representable and in range: with cond A
+;; and seed >= 0 the minimum index is non-negative, and cond B -- computed as
+;; `sub bound 1; sub length 1; sub ... base_eff; signed Le` -- bounds the
+;; maximum. `length - 1 - base_eff` is representable on every path where it
+;; matters: for length in [0, 2^63) and base_eff >= 0 its minimum is -2^63,
+;; and a wrapped-negative RHS (only possible for lengths at or above 2^63,
+;; where the wrap adds back exactly 2^64) leaves cond B equivalent to
+;; `base_eff + bound - 1 <= length_u64 - 1`, so even those lengths stay
+;; sound. A base_eff that overflowed negative fails cond A and keeps the
+;; checked slow path, like every conservatively-false guard here.
+(define (opt-bce-version-var-base-guard
+  [_seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [length : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match acc
+    [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+      (let
+        [eff-var : i64
+          (if (= offset 0)
+            (- 0 1)
+            (opt-bce-version-alloc-var cell))]
+        [eff : ir.CompilerIrValue
+          (if (= offset 0)
+            base
+            (ir.CompilerIrValue.Var eff-var))]
+        [eff-instrs : ir.CompilerIrInstrList
+          (if (= offset 0)
+            instrs
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                eff-var
+                (ir.CompilerIrBinOp.Add)
+                base
+                (ir.CompilerIrValue.I64 offset)
+                (ast.AstType.I64))
+              instrs))]
+        [last-counter : i64 (opt-bce-version-alloc-var cell)]
+        [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
+        [room : i64 (opt-bce-version-alloc-var cell)]
+        [with-arithmetic : OptBceVersionGuardAcc
+          (OptBceVersionGuardAcc.Some
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                room
+                (ir.CompilerIrBinOp.Sub)
+                (ir.CompilerIrValue.Var length-minus-one)
+                eff
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  length-minus-one
+                  (ir.CompilerIrBinOp.Sub)
+                  length
+                  (ir.CompilerIrValue.I64 1)
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    last-counter
+                    (ir.CompilerIrBinOp.Sub)
+                    bound
+                    (ir.CompilerIrValue.I64 1)
+                    (ast.AstType.I64))
+                  eff-instrs)))
+            values
+            counter-seen)]
+        (opt-bce-version-cond-counter-seen
+          (opt-bce-version-cond
+            cell
+            (ir.CompilerIrBinOp.Le)
+            (ir.CompilerIrValue.Var last-counter)
+            (ir.CompilerIrValue.Var room)
+            (opt-bce-version-cond
+              cell
+              (ir.CompilerIrBinOp.Ge)
+              eff
+              (ir.CompilerIrValue.I64 0)
+              with-arithmetic))))]))
+
 ;; One Add side as the strided part, the other as the invariant base. Exactly
 ;; one side may involve the counter: an in-loop base fails the
 ;; invariant-operand check.
+;;
+;; `allow-scale1` carries the loop-level profitability verdict for the plain
+;; `base + counter + k` form (see opt-bce-version-guard-conds): when it is
+;; false a scale-1 recovery reports No and the check simply stays in the
+;; fast clone, exactly as before this form was admitted. Scale > 1 ignores
+;; the flag -- its economics were settled when it landed.
 (define (opt-bce-version-var-base-side-strided
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -43430,6 +45846,7 @@
   [affine-side : ir.CompilerIrValue]
   [base-side : ir.CompilerIrValue]
   [length-value : ir.CompilerIrValue]
+  [allow-scale1 : bool]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match (opt-bce-version-strided-side
     instrs
@@ -43443,26 +45860,39 @@
     16)
     [(OptBceVarBaseStrided.No) (OptBceVersionGuardAcc.No)]
     [(OptBceVarBaseStrided.Scaled scale k2)
-      (match (opt-bce-version-k-add k0 k2)
-        [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
-        [(OptBceVersionKSum.Some offset)
-          (match (opt-bce-version-invariant-operand
-            instrs
-            phi-count
-            last
-            defs
-            base-side)
-            [(ir.CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
-            [(ir.CompilerIrMaybeValue.Some base)
-              (opt-bce-version-var-base-scaled-guard
-                seed
-                bound
-                base
-                scale
-                offset
-                length-value
-                cell
-                acc)])])]
+      (if (and (= scale 1) (not allow-scale1))
+        (OptBceVersionGuardAcc.No)
+        (match (opt-bce-version-k-add k0 k2)
+          [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
+          [(OptBceVersionKSum.Some offset)
+            (match (opt-bce-version-invariant-operand
+              instrs
+              phi-count
+              last
+              defs
+              base-side)
+              [(ir.CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
+              [(ir.CompilerIrMaybeValue.Some base)
+                (if (= scale 1)
+                  ;; No mul, no division: the scale-1 specialization the
+                  ;; multi-block pass already uses for this exact shape.
+                  (opt-bce-version-var-base-guard
+                    seed
+                    bound
+                    base
+                    offset
+                    length-value
+                    cell
+                    acc)
+                  (opt-bce-version-var-base-scaled-guard
+                    seed
+                    bound
+                    base
+                    scale
+                    offset
+                    length-value
+                    cell
+                    acc))])]))]
     [(OptBceVarBaseStrided.Derived d0 step k2)
       (match (opt-bce-version-k-add k0 k2)
         [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
@@ -43502,6 +45932,7 @@
   [cell : (__tl_dyn-array i64)]
   [index-value : ir.CompilerIrValue]
   [length-value : ir.CompilerIrValue]
+  [allow-scale1 : bool]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match (opt-bce-version-strided-peel instrs phi-count last index-value 0 8)
     [(OptBceVersionStridedCore.No) (OptBceVersionGuardAcc.No)]
@@ -43534,6 +45965,7 @@
                           lhs
                           rhs
                           length-value
+                          allow-scale1
                           acc)]
                       (match attempt
                         [(OptBceVersionGuardAcc.No)
@@ -43552,6 +45984,7 @@
                             rhs
                             lhs
                             length-value
+                            allow-scale1
                             acc)]
                         [_ attempt]))]
                   [_ (OptBceVersionGuardAcc.No)]))]
@@ -43571,6 +46004,7 @@
   [cell : (__tl_dyn-array i64)]
   [index-value : ir.CompilerIrValue]
   [length-value : ir.CompilerIrValue]
+  [allow-scale1 : bool]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match index-value
     [(ir.CompilerIrValue.I64 k)
@@ -43657,6 +46091,7 @@
                               cell
                               (ir.CompilerIrValue.Var id)
                               length-value
+                              allow-scale1
                               acc)]
                           [(OptBceCounterAffine.Some scale offset)
                             (opt-bce-version-affine-guard
@@ -43712,6 +46147,7 @@
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (__tl_dyn-array i64)]
+  [allow-scale1 : bool]
   [state : OptBceVersionDerive]) : OptBceVersionDerive
   (if (>= index last)
     state
@@ -43727,6 +46163,7 @@
       seed
       bound
       cell
+      allow-scale1
       (match (ir.compiler-ir-instr-seq-ref instrs index)
         [(ir.CompilerIrInstr.BoundsCheck index-value length-value _)
           (match (opt-bce-version-invariant-operand
@@ -43751,6 +46188,7 @@
                     cell
                     index-value
                     length-invariant
+                    allow-scale1
                     (struct-get state guard))]
                 (match derived-guard
                   [(OptBceVersionGuardAcc.No)
@@ -43973,8 +46411,28 @@
         label
         (ir.compiler-ir-instr-builder-to-seq builder)))))
 
+;; The empty derivation state every scan starts from.
+(define (opt-bce-version-derive-start) : OptBceVersionDerive
+  (OptBceVersionDerive
+    (OptBceVersionGuardAcc.Some
+      (ir.CompilerIrInstrList.Nil)
+      (ir.CompilerIrValueList.Nil)
+      false)
+    (OptBceVersionKeep.Nil)
+    0))
+
 ;; Assemble the single-block guard: derive the per-check conditions, then
 ;; finish them (seed compares + And chain).
+;;
+;; The scale-1 variable-base form is admitted only when the loop ends up with
+;; at least TWO eliminable checks (the guard-economics gate documented at the
+;; head of this pass). Deciding that needs the derived count, which is what
+;; the scan produces, so the scan runs twice: once on a THROWAWAY var counter
+;; to take the census, then for real with the verdict. The trial's condition
+;; instructions are discarded with its counter, so the emitted guard is
+;; exactly what a single scan under the chosen verdict would build, and a
+;; rejected verdict reproduces the pre-gate behaviour instruction for
+;; instruction.
 (define (opt-bce-version-guard-conds
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -43987,6 +46445,24 @@
   [bound : ir.CompilerIrValue]
   [cell : (__tl_dyn-array i64)]) : OptBceVersionGuardOut
   (let
+    [census-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [_census-seed : unit (array-set! census-cell 0 (array-ref cell 0))]
+    [census : OptBceVersionDerive
+      (opt-bce-version-derive-checks
+        instrs
+        phi-count
+        phi-count
+        last
+        defs
+        loop-label
+        pred-label
+        iphi
+        seed
+        bound
+        census-cell
+        true
+        (opt-bce-version-derive-start))]
+    [allow-scale1 : bool (>= (struct-get census derived) 2)]
     [state : OptBceVersionDerive
       (opt-bce-version-derive-checks
         instrs
@@ -44000,13 +46476,8 @@
         seed
         bound
         cell
-        (OptBceVersionDerive
-          (OptBceVersionGuardAcc.Some
-            (ir.CompilerIrInstrList.Nil)
-            (ir.CompilerIrValueList.Nil)
-            false)
-          (OptBceVersionKeep.Nil)
-          0))]
+        allow-scale1
+        (opt-bce-version-derive-start))]
     ;; Partial versioning still needs at least one REMOVED check to pay for
     ;; the clone; with none, the loop is left untouched.
     (if (= (struct-get state derived) 0)
@@ -47401,100 +49872,6 @@
       (OptBceCounterAffineBase.Some scale offset base)]
     [(OptBceCounterAffineBase.No)
       (opt-bce-mb-var-base-side body-blocks defs iphi rhs lhs)]))
-
-;; Prove `base + counter + offset` stays in [0, length) for every counter in
-;; [seed, bound), with `base` loop-invariant. This is the existing literal
-;; affine guard with scale 1 and the variable `base + offset` folded in for
-;; the literal offset; the division is exact at scale 1 and needs no
-;; instruction. The conditions are
-;;
-;;   cond A: base_eff >= 0                    (base_eff = base + offset)
-;;   cond B: bound - 1 <= length - 1 - base_eff
-;;
-;; alongside the once-only primary `seed >= 0 && seed < bound`. Every emitted
-;; instruction wraps like the body's own arithmetic, and the conjunction can
-;; be true only where every index is representable and in range: with cond A
-;; and seed >= 0 the minimum index is non-negative, and cond B -- computed as
-;; `sub bound 1; sub length 1; sub ... base_eff; signed Le` -- bounds the
-;; maximum. `length - 1 - base_eff` is representable on every path where it
-;; matters: for length in [0, 2^63) and base_eff >= 0 its minimum is -2^63,
-;; and a wrapped-negative RHS (only possible for lengths at or above 2^63,
-;; where the wrap adds back exactly 2^64) leaves cond B equivalent to
-;; `base_eff + bound - 1 <= length_u64 - 1`, so even those lengths stay
-;; sound. A base_eff that overflowed negative fails cond A and keeps the
-;; checked slow path, like every conservatively-false guard here.
-(define (opt-bce-version-var-base-guard
-  [_seed : ir.CompilerIrValue]
-  [bound : ir.CompilerIrValue]
-  [base : ir.CompilerIrValue]
-  [offset : i64]
-  [length : ir.CompilerIrValue]
-  [cell : (__tl_dyn-array i64)]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match acc
-    [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
-    [(OptBceVersionGuardAcc.Some instrs values counter-seen)
-      (let
-        [eff-var : i64
-          (if (= offset 0)
-            (- 0 1)
-            (opt-bce-version-alloc-var cell))]
-        [eff : ir.CompilerIrValue
-          (if (= offset 0)
-            base
-            (ir.CompilerIrValue.Var eff-var))]
-        [eff-instrs : ir.CompilerIrInstrList
-          (if (= offset 0)
-            instrs
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                eff-var
-                (ir.CompilerIrBinOp.Add)
-                base
-                (ir.CompilerIrValue.I64 offset)
-                (ast.AstType.I64))
-              instrs))]
-        [last-counter : i64 (opt-bce-version-alloc-var cell)]
-        [length-minus-one : i64 (opt-bce-version-alloc-var cell)]
-        [room : i64 (opt-bce-version-alloc-var cell)]
-        [with-arithmetic : OptBceVersionGuardAcc
-          (OptBceVersionGuardAcc.Some
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                room
-                (ir.CompilerIrBinOp.Sub)
-                (ir.CompilerIrValue.Var length-minus-one)
-                eff
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.BinOp
-                  length-minus-one
-                  (ir.CompilerIrBinOp.Sub)
-                  length
-                  (ir.CompilerIrValue.I64 1)
-                  (ast.AstType.I64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.BinOp
-                    last-counter
-                    (ir.CompilerIrBinOp.Sub)
-                    bound
-                    (ir.CompilerIrValue.I64 1)
-                    (ast.AstType.I64))
-                  eff-instrs)))
-            values
-            counter-seen)]
-        (opt-bce-version-cond-counter-seen
-          (opt-bce-version-cond
-            cell
-            (ir.CompilerIrBinOp.Le)
-            (ir.CompilerIrValue.Var last-counter)
-            (ir.CompilerIrValue.Var room)
-            (opt-bce-version-cond
-              cell
-              (ir.CompilerIrBinOp.Ge)
-              eff
-              (ir.CompilerIrValue.I64 0)
-              with-arithmetic))))]))
 
 ;; Descriptor-length recognition context: the type-pool segment bases and the
 ;; per-function descriptor-handle set they classify (the load-GVN/LICM header
@@ -50925,6 +53302,1437 @@
 ;; dominance-based natural-loop and diamond checks remain behind this gate.
 (define (opt-unroll-mb-blocks-have-candidate? [blocks : ir.CompilerIrBlockList]) : bool
   (opt-unroll-mb-blocks-have-fast-phi? blocks))
+
+;; --- invariant-offset Gep splitting (gep_offset) -----------------------------
+;;
+;; A loop body that reads `base[invariant + counter]` lowers to a THREE-term
+;; address: `A = Add I, V` inside the loop, then `Gep base, A`. The x86 SIB mode
+;; is `disp(base, index, scale)` -- one register base plus one register index --
+;; so the third term costs a `lea` per access per iteration.
+;; `benchmarks/intern_table`'s `it-slice-eq?` byte compare pays that twice per
+;; byte; the C twin hoists `p = names + name_start` once and loads `(p,i,1)`.
+;;
+;; Gep is exactly associative in its index -- `Gep b, (I + V) : t` and
+;; `Gep (Gep b, I : t), V : t` both address `b + (I + V) * sizeof t` -- so the
+;; fix is to split the address rather than to build an induction variable:
+;; compute the derived base `T = Gep b, I : t` once in the loop preheader and
+;; leave `Gep T, V : t` in the body. The Add then has no uses left and the
+;; pipeline DCE retires it.
+;;
+;; Why not the induction pass. `opt-induction-affine-offset-from-add` only
+;; recognizes `phi + literal`, so a `var + var` index is invisible to it, and
+;; `opt-induction-gep-stride-pays?` deliberately refuses SIB strides because a
+;; pointer INDUCTION VARIABLE at those strides buys nothing: it adds a latch add
+;; and a loop-live range for an address the SIB mode forms for free. A derived
+;; BASE is not an induction variable -- no phi, no latch step, one preheader
+;; instruction -- so that veto does not reach it.
+;;
+;; Why this late. Two orderings pin the pass. Before `bce_version` the same Add
+;; also feeds the body's BoundsCheck, so splitting the Gep would leave the Add
+;; live and cost an instruction instead of saving one; only the fast clone has
+;; the single-use Add this pass needs. And before `post_lftr_licm` a versioned
+;; clone still loads its array's data pointer INSIDE the body -- that LICM run
+;; is what lifts the load into the preheader -- so the base is not yet loop
+;; invariant and the address does not read as base-plus-invariant at all. The
+;; slot immediately after `post_lftr_licm` is the first point where both hold.
+;;
+;; Register pressure. With k distinct bases sharing one invariant addend the
+;; loop trades `{I, b_1..b_k}` for `{T_1..T_k}`: one fewer live value when the
+;; addend dies with the Adds, level when it does not. It is only additive when
+;; a base outlives the Geps rewritten here, so a base with any other in-loop use
+;; disqualifies the whole Add. The addend gate is the same rule from the other
+;; side: a surviving addend is admitted only when k >= 2, where the removed Add
+;; still pays for the one extra live value.
+;;
+;; The pressure gates read use counts collected over the PROVISIONALLY accepted
+;; Adds. Rejecting one Add can leave those counts high for another Add sharing a
+;; base, which only makes the heuristic slightly optimistic in that shape;
+;; correctness never depends on them.
+;;
+;; A bce fast clone is entered straight from its guard chain, so its header has
+;; no dedicated preheader (`opt-natural-loop-safe-preheader-block?` wants a sole
+;; successor). Loops that carry a candidate get one synthesized first, reusing
+;; `opt-loop-preheaders-synthesize-loop` a loop at a time so that only the loops
+;; this pass actually rewrites pay for a block.
+;; preheader-label, derived dst, base, invariant index, element type.
+(defenum OptGepOffsetDerived
+  (Derived i64 i64 ir.CompilerIrValue ir.CompilerIrValue ast.AstType))
+
+(defenum OptGepOffsetDerivedList
+  (Nil)
+  (Cons OptGepOffsetDerived (Box OptGepOffsetDerivedList)))
+
+;; The invariant addend and the loop-variant addend of an admissible Add.
+(defenum OptGepOffsetSplit
+  (No)
+  (Some i64 i64))
+
+(defenum OptGepOffsetPreheaderResult
+  (Result ir.CompilerIrBlockList OptCfgContext bool))
+
+(defenum OptGepOffsetPlanResult
+  (Result ir.CompilerIrBlockList i64 bool))
+
+(define (opt-gep-offset-fill! [items : (__tl_dyn-array i64)] [value : i64]) : unit
+  (let
+    [count : i64 (array-length items)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (array-set! items cursor value)
+        (set! cursor (+ cursor 1))))))
+
+;; An element scale the SIB byte can encode. A wider stride keeps a multiply in
+;; the loop either way, so splitting its address buys nothing.
+(define (opt-gep-offset-sib-scale?
+  [type-segment-bases : i64]
+  [elem-ty : ast.AstType]) : bool
+  (let
+    [scale : i64 (opt-scratch-alloc-type-size type-segment-bases elem-ty)]
+    (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))))
+
+;; var -> id of the block that defines it; -1 for parameters and unknowns. The
+;; ids are block-list positions, which is what `opt-loop-body-contains-id?`
+;; indexes.
+(define (opt-gep-offset-defs-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [block-id : i64]
+  [def-block : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (match (opt-instr-def-var (ir.compiler-ir-instr-seq-ref instrs cursor))
+          [(option_i64.Some dst)
+            (if (and (>= dst 0) (< dst (array-length def-block)))
+              (array-set! def-block dst block-id)
+              unit)]
+          [(option_i64.None) unit])
+        (set! cursor (+ cursor 1))))))
+
+(define (opt-gep-offset-defs-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [block-id : i64]
+  [def-block : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-gep-offset-defs-instrs! instrs block-id def-block)
+            (opt-gep-offset-defs-blocks!
+              (box-get rest)
+              (+ block-id 1)
+              def-block))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gep-offset-defs-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        block-id
+        def-block)]))
+
+;; Whole-function census keyed by the var a Gep uses as its variable INDEX:
+;; how many Geps index on it, whether any of them disqualifies it (non-variable
+;; base or non-SIB scale), the first base named, and whether a later Gep named a
+;; different one. None of this depends on a loop, so it is collected once.
+(define (opt-gep-offset-census-instrs!
+  [type-segment-bases : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [base0 : (__tl_dyn-array i64)]
+  [multi-base : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+          [(ir.CompilerIrInstr.Gep _ base offset elem-ty)
+            (match offset
+              [(ir.CompilerIrValue.Var idx)
+                (if (and (>= idx 0) (< idx (array-length gep-uses)))
+                  (begin
+                    (array-set! gep-uses idx (+ (array-ref gep-uses idx) 1))
+                    (if (opt-gep-offset-sib-scale? type-segment-bases elem-ty)
+                      unit
+                      (array-set! poison idx 1))
+                    (match base
+                      [(ir.CompilerIrValue.Var b)
+                        (if (< (array-ref base0 idx) 0)
+                          (array-set! base0 idx b)
+                          (if (= (array-ref base0 idx) b)
+                            unit
+                            (array-set! multi-base idx 1)))]
+                      [_ (array-set! poison idx 1)]))
+                  unit)]
+              [_ unit])]
+          [_ unit])
+        (set! cursor (+ cursor 1))))))
+
+(define (opt-gep-offset-census-blocks!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [base0 : (__tl_dyn-array i64)]
+  [multi-base : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-gep-offset-census-instrs!
+              type-segment-bases
+              instrs
+              gep-uses
+              poison
+              base0
+              multi-base)
+            (opt-gep-offset-census-blocks!
+              type-segment-bases
+              (box-get rest)
+              gep-uses
+              poison
+              base0
+              multi-base))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gep-offset-census-blocks!
+        type-segment-bases
+        (ir.compiler-ir-block-seq-to-list seq)
+        gep-uses
+        poison
+        base0
+        multi-base)]))
+
+;; Uses that the pipeline DCE retires before the backend sees them. Removing a
+;; BoundsCheck strands a dead `Cast` of the very Add this pass wants to split,
+;; and counting that stale use fails the all-uses gate for a value that is
+;; genuinely single-use by the time it is lowered. Only pure single-destination
+;; kinds are retired, and only once their own result is already unused, so this
+;; never claims a live instruction is dead. The per-loop pressure counts stay on
+;; the raw numbers: over-counting there only rejects.
+(define (opt-gep-offset-strandable? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Cast _ _ _ _) true]
+    [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(ir.CompilerIrInstr.Mov _ _ _) true]
+    [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
+    [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(ir.CompilerIrInstr.Gep _ _ _ _) true]
+    [(ir.CompilerIrInstr.AddrOf _ _) true]
+    [_ false]))
+
+(define (opt-gep-offset-settle-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [uses : (__tl_dyn-array i64)]
+  [dead-uses : (__tl_dyn-array i64)]
+  [dead : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          (if (opt-gep-offset-strandable? instr)
+            (match (opt-instr-def-var instr)
+              [(option_i64.Some dst)
+                (if (and
+                  (>= dst 0)
+                  (< dst (array-length dead))
+                  (= (array-ref dead dst) 0)
+                  (<= (- (array-ref uses dst) (array-ref dead-uses dst)) 0))
+                  (begin
+                    (array-set! dead dst 1)
+                    (opt-collect-instr-uses-array dead-uses instr)
+                    (array-set! changed 0 1))
+                  unit)]
+              [(option_i64.None) unit])
+            unit))
+        (set! cursor (+ cursor 1))))))
+
+(define (opt-gep-offset-settle-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [uses : (__tl_dyn-array i64)]
+  [dead-uses : (__tl_dyn-array i64)]
+  [dead : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-gep-offset-settle-instrs! instrs uses dead-uses dead changed)
+            (opt-gep-offset-settle-blocks!
+              (box-get rest)
+              uses
+              dead-uses
+              dead
+              changed))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gep-offset-settle-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        uses
+        dead-uses
+        dead
+        changed)]))
+
+(define (opt-gep-offset-settle-rounds!
+  [blocks : ir.CompilerIrBlockList]
+  [uses : (__tl_dyn-array i64)]
+  [dead-uses : (__tl_dyn-array i64)]
+  [dead : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array i64)]
+  [remaining : i64]) : unit
+  (if (<= remaining 0)
+    unit
+    (begin
+      (array-set! changed 0 0)
+      (opt-gep-offset-settle-blocks! blocks uses dead-uses dead changed)
+      (if (= (array-ref changed 0) 1)
+        (opt-gep-offset-settle-rounds!
+          blocks
+          uses
+          dead-uses
+          dead
+          changed
+          (- remaining 1))
+        unit))))
+
+;; Whole-function use counts with the DCE-retired chains already subtracted.
+(define (opt-gep-offset-effective-uses
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]) : (__tl_dyn-array i64)
+  (let
+    [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame blocks)]
+    [dead-uses : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [dead : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [changed : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [_settle : unit
+      (opt-gep-offset-settle-rounds!
+        blocks
+        uses
+        dead-uses
+        dead
+        changed
+        (+ frame 1))]
+    [cursor : i64 0]
+    (begin
+      (while (< cursor frame)
+        (begin
+          (array-set!
+            uses
+            cursor
+            (- (array-ref uses cursor) (array-ref dead-uses cursor)))
+          (set! cursor (+ cursor 1))))
+      uses)))
+
+(define (opt-gep-offset-var-in-loop?
+  [var : i64]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]) : bool
+  (if (or (< var 0) (>= var (array-length def-block)))
+    false
+    (let
+      [id : i64 (array-ref def-block var)]
+      (if (< id 0)
+        false
+        (opt-loop-body-contains-id? body id)))))
+
+;; `Add x, y` with two variable operands, exactly one of which the loop defines.
+(define (opt-gep-offset-add-split
+  [instr : ir.CompilerIrInstr]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]) : OptGepOffsetSplit
+  (match instr
+    [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+      (match op
+        [(ir.CompilerIrBinOp.Add)
+          (match lhs
+            [(ir.CompilerIrValue.Var a)
+              (match rhs
+                [(ir.CompilerIrValue.Var b)
+                  (let
+                    [a-in : bool (opt-gep-offset-var-in-loop? a def-block body)]
+                    [b-in : bool (opt-gep-offset-var-in-loop? b def-block body)]
+                    (if a-in
+                      (if b-in
+                        (OptGepOffsetSplit.No)
+                        (OptGepOffsetSplit.Some b a))
+                      (if b-in
+                        (OptGepOffsetSplit.Some a b)
+                        (OptGepOffsetSplit.No))))]
+                [_ (OptGepOffsetSplit.No)])]
+            [_ (OptGepOffsetSplit.No)])]
+        [_ (OptGepOffsetSplit.No)])]
+    [_ (OptGepOffsetSplit.No)]))
+
+;; Every use of the Add anywhere in the function is an eligible Gep index, and
+;; there is at least one. A use outside the loop is fine: the derived base
+;; dominates the preheader, which dominates every block the Add dominates.
+(define (opt-gep-offset-uses-all-geps?
+  [dst : i64]
+  [uses : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]) : bool
+  (and
+    (>= dst 0)
+    (< dst (array-length uses))
+    (= (array-ref poison dst) 0)
+    (>= (array-ref uses dst) 1)
+    (= (array-ref uses dst) (array-ref gep-uses dst))))
+
+;; The shape test that does not need any per-loop array: used both to decide
+;; whether a loop is worth synthesizing a preheader for and to seed the plan.
+(define (opt-gep-offset-instr-candidate?
+  [instr : ir.CompilerIrInstr]
+  [uses : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]) : bool
+  (match (opt-gep-offset-add-split instr def-block body)
+    [(OptGepOffsetSplit.No) false]
+    [(OptGepOffsetSplit.Some _ _)
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst)
+          (opt-gep-offset-uses-all-geps? dst uses gep-uses poison)]
+        [(option_i64.None) false])]))
+
+(define (opt-gep-offset-block-has-candidate?
+  [instrs : ir.CompilerIrInstrSeq]
+  [cursor : i64]
+  [uses : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]) : bool
+  (if (>= cursor (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-gep-offset-instr-candidate?
+      (ir.compiler-ir-instr-seq-ref instrs cursor)
+      uses
+      gep-uses
+      poison
+      def-block
+      body)
+      true
+      (opt-gep-offset-block-has-candidate?
+        instrs
+        (+ cursor 1)
+        uses
+        gep-uses
+        poison
+        def-block
+        body))))
+
+(define (opt-gep-offset-blocks-have-candidate?
+  [blocks : ir.CompilerIrBlockList]
+  [uses : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (opt-gep-offset-block-has-candidate?
+            instrs
+            0
+            uses
+            gep-uses
+            poison
+            def-block
+            body)
+            true
+            (opt-gep-offset-blocks-have-candidate?
+              (box-get rest)
+              uses
+              gep-uses
+              poison
+              def-block
+              body))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gep-offset-blocks-have-candidate?
+        (ir.compiler-ir-block-seq-to-list seq)
+        uses
+        gep-uses
+        poison
+        def-block
+        body)]))
+
+(define (opt-gep-offset-loop-has-candidate?
+  [loop : OptNaturalLoop]
+  [blocks : ir.CompilerIrBlockList]
+  [uses : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]) : bool
+  (opt-gep-offset-blocks-have-candidate?
+    (opt-natural-loop-current-body-blocks loop blocks)
+    uses
+    gep-uses
+    poison
+    def-block
+    (opt-natural-loop-body-info loop)))
+
+;; The first loop that carries a candidate but has no dedicated preheader.
+(define (opt-gep-offset-first-preheaderless
+  [loops : OptNaturalLoopList]
+  [blocks : ir.CompilerIrBlockList]
+  [uses : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]) : OptMaybeNaturalLoop
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptMaybeNaturalLoop.No)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-natural-loop-preheader loop)
+        [(OptLoopPreheader.Some _)
+          (opt-gep-offset-first-preheaderless
+            (box-get rest)
+            blocks
+            uses
+            gep-uses
+            poison
+            def-block)]
+        [(OptLoopPreheader.No)
+          (if (opt-gep-offset-loop-has-candidate?
+            loop
+            blocks
+            uses
+            gep-uses
+            poison
+            def-block)
+            (OptMaybeNaturalLoop.Some loop)
+            (opt-gep-offset-first-preheaderless
+              (box-get rest)
+              blocks
+              uses
+              gep-uses
+              poison
+              def-block))])]))
+
+;; One synthesis per round: the CFG (and therefore `context`) is stale straight
+;; afterwards, exactly as `opt-loop-preheaders-blocks-fixed-result` handles it.
+(define (opt-gep-offset-prepare-preheaders
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [remaining : i64]
+  [changed : bool]) : OptGepOffsetPreheaderResult
+  (if (<= remaining 0)
+    (OptGepOffsetPreheaderResult.Result blocks context changed)
+    (let
+      [uses : (__tl_dyn-array i64) (opt-gep-offset-effective-uses blocks frame)]
+      [gep-uses : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      [poison : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      [base0 : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      [multi-base : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      [def-block : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      [_base0 : unit (opt-gep-offset-fill! base0 (- 0 1))]
+      [_defs : unit
+        (begin
+          (opt-gep-offset-fill! def-block (- 0 1))
+          (opt-gep-offset-defs-blocks! blocks 0 def-block))]
+      [_census : unit
+        (opt-gep-offset-census-blocks!
+          type-segment-bases
+          blocks
+          gep-uses
+          poison
+          base0
+          multi-base)]
+      (match (opt-gep-offset-first-preheaderless
+        (opt-cfg-natural-loops-with-context blocks context)
+        blocks
+        uses
+        gep-uses
+        poison
+        def-block)
+        [(OptMaybeNaturalLoop.No)
+          (OptGepOffsetPreheaderResult.Result blocks context changed)]
+        [(OptMaybeNaturalLoop.Some loop)
+          (match (opt-loop-preheaders-synthesize-loop blocks context loop)
+            [(OptBlockListPassResult.Result next synthesized)
+              (if synthesized
+                (opt-gep-offset-prepare-preheaders
+                  type-segment-bases
+                  next
+                  (opt-cfg-context-build next)
+                  frame
+                  (- remaining 1)
+                  true)
+                (OptGepOffsetPreheaderResult.Result blocks context changed))])]))))
+
+;; --- per-loop plan ------------------------------------------------------------
+;; Provisional acceptance: shape plus the all-uses-are-Gep-indices gate.
+(define (opt-gep-offset-mark-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [uses : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [cand : (__tl_dyn-array i64)]
+  [cand-inv : (__tl_dyn-array i64)]
+  [cand-var : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          (match (opt-gep-offset-add-split instr def-block body)
+            [(OptGepOffsetSplit.No) unit]
+            [(OptGepOffsetSplit.Some inv variant)
+              (match (opt-instr-def-var instr)
+                [(option_i64.Some dst)
+                  (if (opt-gep-offset-uses-all-geps? dst uses gep-uses poison)
+                    (begin
+                      (array-set! cand dst 1)
+                      (array-set! cand-inv dst inv)
+                      (array-set! cand-var dst variant))
+                    unit)]
+                [(option_i64.None) unit])]))
+        (set! cursor (+ cursor 1))))))
+
+(define (opt-gep-offset-mark-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [uses : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [cand : (__tl_dyn-array i64)]
+  [cand-inv : (__tl_dyn-array i64)]
+  [cand-var : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-gep-offset-mark-instrs!
+              instrs
+              uses
+              gep-uses
+              poison
+              def-block
+              body
+              cand
+              cand-inv
+              cand-var)
+            (opt-gep-offset-mark-blocks!
+              (box-get rest)
+              uses
+              gep-uses
+              poison
+              def-block
+              body
+              cand
+              cand-inv
+              cand-var))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gep-offset-mark-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        uses
+        gep-uses
+        poison
+        def-block
+        body
+        cand
+        cand-inv
+        cand-var)]))
+
+;; Correctness filter: the derived base is emitted in the preheader, so every
+;; Gep that indexes on a candidate must name a base the loop does not define.
+(define (opt-gep-offset-drop-variant-bases-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [cand : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+          [(ir.CompilerIrInstr.Gep _ base offset _)
+            (match offset
+              [(ir.CompilerIrValue.Var idx)
+                (if (and
+                  (>= idx 0)
+                  (< idx (array-length cand))
+                  (= (array-ref cand idx) 1))
+                  (match base
+                    [(ir.CompilerIrValue.Var b)
+                      (if (opt-gep-offset-var-in-loop? b def-block body)
+                        (array-set! cand idx 0)
+                        unit)]
+                    [_ (array-set! cand idx 0)])
+                  unit)]
+              [_ unit])]
+          [_ unit])
+        (set! cursor (+ cursor 1))))))
+
+(define (opt-gep-offset-drop-variant-bases-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [def-block : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [cand : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-gep-offset-drop-variant-bases-instrs!
+              instrs
+              def-block
+              body
+              cand)
+            (opt-gep-offset-drop-variant-bases-blocks!
+              (box-get rest)
+              def-block
+              body
+              cand))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gep-offset-drop-variant-bases-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        def-block
+        body
+        cand)]))
+
+;; In-loop uses that the rewrite removes: a base named by a surviving
+;; candidate's Gep, and the invariant operand of a surviving candidate Add.
+(define (opt-gep-offset-count-split-uses-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [cand : (__tl_dyn-array i64)]
+  [cand-inv : (__tl_dyn-array i64)]
+  [base-split : (__tl_dyn-array i64)]
+  [addend-split : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          (begin
+            (match instr
+              [(ir.CompilerIrInstr.Gep _ base offset _)
+                (match offset
+                  [(ir.CompilerIrValue.Var idx)
+                    (if (and
+                      (>= idx 0)
+                      (< idx (array-length cand))
+                      (= (array-ref cand idx) 1))
+                      (match base
+                        [(ir.CompilerIrValue.Var b)
+                          (if (and (>= b 0) (< b (array-length base-split)))
+                            (array-set!
+                              base-split
+                              b
+                              (+ (array-ref base-split b) 1))
+                            unit)]
+                        [_ unit])
+                      unit)]
+                  [_ unit])]
+              [_ unit])
+            (match (opt-instr-def-var instr)
+              [(option_i64.Some dst)
+                (if (and
+                  (>= dst 0)
+                  (< dst (array-length cand))
+                  (= (array-ref cand dst) 1))
+                  (let
+                    [inv : i64 (array-ref cand-inv dst)]
+                    (if (and (>= inv 0) (< inv (array-length addend-split)))
+                      (array-set!
+                        addend-split
+                        inv
+                        (+ (array-ref addend-split inv) 1))
+                      unit))
+                  unit)]
+              [(option_i64.None) unit])))
+        (set! cursor (+ cursor 1))))))
+
+(define (opt-gep-offset-count-split-uses-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [cand : (__tl_dyn-array i64)]
+  [cand-inv : (__tl_dyn-array i64)]
+  [base-split : (__tl_dyn-array i64)]
+  [addend-split : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-gep-offset-count-split-uses-instrs!
+              instrs
+              cand
+              cand-inv
+              base-split
+              addend-split)
+            (opt-gep-offset-count-split-uses-blocks!
+              (box-get rest)
+              cand
+              cand-inv
+              base-split
+              addend-split))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gep-offset-count-split-uses-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        cand
+        cand-inv
+        base-split
+        addend-split)]))
+
+;; Pressure gates. A base that outlives the rewritten Geps would add a live
+;; value outright, so it rejects its Add; a surviving addend is admitted only
+;; when the Add feeds two or more distinct bases.
+(define (opt-gep-offset-apply-pressure-gates-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [loop-uses : (__tl_dyn-array i64)]
+  [base-split : (__tl_dyn-array i64)]
+  [addend-split : (__tl_dyn-array i64)]
+  [multi-base : (__tl_dyn-array i64)]
+  [cand : (__tl_dyn-array i64)]
+  [cand-inv : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (begin
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          (begin
+            (match instr
+              [(ir.CompilerIrInstr.Gep _ base offset _)
+                (match offset
+                  [(ir.CompilerIrValue.Var idx)
+                    (if (and
+                      (>= idx 0)
+                      (< idx (array-length cand))
+                      (= (array-ref cand idx) 1))
+                      (match base
+                        [(ir.CompilerIrValue.Var b)
+                          (if (and
+                            (>= b 0)
+                            (< b (array-length loop-uses))
+                            (= (array-ref loop-uses b) (array-ref base-split b)))
+                            unit
+                            (array-set! cand idx 0))]
+                        [_ (array-set! cand idx 0)])
+                      unit)]
+                  [_ unit])]
+              [_ unit])
+            (match (opt-instr-def-var instr)
+              [(option_i64.Some dst)
+                (if (and
+                  (>= dst 0)
+                  (< dst (array-length cand))
+                  (= (array-ref cand dst) 1))
+                  (let
+                    [inv : i64 (array-ref cand-inv dst)]
+                    (if (or
+                      (= (array-ref multi-base dst) 1)
+                      (and
+                        (>= inv 0)
+                        (< inv (array-length loop-uses))
+                        (=
+                          (array-ref loop-uses inv)
+                          (array-ref addend-split inv))))
+                      unit
+                      (array-set! cand dst 0)))
+                  unit)]
+              [(option_i64.None) unit])))
+        (set! cursor (+ cursor 1))))))
+
+(define (opt-gep-offset-apply-pressure-gates-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [loop-uses : (__tl_dyn-array i64)]
+  [base-split : (__tl_dyn-array i64)]
+  [addend-split : (__tl_dyn-array i64)]
+  [multi-base : (__tl_dyn-array i64)]
+  [cand : (__tl_dyn-array i64)]
+  [cand-inv : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-gep-offset-apply-pressure-gates-instrs!
+              instrs
+              loop-uses
+              base-split
+              addend-split
+              multi-base
+              cand
+              cand-inv)
+            (opt-gep-offset-apply-pressure-gates-blocks!
+              (box-get rest)
+              loop-uses
+              base-split
+              addend-split
+              multi-base
+              cand
+              cand-inv))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gep-offset-apply-pressure-gates-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        loop-uses
+        base-split
+        addend-split
+        multi-base
+        cand
+        cand-inv)]))
+
+;; Assign one derived base per (base, element type) reached in this loop and
+;; record the Geps that adopt it. Geps already claimed by an enclosing loop keep
+;; that assignment: a var is rewritten once.
+(define (opt-gep-offset-assign-instrs!
+  [type-segment-bases : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [preheader : i64]
+  [cand : (__tl_dyn-array i64)]
+  [cand-inv : (__tl_dyn-array i64)]
+  [cand-var : (__tl_dyn-array i64)]
+  [derived-var : (__tl_dyn-array i64)]
+  [derived-inv : (__tl_dyn-array i64)]
+  [derived-ty : (__tl_dyn-array ast.AstType)]
+  [gep-mark : (__tl_dyn-array i64)]
+  [gep-base : (__tl_dyn-array i64)]
+  [gep-index : (__tl_dyn-array i64)]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptGepOffsetDerivedList]) : OptGepOffsetDerivedList
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    [out : OptGepOffsetDerivedList acc]
+    (begin
+      (while (< cursor count)
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+            [(ir.CompilerIrInstr.Gep dst base offset elem-ty)
+              (match offset
+                [(ir.CompilerIrValue.Var idx)
+                  (if (and
+                    (>= idx 0)
+                    (< idx (array-length cand))
+                    (= (array-ref cand idx) 1)
+                    (>= dst 0)
+                    (< dst (array-length gep-mark))
+                    (= (array-ref gep-mark dst) 0))
+                    (match base
+                      [(ir.CompilerIrValue.Var b)
+                        (let
+                          [cached : i64
+                            (if (and (>= b 0) (< b (array-length derived-var)))
+                              (array-ref derived-var b)
+                              (- 0 1))]
+                          ;; The cache key is the WHOLE recipe. One array
+                          ;; indexed at two different invariant offsets in the
+                          ;; same loop needs a derived base each; keying on the
+                          ;; base alone would silently retarget the second
+                          ;; address to the first one's offset.
+                          [reuse? : bool
+                            (and
+                              (>= cached 0)
+                              (=
+                                (array-ref derived-inv b)
+                                (array-ref cand-inv idx))
+                              (opt-type-eq
+                                type-segment-bases
+                                (array-ref derived-ty b)
+                                elem-ty))]
+                          [derived : i64
+                            (if reuse?
+                              cached
+                              (opt-bce-version-alloc-var cell))]
+                          (begin
+                            (if reuse?
+                              unit
+                              (begin
+                                (if (and
+                                  (>= b 0)
+                                  (< b (array-length derived-var)))
+                                  (begin
+                                    (array-set! derived-var b derived)
+                                    (array-set!
+                                      derived-inv
+                                      b
+                                      (array-ref cand-inv idx))
+                                    (array-set! derived-ty b elem-ty))
+                                  unit)
+                                (set!
+                                  out
+                                  (OptGepOffsetDerivedList.Cons
+                                    (OptGepOffsetDerived.Derived
+                                      preheader
+                                      derived
+                                      base
+                                      (ir.CompilerIrValue.Var
+                                        (array-ref cand-inv idx))
+                                      elem-ty)
+                                    (box out)))))
+                            (array-set! gep-mark dst 1)
+                            (array-set! gep-base dst derived)
+                            (array-set! gep-index dst (array-ref cand-var idx))))]
+                      [_ unit])
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! cursor (+ cursor 1))))
+      out)))
+
+(define (opt-gep-offset-assign-blocks!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [preheader : i64]
+  [cand : (__tl_dyn-array i64)]
+  [cand-inv : (__tl_dyn-array i64)]
+  [cand-var : (__tl_dyn-array i64)]
+  [derived-var : (__tl_dyn-array i64)]
+  [derived-inv : (__tl_dyn-array i64)]
+  [derived-ty : (__tl_dyn-array ast.AstType)]
+  [gep-mark : (__tl_dyn-array i64)]
+  [gep-base : (__tl_dyn-array i64)]
+  [gep-index : (__tl_dyn-array i64)]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptGepOffsetDerivedList]) : OptGepOffsetDerivedList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-gep-offset-assign-blocks!
+            type-segment-bases
+            (box-get rest)
+            preheader
+            cand
+            cand-inv
+            cand-var
+            derived-var
+            derived-inv
+            derived-ty
+            gep-mark
+            gep-base
+            gep-index
+            cell
+            (opt-gep-offset-assign-instrs!
+              type-segment-bases
+              instrs
+              preheader
+              cand
+              cand-inv
+              cand-var
+              derived-var
+              derived-inv
+              derived-ty
+              gep-mark
+              gep-base
+              gep-index
+              cell
+              acc))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gep-offset-assign-blocks!
+        type-segment-bases
+        (ir.compiler-ir-block-seq-to-list seq)
+        preheader
+        cand
+        cand-inv
+        cand-var
+        derived-var
+        derived-inv
+        derived-ty
+        gep-mark
+        gep-base
+        gep-index
+        cell
+        acc)]))
+
+(define (opt-gep-offset-plan-loop
+  [type-segment-bases : i64]
+  [loop : OptNaturalLoop]
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [multi-base : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]
+  [gep-mark : (__tl_dyn-array i64)]
+  [gep-base : (__tl_dyn-array i64)]
+  [gep-index : (__tl_dyn-array i64)]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptGepOffsetDerivedList]) : OptGepOffsetDerivedList
+  (match (opt-natural-loop-preheader loop)
+    [(OptLoopPreheader.No) acc]
+    [(OptLoopPreheader.Some preheader)
+      (let
+        [body : OptLoopBody (opt-natural-loop-body-info loop)]
+        [body-blocks : ir.CompilerIrBlockList
+          (opt-natural-loop-current-body-blocks loop blocks)]
+        (if (not
+          (opt-gep-offset-blocks-have-candidate?
+            body-blocks
+            uses
+            gep-uses
+            poison
+            def-block
+            body))
+          acc
+          (let
+            [cand : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [cand-inv : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [cand-var : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [base-split : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [addend-split : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [derived-var : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [derived-inv : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [derived-ty : (__tl_dyn-array ast.AstType)
+              (array.make-array ast.AstType frame)]
+            [loop-uses : (__tl_dyn-array i64)
+              (opt-collect-blocks-uses-array frame body-blocks)]
+            [_derived : unit (opt-gep-offset-fill! derived-var (- 0 1))]
+            [_mark : unit
+              (opt-gep-offset-mark-blocks!
+                body-blocks
+                uses
+                gep-uses
+                poison
+                def-block
+                body
+                cand
+                cand-inv
+                cand-var)]
+            [_bases : unit
+              (opt-gep-offset-drop-variant-bases-blocks!
+                blocks
+                def-block
+                body
+                cand)]
+            [_counts : unit
+              (opt-gep-offset-count-split-uses-blocks!
+                body-blocks
+                cand
+                cand-inv
+                base-split
+                addend-split)]
+            [_gates : unit
+              (opt-gep-offset-apply-pressure-gates-blocks!
+                body-blocks
+                loop-uses
+                base-split
+                addend-split
+                multi-base
+                cand
+                cand-inv)]
+            (opt-gep-offset-assign-blocks!
+              type-segment-bases
+              blocks
+              preheader
+              cand
+              cand-inv
+              cand-var
+              derived-var
+              derived-inv
+              derived-ty
+              gep-mark
+              gep-base
+              gep-index
+              cell
+              acc))))]))
+
+(define (opt-gep-offset-plan-loops
+  [type-segment-bases : i64]
+  [loops : OptNaturalLoopList]
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [poison : (__tl_dyn-array i64)]
+  [multi-base : (__tl_dyn-array i64)]
+  [def-block : (__tl_dyn-array i64)]
+  [gep-mark : (__tl_dyn-array i64)]
+  [gep-base : (__tl_dyn-array i64)]
+  [gep-index : (__tl_dyn-array i64)]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptGepOffsetDerivedList]) : OptGepOffsetDerivedList
+  (match loops
+    [(OptNaturalLoopList.Nil) acc]
+    [(OptNaturalLoopList.Cons loop rest)
+      (opt-gep-offset-plan-loops
+        type-segment-bases
+        (box-get rest)
+        blocks
+        frame
+        uses
+        gep-uses
+        poison
+        multi-base
+        def-block
+        gep-mark
+        gep-base
+        gep-index
+        cell
+        (opt-gep-offset-plan-loop
+          type-segment-bases
+          loop
+          blocks
+          frame
+          uses
+          gep-uses
+          poison
+          multi-base
+          def-block
+          gep-mark
+          gep-base
+          gep-index
+          cell
+          acc))]))
+
+;; --- rewrite ------------------------------------------------------------------
+(define (opt-gep-offset-rewrite-instr
+  [instr : ir.CompilerIrInstr]
+  [gep-mark : (__tl_dyn-array i64)]
+  [gep-base : (__tl_dyn-array i64)]
+  [gep-index : (__tl_dyn-array i64)]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Gep dst _ _ elem-ty)
+      (if (and
+        (>= dst 0)
+        (< dst (array-length gep-mark))
+        (= (array-ref gep-mark dst) 1))
+        (ir.CompilerIrInstr.Gep
+          dst
+          (ir.CompilerIrValue.Var (array-ref gep-base dst))
+          (ir.CompilerIrValue.Var (array-ref gep-index dst))
+          elem-ty)
+        instr)]
+    [_ instr]))
+
+(define (opt-gep-offset-rewrite-instr-seq
+  [instrs : ir.CompilerIrInstrSeq]
+  [gep-mark : (__tl_dyn-array i64)]
+  [gep-base : (__tl_dyn-array i64)]
+  [gep-index : (__tl_dyn-array i64)]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [cursor : i64 0]
+    (begin
+      (while (< cursor count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (opt-gep-offset-rewrite-instr
+              (ir.compiler-ir-instr-seq-ref instrs cursor)
+              gep-mark
+              gep-base
+              gep-index))
+          (set! cursor (+ cursor 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+;; The derived Geps this label owns, in plan order.
+(define (opt-gep-offset-hoisted-for-label
+  [derived : OptGepOffsetDerivedList]
+  [label : i64]) : ir.CompilerIrInstrList
+  (match derived
+    [(OptGepOffsetDerivedList.Nil) (ir.CompilerIrInstrList.Nil)]
+    [(OptGepOffsetDerivedList.Cons record rest)
+      (match record
+        [(OptGepOffsetDerived.Derived record-label dst base index elem-ty)
+          (if (= record-label label)
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Gep dst base index elem-ty)
+              (opt-gep-offset-hoisted-for-label (box-get rest) label))
+            (opt-gep-offset-hoisted-for-label (box-get rest) label))])]))
+
+(define (opt-gep-offset-rewrite-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [derived : OptGepOffsetDerivedList]
+  [gep-mark : (__tl_dyn-array i64)]
+  [gep-base : (__tl_dyn-array i64)]
+  [gep-index : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-licm-insert-before-terminator-seq
+                (opt-gep-offset-hoisted-for-label derived label)
+                (opt-gep-offset-rewrite-instr-seq
+                  instrs
+                  gep-mark
+                  gep-base
+                  gep-index)))
+            (opt-gep-offset-rewrite-blocks
+              (box-get rest)
+              derived
+              gep-mark
+              gep-base
+              gep-index))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gep-offset-rewrite-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        derived
+        gep-mark
+        gep-base
+        gep-index)]))
+
+(define (opt-gep-offset-derived-empty? [derived : OptGepOffsetDerivedList]) : bool
+  (match derived
+    [(OptGepOffsetDerivedList.Nil) true]
+    [(OptGepOffsetDerivedList.Cons _ _) false]))
+
+;; --- entry --------------------------------------------------------------------
+(define (opt-gep-offset-blocks-result
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]) : OptGepOffsetPlanResult
+  (let
+    [uses : (__tl_dyn-array i64) (opt-gep-offset-effective-uses blocks frame)]
+    [gep-uses : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [poison : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [base0 : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [multi-base : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [def-block : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [gep-mark : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [gep-base : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [gep-index : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [_seed : unit (array-set! cell 0 frame)]
+    [_base0 : unit (opt-gep-offset-fill! base0 (- 0 1))]
+    [_defs : unit
+      (begin
+        (opt-gep-offset-fill! def-block (- 0 1))
+        (opt-gep-offset-defs-blocks! blocks 0 def-block))]
+    [_census : unit
+      (opt-gep-offset-census-blocks!
+        type-segment-bases
+        blocks
+        gep-uses
+        poison
+        base0
+        multi-base)]
+    [derived : OptGepOffsetDerivedList
+      (opt-gep-offset-plan-loops
+        type-segment-bases
+        (opt-cfg-natural-loops-with-context blocks context)
+        blocks
+        frame
+        uses
+        gep-uses
+        poison
+        multi-base
+        def-block
+        gep-mark
+        gep-base
+        gep-index
+        cell
+        (OptGepOffsetDerivedList.Nil))]
+    (if (opt-gep-offset-derived-empty? derived)
+      (OptGepOffsetPlanResult.Result blocks frame false)
+      (OptGepOffsetPlanResult.Result
+        (opt-gep-offset-rewrite-blocks
+          blocks
+          derived
+          gep-mark
+          gep-base
+          gep-index)
+        (array-ref cell 0)
+        true))))
+
+;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
+;; Preheader synthesis is the only step that touches the CFG, so the returned
+;; context is rebuilt exactly when it fired.
+(define (opt-gep-offset-function-with-context-result
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
+  (match (opt-verify-gate verified? func context)
+    [(ResultCompilerOptimizeVerify.Ok)
+      (match func
+        [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+          (match (opt-gep-offset-prepare-preheaders
+            type-segment-bases
+            blocks
+            context
+            frame
+            (+ 1 (ir.compiler-ir-block-list-count blocks))
+            false)
+            [(OptGepOffsetPreheaderResult.Result
+                staged-blocks
+                staged-context
+                preheaders-changed?)
+              (match (opt-gep-offset-blocks-result
+                type-segment-bases
+                staged-blocks
+                staged-context
+                frame)
+                [(OptGepOffsetPlanResult.Result next-blocks next-frame changed)
+                  (if (not (or changed preheaders-changed?))
+                    (OptFunctionCtxResult.Result func context)
+                    ;; A preheader synthesized for a loop that then failed a
+                    ;; gate would leave a jump-only block behind, so drop the
+                    ;; whole staging when nothing split.
+                    (if (not changed)
+                      (OptFunctionCtxResult.Result func context)
+                      (let
+                        [next : ir.CompilerIrFunction
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            next-frame
+                            next-blocks)]
+                        [next-context : OptCfgContext
+                          (opt-cfg-context-build next-blocks)]
+                        (match (opt-verify-function-with-context
+                          next
+                          next-context)
+                          [(ResultCompilerOptimizeVerify.Ok)
+                            (OptFunctionCtxResult.Result next next-context)]
+                          [(ResultCompilerOptimizeVerify.Err _)
+                            (OptFunctionCtxResult.Result func context)]))))])])])]
+    [(ResultCompilerOptimizeVerify.Err _)
+      (OptFunctionCtxResult.Result func context)]))
+
+;; Standalone driver for tests and ad-hoc runs: builds its own CFG context and
+;; keeps the defensive entry verify.
+(define (opt-gep-offset-function
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-gep-offset-function-with-context-result
+    type-segment-bases
+    (opt-cfg-context-build (opt-function-blocks func))
+    false
+    func)
+    [(OptFunctionCtxResult.Result next _) next]))
 
 ;; --- Gep use-splitting for indexed memory operands --------------------------
 ;;
@@ -55401,6 +59209,38 @@
                             name
                             _t-induction)
                           unit)]
+                      ;; Monotone-flag loop-exit conversion runs on induction's
+                      ;; output and ahead of versioning: the loop it hands the
+                      ;; versioner has lost its flag test and its clearing arm,
+                      ;; so the clone the versioner has to fit inside
+                      ;; `opt-bce-mb-block-max` is strictly smaller.
+                      [_t-flag-exit : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [flag-exit-result : OptFunctionCtxResult
+                        (if run-loop?
+                          (opt-flag-exit-function-with-context-result
+                            induction-context
+                            loop-cluster-verified?
+                            induction)
+                          induction-result)]
+                      [flag-exit : ir.CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "flag_exit"
+                          (match flag-exit-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
+                      [flag-exit-context : OptCfgContext
+                        (match flag-exit-result
+                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
+                      [_p-flag-exit : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "flag_exit"
+                            name
+                            _t-flag-exit)
+                          unit)]
                       ;; Bounds-check loop versioning runs on induction's
                       ;; output so its check-free fast clone reaches the
                       ;; unroller INSIDE the same pipeline iteration (a
@@ -55412,10 +59252,10 @@
                         (if run-loop?
                           (opt-bce-version-function-with-context-result
                             type-segment-bases
-                            induction-context
+                            flag-exit-context
                             loop-cluster-verified?
-                            induction)
-                          induction-result)]
+                            flag-exit)
+                          flag-exit-result)]
                       [bce-version : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -55573,7 +59413,45 @@
                             name
                             _t-post-lftr-licm)
                           unit)]
-                      [unroll-frame : i64 (opt-function-frame post-lftr-licm)]
+                      ;; Invariant-offset Gep splitting. Two orderings pin it
+                      ;; here. It has to follow bce_version, because only the
+                      ;; fast clone drops the BoundsCheck that keeps the
+                      ;; `invariant + counter` Add multi-use, and a split that
+                      ;; leaves the Add live costs an instruction instead of
+                      ;; saving one. It also has to follow the post-LFTR LICM,
+                      ;; which is what lifts a versioned clone's descriptor data
+                      ;; load into its preheader: until that runs the array base
+                      ;; is still defined INSIDE the body, so the address is not
+                      ;; yet recognizable as base-plus-invariant.
+                      [_t-gep-offset : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [gep-offset-result : OptFunctionCtxResult
+                        (if run-loop?
+                          (opt-gep-offset-function-with-context-result
+                            type-segment-bases
+                            post-lftr-licm-context
+                            loop-cluster-verified?
+                            post-lftr-licm)
+                          post-lftr-licm-result)]
+                      [gep-offset : ir.CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "gep_offset"
+                          (match gep-offset-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
+                      [gep-offset-context : OptCfgContext
+                        (match gep-offset-result
+                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
+                      [_p-gep-offset : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "gep_offset"
+                            name
+                            _t-gep-offset)
+                          unit)]
+                      [unroll-frame : i64 (opt-function-frame gep-offset)]
                       ;; Affine chain folding must see the unroller's output
                       ;; INSIDE the same pipeline iteration: a lowered while
                       ;; loop spends iteration 1 on SSA+rotation and unrolls in
@@ -55583,8 +59461,8 @@
                       ;; post-LFTR LICM context stays valid below.
                       [unroll-blocks : ir.CompilerIrBlockList
                         (opt-affine-fold-blocks
-                          (opt-function-frame post-lftr-licm)
-                          (opt-function-blocks post-lftr-licm))]
+                          (opt-function-frame gep-offset)
+                          (opt-function-blocks gep-offset))]
                       ;; Cross-block global value numbering + copy propagation
                       ;; runs after local GVN/SCCP/CFG/LICM cleanup, on
                       ;; the post-stack-promotion frame so its slots stay
@@ -55604,7 +59482,7 @@
                           (if run-heavy?
                             (opt-global-value-number-function-with-context
                               type-segment-bases
-                              post-lftr-licm-context
+                              gep-offset-context
                               loop-cluster-verified?
                               (ir.CompilerIrFunction.Function
                                 name
@@ -55655,7 +59533,7 @@
                           (if run-heavy?
                             (opt-divrem-safety-blocks-with-context
                               type-segment-bases
-                              post-lftr-licm-context
+                              gep-offset-context
                               params
                               const-div-blocks)
                             const-div-blocks))]
@@ -56144,9 +60022,23 @@
                     (opt-licm-unswitch-final type-segment-bases final))]
                 [unswitch-changed : bool
                   (not (opt-function-eq type-segment-bases final unswitched))]
-                (OptFunctionPassResult.Result
-                  unswitched
-                  (or fixed-changed if-convert-changed unswitch-changed)))])]))))
+                ;; Last position in the pipeline on purpose: the arm blocks this
+                ;; removes are lowering artifacts, but versioning, unrolling and
+                ;; unswitching all clone blocks after the last CFG cleanup, so
+                ;; running anywhere earlier would leave their copies behind.
+                (match (opt-cfg-straighten-final-pass
+                  type-segment-bases
+                  unswitched)
+                  [(OptFunctionPassResult.Result
+                      straightened
+                      straighten-changed)
+                    (OptFunctionPassResult.Result
+                      straightened
+                      (or
+                        fixed-changed
+                        if-convert-changed
+                        unswitch-changed
+                        straighten-changed))]))])]))))
 
 (define (optimize-function-with-level-and-summaries
   [pools : ast.AstNodePoolContext]

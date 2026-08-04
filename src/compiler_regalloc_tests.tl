@@ -5843,6 +5843,22 @@
       (reg.compiler-reg-destructive-chain-ok?)
       "bounded destructive ties coalesce lhs/rhs chains and refuse clobber/noncomm-rhs/div")))
 
+(cfg
+  test
+  (test
+    regalloc-scalar-web-merge
+    (test.assert-true
+      (compiler-reg-color-web-merge-ok?)
+      "order-independent webs merge a disjoint carry chain into one slot and still refuse an overlap")))
+
+(cfg
+  test
+  (test
+    regalloc-scalar-web-carry-priority
+    (test.assert-true
+      (compiler-reg-color-carry-priority-ok?)
+      "a phi dst joins the loop carry's web rather than an interfering computed source")))
+
 ;; M-B2 scalar phi-web slot sharing. Both cases hand the colorer the SAME plan
 ;; intervals -- deliberately overlapping, which is what the conservative model
 ;; produces for a phi and its input, because it counts the input as live AT the
@@ -5910,7 +5926,8 @@
       ir.CompilerIrParamList.Nil
       (compiler-reg-color-phi-web-blocks live-after-phi)
       2
-      2)))
+      2
+      (live.compiler-live-set-empty))))
 
 (cfg
   test
@@ -5925,6 +5942,292 @@
               (= live-slots 2)
               (not (= (array-ref live-remap 0) (array-ref live-remap 1))))]
           [(reg.CompilerRegColoring.None) false])]
+      [(reg.CompilerRegColoring.None) false])))
+
+;; M-B3 order-independent web construction. The loop below is the shape every
+;; spilled loop carry in intern_table's it-intern-slice has: a header phi (%0)
+;; fed by an entry constant (%3) and by a latch phi (%2), with a third phi (%1)
+;; on the path between them. All four EP hulls are pairwise disjoint --
+;; %3 dies in `entry`, %0 in `body`, %1 in `merge`, %2 in `latch` -- so ONE slot
+;; serves the whole chain.
+;;
+;; The pre-M-B3 monotone rule could not see that. Visiting `header` first it
+;; joined %2 to %0 (the only pair whose hulls are ordered the way the rule
+;; wanted), which pushed the web's running end out to %2's; %3 and %1 both start
+;; before that end and were refused even though neither overlaps anything in the
+;; web, and %1's own web could never be joined to a second web anyway. Result: 3
+;; slots and two surviving slot-to-slot phi copies per iteration. With all-pairs
+;; disjointness plus web-to-web merging the chain collapses to 1 slot.
+;;
+;; `overlap` injects a genuine interference to prove the test still refuses: the
+;; exit returns %1, so %1 stays live from `merge` past `latch` and really does
+;; overlap %2. %1 must then keep its own slot.
+(cfg
+  test
+  (define (compiler-reg-color-web-merge-blocks [overlap : bool]) : ir.CompilerIrBlockList
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            3
+            (ir.CompilerIrValue.I64 7)
+            (reg.compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+            ir.CompilerIrInstrList.Nil)))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "header")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Phi
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.Var 2)
+                (ir.compiler-ir-label "latch")
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var 3)
+                  (ir.compiler-ir-label "entry")
+                  ir.CompilerIrPhiInputList.Nil))
+              (reg.compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var 0)
+                (ir.compiler-ir-label "body")
+                (ir.compiler-ir-label "exit"))
+              ir.CompilerIrInstrList.Nil)))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "body")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))
+              ir.CompilerIrInstrList.Nil))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "merge")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Phi
+                  1
+                  (ir.compiler-ir-phi-input-cons
+                    (ir.CompilerIrValue.Var 0)
+                    (ir.compiler-ir-label "body")
+                    ir.CompilerIrPhiInputList.Nil)
+                  (reg.compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                  ir.CompilerIrInstrList.Nil)))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "latch")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Phi
+                    2
+                    (ir.compiler-ir-phi-input-cons
+                      (ir.CompilerIrValue.Var 1)
+                      (ir.compiler-ir-label "merge")
+                      ir.CompilerIrPhiInputList.Nil)
+                    (reg.compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+                    ir.CompilerIrInstrList.Nil)))
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  (ir.compiler-ir-label "exit")
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Return
+                      (ir.CompilerIrMaybeValue.Some
+                        (if overlap
+                          (ir.CompilerIrValue.Var 1)
+                          (ir.CompilerIrValue.I64 0))))
+                    ir.CompilerIrInstrList.Nil))
+                ir.CompilerIrBlockList.Nil))))))))
+
+;; Deliberately overlapping conservative intervals, as in the M-B2 fixture above:
+;; the ordinary disjoint-interval walk can share nothing, so every merge in the
+;; result is the web logic's doing.
+(cfg
+  test
+  (define (compiler-reg-color-web-merge-intervals) : reg.CompilerRegIntervalSeq
+    (reg.compiler-reg-interval-seq-prepend
+      (reg.CompilerRegInterval 0 0 9)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 1 9)
+        (reg.compiler-reg-interval-seq-prepend
+          (reg.CompilerRegInterval 2 2 9)
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval 3 3 9)
+            (reg.compiler-reg-interval-seq-empty)))))))
+
+(cfg
+  test
+  (define (compiler-reg-color-web-merge-coloring [overlap : bool]) : reg.CompilerRegColoring
+    (reg.compiler-reg-color-stack-slots
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (reg.CompilerRegPlan.Plan
+        (reg.compiler-reg-color-spill-sharing-assignments 4)
+        (live.compiler-live-set-empty)
+        (compiler-reg-color-web-merge-intervals)
+        (reg.compiler-reg-color-spill-sharing-types 4)
+        (reg.compiler-reg-call-split-empty)
+        (reg.compiler-reg-split-plan-empty))
+      (live.compiler-live-set-empty)
+      ir.CompilerIrParamList.Nil
+      (compiler-reg-color-web-merge-blocks overlap)
+      4
+      4
+      (live.compiler-live-set-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-color-web-merge-ok?) : bool
+    (match (compiler-reg-color-web-merge-coloring false)
+      [(reg.CompilerRegColoring.Remap merged-remap merged-slots)
+        (match (compiler-reg-color-web-merge-coloring true)
+          [(reg.CompilerRegColoring.Remap overlap-remap overlap-slots)
+            (and
+              ;; Disjoint chain: entry constant, header phi, mid phi and latch
+              ;; phi all share ONE slot.
+              (= merged-slots 1)
+              (= (array-ref merged-remap 0) (array-ref merged-remap 1))
+              (= (array-ref merged-remap 0) (array-ref merged-remap 2))
+              (= (array-ref merged-remap 0) (array-ref merged-remap 3))
+              ;; Genuine interference still refuses: %1 outlives %2's definition.
+              (> overlap-slots 1)
+              (not (= (array-ref overlap-remap 1) (array-ref overlap-remap 2))))]
+          [(reg.CompilerRegColoring.None) false])]
+      [(reg.CompilerRegColoring.None) false])))
+
+;; M-B3 loop-carry priority. `merge`'s phi (%2) sits in the MIDDLE of the carry
+;; chain -- `header`'s phi (%0) is fed by the latch phi (%3), not by %2 -- so when
+;; `merge` is visited %2 is still a fresh singleton and both of its sources are
+;; live candidates. It can join the web of either, but not both: the carry %0 is
+;; live through `right` to feed %2 while the computed %1 is defined in `left`, so
+;; %0 and %1 overlap. The input list names the COMPUTED source first, so a single
+;; in-order pass takes %1 -- and the carry then pays a slot-to-slot copy on the
+;; `right` edge, on the latch edge and on the back edge. Offering phi-defined
+;; sources first puts %2 in the CARRY's web instead, collapsing the whole chain.
+;; Exactly the `%208 = phi [%187, if_else.36], [%210, if_then.35]` decision in
+;; it-intern-slice, where %187 is an `add` that overlaps the carry %210.
+(cfg
+  test
+  (define (compiler-reg-color-carry-priority-blocks) : ir.CompilerIrBlockList
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Mov
+            4
+            (ir.CompilerIrValue.I64 7)
+            (reg.compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+            ir.CompilerIrInstrList.Nil)))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "header")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Phi
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.Var 3)
+                (ir.compiler-ir-label "latch")
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var 4)
+                  (ir.compiler-ir-label "entry")
+                  ir.CompilerIrPhiInputList.Nil))
+              (reg.compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var 0)
+                (ir.compiler-ir-label "left")
+                (ir.compiler-ir-label "right"))
+              ir.CompilerIrInstrList.Nil)))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "left")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                1
+                (ir.CompilerIrValue.I64 9)
+                (reg.compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))
+                ir.CompilerIrInstrList.Nil)))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "right")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "merge"))
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "merge")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Phi
+                    2
+                    (ir.compiler-ir-phi-input-cons
+                      (ir.CompilerIrValue.Var 1)
+                      (ir.compiler-ir-label "left")
+                      (ir.compiler-ir-phi-input-cons
+                        (ir.CompilerIrValue.Var 0)
+                        (ir.compiler-ir-label "right")
+                        ir.CompilerIrPhiInputList.Nil))
+                    (reg.compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                    ir.CompilerIrInstrList.Nil)))
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  (ir.compiler-ir-label "latch")
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Phi
+                      3
+                      (ir.compiler-ir-phi-input-cons
+                        (ir.CompilerIrValue.Var 2)
+                        (ir.compiler-ir-label "merge")
+                        ir.CompilerIrPhiInputList.Nil)
+                      (reg.compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+                      ir.CompilerIrInstrList.Nil)))
+                ir.CompilerIrBlockList.Nil))))))))
+
+(cfg
+  test
+  (define (compiler-reg-color-carry-priority-intervals) : reg.CompilerRegIntervalSeq
+    (reg.compiler-reg-interval-seq-prepend
+      (reg.CompilerRegInterval 4 4 11)
+      (compiler-reg-color-web-merge-intervals))))
+
+(cfg
+  test
+  (define (compiler-reg-color-carry-priority-coloring) : reg.CompilerRegColoring
+    (reg.compiler-reg-color-stack-slots
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (reg.CompilerRegPlan.Plan
+        (reg.compiler-reg-color-spill-sharing-assignments 5)
+        (live.compiler-live-set-empty)
+        (compiler-reg-color-carry-priority-intervals)
+        (reg.compiler-reg-color-spill-sharing-types 5)
+        (reg.compiler-reg-call-split-empty)
+        (reg.compiler-reg-split-plan-empty))
+      (live.compiler-live-set-empty)
+      ir.CompilerIrParamList.Nil
+      (compiler-reg-color-carry-priority-blocks)
+      5
+      5
+      (live.compiler-live-set-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-color-carry-priority-ok?) : bool
+    (match (compiler-reg-color-carry-priority-coloring)
+      [(reg.CompilerRegColoring.Remap remap _)
+        (and
+          ;; The merge phi lands in the loop carry's web ...
+          (= (array-ref remap 2) (array-ref remap 0))
+          ;; ... and NOT in the computed value's, which interferes with it.
+          (not (= (array-ref remap 2) (array-ref remap 1))))]
       [(reg.CompilerRegColoring.None) false])))
 
 (define (compiler-regalloc-self-test-failure-message [name : String]) : String
@@ -6246,8 +6549,17 @@
       "compiler-reg-color-spill-slot-sharing-ok?"
       (reg.compiler-reg-color-spill-slot-sharing-ok?))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-color-fusion-pin-slots-ok?"
+      (reg.compiler-reg-color-fusion-pin-slots-ok?))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-color-phi-web-slot-sharing-ok?"
       (cfg test (compiler-reg-color-phi-web-slot-sharing-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-color-web-merge-ok?"
+      (cfg test (compiler-reg-color-web-merge-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-color-carry-priority-ok?"
+      (cfg test (compiler-reg-color-carry-priority-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-spill-param-pins-ok?"
       (reg.compiler-reg-color-spill-param-pins-ok?))

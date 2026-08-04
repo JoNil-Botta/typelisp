@@ -32269,6 +32269,40 @@
         (ir.CompilerIrValue.Var v)
         (ir.compiler-ir-binop-result-type op ty))]))
 
+;; A BoundsCheck is emitted as one unsigned `cmpq length, index`, so a operand
+;; that is already a width-64 integer needs no materialised `Cast ... : u64`:
+;; i64 and u64 share the single 64-bit register/stack home the compare reads,
+;; and the emitted instruction is identical either way. A negative i64 index
+;; still traps, because the unsigned compare sees its sign-extended pattern as a
+;; huge value -- which is exactly what the cast used to produce.
+;;
+;; The IR already carries raw i64 bounds-check operands: the gather lane checks
+;; and the vector-map lane-array checks pass array lengths and computed indices
+;; straight through with no cast at all. The optimizer likewise already assumes
+;; the identity, canonicalising an `I64->U64` bounds operand back to its source
+;; before keying redundancy facts (opt-bounds-cast-canon).
+;;
+;; Emitting the cast anyway costs one extra SSA value per operand -- two per
+;; array access -- that the register allocator must give a home. Under pressure
+;; that home is a spill slot, and because the slot colouring re-derives slots
+;; per variable it need not be the source's slot, so the "no-op" cast
+;; materialises as a real staged slot-to-slot copy in front of every check.
+;;
+;; Narrower operands keep their cast: those extensions are real work.
+(define (lower-bounds-operand-width-64? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [_ false]))
+
+(define (lower-emit-bounds-operand
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [from-ty : ast.AstType]) : LowerExpr
+  (if (lower-bounds-operand-width-64? from-ty)
+    (LowerExpr.Expr state value from-ty)
+    (lower-emit-cast state value from-ty (ast.AstType.U64))))
+
 (define (lower-emit-bounds-check
   [state : LowerState]
   [index : ir.CompilerIrValue]
@@ -32329,7 +32363,7 @@
   [idx-value : ir.CompilerIrValue]
   [idx-ty : ast.AstType]
   [elem-ty : ast.AstType]) : LowerExpr
-  (match (lower-emit-cast state idx-value idx-ty (ast.AstType.U64))
+  (match (lower-emit-bounds-operand state idx-value idx-ty)
     [(LowerExpr.Expr s1 idx-u _)
       (match (lower-emit-cast s1 idx-value idx-ty (ast.AstType.I64))
         [(LowerExpr.Expr s2 idx-off _)
@@ -32341,11 +32375,10 @@
             [(LowerExpr.Expr s3 len-gep _)
               (match (lower-emit-load s3 len-gep (ast.AstType.I64))
                 [(LowerExpr.Expr s4 len-val _)
-                  (match (lower-emit-cast
+                  (match (lower-emit-bounds-operand
                     s4
                     len-val
-                    (ast.AstType.I64)
-                    (ast.AstType.U64))
+                    (ast.AstType.I64))
                     [(LowerExpr.Expr s5 len-u _)
                       (lower-array-element-addr-finish
                         ctx
@@ -32377,15 +32410,14 @@
         1
         (lower-register-word-type ctx slice-ty 1))
         [(LowerExpr.Expr s1 length-i64 _)
-          (match (lower-emit-cast s1 idx-value idx-ty (ast.AstType.U64))
+          (match (lower-emit-bounds-operand s1 idx-value idx-ty)
             [(LowerExpr.Expr s2 idx-u _)
               (match (lower-emit-cast s2 idx-value idx-ty (ast.AstType.I64))
                 [(LowerExpr.Expr s3 idx-off _)
-                  (match (lower-emit-cast
+                  (match (lower-emit-bounds-operand
                     s3
                     length-i64
-                    (ast.AstType.I64)
-                    (ast.AstType.U64))
+                    (ast.AstType.I64))
                     [(LowerExpr.Expr s4 length-u _)
                       (lower-emit-elem-addr-gep
                         ctx
@@ -33085,7 +33117,7 @@
   [idx-ty : ast.AstType]
   [elem-ty : ast.AstType]
   [elem-count : i64]) : LowerExpr
-  (match (lower-emit-cast state idx-value idx-ty (ast.AstType.U64))
+  (match (lower-emit-bounds-operand state idx-value idx-ty)
     [(LowerExpr.Expr s1 idx-u _)
       (match (lower-emit-cast s1 idx-value idx-ty (ast.AstType.I64))
         [(LowerExpr.Expr s2 idx-off _)
@@ -45986,13 +46018,12 @@
   [state : LowerState]
   [lane : ir.CompilerIrValue]
   [active-lanes : ir.CompilerIrValue]) : LowerState
-  (match (lower-emit-cast state lane (ast.AstType.I64) (ast.AstType.U64))
+  (match (lower-emit-bounds-operand state lane (ast.AstType.I64))
     [(LowerExpr.Expr lane-state lane-u _)
-      (match (lower-emit-cast
+      (match (lower-emit-bounds-operand
         lane-state
         active-lanes
-        (ast.AstType.I64)
-        (ast.AstType.U64))
+        (ast.AstType.I64))
         [(LowerExpr.Expr count-state count-u _)
           (lower-emit-bounds-check count-state lane-u count-u)])]))
 

@@ -25133,18 +25133,46 @@
 ;; ordinary disjoint-interval walk, which now sees the whole web as one variable
 ;; and therefore reserves the UNION of the members' conservative hulls.
 ;;
-;; WEB RULE (conservative; when in doubt, no alias). A variable joins a web only
-;; when its EP hull starts STRICTLY after the latest EP hull end already in that
-;; web (`web-end`). Every pair of members is then provably never live at once,
-;; and joins strictly advance the hull position, so the alias graph is acyclic.
-;; The single exception is a Mov witness: `hull(src).end == hull(dst).start` is
-;; admitted when the web's latest end IS src's -- exactly the group-Mov rule
-;; above. Interval points are unique per instruction (2 coords each), so that
-;; equality proves this mov carries src's LAST liveness event and dst's FIRST. A
-;; touch WITHOUT a Mov witness is rejected: the backend may write a destination
-;; home before reading a source home, and phi parallel copies at a block edge
-;; read inputs and write destinations at the same interval position -- the same
-;; hazard that makes compiler-reg-color-find-slot demand a STRICT `<`.
+;; WEB RULE (conservative; when in doubt, no alias). Membership is decided by
+;; PAIRWISE EP-hull disjointness: a web may absorb another web only when EVERY
+;; cross pair of members has non-overlapping hulls, so every pair of members in
+;; the result is provably never live at once. The single exception is a Mov
+;; witness: `hull(src).end == hull(dst).start` is admitted for THAT pair --
+;; exactly the group-Mov rule above. Interval points are unique per instruction
+;; (2 coords each), so that equality proves this mov carries src's LAST liveness
+;; event and dst's FIRST. A touch WITHOUT a Mov witness is rejected: the backend
+;; may write a destination home before reading a source home, and phi parallel
+;; copies at a block edge read inputs and write destinations at the same interval
+;; position -- the same hazard that makes compiler-reg-color-find-slot demand a
+;; STRICT `<`.
+;;
+;; ORDER INDEPENDENCE (M-B3). The rule above replaces a monotone one: a variable
+;; used to join only when its hull started strictly after the web's LATEST end
+;; (`web-end`), and only while still virgin. Both guards made the result depend
+;; on the order links are offered, and rejected merges that do not interfere at
+;; all. In intern_table's it-intern-slice all three loop carries lost their
+;; carry-to-phi merge that way: the web absorbed the LATER back-edge member
+;; first, after which `web-end` sat past the earlier member's start even though
+;; the two hulls are disjoint; and a phi dst that had already joined one web
+;; could never be joined to a second. Both are now expressible: webs are unioned
+;; (not just extended), and the admission test looks at all member pairs instead
+;; of a single running maximum.
+;;
+;; The old monotone test is still tried FIRST and, when it passes, takes exactly
+;; the old action -- so the Mov at-boundary allowance keeps its precise shape and
+;; every merge the previous rule would have made at a given state is still made:
+;; `web-end(root) < start(later)` implies `end(m) <= web-end(root) < start(later)`
+;; for every member m, which is the all-pairs test. The pass therefore admits a
+;; superset of the old merges at each decision point.
+;;
+;; COST. Webs are held as an intrusive circular member list (`web-next`, a
+;; singleton points at itself) with a size counter, and merges are gated on the
+;; combined size fitting `compiler-reg-color-scalar-web-cap`. One link attempt is
+;; O(1) when either web is a singleton -- the overwhelmingly common case, and
+;; exactly today's cost -- and at worst O(cap^2) bounded array reads. The splice
+;; itself is O(size(absorbed)) and re-points every absorbed member directly at the
+;; surviving root, so `alias` stays the depth-one forest the remap propagation and
+;; interval rewrite expect.
 ;;
 ;; MEMBERSHIP GUARDS mirror the scalar walk's own admission rules, so a merged
 ;; web colors exactly as one of its members would have: colorable scalars of one
@@ -25293,16 +25321,136 @@
               [(CompilerRegMaybeLocation.No) true])))
         (set! i (+ i 1))))))
 
-;; Join `later` to the web that owns `earlier`, when the web's latest EP hull end
-;; is strictly before `later`'s EP hull start (or exactly at it for a Mov
-;; witness, see the header). `later` must be a virgin variable -- neither already
-;; a member nor already a web root -- so every member has exactly one home and
-;; the alias graph stays a forest of depth one.
+;; Largest web the all-pairs admission test will build. Bounds every member walk
+;; below and keeps a link attempt's worst case at a few hundred array reads; real
+;; webs are far smaller (the deepest in the benchmark corpus is 7).
+(define compiler-reg-color-scalar-web-cap : i64
+  16)
+
+;; EP hulls are convex intervals, so non-overlap is exactly one endpoint compare.
+(define (compiler-reg-color-scalar-hulls-disjoint?
+  [ep-starts : (__tl_dyn-array i64)]
+  [ep-ends : (__tl_dyn-array i64)]
+  [a : i64]
+  [b : i64]) : bool
+  (or
+    (< (array-ref ep-ends a) (array-ref ep-starts b))
+    (< (array-ref ep-ends b) (array-ref ep-starts a))))
+
+;; Disjointness of `x` against every member of the web whose circular member list
+;; starts at `root-b`. The single pair (touch-a, touch-b) -- the Mov witness's own
+;; src/dst -- may TOUCH at `end(touch-a) == start(touch-b)`; every other pair must
+;; be strictly disjoint. Callers pass -1/-1 when there is no Mov witness, which no
+;; real var id can equal.
+(define (compiler-reg-color-scalar-web-var-disjoint?
+  [web-next : (__tl_dyn-array i64)]
+  [ep-starts : (__tl_dyn-array i64)]
+  [ep-ends : (__tl_dyn-array i64)]
+  [x : i64]
+  [root-b : i64]
+  [touch-a : i64]
+  [touch-b : i64]) : bool
+  (let
+    [y : i64 root-b]
+    [steps : i64 0]
+    (begin
+      (while (< steps compiler-reg-color-scalar-web-cap)
+        (begin
+          (unless
+            (compiler-reg-color-scalar-hulls-disjoint? ep-starts ep-ends x y)
+            (unless
+              (and
+                (or
+                  (and (= x touch-a) (= y touch-b))
+                  (and (= x touch-b) (= y touch-a)))
+                (= (array-ref ep-ends touch-a) (array-ref ep-starts touch-b)))
+              (return false)))
+          (set! y (array-ref web-next y))
+          (set! steps (+ steps 1))
+          (when (= y root-b) (return true))))
+      false)))
+
+;; Every cross pair of the two webs is disjoint (see the header's WEB RULE).
+(define (compiler-reg-color-scalar-webs-disjoint?
+  [web-next : (__tl_dyn-array i64)]
+  [ep-starts : (__tl_dyn-array i64)]
+  [ep-ends : (__tl_dyn-array i64)]
+  [root-a : i64]
+  [root-b : i64]
+  [touch-a : i64]
+  [touch-b : i64]) : bool
+  (let
+    [x : i64 root-a]
+    [steps : i64 0]
+    (begin
+      (while (< steps compiler-reg-color-scalar-web-cap)
+        (begin
+          (unless
+            (compiler-reg-color-scalar-web-var-disjoint?
+              web-next
+              ep-starts
+              ep-ends
+              x
+              root-b
+              touch-a
+              touch-b)
+            (return false))
+          (set! x (array-ref web-next x))
+          (set! steps (+ steps 1))
+          (when (= x root-a) (return true))))
+      false)))
+
+;; Absorb the web rooted at `root-b` into the one rooted at `root-a`: re-point
+;; every absorbed member's alias directly at `root-a` (keeping the forest depth
+;; one), splice the two circular lists, and carry the size and hull end across.
+(define (compiler-reg-color-scalar-web-splice!
+  [alias : (__tl_dyn-array i64)]
+  [web-root : (__tl_dyn-array bool)]
+  [web-end : (__tl_dyn-array i64)]
+  [web-next : (__tl_dyn-array i64)]
+  [web-size : (__tl_dyn-array i64)]
+  [ep-ends : (__tl_dyn-array i64)]
+  [root-a : i64]
+  [root-b : i64]) : unit
+  (let
+    [a-next : i64 (array-ref web-next root-a)]
+    [count : i64 (array-ref web-size root-b)]
+    [member : i64 root-b]
+    [last : i64 root-b]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! alias member root-a)
+          (array-set! web-root member false)
+          (array-set!
+            web-end
+            root-a
+            (compiler-reg-max
+              (array-ref web-end root-a)
+              (array-ref ep-ends member)))
+          (set! last member)
+          (set! member (array-ref web-next member))
+          (set! i (+ i 1))))
+      (array-set! web-next root-a root-b)
+      (array-set! web-next last a-next)
+      (array-set! alias root-a (- 0 1))
+      (array-set! web-root root-a true)
+      (array-set! web-size root-a (+ (array-ref web-size root-a) count))
+      unit)))
+
+;; Join the web owning `later` to the web owning `earlier`. The old monotone test
+;; (web's latest EP hull end strictly before `later`'s start, or exactly at it for
+;; a Mov witness) is tried first and keeps its exact shape; when it does not
+;; apply, the webs merge if EVERY cross pair of members has disjoint hulls. See
+;; the header for why the second test subsumes the first at any given state.
 (define (compiler-reg-color-scalar-alias-link!
   [type-segment-bases : i64]
   [alias : (__tl_dyn-array i64)]
   [web-root : (__tl_dyn-array bool)]
   [web-end : (__tl_dyn-array i64)]
+  [web-next : (__tl_dyn-array i64)]
+  [web-size : (__tl_dyn-array i64)]
   [eligible : (__tl_dyn-array bool)]
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
@@ -25319,52 +25467,106 @@
     (array-ref eligible earlier)
     (array-ref eligible later)
     (>= (array-ref ep-starts earlier) 0)
-    (>= (array-ref ep-starts later) 0)
-    (< (array-ref alias later) 0)
-    (not (array-ref web-root later)))
+    (>= (array-ref ep-starts later) 0))
     (let
       [root : i64 (compiler-reg-color-group-alias-root alias earlier)]
-      (if (and
-        (not (= root later))
-        (>= root 0)
-        (< root (array-length alias))
-        (array-ref eligible root)
-        (>= (array-ref web-end root) 0)
-        (if (< (array-ref web-end root) (array-ref ep-starts later))
-          true
+      [other : i64 (compiler-reg-color-group-alias-root alias later)]
+      [bounded : bool
+        (and
+          (>= root 0)
+          (< root (array-length alias))
+          (>= other 0)
+          (< other (array-length alias))
+          (not (= root other))
+          (array-ref eligible root)
+          (array-ref eligible other)
+          (>= (array-ref web-end root) 0)
+          (>= (array-ref web-end other) 0)
+          (ast.ast-type-eq-with-seg-bases?
+            type-segment-bases
+            (array-ref var-tys root)
+            (array-ref var-tys later))
+          (ast.ast-type-eq-with-seg-bases?
+            type-segment-bases
+            (array-ref var-tys root)
+            (array-ref var-tys other)))]
+      ;; The pre-M-B3 rule, unchanged: `later` still virgin, and the web's
+      ;; running maximum end strictly before its start (or the Mov touch).
+      [monotone : bool
+        (and
+          bounded
+          (= other later)
+          (< (array-ref alias later) 0)
+          (not (array-ref web-root later))
+          (if (< (array-ref web-end root) (array-ref ep-starts later))
+            true
+            (and
+              mov-witness
+              (= (array-ref web-end root) (array-ref ep-ends earlier))
+              (= (array-ref ep-ends earlier) (array-ref ep-starts later)))))]
+      [merge : bool
+        (or
+          monotone
           (and
-            mov-witness
-            (= (array-ref web-end root) (array-ref ep-ends earlier))
-            (= (array-ref ep-ends earlier) (array-ref ep-starts later))))
-        (ast.ast-type-eq-with-seg-bases?
-          type-segment-bases
-          (array-ref var-tys root)
-          (array-ref var-tys later)))
-        (begin
-          (array-set! alias later root)
-          (array-set! web-root root true)
-          (array-set!
-            web-end
-            root
-            (compiler-reg-max
-              (array-ref web-end root)
-              (array-ref ep-ends later)))
-          unit)
+            bounded
+            (<=
+              (+ (array-ref web-size root) (array-ref web-size other))
+              compiler-reg-color-scalar-web-cap)
+            (compiler-reg-color-scalar-webs-disjoint?
+              web-next
+              ep-starts
+              ep-ends
+              root
+              other
+              (if mov-witness
+                earlier
+                (- 0 1))
+              (if mov-witness
+                later
+                (- 0 1)))))]
+      (if merge
+        (compiler-reg-color-scalar-web-splice!
+          alias
+          web-root
+          web-end
+          web-next
+          web-size
+          ep-ends
+          root
+          other)
         unit))
     unit))
 
-;; A phi pair has no Mov witness, so both orderings are offered and the strictly
-;; earlier hull (if any) wins; equal starts are impossible for distinct defs and
-;; are rejected by both attempts.
+;; A phi pair has no Mov witness, so both orderings are offered and whichever
+;; direction the web rule admits wins; equal starts are impossible for distinct
+;; defs and are rejected by both attempts.
+;;
+;; LOOP-CARRY PRIORITY (M-B3). Inputs are offered in TWO passes: `phi-pass` true
+;; visits only inputs that are themselves phi definitions, then a second call
+;; visits the rest. A phi dst whose sources conflict with each other can join only
+;; ONE of their webs, and the first offer wins; taking the phi-defined source
+;; first puts the dst in the LOOP CARRY's web rather than a computed value's.
+;; That is the profitable choice: the carry's web already spans the header phi and
+;; the back-edge phi, so joining it turns several edges' copies into same-home
+;; no-ops, while joining a computed value's singleton web can only ever silence
+;; the one edge that value arrives on. In it-intern-slice this is exactly
+;; `%208 = phi [%187, if_else.36], [%210, if_then.35]`: `%187` (an `add`) truly
+;; overlaps `%210` at its own def point, so only one of the two can be joined, and
+;; taking `%210` retires the copies on the if_then.35 and if_merge.37 edges
+;; (4.15M dynamic) at the cost of one on if_else.36 (0.79M).
 (define (compiler-reg-color-scalar-alias-phi-inputs!
   [type-segment-bases : i64]
   [alias : (__tl_dyn-array i64)]
   [web-root : (__tl_dyn-array bool)]
   [web-end : (__tl_dyn-array i64)]
+  [web-next : (__tl_dyn-array i64)]
+  [web-size : (__tl_dyn-array i64)]
   [eligible : (__tl_dyn-array bool)]
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
   [ep-ends : (__tl_dyn-array i64)]
+  [phi-def : (__tl_dyn-array bool)]
+  [phi-pass : bool]
   [dst : i64]
   [inputs : ir.CompilerIrPhiInputList]) : unit
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
@@ -25375,80 +25577,114 @@
         alias
         web-root
         web-end
+        web-next
+        web-size
         eligible
         var-tys
         ep-starts
         ep-ends
+        phi-def
+        phi-pass
         dst
         (ir.compiler-ir-phi-input-seq-to-list seq))]
     [(ir.CompilerIrPhiInputList.Cons value _ rest)
       (begin
         (match value
           [(ir.CompilerIrValue.Var src)
-            (begin
-              (compiler-reg-color-scalar-alias-link!
-                type-segment-bases
-                alias
-                web-root
-                web-end
-                eligible
-                var-tys
-                ep-starts
-                ep-ends
-                src
-                dst
-                false)
-              (compiler-reg-color-scalar-alias-link!
-                type-segment-bases
-                alias
-                web-root
-                web-end
-                eligible
-                var-tys
-                ep-starts
-                ep-ends
-                dst
-                src
-                false))]
+            (let
+              [src-is-phi : bool
+                (and
+                  (>= src 0)
+                  (< src (array-length phi-def))
+                  (array-ref phi-def src))]
+              (when
+                (if phi-pass
+                  src-is-phi
+                  (not src-is-phi))
+                (begin
+                  (compiler-reg-color-scalar-alias-link!
+                    type-segment-bases
+                    alias
+                    web-root
+                    web-end
+                    web-next
+                    web-size
+                    eligible
+                    var-tys
+                    ep-starts
+                    ep-ends
+                    src
+                    dst
+                    false)
+                  (compiler-reg-color-scalar-alias-link!
+                    type-segment-bases
+                    alias
+                    web-root
+                    web-end
+                    web-next
+                    web-size
+                    eligible
+                    var-tys
+                    ep-starts
+                    ep-ends
+                    dst
+                    src
+                    false))))]
           [_ unit])
         (compiler-reg-color-scalar-alias-phi-inputs!
           type-segment-bases
           alias
           web-root
           web-end
+          web-next
+          web-size
           eligible
           var-tys
           ep-starts
           ep-ends
+          phi-def
+          phi-pass
           dst
           (box-get rest)))]))
 
+;; One instruction's link offers for ONE pass. `phi-pass` true is the loop-carry
+;; priority pass (phi-defined phi inputs only); the Mov witness rides that pass so
+;; the second visit adds nothing for non-phi instructions. The caller re-reads the
+;; instruction for the second pass because a phi's input list is owned.
 (define (compiler-reg-color-scalar-alias-instr!
   [type-segment-bases : i64]
   [instr : ir.CompilerIrInstr]
   [alias : (__tl_dyn-array i64)]
   [web-root : (__tl_dyn-array bool)]
   [web-end : (__tl_dyn-array i64)]
+  [web-next : (__tl_dyn-array i64)]
+  [web-size : (__tl_dyn-array i64)]
   [eligible : (__tl_dyn-array bool)]
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
-  [ep-ends : (__tl_dyn-array i64)]) : unit
+  [ep-ends : (__tl_dyn-array i64)]
+  [phi-def : (__tl_dyn-array bool)]
+  [phi-pass : bool]) : unit
   (match instr
     [(ir.CompilerIrInstr.Mov dst src _)
       (match src
         [(ir.CompilerIrValue.Var src-var)
-          (compiler-reg-color-scalar-alias-link!
-            type-segment-bases
-            alias
-            web-root
-            web-end
-            eligible
-            var-tys
-            ep-starts
-            ep-ends
-            src-var
-            dst
-            true)]
+          (when
+            phi-pass
+            (compiler-reg-color-scalar-alias-link!
+              type-segment-bases
+              alias
+              web-root
+              web-end
+              web-next
+              web-size
+              eligible
+              var-tys
+              ep-starts
+              ep-ends
+              src-var
+              dst
+              true))]
         [_ unit])]
     [(ir.CompilerIrInstr.Phi dst inputs _)
       (compiler-reg-color-scalar-alias-phi-inputs!
@@ -25456,10 +25692,14 @@
         alias
         web-root
         web-end
+        web-next
+        web-size
         eligible
         var-tys
         ep-starts
         ep-ends
+        phi-def
+        phi-pass
         dst
         inputs)]
     [_ unit]))
@@ -25470,26 +25710,54 @@
   [alias : (__tl_dyn-array i64)]
   [web-root : (__tl_dyn-array bool)]
   [web-end : (__tl_dyn-array i64)]
+  [web-next : (__tl_dyn-array i64)]
+  [web-size : (__tl_dyn-array i64)]
   [eligible : (__tl_dyn-array bool)]
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
-  [ep-ends : (__tl_dyn-array i64)]) : unit
+  [ep-ends : (__tl_dyn-array i64)]
+  [phi-def : (__tl_dyn-array bool)]) : unit
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [i : i64 0]
     (while (< i len)
       (begin
+        ;; Loop-carry priority: offer this instruction's phi-defined inputs (and
+        ;; the Mov witness) first, then its remaining inputs.
         (compiler-reg-color-scalar-alias-instr!
           type-segment-bases
           (array-ref slots i)
           alias
           web-root
           web-end
+          web-next
+          web-size
           eligible
           var-tys
           ep-starts
-          ep-ends)
+          ep-ends
+          phi-def
+          true)
+        ;; Only a Phi has anything left for the second pass, and re-reading the
+        ;; instruction owns a copy -- borrow-test the tag before paying for it.
+        (match (& (array-ref slots i))
+          [(ir.CompilerIrInstr.Phi _ _ _)
+            (compiler-reg-color-scalar-alias-instr!
+              type-segment-bases
+              (ir.compiler-ir-instr-seq-ref instrs i)
+              alias
+              web-root
+              web-end
+              web-next
+              web-size
+              eligible
+              var-tys
+              ep-starts
+              ep-ends
+              phi-def
+              false)]
+          [_ unit])
         (set! i (+ i 1))))))
 
 (define (compiler-reg-color-scalar-alias-blocks!
@@ -25498,10 +25766,13 @@
   [alias : (__tl_dyn-array i64)]
   [web-root : (__tl_dyn-array bool)]
   [web-end : (__tl_dyn-array i64)]
+  [web-next : (__tl_dyn-array i64)]
+  [web-size : (__tl_dyn-array i64)]
   [eligible : (__tl_dyn-array bool)]
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
-  [ep-ends : (__tl_dyn-array i64)]) : unit
+  [ep-ends : (__tl_dyn-array i64)]
+  [phi-def : (__tl_dyn-array bool)]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -25514,20 +25785,26 @@
               alias
               web-root
               web-end
+              web-next
+              web-size
               eligible
               var-tys
               ep-starts
-              ep-ends)])
+              ep-ends
+              phi-def)])
         (compiler-reg-color-scalar-alias-blocks!
           type-segment-bases
           (box-get rest)
           alias
           web-root
           web-end
+          web-next
+          web-size
           eligible
           var-tys
           ep-starts
-          ep-ends))]
+          ep-ends
+          phi-def))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -25541,10 +25818,55 @@
                   alias
                   web-root
                   web-end
+                  web-next
+                  web-size
                   eligible
                   var-tys
                   ep-starts
-                  ep-ends)])
+                  ep-ends
+                  phi-def)])
+            (set! i (+ i 1)))))]))
+
+;; Mark every variable defined by a Phi, for the loop-carry priority pass.
+(define (compiler-reg-color-scalar-phi-def-seq!
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-def : (__tl_dyn-array bool)]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [i : i64 0]
+    (while (< i len)
+      (begin
+        (match (& (array-ref slots i))
+          [(ir.CompilerIrInstr.Phi _ _ _)
+            (match (ir.compiler-ir-instr-seq-ref instrs i)
+              [(ir.CompilerIrInstr.Phi dst _ _)
+                (when
+                  (and (>= dst 0) (< dst (array-length phi-def)))
+                  (array-set! phi-def dst true))]
+              [_ unit])]
+          [_ unit])
+        (set! i (+ i 1))))))
+
+(define (compiler-reg-color-scalar-phi-def-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [phi-def : (__tl_dyn-array bool)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (compiler-reg-color-scalar-phi-def-seq! instrs phi-def)])
+        (compiler-reg-color-scalar-phi-def-blocks! (box-get rest) phi-def))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        (while (< i (ir.compiler-ir-block-seq-count seq))
+          (begin
+            (match (ir.compiler-ir-block-seq-ref seq i)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (compiler-reg-color-scalar-phi-def-seq! instrs phi-def)])
             (set! i (+ i 1)))))]))
 
 ;; Cheap gate: does any Mov or Phi in the function relate two members-in-waiting?
@@ -25685,6 +26007,11 @@
           [ep-ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
           [web-end : (__tl_dyn-array i64) (array.make-array i64 vars)]
           [web-root : (__tl_dyn-array bool) (array.make-array bool vars)]
+          ;; Intrusive circular member list + size, one web per variable to start
+          ;; (a singleton's `web-next` points at itself).
+          [web-next : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [web-size : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [phi-def : (__tl_dyn-array bool) (array.make-array bool vars)]
           [liveness : live.CompilerFunctionLiveness
             (live.compiler-live-analyze-blocks-edge-precise blocks vars)]
           (begin
@@ -25696,12 +26023,15 @@
               0
               ep-starts
               ep-ends)
+            (compiler-reg-color-scalar-phi-def-blocks! blocks phi-def)
             (let
               [i : i64 0]
               (while (< i vars)
                 (begin
                   (array-set! web-end i (array-ref ep-ends i))
                   (array-set! web-root i false)
+                  (array-set! web-next i i)
+                  (array-set! web-size i 1)
                   (set! i (+ i 1)))))
             (compiler-reg-color-scalar-alias-blocks!
               type-segment-bases
@@ -25709,10 +26039,13 @@
               alias
               web-root
               web-end
+              web-next
+              web-size
               eligible
               var-tys
               ep-starts
-              ep-ends)))
+              ep-ends
+              phi-def)))
         unit)
       alias)))
 
@@ -25771,6 +26104,16 @@
 ;; that scalar prefix, every remaining slot-resident variable gets a private
 ;; dense slot above them, and register-homed variables move to ids that are not
 ;; used by a stack slot. The assignment table is rebuilt on the new keys.
+;;
+;; `fusion-pinned` names spilled variables whose IDENTITY the backend still
+;; needs after the renumbering: a single-use address temp the following
+;; instruction folds into its addressing mode (see
+;; compiler-backend-gep-fusion-pinned-vars). Merging one of those onto a shared
+;; representative would make the merged id's use count -- recomputed on the
+;; remapped blocks -- far greater than one and silently disable the fusion
+;; peephole. Pinned variables are therefore withheld from every sharing
+;; mechanism (the scalar walk and its phi/mov webs) and land in the private
+;; dense slots below, one fresh slot each.
 (define (compiler-reg-color-stack-slots
   [type-segment-bases : i64]
   [plan : CompilerRegPlan]
@@ -25778,7 +26121,8 @@
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]
   [vars : i64]
-  [slot-candidate-vars : i64]) : CompilerRegColoring
+  [slot-candidate-vars : i64]
+  [fusion-pinned : live.CompilerLiveI64Set]) : CompilerRegColoring
   (let
     [intervals : CompilerRegIntervalSeq (compiler-reg-plan-intervals plan)]
     (if (compiler-reg-interval-seq-empty? intervals)
@@ -25829,7 +26173,22 @@
               (while (< i vars)
                 (begin
                   (array-set! colorable i false)
-                  (set! i (+ i 1))))))]
+                  (set! i (+ i 1)))))
+            ;; Clearing the colorable flag is exactly the "no shared slot"
+            ;; decision: it withdraws the variable from the scalar walk AND
+            ;; from the phi/mov web builder (the only two mechanisms that hand
+            ;; one slot to several variables), leaving the private-slot loop
+            ;; below to give it a fresh id of its own.
+            (if (> (live.compiler-live-set-word-count fusion-pinned) 0)
+              (let
+                [i : i64 0]
+                (while (< i vars)
+                  (begin
+                    (if (live.compiler-live-set-contains? fusion-pinned i)
+                      (array-set! colorable i false)
+                      unit)
+                    (set! i (+ i 1)))))
+              unit))]
         ;; Count direct IR uses and defs, not type-table membership: dead defs
         ;; still emit a write, while raw-id holes and register-only scratch
         ;; pseudo-vars have no instruction reference and need no formula slot.
@@ -36319,7 +36678,8 @@
     ir.CompilerIrParamList.Nil
     ir.CompilerIrBlockList.Nil
     3
-    3)
+    3
+    (live.compiler-live-set-empty))
     [(CompilerRegColoring.Remap share-remap share-slots)
       (match (compiler-reg-color-stack-slots
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -36334,7 +36694,8 @@
         ir.CompilerIrParamList.Nil
         ir.CompilerIrBlockList.Nil
         2
-        2)
+        2
+        (live.compiler-live-set-empty))
         [(CompilerRegColoring.Remap split-remap split-slots)
           (and
             (= share-slots 2)
@@ -36342,6 +36703,65 @@
             (not (= (array-ref share-remap 0) (array-ref share-remap 2)))
             (= split-slots 2)
             (not (= (array-ref split-remap 0) (array-ref split-remap 1))))]
+        [(CompilerRegColoring.None) false])]
+    [(CompilerRegColoring.None) false]))
+
+;; Four spilled variables whose intervals form a strictly disjoint chain: the
+;; ordinary walk folds every one of them onto a single shared slot.
+(define (compiler-reg-color-fusion-pin-intervals) : CompilerRegIntervalSeq
+  (compiler-reg-interval-seq-prepend
+    (CompilerRegInterval 0 0 1)
+    (compiler-reg-interval-seq-prepend
+      (CompilerRegInterval 1 2 3)
+      (compiler-reg-interval-seq-prepend
+        (CompilerRegInterval 2 4 5)
+        (compiler-reg-interval-seq-prepend
+          (CompilerRegInterval 3 6 7)
+          (compiler-reg-interval-seq-empty))))))
+
+(define (compiler-reg-color-fusion-pin-coloring
+  [fusion-pinned : live.CompilerLiveI64Set]) : CompilerRegColoring
+  (compiler-reg-color-stack-slots
+    (ast.ast-node-pool-reader-type-segment-bases)
+    (CompilerRegPlan.Plan
+      (compiler-reg-color-spill-sharing-assignments 4)
+      (live.compiler-live-set-empty)
+      (compiler-reg-color-fusion-pin-intervals)
+      (compiler-reg-color-spill-sharing-types 4)
+      (compiler-reg-call-split-empty)
+      (compiler-reg-split-plan-empty))
+    (live.compiler-live-set-empty)
+    ir.CompilerIrParamList.Nil
+    ir.CompilerIrBlockList.Nil
+    4
+    4
+    fusion-pinned))
+
+;; Vars 0 and 1 stand in for the fusable single-use address temps the backend
+;; reports, vars 2 and 3 for ordinary spilled values. The pinned pair must come
+;; out of the coloring with distinct private ids -- a shared id would carry the
+;; other members' uses and switch off the fusion peephole -- while the ordinary
+;; pair keeps sharing exactly as it did before.
+(define (compiler-reg-color-fusion-pin-slots-ok?) : bool
+  (match (compiler-reg-color-fusion-pin-coloring (live.compiler-live-set-empty))
+    [(CompilerRegColoring.Remap merged-remap merged-slots)
+      (match (compiler-reg-color-fusion-pin-coloring
+        (live.compiler-live-set2 0 1))
+        [(CompilerRegColoring.Remap pin-remap pin-slots)
+          (and
+            (= merged-slots 1)
+            (= (array-ref merged-remap 0) (array-ref merged-remap 1))
+            (= (array-ref merged-remap 0) (array-ref merged-remap 2))
+            (= (array-ref merged-remap 0) (array-ref merged-remap 3))
+            (= pin-slots 3)
+            (not (= (array-ref pin-remap 0) (array-ref pin-remap 1)))
+            (not (= (array-ref pin-remap 0) (array-ref pin-remap 2)))
+            (not (= (array-ref pin-remap 0) (array-ref pin-remap 3)))
+            (not (= (array-ref pin-remap 1) (array-ref pin-remap 2)))
+            (not (= (array-ref pin-remap 1) (array-ref pin-remap 3)))
+            (= (array-ref pin-remap 2) (array-ref pin-remap 3))
+            (< (array-ref pin-remap 0) pin-slots)
+            (< (array-ref pin-remap 1) pin-slots))]
         [(CompilerRegColoring.None) false])]
     [(CompilerRegColoring.None) false]))
 
@@ -36361,7 +36781,8 @@
       ir.CompilerIrParamList.Nil)
     ir.CompilerIrBlockList.Nil
     3
-    3)
+    3
+    (live.compiler-live-set-empty))
     [(CompilerRegColoring.Remap remap slots)
       (and
         (= slots 2)
@@ -36412,7 +36833,8 @@
       params
       ir.CompilerIrBlockList.Nil
       3
-      3)
+      3
+      (live.compiler-live-set-empty))
       [(CompilerRegColoring.Remap remap slots)
         (let
           [active : i64 (array-ref remap 0)]
@@ -36478,7 +36900,8 @@
     ir.CompilerIrParamList.Nil
     ir.CompilerIrBlockList.Nil
     10
-    10)
+    10
+    (live.compiler-live-set-empty))
     [(CompilerRegColoring.Remap remap slots)
       (and
         (= slots 1)
@@ -36509,7 +36932,8 @@
       params
       ir.CompilerIrBlockList.Nil
       2
-      1)
+      1
+      (live.compiler-live-set-empty))
       [(CompilerRegColoring.Remap remap slots)
         (and (= slots 1) (= (array-ref remap 0) 0) (= (array-ref remap 1) 1))]
       [(CompilerRegColoring.None) false])))
@@ -36570,7 +36994,8 @@
         params
         blocks
         vars
-        vars)
+        vars
+        (live.compiler-live-set-empty))
         [(CompilerRegColoring.Remap remap slots)
           (and
             (= (array-ref remap 0) 3)
@@ -36652,7 +37077,8 @@
         params
         blocks
         vars
-        vars)
+        vars
+        (live.compiler-live-set-empty))
         [(CompilerRegColoring.Remap remap slots)
           (and
             (= slots 2)
@@ -36684,7 +37110,8 @@
         ir.CompilerIrParamList.Nil
         ir.CompilerIrBlockList.Nil
         (+ group-var 1)
-        (+ group-var 1))]
+        (+ group-var 1)
+        (live.compiler-live-set-empty))]
     (match coloring
       [(CompilerRegColoring.Remap remap slots)
         (and

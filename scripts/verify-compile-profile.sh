@@ -1096,6 +1096,10 @@ fi
 # #6193's dotted-module migration crossed the next type-pool typecheck boundary,
 # 7 -> 8 segments: the authoritative Windows selfhost probe measured 7346 used
 # nodes, 8192 capacity, and 196608 physical payload bytes.
+# #6293's derived-symbol table (moving ~50k generated spellings out of the
+# pinned intern pool, plus its tests) crossed the expr typecheck boundary
+# from 29 to 30 segments: the authoritative Windows probe measured 1,902,698
+# used nodes, 1,966,080 capacity, and 62,914,560 physical payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1131,7 +1135,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 49 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 29 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 30 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \

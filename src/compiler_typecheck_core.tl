@@ -10798,14 +10798,17 @@
 (define (tc-hygiene-global-boundary-id) : i64
   cbi.compiler-builtin-id-tc-hygiene-global-boundary)
 
+;; One spelling per prefix, owned by the interner: it classifies every pool
+;; entry against these strings when the entry is recorded, so a second copy here
+;; would let the stored class and the string test disagree.
 (define (tc-hygiene-template-prefix) : String
-  "__tl_macro_template$")
+  (ci.intern-macro-template-prefix))
 
 (define (tc-hygiene-global-prefix) : String
-  "__tl_macro_global$")
+  (ci.intern-macro-global-prefix))
 
 (define (tc-hygiene-local-prefix) : String
-  "__tl_macro_local$")
+  (ci.intern-macro-local-prefix))
 
 (defenum TcHygieneGlobalName
   (Legacy String)
@@ -10943,13 +10946,15 @@
 (define (tc-hygiene-template-name? [name : String]) : bool
   (tc-hygiene-string-prefix? name (tc-hygiene-template-prefix)))
 
+;; Pool ids and the structural families partition the id space: every
+;; structural base is at least stride^2 above the pool range, so a pool id can
+;; never be a template-source id. Testing the pool range first therefore keeps
+;; the same answer while skipping the structural predicate on the common path,
+;; and the prefix answer comes from the class the interner already recorded.
 (define (tc-hygiene-template-name-id? [name-id : i64]) : bool
-  (or
-    (ci.intern-template-source-id? name-id)
-    (and
-      (>= name-id 0)
-      (< name-id (ci.intern-capacity))
-      (tc-hygiene-template-name? (ci.intern-str name-id)))))
+  (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
+    (ci.intern-macro-template-name-id? name-id)
+    (ci.intern-template-source-id? name-id)))
 
 (define (tc-hygiene-template-source-id-or [name-id : i64] [fallback : i64]) : i64
   (if (ci.intern-template-source-id? name-id)
@@ -10966,12 +10971,9 @@
   (tc-hygiene-string-prefix? name (tc-hygiene-local-prefix)))
 
 (define (tc-hygiene-global-name-id? [name-id : i64]) : bool
-  (or
-    (macro-hygiene-global-id? name-id)
-    (and
-      (>= name-id 0)
-      (< name-id (ci.intern-capacity))
-      (tc-hygiene-global-name? (ci.intern-str name-id)))))
+  (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
+    (ci.intern-macro-global-name-id? name-id)
+    (macro-hygiene-global-id? name-id)))
 
 (define (tc-structural-local-name-id? [name-id : i64]) : bool
   (if (< name-id (ci.intern-capacity))
@@ -10981,12 +10983,9 @@
       (ci.intern-structural-local-id? name-id))))
 
 (define (tc-hygiene-local-name-id? [name-id : i64]) : bool
-  (or
-    (tc-structural-local-name-id? name-id)
-    (and
-      (>= name-id 0)
-      (< name-id (ci.intern-capacity))
-      (tc-hygiene-local-name? (ci.intern-str name-id)))))
+  (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
+    (ci.intern-macro-local-name-id? name-id)
+    (tc-structural-local-name-id? name-id)))
 
 (define (tc-hygiene-name-text-id [name-id : i64]) : String
   (cond
@@ -17040,7 +17039,7 @@
     (and
       (or
         (< name-id (ci.intern-pool-len))
-        (not (tc-hygiene-local-name? (ci.intern-str name-id))))
+        (not (ci.intern-macro-local-name-id? name-id)))
       (ci.intern-qualified? name-id))
     (cond
       [(< name-id 0) false]
@@ -76204,7 +76203,7 @@
   (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
     (if (and
       (ci.intern-qualified? name-id)
-      (tc-hygiene-global-name? (ci.intern-str name-id)))
+      (ci.intern-macro-global-name-id? name-id))
       (ci.intern-qualified-base-id name-id)
       fallback)
     (cond

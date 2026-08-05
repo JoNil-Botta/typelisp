@@ -12985,6 +12985,261 @@
           "inline_switch")
         0))))
 
+;; --- duplicating a two-reference leaf into its in-loop sites ----------------
+;;
+;; The leaf under test is the cyclic bounds-carrying Switch leaf again, built
+;; here in two versions that differ in exactly one instruction: whether the
+;; `zero` case makes a call. Everything else across these fixtures varies only
+;; in the CALLERS, so each test isolates one clause of
+;; opt-inline-dup-absorb-ok?.
+(define (opt-inline-dup-leaf-named
+  [callee-name : i64]
+  [vars : i64]
+  [zero-instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    vars
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-inline-switch-loop-bounds-instr
+              (compiler_ir_types.compiler-ir-label "switch_bounds_ok"))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Switch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                0
+                (opt-inline-switch-cases
+                  (compiler_ir_types.compiler-ir-label "zero")
+                  (compiler_ir_types.compiler-ir-label "one"))
+                (compiler_ir_types.compiler-ir-label "loop"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "zero")
+            zero-instrs)
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "one")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "join")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-inline-switch-loop-phi-instr)
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 3)))
+                    compiler_ir_types.CompilerIrInstrList.Nil)))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-dup-leaf-jump-zero-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Jump
+      (compiler_ir_types.compiler-ir-label "join"))
+    compiler_ir_types.CompilerIrInstrList.Nil))
+
+;; The same case block, plus one call to a helper the program does not define,
+;; so nothing can inline it away before the leaf itself is offered.
+(define (opt-inline-dup-leaf-call-zero-instrs [helper-name : i64]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (array.make-array compiler_ir_types.CompilerIrValue 1)]
+    (begin
+      (array-set! args 0 (compiler_ir_types.CompilerIrValue.Var 0))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          helper-name
+          (compiler_ir_types.CompilerIrCallArgs.Array args)
+          (compiler_ast_types.AstType.I64))
+        (opt-inline-dup-leaf-jump-zero-instrs)))))
+
+(define (opt-inline-dup-leaf-plain [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-dup-leaf-named
+    callee-name
+    4
+    (opt-inline-dup-leaf-jump-zero-instrs)))
+
+(define (opt-inline-dup-leaf-calling [callee-name : i64] [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-dup-leaf-named
+    callee-name
+    5
+    (opt-inline-dup-leaf-call-zero-instrs helper-name)))
+
+;; N in-loop callers of one leaf, so the leaf's static reference count is
+;; exactly the number of callers. None of the callers is referenced itself, so
+;; the cascade clause is satisfied for all of them and only the reference count
+;; separates the cases.
+(define (opt-inline-dup-caller-chain
+  [names : compiler_optimize.OptSlotList]
+  [callee-name : i64]
+  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  (match names
+    [(compiler_optimize.OptSlotList.Nil) tail]
+    [(compiler_optimize.OptSlotList.Cons name rest)
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-inline-loop-site-function
+          name
+          callee-name
+          (opt-inline-loop-site-entry-instrs))
+        (opt-inline-dup-caller-chain (box-get rest) callee-name tail))]))
+
+(define (opt-inline-dup-two-caller-names [symbols : OptInlineMultiTestSymbols]) : compiler_optimize.OptSlotList
+  (compiler_optimize.OptSlotList.Cons
+    (struct-get symbols main)
+    (box
+      (compiler_optimize.OptSlotList.Cons
+        (struct-get symbols inline-nonleaf)
+        (box (compiler_optimize.OptSlotList.Nil))))))
+
+(define (opt-inline-dup-three-caller-names
+  [symbols : OptInlineMultiTestSymbols]) : compiler_optimize.OptSlotList
+  (compiler_optimize.OptSlotList.Cons
+    (struct-get symbols inline-loop)
+    (box (opt-inline-dup-two-caller-names symbols))))
+
+(define (opt-inline-dup-optimized
+  [callers : compiler_optimize.OptSlotList]
+  [callee-name : i64]
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_optimize.opt-inline-program-functions
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-inline-dup-caller-chain
+      callers
+      callee-name
+      (compiler_ir_types.compiler-ir-function-cons
+        leaf
+        compiler_ir_types.CompilerIrFunctionList.Nil))
+    2))
+
+;; Two in-loop callers duplicate the leaf into both; a third reference puts the
+;; callee outside opt-inline-dup-max-refcount and all three sites keep the call.
+(define (compiler-optimize-inline-dup-two-site-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [two : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-two-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-plain callee-name))]
+    [three : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-three-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-plain callee-name))]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list two "main" "inline_switch")
+        0)
+      (=
+        (opt-count-direct-call-name-function-list
+          two
+          "inline_nonleaf"
+          "inline_switch")
+        0)
+      (=
+        (opt-count-direct-call-name-function-list three "main" "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          three
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          three
+          "inline_loop"
+          "inline_switch")
+        1))))
+
+;; The identical two-reference leaf, at two in-loop sites, one of whose callers
+;; is itself a single-reference bounds-free function: that caller would lose its
+;; own inline by taking the leaf's bounds check, so the cascade clause refuses
+;; the copy THERE and admits it at the other site. One caller taking the body
+;; does not commit the other.
+(define (compiler-optimize-inline-dup-cascade-per-caller-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [mid-name : i64 (struct-get symbols inline-nonleaf)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-switch-caller-named symbols mid-name)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-loop-site-function
+              mid-name
+              callee-name
+              (opt-inline-loop-site-entry-instrs))
+            (compiler_ir_types.compiler-ir-function-cons
+              (opt-inline-loop-site-function
+                (struct-get symbols inline-loop)
+                callee-name
+                (opt-inline-loop-site-entry-instrs))
+              (compiler_ir_types.compiler-ir-function-cons
+                (opt-inline-dup-leaf-plain callee-name)
+                compiler_ir_types.CompilerIrFunctionList.Nil))))
+        2)]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_loop"
+          "inline_switch")
+        0))))
+
+;; The same two-reference leaf with one call in its body stays out of line at
+;; both sites: a duplicated body is bounded by its own size only while nothing
+;; inside it can bring another body along, and the multiblock clone path
+;; miscompiles call-carrying clones (#6307).
+(define (compiler-optimize-inline-dup-call-bearing-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-two-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-calling
+          callee-name
+          (struct-get symbols external-helper)))]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")
+        1))))
+
 (define (opt-inline-phi-span-ok-instr-seq-from?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [pos : i64]

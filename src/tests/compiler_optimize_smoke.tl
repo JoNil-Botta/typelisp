@@ -3364,6 +3364,24 @@
     "import refused when it would cost a bounds-free single-site caller its own inline"))
 
 (test
+  inline-dup-two-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-dup-two-site-ok?)
+    "a two-reference call-free leaf is duplicated into both in-loop sites; three references stay out of line"))
+
+(test
+  inline-dup-cascade-per-caller
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-dup-cascade-per-caller-ok?)
+    "the cascade clause is asked per caller: the same duplicable leaf is refused at one site and admitted at the other"))
+
+(test
+  inline-dup-call-bearing-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-dup-call-bearing-refusal-ok?)
+    "a two-reference leaf carrying a call stays out of line at both sites"))
+
+(test
   inline-vm-run-bounds-loop-span-positive
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-switch-span-case-code

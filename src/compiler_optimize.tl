@@ -61867,6 +61867,38 @@
     (opt-inline-census-single-site? index census callee-name)
     (not (ir.compiler-ir-symbol-eq? caller-name callee-name))))
 
+;; Largest static reference count a callee may carry and still be treated as
+;; belonging to its call sites. 1 is absorption: the body moves and nothing is
+;; left behind. 2 is duplication: the body is copied into both sites, and the
+;; measured leaves that qualify (see opt-inline-dup-absorb-ok?) are small enough
+;; that the copy is cheaper than the boundary it retires.
+(define (opt-inline-dup-max-refcount) : i64
+  2)
+
+;; The reference class of a callee seen from one caller, and the one census
+;; query the multiblock sites make: 0 when the callee belongs to no site,
+;; otherwise its reference count (1 = absorbable, up to
+;; opt-inline-dup-max-refcount = duplicable). Address-taken callees, `main`, and
+;; self-calls are class 0 for the same reasons opt-inline-census-absorbable?
+;; refuses them. Class 1 is exactly opt-inline-census-absorbable?, so the sites
+;; that used to ask that question read this number instead of paying for a
+;; second refcount lookup.
+(define (opt-inline-census-absorb-class
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [caller-name : i64]
+  [callee-name : i64]) : i64
+  (let
+    [refs : i64 (opt-inline-census-refcount index census callee-name)]
+    (if (or
+      (< refs 1)
+      (> refs (opt-inline-dup-max-refcount))
+      (ir.compiler-ir-symbol-eq? caller-name callee-name)
+      (opt-inline-census-address-taken? index census callee-name)
+      (string.eq (ir.compiler-ir-symbol-text callee-name) "main"))
+      0
+      refs)))
+
 (define (opt-callgraph-callee-count [graph : OptCallGraph] [from-slot : i64]) : i64
   (if (or (< from-slot 0) (>= from-slot (struct-get graph count)))
     -1
@@ -62742,6 +62774,45 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-inline-blocks-have-bounds-check?
         (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; A body with no call of any kind. Used by the duplicating admission below:
+;; the clone the duplication makes is bounded by the callee's own size only when
+;; nothing inside it can bring another body along, and the multiblock clone path
+;; is known to miscompile call-carrying clones (#6307), so a duplicated callee
+;; stays a leaf by construction.
+(define (opt-inline-instr-call? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Call _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult _) true]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
+    [(ir.CompilerIrInstr.SpmdCall _) true]
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) true]
+    [(ir.CompilerIrInstr.Syscall _ _) true]
+    [_ false]))
+
+(define (opt-inline-instr-seq-call-free-from?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (if (opt-inline-instr-call? (ir.compiler-ir-instr-seq-ref instrs index))
+      false
+      (opt-inline-instr-seq-call-free-from? instrs (+ index 1)))))
+
+(define (opt-inline-blocks-call-free? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (opt-inline-instr-seq-call-free-from? instrs 0)
+            (opt-inline-blocks-call-free? (box-get rest))
+            false)])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-inline-blocks-call-free? (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-inline-multiblock-instrs-ok-from?
   [instrs : ir.CompilerIrInstrSeq]
@@ -64434,16 +64505,74 @@
     (or (not opt-inline-caller-single-site?) opt-inline-caller-has-bounds?)))
 
 ;; Ordered so the two free tests run first: the lazy caller facts are only
-;; forced for a candidate that is already absorbable and already small.
+;; forced for a candidate that is already claimed by this site and already
+;; small. `claimed?` is the reference-class verdict -- absorption for a
+;; single-reference callee, duplication for the two-reference case below -- so
+;; both paths share one copy of the size, site, and cascade clauses.
 (define (opt-inline-bounds-loop-absorb-ok?
-  [absorbable? : bool]
+  [claimed? : bool]
   [callee-instrs : i64]
   [blocks : ir.CompilerIrBlockList]) : bool
   (and
-    absorbable?
+    claimed?
     (opt-inline-bounds-loop-small? blocks callee-instrs)
     (opt-inline-bounds-loop-site-in-loop?)
     (opt-inline-bounds-loop-cascade-safe?)))
+
+;; --- duplicating a two-reference leaf into its in-loop sites ----------------
+;;
+;; The admission above requires the callee to have exactly one static reference,
+;; because absorption is what pays for it: the body moves, and the program does
+;; not grow. A leaf with two references cannot be absorbed, only copied -- and
+;; the measured population of two-reference callees that reach an in-loop site
+;; is a family of character-class predicates, nine instructions in five blocks,
+;; sitting one per element inside a scan loop. Copying nine instructions twice
+;; to retire a call per character is the same trade the single-reference gate
+;; already makes, and it measures the same way: gvn_table -1.356%, liveness_scan
+;; -1.098%, cfg_domloops -0.680%, with no other row moving anywhere and the
+;; corpus binaries 160 bytes SMALLER in total, because the retired call sequence
+;; costs more static bytes than the duplicated body.
+;;
+;; The autopsy signature is the opposite of the inlining pathology this gate
+;; exists to avoid: ln-fill-tokens goes from ten frame operations to one and
+;; from five reloads to none, and cfg-scan-ints keeps its instruction count
+;; exactly and loses two calls. Nine-instruction bodies do not move the
+;; allocator.
+;;
+;; Everything the single-reference admission asks is asked here unchanged --
+;; size, in-loop site, cascade -- through the same predicate, plus one condition
+;; of its own: the body must be call-free. A clone is bounded by the callee's
+;; measured size only while nothing inside it can bring another body along, and
+;; the multiblock clone path miscompiles call-carrying clones (#6307).
+;;
+;; The clause order is the cost argument. Every multiblock call site in the
+;; program reaches this predicate, so the reference-class compare -- already
+;; computed, one integer test -- runs first, before the block scan and before
+;; the lazy caller facts. The call-free scan runs last, on the few candidates
+;; that have already cleared size, site, and cascade.
+;;
+;; The site and cascade clauses are asked once per CALLER, from that caller's
+;; own facts, so a two-reference leaf is duplicated only into those of its
+;; callers that individually clear them and one caller taking the body does not
+;; commit the other. (The cascade question a caller asks is still "am I a
+;; single-reference function that would lose my own inline", which a
+;; two-reference caller now answers "no" while itself being duplicable. That
+;; caller-side widening is a separate probe; no corpus or self-compile row
+;; exercises it today.)
+;;
+;; This has to grant the absorb credit, not merely pass the bounds gate: the
+;; cost model prices a nine-instruction body in five blocks at 9 + 6*6 = 45
+;; against a threshold of 4, so the block weight alone refuses every one of
+;; these leaves. The single-reference bonus is what admits them, and a
+;; duplication that has cleared the clauses above is the same bet.
+(define (opt-inline-dup-absorb-ok?
+  [absorb-class : i64]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    (>= absorb-class 2)
+    (opt-inline-bounds-loop-absorb-ok? true callee-instrs blocks)
+    (opt-inline-blocks-call-free? blocks)))
 
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]
@@ -64894,12 +65023,22 @@
                       np
                       0))]
                 [const-args : i64 (opt-inline-args-const-count cargs)]
-                [absorbable : bool
-                  (opt-inline-census-absorbable?
+                [absorb-class : i64
+                  (opt-inline-census-absorb-class
                     index
                     census
                     func-name
                     callee-name)]
+                ;; The site-level verdict: this site claims the callee's body,
+                ;; either because it is the only one (class 1, absorption) or
+                ;; because the duplicating clauses admit a copy (class 2).
+                [absorbable-here? : bool
+                  (or
+                    (= absorb-class 1)
+                    (opt-inline-dup-absorb-ok?
+                      absorb-class
+                      callee-instrs
+                      cblocks))]
                 ;; Splitting a loop phi predecessor can lengthen live ranges.
                 ;; Keep ordinary cost-model admission available here, but do
                 ;; not let the unconditional single-reference absorb bonus
@@ -64915,13 +65054,13 @@
                 [bounds-ok? : bool
                   (opt-inline-bounds-inline-ok?
                     has-bounds?
-                    absorbable
+                    absorbable-here?
                     const-args
                     np)]
                 [bounds-loop-ok? : bool
                   (opt-inline-multiblock-bounds-loop-ok?
                     has-bounds?
-                    absorbable
+                    absorbable-here?
                     callee-instrs
                     callee-name
                     cblocks)]
@@ -64935,7 +65074,7 @@
                         added-blocks
                         const-args
                         (and
-                          absorbable
+                          absorbable-here?
                           (not opt-inline-current-phi-predecessor?))
                         caller-blocks
                         added-so-far)
@@ -65520,12 +65659,20 @@
                       np
                       0))]
                 [const-args : i64 (opt-inline-args-const-count cargs)]
-                [absorbable : bool
-                  (opt-inline-census-absorbable?
+                [absorb-class : i64
+                  (opt-inline-census-absorb-class
                     index
                     census
                     func-name
                     callee-name)]
+                ;; Same site-level verdict as the non-span path.
+                [absorbable-here? : bool
+                  (or
+                    (= absorb-class 1)
+                    (opt-inline-dup-absorb-ok?
+                      absorb-class
+                      callee-instrs
+                      cblocks))]
                 [tiny-predicate? : bool
                   (and
                     (not stage-args?)
@@ -65536,13 +65683,13 @@
                 [bounds-ok? : bool
                   (opt-inline-bounds-inline-ok?
                     has-bounds?
-                    absorbable
+                    absorbable-here?
                     const-args
                     np)]
                 [bounds-loop-ok? : bool
                   (opt-inline-multiblock-bounds-loop-ok?
                     has-bounds?
-                    absorbable
+                    absorbable-here?
                     callee-instrs
                     callee-name
                     cblocks)]
@@ -65556,7 +65703,7 @@
                         added-blocks
                         const-args
                         (and
-                          absorbable
+                          absorbable-here?
                           (not opt-inline-current-phi-predecessor?))
                         caller-blocks
                         added-so-far)

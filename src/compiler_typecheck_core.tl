@@ -45103,6 +45103,58 @@
         [(ResultTcLayoutInfo.Err message)
           (ResultTcInlinePayloadFieldsLayout.Err message)]))))
 
+;; Lay out a structural type list exactly like the fields of a C aggregate.
+;; Unlike the payload/field walkers above this helper only needs the completed
+;; size/alignment, so it is also used by anonymous tuples.  Keeping the walk in
+;; typecheck makes nested tuple/array layout agree with nominal aggregates and
+;; gives every caller the same cycle/error propagation behavior.
+(define (tc-inline-aggregate-type-list-layout
+  [ctx : TcContext]
+  [types : ast.AstTypeList]
+  [cursor : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcLayoutInfo
+  (tc-inline-aggregate-type-list-layout-at
+    ctx
+    (& types)
+    0
+    cursor
+    max-align
+    stack))
+
+(define (tc-inline-aggregate-type-list-layout-at
+  [ctx : TcContext]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]
+  [cursor : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcLayoutInfo
+  (if (>= index (ast.ast-type-list-len types))
+    (match (tc-inline-aggregate-finish-layout cursor max-align)
+      [(TcLayoutInfo size align)
+        (ResultTcLayoutInfo.Ok (TcLayoutInfo size align))])
+    (let
+      [ty : ast.AstType
+        (tc-context-type-get
+          ctx
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+      (match (tc-inline-aggregate-type-layout-with-stack ctx ty stack)
+        [(ResultTcLayoutInfo.Ok info)
+          (let
+            [field-align : i64 (tc-layout-info-align info)]
+            [field-size : i64 (tc-layout-info-size info)]
+            [offset : i64 (tc-align-up cursor field-align)]
+            [next-cursor : i64 (+ offset field-size)]
+            [next-align : i64 (tc-max-i64 max-align field-align)]
+            (tc-inline-aggregate-type-list-layout-at
+              ctx
+              types
+              (+ index 1)
+              next-cursor
+              next-align
+              stack))]
+        [(ResultTcLayoutInfo.Err message) (ResultTcLayoutInfo.Err message)]))))
+
 (define (tc-inline-aggregate-struct-layout-with-stack
   [ctx : TcContext]
   [struct-name : String]
@@ -45522,8 +45574,8 @@
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(ast.AstType.VarArgs _ _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
-    [(ast.AstType.Tuple _)
-      (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
+    [(ast.AstType.Tuple types)
+      (tc-inline-aggregate-type-list-layout ctx (box-get types) 0 0 stack)]
     [(ast.AstType.Array elem count)
       (match (tc-inline-aggregate-type-layout-with-stack
         ctx
@@ -60175,7 +60227,6 @@
         [(ast.AstType.Enum name) (not (tc-name-register-resident-id? ctx name))]
         [(ast.AstType.EnumArgs name _)
           (not (tc-name-register-resident-id? ctx name))]
-        [(ast.AstType.Array _ _) true]
         [_ false]))))
 
 (define (tc-param-storage-seed-params
@@ -60211,10 +60262,17 @@
     [(ast.AstType.Array _ _) true]
     [_ false]))
 
-;; Return the original by-value parameter whose ABI backing storage contains
-;; this place. Struct fields and fixed-array elements remain inside that
-;; storage; tuple/dynamic-array/box projections cross a shallow handle and must
-;; not inherit the parameter provenance.
+(define (tc-param-storage-tuple-type? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(ast.AstType.Tuple _) true]
+    [_ false]))
+
+;; Return the original by-value memory-class nominal Struct/Enum parameter
+;; whose ABI backing storage contains this place. Only those nominal
+;; parameters are seeded/tracked here: by-value fixed arrays and tuples have
+;; private callee storage. Tuple and fixed-array projections are inline and
+;; inherit provenance only when rooted in a tracked nominal memory parameter;
+;; dynamic-array/box/reference projections remain shallow handles and do not.
 (define (tc-param-storage-place-origin
   [ctx : TcContext]
   [expr-bases : i64]
@@ -60266,6 +60324,16 @@
           [(ResultTcType.Ok array-ty)
             (if (tc-param-storage-fixed-array-type? ctx array-ty)
               (tc-param-storage-place-origin ctx expr-bases env moved array)
+              TcMaybeNameId.No)]
+          [(ResultTcType.Err _) TcMaybeNameId.No]))]
+    [(ast.AstExpr.TupleRef tuple-box _)
+      (let
+        [tuple : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
+        (match (tc-expr ctx env tuple)
+          [(ResultTcType.Ok tuple-ty)
+            (if (tc-param-storage-tuple-type? ctx tuple-ty)
+              (tc-param-storage-place-origin ctx expr-bases env moved tuple)
               TcMaybeNameId.No)]
           [(ResultTcType.Err _) TcMaybeNameId.No]))]
     [_ TcMaybeNameId.No]))

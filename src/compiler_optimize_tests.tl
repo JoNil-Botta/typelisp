@@ -2317,6 +2317,35 @@
           [_ 0])
         (opt-count-addr-of-instrs (box-get rest)))]))
 
+(define (opt-aggregate-promote-shape-ok?
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : bool
+  (and
+    (= (compiler_ir_types.compiler-ir-instr-list-count instrs) 10)
+    (match instrs
+      [(compiler_ir_types.CompilerIrInstrList.Cons
+          (compiler_ir_types.CompilerIrInstr.Alloc first-dst first-ty)
+          rest)
+        (match (box-get rest)
+          [(compiler_ir_types.CompilerIrInstrList.Cons
+              (compiler_ir_types.CompilerIrInstr.Alloc second-dst second-ty)
+              rest2)
+            (match (box-get rest2)
+              [(compiler_ir_types.CompilerIrInstrList.Cons
+                  (compiler_ir_types.CompilerIrInstr.AddrOf base storage)
+                  _)
+                (and
+                  (= first-dst 4)
+                  (= second-dst 5)
+                  (= storage 5)
+                  (= base 1)
+                  (compiler_optimize.opt-type-eq
+                    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+                    first-ty
+                    second-ty))]
+              [_ false])]
+          [_ false])]
+      [_ false])))
+
 (define (opt-aggregate-promote-test-function
   [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunction
   (compiler_optimize.opt-aggregate-stack-promote-function
@@ -2370,23 +2399,24 @@
         2)]
     (cond
       [(not (= (opt-count-tl-alloc-calls positive) 0)) 1]
-      [(not (= (opt-count-ir-alloc-instrs positive) 1)) 2]
+      [(not (= (opt-count-ir-alloc-instrs positive) 2)) 2]
       [(not (= (opt-count-addr-of-instrs positive) 1)) 3]
+      [(not (opt-aggregate-promote-shape-ok? positive)) 4]
       [(not
           (=
             (opt-aggregate-promote-test-frame (opt-aggregate-positive-instrs))
             6))
-        4]
-      [(not (= (opt-count-tl-alloc-calls returned) 1)) 5]
-      [(not (= (opt-count-tl-alloc-calls passed) 1)) 6]
-      [(not (= (opt-count-tl-alloc-calls stored) 1)) 7]
-      [(not (= (opt-count-tl-alloc-calls unknown-offset) 1)) 8]
-      [(not (= (opt-count-tl-alloc-calls call-separated) 1)) 9]
-      [(not (= (opt-count-tl-alloc-calls array-local) 1)) 10]
+        5]
+      [(not (= (opt-count-tl-alloc-calls returned) 1)) 6]
+      [(not (= (opt-count-tl-alloc-calls passed) 1)) 7]
+      [(not (= (opt-count-tl-alloc-calls stored) 1)) 8]
+      [(not (= (opt-count-tl-alloc-calls unknown-offset) 1)) 9]
+      [(not (= (opt-count-tl-alloc-calls call-separated) 1)) 10]
+      [(not (= (opt-count-tl-alloc-calls array-local) 1)) 11]
       [(not (= (opt-count-tl-alloc-calls (opt-program-first-instrs level0)) 1))
-        11]
-      [(not (= (opt-count-tl-alloc-calls (opt-program-first-instrs level2)) 0))
         12]
+      [(not (= (opt-count-tl-alloc-calls (opt-program-first-instrs level2)) 0))
+        13]
       [else 42])))
 
 (define (opt-aggregate-repeated-load-instrs) : compiler_ir_types.CompilerIrInstrList
@@ -13671,6 +13701,212 @@
           (compiler_ir_types.compiler-ir-instr-seq-from-list
             compiler_ir_types.CompilerIrInstrList.Nil))))))
 
+;; #6219: a SysV MEMORY-class aggregate parameter is pointer-shaped in IR, but
+;; the backend's call emission gives it a private byte copy.  Keep that call
+;; boundary through every inliner admission path and distinguish IR-owned
+;; transport names from source-owned spelling collisions.
+(define (opt-inline-private-memory-test-params
+  [value-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "__sret"
+      (compiler_ast_types.AstType.U64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param "value" value-ty 1)
+      compiler_ir_types.CompilerIrParamList.Nil)))
+
+(define (opt-inline-private-memory-test-body) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "private_memory.entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 99)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.CopyBytes
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            24)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 0)))
+            compiler_ir_types.CompilerIrInstrList.Nil))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (opt-inline-private-memory-test-callee
+  [name : i64]
+  [value-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-inline-private-memory-test-params value-ty)
+    (compiler_ast_types.AstType.U64)
+    2
+    (opt-inline-private-memory-test-body)))
+
+(define (opt-inline-private-memory-test-caller
+  [caller-name : i64]
+  [callee-name : i64]
+  [value-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    caller-name
+    (opt-inline-private-memory-test-params value-ty)
+    (compiler_ast_types.AstType.Unit)
+    3
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "private_memory.caller")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Call
+            2
+            callee-name
+            (compiler_ir_types.CompilerIrCallArgs.Two
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.Var 1))
+            (compiler_ast_types.AstType.U64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.No))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-private-memory-test-functions
+  [caller-name : i64]
+  [callee-name : i64]
+  [value-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-private-memory-test-caller caller-name callee-name value-ty)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-private-memory-test-callee callee-name value-ty)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (compiler-optimize-inline-private-memory-boundary-ok?) : bool
+  (let
+    [private-text : String "__tl_internal_abi_mem_s24__array_i64_3"]
+    [group-text : String "__tl_internal_abi_group_m0__inline_control"]
+    [private-id : i64 (opt-test-symbol private-text)]
+    [source-id : i64 (ci.intern private-text)]
+    [group-id : i64 (opt-test-symbol group-text)]
+    [private-ty : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct private-id)]
+    [private-args-ty : compiler_ast_types.AstType
+      (compiler_ast_types.ast-ty-struct-args
+        private-id
+        (compiler_ast_types.ast-lifetime-list-new))]
+    [source-ty : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct source-id)]
+    [group-ty : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct group-id)]
+    [private-callee-name : i64 (opt-test-symbol "inline_private_memory")]
+    [private-caller-name : i64 (opt-test-symbol "private_memory_main")]
+    [source-callee-name : i64 (opt-test-symbol "inline_source_collision")]
+    [source-caller-name : i64 (opt-test-symbol "source_collision_main")]
+    [private-params : compiler_ir_types.CompilerIrParamList
+      (opt-inline-private-memory-test-params private-ty)]
+    [source-params : compiler_ir_types.CompilerIrParamList
+      (opt-inline-private-memory-test-params source-ty)]
+    [private-callee : compiler_ir_types.CompilerIrFunction
+      (opt-inline-private-memory-test-callee private-callee-name private-ty)]
+    [source-callee : compiler_ir_types.CompilerIrFunction
+      (opt-inline-private-memory-test-callee source-callee-name source-ty)]
+    [private-level1 : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-private-memory-test-functions
+          private-caller-name
+          private-callee-name
+          private-ty)
+        1)]
+    [private-level2 : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-private-memory-test-functions
+          private-caller-name
+          private-callee-name
+          private-ty)
+        2)]
+    [source-level1 : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-private-memory-test-functions
+          source-caller-name
+          source-callee-name
+          source-ty)
+        1)]
+    (match (compiler_optimize.opt-function-list-find
+      private-level1
+      "private_memory_main")
+      [(compiler_optimize.OptMaybeFunction.Some private-main-level1)
+        (match (compiler_optimize.opt-function-list-find
+          private-level2
+          "private_memory_main")
+          [(compiler_optimize.OptMaybeFunction.Some private-main-level2)
+            (match (compiler_optimize.opt-function-list-find
+              source-level1
+              "source_collision_main")
+              [(compiler_optimize.OptMaybeFunction.Some source-main-level1)
+                (let
+                  [private-level1-blocks : compiler_ir_types.CompilerIrBlockList
+                    (compiler_optimize.opt-function-blocks private-main-level1)]
+                  [private-level2-blocks : compiler_ir_types.CompilerIrBlockList
+                    (compiler_optimize.opt-function-blocks private-main-level2)]
+                  [source-level1-blocks : compiler_ir_types.CompilerIrBlockList
+                    (compiler_optimize.opt-function-blocks source-main-level1)]
+                  (and
+                    (compiler_ir_types.compiler-ir-symbol-owned? private-id)
+                    (not
+                      (compiler_ir_types.compiler-ir-symbol-owned? source-id))
+                    (compiler_ir_types.compiler-ir-symbol-owned? group-id)
+                    (compiler_optimize.opt-inline-private-memory-transport-type?
+                      private-ty)
+                    (compiler_optimize.opt-inline-private-memory-transport-type?
+                      private-args-ty)
+                    (not
+                      (compiler_optimize.opt-inline-private-memory-transport-type?
+                        source-ty))
+                    (not
+                      (compiler_optimize.opt-inline-private-memory-transport-type?
+                        group-ty))
+                    (compiler_optimize.opt-inline-params-have-private-memory?
+                      private-params)
+                    (not
+                      (compiler_optimize.opt-inline-callee-ok?
+                        private-callee
+                        private-caller-name))
+                    (not
+                      (compiler_optimize.opt-inline-multiblock-callee-body-ok?
+                        private-params
+                        (compiler_ast_types.AstType.U64)
+                        2
+                        (opt-inline-private-memory-test-body)))
+                    (compiler_optimize.opt-inline-callee-ok?
+                      source-callee
+                      source-caller-name)
+                    (not
+                      (compiler_optimize.opt-inline-params-have-private-memory?
+                        source-params))
+                    (=
+                      (opt-count-direct-call-name-blocks
+                        private-level1-blocks
+                        "inline_private_memory")
+                      1)
+                    (=
+                      (opt-count-direct-call-name-blocks
+                        private-level2-blocks
+                        "inline_private_memory")
+                      1)
+                    (=
+                      (opt-count-direct-call-name-blocks
+                        source-level1-blocks
+                        "inline_source_collision")
+                      0)))]
+              [(compiler_optimize.OptMaybeFunction.No) false])]
+          [(compiler_optimize.OptMaybeFunction.No) false])]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
 (define (compiler-optimize-inline-self-test) : i64
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
@@ -13922,6 +14158,9 @@
                     (unless
                       (compiler-optimize-inline-multiblock-return-gate-ok?)
                       (return 49))
+                    (unless
+                      (compiler-optimize-inline-private-memory-boundary-ok?)
+                      (return 59))
                     42))]
               [(compiler_optimize.OptMaybeFunction.No) 41])))]
       [(compiler_optimize.OptMaybeFunction.No) 43])))

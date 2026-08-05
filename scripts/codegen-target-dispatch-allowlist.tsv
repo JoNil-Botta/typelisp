@@ -6,6 +6,8 @@ src/compiler_lower.tl	lower-c-abi-register-aggregate-fields-ok?	abi	lower-mode-w
 src/compiler_lower.tl	lower-c-abi-register-aggregate-size?	abi	lower-mode-windows-c-abi[?]	1	Win64 register aggregate sizes are limited to 1, 2, 4, or 8 bytes.
 src/compiler_lower.tl	lower-c-abi-target-name	abi	lower-mode-windows-c-abi[?]|linux-x86_64|windows-x86_64	3	C ABI diagnostics report the concrete target triple.
 src/compiler_lower.tl	lower-c-abi-two-register-return-message	abi	linux-x86_64	1	System V two-register aggregate return diagnostic is target-specific.
+src/compiler_lower.tl	lower-internal-win64-aggregate-class	abi	lower-mode-windows-c-abi[?]	1	Internal aggregate classification accepts Win64 aggregate transport only in Win64 ABI modes.
+src/compiler_lower.tl	lower-internal-aggregate-class-from-size	abi	lower-mode-windows-c-abi[?]	1	Internal aggregate classification selects Win64 versus System V transport from the lowering mode.
 src/compiler_lower.tl	lower-dispatch-lower-mode	backend-mode	CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)|lower-mode-(linux|windows)-c-abi[?]	12	Source dispatch keeps the selected target ABI while changing the ISA mode.
 src/compiler_lower.tl	lower-mode-simd?	backend-mode	CompilerLowerMode[.](Linux|Windows)(Avx2|Avx512)	4	Target-aware SIMD modes are still SIMD-capable.
 src/compiler_lower.tl	lower-mode-avx2?	backend-mode	CompilerLowerMode[.](Linux|Windows)Avx2	2	Target-aware AVX2 modes preserve the AVX2 capability bit.
@@ -23,6 +25,15 @@ src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-nested-small-aggregate-
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 small float aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-extern-value-fnptr-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test uses Linux C ABI mode for extern function pointer shape.
 src/compiler_lower_tests.tl	compiler-lower-windows-error-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer diagnostic helper exercises Win64 C ABI failures.
+src/compiler_lower_tests.tl	compiler-lower-defdispatch-structural-shape-ok?	test-only	CompilerLowerMode[.]LinuxScalar	1	Inline lowerer structural-shape test selects the Linux scalar lower mode.
+src/compiler_lower_tests.tl	compiler-lower-internal-direct-tail-structural-param-shape-ok?	test-only	CompilerLowerMode[.]LinuxScalar	1	Inline lowerer direct-tail structural-shape test selects the Linux scalar lower mode.
+src/compiler_lower_tests.tl	compiler-lower-internal-early-return-shape-ok?	test-only	CompilerLowerMode[.]LinuxScalar	1	Inline lowerer early-return shape test selects the Linux scalar lower mode.
+src/compiler_lower_tests.tl	compiler-lower-internal-indirect-tail-structural-param-shape-ok?	test-only	CompilerLowerMode[.]LinuxScalar	1	Inline lowerer indirect-tail structural-shape test selects the Linux scalar lower mode.
+src/compiler_lower_tests.tl	compiler-lower-internal-structural-call-shape-ok?	test-only	CompilerLowerMode[.]LinuxScalar	1	Inline lowerer structural-call shape test selects the Linux scalar lower mode.
+src/compiler_lower_tests.tl	compiler-lower-internal-tuple-array-layout-ok?	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	16	Inline lowerer tuple/array layout test checks Linux and Windows scalar lower modes.
+src/compiler_lower_tests.tl	compiler-lower-internal-unsupported-diagnostics-ok?	test-only	CompilerLowerMode[.](Linux|Windows)Scalar|(linux|windows)-x86_64	12	Inline lowerer diagnostic test checks target-specific modes and diagnostic target names.
+src/compiler_lower_tests.tl	compiler-lower-internal-windows-byref-sret-shape-ok?	test-only	CompilerLowerMode[.]WindowsScalar	1	Inline lowerer Windows by-reference sret shape test selects the Win64 scalar lower mode.
+src/compiler_lower_tests.tl	compiler-lower-internal-windows-u8-three-shape-ok?	test-only	CompilerLowerMode[.]WindowsScalar	1	Inline lowerer Windows u8 aggregate shape test selects the Win64 scalar lower mode.
 src/compiler_backend.tl	enum:CompilerBackendTarget	backend-mode	CompilerBackendTarget[.](Linux|Windows)	2	Backend target enum names the supported native codegen targets.
 src/compiler_backend.tl	compiler-backend-target-abi	abi	CompilerBackendTarget[.](Linux|Windows)	2	Central backend-target to shared ABI mapping feeds regalloc, call lowering, and ABI table helpers.
 src/compiler_backend.tl	compiler-backend-const-hoist-candidate-regs	abi	CompilerBackendTarget[.](Linux|Windows)	2	Constant-hoist candidates exclude Win64 callee-saved rsi/rdi while retaining ABI-safe register homes.
@@ -50,6 +61,11 @@ src/compiler_backend.tl	compiler-backend-atomic-value-reg	abi	compiler-backend-t
 src/compiler_backend.tl	compiler-backend-atomic-new-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer CAS consumes the target ABI's third integer argument register.
 src/compiler_backend.tl	compiler-backend-closure-adapter-outgoing-frame-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Closure adapter outgoing space follows target calling convention rules.
 src/compiler_backend.tl	compiler-backend-c-memory-aggregate-type?	abi	compiler-backend-target-linux[?]	1	System V memory aggregate classification is Linux-target specific.
+src/compiler_backend.tl	compiler-backend-linux-group-register-banks-fit?	abi	compiler-backend-target-linux[?]	1	SysV two-eightbyte assignment checks split integer/SSE register banks atomically; Win64 uses unified positions.
+src/compiler_backend.tl	compiler-backend-call-stack-arg-count	abi	compiler-backend-target-linux[?]	2	Stack sizing handles SysV private-memory aggregates and atomic two-word group fallback.
+src/compiler_backend.tl	compiler-backend-type-list-stack-arg-count-at	abi	compiler-backend-target-linux[?]	2	Type-list stack sizing mirrors the SysV aggregate and atomic group argument rules.
+src/compiler_backend.tl	compiler-backend-emit-call-args-with-assignments-into	abi	compiler-backend-target-linux[?]	2	Call emission handles SysV private-memory stack copies and atomic two-word group fallback.
+src/compiler_backend.tl	compiler-backend-emit-param-spills-from	abi	compiler-backend-target-linux[?]	2	Callee spills mirror the SysV private-memory and atomic group argument rules.
 src/compiler_backend.tl	compiler-backend-emit-syscall	runtime	compiler-backend-target-windows[?]|linux-x86_64	2	Raw syscall emission is only valid for Linux x86_64.
 src/compiler_backend.tl	compiler-backend-emit-inline-fast-alloc	runtime	compiler-backend-target-windows[?]	1	Windows uses the incrementally committed arena bound at offset 64; Linux uses the mapped-segment bound at offset 24.
 src/compiler_backend.tl	compiler-backend-emit-windows-main-argv-capture	entry	compiler-backend-target-windows[?]	1	Windows CRT passes argc and argv in Win64 registers.

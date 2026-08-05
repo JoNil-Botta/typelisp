@@ -6440,6 +6440,738 @@
 (define (compiler-backend-register-group-test-type) : compiler_ast_types.AstType
   (compiler_ast_types.AstType.Struct (ci.intern "BackendGroupTest")))
 
+;; Packet-2 transport contracts: encoded names must be exact, signature-only
+;; groups must seed their physical metadata, and private MEMORY calls/params
+;; must copy bytes/address objects rather than loading word zero.
+(define (compiler-backend-private-abi-decoding-ok?) : bool
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [group0 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_group_m0__g0"))]
+    [group1 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_group_m1__g1"))]
+    [group2 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_group_m2__g2"))]
+    [group3 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_group_m3__g3"))]
+    [bad-group : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_group_m4__bad"))]
+    [double-mask-group : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_group_m01__bad"))]
+    [empty-group-key : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_group_m0__"))]
+    [memory24 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_mem_s24__m24"))]
+    [memory9 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_mem_s9__m9"))]
+    [bad-memory : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_mem_s0__bad"))]
+    [overflow-memory : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_mem_s9223372036854775808__overflow"))]
+    [ordinary : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_mem_s24_bad"))]
+    [empty-memory-key : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_mem_s24__"))]
+    [nondigit-memory : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_mem_sx__bad"))]
+    [negative-memory : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol "__tl_internal_abi_mem_s-1__bad"))]
+    [source-group-name : String "__tl_internal_abi_group_m2__source_collision"]
+    [source-memory-name : String "__tl_internal_abi_mem_s24__source_collision"]
+    [source-group : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct (ci.intern source-group-name))]
+    [source-memory : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct (ci.intern source-memory-name))]
+    (and
+      (= (compiler_backend.compiler-backend-abi-group-mask bases group0) 0)
+      (= (compiler_backend.compiler-backend-abi-group-mask bases group1) 1)
+      (= (compiler_backend.compiler-backend-abi-group-mask bases group2) 2)
+      (= (compiler_backend.compiler-backend-abi-group-mask bases group3) 3)
+      (= (compiler_backend.compiler-backend-abi-group-mask bases bad-group) -1)
+      (=
+        (compiler_backend.compiler-backend-abi-group-mask
+          bases
+          double-mask-group)
+        -1)
+      (=
+        (compiler_backend.compiler-backend-abi-group-mask bases empty-group-key)
+        -1)
+      (= (compiler_backend.compiler-backend-abi-memory-size bases memory24) 24)
+      (= (compiler_backend.compiler-backend-abi-memory-size bases memory9) 9)
+      (= (compiler_backend.compiler-backend-abi-memory-size bases bad-memory) 0)
+      (=
+        (compiler_backend.compiler-backend-abi-memory-size
+          bases
+          overflow-memory)
+        0)
+      (= (compiler_backend.compiler-backend-abi-memory-size bases ordinary) 0)
+      (=
+        (compiler_backend.compiler-backend-abi-memory-size
+          bases
+          empty-memory-key)
+        0)
+      (=
+        (compiler_backend.compiler-backend-abi-memory-size
+          bases
+          nondigit-memory)
+        0)
+      (=
+        (compiler_backend.compiler-backend-abi-memory-size
+          bases
+          negative-memory)
+        0)
+      (=
+        (compiler_backend.compiler-backend-abi-group-mask bases source-group)
+        -1)
+      (=
+        (compiler_backend.compiler-backend-abi-memory-size bases source-memory)
+        0)
+      (not
+        (compiler_regalloc.compiler-reg-private-memory-type?
+          bases
+          source-memory))
+      (string.eq
+        (compiler_backend.compiler-backend-aggregate-type-name
+          bases
+          source-group)
+        source-group-name)
+      (string.eq
+        (compiler_backend.compiler-backend-aggregate-type-name
+          bases
+          source-memory)
+        source-memory-name))))
+
+(define (compiler-backend-ir-owned-private-abi-ok?) : bool
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [group0-name : String "__tl_internal_abi_group_m0__ir_owned_6219_group0"]
+    [group2-name : String "__tl_internal_abi_group_m2__ir_owned_6219_group2"]
+    [memory24-name : String "__tl_internal_abi_mem_s24__ir_owned_6219_memory24"]
+    [group0-id : i64 (compiler_ir_types.compiler-ir-symbol group0-name)]
+    [group2-id : i64 (compiler_ir_types.compiler-ir-symbol group2-name)]
+    [memory24-id : i64 (compiler_ir_types.compiler-ir-symbol memory24-name)]
+    [group0 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct group0-id)]
+    [group2 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct group2-id)]
+    [memory24 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct memory24-id)]
+    [ordinary-id : i64 (ci.intern "Issue6219OrdinaryFallback")]
+    [composite-id : i64
+      (ci.intern-composite-pair-id
+        (ci.intern "Issue6219CompositeLeft")
+        (ci.intern "Issue6219CompositeRight"))]
+    [ordinary : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct ordinary-id)]
+    [composite : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct composite-id)]
+    [words0 : compiler_ir_types.CompilerIrValueList
+      (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.CompilerIrValue.I64 2)
+          compiler_ir_types.CompilerIrValueList.Nil))]
+    [words2 : compiler_ir_types.CompilerIrValueList
+      (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.CompilerIrValue.I64 3)
+        (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.CompilerIrValue.F64
+            (compiler-backend-test-f64-bits "2.5"))
+          compiler_ir_types.CompilerIrValueList.Nil))]
+    [instrs : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Pack 0 words0 group0)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Pack 1 words2 group2)
+          compiler_ir_types.CompilerIrInstrList.Nil))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "entry")
+          instrs)
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    [functions : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.CompilerIrFunction.Function
+          (compiler_ir_types.compiler-ir-symbol
+            "__tl_internal_abi_ir_owned_6219_fixture")
+          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ast_types.AstType.I64)
+          2
+          blocks)
+        compiler_ir_types.CompilerIrFunctionList.Nil)]
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        bases
+        functions
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    (and
+      (compiler_ir_types.compiler-ir-symbol-owned? group0-id)
+      (compiler_ir_types.compiler-ir-symbol-owned? group2-id)
+      (compiler_ir_types.compiler-ir-symbol-owned? memory24-id)
+      (not (= group0-id group2-id))
+      (string.eq
+        (compiler_backend.compiler-backend-aggregate-type-name bases group0)
+        group0-name)
+      (string.eq
+        (compiler_backend.compiler-backend-aggregate-type-name bases group2)
+        group2-name)
+      (string.eq
+        (compiler_backend.compiler-backend-aggregate-type-name bases memory24)
+        memory24-name)
+      (= (compiler_backend.compiler-backend-abi-group-mask bases group0) 0)
+      (= (compiler_backend.compiler-backend-abi-group-mask bases group2) 2)
+      (= (compiler_backend.compiler-backend-abi-memory-size bases memory24) 24)
+      (compiler_backend.compiler-backend-group-type? bases index group0)
+      (compiler_backend.compiler-backend-group-type? bases index group2)
+      (=
+        (compiler_backend.compiler-backend-group-word-count bases index group0)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-count bases index group2)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          group0)
+        0)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          group2)
+        2)
+      (compiler_regalloc.compiler-reg-private-memory-type? bases memory24)
+      (string.eq
+        (compiler_regalloc.compiler-reg-aggregate-type-name-with-seg-bases
+          bases
+          group0)
+        group0-name)
+      (string.eq
+        (compiler_regalloc.compiler-reg-aggregate-type-name-with-seg-bases
+          bases
+          group2)
+        group2-name)
+      (string.eq
+        (compiler_backend.compiler-backend-aggregate-type-name bases ordinary)
+        "Issue6219OrdinaryFallback")
+      (string.eq
+        (compiler_backend.compiler-backend-aggregate-type-name bases composite)
+        "Issue6219CompositeLeft/Issue6219CompositeRight")
+      (string.eq
+        (compiler_regalloc.compiler-reg-aggregate-type-name-with-seg-bases
+          bases
+          composite)
+        "Issue6219CompositeLeft/Issue6219CompositeRight"))))
+
+(define (compiler-backend-private-abi-signature-seeding-ok?) : bool
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [type0 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_group_m0__sig0"))]
+    [type1 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_group_m1__sig1"))]
+    [type2 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_group_m2__sig2"))]
+    [type3 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_group_m3__sig3"))]
+    [params : compiler_ir_types.CompilerIrParamList
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param "p0" type0 0)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param "p1" type1 1)
+          (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.CompilerIrParam.Param "p2" type2 2)
+            (compiler_ir_types.compiler-ir-param-cons
+              (compiler_ir_types.CompilerIrParam.Param "p3" type3 3)
+              compiler_ir_types.CompilerIrParamList.Nil))))]
+    [functions : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.CompilerIrFunction.Function
+          (ci.intern "private_group_signature")
+          params
+          type3
+          4
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionList.Nil)]
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        bases
+        functions
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    (and
+      (=
+        (compiler_backend.compiler-backend-group-word-count bases index type0)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          type0)
+        0)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          type1)
+        1)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          type2)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          type3)
+        3)
+      (compiler_backend.compiler-backend-group-word-sse? bases index type1 0)
+      (not
+        (compiler_backend.compiler-backend-group-word-sse? bases index type1 1))
+      (not
+        (compiler_backend.compiler-backend-group-word-sse? bases index type2 0))
+      (compiler_backend.compiler-backend-group-word-sse? bases index type2 1))))
+
+(define (compiler-backend-private-memory-transport-ok?) : bool
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [memory24 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_mem_s24__transport"))]
+    [memory9 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_mem_s9__transport"))]
+    [memory11 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_mem_s11__transport"))]
+    [types : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-cons
+        memory24
+        (compiler_ast_types.ast-type-list-new))]
+    [types9 : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-cons
+        memory9
+        (compiler_ast_types.ast-type-list-new))]
+    [types11 : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-cons
+        memory11
+        (compiler_ast_types.ast-type-list-new))]
+    [assignments : compiler_regalloc.CompilerRegAssignmentList
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+    [diag : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        bases
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    [memory40 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_mem_s40__indirect"))]
+    [source-array40 : compiler_ast_types.AstType
+      (compiler_ast_types.ast-ty-array (compiler_ast_types.AstType.U8) 40)]
+    [closure-type : compiler_ast_types.AstType
+      (compiler_ast_types.ast-ty-func
+        (compiler_ast_types.ast-type-cons
+          source-array40
+          (compiler_ast_types.ast-type-list-new))
+        (compiler_ast_types.AstType.I64))]
+    [dynamic-types : compiler_regalloc.CompilerRegVarTypes
+      (compiler_regalloc.compiler-reg-var-types-insert
+        (compiler_regalloc.compiler-reg-var-types-insert
+          (compiler_regalloc.compiler-reg-var-types-empty)
+          0
+          memory40)
+        2
+        closure-type)]
+    [dynamic-args : compiler_ir_types.CompilerIrCallArgs
+      (compiler_ir_types.CompilerIrCallArgs.One
+        (compiler_ir_types.CompilerIrValue.Var 0))]
+    [dynamic-instr : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.CallIndirect
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        dynamic-args
+        (compiler_ast_types.AstType.I64))]
+    [effective-dynamic-types : compiler_ast_types.AstTypeList
+      (compiler_backend.compiler-backend-effective-normal-indirect-param-types
+        bases
+        dynamic-types
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        dynamic-args
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil
+        index)]
+    [effective-dynamic-type : compiler_ast_types.AstType
+      (compiler_ast_types.ast-type-segment-bases-get
+        bases
+        (compiler_ast_types.ast-type-list-get
+          (& effective-dynamic-types)
+          0
+          (compiler_ast_types.ast-type-id-fallback)))]
+    [dynamic-outgoing-space : i64
+      (compiler_backend.compiler-backend-instr-outgoing-stack-space
+        bases
+        compiler_backend.CompilerBackendTarget.Linux
+        dynamic-instr
+        dynamic-types
+        index)]
+    [stack-count : i64
+      (compiler_backend.compiler-backend-call-stack-arg-count
+        bases
+        compiler_backend.CompilerBackendTarget.Linux
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Var 0))
+        types
+        false
+        0
+        0
+        0
+        0
+        0
+        index)]
+    [asm : compiler_backend.ResultCompilerBackend
+      (begin
+        (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
+          "%xmm11")
+        (compiler_backend.compiler-backend-emit-call-args
+          bases
+          compiler_backend.CompilerBackendTarget.Linux
+          assignments
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var 0))
+          types
+          false
+          0
+          0
+          0
+          0
+          0
+          "%r14"
+          diag
+          index
+          1
+          (struct-get index backend-state)))]
+    [asm-text : String
+      (match asm
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    [stack-count9 : i64
+      (compiler_backend.compiler-backend-call-stack-arg-count
+        bases
+        compiler_backend.CompilerBackendTarget.Linux
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Var 0))
+        types9
+        false
+        0
+        0
+        0
+        0
+        0
+        index)]
+    [asm9 : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-call-args
+        bases
+        compiler_backend.CompilerBackendTarget.Linux
+        assignments
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Var 0))
+        types9
+        false
+        0
+        0
+        0
+        0
+        0
+        "%r14"
+        diag
+        index
+        1
+        (struct-get index backend-state))]
+    [asm9-text : String
+      (match asm9
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    [stack-count11 : i64
+      (compiler_backend.compiler-backend-call-stack-arg-count
+        bases
+        compiler_backend.CompilerBackendTarget.Linux
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Var 0))
+        types11
+        false
+        0
+        0
+        0
+        0
+        0
+        index)]
+    [asm11 : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-call-args
+        bases
+        compiler_backend.CompilerBackendTarget.Linux
+        assignments
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Var 0))
+        types11
+        false
+        0
+        0
+        0
+        0
+        0
+        "%r14"
+        diag
+        index
+        1
+        (struct-get index backend-state))]
+    [asm11-text : String
+      (match asm11
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    [param-types : compiler_ir_types.CompilerIrParamList
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param "mem" memory24 0)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "scalar"
+            (compiler_ast_types.AstType.I64)
+            1)
+          compiler_ir_types.CompilerIrParamList.Nil))]
+    [param-assignments : compiler_regalloc.CompilerRegAssignmentList
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r13))
+          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+    [params-asm : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-param-spills
+        bases
+        compiler_backend.CompilerBackendTarget.Linux
+        param-assignments
+        param-types
+        0
+        0
+        0
+        0
+        index
+        2
+        (struct-get index backend-state))]
+    [_reset-xmm : unit
+      (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
+        "")]
+    [param-text : String
+      (match params-asm
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    (and
+      (= (compiler_ast_types.ast-type-list-len (& effective-dynamic-types)) 1)
+      (=
+        (compiler_backend.compiler-backend-abi-memory-size
+          bases
+          effective-dynamic-type)
+        40)
+      (string.eq
+        (compiler_backend.compiler-backend-aggregate-type-name
+          bases
+          effective-dynamic-type)
+        "__tl_internal_abi_mem_s40__indirect")
+      (>= dynamic-outgoing-space 40)
+      (= (% dynamic-outgoing-space 16) 0)
+      (= stack-count 3)
+      (= stack-count9 2)
+      (= stack-count11 2)
+      (compiler_backend.compiler-backend-string-contains?
+        asm-text
+        "    movq %r12, %r14\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm-text
+        "    movups (%r14), %xmm11\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm-text
+        "    movups %xmm11, 0(%rsp)\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm-text
+        "    movq 16(%r14), %xmm11\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm-text
+        "    movq %xmm11, 16(%rsp)\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm9-text
+        "    movb 8(%r14), %r14b\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm9-text
+        "    movb %r14b, 8(%rsp)\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          asm9-text
+          "    movd 8(%r14),"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          asm9-text
+          "    movd %xmm11, 8(%rsp)"))
+      (compiler_backend.compiler-backend-string-contains?
+        asm11-text
+        "    movq %r12, %r14\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm11-text
+        "    movw 8(%r14), %r14w\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm11-text
+        "    movw %r14w, 8(%rsp)\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm11-text
+        "    movq %r14, %xmm11\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm11-text
+        "    movq %xmm11, %r14\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm11-text
+        "    movb 10(%r14), %r14b\n")
+      (compiler_backend.compiler-backend-string-contains?
+        asm11-text
+        "    movb %r14b, 10(%rsp)\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          asm11-text
+          "    movd 8(%r14),"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          asm11-text
+          "    movd 10(%r14),"))
+      (compiler_backend.compiler-backend-string-contains?
+        param-text
+        "    movq %rdi, %r13\n")
+      (compiler_backend.compiler-backend-string-contains?
+        param-text
+        "    leaq 16(%rbp), %r12\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          param-text
+          "movq 16(%rbp),")))))
+
+(define (compiler-backend-private-memory-scratch-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+      [memory : compiler_ast_types.AstType
+        (compiler_ast_types.AstType.Struct
+          (compiler_ir_types.compiler-ir-symbol
+            "__tl_internal_abi_mem_s40__scratch"))]
+      [types : compiler_regalloc.CompilerRegVarTypes
+        (compiler_regalloc.compiler-reg-var-types-insert
+          (compiler_regalloc.compiler-reg-var-types-empty)
+          0
+          memory)]
+      [args : compiler_ir_types.CompilerIrCallArgs
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Var 0))]
+      [name : i64 (ci.intern "private_memory_scratch_callee")]
+      [params : compiler_ir_types.CompilerIrParamList
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param "mem" memory 0)
+          compiler_ir_types.CompilerIrParamList.Nil)]
+      [_index : compiler_backend.CompilerBackendProgramIndex
+        (compiler_backend.compiler-backend-program-index-build
+          bases
+          (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.CompilerIrFunction.Function
+              name
+              params
+              (compiler_ast_types.AstType.I64)
+              1
+              compiler_ir_types.CompilerIrBlockList.Nil)
+            compiler_ir_types.CompilerIrFunctionList.Nil)
+          compiler_ir_types.CompilerIrExternList.Nil)]
+      [indirect-slots : i64
+        (compiler_regalloc.compiler-reg-scratch-vreg-slots
+          bases
+          compiler_abi.CompilerRegTargetAbi.Linux
+          compiler_regalloc.CompilerRegAssignmentList.Nil
+          types
+          (compiler_ir_types.CompilerIrInstr.CallIndirect
+            1
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            args
+            (compiler_ast_types.AstType.I64))
+          (compiler_regalloc.compiler-reg-label-seq-empty)
+          (compiler_regalloc.compiler-reg-label-seq-empty)
+          false)]
+      [direct-slots : i64
+        (compiler_regalloc.compiler-reg-scratch-vreg-slots
+          bases
+          compiler_abi.CompilerRegTargetAbi.Linux
+          compiler_regalloc.CompilerRegAssignmentList.Nil
+          types
+          (compiler_ir_types.CompilerIrInstr.Call
+            1
+            name
+            args
+            (compiler_ast_types.AstType.I64))
+          (compiler_regalloc.compiler-reg-label-seq-empty)
+          (compiler_regalloc.compiler-reg-label-seq-empty)
+          false)]
+      [tail-slots : i64
+        (compiler_regalloc.compiler-reg-scratch-vreg-slots
+          bases
+          compiler_abi.CompilerRegTargetAbi.Linux
+          compiler_regalloc.CompilerRegAssignmentList.Nil
+          types
+          (compiler_ir_types.CompilerIrInstr.TailCall
+            name
+            args
+            (compiler_ast_types.AstType.I64))
+          (compiler_regalloc.compiler-reg-label-seq-empty)
+          (compiler_regalloc.compiler-reg-label-seq-empty)
+          false)]
+      (and (= indirect-slots 3) (= direct-slots 2) (= tail-slots 2)))
+    true))
+
 ;; Structural borrowed-slice ABI classification must not depend on a nominal
 ;; aggregate map entry.  The private type pool below has no Pack-producing
 ;; function, so the empty program index exercises the structural short-circuit
@@ -29304,6 +30036,639 @@
                 "    movq 24(%rbp), %rdx\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
+(define (compiler-backend-linux-atomic-int-group-type) : compiler_ast_types.AstType
+  (compiler_ast_types.AstType.Struct
+    (compiler_ir_types.compiler-ir-symbol
+      "__tl_internal_abi_group_m0__linux_atomic_int")))
+
+(define (compiler-backend-linux-atomic-mixed-group-type) : compiler_ast_types.AstType
+  (compiler_ast_types.AstType.Struct
+    (compiler_ir_types.compiler-ir-symbol
+      "__tl_internal_abi_group_m2__linux_atomic_mixed")))
+
+(define (compiler-backend-linux-atomic-group-index) : compiler_backend.CompilerBackendProgramIndex
+  (let
+    [int-group : compiler_ast_types.AstType
+      (compiler-backend-linux-atomic-int-group-type)]
+    [mixed-group : compiler_ast_types.AstType
+      (compiler-backend-linux-atomic-mixed-group-type)]
+    [params : compiler_ir_types.CompilerIrParamList
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param "ints" int-group 0)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param "mixed" mixed-group 1)
+          compiler_ir_types.CompilerIrParamList.Nil))]
+    (compiler_backend.compiler-backend-program-index-build
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.CompilerIrFunction.Function
+          (compiler_ir_types.compiler-ir-symbol
+            "__tl_internal_abi_linux_atomic_group_fixture")
+          params
+          (compiler_ast_types.AstType.I64)
+          2
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrFunctionList.Nil)
+      compiler_ir_types.CompilerIrExternList.Nil)))
+
+(define (compiler-backend-linux-atomic-pressure-types
+  [group : compiler_ast_types.AstType]
+  [tail? : bool]) : compiler_ast_types.AstTypeList
+  (let
+    [types : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-cons
+        group
+        (if tail?
+          (compiler_ast_types.ast-type-cons
+            (compiler_ast_types.AstType.I64)
+            (compiler_ast_types.ast-type-list-new))
+          (compiler_ast_types.ast-type-list-new)))]
+    [i : i64 5]
+    (begin
+      (while (> i 0)
+        (begin
+          (set!
+            types
+            (compiler_ast_types.ast-type-cons
+              (compiler_ast_types.AstType.I64)
+              types))
+          (set! i (- i 1))))
+      types)))
+
+(define (compiler-backend-linux-atomic-pressure-args [tail? : bool]) : compiler_ir_types.CompilerIrCallArgs
+  (let
+    [values : compiler_ir_types.CompilerIrValueList
+      (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (if tail?
+          (compiler_ir_types.compiler-ir-value-cons
+            (compiler_ir_types.CompilerIrValue.I64 16)
+            compiler_ir_types.CompilerIrValueList.Nil)
+          compiler_ir_types.CompilerIrValueList.Nil))]
+    [i : i64 5]
+    (begin
+      (while (> i 0)
+        (begin
+          (set!
+            values
+            (compiler_ir_types.compiler-ir-value-cons
+              (compiler_ir_types.CompilerIrValue.I64 (+ i 10))
+              values))
+          (set! i (- i 1))))
+      (compiler_ir_types.compiler-ir-call-args-from-list values))))
+
+(define (compiler-backend-linux-atomic-pressure-params
+  [group : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrParamList
+  (let
+    [params : compiler_ir_types.CompilerIrParamList
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param "group" group 0)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "tail"
+            (compiler_ast_types.AstType.I64)
+            6)
+          compiler_ir_types.CompilerIrParamList.Nil))]
+    [i : i64 5]
+    (begin
+      (while (> i 0)
+        (begin
+          (set!
+            params
+            (compiler_ir_types.compiler-ir-param-cons
+              (compiler_ir_types.CompilerIrParam.Param
+                (string.append "scalar" (string.int->string i))
+                (compiler_ast_types.AstType.I64)
+                i)
+              params))
+          (set! i (- i 1))))
+      params)))
+
+(define (compiler-backend-linux-atomic-pressure-memory-assignments) : compiler_regalloc.CompilerRegAssignmentList
+  (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Spill -8))
+    (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-rdi))
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rsi))
+        (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.CompilerRegAssignment
+            3
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-rdx))
+          (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.CompilerRegAssignment
+              4
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-rcx))
+            (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.CompilerRegAssignment
+                5
+                (compiler_regalloc.CompilerRegLocation.Register
+                  compiler_abi.compiler-reg-id-r8))
+              (compiler_regalloc.compiler-reg-assignment-cons
+                (compiler_regalloc.CompilerRegAssignment
+                  6
+                  (compiler_regalloc.CompilerRegLocation.Register
+                    compiler_abi.compiler-reg-id-r15))
+                compiler_regalloc.CompilerRegAssignmentList.Nil))))))))
+
+(define (compiler-backend-linux-atomic-group-allocation-ok?) : bool
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [target : compiler_backend.CompilerBackendTarget
+      compiler_backend.CompilerBackendTarget.Linux]
+    [int-group : compiler_ast_types.AstType
+      (compiler-backend-linux-atomic-int-group-type)]
+    [mixed-group : compiler_ast_types.AstType
+      (compiler-backend-linux-atomic-mixed-group-type)]
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler-backend-linux-atomic-group-index)]
+    [diag : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
+    [pressure-types : compiler_ast_types.AstTypeList
+      (compiler-backend-linux-atomic-pressure-types int-group true)]
+    [pressure-args : compiler_ir_types.CompilerIrCallArgs
+      (compiler-backend-linux-atomic-pressure-args true)]
+    [pressure-call-assignments : compiler_regalloc.CompilerRegAssignmentList
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.RegisterPair
+            compiler_abi.compiler-reg-id-r12
+            compiler_abi.compiler-reg-id-r13))
+        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+    [pressure-call-result : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-call-args
+        bases
+        target
+        pressure-call-assignments
+        pressure-args
+        pressure-types
+        false
+        0
+        0
+        0
+        0
+        0
+        "%r14"
+        diag
+        index
+        1
+        (struct-get index backend-state))]
+    [pressure-call : String
+      (match pressure-call-result
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    [pressure-param-assignments : compiler_regalloc.CompilerRegAssignmentList
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.RegisterPair
+            compiler_abi.compiler-reg-id-r12
+            compiler_abi.compiler-reg-id-r13))
+        (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.CompilerRegAssignment
+            6
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r15))
+          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+    [pressure-param-result : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-param-spills
+        bases
+        target
+        pressure-param-assignments
+        (compiler-backend-linux-atomic-pressure-params int-group)
+        0
+        0
+        0
+        0
+        index
+        7
+        (struct-get index backend-state))]
+    [pressure-param : String
+      (match pressure-param-result
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    [memory-param-assignments : compiler_regalloc.CompilerRegAssignmentList
+      (compiler-backend-linux-atomic-pressure-memory-assignments)]
+    [_memory-group-enable : unit
+      (begin
+        (compiler_backend.compiler-backend-current-slot-vars-set! 7)
+        (compiler_backend.compiler-backend-group-vars-enable!
+          (compiler_liveness.compiler-live-set1 0)
+          (compiler_liveness.compiler-live-set-empty)))]
+    [memory-param-result : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-param-spills
+        bases
+        target
+        memory-param-assignments
+        (compiler-backend-linux-atomic-pressure-params int-group)
+        0
+        0
+        0
+        0
+        index
+        7
+        (struct-get index backend-state))]
+    [memory-param : String
+      (match memory-param-result
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    [_memory-group-disable : unit
+      (compiler_backend.compiler-backend-group-vars-disable!)]
+    [mixed-types : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-cons
+        mixed-group
+        (compiler_ast_types.ast-type-list-new))]
+    [mixed-args : compiler_ir_types.CompilerIrCallArgs
+      (compiler_ir_types.CompilerIrCallArgs.One
+        (compiler_ir_types.CompilerIrValue.Var 0))]
+    [mixed-assignments : compiler_regalloc.CompilerRegAssignmentList
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.RegisterPair
+            compiler_abi.compiler-reg-id-r12
+            (compiler_abi.compiler-abi-xmm-register-id 3)))
+        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+    [mixed-call-result : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-call-args
+        bases
+        target
+        mixed-assignments
+        mixed-args
+        mixed-types
+        false
+        0
+        0
+        0
+        0
+        0
+        "%r14"
+        diag
+        index
+        1
+        (struct-get index backend-state))]
+    [mixed-call : String
+      (match mixed-call-result
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    [mixed-param-result : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-param-spills
+        bases
+        target
+        mixed-assignments
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param "mixed" mixed-group 0)
+          compiler_ir_types.CompilerIrParamList.Nil)
+        0
+        0
+        0
+        0
+        index
+        1
+        (struct-get index backend-state))]
+    [mixed-param : String
+      (match mixed-param-result
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    [exhausted-types : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-cons
+        mixed-group
+        (compiler_ast_types.ast-type-cons
+          (compiler_ast_types.AstType.F64)
+          (compiler_ast_types.ast-type-list-new)))]
+    [exhausted-args : compiler_ir_types.CompilerIrCallArgs
+      (compiler_ir_types.compiler-ir-call-args-from-list
+        (compiler_ir_types.compiler-ir-value-cons
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-value-cons
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            compiler_ir_types.CompilerIrValueList.Nil)))]
+    [exhausted-assignments : compiler_regalloc.CompilerRegAssignmentList
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.RegisterPair
+            compiler_abi.compiler-reg-id-r12
+            (compiler_abi.compiler-abi-xmm-register-id 3)))
+        (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Register
+              (compiler_abi.compiler-abi-xmm-register-id 4)))
+          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+    [exhausted-call-result : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-call-args
+        bases
+        target
+        exhausted-assignments
+        exhausted-args
+        exhausted-types
+        false
+        0
+        6
+        0
+        6
+        0
+        "%r14"
+        diag
+        index
+        2
+        (struct-get index backend-state))]
+    [exhausted-call : String
+      (match exhausted-call-result
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    [exhausted-param-result : compiler_backend.ResultCompilerBackend
+      (compiler_backend.compiler-backend-emit-param-spills
+        bases
+        target
+        exhausted-assignments
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param "mixed" mixed-group 0)
+          (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.CompilerIrParam.Param
+              "tail"
+              (compiler_ast_types.AstType.F64)
+              1)
+            compiler_ir_types.CompilerIrParamList.Nil))
+        6
+        0
+        6
+        0
+        index
+        2
+        (struct-get index backend-state))]
+    [exhausted-param : String
+      (match exhausted-param-result
+        [(compiler_backend.ResultCompilerBackend.Ok text) text]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    (and
+      (not
+        (compiler_backend.compiler-backend-linux-group-register-banks-fit?
+          bases
+          target
+          index
+          int-group
+          5
+          0
+          5))
+      (compiler_backend.compiler-backend-linux-group-register-banks-fit?
+        bases
+        target
+        index
+        mixed-group
+        0
+        0
+        0)
+      (not
+        (compiler_backend.compiler-backend-linux-group-register-banks-fit?
+          bases
+          target
+          index
+          mixed-group
+          6
+          0
+          6))
+      (not
+        (compiler_backend.compiler-backend-linux-group-register-banks-fit?
+          bases
+          target
+          index
+          mixed-group
+          0
+          8
+          8))
+      (=
+        (compiler_backend.compiler-backend-call-stack-arg-count
+          bases
+          target
+          pressure-args
+          pressure-types
+          false
+          0
+          0
+          0
+          0
+          0
+          index)
+        2)
+      (=
+        (compiler_backend.compiler-backend-type-list-stack-arg-count
+          bases
+          target
+          pressure-types
+          0
+          0
+          0
+          0
+          index)
+        2)
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-call
+        "    movl $11, %edi\n")
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-call
+        "    movl $12, %esi\n")
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-call
+        "    movl $13, %edx\n")
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-call
+        "    movl $14, %ecx\n")
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-call
+        "    movl $15, %r8d\n")
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-call
+        "    movq %r12, %r14\n    movq %r14, 0(%rsp)\n")
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-call
+        "    movq %r13, %r14\n    movq %r14, 8(%rsp)\n")
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-call
+        "    movl $16, %r9d\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          pressure-call
+          "    movq %r12, %r9\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          pressure-call
+          "    movq %r13, %r9\n"))
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-param
+        "    movq 16(%rbp), %r12\n")
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-param
+        "    movq 24(%rbp), %r13\n")
+      (compiler_backend.compiler-backend-string-contains?
+        pressure-param
+        "    movq %r9, %r15\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          pressure-param
+          "    movq %r9, %r12\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          pressure-param
+          "    movq %r9, %r13\n"))
+      (compiler_backend.compiler-backend-string-contains?
+        memory-param
+        "    movq %r9, %r15\n")
+      (<
+        (compiler_backend.compiler-backend-string-find-from
+          memory-param
+          "    movq %r9, %r15\n"
+          0)
+        (compiler_backend.compiler-backend-string-find-from
+          memory-param
+          "    movq 16(%rbp), "
+          0))
+      (compiler_backend.compiler-backend-string-contains?
+        memory-param
+        "    movq 16(%rbp), %r9\n    movq %r9, -8(%rbp)\n")
+      (compiler_backend.compiler-backend-string-contains?
+        memory-param
+        "    movq 24(%rbp), %r9\n    movq %r9, -16(%rbp)\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 16(%rbp), %rdi\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 16(%rbp), %rsi\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 16(%rbp), %rdx\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 16(%rbp), %rcx\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 16(%rbp), %r8\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 16(%rbp), %r15\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 24(%rbp), %rdi\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 24(%rbp), %rsi\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 24(%rbp), %rdx\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 24(%rbp), %rcx\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 24(%rbp), %r8\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          memory-param
+          "    movq 24(%rbp), %r15\n"))
+      (=
+        (compiler_backend.compiler-backend-call-stack-arg-count
+          bases
+          target
+          mixed-args
+          mixed-types
+          false
+          0
+          0
+          0
+          0
+          0
+          index)
+        0)
+      (compiler_backend.compiler-backend-string-contains?
+        mixed-call
+        "    movq %r12, %rdi\n")
+      (compiler_backend.compiler-backend-string-contains?
+        mixed-call
+        "    movsd %xmm3, %xmm0\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains? mixed-call "(%rsp)"))
+      (compiler_backend.compiler-backend-string-contains?
+        mixed-param
+        "    movq %rdi, %r12\n")
+      (compiler_backend.compiler-backend-string-contains?
+        mixed-param
+        "    movsd %xmm0, %xmm3\n")
+      (=
+        (compiler_backend.compiler-backend-call-stack-arg-count
+          bases
+          target
+          exhausted-args
+          exhausted-types
+          false
+          0
+          6
+          0
+          6
+          0
+          index)
+        2)
+      (=
+        (compiler_backend.compiler-backend-type-list-stack-arg-count
+          bases
+          target
+          exhausted-types
+          6
+          0
+          6
+          0
+          index)
+        2)
+      (compiler_backend.compiler-backend-string-contains?
+        exhausted-call
+        "    movq %r12, %r14\n    movq %r14, 0(%rsp)\n")
+      (compiler_backend.compiler-backend-string-contains?
+        exhausted-call
+        "    movq %xmm3, %r14\n    movq %r14, 8(%rsp)\n")
+      (compiler_backend.compiler-backend-string-contains?
+        exhausted-call
+        "    movsd %xmm4, %xmm0\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          exhausted-call
+          "    movsd %xmm3, %xmm0\n"))
+      (compiler_backend.compiler-backend-string-contains?
+        exhausted-param
+        "    movq 16(%rbp), %r12\n")
+      (compiler_backend.compiler-backend-string-contains?
+        exhausted-param
+        "    movsd 24(%rbp), %xmm3\n")
+      (compiler_backend.compiler-backend-string-contains?
+        exhausted-param
+        "    movsd %xmm0, %xmm4\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          exhausted-param
+          "    movsd %xmm0, %xmm3\n")))))
+
 (define (compiler-backend-stack-args-ok?) : bool
   (and
     (compiler-backend-stack-int-args-ok?)
@@ -29313,6 +30678,7 @@
     (compiler-backend-stack-f32-arg-bits-ok?)
     (compiler-backend-group-stack-f64-arg-bits-ok?)
     (compiler-backend-group-stack-param-no-return-stage-ok?)
+    (compiler-backend-linux-atomic-group-allocation-ok?)
     (compiler-backend-immediate-stack-call-args-ok?)))
 
 (define (compiler-backend-asm-function-body [asm : String] [symbol : String]) : String
@@ -38636,6 +40002,7 @@
         (compiler-backend-scratch-vreg-select-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-incomplete-group-fallback-ok?)
+        (compiler-backend-private-memory-scratch-ok?)
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-emit-current-count-gate-ok?)
@@ -38663,6 +40030,10 @@
         (compiler-backend-implicit-main-ok?))
       (and
         (compiler-backend-aggregate-ok?)
+        (compiler-backend-private-abi-decoding-ok?)
+        (compiler-backend-ir-owned-private-abi-ok?)
+        (compiler-backend-private-abi-signature-seeding-ok?)
+        (compiler-backend-private-memory-transport-ok?)
         (compiler-backend-slice-reference-abi-classifiers-ok?)
         (compiler-backend-slice-reference-abi-registers-ok?)
         (compiler-backend-pack-immediate-word-shape-ok?)

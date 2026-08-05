@@ -15,6 +15,7 @@
 (import compiler_optimize)
 (import sym_i64_env)
 (cfg test (import stdlib.test))
+(cfg test (import compiler_intern as ci))
 
 (defenum CompilerWindowsCoffLinkability
   (Linkable)
@@ -132,6 +133,7 @@
       input-path)))
 
 (define (compiler-windows-batch-emit-assembly
+  [backend-state : compiler_backend.CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
@@ -143,7 +145,8 @@
     (cfg
       compile-profile
       (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
-    (match (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
+    (match (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
+      backend-state
       pools
       program
       (compiler_backend.CompilerBackendTarget.Windows)
@@ -235,14 +238,20 @@
               (set! index (+ index 1))))
           supported))]))
 
-(define (compiler-windows-coff-object-call-supported? [name : i64]) : bool
+(define (compiler-windows-coff-object-call-supported?
+  [backend-state : compiler_backend.CompilerBackendState]
+  [name : i64]) : bool
   (let
-    [text : String (compiler_ir_types.compiler-ir-symbol-text name)]
+    [text : String
+      (compiler_backend.compiler-backend-symbol-text-state backend-state name)]
     (and
       (not
         (compiler_backend.compiler-backend-stdlib-runtime-function-name? text))
       (not (compiler_backend.compiler-backend-string-prefix-at? text "tl_" 0))
-      (not (compiler_backend.compiler-backend-fixed-fault-symbol-id? name)))))
+      (not
+        (compiler_backend.compiler-backend-fixed-fault-symbol-id?
+          backend-state
+          name)))))
 
 ;; Object-image lowering is deliberately incremental. The COFF encoder can
 ;; serialize every byte record produced by the cases below, but several IR
@@ -250,6 +259,7 @@
 ;; emitter. Do not mistake an encodable image for a semantically complete one:
 ;; keep those programs on the assembly path until their object lowering lands.
 (define (compiler-windows-coff-object-instr-supported?
+  [backend-state : compiler_backend.CompilerBackendState]
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (match instr
     [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
@@ -267,7 +277,7 @@
           [_ true]))]
     [(compiler_ir_types.CompilerIrInstr.Call _ name args _)
       (and
-        (compiler-windows-coff-object-call-supported? name)
+        (compiler-windows-coff-object-call-supported? backend-state name)
         (compiler-windows-coff-object-call-args-supported? args))]
     [(compiler_ir_types.CompilerIrInstr.CallIndirect _ _ _ _) false]
     [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ callee args _)
@@ -335,25 +345,32 @@
 
 (test
   compiler-windows-coff-total-enum-control-flow-falls-back
-  (begin
-    (test.assert-false
-      (compiler-windows-coff-object-instr-supported?
-        (compiler_ir_types.CompilerIrInstr.TotalEnumBranch
-          (compiler_ir_types.CompilerIrValue.I64 0)
-          1
-          2))
-      "total enum branches stay on the assembly path")
-    (test.assert-false
-      (compiler-windows-coff-object-instr-supported?
-        (compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
-          (compiler_ir_types.CompilerIrValue.I64 0)
-          0
-          compiler_ir_types.CompilerIrSwitchCaseList.Nil
-          1
-          2))
-      "total enum switches stay on the assembly path")))
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (begin
+      (test.assert-false
+        (compiler-windows-coff-object-instr-supported?
+          backend-state
+          (compiler_ir_types.CompilerIrInstr.TotalEnumBranch
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            1
+            2))
+        "total enum branches stay on the assembly path")
+      (test.assert-false
+        (compiler-windows-coff-object-instr-supported?
+          backend-state
+          (compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            0
+            compiler_ir_types.CompilerIrSwitchCaseList.Nil
+            1
+            2))
+        "total enum switches stay on the assembly path"))))
 
 (define (compiler-windows-coff-object-instrs-supported?
+  [backend-state : compiler_backend.CompilerBackendState]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
   (let
     [index : i64 0]
@@ -365,11 +382,13 @@
           (set!
             supported
             (compiler-windows-coff-object-instr-supported?
+              backend-state
               (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
           (set! index (+ index 1))))
       supported)))
 
 (define (compiler-windows-coff-object-blocks-supported?
+  [backend-state : compiler_backend.CompilerBackendState]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) true]
@@ -377,8 +396,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (and
-            (compiler-windows-coff-object-instrs-supported? instrs)
-            (compiler-windows-coff-object-blocks-supported? (box-get rest)))])]
+            (compiler-windows-coff-object-instrs-supported?
+              backend-state
+              instrs)
+            (compiler-windows-coff-object-blocks-supported?
+              backend-state
+              (box-get rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (let
         [index : i64 0]
@@ -391,11 +414,14 @@
                 [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
                   (set!
                     supported
-                    (compiler-windows-coff-object-instrs-supported? instrs))])
+                    (compiler-windows-coff-object-instrs-supported?
+                      backend-state
+                      instrs))])
               (set! index (+ index 1))))
           supported))]))
 
 (define (compiler-windows-coff-object-functions-supported?
+  [backend-state : compiler_backend.CompilerBackendState]
   [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
   (match functions
     [(compiler_ir_types.CompilerIrFunctionList.Nil) true]
@@ -405,9 +431,15 @@
           (and
             (or
               (compiler_backend.compiler-backend-stdlib-runtime-function-name?
-                (compiler_ir_types.compiler-ir-symbol-text name))
-              (compiler-windows-coff-object-blocks-supported? blocks))
-            (compiler-windows-coff-object-functions-supported? (box-get rest)))])]
+                (compiler_backend.compiler-backend-symbol-text-state
+                  backend-state
+                  name))
+              (compiler-windows-coff-object-blocks-supported?
+                backend-state
+                blocks))
+            (compiler-windows-coff-object-functions-supported?
+              backend-state
+              (box-get rest)))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (let
         [index : i64 0]
@@ -427,18 +459,26 @@
                     supported
                     (or
                       (compiler_backend.compiler-backend-stdlib-runtime-function-name?
-                        (compiler_ir_types.compiler-ir-symbol-text name))
-                      (compiler-windows-coff-object-blocks-supported? blocks)))])
+                        (compiler_backend.compiler-backend-symbol-text-state
+                          backend-state
+                          name))
+                      (compiler-windows-coff-object-blocks-supported?
+                        backend-state
+                        blocks)))])
               (set! index (+ index 1))))
           supported))]))
 
 (define (compiler-windows-coff-object-program-supported?
+  [backend-state : compiler_backend.CompilerBackendState]
   [program : compiler_ir_types.CompilerIrProgram]) : bool
   (match program
     [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-      (compiler-windows-coff-object-functions-supported? functions)]))
+      (compiler-windows-coff-object-functions-supported?
+        backend-state
+        functions)]))
 
 (define (compiler-windows-batch-emit-optimized
+  [backend-state : compiler_backend.CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
@@ -448,6 +488,7 @@
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
   (if force-assembly
     (compiler-windows-batch-emit-assembly
+      backend-state
       pools
       input-path
       program
@@ -455,8 +496,10 @@
       mode
       "forced-assembly"
       profile-state)
-    (if (not (compiler-windows-coff-object-program-supported? program))
+    (if (not
+      (compiler-windows-coff-object-program-supported? backend-state program))
       (compiler-windows-batch-emit-assembly
+        backend-state
         pools
         input-path
         program
@@ -469,7 +512,8 @@
           compile-profile
           (compiler_driver_core.compiler-driver-profile-start-phase
             profile-state))
-        (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
+        (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          backend-state
           pools
           program
           (compiler_backend.CompilerBackendTarget.Windows)
@@ -522,6 +566,7 @@
                                 message))))]))]
                 [(CompilerWindowsCoffLinkability.Unavailable category)
                   (compiler-windows-batch-emit-assembly
+                    backend-state
                     pools
                     input-path
                     program
@@ -542,6 +587,7 @@
                 (compiler-windows-batch-backend-diagnostic input-path diag)))])))))
 
 (define (compiler-windows-batch-emit-lowered
+  [backend-state : compiler_backend.CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
@@ -585,9 +631,11 @@
                   (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
                     input-path)))
               (begin
-                (compiler_backend.compiler-backend-set-scalar-registers!
+                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                  backend-state
                   (>= opt-level 2))
                 (compiler-windows-batch-emit-optimized
+                  backend-state
                   pools
                   input-path
                   optimized
@@ -607,7 +655,8 @@
         program
         spans
         pools
-        profile-state)
+        profile-state
+        backend-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
@@ -626,6 +675,7 @@
               (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
               unit)
             (compiler-windows-batch-emit-lowered
+              backend-state
               pools
               input-path
               emit-program

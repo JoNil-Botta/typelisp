@@ -1973,18 +1973,28 @@
 ;; them for every later entry. Materialize them once before the first measured
 ;; entry so that persistent compiler infrastructure is part of the batch
 ;; baseline instead of being misattributed as leaked entry state.
-(define (compile-cli-batch-persistent-table-storage-ensure!) : unit
-  (begin
-    (backend.compiler-backend-peephole-carry-safe-reset!)
-    (backend.compiler-backend-peephole-owner-global-reset!)
-    (backend.compiler-backend-slot-cache-reset!)
-    (tc_core.tc-type-needs-resolution-storage-ensure!)
-    (tc_core.tc-agg-size-cache-storage-ensure!)
-    (tc_core.tc-agg-align-cache-storage-ensure!)
-    (tc_core.tc-agg-regwords-cache-storage-ensure!)
-    (tc_core.tc-lazy-import-stub-storage-ensure!)
-    (tc_core.tc-agg-layout-cache-table-storage-ensure!)
-    (tc_core.macro-unqualified-import-cache-storage-ensure!)))
+(define (compile-cli-batch-persistent-table-storage-ensure!
+  [state : compiler_driver_core.CompilerDriverState]) : unit
+  (let
+    [backend-state : backend.CompilerBackendState
+      (compiler_driver_core.compiler-driver-state-backend state)]
+    (begin
+      (backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
+        backend-state)
+      (backend.compiler-backend-peephole-owner-global-reset-with-backend-state!
+        backend-state)
+      (backend.compiler-backend-state-slot-frame-cache-storage-ensure!
+        backend-state)
+      (backend.compiler-backend-state-immediate-cache-storage-ensure!
+        backend-state)
+      (backend.compiler-backend-state-slot-cache-reset! backend-state)
+      (tc_core.tc-type-needs-resolution-storage-ensure!)
+      (tc_core.tc-agg-size-cache-storage-ensure!)
+      (tc_core.tc-agg-align-cache-storage-ensure!)
+      (tc_core.tc-agg-regwords-cache-storage-ensure!)
+      (tc_core.tc-lazy-import-stub-storage-ensure!)
+      (tc_core.tc-agg-layout-cache-table-storage-ensure!)
+      (tc_core.macro-unqualified-import-cache-storage-ensure!))))
 
 (define (compile-cli-run-batch-entries
   [state : compiler_driver_core.CompilerDriverState]
@@ -1996,7 +2006,7 @@
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (begin
-    (compile-cli-batch-persistent-table-storage-ensure!)
+    (compile-cli-batch-persistent-table-storage-ensure! state)
     (compile-cli-run-batch-entries-from
       state
       (& entries)
@@ -2201,7 +2211,7 @@
   [opt-level : i64]) : i64
   (let
     [results : cli_svec.Vec (cli_svec.new)]
-    [_tables : unit (compile-cli-batch-persistent-table-storage-ensure!)]
+    [_tables : unit (compile-cli-batch-persistent-table-storage-ensure! state)]
     [status : i64
       (compile-cli-run-windows-batch-entries-from
         state

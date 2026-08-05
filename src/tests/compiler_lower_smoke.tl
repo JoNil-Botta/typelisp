@@ -315,7 +315,7 @@
         (compiler_driver_core.compiler-driver-target-cfgs
           (backend.CompilerBackendTarget.Linux)
           (parser.compiler-cfg-empty)))
-        [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _) true]
+        [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _) true]
         [(compiler_driver_core.ResultCompilerDriverLowered.Err _) false]))))
 
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source) : String

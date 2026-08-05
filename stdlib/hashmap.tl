@@ -25,7 +25,12 @@
 ;# paths need the absent slot or the first tombstone it carries. `find-index`
 ;# reports "no such key" as -1 and keeps the probe order, wrap rule and
 ;# terminating bound of `probe` exactly, so lookup, containment and removal see
-;# the same slot for the same table state.
+;# the same slot for the same table state. The scalar `get`/`get-borrowed` pair
+;# emits that same probe inline and yields the value from the slot it stopped
+;# on: routing them through `find-index` paid a call, then re-derived the slot
+;# array, repeated a bounds check and re-matched a state the probe had already
+;# decided. The probe order and hash are shared with `find-index`, so the two
+;# still agree on every slot, and no iteration order moves.
 ;#
 ;# The scalar scan loops bound themselves by wrap detection -- the cursor
 ;# returning to the slot it started at -- instead of a separate step counter.
@@ -601,20 +606,74 @@
             (hash-key key))
             [(GeneratedHashmapProbe.Found index) index]
             [_ -1])))]
-    [get-borrowed-body : comptime.Expr
+    ;; Scalar lookup walks the probe itself rather than routing through
+    ;; `find-index` and then re-deriving the slot from the returned index.
+    ;; `find-index` only ever reports a slot it has already classified Occupied
+    ;; with a matching key, so the bounds check `array-ref` repeats and the
+    ;; state re-match after it are both provably redundant, and the index round
+    ;; trip costs a call besides. The probe order, hash, wrap rule and
+    ;; terminating bound below are the ones `find-index` uses, character for
+    ;; character, so a key resolves to the same slot and iteration order is
+    ;; untouched.
+    [scalar-lookup-body : comptime.Expr
       `(let
-        [index : i64 (find-index map key)]
-        (if (< index 0)
+        [slots : (& map (Array GeneratedHashmapSlot))
+          (& (struct-get map slots))]
+        [data : (Ptr GeneratedHashmapSlot)
+          (unsafe
+            (ptr-cast
+              (array-data (struct-get map slots))
+              : (Ptr GeneratedHashmapSlot)))]
+        [cap : i64 (array_ops.length slots)]
+        (if (<= cap 0)
           (LookupMissing)
           (let
-            [slot : GeneratedHashmapSlot
-              (array-ref (struct-get map slots) index)]
-            (match (struct-get slot state)
-              [GeneratedHashmapSlotState.Occupied
-                (let
-                  [value : ,V (struct-get slot value)]
-                  (LookupFound ,value-copy))]
-              [_ (LookupMissing)]))))]
+            [mask : i64 (- cap 1)]
+            [cursor : i64 (bit-and (* key 6364136223846793005) mask)]
+            [start : i64 cursor]
+            (begin
+              (while true
+                (begin
+                  (let
+                    [slot : GeneratedHashmapSlot
+                      (unsafe
+                        (ptr-read (ptr-offset data cursor)))]
+                    (match (struct-get slot state)
+                      [GeneratedHashmapSlotState.Occupied
+                        (if (= (struct-get slot key) key)
+                          (return (LookupFound (struct-get slot value)))
+                          (set! cursor (bit-and (+ cursor 1) mask)))]
+                      [GeneratedHashmapSlotState.Empty (return (LookupMissing))]
+                      [GeneratedHashmapSlotState.Tombstone
+                        (set! cursor (bit-and (+ cursor 1) mask))]))
+                  (if (= cursor start)
+                    (return (LookupMissing))
+                    unit)))
+              (LookupMissing)))))]
+    [get-borrowed-body : comptime.Expr
+      (if scalar-family
+        scalar-lookup-body
+        `(let
+          [index : i64 (find-index map key)]
+          (if (< index 0)
+            (LookupMissing)
+            (let
+              [slot : GeneratedHashmapSlot
+                (array-ref (struct-get map slots) index)]
+              (match (struct-get slot state)
+                [GeneratedHashmapSlotState.Occupied
+                  (let
+                    [value : ,V (struct-get slot value)]
+                    (LookupFound ,value-copy))]
+                [_ (LookupMissing)])))))]
+    ;; `get` and `get-borrowed` take the same argument for a scalar key, so the
+    ;; owned entry point is the borrowed one; emitting the probe rather than a
+    ;; forwarding call keeps the 31M-per-self-compile owned lookups off a frame
+    ;; adjust and a jump that exist only to rename the parameter.
+    [get-body : comptime.Expr
+      (if scalar-family
+        scalar-lookup-body
+        `(get-borrowed map ,owned-query-key))]
     [get-value-borrowed-body : comptime.Expr
       `(let
         [index : i64 (find-index map key)]
@@ -890,7 +949,7 @@
         (define (get-borrowed [map : (& map Map)] [key : ,query-key-type]) : Lookup
           ,get-borrowed-body)
         (define (get [map : (& map Map)] [key : ,K]) : Lookup
-          (get-borrowed map ,owned-query-key))
+          ,get-body)
         (define (get-value-or [map : (& map Map)] [key : ,K] [fallback : ,V]) : ,V
           ,get-value-or-body)
         (define (borrowed-value-missing [_map : (& map Map)]) : (BorrowedValueLookup

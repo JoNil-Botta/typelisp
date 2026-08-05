@@ -5490,13 +5490,16 @@
   (unsafe
     (ptr-read (ptr-cast (ptr-offset data index) : (Ptr i64)))))
 
+;; The weighted trigram sum is at most 255*251 + 255*31 + 255 = 72165 and never
+;; negative, so masking with 65535 reproduces the `% 65536` bucket exactly while
+;; avoiding the signed-remainder sequence the modulo lowers to.
 (define (ctfe-embedded-stdlib-lzss-hash [data : (Ptr u8)] [index : i64]) : i64
-  (%
+  (bit-and
     (+
       (* (ctfe-embedded-stdlib-lzss-byte data index) 251)
       (* (ctfe-embedded-stdlib-lzss-byte data (+ index 1)) 31)
       (ctfe-embedded-stdlib-lzss-byte data (+ index 2)))
-    65536))
+    65535))
 
 (define (ctfe-embedded-stdlib-array-fill!
   [items : (&mut items (__tl_dyn-array i64))]
@@ -5508,38 +5511,58 @@
         (array-set! items index value)
         (set! index (+ index 1))))))
 
+;; `head` and `previous` are the raw element storage of the two index arrays the
+;; compressor owns for the length of one compression. Both subscripts are
+;; statically in range: the hash is masked to 0..65535 and `head` has 65536
+;; slots, and the guard above keeps `index` inside 0..source-len-3 while
+;; `previous` has source-len slots.
 (define (ctfe-embedded-stdlib-lzss-insert!
   [data : (Ptr u8)]
   [source-len : i64]
-  [head : (&mut head (__tl_dyn-array i64))]
-  [previous : (&mut previous (__tl_dyn-array i64))]
+  [head : (MutPtr i64)]
+  [previous : (MutPtr i64)]
   [index : i64]) : unit
   (if (> (+ index 2) (- source-len 1))
     unit
     (let
-      [hash : i64 (ctfe-embedded-stdlib-lzss-hash data index)]
-      (begin
-        (array-set! previous index (array-ref head hash))
-        (array-set! head hash index)))))
+      [slot : (MutPtr i64)
+        (unsafe
+          (ptr-offset head (ctfe-embedded-stdlib-lzss-hash data index)))]
+      (unsafe
+        (begin
+          (ptr-write! (ptr-offset previous index) (ptr-read slot))
+          (ptr-write! slot index))))))
 
+;; Same stores as calling insert! for each position in the range, with the
+;; per-position guard turned into the loop bound: insert! indexes exactly the
+;; positions with index + 2 <= source-len - 1, that is index < source-len - 2.
 (define (ctfe-embedded-stdlib-lzss-insert-range!
   [data : (Ptr u8)]
   [source-len : i64]
-  [head : (&mut head (__tl_dyn-array i64))]
-  [previous : (&mut previous (__tl_dyn-array i64))]
+  [head : (MutPtr i64)]
+  [previous : (MutPtr i64)]
   [start : i64]
   [count : i64]) : unit
   (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (ctfe-embedded-stdlib-lzss-insert!
-          data
-          source-len
-          head
-          previous
-          (+ start index))
-        (set! index (+ index 1))))))
+    [index : i64 start]
+    [limit : i64 (- source-len 2)]
+    [end : i64
+      (let
+        [stop : i64 (+ start count)]
+        (if (< stop limit)
+          stop
+          limit))]
+    (while (< index end)
+      (let
+        [slot : (MutPtr i64)
+          (unsafe
+            (ptr-offset head (ctfe-embedded-stdlib-lzss-hash data index)))]
+        (begin
+          (unsafe
+            (begin
+              (ptr-write! (ptr-offset previous index) (ptr-read slot))
+              (ptr-write! slot index)))
+          (set! index (+ index 1)))))))
 
 ;; Longest common prefix of the candidate and cursor spans, capped by `cap`
 ;; (= min(18, source-len - index)). Words compare 8 bytes at a time; the byte
@@ -5573,14 +5596,16 @@
 (define (ctfe-embedded-stdlib-lzss-find-match
   [data : (Ptr u8)]
   [source-len : i64]
-  [head : (& head (__tl_dyn-array i64))]
-  [previous : (& previous (__tl_dyn-array i64))]
+  [head : (Ptr i64)]
+  [previous : (Ptr i64)]
   [index : i64]) : CtfeEmbeddedStdlibLzssMatch
   (if (> (+ index 2) (- source-len 1))
     (CtfeEmbeddedStdlibLzssMatch 0 0)
     (let
-      [hash : i64 (ctfe-embedded-stdlib-lzss-hash data index)]
-      [candidate : i64 (array-ref head hash)]
+      [candidate : i64
+        (unsafe
+          (ptr-read
+            (ptr-offset head (ctfe-embedded-stdlib-lzss-hash data index))))]
       [best-offset : i64 0]
       [best-len : i64 0]
       [cap : i64
@@ -5589,31 +5614,68 @@
           (if (< avail 18)
             avail
             18))]
+      ;; `floor` folds the two chain-walk stops into one compare: a chain link
+      ;; is -1 at the end, so `candidate >= max(0, index-4096)` holds exactly
+      ;; when the old `candidate >= 0` and `index - candidate <= 4096` both did.
+      [floor : i64
+        (let
+          [oldest : i64 (- index 4096)]
+          (if (< oldest 0)
+            0
+            oldest))]
+      ;; A local view of the chain array: reading it through the parameter
+      ;; keeps reloading the spilled pointer inside the scan below.
+      [chain : (Ptr i64)
+        (unsafe
+          (ptr-offset previous 0))]
       (begin
-        ;; best-len < cap bounds every filter read (index+best-len < source-len)
-        ;; and exits once no candidate can improve the match; the replaced
-        ;; best-len < 18 condition kept walking candidates that could not win.
-        (while (and
-          (>= candidate 0)
-          (<= (- index candidate) 4096)
-          (< best-len cap))
-          (begin
-            ;; A candidate can only beat best-len by matching at offset
-            ;; best-len too, so one byte probe skips most full scans without
-            ;; changing which candidate wins.
-            (when
-              (=
-                (ctfe-embedded-stdlib-lzss-byte data (+ candidate best-len))
-                (ctfe-embedded-stdlib-lzss-byte data (+ index best-len)))
-              (let
-                [length : i64
-                  (ctfe-embedded-stdlib-lzss-match-len data cap candidate index)]
-                (when
-                  (> length best-len)
+        ;; best-len < cap exits once no candidate can improve the match; the
+        ;; replaced best-len < 18 condition kept walking candidates that could
+        ;; not win. It also bounds both reads below: index+best-len is under
+        ;; source-len whenever the body runs.
+        (while (< best-len cap)
+          (let
+            ;; The cursor side of the one-byte filter is fixed for the whole
+            ;; scan, so hoist the read out of it.
+            [probe : i64
+              (ctfe-embedded-stdlib-lzss-byte data (+ index best-len))]
+            (begin
+              ;; A candidate can only beat best-len by matching at offset
+              ;; best-len too, so one byte probe skips most full scans without
+              ;; changing which candidate wins. Rejected candidates leave every
+              ;; other loop variable alone, so the scan for the next surviving
+              ;; candidate is its own loop over `candidate` -- that keeps the
+              ;; ~94% of chain links that lose the probe off the merge path the
+              ;; wider loop needs for best-len and best-offset.
+              (while (and
+                (>= candidate floor)
+                (not
+                  (=
+                    (ctfe-embedded-stdlib-lzss-byte data (+ candidate best-len))
+                    probe)))
+                (set!
+                  candidate
+                  (unsafe
+                    (ptr-read (ptr-offset chain candidate)))))
+              (if (< candidate floor)
+                (return (CtfeEmbeddedStdlibLzssMatch best-offset best-len))
+                (let
+                  [length : i64
+                    (ctfe-embedded-stdlib-lzss-match-len
+                      data
+                      cap
+                      candidate
+                      index)]
                   (begin
-                    (set! best-len length)
-                    (set! best-offset (- index candidate))))))
-            (set! candidate (array-ref previous candidate))))
+                    (when
+                      (> length best-len)
+                      (begin
+                        (set! best-len length)
+                        (set! best-offset (- index candidate))))
+                    (set!
+                      candidate
+                      (unsafe
+                        (ptr-read (ptr-offset chain candidate))))))))))
         (CtfeEmbeddedStdlibLzssMatch best-offset best-len)))))
 
 (define (ctfe-embedded-stdlib-lzss-compress [source : String]) : String
@@ -5627,6 +5689,21 @@
     ;; written by insert! (head points at an inserted index, and previous[i]
     ;; is stored when i is inserted), so its initial contents are never read.
     [previous : (__tl_dyn-array i64) (array.make-array i64 source-len)]
+    ;; Both index arrays keep a fixed length for the whole compression, so their
+    ;; element storage never moves and the raw views below stay valid until the
+    ;; owners drop at the end of this let.
+    [head-slots : (MutPtr i64)
+      (unsafe
+        (array-data head))]
+    [previous-slots : (MutPtr i64)
+      (unsafe
+        (array-data previous))]
+    [head-view : (Ptr i64)
+      (unsafe
+        (ptr-cast head-slots : (Ptr i64)))]
+    [previous-view : (Ptr i64)
+      (unsafe
+        (ptr-cast previous-slots : (Ptr i64)))]
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity
         (+ source-len (+ (/ source-len 8) 1)))]
@@ -5644,8 +5721,8 @@
               (match (ctfe-embedded-stdlib-lzss-find-match
                 data
                 source-len
-                (& head)
-                (& previous)
+                head-view
+                previous-view
                 index)
                 [(CtfeEmbeddedStdlibLzssMatch offset length)
                   (if (>= length 3)
@@ -5661,8 +5738,8 @@
                         (ctfe-embedded-stdlib-lzss-insert-range!
                           data
                           source-len
-                          (&mut head)
-                          (&mut previous)
+                          head-slots
+                          previous-slots
                           index
                           length)
                         (set! index (+ index length))))
@@ -5674,8 +5751,8 @@
                       (ctfe-embedded-stdlib-lzss-insert!
                         data
                         source-len
-                        (&mut head)
-                        (&mut previous)
+                        head-slots
+                        previous-slots
                         index)
                       (set! index (+ index 1))))])
               (set! bit (+ bit 1)))

@@ -11266,10 +11266,98 @@
 (define compiler-backend-slot-cache-capacity : i64
   16384)
 
+;; "Does this function's plan home a value in register R" is a per-function,
+;; per-REGISTER constant: the emitted assignment list is fixed before body
+;; emission (every re-plan stage -- caller-save, loop-split, remat, scratch-vreg,
+;; slot coloring -- is already folded into it, exactly as for the dense operand
+;; index above). The prologue/epilogue, frame layout, callee-save and FPO paths
+;; ask it tens of times per function, and each ask used to re-walk the whole
+;; list through `compiler-reg-location-uses-register?` (two ownership-id folds
+;; per node). Fold the list ONCE per function into a register bitmask instead.
+;;
+;; The bit index is the register's OWNERSHIP id (`compiler-abi-registers-overlap?`'s
+;; equivalence class: a vec id folds onto its xmm sibling), so the mask answers
+;; exactly what the walk answered, overlap included. Ownership ids live in
+;; 0..15 (GP) and 32..63 (XMM family); mask registers (96..) fall outside the
+;; word, so they are simply not recorded -- sound, because a location whose
+;; ownership id is outside the word can never equal a query inside it, and a
+;; query outside the word falls back to the walk.
+;;
+;; Ownership folding is the IDENTITY on every id the word covers -- GP ids are
+;; their own class and an xmm id is its own class representative -- so ids
+;; already inside 0..63 take the bit directly and only a vec id (64..95) pays
+;; the fold onto its xmm sibling.
+(define (compiler-backend-plan-reg-id-bit [reg : i64]) : i64
+  (if (and (>= reg 0) (< reg 64))
+    (shl 1 reg)
+    (let
+      [own : i64 (compiler_abi.compiler-abi-register-ownership-id reg)]
+      (if (and (>= own 0) (< own 64))
+        (shl 1 own)
+        0))))
+
+(define (compiler-backend-plan-location-reg-mask
+  [location : compiler_regalloc.CompilerRegLocation]) : i64
+  (match location
+    [(compiler_regalloc.CompilerRegLocation.Register reg)
+      (compiler-backend-plan-reg-id-bit reg)]
+    [(compiler_regalloc.CompilerRegLocation.RegisterPair a b)
+      (bit-or
+        (compiler-backend-plan-reg-id-bit a)
+        (compiler-backend-plan-reg-id-bit b))]
+    [_ 0]))
+
+(define (compiler-backend-plan-reg-mask-of
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [mask : i64]) : i64
+  (match assignments
+    [(compiler_regalloc.CompilerRegAssignmentList.Nil) mask]
+    [(compiler_regalloc.CompilerRegAssignmentList.Cons item rest)
+      (compiler-backend-plan-reg-mask-of
+        (box-get rest)
+        (bit-or
+          mask
+          (compiler-backend-plan-location-reg-mask (struct-get item location))))]))
+
+(define compiler-backend-emit-plan-reg-mask : i64
+  0)
+
+;; `active` gates the fast path exactly as the dense operand index does, and it
+;; has the same lifetime: installed from the final list alongside that index and
+;; cleared with it in compiler-backend-clear-function-emit-state!. Clearing is
+;; REQUIRED, not tidiness -- the backend self-test calls the callee-save helpers
+;; directly with their own lists, and a mask left active from the previously
+;; emitted function would answer for that function instead.
+(define compiler-backend-emit-plan-reg-mask-active : bool
+  false)
+
+(define (compiler-backend-set-emit-plan-reg-mask!
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : unit
+  (begin
+    (set!
+      compiler-backend-emit-plan-reg-mask
+      (compiler-backend-plan-reg-mask-of assignments 0))
+    (set! compiler-backend-emit-plan-reg-mask-active true)))
+
 (define (compiler-backend-plan-uses-reg?
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [reg : i64]) : bool
-  (compiler_regalloc.compiler-reg-assignments-use-register? assignments reg))
+  (match assignments
+    ;; An empty plan homes nothing, whatever the installed mask describes: this
+    ;; is the exact list answer, and it keeps out-of-emission callers correct.
+    [(compiler_regalloc.CompilerRegAssignmentList.Nil) false]
+    [(compiler_regalloc.CompilerRegAssignmentList.Cons _ _)
+      (if compiler-backend-emit-plan-reg-mask-active
+        (let
+          [bit : i64 (compiler-backend-plan-reg-id-bit reg)]
+          (if (= bit 0)
+            (compiler_regalloc.compiler-reg-assignments-use-register?
+              assignments
+              reg)
+            (not (= (bit-and compiler-backend-emit-plan-reg-mask bit) 0))))
+        (compiler_regalloc.compiler-reg-assignments-use-register?
+          assignments
+          reg))]))
 
 (define (compiler-backend-plan-uses-callee-regs?
   [assignments : compiler_regalloc.CompilerRegAssignmentList]) : bool
@@ -27668,6 +27756,16 @@
 ;; gep displacement here instead of `addq $disp` on a staged base copy, so a
 ;; register-homed base serves as the store base directly. Callers guarantee
 ;; dst-bias + remaining fits imm32; plain copies pass 0 (byte-identical).
+;;
+;; CONTRACT: `dst-reg` and `src-reg` are memory-operand BASE SPELLINGS, not
+;; necessarily bare registers. They reach the output only through
+;; `compiler-backend-copy-address`, which parenthesizes the spelling and
+;; prefixes the displacement, so a `base,index,scale` SIB triple renders as
+;; `disp(base,index,scale)` through the same path a register renders as
+;; `disp(%reg)`. `compiler-backend-copy-gep-element-spelling` relies on this to
+;; address a fused gep element without materializing it. Any future use of
+;; either parameter as a register (sizing it, comparing it to a home, emitting
+;; it as an operand) must first reject the SIB form.
 (define (compiler-backend-emit-copy-bytes-chunks
   [type-segment-bases : i64]
   [dst-reg : String]
@@ -28354,46 +28452,296 @@
     [src-home : String
       (compiler-backend-address-base-filter
         (compiler-backend-value-scalar-register assignments src))]
-    [scav-base : String
-      (if (string.eq planned-dst "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-scavenge-exclude-merge
-            (compiler-backend-two-exclude src-home offset-home)
-            2
-            protect
-            protect-n)
-          (+ 2 protect-n)
-          "%r10")
-        planned-dst)]
-    (match (compiler-backend-emit-copy-gep-dyn-address
-      assignments
-      base
-      offset
-      scale
-      scav-base
-      base-home
-      offset-home
-      src-home
-      protect
-      protect-n
-      gep-disp
-      planned-index
-      backend-state)
-      [(ResultCompilerBackend.Ok addr-asm)
+    ;; When base and index are register-homed under a SIB scale the element
+    ;; address does not need to exist: every chunk STORE spells
+    ;; `disp(base,index,scale)` directly and the composing `leaq` disappears.
+    ;; This is the destination-side twin of
+    ;; `compiler-backend-emit-copy-bytes-gep-src`; the same register argument
+    ;; applies (the chunks write only the scratch and the destination MEMORY, so
+    ;; both operand homes stay valid across the whole run).
+    [dst-spelling : String
+      (compiler-backend-copy-gep-element-spelling
+        type-segment-bases
+        assignments
+        base
+        offset
+        elem-ty
+        size)]
+    (if (not (string.eq dst-spelling ""))
+      (compiler-backend-emit-copy-bytes-gep-dst
+        type-segment-bases
+        assignments
+        src
+        base
+        offset
+        dst-spelling
+        gep-disp
+        size
+        protect
+        protect-n
+        planned-src
+        planned-value
+        planned-xmm
+        backend-state)
+      ;; M-D: `scav-base` is bound INSIDE the declining branch. Scavenging is
+      ;; not a query -- under full occupancy it emergency-adds the picked
+      ;; register to the global pending set -- so a pick made for a path that is
+      ;; not taken leaks a stray restore into the surrounding emission.
+      (let
+        [scav-base : String
+          (if (string.eq planned-dst "")
+            (compiler-backend-scavenge-reg-here
+              (compiler-backend-scavenge-exclude-merge
+                (compiler-backend-two-exclude src-home offset-home)
+                2
+                protect
+                protect-n)
+              (+ 2 protect-n)
+              "%r10")
+            planned-dst)]
+        (match (compiler-backend-emit-copy-gep-dyn-address
+          assignments
+          base
+          offset
+          scale
+          scav-base
+          base-home
+          offset-home
+          src-home
+          protect
+          protect-n
+          gep-disp
+          planned-index
+          backend-state)
+          [(ResultCompilerBackend.Ok addr-asm)
+            (let
+              [src-reg : String
+                (if (string.eq src-home "")
+                  (if (string.eq planned-src "")
+                    (compiler-backend-scavenge-reg-here
+                      (compiler-backend-scavenge-exclude-merge
+                        (compiler-backend-one-exclude scav-base)
+                        1
+                        protect
+                        protect-n)
+                      (+ 1 protect-n)
+                      "%r9")
+                    planned-src)
+                  src-home)]
+              [copy-xmm : String
+                (compiler-backend-copy-xmm-scratch size planned-xmm)]
+              [copy-gp : String
+                (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+                  (if (string.eq planned-value "")
+                    (compiler-backend-scavenge-reg-here
+                      (compiler-backend-scavenge-exclude-merge
+                        (compiler-backend-two-exclude scav-base src-reg)
+                        2
+                        protect
+                        protect-n)
+                      (+ 2 protect-n)
+                      "%r8")
+                    planned-value)
+                  "")]
+              (match (if (string.eq src-home "")
+                (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  src
+                  src-reg
+                  backend-state)
+                (ResultCompilerBackend.Ok ""))
+                [(ResultCompilerBackend.Ok src-asm)
+                  (ResultCompilerBackend.Ok
+                    (str_cat.str-cat
+                      addr-asm
+                      (str_cat.str-cat
+                        src-asm
+                        (compiler-backend-emit-copy-bytes-chunks
+                          type-segment-bases
+                          scav-base
+                          src-reg
+                          copy-gp
+                          copy-xmm
+                          0
+                          size
+                          0))))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])))))
+
+;; --- gep element addressing folded into the copy chunks --------------------
+;; A fused Gep+CopyBytes used to COMPOSE the element address into a register
+;; (`leaq (base,index,scale), %r`) and then address every chunk off `(%r)`. A
+;; register-homed base and index under a SIB scale make that register
+;; unnecessary: each chunk spells `disp(base,index,scale)` itself and the leaq
+;; disappears. The two emitters below apply that on each side --
+;; `-gep-src` where the element is the copy SOURCE (`(array-ref xs i)` on a
+;; multi-word struct, which had no fusion at all before) and `-gep-dst` where it
+;; is the DESTINATION (the staged half of
+;; `compiler-backend-emit-copy-bytes-from-gep-dyn`).
+;;
+;; REGISTER SAFETY. The chunk copies write only the xmm/gp scratch and the
+;; destination MEMORY; base and index are read, never written, so their homes
+;; stay valid across every chunk and no live range is extended -- the fold is
+;; sound against the register plan already in force. The scavenge exclusions in
+;; each emitter additionally keep the staged pointer and the gp scratch off both
+;; operand homes.
+;;
+;; ORDINAL SAFETY. Admission is decided from the scale, the operand homes and
+;; the size ALONE -- never from the GAP9 displacement -- so a declined shape
+;; leaves `compiler-backend-gep-fold-next!` for the ordinary gep emission to
+;; consume exactly once. `compiler-backend-gep-fold-k-bound` bounds a folded
+;; displacement far below imm32, so every chunk address stays encodable.
+;; The chunk base SPELLING for a fused gep element: a `base,index,scale` SIB
+;; triple, or "" to decline. The spelling is consumed by
+;; `compiler-backend-mem-base-address`, which parenthesizes it and prefixes the
+;; displacement, so it renders through the ordinary chunk address path.
+;;
+;; #rbp-base: `address-base-filter` rejects a %rbp home -- the gep index already
+;; occupies the SIB index slot, so it cannot also take the base slot. A %rbp
+;; INDEX is admitted, as at every other dynamic gep site: the FPO rsp-rebase
+;; pass and the peephole slot recognizers key frame slots on the `(%rbp)` base
+;; spelling, which `(base,%rbp,scale)` does not match.
+;;
+;; CONSTANT gep offsets are admitted through a BOUND, never through the GAP9
+;; displacement. Their element address is `disp(base)` with `disp = n * scale`
+;; read straight off the instruction, so the chunk addresses span
+;; `[disp, disp + size)`. The GAP9 fold contributes nothing to a constant
+;; offset -- `compiler-backend-gep-fold-rewrite-seq` records displacement 0 for
+;; every non-Var offset kind -- but admission still must not READ that entry
+;; (reading is consuming), so it charges the fold's own magnitude cap,
+;; `compiler-backend-gep-fold-k-bound`, against the range instead. `n` is
+;; range-checked before the multiply and `scale` is a type size, so the product
+;; and the sum below are computed without overflow. A declined shape emits
+;; exactly once, as before.
+(define (compiler-backend-copy-gep-const-disp-ok?
+  [n : i64]
+  [scale : i64]
+  [size : i64]) : bool
+  (if (and
+    (compiler-backend-imm32? n)
+    (> scale 0)
+    (< scale 65536)
+    (>= size 0)
+    (< size 65536))
+    (let
+      [disp : i64 (* n scale)]
+      [slack : i64 (+ size (compiler-backend-gep-fold-k-bound))]
+      (and
+        (compiler-backend-imm32? (+ disp slack))
+        (compiler-backend-imm32? (- disp slack))))
+    false))
+
+;; The constant part of a gep element's byte displacement (0 for a dynamic
+;; index). Callers add the GAP9 fold on top; for a constant offset that fold is
+;; structurally 0.
+(define (compiler-backend-gep-const-element-disp
+  [type-segment-bases : i64]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]) : i64
+  (match (compiler-backend-value-as-i64 offset)
+    [(option_i64.Some n)
+      (* n (compiler-backend-type-size type-segment-bases elem-ty))]
+    [(option_i64.None) 0]))
+
+(define (compiler-backend-copy-gep-element-spelling
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [size : i64]) : String
+  (if (<= size 0)
+    ""
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some n)
+        ;; Constant index: the element address is the base home alone, with the
+        ;; whole displacement carried by the chunk addresses. The base occupies
+        ;; the operand's BASE slot ALONE, so GAP7 admits a %rbp home here (spelled
+        ;; `disp(,%rbp,1)` by compiler-backend-mem-base-address) exactly as at the
+        ;; other const-offset fused gep sites.
         (let
-          [src-reg : String
-            (if (string.eq src-home "")
-              (if (string.eq planned-src "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-one-exclude scav-base)
-                    1
-                    protect
-                    protect-n)
-                  (+ 1 protect-n)
-                  "%r9")
-                planned-src)
-              src-home)]
+          [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
+          [base-home : String
+            (compiler-backend-address-base-filter-direct
+              (compiler-backend-value-scalar-register assignments base))]
+          (if (and
+            (not (string.eq base-home ""))
+            (compiler-backend-copy-gep-const-disp-ok? n scale size))
+            base-home
+            ""))]
+      [(option_i64.None)
+        (let
+          [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
+          [base-home : String
+            (compiler-backend-address-base-filter
+              (compiler-backend-value-scalar-register assignments base))]
+          [offset-home : String
+            (compiler-backend-value-scalar-register assignments offset)]
+          (if (and
+            (compiler-backend-gep-sib-scale? scale)
+            (not (string.eq base-home ""))
+            (not (string.eq offset-home "")))
+            (str_cat.str-cat
+              base-home
+              ","
+              offset-home
+              ","
+              (string.int->string scale))
+            ""))])))
+
+;; Emit the fused copy. `src-spelling` is the non-empty result of
+;; `-src-base-spelling`; `src-disp` its starting displacement. Chunk source
+;; addresses run from `src-disp`, so the destination bias cancels it back to 0.
+(define (compiler-backend-emit-copy-bytes-gep-src
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [dst : compiler_ir_types.CompilerIrValue]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [src-spelling : String]
+  [src-disp : i64]
+  [size : i64]
+  [protect : (Array String)]
+  [protect-n : i64]
+  [planned-dst : String]
+  [planned-value : String]
+  [planned-xmm : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    ;; The two registers the fused source operand READS. Excluded from every
+    ;; scavenge below so no staged destination load can overwrite the address
+    ;; the chunk copies are still reading from.
+    [operand-a : String
+      (compiler-backend-value-scalar-register assignments base)]
+    [operand-b : String
+      (compiler-backend-value-scalar-register assignments offset)]
+    [dst-home : String
+      (compiler-backend-address-base-filter-direct
+        (compiler-backend-value-register-home assignments dst))]
+    [dst-reg : String
+      (if (string.eq dst-home "")
+        (if (string.eq planned-dst "")
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-scavenge-exclude-merge
+              (compiler-backend-two-exclude operand-a operand-b)
+              2
+              protect
+              protect-n)
+            (+ 2 protect-n)
+            "%r10")
+          planned-dst)
+        dst-home)]
+    (match (if (string.eq dst-home "")
+      (compiler-backend-emit-load-value-with-plan
+        assignments
+        dst
+        dst-reg
+        backend-state)
+      (ResultCompilerBackend.Ok ""))
+      [(ResultCompilerBackend.Ok dst-asm)
+        (let
           [copy-xmm : String
             (compiler-backend-copy-xmm-scratch size planned-xmm)]
           [copy-gp : String
@@ -28401,38 +28749,107 @@
               (if (string.eq planned-value "")
                 (compiler-backend-scavenge-reg-here
                   (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-two-exclude scav-base src-reg)
-                    2
+                    (compiler-backend-three-exclude dst-reg operand-a operand-b)
+                    3
                     protect
                     protect-n)
-                  (+ 2 protect-n)
+                  (+ 3 protect-n)
                   "%r8")
                 planned-value)
               "")]
-          (match (if (string.eq src-home "")
-            (compiler-backend-emit-load-value-with-plan
-              assignments
-              src
-              src-reg
-              backend-state)
-            (ResultCompilerBackend.Ok ""))
-            [(ResultCompilerBackend.Ok src-asm)
-              (ResultCompilerBackend.Ok
-                (str_cat.str-cat
-                  addr-asm
-                  (str_cat.str-cat
-                    src-asm
-                    (compiler-backend-emit-copy-bytes-chunks
-                      type-segment-bases
-                      scav-base
-                      src-reg
-                      copy-gp
-                      copy-xmm
-                      0
-                      size
-                      0))))]
-            [(ResultCompilerBackend.Err message)
-              (ResultCompilerBackend.Err message)]))]
+          (ResultCompilerBackend.Ok
+            (string.append
+              dst-asm
+              (compiler-backend-emit-copy-bytes-chunks
+                type-segment-bases
+                dst-reg
+                src-spelling
+                copy-gp
+                copy-xmm
+                src-disp
+                size
+                (- 0 src-disp)))))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+
+;; Destination-side twin of the emitter above: the gep element is the copy
+;; DESTINATION, so `dst-spelling` addresses the chunk STORES and the source
+;; pointer keeps its ordinary register. Chunk destination addresses run from
+;; `dst-disp` (the GAP9 fold) via the bias; source addresses start at 0.
+(define (compiler-backend-emit-copy-bytes-gep-dst
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [src : compiler_ir_types.CompilerIrValue]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [dst-spelling : String]
+  [dst-disp : i64]
+  [size : i64]
+  [protect : (Array String)]
+  [protect-n : i64]
+  [planned-src : String]
+  [planned-value : String]
+  [planned-xmm : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    ;; The two registers the fused destination operand READS; excluded from
+    ;; every scavenge so a staged source load cannot overwrite the address the
+    ;; chunk stores are still writing through.
+    [operand-a : String
+      (compiler-backend-value-scalar-register assignments base)]
+    [operand-b : String
+      (compiler-backend-value-scalar-register assignments offset)]
+    [src-home : String
+      (compiler-backend-address-base-filter-direct
+        (compiler-backend-value-scalar-register assignments src))]
+    [src-reg : String
+      (if (string.eq src-home "")
+        (if (string.eq planned-src "")
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-scavenge-exclude-merge
+              (compiler-backend-two-exclude operand-a operand-b)
+              2
+              protect
+              protect-n)
+            (+ 2 protect-n)
+            "%r9")
+          planned-src)
+        src-home)]
+    (match (if (string.eq src-home "")
+      (compiler-backend-emit-load-value-with-plan
+        assignments
+        src
+        src-reg
+        backend-state)
+      (ResultCompilerBackend.Ok ""))
+      [(ResultCompilerBackend.Ok src-asm)
+        (let
+          [copy-xmm : String
+            (compiler-backend-copy-xmm-scratch size planned-xmm)]
+          [copy-gp : String
+            (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+              (if (string.eq planned-value "")
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-scavenge-exclude-merge
+                    (compiler-backend-three-exclude src-reg operand-a operand-b)
+                    3
+                    protect
+                    protect-n)
+                  (+ 3 protect-n)
+                  "%r8")
+                planned-value)
+              "")]
+          (ResultCompilerBackend.Ok
+            (string.append
+              src-asm
+              (compiler-backend-emit-copy-bytes-chunks
+                type-segment-bases
+                dst-spelling
+                src-reg
+                copy-gp
+                copy-xmm
+                0
+                size
+                dst-disp))))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 ;; Compose the dynamic gep element address into scav-base for the fused copy.
@@ -36138,37 +36555,76 @@
 (define compiler-backend-phi-xmm-cycle-fallback-count : i64
   0)
 
-;; P22-B: interval point of the phi edge TARGET block's entry -- twice its
-;; structural instruction prefix, the SAME coordinate `emit-instr-post-base`
-;; accumulates over the emitted block list, so it is directly comparable with
-;; the scavenge's `2 * (post-base - current-count)`. The phi-edge block scans
-;; already walk that list to find the target block, so the prefix is accumulated
-;; on the way at no extra cost. -1 means "not an edge emission / target not
-;; found" and keeps the conservative bracket.
+;; #phi-staged-copy: program point (2 x global instruction index -- the scavenge
+;; coordinate) of the FIRST instruction of the phi edge's TARGET block, or -1
+;; when no edge scan has established one. The edge scan already walks the block
+;; list to find the target block, so accumulating the prefix sum of block
+;; instruction counts on the way costs one add per skipped block and lands in
+;; exactly the coordinate emit-instr-post-base builds (both walk the same list in
+;; the same order, adding the same per-block instruction count).
 (define compiler-backend-current-phi-target-point : i64
   -1)
 
-;; True iff the phi edge currently being emitted runs FORWARD in emission order:
-;; the target block starts at or after the end of the block being emitted.
-;; `post-base` is the cumulative instruction count THROUGH the current block, so
-;; `2 * post-base` is the point just past its last instruction; a target prefix
-;; at or beyond that is a strictly later block, and anything below it is the
-;; current block itself or an earlier one (a back edge).
-;;
-;; This is the un-bracket test the staging path needs. On a forward edge every
-;; var live at the target's entry was defined before this edge and is next used
-;; at or after the target, so its interval [def, use] spans the emission point
-;; and the occupancy query the scavenge already runs reports its home OCCUPIED --
-;; the staging register it hands back cannot be one of them. Only a back edge
-;; can present a value that reads free here (a loop carry whose next use is the
-;; next iteration, i.e. at a LOWER point) and still has to survive the jump, so
-;; back edges keep the pushq/popq bracket.
-(define (compiler-backend-phi-edge-forward?) : bool
-  (and
-    (>= compiler-backend-current-phi-target-point 0)
-    (>=
-      compiler-backend-current-phi-target-point
-      (* 2 compiler-backend-emit-instr-post-base))))
+;; Pooled-register-home bit mask of every dst in the ORIGINAL phi-copy list of
+;; the edge being marshalled. -1 (every bit set) is the conservative default: with
+;; no list installed nothing can be proven free. This is the same exclusion the
+;; cycle-break Temp pick applies (see phi-temp-pick-reg): an already-drained copy
+;; has placed a final phi value in its dst register which must survive to the
+;; merge block entry, and the occupancy mask -- which models the allocation, not
+;; these transient marshalling values -- does not show it.
+(define compiler-backend-current-phi-dst-home-mask : i64
+  -1)
+
+;; #phi-staged-copy: may the spilled-dst phi copy stage through `reg` WITHOUT the
+;; pushq/popq bracket? Three obligations, all discharged from state the emitter
+;; already holds:
+;;   (1) `reg` is a pooled register -- a spelling with no scavenge bit (%rbp,
+;;       %rsp) cannot be tested at all and is refused;
+;;   (2) `reg` is FREE over the scavenge staging window at this point. This is the
+;;       same query the scavenge itself ran, re-asked so an EMERGENCY pick (which
+;;       returns an OCCUPIED register plus a pending save) keeps its bracket. On a
+;;       BACK edge (target point <= this point) `reg` must ALSO be free at the
+;;       TARGET block's entry: a value carried around the loop whose next use is
+;;       the next iteration's phi is what a point-local query at the bottom of the
+;;       body can fail to see, and the header entry point is where it is
+;;       guaranteed occupied. On a forward or fall-through edge every value live
+;;       into the target has an interval covering this point already (its def
+;;       dominates the edge and its use is ahead), so the point-local query is
+;;       sufficient there -- exactly the split the bracket's own comment named.
+;;   (3) `reg` is not the home of ANY dst of this edge's copy list, so no drained
+;;       copy's placed phi value is sitting in it.
+;; With all three the value in `reg` at this point is dead, so the bracket saves
+;; and restores a dead value. Dropping it leaves `movq SRC,%rX` / `movq %rX,DST`:
+;; two instructions and two memory ops in a load->store chain, strictly fewer
+;; memory operations AND a shorter dependency chain than the bracketed four.
+(define (compiler-backend-phi-staged-copy-proven? [reg : String]) : bool
+  (let
+    [bit : i64 (compiler-backend-scavenge-reg-bit reg)]
+    [point : i64
+      (*
+        2
+        (-
+          compiler-backend-emit-instr-post-base
+          compiler-backend-emit-current-count))]
+    [target : i64 compiler-backend-current-phi-target-point]
+    (and
+      (not (= bit 0))
+      (>= target 0)
+      (= (bit-and compiler-backend-current-phi-dst-home-mask bit) 0)
+      (=
+        (bit-and
+          (compiler-backend-scavenge-occupied-mask-over-range
+            point
+            (+ point compiler-backend-scavenge-staging-window))
+          bit)
+        0)
+      (or
+        (> target point)
+        (=
+          (bit-and
+            (compiler-backend-scavenge-occupied-mask-at-point target)
+            bit)
+          0)))))
 
 (cfg
   scratch-vreg
@@ -36884,33 +37340,25 @@
         dst-home)]
     ;; The scavenged staging register may host a value live through the edge even
     ;; when the point-local occupancy mask reads it free. Back edges hit this
-    ;; when a loop-carried value's next use is in the next iteration; forward
-    ;; edges into a merge inside a loop can hit the same class when a live-through
-    ;; register is next used after the merge. Bracket spilled-dst scalar GP phi
-    ;; copies so the occupant survives the edge marshalling. Homes are
-    ;; frame-relative at emission, so the transient %rsp shift cannot skew the
-    ;; operands, and the FPO audit tracks push/pop deltas.
+    ;; when a loop-carried value's next use is in the next iteration; a drained
+    ;; copy of this same edge may also have placed a phi value in it, which the
+    ;; occupancy mask (a model of the ALLOCATION, not of edge marshalling) never
+    ;; shows. Bracket spilled-dst scalar GP phi copies so the occupant survives
+    ;; the edge marshalling. Homes are frame-relative at emission, so the
+    ;; transient %rsp shift cannot skew the operands, and the FPO audit tracks
+    ;; push/pop deltas.
     ;;
     ;; A function-wide "is this register a plan home at all?" test does NOT
     ;; un-bracket this: the allocator homes short-lived temporaries in %r8 (the
     ;; preferred staging fallback) in essentially every function that also has a
     ;; spilled phi dst, so the mask is set even though nothing is live in %r8
     ;; across the edge. Measured: 0 of 2044 sites in the benchmark corpus plus
-    ;; stage2.s un-bracket that way. What the test actually needs is per-EDGE
-    ;; liveness, and only for BACK edges -- on a forward edge every var live at
-    ;; the target's entry has an interval covering this point already (its def
-    ;; dominates the edge and its use is ahead), so the occupancy query the
-    ;; scavenge already runs is sufficient there; only a loop carry whose next use
-    ;; is in the next iteration reads free here while having to survive the jump.
-    ;;
-    ;; P22-B implements exactly that: the phi-edge block scans now record the
-    ;; TARGET label's point, and `phi-edge-forward?` compares it with the current
-    ;; block's end. A forward edge drops the bracket; a back edge (and any edge
-    ;; whose target point is unknown) keeps it.
-    [bracket? : bool
-      (and
-        (string.eq compiler-backend-current-phi-planned-stage "")
-        (not (compiler-backend-phi-edge-forward?)))]
+    ;; stage2.s un-bracket that way. #phi-staged-copy discharges the real
+    ;; obligations instead -- per-EDGE occupancy (point-local on forward and
+    ;; fall-through edges, unioned with the TARGET block entry on back edges) plus
+    ;; the edge's dst-home mask -- and drops the bracket when they hold, leaving
+    ;; the 2-instruction register-staged copy. See
+    ;; compiler-backend-phi-staged-copy-proven?.
     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
       type-segment-bases
       assignments
@@ -36930,7 +37378,26 @@
                   reg
                   ty
                   backend-state))
-              (if bracket?
+              ;; P34 #phi-empty-load: an EMPTY load means the loader elided a
+              ;; same-register move -- the source value is ALREADY in `reg`. The
+              ;; pair is then just the store, which reads `reg` and writes
+              ;; memory: nothing between the bracket's push and pop can modify
+              ;; `reg`, so there is no occupant to preserve and the bracket saves
+              ;; and restores the very value it is storing. Dropping it removes
+              ;; two instructions AND two memory accesses; the remaining
+              ;; (clobbering) loads keep the bracket for the reason above.
+              (if (or
+                (string.eq load "")
+                (not (string.eq compiler-backend-current-phi-planned-stage ""))
+                (compiler-backend-phi-staged-copy-proven? reg))
+                (string.append
+                  load
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    reg
+                    ty
+                    backend-state))
                 (str_cat.str-cat
                   "    pushq "
                   reg
@@ -36944,15 +37411,7 @@
                     backend-state)
                   "    popq "
                   reg
-                  "\n")
-                (string.append
-                  load
-                  (compiler-backend-emit-store-typed-var-with-plan
-                    assignments
-                    dst
-                    reg
-                    ty
-                    backend-state))))
+                  "\n")))
             load))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
@@ -37266,15 +37725,23 @@
   [vars : i64]
   [outer-active : bool]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (compiler-backend-emit-phi-copy-list-with-all
-    type-segment-bases
-    assignments
-    copies
-    copies
-    program-index
-    vars
-    outer-active
-    backend-state))
+  (begin
+    ;; #phi-staged-copy: install this edge's dst-home mask once, at the single
+    ;; entry to the marshalling recursion, so every copy's staging proof can
+    ;; exclude registers holding placed phi values without rebuilding the mask
+    ;; per copy. The recursion re-enters -with-all, never this function.
+    (set!
+      compiler-backend-current-phi-dst-home-mask
+      (compiler-backend-phi-copy-list-dst-home-mask assignments copies))
+    (compiler-backend-emit-phi-copy-list-with-all
+      type-segment-bases
+      assignments
+      copies
+      copies
+      program-index
+      vars
+      outer-active
+      backend-state)))
 
 ;; `all` is the ORIGINAL (top-level) phi-copy list, carried unchanged through the
 ;; recursion so the cycle-break Temp pick can exclude every dst register of the
@@ -37558,9 +38025,9 @@
     (set! compiler-backend-current-phi-planned-cycle planned-cycle)
     (set! compiler-backend-current-phi-planned-stage planned-stage)
     (set! compiler-backend-current-phi-planned-xmm-cycle planned-xmm-cycle)
-    (set!
-      compiler-backend-current-phi-target-point
-      (compiler-backend-phi-target-point-scan blocks target-label 0))
+    ;; #phi-staged-copy: cleared on entry so a scan that never reaches the target
+    ;; leaves no previous edge's point behind; the scan below sets it.
+    (set! compiler-backend-current-phi-target-point -1)
     (compiler-backend-emit-phi-edge-copies-scan
       type-segment-bases
       assignments
@@ -37568,8 +38035,12 @@
       target-label
       from-label
       program-index
-      vars)))
+      vars
+      0)))
 
+;; `point` is the running prefix sum of block instruction counts in scavenge
+;; coordinates (2 per instruction) over the blocks already skipped -- the target
+;; block's entry point once the label matches. See #phi-staged-copy.
 (define (compiler-backend-emit-phi-edge-copies-scan
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
@@ -37577,7 +38048,8 @@
   [target-label : i64]
   [from-label : i64]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [point : i64]) : ResultCompilerBackend
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil)
       (ResultCompilerBackend.Err
@@ -37591,13 +38063,15 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
           (if (= block-label target-label)
-            (compiler-backend-emit-leading-phi-copies
-              type-segment-bases
-              assignments
-              instrs
-              from-label
-              program-index
-              vars)
+            (begin
+              (set! compiler-backend-current-phi-target-point point)
+              (compiler-backend-emit-leading-phi-copies
+                type-segment-bases
+                assignments
+                instrs
+                from-label
+                program-index
+                vars))
             (compiler-backend-emit-phi-edge-copies-scan
               type-segment-bases
               assignments
@@ -37605,7 +38079,8 @@
               target-label
               from-label
               program-index
-              vars))])]
+              vars
+              (+ point (* 2 (struct-get instrs len)))))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-phi-edge-copies-scan-seq
         type-segment-bases
@@ -37615,7 +38090,8 @@
         target-label
         from-label
         program-index
-        vars)]))
+        vars
+        point)]))
 
 (define (compiler-backend-emit-phi-edge-copies-scan-seq
   [type-segment-bases : i64]
@@ -37625,7 +38101,8 @@
   [target-label : i64]
   [from-label : i64]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [point : i64]) : ResultCompilerBackend
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     (ResultCompilerBackend.Err
       (box
@@ -37637,13 +38114,15 @@
     (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
       [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
         (if (= block-label target-label)
-          (compiler-backend-emit-leading-phi-copies
-            type-segment-bases
-            assignments
-            instrs
-            from-label
-            program-index
-            vars)
+          (begin
+            (set! compiler-backend-current-phi-target-point point)
+            (compiler-backend-emit-leading-phi-copies
+              type-segment-bases
+              assignments
+              instrs
+              from-label
+              program-index
+              vars))
           (compiler-backend-emit-phi-edge-copies-scan-seq
             type-segment-bases
             assignments
@@ -37652,7 +38131,8 @@
             target-label
             from-label
             program-index
-            vars))])))
+            vars
+            (+ point (* 2 (struct-get instrs len)))))])))
 
 (define (compiler-backend-emit-mov-phi-copy-edge
   [type-segment-bases : i64]
@@ -37689,9 +38169,8 @@
           moved-src
           planned-stage)
         planned-stage))
-    (set!
-      compiler-backend-current-phi-target-point
-      (compiler-backend-phi-target-point-scan blocks target-label 0))
+    ;; #phi-staged-copy: see emit-phi-edge-copies.
+    (set! compiler-backend-current-phi-target-point -1)
     (compiler-backend-emit-mov-phi-copy-edge-scan
       type-segment-bases
       assignments
@@ -37701,7 +38180,8 @@
       moved-dst
       moved-src
       program-index
-      vars)))
+      vars
+      0)))
 
 (define (compiler-backend-emit-mov-phi-copy-edge-scan
   [type-segment-bases : i64]
@@ -37712,7 +38192,8 @@
   [moved-dst : i64]
   [moved-src : compiler_ir_types.CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [point : i64]) : ResultCompilerBackend
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil)
       (ResultCompilerBackend.Err
@@ -37737,19 +38218,21 @@
                   ;; #orphan-push: the substituted source can share its dst's
                   ;; home -- re-apply the build-time same-home filter or the
                   ;; cycle break emits an orphaned push (see drop-same-home).
-                  (compiler-backend-emit-phi-copy-list
-                    type-segment-bases
-                    assignments
-                    (compiler-backend-phi-copy-list-drop-same-home
+                  (begin
+                    (set! compiler-backend-current-phi-target-point point)
+                    (compiler-backend-emit-phi-copy-list
+                      type-segment-bases
                       assignments
-                      (compiler-backend-phi-copy-list-replace-source-var
-                        copies
-                        moved-dst
-                        moved-src))
-                    program-index
-                    vars
-                    false
-                    (struct-get program-index backend-state))
+                      (compiler-backend-phi-copy-list-drop-same-home
+                        assignments
+                        (compiler-backend-phi-copy-list-replace-source-var
+                          copies
+                          moved-dst
+                          moved-src))
+                      program-index
+                      vars
+                      false
+                      (struct-get program-index backend-state)))
                   (ResultCompilerBackend.Ok ""))]
               [(ResultBackendPhiCopies.Err message)
                 (ResultCompilerBackend.Err
@@ -37766,7 +38249,8 @@
               moved-dst
               moved-src
               program-index
-              vars))])]
+              vars
+              (+ point (* 2 (struct-get instrs len)))))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-mov-phi-copy-edge-scan-seq
         type-segment-bases
@@ -37778,7 +38262,8 @@
         moved-dst
         moved-src
         program-index
-        vars)]))
+        vars
+        point)]))
 
 (define (compiler-backend-emit-mov-phi-copy-edge-scan-seq
   [type-segment-bases : i64]
@@ -37790,7 +38275,8 @@
   [moved-dst : i64]
   [moved-src : compiler_ir_types.CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [point : i64]) : ResultCompilerBackend
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     (ResultCompilerBackend.Err
       (box
@@ -37810,19 +38296,21 @@
               (if (compiler-backend-phi-copy-list-has-source-var?
                 copies
                 moved-dst)
-                (compiler-backend-emit-phi-copy-list
-                  type-segment-bases
-                  assignments
-                  (compiler-backend-phi-copy-list-drop-same-home
+                (begin
+                  (set! compiler-backend-current-phi-target-point point)
+                  (compiler-backend-emit-phi-copy-list
+                    type-segment-bases
                     assignments
-                    (compiler-backend-phi-copy-list-replace-source-var
-                      copies
-                      moved-dst
-                      moved-src))
-                  program-index
-                  vars
-                  false
-                  (struct-get program-index backend-state))
+                    (compiler-backend-phi-copy-list-drop-same-home
+                      assignments
+                      (compiler-backend-phi-copy-list-replace-source-var
+                        copies
+                        moved-dst
+                        moved-src))
+                    program-index
+                    vars
+                    false
+                    (struct-get program-index backend-state)))
                 (ResultCompilerBackend.Ok ""))]
             [(ResultBackendPhiCopies.Err message)
               (ResultCompilerBackend.Err
@@ -37838,7 +38326,8 @@
             moved-dst
             moved-src
             program-index
-            vars))])))
+            vars
+            (+ point (* 2 (struct-get instrs len)))))])))
 
 (define (compiler-backend-instr-seq-starts-with-phi?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
@@ -49873,6 +50362,108 @@
             out)]))
     (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
+;; CopyBytes whose SOURCE is the gep element (the mirror of the copy-dst rule
+;; beside every caller). Fuses when the source spelling admits -- a SIB
+;; base+index for a variable gep index, the base home for a constant one (whose
+;; displacement is admitted through a static bound, never by reading the GAP9
+;; entry) -- so the chunk loads address the element directly and the `leaq` that
+;; materialized it disappears. A declined spelling falls through to ordinary
+;; emission, which consumes the GAP9 gep ordinal itself; the admission test never
+;; reads that ordinal, so exactly one side consumes it on every path.
+(define (compiler-backend-emit-gep-copy-src-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [gep-dst : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [copy-dst : compiler_ir_types.CompilerIrValue]
+  [copy-src : compiler_ir_types.CompilerIrValue]
+  [copy-size : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [after-gep : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
+  (let
+    [spelling : String
+      (if (compiler-backend-branch-uses-var? copy-src gep-dst)
+        (compiler-backend-copy-gep-element-spelling
+          ctx.type-segment-bases
+          ctx.assignments
+          base
+          offset
+          elem-ty
+          copy-size)
+        "")]
+    (if (string.eq spelling "")
+      (compiler-backend-emit-instrs-normal
+        ctx
+        fallthrough
+        instr
+        instrs
+        index
+        out)
+      (let
+        [protect-n : i64
+          (compiler-backend-copy-run-protect-count
+            ctx.assignments
+            instrs
+            after-gep)]
+        [protect : (Array String)
+          (compiler-backend-copy-run-protect-exclude
+            ctx.assignments
+            instrs
+            after-gep)]
+        ;; A dynamic index carries no constant part, so the whole starting
+        ;; displacement is the GAP9 fold; a constant index carries `n * scale`
+        ;; and the fold contributes 0. The ordinal is consumed exactly once
+        ;; here, only on the admitted path.
+        [src-disp : i64
+          (+
+            (compiler-backend-gep-const-element-disp
+              ctx.type-segment-bases
+              offset
+              elem-ty)
+            (compiler-backend-gep-fold-next!
+              ctx.type-segment-bases
+              offset
+              elem-ty))]
+        (compiler-backend-emit-fused-result-rest
+          ctx
+          fallthrough
+          (compiler-backend-emit-copy-bytes-gep-src
+            ctx.type-segment-bases
+            ctx.assignments
+            copy-dst
+            base
+            offset
+            spelling
+            src-disp
+            copy-size
+            protect
+            protect-n
+            (compiler-backend-scratch-plan-register-ahead
+              (compiler-backend-runtime-plan-scratch ctx.plan)
+              0
+              0)
+            (compiler-backend-scratch-plan-register-ahead
+              (compiler-backend-runtime-plan-scratch ctx.plan)
+              1
+              (if (>= copy-size 16)
+                3
+                2))
+            (if (>= copy-size 16)
+              (compiler-backend-scratch-plan-register-ahead
+                (compiler-backend-runtime-plan-scratch ctx.plan)
+                1
+                2)
+              "")
+            ctx.backend-state)
+          instrs
+          after-gep
+          out)))))
+
 ;; The `Gep` fusion cluster of `compiler-backend-emit-instrs-step`, extracted
 ;; unchanged (refs #5177). It is the peephole family that folds a single-use
 ;; address computation into the instruction that consumes it -- load, store,
@@ -50172,12 +50763,26 @@
                       instrs
                       after-load
                       out))
-                  (compiler-backend-emit-instrs-normal
+                  ;; Not the copy DESTINATION (or out of imm32 range there):
+                  ;; the source-side rule owns the mirror shape and declines
+                  ;; back to ordinary emission itself, so the ordinal is
+                  ;; consumed exactly once either way. A copy whose dst AND src
+                  ;; are both this gep cannot reach either rule: that is two
+                  ;; uses, and the whole cluster is behind a single-use gate.
+                  (compiler-backend-emit-gep-copy-src-rest
                     ctx
                     fallthrough
                     instr
+                    gep-dst
+                    base
+                    offset
+                    elem-ty
+                    copy-dst
+                    copy-src
+                    copy-size
                     instrs
                     index
+                    after-load
                     out))]
               [_
                 (compiler-backend-emit-instrs-normal
@@ -50428,12 +51033,20 @@
                       instrs
                       after-gep
                       out))
-                  (compiler-backend-emit-instrs-normal
+                  (compiler-backend-emit-gep-copy-src-rest
                     ctx
                     fallthrough
                     instr
+                    gep-dst
+                    base
+                    offset
+                    elem-ty
+                    copy-dst
+                    copy-src
+                    copy-size
                     instrs
                     index
+                    after-gep
                     out))]
               [_
                 (compiler-backend-emit-instrs-normal
@@ -54171,11 +54784,7 @@
           (backend_label_i64_map.insert-ref!
             (&mut counts)
             label
-            (+
-              1
-              (match (backend_label_i64_map.get (& counts) label)
-                [(backend_label_i64_map.LookupFound v) v]
-                [(backend_label_i64_map.LookupMissing) 0])))
+            (+ 1 (backend_label_i64_map.get-value-or (& counts) label 0)))
           (compiler-backend-peephole-predcount-bump
             counts
             (compiler_optimize.opt-label-tail labels))))]))
@@ -54307,9 +54916,7 @@
               (not (compiler-backend-peephole-prev-splits-edge? prev))
               (=
                 1
-                (match (backend_label_i64_map.get (& predcount) cur-label)
-                  [(backend_label_i64_map.LookupFound v) v]
-                  [(backend_label_i64_map.LookupMissing) 0]))
+                (backend_label_i64_map.get-value-or (& predcount) cur-label 0))
               (compiler_optimize.opt-label-contains
                 (compiler_optimize.opt-cfg-block-successors-with-next
                   prev
@@ -54345,9 +54952,7 @@
               (not (compiler-backend-peephole-prev-splits-edge? prev))
               (=
                 1
-                (match (backend_label_i64_map.get (& predcount) cur-label)
-                  [(backend_label_i64_map.LookupFound v) v]
-                  [(backend_label_i64_map.LookupMissing) 0]))
+                (backend_label_i64_map.get-value-or (& predcount) cur-label 0))
               (compiler_optimize.opt-label-contains
                 (compiler_optimize.opt-cfg-block-successors-with-next
                   prev
@@ -55540,8 +56145,17 @@
 (define compiler-backend-sweep-line-flag-win64-rbp-set : i64
   512)
 
-;; An indexed / truncated `(%rsp` reference, or a `popq` whose operand
-;; addresses the frame: both disable the whole function unconditionally.
+;; An indexed / truncated `(%rsp` reference: disables the whole function
+;; unconditionally (the sweep cannot bound what such a line touches).
+;;
+;; A `popq` whose operand addresses the frame used to be fatal here too. It is
+;; not: a pop's frame operand is a perfectly ordinary bounded reference, it just
+;; sits at a %rsp that has ALREADY been incremented, so the replay canonicalizes
+;; it at delta-8 (matching the FPO rebase pass, which lowers delta before
+;; rewriting a pop's refs). Production emission contains no `popq MEM` today, so
+;; the fatal arms were unreachable -- but a single such line would have silently
+;; disqualified its whole function from the dead-frame-store sweep (+7,292 dead
+;; stores measured when one was emitted experimentally).
 (define compiler-backend-sweep-line-flag-fatal-mem : i64
   1024)
 
@@ -56245,8 +56859,7 @@
                                 (compiler-backend-peephole-record-width line)]
                               [k : i64 0]
                               (begin
-                                ;; "(%rsp," indexed / truncated, or popq MEM
-                                ;; (which addresses AFTER the bump).
+                                ;; "(%rsp," indexed / truncated.
                                 (when
                                   (compiler-backend-sweep-line-flag?
                                     flags
@@ -56272,6 +56885,14 @@
                                   (set! sweepable false))
                                 (while (< k mem-count)
                                   (let
+                                    ;; `popq MEM` increments %rsp BEFORE computing
+                                    ;; its destination address, so its frame
+                                    ;; operand is canonical at delta-8 -- the same
+                                    ;; bias the FPO rebase pass applies (it lowers
+                                    ;; delta before rewriting a pop's refs). Every
+                                    ;; other line, push included (`push m` reads its
+                                    ;; operand at the ORIGINAL %rsp), is canonical
+                                    ;; at delta.
                                     [c : i64
                                       (-
                                         (if (= k 0)
@@ -56284,7 +56905,9 @@
                                             (compiler-backend-peephole-record-end
                                               line)
                                             k))
-                                        delta)]
+                                        (if pop?
+                                          (- delta 8)
+                                          delta))]
                                     (begin
                                       (if leaq?
                                         ;; address taken: poison upward
@@ -57883,6 +58506,12 @@
                     scratch-vars))
                 (set! compiler-backend-emit-assignment-index-active true))
               (set! compiler-backend-emit-assignment-index-active false))
+            ;; Same list, same "fixed before body emission" guarantee: fold the
+            ;; plan's register homes into the per-function mask that
+            ;; compiler-backend-plan-uses-reg? answers from. Unlike the dense
+            ;; index this is installed for EVERY function -- it is one machine
+            ;; word, so there is no size threshold to trade against.
+            (compiler-backend-set-emit-plan-reg-mask! assignments)
             (set! compiler-backend-rax-override-var -1)
             (set! compiler-backend-rax-forward-pending-var -1)
             (compiler-backend-emit-home-overrides-disable!))]
@@ -58702,6 +59331,7 @@
 (define (compiler-backend-clear-function-emit-state!) : unit
   (begin
     (set! compiler-backend-emit-assignment-index-active false)
+    (set! compiler-backend-emit-plan-reg-mask-active false)
     (set! compiler-backend-rax-override-var -1)
     (set! compiler-backend-rax-forward-pending-var -1)
     (compiler-backend-set-scavenge-ctx!
@@ -58717,6 +59347,10 @@
       compiler-backend-current-phi-targets
       (compiler-backend-empty-label-seq))
     (set! compiler-backend-current-phi-target-count 0)
+    ;; #phi-staged-copy: both are edge-scoped, but a function that never emits a
+    ;; phi edge must not inherit the previous function's coordinates.
+    (set! compiler-backend-current-phi-target-point -1)
+    (set! compiler-backend-current-phi-dst-home-mask -1)
     (set! compiler-backend-emit-instr-post-base 0)
     (set! compiler-backend-emit-current-count 0)
     (set! compiler-backend-emit-current-site 0)
@@ -68876,23 +69510,19 @@
                                           (bit-or
                                             walk-flags
                                             compiler-backend-sweep-line-flag-fatal-mem))
-                                        (if pop?
-                                          ;; popq MEM addresses AFTER the bump
-                                          (set!
-                                            walk-flags
-                                            (bit-or
-                                              walk-flags
-                                              compiler-backend-sweep-line-flag-fatal-mem))
-                                          (begin
-                                            (when
-                                              (= mem-count 0)
-                                              (set!
-                                                mem-off
-                                                (compiler-backend-sweep-rsp-ref-offset
-                                                  data
-                                                  ms
-                                                  q)))
-                                            (set! mem-count (+ mem-count 1)))))
+                                        ;; A `popq MEM` frame operand is recorded
+                                        ;; like any other; the sweep replay
+                                        ;; canonicalizes it at delta-8.
+                                        (begin
+                                          (when
+                                            (= mem-count 0)
+                                            (set!
+                                              mem-off
+                                              (compiler-backend-sweep-rsp-ref-offset
+                                                data
+                                                ms
+                                                q)))
+                                          (set! mem-count (+ mem-count 1))))
                                       (set!
                                         walk-flags
                                         (bit-or
@@ -68959,22 +69589,16 @@
                                     (bit-or
                                       walk-flags
                                       compiler-backend-sweep-line-flag-fatal-mem))
-                                  (if pop?
-                                    (set!
-                                      walk-flags
-                                      (bit-or
-                                        walk-flags
-                                        compiler-backend-sweep-line-flag-fatal-mem))
-                                    (begin
-                                      (when
-                                        (= mem-count 0)
-                                        (set!
-                                          mem-off
-                                          (compiler-backend-sweep-rsp-ref-offset
-                                            data
-                                            ms
-                                            i)))
-                                      (set! mem-count (+ mem-count 1)))))
+                                  (begin
+                                    (when
+                                      (= mem-count 0)
+                                      (set!
+                                        mem-off
+                                        (compiler-backend-sweep-rsp-ref-offset
+                                          data
+                                          ms
+                                          i)))
+                                    (set! mem-count (+ mem-count 1))))
                                 (set!
                                   walk-flags
                                   (bit-or
@@ -69255,6 +69879,91 @@
       false
       (compiler-backend-peephole-redundant-zext-next-desc? next dst))))
 
+;; First non-space byte at or after `start`, i.e. where a line's operands begin
+;; once the mnemonic has been stepped over.
+(define (compiler-backend-peephole-operand-start-range
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 start]
+    (begin
+      (while (and (< i end) (= (compiler-backend-peephole-byte-at data i) 32))
+        (set! i (+ i 1)))
+      i)))
+
+;; `andq X, %r` writes %r and sets ZF/SF/PF from the result while clearing
+;; OF/CF; `testq %r, %r` on that same register recomputes exactly those flags
+;; and clears the same two, so it is dead -- for every consumer, not just the
+;; equality branches (CF is 0 either way, so the unsigned predicates agree too).
+;;
+;; The pair is ADJACENT in the emitted text, which is what makes "nothing wrote
+;; flags in between" true: every instruction is a line of its own, and a label
+;; between the two would be the pending line here instead (the deferred-jmp path
+;; is the only thing that buffers labels, and it only ever defers a `jmp`, then
+;; replays the labels through the ordinary emit rule). Operand ranges are not
+;; pre-split for these mnemonics -- only the move/zext rules consume the split --
+;; so both operands are located here, and the `%` test keeps the destination a
+;; register rather than a memory location.
+(define (compiler-backend-peephole-dead-test-after-and-desc?
+  [pending : CompilerBackendPeepholeLine]
+  [next : CompilerBackendPeepholeLine]) : bool
+  (let
+    [pd : (Ptr u8) (struct-get pending data)]
+    [pms : i64 (compiler-backend-peephole-desc-mnemonic-start pending)]
+    [pmlen : i64 (compiler-backend-peephole-desc-mnemonic-len pending)]
+    (if (or
+      (not (= pmlen 4))
+      (not (= (compiler-backend-peephole-byte-at pd pms) 97))
+      (not (compiler-backend-peephole-range-eq? pd pms (+ pms pmlen) "andq")))
+      false
+      (let
+        [nd : (Ptr u8) (struct-get next data)]
+        [nms : i64 (compiler-backend-peephole-desc-mnemonic-start next)]
+        [nmlen : i64 (compiler-backend-peephole-desc-mnemonic-len next)]
+        (if (or
+          (not (= nmlen 5))
+          (not
+            (compiler-backend-peephole-range-eq? nd nms (+ nms nmlen) "testq")))
+          false
+          (let
+            [pend : i64 (compiler-backend-peephole-desc-end pending)]
+            [nend : i64 (compiler-backend-peephole-desc-end next)]
+            [pops : i64
+              (compiler-backend-peephole-operand-start-range
+                pd
+                (+ pms pmlen)
+                pend)]
+            [nops : i64
+              (compiler-backend-peephole-operand-start-range
+                nd
+                (+ nms nmlen)
+                nend)]
+            [pcomma : i64
+              (compiler-backend-peephole-find-comma-space-range pd pops pend)]
+            [ncomma : i64
+              (compiler-backend-peephole-find-comma-space-range nd nops nend)]
+            (and
+              (> pcomma pops)
+              (> ncomma nops)
+              (< (+ pcomma 2) pend)
+              (< (+ ncomma 2) nend)
+              (= (compiler-backend-peephole-byte-at pd (+ pcomma 2)) 37)
+              (compiler-backend-peephole-ranges-eq?
+                nd
+                nops
+                ncomma
+                nd
+                (+ ncomma 2)
+                nend)
+              (compiler-backend-peephole-ranges-eq?
+                pd
+                (+ pcomma 2)
+                pend
+                nd
+                nops
+                ncomma))))))))
+
 ;; True iff any assembly text is left at or after chunk `chunk` offset `start`.
 ;; The scan below stops on its line cap, and the cap census counts only the
 ;; stops that left text unexamined.
@@ -69359,7 +70068,10 @@
   [chunk : i64]
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : i64
-  (if (compiler-backend-peephole-redundant-zext-pair-desc? pending next)
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (compiler-backend-peephole-redundant-zext-pair-desc? pending next)
+    (compiler-backend-peephole-dead-test-after-and-desc? pending next))
     2
     (if (compiler-backend-peephole-desc-movq? pending)
       (if (compiler-backend-peephole-line-self-move-desc? pending)

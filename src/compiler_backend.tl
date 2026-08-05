@@ -65994,6 +65994,91 @@
       false
       (compiler-backend-peephole-redundant-zext-next-desc? next dst))))
 
+;; First non-space byte at or after `start`, i.e. where a line's operands begin
+;; once the mnemonic has been stepped over.
+(define (compiler-backend-peephole-operand-start-range
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 start]
+    (begin
+      (while (and (< i end) (= (compiler-backend-peephole-byte-at data i) 32))
+        (set! i (+ i 1)))
+      i)))
+
+;; `andq X, %r` writes %r and sets ZF/SF/PF from the result while clearing
+;; OF/CF; `testq %r, %r` on that same register recomputes exactly those flags
+;; and clears the same two, so it is dead -- for every consumer, not just the
+;; equality branches (CF is 0 either way, so the unsigned predicates agree too).
+;;
+;; The pair is ADJACENT in the emitted text, which is what makes "nothing wrote
+;; flags in between" true: every instruction is a line of its own, and a label
+;; between the two would be the pending line here instead (the deferred-jmp path
+;; is the only thing that buffers labels, and it only ever defers a `jmp`, then
+;; replays the labels through the ordinary emit rule). Operand ranges are not
+;; pre-split for these mnemonics -- only the move/zext rules consume the split --
+;; so both operands are located here, and the `%` test keeps the destination a
+;; register rather than a memory location.
+(define (compiler-backend-peephole-dead-test-after-and-desc?
+  [pending : CompilerBackendPeepholeLine]
+  [next : CompilerBackendPeepholeLine]) : bool
+  (let
+    [pd : (Ptr u8) (struct-get pending data)]
+    [pms : i64 (compiler-backend-peephole-desc-mnemonic-start pending)]
+    [pmlen : i64 (compiler-backend-peephole-desc-mnemonic-len pending)]
+    (if (or
+      (not (= pmlen 4))
+      (not (= (compiler-backend-peephole-byte-at pd pms) 97))
+      (not (compiler-backend-peephole-range-eq? pd pms (+ pms pmlen) "andq")))
+      false
+      (let
+        [nd : (Ptr u8) (struct-get next data)]
+        [nms : i64 (compiler-backend-peephole-desc-mnemonic-start next)]
+        [nmlen : i64 (compiler-backend-peephole-desc-mnemonic-len next)]
+        (if (or
+          (not (= nmlen 5))
+          (not
+            (compiler-backend-peephole-range-eq? nd nms (+ nms nmlen) "testq")))
+          false
+          (let
+            [pend : i64 (compiler-backend-peephole-desc-end pending)]
+            [nend : i64 (compiler-backend-peephole-desc-end next)]
+            [pops : i64
+              (compiler-backend-peephole-operand-start-range
+                pd
+                (+ pms pmlen)
+                pend)]
+            [nops : i64
+              (compiler-backend-peephole-operand-start-range
+                nd
+                (+ nms nmlen)
+                nend)]
+            [pcomma : i64
+              (compiler-backend-peephole-find-comma-space-range pd pops pend)]
+            [ncomma : i64
+              (compiler-backend-peephole-find-comma-space-range nd nops nend)]
+            (and
+              (> pcomma pops)
+              (> ncomma nops)
+              (< (+ pcomma 2) pend)
+              (< (+ ncomma 2) nend)
+              (= (compiler-backend-peephole-byte-at pd (+ pcomma 2)) 37)
+              (compiler-backend-peephole-ranges-eq?
+                nd
+                nops
+                ncomma
+                nd
+                (+ ncomma 2)
+                nend)
+              (compiler-backend-peephole-ranges-eq?
+                pd
+                (+ pcomma 2)
+                pend
+                nd
+                nops
+                ncomma))))))))
+
 ;; True iff any assembly text is left at or after chunk `chunk` offset `start`.
 ;; The scan below stops on its line cap, and the cap census counts only the
 ;; stops that left text unexamined.
@@ -66098,7 +66183,10 @@
   [chunk : i64]
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : i64
-  (if (compiler-backend-peephole-redundant-zext-pair-desc? pending next)
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (compiler-backend-peephole-redundant-zext-pair-desc? pending next)
+    (compiler-backend-peephole-dead-test-after-and-desc? pending next))
     2
     (if (compiler-backend-peephole-desc-movq? pending)
       (if (compiler-backend-peephole-line-self-move-desc? pending)

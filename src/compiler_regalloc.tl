@@ -2940,9 +2940,23 @@
         (set! index (+ index 1))))))
 
 ;; The live-after half: bridge every value live out of this instruction across
-;; the `point`/`next` pair. This one stays a word walk -- live-after is a real
-;; dense live row (36.9M of the 39.1M words this walk reads in an opt2
-;; self-compile), not a one-or-two-bit per-instruction set.
+;; the `point`/`next` pair. This one stays a word walk and does not become an id
+;; list -- live-after is a whole live row (36.9M of the 39.1M words this walk
+;; reads in an opt2 self-compile), not a one-or-two-bit per-instruction set.
+;;
+;; A whole row is not a full row, though, and the walk pays for the difference:
+;; of the 26,954,947 words it reads in an opt2 self-compile, 21.1M (78%) are
+;; zero and carry the loop to the next word and nothing else, at 19 instructions
+;; each. Two things are therefore kept out of the per-word step.
+;; `compiler-live-set-word-at-bounded` reloads the set handle, the array handle
+;; behind it and the data pointer behind that on every call, so the pointer is
+;; taken once up front (`compiler-live-set-word-data`; heap allocation is a bump
+;; into the active arena and nothing is moved or freed under a live value, and
+;; nothing here writes to `live-after`, so it stays valid across the calls in
+;; the body). And the word's bit base belongs to the bits, not to the word:
+;; computing it in the item expression lets the loop hoist it into the inner
+;; walk's preheader, charging the 5.9M words that carry a bit instead of all
+;; 27.0M. Same words, same order, same values.
 (define (compiler-reg-extend-segment-after-words!
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
@@ -2953,18 +2967,20 @@
   [point : i64]) : unit
   (let
     [after-words : i64 (live.compiler-live-set-word-count live-after)]
+    [after-data : (MutPtr i64) (live.compiler-live-set-word-data live-after)]
     [next : i64 (+ point 1)]
     [index : i64 0]
     (while (< index after-words)
       (let
-        [base : i64 (* index (live.compiler-live-set-word-bits))]
         [after-bits : i64
-          (live.compiler-live-set-word-at-bounded live-after index)]
+          (live.compiler-live-set-word-at-data after-data index)]
         (begin
           (while (not (= after-bits 0))
             (let
               [item-var : i64
-                (+ base (compiler-reg-low-bit-index32 after-bits))]
+                (+
+                  (* index (live.compiler-live-set-word-bits))
+                  (compiler-reg-low-bit-index32 after-bits))]
               (begin
                 (compiler-reg-segment-note-span!
                   segments

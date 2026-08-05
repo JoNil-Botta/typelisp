@@ -107,6 +107,31 @@
 (define (compiler-live-instr-set-vec-empty) : CompilerLiveInstrSetVec
   (CompilerLiveInstrSetVec (make-array CompilerLiveI64Set 0)))
 
+(unsafe
+  (extern (live-runtime-copy-bytes!
+    [dst : (MutPtr u8)]
+    [src : (Ptr u8)]
+    [count : i64]) : unit (:symbol "tl_memcpy")))
+
+;; Word count at which a bulk `tl_memcpy` beats copying a live-set word range
+;; one i64 at a time.
+;;
+;; The scalar arm is the load/store/index/compare/branch body the backend emits
+;; for a dense word walk, five or six instructions per word. `tl_memcpy` costs
+;; thirteen instructions of direction/overlap dispatch plus one `rep movsq` step
+;; per eight bytes, and reaching it costs the argument moves and the `call`.
+;; That is roughly `5n` against `18 + n`, which crosses just above four words.
+;;
+;; The threshold is not a guess and the scalar arm is not vestigial: a
+;; word-count census over an opt2 self-compile puts half of every live-set copy
+;; at three words or fewer (freezes: 4.9% empty, 25.9% one word, 14.2% two,
+;; 10.1% three; the range copies are wider still at the tail but 52% of them are
+;; also three or fewer). Those calls are half the traffic and 7% of the words,
+;; so they must keep the cheap arm while the long tail -- which is where nearly
+;; all the words are -- takes the bulk copy.
+(define (compiler-live-set-bulk-copy-words) : i64
+  5)
+
 (define (compiler-live-set-word-bits) : i64
   32)
 
@@ -172,16 +197,69 @@
     (ptr-read
       (ptr-offset (array-data (compiler-live-set-words set)) word-index))))
 
+;; The backing pointer `compiler-live-set-word-at-bounded` reloads on every
+;; call: the set handle, the array handle behind it, and the data pointer behind
+;; that are three dependent loads a walk repeats per word. A walk that reads
+;; many words takes the pointer once with this and indexes it with
+;; `compiler-live-set-word-at-data`. Heap allocation is a bump into the active
+;; arena and nothing is ever moved or freed under a live value, so the pointer
+;; stays valid for as long as the set does -- including across calls that
+;; allocate, as long as they do not write to this set.
+(define (compiler-live-set-word-data [set : CompilerLiveI64Set]) : (MutPtr i64)
+  (unsafe
+    (array-data (compiler-live-set-words set))))
+
+;; Same word `compiler-live-set-word-at-bounded` returns for this index, read
+;; through a pointer the caller hoisted with `compiler-live-set-word-data`.
+;; Callers must prove `0 <= word-index < compiler-live-set-word-count set`.
+(define (compiler-live-set-word-at-data
+  [data : (MutPtr i64)]
+  [word-index : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-offset data word-index))))
+
+;; Copy `src[index, count)` into the same range of `dst`. Both callers below
+;; allocate `dst` fresh at a length that covers `count` and never pass a `count`
+;; past the end of `src`, so `dst` and `src` are always distinct arrays and the
+;; range is in bounds for both -- the recursive `array-ref`/`array-set!` form
+;; this replaces re-read both lengths and re-tested them on every word, which is
+;; four of the fourteen instructions it spent per word. Reading the backing
+;; pointers once and indexing them directly leaves the five-instruction word
+;; body, and once the range is wide enough to pay for the call (see
+;; `compiler-live-set-bulk-copy-words`) `tl_memcpy` moves it eight bytes per
+;; instruction instead. Distinct arrays means the ranges cannot overlap, so the
+;; forward bulk copy sees exactly what the ascending word walk saw.
 (define (compiler-live-set-copy-words-into
   [dst : (__tl_dyn-array i64)]
   [src : (__tl_dyn-array i64)]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (array-set! dst index (array-ref src index))
-      (compiler-live-set-copy-words-into dst src (+ index 1) count))))
+  (let
+    [words : i64 (- count index)]
+    (if (<= words 0)
+      unit
+      (let
+        [src-data : (MutPtr i64)
+          (unsafe
+            (array-data src))]
+        [dst-data : (MutPtr i64)
+          (unsafe
+            (array-data dst))]
+        (if (< words (compiler-live-set-bulk-copy-words))
+          (let
+            [at : i64 index]
+            (while (< at count)
+              (begin
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset dst-data at)
+                    (ptr-read (ptr-offset src-data at))))
+                (set! at (+ at 1)))))
+          (unsafe
+            (live-runtime-copy-bytes!
+              (ptr-cast (ptr-offset dst-data index) : (MutPtr u8))
+              (ptr-cast (ptr-offset src-data index) : (Ptr u8))
+              (* words 8))))))))
 
 (define (compiler-live-set-copy-with-capacity
   [set : CompilerLiveI64Set]
@@ -669,13 +747,25 @@
             (array-data out))]
         [index : i64 0]
         (begin
-          (while (< index count)
-            (begin
-              (unsafe
-                (ptr-write!
-                  (ptr-offset dst index)
-                  (ptr-read (ptr-offset src index))))
-              (set! index (+ index 1))))
+          ;; `out` is the allocation two lines up, so it can never be the array
+          ;; `words` points at and the two ranges cannot overlap -- the bulk
+          ;; copy therefore reads exactly what the ascending word walk read.
+          ;; Freezes are short: half of them are three words or fewer, which is
+          ;; under the width where the call pays for itself, so the word walk
+          ;; stays for those (see `compiler-live-set-bulk-copy-words`).
+          (if (< count (compiler-live-set-bulk-copy-words))
+            (while (< index count)
+              (begin
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset dst index)
+                    (ptr-read (ptr-offset src index))))
+                (set! index (+ index 1))))
+            (unsafe
+              (live-runtime-copy-bytes!
+                (ptr-cast dst : (MutPtr u8))
+                (ptr-cast src : (Ptr u8))
+                (* count 8))))
           (CompilerLiveI64Set out))))))
 
 (define (compiler-live-var-word-count [vars : i64]) : i64

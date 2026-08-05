@@ -7,13 +7,16 @@
 ;; ordinary package source discovery skips them. Hosts without directory
 ;; enumeration fall back to the manifest entry source.
 (import stdlib.fs)
+(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_diagnostic)
 (import compiler_load)
+(import tlci_core as tlci)
 
 (defstruct PackageSourceSet
   (manifest-path String)
@@ -28,6 +31,20 @@
 (defenum ResultPackageSourceList
   (Ok svec.Vec)
   (Err String))
+
+(defenum ResultPackageSourceDigest
+  (Ok i64)
+  (Err String))
+
+(defenum PackageSourceBindingVerification
+  (Match i64)
+  ;; Stable ordering: expected/current-source digest first, actual/image
+  ;; digest second.
+  (Mismatch i64 i64)
+  (Unreadable String)
+  (MissingOrLegacy)
+  (UnsupportedSchema i64)
+  (Malformed String))
 
 (define (package-source-char-code-at [text : String] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
@@ -585,3 +602,761 @@
   (let
     [root : String (struct-get source-set manifest-dir)]
     (package-source-scan-optional-dir command root "tests" (svec.new))))
+
+;; Source-set provenance transcript -------------------------------------------------
+;;
+;; The transcript is framed with little-endian u64 lengths so concatenation
+;; shapes cannot collide.  Files are read as bytes through `io.try-read-file`;
+;; no text conversion or newline normalization is involved.
+(define package-source-binding-domain : String
+  "typelisp-package-source-set")
+(define package-source-binding-schema-version : i64
+  1)
+(define package-source-binding-hash-modulus : i64
+  2147483647)
+(define package-source-binding-hash-multiplier : i64
+  131)
+
+(define (package-source-binding-hash-byte [hash : i64] [value : i64]) : i64
+  (%
+    (+ (* hash package-source-binding-hash-multiplier) (bit-and value 0xff))
+    package-source-binding-hash-modulus))
+
+(define (package-source-binding-hash-u64 [hash : i64] [value : i64]) : i64
+  (let
+    [next : i64 hash]
+    [index : i64 0]
+    (begin
+      (while (< index 8)
+        (begin
+          (set!
+            next
+            (package-source-binding-hash-byte next (shr value (* index 8))))
+          (set! index (+ index 1))))
+      next)))
+
+(define (package-source-binding-hash-string [hash : i64] [text : String]) : i64
+  (let
+    [next : i64 hash]
+    [index : i64 0]
+    [count : i64 (string.string-length text)]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            next
+            (package-source-binding-hash-byte
+              next
+              (cast (string.string-ref text index) : i64)))
+          (set! index (+ index 1))))
+      next)))
+
+(define (package-source-binding-hash-bytes
+  [hash : i64]
+  [bytes : (__tl_dyn-array u8)]) : i64
+  (let
+    [next : i64 hash]
+    [index : i64 0]
+    [count : i64 (array-length bytes)]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            next
+            (package-source-binding-hash-byte
+              next
+              (cast (array-ref bytes index) : i64)))
+          (set! index (+ index 1))))
+      next)))
+
+(define (package-source-binding-relative-path [root : String] [path : String]) : String
+  (let
+    [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
+    [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
+    [relative : String
+      (if (= normalized-root ".")
+        normalized-path
+        (compiler_load.compiler-load-root-relative-path
+          normalized-root
+          normalized-path))]
+    (if (and
+      (> (string.string-length relative) 0)
+      (not (string.eq relative "."))
+      (fs.path-safe-relative? (& relative))
+      (package-source-tl-file? relative)
+      (not (string.eq relative normalized-path)))
+      relative
+      ;; A root of `.` has no lexical prefix after normalization; its
+      ;; normalized path is nevertheless a valid package-relative spelling.
+      (if (and
+        (string.eq normalized-root ".")
+        (> (string.string-length normalized-path) 0)
+        (not (string.eq normalized-path "."))
+        (fs.path-safe-relative? (& normalized-path))
+        (package-source-tl-file? normalized-path))
+        normalized-path
+        ""))))
+
+(define (package-source-binding-invalid-set-error
+  [source-set : PackageSourceSet]
+  [path : String]
+  [reason : String]) : String
+  (str_cat.str-cat
+    "package '"
+    (struct-get source-set manifest-path)
+    "' source '"
+    path
+    "': "
+    reason))
+
+(define (package-source-binding-read-error
+  [source-set : PackageSourceSet]
+  [path : String]
+  [error : io.IoError]) : String
+  (package-source-binding-invalid-set-error
+    source-set
+    path
+    (str_cat.str-cat "unreadable source: " (io.error-message error))))
+
+;; Hash one already-read source after its relative path and file length.  This
+;; small helper keeps the main walker readable and makes the exact framing
+;; explicit in one place.
+(define (package-source-binding-hash-source
+  [hash : i64]
+  [relative : String]
+  [bytes : (__tl_dyn-array u8)]) : i64
+  (let
+    [with-path-len : i64
+      (package-source-binding-hash-u64 hash (string.string-length relative))]
+    [with-path : i64
+      (package-source-binding-hash-string with-path-len relative)]
+    [with-file-len : i64
+      (package-source-binding-hash-u64 with-path (array-length bytes))]
+    (package-source-binding-hash-bytes with-file-len bytes)))
+
+(define (package-source-set-digest [source-set : PackageSourceSet]) : ResultPackageSourceDigest
+  (let
+    [sources : svec.Vec (struct-get source-set sources)]
+    [root : String
+      (compiler_load.compiler-load-normalize-path
+        (struct-get source-set manifest-dir))]
+    [count : i64 (svec.len (& sources))]
+    [hash0 : i64
+      (package-source-binding-hash-u64
+        (package-source-binding-hash-u64
+          (package-source-binding-hash-string
+            (package-source-binding-hash-u64
+              1
+              (string.string-length package-source-binding-domain))
+            package-source-binding-domain)
+          package-source-binding-schema-version)
+        count)]
+    [index : i64 0]
+    [hash : i64 hash0]
+    [previous-relative : String ""]
+    [error : String
+      (if (<= count 0)
+        "package source set must contain at least one source"
+        "")]
+    (begin
+      (while (and (= (string.string-length error) 0) (< index count))
+        (let
+          [path : String (svec.get (& sources) index "")]
+          [relative : String (package-source-binding-relative-path root path)]
+          (if (= (string.string-length relative) 0)
+            (set!
+              error
+              (package-source-binding-invalid-set-error
+                source-set
+                path
+                "source path is not a safe nonempty relative path under package root"))
+            (if (if (= (string.string-length previous-relative) 0)
+              false
+              (not (package-source-string-less? previous-relative relative)))
+              (set!
+                error
+                (package-source-binding-invalid-set-error
+                  source-set
+                  path
+                  "source paths must be unique and in deterministic order"))
+              (if (not (package-source-relative-parent-eligible? root relative))
+                (set!
+                  error
+                  (package-source-binding-invalid-set-error
+                    source-set
+                    path
+                    "source is excluded by package discovery policy"))
+                (match (fs.try-file-kind-no-follow (& path))
+                  [(fs.ErrFsFileKind io-error)
+                    (set!
+                      error
+                      (package-source-binding-read-error
+                        source-set
+                        path
+                        io-error))]
+                  [(fs.OkFsFileKind kind)
+                    (if (not (package-source-include-kind? path kind))
+                      (set!
+                        error
+                        (package-source-binding-invalid-set-error
+                          source-set
+                          path
+                          "source is no longer a regular TypeLisp file"))
+                      (match (io.try-read-file (& path))
+                        [(io.ErrIoBytes io-error)
+                          (set!
+                            error
+                            (package-source-binding-read-error
+                              source-set
+                              path
+                              io-error))]
+                        [(io.OkIoBytes contents)
+                          (let
+                            [bytes : (__tl_dyn-array u8)
+                              (byte_buf.to-array contents)]
+                            (set!
+                              hash
+                              (package-source-binding-hash-source
+                                hash
+                                relative
+                                bytes))
+                            (set! previous-relative relative))]))])))))
+        (set! index (+ index 1))))
+    (if (> (string.string-length error) 0)
+      (ResultPackageSourceDigest.Err error)
+      (ResultPackageSourceDigest.Ok hash))))
+
+(define (package-source-digest-for [source-set : PackageSourceSet]) : ResultPackageSourceDigest
+  (package-source-set-digest source-set))
+
+(define (package-source-binding-verification-from-admission
+  [admission : tlci.TlciPackageSourceBindingAdmission]) : PackageSourceBindingVerification
+  (match admission
+    [(tlci.TlciPackageSourceBindingAdmission.Match digest)
+      (PackageSourceBindingVerification.Match digest)]
+    [(tlci.TlciPackageSourceBindingAdmission.Mismatch expected actual)
+      (PackageSourceBindingVerification.Mismatch expected actual)]
+    [(tlci.TlciPackageSourceBindingAdmission.MissingOrLegacy)
+      (PackageSourceBindingVerification.MissingOrLegacy)]
+    [(tlci.TlciPackageSourceBindingAdmission.UnsupportedSchema schema)
+      (PackageSourceBindingVerification.UnsupportedSchema schema)]
+    [(tlci.TlciPackageSourceBindingAdmission.Malformed message)
+      (PackageSourceBindingVerification.Malformed message)]))
+
+(define (package-source-verify-binding
+  [source-set : PackageSourceSet]
+  [rodata : (__tl_dyn-array u8)]) : PackageSourceBindingVerification
+  (match (package-source-set-digest source-set)
+    [(ResultPackageSourceDigest.Err message)
+      (PackageSourceBindingVerification.Unreadable message)]
+    [(ResultPackageSourceDigest.Ok expected)
+      (package-source-binding-verification-from-admission
+        (tlci.tlci-package-source-binding-admit rodata expected))]))
+
+(define (package-source-verify-binding-for
+  [command : String]
+  [manifest-path : String]
+  [has-manifest : bool]
+  [rodata : (__tl_dyn-array u8)]) : PackageSourceBindingVerification
+  (match (package-source-discover-for command manifest-path has-manifest)
+    [(ResultPackageSourceSet.Err message)
+      (PackageSourceBindingVerification.Unreadable message)]
+    [(ResultPackageSourceSet.Ok source-set)
+      (package-source-verify-binding source-set rodata)]))
+
+(cfg
+  test
+  (define package-source-binding-test-root : String
+    (str_cat.str-cat
+      "target/package_source_binding_fixture/"
+      (string.int->string (fs.process-id)))))
+(cfg
+  test
+  (define package-source-binding-test-alternate-root : String
+    (str_cat.str-cat
+      "target/./package_source_binding_fixture/"
+      (string.int->string (fs.process-id)))))
+(cfg
+  test
+  (define package-source-binding-test-target : String
+    "target"))
+(cfg
+  test
+  (define package-source-binding-test-parent : String
+    "target/package_source_binding_fixture"))
+(cfg
+  test
+  (define package-source-binding-test-manifest-text : String
+    "(package\n  (name \"binding_fixture\")\n  (version \"0.1.0\")\n  (kind \"bin\")\n  (entry \"a.tl\"))\n"))
+
+(cfg
+  test
+  (define (package-source-binding-test-write
+    [path : String]
+    [contents : String]) : bool
+    (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
+      [(io.OkIoUnit) true]
+      [(io.ErrIoUnit _) false])))
+
+(cfg
+  test
+  (define (package-source-binding-test-remove [path : String]) : unit
+    (match (fs.try-remove-file (& path))
+      [(io.OkIoUnit) unit]
+      [(io.ErrIoUnit _) unit])))
+
+(cfg
+  test
+  (define (package-source-binding-test-ensure-root [root : String]) : bool
+    (and
+      (match (fs.try-mkdir-if-missing (& package-source-binding-test-target))
+        [(io.OkIoUnit) true]
+        [(io.ErrIoUnit _) false])
+      (match (fs.try-mkdir-if-missing (& package-source-binding-test-parent))
+        [(io.OkIoUnit) true]
+        [(io.ErrIoUnit _) false])
+      (match (fs.try-mkdir-if-missing (& root))
+        [(io.OkIoUnit) true]
+        [(io.ErrIoUnit _) false]))))
+
+(cfg
+  test
+  (define (package-source-binding-test-manifest) : compiler_load.CompilerPkgManifest
+    (compiler_load.CompilerPkgManifest
+      "binding-fixture"
+      "1.0.0"
+      compiler_load.CompilerPkgKindBin
+      "a.tl"
+      (compiler_load.compiler-pkg-deps-empty)
+      (compiler_load.compiler-pkg-link-empty))))
+
+(cfg
+  test
+  (define (package-source-binding-test-source-set-from-sources
+    [root : String]
+    [sources : svec.Vec]) : PackageSourceSet
+    (PackageSourceSet
+      (package-source-root-join root "typelisp.pkg")
+      root
+      (package-source-binding-test-manifest)
+      sources)))
+
+(cfg
+  test
+  (define (package-source-binding-test-source-set
+    [root : String]
+    [extra : bool]) : PackageSourceSet
+    (let
+      [sources : svec.Vec (svec.new)]
+      (begin
+        (svec.push (&mut sources) (package-source-root-join root "a.tl"))
+        (svec.push (&mut sources) (package-source-root-join root "b.tl"))
+        (if extra
+          (svec.push (&mut sources) (package-source-root-join root "c.tl"))
+          unit)
+        (package-source-binding-test-source-set-from-sources root sources)))))
+
+(cfg
+  test
+  (define (package-source-binding-test-pack
+    [schema : i64]
+    [payload : (__tl_dyn-array u8)]) : (__tl_dyn-array u8)
+    (let
+      [sections : (__tl_dyn-array tlci.TlciAuxSection)
+        (array.make-array tlci.TlciAuxSection 1)]
+      (begin
+        (array-set!
+          sections
+          0
+          (tlci.TlciAuxSection
+            tlci.tlci-aux-kind-package-source-binding
+            schema
+            payload))
+        (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+          [(tlci.ResultTlciAuxBytes.Ok packed) packed]
+          [(tlci.ResultTlciAuxBytes.Err message) (io.panic message)])))))
+
+(cfg
+  test
+  (define (package-source-binding-test-bound-pack [digest : i64]) : (__tl_dyn-array
+      u8)
+    (package-source-binding-test-pack
+      tlci.tlci-package-source-binding-schema-version
+      (let
+        [payload : (__tl_dyn-array u8) (make-array u8 8)]
+        (begin
+          (tlci.tlci-set-u64! payload 0 digest)
+          payload)))))
+
+(cfg
+  test
+  (define (package-source-binding-test-digest [source-set : PackageSourceSet]) : i64
+    (match (package-source-set-digest source-set)
+      [(ResultPackageSourceDigest.Ok digest) digest]
+      [(ResultPackageSourceDigest.Err message) (io.panic message)])))
+
+(cfg
+  test
+  (test
+    package-source-binding-transcript-and-admission
+    (let
+      [root : String package-source-binding-test-root]
+      [a : String (package-source-root-join root "a.tl")]
+      [b : String (package-source-root-join root "b.tl")]
+      [c : String (package-source-root-join root "c.tl")]
+      [setup : bool
+        (and
+          (package-source-binding-test-ensure-root root)
+          (package-source-binding-test-write a "(a)\n")
+          (package-source-binding-test-write b "(b)\n"))]
+      (if (not setup)
+        (io.panic "package-source: unable to create digest fixture")
+        (let
+          [source-set : PackageSourceSet
+            (package-source-binding-test-source-set root false)]
+          [alternate : PackageSourceSet
+            (package-source-binding-test-source-set
+              package-source-binding-test-alternate-root
+              false)]
+          [baseline : i64 0]
+          [binding : (__tl_dyn-array u8) (tlci.tlci-empty-bytes)]
+          (begin
+            (match (package-source-set-digest source-set)
+              [(ResultPackageSourceDigest.Ok digest) (set! baseline digest)]
+              [(ResultPackageSourceDigest.Err message) (io.panic message)])
+            (if (not (= baseline 1959683407))
+              (io.panic "package-source: pinned digest mismatch")
+              unit)
+            (match (package-source-set-digest alternate)
+              [(ResultPackageSourceDigest.Ok digest)
+                (if (not (= digest baseline))
+                  (io.panic
+                    "package-source: alternate root spelling changed digest")
+                  unit)]
+              [(ResultPackageSourceDigest.Err message) (io.panic message)])
+            (set! binding (package-source-binding-test-bound-pack baseline))
+            (match (package-source-verify-binding source-set binding)
+              [(PackageSourceBindingVerification.Match digest)
+                (if (not (= digest baseline))
+                  (io.panic "package-source: bound digest did not match")
+                  unit)]
+              [_ (io.panic "package-source: bound digest admission failed")])
+            (if (not (package-source-binding-test-write a "(changed)\n"))
+              (io.panic "package-source: unable to mutate digest fixture")
+              unit)
+            (match (package-source-set-digest source-set)
+              [(ResultPackageSourceDigest.Ok digest)
+                (if (= digest baseline)
+                  (io.panic
+                    "package-source: content mutation did not change digest")
+                  unit)]
+              [(ResultPackageSourceDigest.Err message) (io.panic message)])
+            (if (not (package-source-binding-test-write a "(a)\n"))
+              (io.panic "package-source: unable to restore digest fixture")
+              unit)
+            (if (not (package-source-binding-test-write c "(c)\n"))
+              (io.panic "package-source: unable to add digest fixture")
+              unit)
+            (match (package-source-set-digest
+              (package-source-binding-test-source-set root true))
+              [(ResultPackageSourceDigest.Ok digest)
+                (if (= digest baseline)
+                  (io.panic "package-source: add source did not change digest")
+                  unit)]
+              [(ResultPackageSourceDigest.Err message) (io.panic message)])
+            (match (package-source-verify-binding
+              source-set
+              (package-source-binding-test-bound-pack 12345))
+              [(PackageSourceBindingVerification.Mismatch expected actual)
+                (if (and (= expected baseline) (= actual 12345))
+                  unit
+                  (io.panic
+                    "package-source: mismatch did not preserve expected/actual order"))]
+              [_ (io.panic "package-source: mismatch admission failed")])
+            (match (package-source-verify-binding
+              source-set
+              (tlci.tlci-empty-bytes))
+              [(PackageSourceBindingVerification.MissingOrLegacy) unit]
+              [_ (io.panic "package-source: missing binding admission failed")])
+            (match (package-source-verify-binding
+              source-set
+              (package-source-binding-test-pack
+                2
+                (tlci.tlci-string->bytes "future")))
+              [(PackageSourceBindingVerification.UnsupportedSchema schema)
+                (if (= schema 2)
+                  unit
+                  (io.panic "package-source: unsupported schema changed"))]
+              [_
+                (io.panic
+                  "package-source: unsupported binding admission failed")])
+            (match (package-source-verify-binding
+              source-set
+              (package-source-binding-test-pack
+                tlci.tlci-package-source-binding-schema-version
+                (make-array u8 7)))
+              [(PackageSourceBindingVerification.Malformed _) unit]
+              [_
+                (io.panic "package-source: malformed binding admission failed")])
+            (match (package-source-verify-binding source-set binding)
+              [(PackageSourceBindingVerification.Match _) unit]
+              [_ (io.panic "package-source: restore did not recover digest")])
+            (if (not (package-source-binding-test-write a "(a)\n"))
+              (io.panic
+                "package-source: unable to restore source before unreadable check")
+              unit)
+            (match (fs.try-remove-file (& a))
+              [(io.OkIoUnit) unit]
+              [(io.ErrIoUnit _)
+                (io.panic "package-source: unable to delete fixture")])
+            (match (package-source-verify-binding source-set binding)
+              [(PackageSourceBindingVerification.Unreadable _) unit]
+              [_ (io.panic "package-source: deleted source was not unreadable")])
+            ;; Leave the ignored fixture in a restorable state for a rerun.
+            (package-source-binding-test-write a "(a)\n")
+            (fs.try-remove-file (& c))
+            unit))))))
+
+(cfg
+  test
+  (test
+    package-source-binding-order-framing-and-rename
+    (let
+      [root : String package-source-binding-test-root]
+      [a : String (package-source-root-join root "a.tl")]
+      [b : String (package-source-root-join root "b.tl")]
+      [renamed : String (package-source-root-join root "renamed.tl")]
+      [collision-root : String (package-source-root-join root "collision")]
+      [collision-a : String (package-source-root-join collision-root "a.tl")]
+      [collision-b : String
+        (package-source-root-join collision-root "a.tlb.tl")]
+      [setup : bool
+        (and
+          (package-source-binding-test-ensure-root root)
+          (match (fs.try-mkdir-if-missing (& collision-root))
+            [(io.OkIoUnit) true]
+            [(io.ErrIoUnit _) false])
+          (package-source-binding-test-write a "(a)\n")
+          (package-source-binding-test-write b "(b)\n")
+          (package-source-binding-test-write collision-a "b.tlX")
+          (package-source-binding-test-write collision-b "X"))]
+      (if (not setup)
+        (io.panic "package-source: unable to create ordering fixture")
+        (let
+          [baseline : i64
+            (package-source-binding-test-digest
+              (package-source-binding-test-source-set root false))]
+          [reversed : svec.Vec (svec.new)]
+          [duplicate : svec.Vec (svec.new)]
+          [collision-left : svec.Vec (svec.new)]
+          [collision-right : svec.Vec (svec.new)]
+          [renamed-sources : svec.Vec (svec.new)]
+          (begin
+            (svec.push (&mut reversed) b)
+            (svec.push (&mut reversed) a)
+            (match (package-source-set-digest
+              (package-source-binding-test-source-set-from-sources
+                root
+                reversed))
+              [(ResultPackageSourceDigest.Err _) unit]
+              [_ (io.panic "package-source: reversed source list was accepted")])
+            (svec.push (&mut duplicate) a)
+            (svec.push (&mut duplicate) a)
+            (match (package-source-set-digest
+              (package-source-binding-test-source-set-from-sources
+                root
+                duplicate))
+              [(ResultPackageSourceDigest.Err _) unit]
+              [_
+                (io.panic "package-source: duplicate source list was accepted")])
+            (svec.push (&mut collision-left) collision-a)
+            (svec.push (&mut collision-right) collision-b)
+            (match (package-source-set-digest
+              (package-source-binding-test-source-set-from-sources
+                collision-root
+                collision-left))
+              [(ResultPackageSourceDigest.Ok left)
+                (match (package-source-set-digest
+                  (package-source-binding-test-source-set-from-sources
+                    collision-root
+                    collision-right))
+                  [(ResultPackageSourceDigest.Ok right)
+                    (if (= left right)
+                      (io.panic
+                        "package-source: framed collision was not distinguished")
+                      unit)]
+                  [(ResultPackageSourceDigest.Err message) (io.panic message)])]
+              [(ResultPackageSourceDigest.Err message) (io.panic message)])
+            (package-source-binding-test-remove renamed)
+            (match (fs.try-rename (& b) (& renamed))
+              [(io.OkIoUnit) unit]
+              [(io.ErrIoUnit _)
+                (io.panic "package-source: rename fixture failed")])
+            (svec.push (&mut renamed-sources) a)
+            (svec.push (&mut renamed-sources) renamed)
+            (match (package-source-set-digest
+              (package-source-binding-test-source-set-from-sources
+                root
+                renamed-sources))
+              [(ResultPackageSourceDigest.Ok changed)
+                (if (= changed baseline)
+                  (io.panic "package-source: rename did not change digest")
+                  unit)]
+              [(ResultPackageSourceDigest.Err message) (io.panic message)])
+            (match (fs.try-rename (& renamed) (& b))
+              [(io.OkIoUnit) unit]
+              [(io.ErrIoUnit _)
+                (io.panic "package-source: rename restore failed")])
+            (if (not
+              (=
+                (package-source-binding-test-digest
+                  (package-source-binding-test-source-set root false))
+                baseline))
+              (io.panic "package-source: rename restoration changed digest")
+              unit)
+            unit))))))
+
+(cfg
+  test
+  (test
+    package-source-binding-discovery-exclusions-and-removal
+    (let
+      [root : String
+        (str_cat.str-cat package-source-binding-test-root "/discover")]
+      [manifest-path : String (package-source-root-join root "typelisp.pkg")]
+      [a : String (package-source-root-join root "a.tl")]
+      [b : String (package-source-root-join root "b.tl")]
+      [target-root : String (package-source-root-join root "target")]
+      [target-source : String
+        (package-source-root-join target-root "ignored.tl")]
+      [nested-root : String (package-source-root-join root "nested")]
+      [nested-manifest : String
+        (package-source-root-join nested-root "typelisp.pkg")]
+      [nested-source : String
+        (package-source-root-join nested-root "ignored.tl")]
+      [setup : bool
+        (and
+          (package-source-binding-test-ensure-root
+            package-source-binding-test-root)
+          (match (fs.try-mkdir-if-missing (& root))
+            [(io.OkIoUnit) true]
+            [(io.ErrIoUnit _) false])
+          (match (fs.try-mkdir-if-missing (& target-root))
+            [(io.OkIoUnit) true]
+            [(io.ErrIoUnit _) false])
+          (match (fs.try-mkdir-if-missing (& nested-root))
+            [(io.OkIoUnit) true]
+            [(io.ErrIoUnit _) false])
+          (package-source-binding-test-write
+            manifest-path
+            package-source-binding-test-manifest-text)
+          (package-source-binding-test-write a "(a)\n")
+          (package-source-binding-test-write b "(b)\n")
+          (package-source-binding-test-write target-source "(target)\n")
+          (package-source-binding-test-write
+            nested-manifest
+            package-source-binding-test-manifest-text)
+          (package-source-binding-test-write nested-source "(nested)\n"))]
+      (if (not setup)
+        (io.panic "package-source: unable to create discovery fixture")
+        (let
+          [binding : (__tl_dyn-array u8) (tlci.tlci-empty-bytes)]
+          [baseline : i64 0]
+          [empty-sources : svec.Vec (svec.new)]
+          [target-sources : svec.Vec (svec.new)]
+          [nested-sources : svec.Vec (svec.new)]
+          [outside-sources : svec.Vec (svec.new)]
+          [outside : String (package-source-root-join root "../outside.tl")]
+          (begin
+            (svec.push (&mut target-sources) target-source)
+            (svec.push (&mut nested-sources) nested-source)
+            (svec.push (&mut outside-sources) outside)
+            (match (package-source-set-digest
+              (package-source-binding-test-source-set-from-sources
+                root
+                empty-sources))
+              [(ResultPackageSourceDigest.Err _) unit]
+              [_ (io.panic "package-source: empty source set was accepted")])
+            (match (package-source-set-digest
+              (package-source-binding-test-source-set-from-sources
+                root
+                target-sources))
+              [(ResultPackageSourceDigest.Err _) unit]
+              [_ (io.panic "package-source: target source was accepted")])
+            (match (package-source-set-digest
+              (package-source-binding-test-source-set-from-sources
+                root
+                nested-sources))
+              [(ResultPackageSourceDigest.Err _) unit]
+              [_ (io.panic "package-source: nested source was accepted")])
+            (match (package-source-set-digest
+              (package-source-binding-test-source-set-from-sources
+                root
+                outside-sources))
+              [(ResultPackageSourceDigest.Err _) unit]
+              [_ (io.panic "package-source: outside source was accepted")])
+            (match (package-source-discover-for "test" manifest-path true)
+              [(ResultPackageSourceSet.Err message) (io.panic message)]
+              [(ResultPackageSourceSet.Ok discovered)
+                (begin
+                  (set!
+                    baseline
+                    (package-source-binding-test-digest discovered))
+                  (if (not (= baseline 1959683407))
+                    (io.panic "package-source: discovery baseline mismatch")
+                    unit))])
+            (set! binding (package-source-binding-test-bound-pack baseline))
+            (match (package-source-verify-binding-for
+              "test"
+              manifest-path
+              true
+              binding)
+              [(PackageSourceBindingVerification.Match digest)
+                (if (= digest baseline)
+                  unit
+                  (io.panic "package-source: discovered binding did not match"))]
+              [_ (io.panic "package-source: discovered match admission failed")])
+            (if (not
+              (package-source-binding-test-write
+                target-source
+                "(target changed)\n"))
+              (io.panic "package-source: target fixture mutation failed")
+              unit)
+            (if (not
+              (package-source-binding-test-write
+                nested-source
+                "(nested changed)\n"))
+              (io.panic "package-source: nested fixture mutation failed")
+              unit)
+            (match (package-source-verify-binding-for
+              "test"
+              manifest-path
+              true
+              binding)
+              [(PackageSourceBindingVerification.Match _) unit]
+              [_ (io.panic "package-source: excluded source changed digest")])
+            (match (fs.try-remove-file (& b))
+              [(io.OkIoUnit) unit]
+              [(io.ErrIoUnit _)
+                (io.panic "package-source: removal fixture failed")])
+            (match (package-source-verify-binding-for
+              "test"
+              manifest-path
+              true
+              binding)
+              [(PackageSourceBindingVerification.Mismatch expected actual)
+                (if (and (not (= expected actual)) (= actual baseline))
+                  unit
+                  (io.panic
+                    "package-source: removal mismatch was not current-first"))]
+              [_ (io.panic "package-source: removal did not produce mismatch")])
+            (if (not (package-source-binding-test-write b "(b)\n"))
+              (io.panic "package-source: removal restore failed")
+              unit)
+            (match (package-source-verify-binding-for
+              "test"
+              manifest-path
+              true
+              binding)
+              [(PackageSourceBindingVerification.Match _) unit]
+              [_ (io.panic "package-source: restored discovery did not match")])))))))

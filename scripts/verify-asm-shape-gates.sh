@@ -659,6 +659,59 @@ check_gep_value_direct() {
     assert_fixed_count_eq "$_body" 'call tl_memcpy' 2 gep-value-direct
 }
 
+check_gep_copy_sib() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "gep_copy_sib_$_suffix" \
+            tests/integration/gep_copy_sib_shape.tl "$_target")
+        _take=$(function_body "$_asm" _tl_gep_copy_sib_shape_take)
+        _put=$(function_body "$_asm" _tl_gep_copy_sib_shape_put)
+        _take_const=$(function_body "$_asm" _tl_gep_copy_sib_shape_take_const)
+
+        # The 32-byte element keeps its stride shift; only the element ADDRESS
+        # register is gone.
+        assert_contains "$_take" 'shlq $5' "gep-copy-sib-take-stride-$_target"
+        assert_contains "$_put" 'shlq $5' "gep-copy-sib-put-stride-$_target"
+
+        # Both 16-byte chunks address the element through the SIB operand, at
+        # displacement 0 and 16, on the side the gep feeds.
+        assert_regex_count_eq "$_take" \
+            '^[[:space:]]+movups (16)?\(%r[a-z0-9]+,%r[a-z0-9]+,1\), %xmm[0-9]+$' 2 \
+            "gep-copy-sib-take-chunks-$_target"
+        assert_regex_count_eq "$_put" \
+            '^[[:space:]]+movups %xmm[0-9]+, (16)?\(%r[a-z0-9]+,%r[a-z0-9]+,1\)$' 2 \
+            "gep-copy-sib-put-chunks-$_target"
+
+        # ...and the composed element address is gone from both.
+        assert_not_matches "$_take" \
+            '^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$' \
+            "gep-copy-sib-take-no-addr-$_target"
+        assert_not_matches "$_put" \
+            '^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$' \
+            "gep-copy-sib-put-no-addr-$_target"
+
+        # The fold reads the operand homes in place: neither body stages the
+        # base or the index through a frame slot to build the address.
+        assert_not_matches "$_take" \
+            '^[[:space:]]+leaq -?[0-9]*\((%rsp|%rbp)\), %r[a-z0-9]+$' \
+            "gep-copy-sib-take-no-stage-$_target"
+        assert_not_matches "$_put" \
+            '^[[:space:]]+leaq -?[0-9]*\((%rsp|%rbp)\), %r[a-z0-9]+$' \
+            "gep-copy-sib-put-no-stage-$_target"
+
+        # CONSTANT index: no index register at all, so both chunks address the
+        # element as disp(base) with the element offset (3 * 32 = 96) folded in.
+        assert_regex_count_eq "$_take_const" \
+            '^[[:space:]]+movups (96|112)\(%r[a-z0-9]+\), %xmm[0-9]+$' 2 \
+            "gep-copy-const-chunks-$_target"
+
+        # ...and the materialized element address is gone.
+        assert_not_matches "$_take_const" \
+            '^[[:space:]]+leaq 96\(%r[a-z0-9]+\), %r[a-z0-9]+$' \
+            "gep-copy-const-no-addr-$_target"
+    done
+}
+
 check_stdlib_math_sqrt() {
     for _target in linux-x86_64 windows-x86_64; do
         _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
@@ -722,6 +775,7 @@ check_hashmap_slot_value_update
 check_param_pin_interval
 check_frame_slot_repacking
 check_gep_value_direct
+check_gep_copy_sib
 check_stdlib_math_sqrt
 check_inline_alloc_unique_labels_link
 

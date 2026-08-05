@@ -107,6 +107,31 @@
 (define (compiler-live-instr-set-vec-empty) : CompilerLiveInstrSetVec
   (CompilerLiveInstrSetVec (make-array CompilerLiveI64Set 0)))
 
+(unsafe
+  (extern (live-runtime-copy-bytes!
+    [dst : (MutPtr u8)]
+    [src : (Ptr u8)]
+    [count : i64]) : unit (:symbol "tl_memcpy")))
+
+;; Word count at which a bulk `tl_memcpy` beats copying a live-set word range
+;; one i64 at a time.
+;;
+;; The scalar arm is the load/store/index/compare/branch body the backend emits
+;; for a dense word walk, five or six instructions per word. `tl_memcpy` costs
+;; thirteen instructions of direction/overlap dispatch plus one `rep movsq` step
+;; per eight bytes, and reaching it costs the argument moves and the `call`.
+;; That is roughly `5n` against `18 + n`, which crosses just above four words.
+;;
+;; The threshold is not a guess and the scalar arm is not vestigial: a
+;; word-count census over an opt2 self-compile puts half of every live-set copy
+;; at three words or fewer (freezes: 4.9% empty, 25.9% one word, 14.2% two,
+;; 10.1% three; the range copies are wider still at the tail but 52% of them are
+;; also three or fewer). Those calls are half the traffic and 7% of the words,
+;; so they must keep the cheap arm while the long tail -- which is where nearly
+;; all the words are -- takes the bulk copy.
+(define (compiler-live-set-bulk-copy-words) : i64
+  5)
+
 (define (compiler-live-set-word-bits) : i64
   32)
 
@@ -154,16 +179,14 @@
 (define (compiler-live-set-word-count [set : CompilerLiveI64Set]) : i64
   (array-length (compiler-live-set-words set)))
 
-(define (compiler-live-set-word-at
-  [set : CompilerLiveI64Set]
-  [word-index : i64]) : i64
-  (let
-    [words : (__tl_dyn-array i64) (compiler-live-set-words set)]
-    (if (and (>= word-index 0) (< word-index (array-length words)))
-      (unsafe
-        (ptr-read (ptr-offset (array-data words) word-index)))
-      0)))
-
+;; There is no bounds-checked `compiler-live-set-word-at` any more. It existed
+;; to answer "the word at this index, or 0 when the set is too short" behind a
+;; call; P41 spelled that out inside `compiler-live-set-contains?` and P42 did
+;; the same for `compiler-live-set-insert` and `compiler-live-set-eq?`, which
+;; were the last two callers. Every remaining word read either proves its index
+;; in range and uses `-bounded` / `-at-data`, or spells the short-set arm out
+;; where the array's own length is already loaded.
+;;
 ;; Callers must prove `0 <= word-index < compiler-live-set-word-count set`.
 (define (compiler-live-set-word-at-bounded
   [set : CompilerLiveI64Set]
@@ -172,16 +195,69 @@
     (ptr-read
       (ptr-offset (array-data (compiler-live-set-words set)) word-index))))
 
+;; The backing pointer `compiler-live-set-word-at-bounded` reloads on every
+;; call: the set handle, the array handle behind it, and the data pointer behind
+;; that are three dependent loads a walk repeats per word. A walk that reads
+;; many words takes the pointer once with this and indexes it with
+;; `compiler-live-set-word-at-data`. Heap allocation is a bump into the active
+;; arena and nothing is ever moved or freed under a live value, so the pointer
+;; stays valid for as long as the set does -- including across calls that
+;; allocate, as long as they do not write to this set.
+(define (compiler-live-set-word-data [set : CompilerLiveI64Set]) : (MutPtr i64)
+  (unsafe
+    (array-data (compiler-live-set-words set))))
+
+;; Same word `compiler-live-set-word-at-bounded` returns for this index, read
+;; through a pointer the caller hoisted with `compiler-live-set-word-data`.
+;; Callers must prove `0 <= word-index < compiler-live-set-word-count set`.
+(define (compiler-live-set-word-at-data
+  [data : (MutPtr i64)]
+  [word-index : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-offset data word-index))))
+
+;; Copy `src[index, count)` into the same range of `dst`. Both callers below
+;; allocate `dst` fresh at a length that covers `count` and never pass a `count`
+;; past the end of `src`, so `dst` and `src` are always distinct arrays and the
+;; range is in bounds for both -- the recursive `array-ref`/`array-set!` form
+;; this replaces re-read both lengths and re-tested them on every word, which is
+;; four of the fourteen instructions it spent per word. Reading the backing
+;; pointers once and indexing them directly leaves the five-instruction word
+;; body, and once the range is wide enough to pay for the call (see
+;; `compiler-live-set-bulk-copy-words`) `tl_memcpy` moves it eight bytes per
+;; instruction instead. Distinct arrays means the ranges cannot overlap, so the
+;; forward bulk copy sees exactly what the ascending word walk saw.
 (define (compiler-live-set-copy-words-into
   [dst : (__tl_dyn-array i64)]
   [src : (__tl_dyn-array i64)]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (array-set! dst index (array-ref src index))
-      (compiler-live-set-copy-words-into dst src (+ index 1) count))))
+  (let
+    [words : i64 (- count index)]
+    (if (<= words 0)
+      unit
+      (let
+        [src-data : (MutPtr i64)
+          (unsafe
+            (array-data src))]
+        [dst-data : (MutPtr i64)
+          (unsafe
+            (array-data dst))]
+        (if (< words (compiler-live-set-bulk-copy-words))
+          (let
+            [at : i64 index]
+            (while (< at count)
+              (begin
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset dst-data at)
+                    (ptr-read (ptr-offset src-data at))))
+                (set! at (+ at 1)))))
+          (unsafe
+            (live-runtime-copy-bytes!
+              (ptr-cast (ptr-offset dst-data index) : (MutPtr u8))
+              (ptr-cast (ptr-offset src-data index) : (Ptr u8))
+              (* words 8))))))))
 
 (define (compiler-live-set-copy-with-capacity
   [set : CompilerLiveI64Set]
@@ -220,13 +296,42 @@
             (compiler-live-set-copy-words-into out words 0 n)
             (CompilerLiveI64Set out)))))))
 
+;; Membership is the hottest liveness primitive in an opt2 self-compile --
+;; 13,669,761 calls spread over 25 register-allocator and backend sites, none of
+;; them dominant -- so the word read is spelled out here instead of going through
+;; the bounds-checked `compiler-live-set-word-at` helper this used to call (P42
+;; retired it once `insert` and `eq?` stopped calling it too). What that helper
+;; charged THIS caller was a call/ret and an argument move, a
+;; `word-index < 0` test that the `value < 0` guard above already decides (a
+;; non-negative value cannot shift right into a negative index), and -- because
+;; the mask has to survive the call -- a callee-saved register plus the frame to
+;; save and restore it in. Everything the helper does for an in-range index is
+;; done here directly, and an out-of-range index still answers false: the helper
+;; returned word 0 for it, and 0 masks to 0.
+;;
+;; The RANGE test now runs before the mask is built, and that is the larger half
+;; of the win rather than a tidying: 46% of the calls in an opt2 self-compile
+;; answer false without reading a word (measured -- the average call costs 19.7
+;; instructions against 28 for the full path), and every one of them used to pay
+;; for `compiler-live-set-bit-mask` first, which is a `shl` by a computed amount
+;; and so carries the two range checks the shift itself needs. Deciding the
+;; cheap, always-needed comparison first lets those calls skip the whole
+;; sequence.
 (define (compiler-live-set-contains? [set : CompilerLiveI64Set] [value : i64]) : bool
   (if (< value 0)
     false
     (let
+      [words : (__tl_dyn-array i64) (compiler-live-set-words set)]
       [word-index : i64 (compiler-live-set-word-index value)]
-      [mask : i64 (compiler-live-set-bit-mask value)]
-      (not (= (bit-and (compiler-live-set-word-at set word-index) mask) 0)))))
+      (if (>= word-index (array-length words))
+        false
+        (not
+          (=
+            (bit-and
+              (unsafe
+                (ptr-read (ptr-offset (array-data words) word-index)))
+              (compiler-live-set-bit-mask value))
+            0))))))
 
 ;; True iff `a` and `b` share at least one element (bitset word-level AND). Used
 ;; by the SplitKit phi-carried loop homing to test whether ANY member of a
@@ -259,17 +364,34 @@
           (set! i (+ i 1))))
       found)))
 
+;; The word read is spelled out rather than routed through the bounds-checked
+;; `compiler-live-set-word-at` helper, for the reason P41 gave for
+;; `compiler-live-set-contains?`: the call reloads the word array
+;; handle that `compiler-live-set-word-count` has already loaded one line above,
+;; and both are on the hot path of a function the liveness walk runs 2.4M times
+;; in an opt2 self-compile. Taking `words` once serves the count, the range test
+;; and the read. The helper's `word-index >= 0` half is dropped with it: `value`
+;; is non-negative on this arm and `compiler-live-set-word-index` is a right
+;; shift, so a negative index cannot arise here. The capacity `max` is spelled
+;; inline for P28's reason -- it is a real out-of-line call with 28 other sites
+;; keeping it that way, and this one sits on the hot path.
 (define (compiler-live-set-insert [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
   (if (< value 0)
     set
     (let
+      [words : (__tl_dyn-array i64) (compiler-live-set-words set)]
+      [word-count : i64 (array-length words)]
       [word-index : i64 (compiler-live-set-word-index value)]
       [mask : i64 (compiler-live-set-bit-mask value)]
       [capacity : i64
-        (compiler-live-set-max
-          (compiler-live-set-word-count set)
-          (+ word-index 1))]
-      [old-bits : i64 (compiler-live-set-word-at set word-index)]
+        (if (< word-count (+ word-index 1))
+          (+ word-index 1)
+          word-count)]
+      [old-bits : i64
+        (if (< word-index word-count)
+          (unsafe
+            (ptr-read (ptr-offset (array-data words) word-index)))
+          0)]
       (if (not (= (bit-and old-bits mask) 0))
         set
         (let
@@ -437,23 +559,56 @@
             (compiler-live-set-from-words-trimmed out count)))
         left))))
 
+;; Two `compiler-live-set-word-at` calls per word was the whole cost of this
+;; comparison: each reloaded the set handle, the array handle behind it and the
+;; data pointer behind that, for one i64. Both arrays' handles, lengths and
+;; backing pointers are taken once here and the reads are spelled out, exactly
+;; as P41 did inside `compiler-live-set-contains?`. This was the helper's last
+;; caller together with `compiler-live-set-insert`, so it is gone. The short-set
+;; arm it provided is kept verbatim -- a set narrower than `count` reads 0 for
+;; its trailing words, which is what a missing word means -- so the same word
+;; pairs are compared in the same order and the same answer comes out.
+;;
+;; The range proof is local: `index` starts at 0 and only ever increments, and
+;; each read is guarded against that array's OWN length, so no caller contract
+;; is involved. The pointers cannot go stale either -- with the calls gone the
+;; loop body contains none at all, so nothing in it can allocate.
 (define (compiler-live-set-eq?
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : bool
   (let
+    [left-words : (__tl_dyn-array i64) (compiler-live-set-words left)]
+    [right-words : (__tl_dyn-array i64) (compiler-live-set-words right)]
+    [left-count : i64 (array-length left-words)]
+    [right-count : i64 (array-length right-words)]
     [count : i64
-      (compiler-live-set-max
-        (compiler-live-set-word-count left)
-        (compiler-live-set-word-count right))]
+      (if (< left-count right-count)
+        right-count
+        left-count)]
+    [left-data : (MutPtr i64)
+      (unsafe
+        (array-data left-words))]
+    [right-data : (MutPtr i64)
+      (unsafe
+        (array-data right-words))]
     [index : i64 0]
     [same : bool true]
     (begin
       (while (and same (< index count))
-        (if (=
-          (compiler-live-set-word-at left index)
-          (compiler-live-set-word-at right index))
-          (set! index (+ index 1))
-          (set! same false)))
+        (let
+          [left-bits : i64
+            (if (< index left-count)
+              (unsafe
+                (ptr-read (ptr-offset left-data index)))
+              0)]
+          [right-bits : i64
+            (if (< index right-count)
+              (unsafe
+                (ptr-read (ptr-offset right-data index)))
+              0)]
+          (if (= left-bits right-bits)
+            (set! index (+ index 1))
+            (set! same false))))
       same)))
 
 ;; Mutable liveness scratch keeps the changing dataflow facts in one
@@ -669,13 +824,25 @@
             (array-data out))]
         [index : i64 0]
         (begin
-          (while (< index count)
-            (begin
-              (unsafe
-                (ptr-write!
-                  (ptr-offset dst index)
-                  (ptr-read (ptr-offset src index))))
-              (set! index (+ index 1))))
+          ;; `out` is the allocation two lines up, so it can never be the array
+          ;; `words` points at and the two ranges cannot overlap -- the bulk
+          ;; copy therefore reads exactly what the ascending word walk read.
+          ;; Freezes are short: half of them are three words or fewer, which is
+          ;; under the width where the call pays for itself, so the word walk
+          ;; stays for those (see `compiler-live-set-bulk-copy-words`).
+          (if (< count (compiler-live-set-bulk-copy-words))
+            (while (< index count)
+              (begin
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset dst index)
+                    (ptr-read (ptr-offset src index))))
+                (set! index (+ index 1))))
+            (unsafe
+              (live-runtime-copy-bytes!
+                (ptr-cast dst : (MutPtr u8))
+                (ptr-cast src : (Ptr u8))
+                (* count 8))))
           (CompilerLiveI64Set out))))))
 
 (define (compiler-live-var-word-count [vars : i64]) : i64

@@ -11978,7 +11978,11 @@
 ;; into scope.
 (define (compiler-typecheck-runtime-builtin-print-string-ok-source) : String
   (compiler-typecheck-with-io-source
-    "(define (main) : i64 (begin (io.print-string \"hi\") 0))"))
+    "(define (main) : i64
+  (begin
+    (io.print-string \"hi\")
+    (io.print-string (begin \"ignored\" \"temporary\"))
+    0))"))
 
 (define (compiler-typecheck-runtime-builtin-print-str-ok-source) : String
   (compiler-typecheck-with-io-source

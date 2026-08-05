@@ -34173,8 +34173,10 @@
         c-abi-args)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
-;; Call-only compatibility extension.  Keep ordinary inferred-type matching
-;; unchanged, then admit precisely the closed whole-array reference unsize.
+;; Call-only compatibility extensions. Keep ordinary inferred-type matching
+;; unchanged, then admit the closed whole-array reference unsize and an owned
+;; String temporary passed to a borrowed str formal. The effective-argument
+;; pass has already rejected non-place values of every other referent type.
 (define (tc-match-call-type-for-expected
   [ctx : TcContext]
   [actual : ast.AstType]
@@ -34183,7 +34185,9 @@
     [(TcInferredTypeMatch.Compatible matched)
       (TcInferredTypeMatch.Compatible matched)]
     [(TcInferredTypeMatch.Mismatch mismatched)
-      (if (tc-call-array-ref-to-slice-ref-compatible? ctx expected actual)
+      (if (or
+        (tc-call-array-ref-to-slice-ref-compatible? ctx expected actual)
+        (tc-call-string-temporary-ref-compatible? ctx expected actual))
         (TcInferredTypeMatch.Compatible actual)
         (TcInferredTypeMatch.Mismatch mismatched))]))
 

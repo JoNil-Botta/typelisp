@@ -123,6 +123,33 @@ Summary:
       (tlci-inspect-spmd-callables (struct-get metadata spmd-callables)))
     ""))
 
+(define (tlci-inspect-source-binding [rodata : (__tl_dyn-array u8)]) : String
+  (match (tlci_core.tlci-package-source-binding-read rodata)
+    [(tlci_core.TlciPackageSourceBindingRead.Bound digest)
+      (str_cat.str-cat
+        "source-set-binding-schema: "
+        (string.int->string
+          tlci_core.tlci-package-source-binding-schema-version)
+        "\n"
+        "source-set-digest: "
+        (string.int->string digest)
+        "\n")]
+    [(tlci_core.TlciPackageSourceBindingRead.MissingOrLegacy)
+      "source-set-binding-schema: missing-or-legacy\nsource-set-digest: unavailable\n"]
+    [(tlci_core.TlciPackageSourceBindingRead.UnsupportedSchema schema)
+      (str_cat.str-cat
+        "source-set-binding-schema: unsupported ("
+        (string.int->string schema)
+        ")\n"
+        "source-set-digest: unavailable\n")]
+    [(tlci_core.TlciPackageSourceBindingRead.Malformed message)
+      (str_cat.str-cat
+        "source-set-binding-schema: malformed\n"
+        "source-set-digest: unavailable\n"
+        "source-set-binding-error: "
+        message
+        "\n")]))
+
 (define (tlci-inspect-render
   [bytes : (__tl_dyn-array u8)]
   [image : tlci_core.TlciImage]) : String
@@ -148,6 +175,7 @@ Summary:
       "producer-compiler-identity: "
       (struct-get image compiler-build-hash)
       "\n"
+      (tlci-inspect-source-binding (struct-get image rodata))
       "content-hash: "
       (string.int->string
         (tlci_core.tlci-read-u64 bytes tlci_core.tlci-hash-field-offset))
@@ -261,6 +289,73 @@ Summary:
         (tlci-inspect-error "pkg/dep.tlci" "tlci: content hash mismatch")
         "inspect: pkg/dep.tlci: tlci: content hash mismatch\n")
       (io.panic "inspect error formatting failed"))))
+
+(cfg
+  test
+  (test
+    tlci-inspect-source-binding-shapes
+    (let
+      [sections : (__tl_dyn-array tlci_core.TlciAuxSection)
+        (make-array tlci_core.TlciAuxSection 1)]
+      [bound : String ""]
+      [unsupported : String ""]
+      [malformed : String ""]
+      [bound-schema : String "source-set-binding-schema: 1\n"]
+      [bound-digest : String "source-set-digest: 12345\n"]
+      [missing-schema : String "source-set-binding-schema: missing-or-legacy\n"]
+      [missing-digest : String "source-set-digest: unavailable\n"]
+      [unsupported-schema : String
+        "source-set-binding-schema: unsupported (2)\n"]
+      [malformed-schema : String "source-set-binding-schema: malformed\n"]
+      (begin
+        (array-set!
+          sections
+          0
+          (tlci_core.tlci-package-source-binding-section 12345))
+        (match (tlci_core.tlci-aux-pack-rodata
+          (tlci_core.tlci-empty-bytes)
+          sections)
+          [(tlci_core.ResultTlciAuxBytes.Ok packed)
+            (set! bound (tlci-inspect-source-binding packed))]
+          [_ unit])
+        (array-set!
+          sections
+          0
+          (tlci_core.TlciAuxSection
+            tlci_core.tlci-aux-kind-package-source-binding
+            2
+            (tlci_core.tlci-string->bytes "future")))
+        (match (tlci_core.tlci-aux-pack-rodata
+          (tlci_core.tlci-empty-bytes)
+          sections)
+          [(tlci_core.ResultTlciAuxBytes.Ok packed)
+            (set! unsupported (tlci-inspect-source-binding packed))]
+          [_ unit])
+        (array-set!
+          sections
+          0
+          (tlci_core.TlciAuxSection
+            tlci_core.tlci-aux-kind-package-source-binding
+            tlci_core.tlci-package-source-binding-schema-version
+            (make-array u8 7)))
+        (match (tlci_core.tlci-aux-pack-rodata
+          (tlci_core.tlci-empty-bytes)
+          sections)
+          [(tlci_core.ResultTlciAuxBytes.Ok packed)
+            (set! malformed (tlci-inspect-source-binding packed))]
+          [_ unit])
+        (let
+          [missing : String
+            (tlci-inspect-source-binding (tlci_core.tlci-empty-bytes))]
+          (if (and
+            (string.contains (& bound) (& bound-schema))
+            (string.contains (& bound) (& bound-digest))
+            (string.contains (& missing) (& missing-schema))
+            (string.contains (& missing) (& missing-digest))
+            (string.contains (& unsupported) (& unsupported-schema))
+            (string.contains (& malformed) (& malformed-schema)))
+            unit
+            (io.panic "inspect source binding rendering failed")))))))
 
 (cfg
   test

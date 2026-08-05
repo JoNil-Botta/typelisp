@@ -289,6 +289,25 @@
   (Ok i64 (__tl_dyn-array u8))
   (Err String))
 
+;; Package source ownership is an additive auxiliary section.  The digest is
+;; deliberately an integrity/reproducibility identity rather than a
+;; cryptographic authenticity proof; the transcript and rolling algorithm are
+;; fixed by `tlci-package-source-binding-schema-version`.
+(defenum TlciPackageSourceBindingRead
+  (Bound i64)
+  (MissingOrLegacy)
+  (UnsupportedSchema i64)
+  (Malformed String))
+
+(defenum TlciPackageSourceBindingAdmission
+  (Match i64)
+  ;; Keep this ordering stable: expected/current-source digest first, actual
+  ;; image digest second.
+  (Mismatch i64 i64)
+  (MissingOrLegacy)
+  (UnsupportedSchema i64)
+  (Malformed String))
+
 (defstruct TlciHostCallbackTable
   (magic i64)
   (abi-version i64)
@@ -935,6 +954,10 @@
   2)
 (define tlci-aux-kind-frontend-facts : i64
   4)
+(define tlci-aux-kind-package-source-binding : i64
+  8)
+(define tlci-package-source-binding-schema-version : i64
+  1)
 
 (define (tlci-host-abi-version-error [actual : i64]) : String
   (str_cat.str-cat
@@ -1663,6 +1686,57 @@
                         (tlci-read-u64 rodata (+ record 24)))))
                   (set! index (+ index 1)))))
             (ResultTlciAuxLookup.Missing))))]))
+
+(define (tlci-package-source-binding-digest-valid? [digest : i64]) : bool
+  (and (>= digest 0) (< digest 2147483647)))
+
+(define (tlci-package-source-binding-section [digest : i64]) : TlciAuxSection
+  (let
+    [payload : (__tl_dyn-array u8) (make-array u8 8)]
+    (begin
+      (tlci-set-u64! payload 0 digest)
+      (TlciAuxSection
+        tlci-aux-kind-package-source-binding
+        tlci-package-source-binding-schema-version
+        payload))))
+
+(define (tlci-package-source-binding-read [rodata : (__tl_dyn-array u8)]) : TlciPackageSourceBindingRead
+  (match (tlci-aux-find rodata tlci-aux-kind-package-source-binding)
+    [(ResultTlciAuxLookup.Missing)
+      (TlciPackageSourceBindingRead.MissingOrLegacy)]
+    [(ResultTlciAuxLookup.Err message)
+      (TlciPackageSourceBindingRead.Malformed message)]
+    [(ResultTlciAuxLookup.Ok schema payload)
+      (if (not (= schema tlci-package-source-binding-schema-version))
+        ;; Do not inspect a payload whose schema is not understood.
+        (TlciPackageSourceBindingRead.UnsupportedSchema schema)
+        (if (not (= (array-length payload) 8))
+          (TlciPackageSourceBindingRead.Malformed
+            "tlci: package source binding payload must be exactly 8 bytes")
+          (let
+            [digest : i64 (tlci-read-u64 payload 0)]
+            (if (not (tlci-package-source-binding-digest-valid? digest))
+              (TlciPackageSourceBindingRead.Malformed
+                "tlci: package source binding digest is out of range")
+              (TlciPackageSourceBindingRead.Bound digest)))))]))
+
+(define (tlci-package-source-binding-admit
+  [rodata : (__tl_dyn-array u8)]
+  [expected-digest : i64]) : TlciPackageSourceBindingAdmission
+  (if (not (tlci-package-source-binding-digest-valid? expected-digest))
+    (TlciPackageSourceBindingAdmission.Malformed
+      "tlci: expected package source binding digest is out of range")
+    (match (tlci-package-source-binding-read rodata)
+      [(TlciPackageSourceBindingRead.Bound actual)
+        (if (= expected-digest actual)
+          (TlciPackageSourceBindingAdmission.Match actual)
+          (TlciPackageSourceBindingAdmission.Mismatch expected-digest actual))]
+      [(TlciPackageSourceBindingRead.MissingOrLegacy)
+        (TlciPackageSourceBindingAdmission.MissingOrLegacy)]
+      [(TlciPackageSourceBindingRead.UnsupportedSchema schema)
+        (TlciPackageSourceBindingAdmission.UnsupportedSchema schema)]
+      [(TlciPackageSourceBindingRead.Malformed message)
+        (TlciPackageSourceBindingAdmission.Malformed message)])))
 
 (define (tlci-char-code-at [text : String] [idx : i64]) : i64
   (cast (tlci-string-ref text idx) : i64))
@@ -4156,6 +4230,120 @@
         [(TlciProducerIdentityAdmission.Malformed) true]
         [_ false]))))
 
+(define (tlci-test-package-source-binding-admission-ok?) : bool
+  (let
+    [sections : (__tl_dyn-array TlciAuxSection)
+      (array.make-array TlciAuxSection 1)]
+    [unsupported : (__tl_dyn-array u8) (tlci-string->bytes "future")]
+    [short : (__tl_dyn-array u8) (make-array u8 7)]
+    [zero : (__tl_dyn-array u8) (make-array u8 8)]
+    [negative : (__tl_dyn-array u8) (make-array u8 8)]
+    [limit : (__tl_dyn-array u8) (make-array u8 8)]
+    (begin
+      (array-set! sections 0 (tlci-package-source-binding-section 12345))
+      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
+        [(ResultTlciAuxBytes.Err _) false]
+        [(ResultTlciAuxBytes.Ok packed)
+          (and
+            (match (tlci-package-source-binding-read packed)
+              [(TlciPackageSourceBindingRead.Bound digest) (= digest 12345)]
+              [_ false])
+            (match (tlci-package-source-binding-admit packed 12345)
+              [(TlciPackageSourceBindingAdmission.Match digest)
+                (= digest 12345)]
+              [_ false])
+            (match (tlci-package-source-binding-admit packed 54321)
+              [(TlciPackageSourceBindingAdmission.Mismatch expected actual)
+                (and (= expected 54321) (= actual 12345))]
+              [_ false])
+            (match (tlci-package-source-binding-read (tlci-empty-bytes))
+              [(TlciPackageSourceBindingRead.MissingOrLegacy) true]
+              [_ false])
+            (match (tlci-package-source-binding-admit (tlci-empty-bytes) 12345)
+              [(TlciPackageSourceBindingAdmission.MissingOrLegacy) true]
+              [_ false]))])
+      (array-set!
+        sections
+        0
+        (TlciAuxSection tlci-aux-kind-package-source-binding 2 unsupported))
+      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
+        [(ResultTlciAuxBytes.Err _) false]
+        [(ResultTlciAuxBytes.Ok packed)
+          (and
+            (match (tlci-package-source-binding-read packed)
+              [(TlciPackageSourceBindingRead.UnsupportedSchema schema)
+                (= schema 2)]
+              [_ false])
+            (match (tlci-package-source-binding-admit packed 12345)
+              [(TlciPackageSourceBindingAdmission.UnsupportedSchema schema)
+                (= schema 2)]
+              [_ false]))])
+      (array-set!
+        sections
+        0
+        (TlciAuxSection
+          tlci-aux-kind-package-source-binding
+          tlci-package-source-binding-schema-version
+          short))
+      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
+        [(ResultTlciAuxBytes.Err _) false]
+        [(ResultTlciAuxBytes.Ok packed)
+          (match (tlci-package-source-binding-read packed)
+            [(TlciPackageSourceBindingRead.Malformed _) true]
+            [_ false])])
+      (tlci-set-u64! zero 0 0)
+      (array-set!
+        sections
+        0
+        (TlciAuxSection
+          tlci-aux-kind-package-source-binding
+          tlci-package-source-binding-schema-version
+          zero))
+      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
+        [(ResultTlciAuxBytes.Err _) false]
+        [(ResultTlciAuxBytes.Ok packed)
+          (and
+            (match (tlci-package-source-binding-read packed)
+              [(TlciPackageSourceBindingRead.Bound digest) (= digest 0)]
+              [_ false])
+            (match (tlci-package-source-binding-admit packed 0)
+              [(TlciPackageSourceBindingAdmission.Match digest) (= digest 0)]
+              [_ false])
+            (match (tlci-package-source-binding-admit packed -1)
+              [(TlciPackageSourceBindingAdmission.Malformed _) true]
+              [_ false])
+            (match (tlci-package-source-binding-admit packed 2147483647)
+              [(TlciPackageSourceBindingAdmission.Malformed _) true]
+              [_ false]))])
+      (tlci-set-u64! negative 0 -1)
+      (array-set!
+        sections
+        0
+        (TlciAuxSection
+          tlci-aux-kind-package-source-binding
+          tlci-package-source-binding-schema-version
+          negative))
+      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
+        [(ResultTlciAuxBytes.Err _) false]
+        [(ResultTlciAuxBytes.Ok packed)
+          (match (tlci-package-source-binding-read packed)
+            [(TlciPackageSourceBindingRead.Malformed _) true]
+            [_ false])])
+      (tlci-set-u64! limit 0 2147483647)
+      (array-set!
+        sections
+        0
+        (TlciAuxSection
+          tlci-aux-kind-package-source-binding
+          tlci-package-source-binding-schema-version
+          limit))
+      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
+        [(ResultTlciAuxBytes.Err _) false]
+        [(ResultTlciAuxBytes.Ok packed)
+          (match (tlci-package-source-binding-read packed)
+            [(TlciPackageSourceBindingRead.Malformed _) true]
+            [_ false])]))))
+
 (define (tlci-core-self-test-status) : i64
   (cond
     [(not (tlci-test-metadata-emit-parse?)) 1]
@@ -4174,6 +4362,7 @@
     [(not (tlci-test-aux-corruption-rejected?)) 15]
     [(not (tlci-test-producer-identity-admission-ok?)) 16]
     [(not (tlci-test-dense-spmd-sequences?)) 17]
+    [(not (tlci-test-package-source-binding-admission-ok?)) 18]
     [else 0]))
 
 (define (tlci-core-self-test) : i64

@@ -20,6 +20,9 @@ compile and run in `avx2` and `avx512`.
 
 - `tail_i64_add.tl` — `foreach` add over `n = 13` (not a multiple of the i64
   vector width 4/8): forces a masked/scalar tail. Exit 247.
+- `predicated_map_tail_fault_suppression.tl` - contiguous simple maps over one,
+  two, and three active i64 lanes whose backing data ends at an unmapped page,
+  proving inactive AVX2/AVX-512 tail loads and stores do not fault. Exit 42.
 - `tail_i32_add.tl` — `foreach` add over `n = 7` `i32` lanes (below the i32
   width 8/16): all-tail, a different element width. Exit 91.
 - `foreach_bound_extremes.tl` - vectorizable zero-trip ranges with negative and

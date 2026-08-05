@@ -48954,7 +48954,7 @@
             (ir.CompilerIrInstr.Mov index-var next-index (ast.AstType.I64)))))]
     [(LowerMaybeVectorMap.No) state]))
 
-(define (lower-avx512-index-plus-offset
+(define (lower-predicated-index-plus-offset
   [state : LowerState]
   [base : ir.CompilerIrValue]
   [offset : i64]) : LowerExpr
@@ -48967,7 +48967,7 @@
       (ast.AstType.I64))
     (LowerExpr.Expr state base (ast.AstType.I64))))
 
-(define (lower-avx512-array-set-end-ok
+(define (lower-predicated-array-set-end-ok
   [state : LowerState]
   [ok : ir.CompilerIrValue]
   [end-value : ir.CompilerIrValue]
@@ -48983,7 +48983,7 @@
           [array-var : i64 (array-ref (struct-get arrays vars) index)]
           [offset : i64 (array-ref (struct-get arrays offsets) index)]
           (begin
-            (match (lower-avx512-index-plus-offset s end-value offset)
+            (match (lower-predicated-index-plus-offset s end-value offset)
               [(LowerExpr.Expr index-state limit-index _)
                 (match (lower-array-len-value
                   index-state
@@ -49008,10 +49008,10 @@
             (set! index (+ index 1)))))
       (LowerExpr.Expr s next-ok (ast.AstType.Bool)))))
 
-(define (lower-avx512-masked-tail-limit [offset : i64]) : i64
+(define (lower-predicated-tail-limit [offset : i64]) : i64
   (- 9223372036854775807 offset))
 
-(define (lower-avx512-masked-tail-ok
+(define (lower-predicated-tail-ok
   [state : LowerState]
   [index-var : i64]
   [end-value : ir.CompilerIrValue]
@@ -49035,7 +49035,7 @@
         s
         (ir.CompilerIrBinOp.Le)
         end-value
-        (ir.CompilerIrValue.I64 (lower-avx512-masked-tail-limit max-offset)))
+        (ir.CompilerIrValue.I64 (lower-predicated-tail-limit max-offset)))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -49066,7 +49066,7 @@
         within
         (ast.AstType.Bool))
         [(LowerExpr.Expr next-s value _)
-          (lower-avx512-array-set-end-ok next-s value end-value arrays)]))))
+          (lower-predicated-array-set-end-ok next-s value end-value arrays)]))))
 
 (define (lower-avx512-masked-unsupported [expr : ast.AstExpr] [detail : String]) : ResultLowerExpr
   (ResultLowerExpr.Err
@@ -54452,7 +54452,7 @@
         lanes
         expr)]))
 
-(define (lower-avx512-tail-map-body
+(define (lower-predicated-tail-map-body
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [index-var : i64]
@@ -54715,7 +54715,7 @@
                       tail-check-label
                       exit-label))
                   tail-check-label))
-              (match (lower-avx512-masked-tail-ok s index-var end-value arrays)
+              (match (lower-predicated-tail-ok s index-var end-value arrays)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
@@ -54946,6 +54946,10 @@
             [vector-ok : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             [tail-cond : ir.CompilerIrValue ir.CompilerIrValue.Unit]
             [tail-safe : ir.CompilerIrValue ir.CompilerIrValue.Unit]
+            [predicated-tail? : bool
+              (or
+                (lower-mode-avx512? (lower-state-mode state))
+                (not (lower-maybe-vector-map-needs-scalar-tail? plan)))]
             [preheader-cache : LowerVectorMapValueCache
               (lower-vector-map-value-cache-empty)]
             (begin
@@ -55064,7 +55068,7 @@
                     (set! tail-cond value))])
               (set!
                 s
-                (if (lower-mode-avx512? (lower-state-mode s))
+                (if predicated-tail?
                   (lower-state-finish-block
                     (lower-state-emit
                       s
@@ -55081,7 +55085,7 @@
                         tail-body-label
                         exit-label))
                     tail-body-label)))
-              (if (lower-mode-avx512? (lower-state-mode s))
+              (if predicated-tail?
                 (if (lower-maybe-vector-map-has-gather? plan)
                   ;; Gather sources require per-lane scalar tail semantics.
                   ;; Enter the ordinary one-iteration tail body directly
@@ -55095,7 +55099,7 @@
                         (ir.CompilerIrInstr.Jump tail-body-label))
                       tail-body-label))
                   (begin
-                    (match (lower-avx512-masked-tail-ok
+                    (match (lower-predicated-tail-ok
                       s
                       index-var
                       end-value
@@ -55116,7 +55120,7 @@
                         tail-mask-label))
                     (set!
                       s
-                      (lower-avx512-tail-map-body
+                      (lower-predicated-tail-map-body
                         ctx
                         s
                         index-var

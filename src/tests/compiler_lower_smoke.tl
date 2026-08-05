@@ -111,7 +111,7 @@
   (and
     (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
       (compiler_lower.CompilerLowerMode.Avx2)
-      false)
+      true)
     (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
       (compiler_lower.CompilerLowerMode.Avx512)
       true)

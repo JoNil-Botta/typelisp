@@ -2651,12 +2651,62 @@
       (opt-collect-blocks-uses-array-into items blocks)
       items)))
 
+;; Comparisons whose negation is another comparison on the same operands. Used
+;; to turn `not (cmp a b)` into the inverted compare instead of a `xorq $1` over
+;; the materialised boolean. Float operands are rejected by the caller: NaN
+;; makes `not (a < b)` and `a >= b` differ.
+(define (opt-invertible-compare-op? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Eq) true]
+    [(ir.CompilerIrBinOp.Ne) true]
+    [(ir.CompilerIrBinOp.Lt) true]
+    [(ir.CompilerIrBinOp.Le) true]
+    [(ir.CompilerIrBinOp.Gt) true]
+    [(ir.CompilerIrBinOp.Ge) true]
+    [(ir.CompilerIrBinOp.BitTestEq) true]
+    [(ir.CompilerIrBinOp.BitTestNe) true]
+    [_ false]))
+
+(define (opt-invert-compare-op [op : ir.CompilerIrBinOp]) : ir.CompilerIrBinOp
+  (match op
+    [(ir.CompilerIrBinOp.Eq) (ir.CompilerIrBinOp.Ne)]
+    [(ir.CompilerIrBinOp.Ne) (ir.CompilerIrBinOp.Eq)]
+    [(ir.CompilerIrBinOp.Lt) (ir.CompilerIrBinOp.Ge)]
+    [(ir.CompilerIrBinOp.Le) (ir.CompilerIrBinOp.Gt)]
+    [(ir.CompilerIrBinOp.Gt) (ir.CompilerIrBinOp.Le)]
+    [(ir.CompilerIrBinOp.Ge) (ir.CompilerIrBinOp.Lt)]
+    [(ir.CompilerIrBinOp.BitTestEq) (ir.CompilerIrBinOp.BitTestNe)]
+    [(ir.CompilerIrBinOp.BitTestNe) (ir.CompilerIrBinOp.BitTestEq)]
+    [_ op]))
+
+;; Passed as `mirror` by callers that have no second use-count array to keep in
+;; step. Zero length is the "no mirror" signal, so the rewrite paths below skip
+;; the mirrored bookkeeping with one length test and no allocation.
+(define opt-dce-no-mirror : (__tl_dyn-array i64)
+  (array.make-array i64 0))
+
+;; Apply to `mirror` the same use-count edit a rewrite just applied to the
+;; array the walk is reading. See `opt-dce-block-list-array-pass`: the dry run
+;; reads a throwaway COPY of the counts, but the rewrites it performs mutate the
+;; real IR, so the REAL counts have to retire the same use or the following
+;; sweep keeps an instruction that is now dead.
+(define (opt-mirror-rewrite!
+  [mirror : (__tl_dyn-array i64)]
+  [retired : i64]
+  [next : ir.CompilerIrInstr]) : unit
+  (if (> (array-length mirror) 0)
+    (begin
+      (opt-used-array-dec mirror retired)
+      (opt-collect-instr-uses-array mirror next))
+    unit))
+
 ;; Mirror of `opt-instr-dead?` for the array-backed use set the pipeline DCE
 ;; runs on. The pure/read-only addr-of/gep/cast/load arms drop the dead
 ;; length-load/address chain that `opt-loop-bce-blocks` strands once a bounds
 ;; check is proven redundant.
 (define (opt-instr-dead-array?
   [items : (__tl_dyn-array i64)]
+  [mirror : (__tl_dyn-array i64)]
   [slots : (__tl_dyn-array ir.CompilerIrInstr)]
   [count : i64]
   [index : i64]
@@ -2723,7 +2773,8 @@
                                 (begin
                                   (array-set! slots index next)
                                   (opt-used-array-dec items and-var)
-                                  (opt-collect-instr-uses-array items next)))
+                                  (opt-collect-instr-uses-array items next)
+                                  (opt-mirror-rewrite! mirror and-var next)))
                               unit)]
                           [_ unit])
                         unit))
@@ -2734,8 +2785,55 @@
         (and
           (not (opt-binop-traps? op))
           (not (opt-used-array-contains items dst))))]
-    [(ir.CompilerIrInstr.UnOp dst _ _ _)
-      (not (opt-used-array-contains items dst))]
+    [(ir.CompilerIrInstr.UnOp dst op src _)
+      (begin
+        ;; `not` over an adjacent single-use comparison is the comparison with
+        ;; the inverted predicate. Emitting it as a negation costs the backend a
+        ;; `setcc`+`movzbq` for the compare and then a `xorq $1` (plus a second
+        ;; `movzbq`) to flip it; inverting the predicate here spends one `setcc`.
+        ;; Shares the adjacency/single-use shape -- and the mirrored use-count
+        ;; bookkeeping -- with the bit-test rewrite above.
+        (if (and (> index 0) (opt-used-array-contains items dst))
+          (match op
+            [(ir.CompilerIrUnOp.Not)
+              (match src
+                [(ir.CompilerIrValue.Var cmp-var)
+                  (if (= (array-ref items cmp-var) 1)
+                    (match (ir.compiler-ir-instr-scalar-fact
+                      (array-ref slots (- index 1)))
+                      [(ir.CompilerIrInstrScalarFact.BinOp
+                          actual
+                          cmp-op
+                          cmp-lhs
+                          cmp-rhs
+                          cmp-ty)
+                        (if (and
+                          (= actual cmp-var)
+                          (opt-invertible-compare-op? cmp-op)
+                          ;; NaN breaks the identity for ordered float
+                          ;; compares (`not (a < b)` is not `a >= b`), so
+                          ;; float operands never invert here.
+                          (not (opt-float-type? cmp-ty)))
+                          (let
+                            [next : ir.CompilerIrInstr
+                              (ir.CompilerIrInstr.BinOp
+                                dst
+                                (opt-invert-compare-op cmp-op)
+                                cmp-lhs
+                                cmp-rhs
+                                cmp-ty)]
+                            (begin
+                              (array-set! slots index next)
+                              (opt-used-array-dec items cmp-var)
+                              (opt-collect-instr-uses-array items next)
+                              (opt-mirror-rewrite! mirror cmp-var next)))
+                          unit)]
+                      [_ unit])
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          unit)
+        (not (opt-used-array-contains items dst)))]
     [(ir.CompilerIrInstr.Phi dst _ _) (not (opt-used-array-contains items dst))]
     [(ir.CompilerIrInstr.LaneId dst _ _)
       (not (opt-used-array-contains items dst))]
@@ -2803,7 +2901,13 @@
         (begin
           (let
             [instr : ir.CompilerIrInstr (array-ref slots index)]
-            (if (opt-instr-dead-array? items slots count index instr)
+            (if (opt-instr-dead-array?
+              items
+              opt-dce-no-mirror
+              slots
+              count
+              index
+              instr)
               (opt-uncount-instr-uses-array items instr)
               (begin
                 (array-set! out-slots write (array-ref slots index))
@@ -2837,7 +2941,13 @@
         (begin
           (let
             [instr : ir.CompilerIrInstr (array-ref slots index)]
-            (if (opt-instr-dead-array? items slots count index instr)
+            (if (opt-instr-dead-array?
+              items
+              opt-dce-no-mirror
+              slots
+              count
+              index
+              instr)
               ;; Deleting this instruction drops the uses it made, so a value it
               ;; was the last reader of becomes dead for an earlier sweep step.
               (opt-uncount-instr-uses-array items instr)
@@ -2910,6 +3020,7 @@
 ;; array, including cascading decrements, and allocates no replacement IR.
 (define (opt-dce-instr-seq-array-has-dead!
   [items : (__tl_dyn-array i64)]
+  [mirror : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : bool
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
@@ -2921,7 +3032,7 @@
         (let
           [instr : ir.CompilerIrInstr (array-ref slots index)]
           (begin
-            (if (opt-instr-dead-array? items slots count index instr)
+            (if (opt-instr-dead-array? items mirror slots count index instr)
               (begin
                 (set! changed true)
                 (opt-uncount-instr-uses-array items instr))
@@ -2931,6 +3042,7 @@
 
 (define (opt-dce-blocks-array-have-dead!
   [items : (__tl_dyn-array i64)]
+  [mirror : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Nil) false]
@@ -2939,19 +3051,33 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (let
             [block-changed : bool
-              (opt-dce-instr-seq-array-has-dead! items instrs)]
+              (opt-dce-instr-seq-array-has-dead! items mirror instrs)]
             (or
               block-changed
-              (opt-dce-blocks-array-have-dead! items (box-get rest))))])]
+              (opt-dce-blocks-array-have-dead! items mirror (box-get rest))))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-dce-blocks-array-have-dead!
         items
+        mirror
         (ir.compiler-ir-block-seq-to-list seq))]))
 
+;; The dry run walks against a COPY of the use counts so the real sweep still
+;; sees its own starting state. That copy is only sound for decisions the dry
+;; run merely OBSERVES: `opt-instr-dead-array?` also REWRITES (`eq (bit_and a b)
+;; 0` into `bit_test_*`, `not (cmp a b)` into the inverted compare) in place,
+;; and each rewrite retires an operand's last use. Applied to the copy alone
+;; that leaves `items` claiming the operand is still read, so the real sweep
+;; keeps an instruction that is now dead -- which is what emitted the `and` next
+;; to the `test` that recomputes it, and the `xorq $1` after a `setcc`. `items`
+;; is therefore passed as the dry run's MIRROR: the rewrites retire the use in
+;; both arrays, so the real sweep starts from counts that match the rewritten
+;; IR. Re-deriving the counts from the rewritten blocks instead is equally
+;; correct but costs a zeroed allocation plus a third full walk on every pass
+;; that folded; mirroring is O(1) per rewrite and allocates nothing.
 (define (opt-dce-block-list-array-pass
   [items : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
-  (if (opt-dce-blocks-array-have-dead! (opt-dce-copy-used items) blocks)
+  (if (opt-dce-blocks-array-have-dead! (opt-dce-copy-used items) items blocks)
     (OptBlockListPassResult.Result (opt-dce-block-list-array items blocks) true)
     (OptBlockListPassResult.Result blocks false)))
 
@@ -3005,7 +3131,13 @@
         (begin
           (let
             [instr : ir.CompilerIrInstr (array-ref src-slots index)]
-            (if (opt-instr-dead-array? items src-slots count index instr)
+            (if (opt-instr-dead-array?
+              items
+              opt-dce-no-mirror
+              src-slots
+              count
+              index
+              instr)
               ;; Deleting this instruction drops the uses it made, so a value it
               ;; was the last reader of becomes dead for an earlier sweep step.
               (opt-uncount-instr-uses-array items instr)

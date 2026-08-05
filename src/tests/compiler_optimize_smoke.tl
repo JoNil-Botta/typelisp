@@ -3346,6 +3346,24 @@
     "only exact vm-run bounds loop inlines at opt2; qs-partition and opt1 stay refused"))
 
 (test
+  inline-bounds-loop-in-loop-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-in-loop-site-ok?)
+    "small absorbable bounds loop leaf inlines at an in-loop call site"))
+
+(test
+  inline-bounds-loop-cold-site-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cold-site-refusal-ok?)
+    "the same leaf stays refused at a straight-line call site"))
+
+(test
+  inline-bounds-loop-cascade-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cascade-refusal-ok?)
+    "import refused when it would cost a bounds-free single-site caller its own inline"))
+
+(test
   inline-vm-run-bounds-loop-span-positive
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-switch-span-case-code

@@ -12772,6 +12772,219 @@
       (opt-inline-switch-case-result-ok? other-opt2 other-text 1 0)
       (opt-inline-switch-case-result-ok? vm-opt1 vm-text 1 0))))
 
+;; --- loop-bearing bounds callee admission (in-loop site + cascade) ----------
+;;
+;; The callee under test is the cyclic bounds-carrying Switch leaf above, which
+;; the shared gate refuses everywhere except at an in-loop site. Only the
+;; CALLER varies across these fixtures, so each test isolates exactly one
+;; clause of opt-inline-bounds-loop-absorb-ok?.
+(define (opt-inline-loop-site-call [callee-name : i64] [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (array.make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (array-set! args 0 (compiler_ir_types.CompilerIrValue.Var 1))
+      (array-set! args 1 (compiler_ir_types.CompilerIrValue.Var 0))
+      (array-set! args 2 (compiler_ir_types.CompilerIrValue.Var 2))
+      (compiler_ir_types.CompilerIrInstr.Call
+        dst
+        callee-name
+        (compiler_ir_types.CompilerIrCallArgs.Array args)
+        (compiler_ast_types.AstType.I64)))))
+
+;; entry -> header -> {body -> latch -> header, exit}. The call sits in `body`,
+;; a member of the natural loop headed by `header`. The back edge leaves from
+;; `latch` rather than from `body` so the call block is not a phi predecessor:
+;; that suppression of the absorb bonus is a separate, already-measured rule
+;; (#5193), and mixing it in would stop this fixture from testing the site
+;; condition it exists to test.
+(define (opt-inline-loop-site-caller-blocks
+  [callee-name : i64]
+  [entry-instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      entry-instrs)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "latch")
+                compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-inline-loop-site-call callee-name 5)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 4)))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-inline-loop-site-entry-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Mov
+      3
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "header"))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+;; Same entry, plus a bounds check the caller already owns. Used to flip the
+;; cascade clause without touching anything else.
+(define (opt-inline-loop-site-bounds-entry-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BoundsCheck
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ir_types.compiler-ir-label "caller_bounds_ok"))
+    (opt-inline-loop-site-entry-instrs)))
+
+(define (opt-inline-loop-site-function
+  [func-name : i64]
+  [callee-name : i64]
+  [entry-instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (opt-inline-loop-site-caller-blocks callee-name entry-instrs)))
+
+;; `main` calls the leaf from inside a loop: the boundary is repaid per
+;; iteration, so the gate admits it.
+(define (compiler-optimize-inline-bounds-loop-in-loop-site-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-loop-site-function
+            (struct-get symbols main)
+            callee-name
+            (opt-inline-loop-site-entry-instrs))
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-switch-callee-named callee-name)
+            compiler_ir_types.CompilerIrFunctionList.Nil))
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 0)
+            (= (compiler_optimize.opt-count-bounds-blocks blocks) 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; The identical callee at a straight-line site stays refused: retiring a
+;; boundary that runs once cannot pay for the caller's allocation.
+(define (compiler-optimize-inline-bounds-loop-cold-site-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-switch-caller-named symbols callee-name)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-switch-callee-named callee-name)
+            compiler_ir_types.CompilerIrFunctionList.Nil))
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 1)
+            (= (compiler_optimize.opt-count-bounds-blocks blocks) 0)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+(define (opt-inline-cascade-program
+  [symbols : OptInlineMultiTestSymbols]
+  [mid-entry : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunctionList
+  (let
+    [mid-name : i64 (struct-get symbols inline-nonleaf)]
+    [leaf-name : i64 (struct-get symbols inline-switch)]
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-switch-caller-named symbols mid-name)
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-inline-loop-site-function mid-name leaf-name mid-entry)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-switch-callee-named leaf-name)
+          compiler_ir_types.CompilerIrFunctionList.Nil)))))
+
+;; `mid` is single-reference and carries no bounds checks, so it is inlined at
+;; its own call site for free. Importing the bounds-carrying loop leaf would
+;; hand it its first bounds check and cost it that inline, so the import is
+;; refused even though the site is in a loop.
+(define (compiler-optimize-inline-bounds-loop-cascade-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-cascade-program symbols (opt-inline-loop-site-entry-instrs))
+        2)]
+    [admitted : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-cascade-program
+          symbols
+          (opt-inline-loop-site-bounds-entry-instrs))
+        2)]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          refused
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          admitted
+          "inline_nonleaf"
+          "inline_switch")
+        0))))
+
 (define (opt-inline-phi-span-ok-instr-seq-from?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [pos : i64]

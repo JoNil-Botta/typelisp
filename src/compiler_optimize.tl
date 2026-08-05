@@ -61845,15 +61845,26 @@
       (opt_i64_i64_map.contains? (& (struct-get census addrtaken)) slot)]
     [(option_i64.None) false]))
 
+;; The caller-independent half of the absorbable test: exactly one static
+;; reference, not address-taken, not `main`. A function that passes this is one
+;; the pipeline expects to disappear into its unique call site, so asking it of
+;; the CALLER answers "would growing this body cost it its own inline?".
+(define (opt-inline-census-single-site?
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [name : i64]) : bool
+  (and
+    (= (opt-inline-census-refcount index census name) 1)
+    (not (opt-inline-census-address-taken? index census name))
+    (not (string.eq (ir.compiler-ir-symbol-text name) "main"))))
+
 (define (opt-inline-census-absorbable?
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [caller-name : i64]
   [callee-name : i64]) : bool
   (and
-    (= (opt-inline-census-refcount index census callee-name) 1)
-    (not (opt-inline-census-address-taken? index census callee-name))
-    (not (string.eq (ir.compiler-ir-symbol-text callee-name) "main"))
+    (opt-inline-census-single-site? index census callee-name)
     (not (ir.compiler-ir-symbol-eq? caller-name callee-name))))
 
 (define (opt-callgraph-callee-count [graph : OptCallGraph] [from-slot : i64]) : i64
@@ -64272,12 +64283,177 @@
     [name : String (ir.compiler-ir-symbol-text callee-name)]
     (opt-symbol-leaf-matches-from? name (opt-symbol-leaf-start name) "vm-run")))
 
+;; --- loop-bearing bounds callee admission -----------------------------------
+;;
+;; A bounds-carrying callee whose body contains a loop used to be refused
+;; outright, with the single measured `vm-run` name exception above. That
+;; refusal is what keeps `intern_table`'s `it-load-word` behind a call: an
+;; eight-iteration byte-compose loop that the constant-trip unroll and the
+;; byte-compose-to-wide-load fold both rewrite into one 8-byte load as soon as
+;; they can see it inside its caller. Retiring that one call boundary is worth
+;; -6.6% on the row, and it lowers pressure rather than raising it: the callee
+;; that absorbs it loses fourteen frame operations because the absorbed loop
+;; stops existing.
+;;
+;; The same admission applied to every absorbable callee loses badly. What it
+;; also absorbs is once-called `init`/`fill` setup helpers, into whichever
+;; function holds the benchmark's hot loop. That trade buys a single call
+;; boundary and pays the caller's whole allocation for it: spmd_scan's inner
+;; loop went from seven to thirteen executed instructions per element -- four
+;; frame operations plus a push/pop scratch pair -- to retire a call that runs
+;; once per program. Three conditions separate the measured win from the
+;; measured loss:
+;;
+;;   1. the census proves the callee absorbable, so the program does not grow;
+;;   2. the callee is small, by opt-inline-bounds-loop-max-body and
+;;      opt-inline-bounds-loop-max-blocks;
+;;   3. the CALL SITE lies in a natural loop of the caller, so the retired
+;;      boundary is repaid per iteration instead of once per program.
+;;
+;; A fourth, caller-side condition is owned by
+;; opt-inline-bounds-loop-cascade-safe? below.
+;;
+;; The band is set from the measured leaf and the next size class above it.
+;; `it-load-word` presents here as 26 instructions in 4 blocks; the smallest
+;; corpus callees that lose are 30 instructions in 7 blocks and 51 in 15. 32
+;; and 6 sit above the admitted shape and below both, so a body that needs a
+;; second nesting level or a second working set is refused on structure rather
+;; than on a count that happens to land right.
+(define (opt-inline-bounds-loop-max-body) : i64
+  32)
+
+(define (opt-inline-bounds-loop-max-blocks) : i64
+  6)
+
+(define (opt-inline-bounds-loop-small?
+  [blocks : ir.CompilerIrBlockList]
+  [callee-instrs : i64]) : bool
+  (and
+    (<= callee-instrs (opt-inline-bounds-loop-max-body))
+    (<=
+      (ir.compiler-ir-block-list-count blocks)
+      (opt-inline-bounds-loop-max-blocks))))
+
+;; Facts about the caller currently being rewritten. They are installed per
+;; caller, but the two that cost real work -- the natural-loop label set and
+;; the bounds-check scan -- are computed on first demand and only when a small
+;; absorbable loop-bearing candidate has already passed the free tests above.
+;; Computing them for every function instead is +0.36% of the opt2 self-compile
+;; spent on facts that almost no caller reads.
+(define opt-inline-caller-facts-blocks : ir.CompilerIrBlockList
+  (ir.CompilerIrBlockList.Nil))
+(define opt-inline-caller-single-site? : bool
+  false)
+(define opt-inline-caller-facts-ready? : bool
+  false)
+(define opt-inline-caller-loop-labels : OptLabelSet
+  (OptLabelSet.Nil))
+(define opt-inline-caller-has-bounds? : bool
+  false)
+(define opt-inline-current-block-label : i64
+  0)
+
+(define (opt-inline-loop-label-union-from
+  [acc : OptLabelSet]
+  [other : OptLabelSet]
+  [index : i64]
+  [count : i64]) : OptLabelSet
+  (if (>= index count)
+    acc
+    (opt-inline-loop-label-union-from
+      (opt-label-add acc (opt-label-ref other index))
+      other
+      (+ index 1)
+      count)))
+
+(define (opt-inline-loop-labels-add
+  [loops : OptNaturalLoopList]
+  [acc : OptLabelSet]) : OptLabelSet
+  (match loops
+    [(OptNaturalLoopList.Nil) acc]
+    [(OptNaturalLoopList.Cons loop rest)
+      (let
+        [body : OptLabelSet (opt-natural-loop-body loop)]
+        (opt-inline-loop-labels-add
+          (box-get rest)
+          (opt-inline-loop-label-union-from acc body 0 (opt-label-count body))))]))
+
+(define (opt-inline-caller-facts-install!
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [name : i64]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (begin
+    (set! opt-inline-caller-facts-blocks blocks)
+    (set!
+      opt-inline-caller-single-site?
+      (opt-inline-census-single-site? index census name))
+    (set! opt-inline-caller-facts-ready? false)
+    (set! opt-inline-caller-loop-labels (OptLabelSet.Nil))
+    (set! opt-inline-caller-has-bounds? false)
+    (set! opt-inline-current-block-label (ir.compiler-ir-label-none))))
+
+(define (opt-inline-caller-facts-ensure!) : unit
+  (if opt-inline-caller-facts-ready?
+    unit
+    (begin
+      (set!
+        opt-inline-caller-loop-labels
+        (opt-inline-loop-labels-add
+          (opt-cfg-natural-loops opt-inline-caller-facts-blocks)
+          (OptLabelSet.Nil)))
+      (set!
+        opt-inline-caller-has-bounds?
+        (opt-inline-blocks-have-bounds-check? opt-inline-caller-facts-blocks))
+      (set! opt-inline-caller-facts-ready? true))))
+
+(define (opt-inline-bounds-loop-site-in-loop?) : bool
+  (begin
+    (opt-inline-caller-facts-ensure!)
+    (opt-label-contains
+      opt-inline-caller-loop-labels
+      opt-inline-current-block-label)))
+
+;; The one measured way a hot-site, small, absorbable import still loses.
+;; opt_quicksort's `qs-bench` is itself a single-reference function carrying no
+;; bounds checks, so it inlines into `main` for free. Importing `qs-fill` --
+;; 24 instructions at a genuine in-loop site -- gives `qs-bench` its first
+;; bounds-carrying loop, and this very gate then refuses `qs-bench` at its own
+;; call site. The caller stops being absorbed, is emitted standalone, and
+;; allocates worse: four frame operations inside `main` became thirty-six in
+;; the evicted `qs-bench`, +0.285% on the row to retire a boundary worth far
+;; less. The import is admissible; what it costs is the caller's own inline.
+;;
+;; So an import that would hand a bounds-free single-reference caller its first
+;; bounds check is refused. A caller that already carries one is already
+;; subject to this gate at its own site and has nothing further to lose, and a
+;; caller with more than one reference was never going to be absorbed anyway.
+(define (opt-inline-bounds-loop-cascade-safe?) : bool
+  (begin
+    (opt-inline-caller-facts-ensure!)
+    (or (not opt-inline-caller-single-site?) opt-inline-caller-has-bounds?)))
+
+;; Ordered so the two free tests run first: the lazy caller facts are only
+;; forced for a candidate that is already absorbable and already small.
+(define (opt-inline-bounds-loop-absorb-ok?
+  [absorbable? : bool]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    absorbable?
+    (opt-inline-bounds-loop-small? blocks callee-instrs)
+    (opt-inline-bounds-loop-site-in-loop?)
+    (opt-inline-bounds-loop-cascade-safe?)))
+
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]
+  [absorbable? : bool]
+  [callee-instrs : i64]
   [callee-name : i64]
   [blocks : ir.CompilerIrBlockList]) : bool
   (or
     (not has-bounds?)
+    (opt-inline-bounds-loop-absorb-ok? absorbable? callee-instrs blocks)
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
     (opt-inline-vm-run-bounds-loop-exception? callee-name)))
 
@@ -64745,6 +64921,8 @@
                 [bounds-loop-ok? : bool
                   (opt-inline-multiblock-bounds-loop-ok?
                     has-bounds?
+                    absorbable
+                    callee-instrs
                     callee-name
                     cblocks)]
                 [inline? : bool
@@ -65048,6 +65226,7 @@
           (set!
             opt-inline-current-phi-predecessor?
             (opt-label-contains phi-predecessors label))
+          (set! opt-inline-current-block-label label)
           (opt-inline-try-multiblock-rewrite-seq-from
             seq
             0
@@ -65363,6 +65542,8 @@
                 [bounds-loop-ok? : bool
                   (opt-inline-multiblock-bounds-loop-ok?
                     has-bounds?
+                    absorbable
+                    callee-instrs
                     callee-name
                     cblocks)]
                 [inline? : bool
@@ -65690,6 +65871,7 @@
           (set!
             opt-inline-current-phi-predecessor?
             (opt-label-contains phi-predecessors label))
+          (set! opt-inline-current-block-label label)
           (opt-inline-try-multiblock-span-rewrite-seq-from
             seq
             0
@@ -65988,6 +66170,7 @@
         [_reset-sites : unit
           (begin
             (set! opt-inline-caller-site-count 0)
+            (opt-inline-caller-facts-install! index census name blocks)
             (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
         (match (opt-inline-blocks
           blocks
@@ -66037,6 +66220,7 @@
         [_reset-sites : unit
           (begin
             (set! opt-inline-caller-site-count 0)
+            (opt-inline-caller-facts-install! index census name blocks)
             (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
         (match (opt-inline-blocks-with-spans
           blocks

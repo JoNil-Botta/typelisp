@@ -298,13 +298,41 @@
             (compiler-live-set-copy-words-into out words 0 n)
             (CompilerLiveI64Set out)))))))
 
+;; Membership is the hottest liveness primitive in an opt2 self-compile --
+;; 13,669,761 calls spread over 25 register-allocator and backend sites, none of
+;; them dominant -- so the word read is spelled out here instead of going through
+;; `compiler-live-set-word-at`. That helper keeps its other two callers and stays
+;; out of line; what it charged THIS one was a call/ret and an argument move, a
+;; `word-index < 0` test that the `value < 0` guard above already decides (a
+;; non-negative value cannot shift right into a negative index), and -- because
+;; the mask has to survive the call -- a callee-saved register plus the frame to
+;; save and restore it in. Everything the helper does for an in-range index is
+;; done here directly, and an out-of-range index still answers false: the helper
+;; returned word 0 for it, and 0 masks to 0.
+;;
+;; The RANGE test now runs before the mask is built, and that is the larger half
+;; of the win rather than a tidying: 46% of the calls in an opt2 self-compile
+;; answer false without reading a word (measured -- the average call costs 19.7
+;; instructions against 28 for the full path), and every one of them used to pay
+;; for `compiler-live-set-bit-mask` first, which is a `shl` by a computed amount
+;; and so carries the two range checks the shift itself needs. Deciding the
+;; cheap, always-needed comparison first lets those calls skip the whole
+;; sequence.
 (define (compiler-live-set-contains? [set : CompilerLiveI64Set] [value : i64]) : bool
   (if (< value 0)
     false
     (let
+      [words : (__tl_dyn-array i64) (compiler-live-set-words set)]
       [word-index : i64 (compiler-live-set-word-index value)]
-      [mask : i64 (compiler-live-set-bit-mask value)]
-      (not (= (bit-and (compiler-live-set-word-at set word-index) mask) 0)))))
+      (if (>= word-index (array-length words))
+        false
+        (not
+          (=
+            (bit-and
+              (unsafe
+                (ptr-read (ptr-offset (array-data words) word-index)))
+              (compiler-live-set-bit-mask value))
+            0))))))
 
 ;; True iff `a` and `b` share at least one element (bitset word-level AND). Used
 ;; by the SplitKit phi-carried loop homing to test whether ANY member of a

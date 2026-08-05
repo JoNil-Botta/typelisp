@@ -2782,6 +2782,27 @@
         [slot : i64 (shr (bit-and (* isolated 0x077cb531) 0xffffffff) 27)]
         (cast (array-ref compiler-reg-low-bit-index32-table slot) : i64)))))
 
+;; The same De Bruijn lookup with the zero guard dropped. CALLERS MUST PROVE the
+;; low 32 bits of `bits` are not all zero. Every use sits directly inside a
+;; `(while (not (= bits 0)))` -- or the equivalent `(if (= bits 0) ..)` early
+;; return -- over a live-set word, and a live-set word only ever carries bits
+;; 0..31 (`compiler-live-set-bit-mask` shifts by `value & 31`, and
+;; `compiler-live-set-word-bits` is 32); the whole walk family already depends on
+;; that, since the guarded form answers 31 for a word whose only set bits are
+;; high ones. A nonzero low half also makes the mask redundant: the lowest set
+;; bit of `bits` then lies in the low 32, so `bits & (- bits)` isolates exactly
+;; the bit `(bits & 0xffffffff) & (- (bits & 0xffffffff))` does. What the guarded
+;; form spends on top of this and the nonzero form does not: a movabs of the
+;; mask, an `and`, a `test`/`jne` pair, and -- because the dead `31` arm is a
+;; second definition of the result -- a stack slot to phi the two arms through,
+;; which costs a store on this arm and a reload at the merge.
+(defmacro (compiler-reg-low-bit-index32-nonzero [bits : i64]) : i64
+  `(let
+    [value : i64 ,bits]
+    [isolated : i64 (bit-and value (- 0 value))]
+    [slot : i64 (shr (bit-and (* isolated 0x077cb531) 0xffffffff) 27)]
+    (cast (array-ref compiler-reg-low-bit-index32-table slot) : i64)))
+
 (define (compiler-reg-segment-flush-var!
   [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
   [starts : (__tl_dyn-array i64)]
@@ -2832,42 +2853,6 @@
             (array-set! starts var point)
             (array-set! ends var point)))))))
 
-;; Note the CONTIGUOUS pair of points `point` and `next` (always `point + 1`)
-;; into the per-var segment in one step. This is exactly
-;; `(note-point! .. point)` followed by `(note-point! .. next)`:
-;;   * no open segment      -> the pair opens one segment [point, next];
-;;   * `point <= end + 1`   -> the first call can only raise `end` to `point`,
-;;                             which leaves `next <= end' + 1` true, so the
-;;                             second call raises `end` to `max(end, next)`;
-;;   * `point > end + 1`    -> the first call flushes and reopens at `point`,
-;;                             after which the second raises `end` to `next`.
-;; Fusing them halves the per-live-value segment bookkeeping on the hot
-;; live-after bridge, where every value is noted at `point` and again at
-;; `point + 1`.
-(define (compiler-reg-segment-note-span!
-  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
-  [starts : (__tl_dyn-array i64)]
-  [ends : (__tl_dyn-array i64)]
-  [var : i64]
-  [point : i64]
-  [next : i64]) : unit
-  (if (or (< var 0) (>= var (array-length starts)))
-    unit
-    (if (< (array-ref starts var) 0)
-      (begin
-        (array-set! starts var point)
-        (array-set! ends var next))
-      (let
-        [end : i64 (array-ref ends var)]
-        (if (<= point (+ end 1))
-          (if (> next end)
-            (array-set! ends var next)
-            unit)
-          (begin
-            (compiler-reg-segment-flush-var! segments starts ends var)
-            (array-set! starts var point)
-            (array-set! ends var next)))))))
-
 ;; Segment build for one instruction point: a def/use pass at `point` followed
 ;; by a live-after pass bridging `point`/`point + 1`. This replaces the four
 ;; separate word walks it once was (defs@point, uses@point, live-after@point,
@@ -2884,9 +2869,9 @@
 ;;     to `point`, note `point` in the segment), so a variable that is both a
 ;;     def and a use gets one application, whether the two arrive OR'd into one
 ;;     word (the set form) or as a def id plus a use id (the id form);
-;;   * live-after still notes `point` before `point + 1` (fused into
-;;     `compiler-reg-segment-note-span!`) and still extends the coarse interval
-;;     to `point + 1`.
+;;   * live-after still notes `point` before `point + 1` (fused into the per-bit
+;;     body of `compiler-reg-extend-segment-after-words!`) and still extends the
+;;     coarse interval to `point + 1`.
 ;;
 ;; Bridging live-after into the SEGMENT at `point` (LLVM SlotIndex semantics: a
 ;; value live-OUT of this instruction is live AT it) makes a pass-through value
@@ -2957,6 +2942,53 @@
 ;; computing it in the item expression lets the loop hoist it into the inner
 ;; walk's preheader, charging the 5.9M words that carry a bit instead of all
 ;; 27.0M. Same words, same order, same values.
+;;
+;; The per-bit body spells out BOTH bridges instead of calling them. It used to
+;; be a `compiler-reg-segment-note-span!` call -- inlined, since this was its
+;; only call site -- followed by a `compiler-reg-extend-interval` call, which is
+;; NOT inlined because ten other call sites keep it out of line. That second
+;; call cost this walk a call/ret, four argument moves and a second `var < 0`
+;; test on every live bit. The two bridges touch DISJOINT arrays --
+;; `segments`/`segment-starts`/`segment-ends` versus `starts`/`ends` -- so they
+;; commute, and the fused body applies exactly the same steps to the same slots
+;; in the same order:
+;;   * the segment half opens a segment when none is open, raises its end while
+;;     `point` still adjoins it, and otherwise flushes and reopens. That is
+;;     `(note-point! .. point)` followed by `(note-point! .. next)` -- with no
+;;     open segment the pair opens one segment [point, next]; with
+;;     `point <= end + 1` the first note can only raise `end` to `point`, which
+;;     leaves `next <= end' + 1` true, so the second raises `end` to
+;;     `max(end, next)`; with `point > end + 1` the first flushes and reopens at
+;;     `point` and the second raises `end` to `next`;
+;;   * the coarse half then extends `[starts[var], ends[var]]` to cover `next`,
+;;     which is the body `compiler-reg-extend-interval` still runs for its other
+;;     callers.
+;; ONE range guard covers both halves, and the four i64 arrays are indexed
+;; through backing pointers taken once in the preheader instead of through their
+;; handles. This is what the fused loop is for: `compiler-reg-segment-flush-var!`
+;; sits in the cold reopen arm, and a call in the loop stops the optimizer
+;; hoisting anything out of it, so EVERY live bit was re-reading a handle, the
+;; length behind it and the data pointer behind that, then re-testing the same
+;; index -- eight instructions of array metadata per bit for two reads the loop
+;; had already proven in range.
+;;
+;; The guard is what makes the raw indexing sound, and it is proven here rather
+;; than assumed: `var-limit` is the MINIMUM of all four lengths, so
+;; `0 <= item-var < var-limit` puts the index inside every one of them. (In
+;; practice the four are equal -- `compiler-reg-live-interval-selection` is the
+;; only root of this walk and allocates each as `(array.make-array i64 vars)` --
+;; but nothing here depends on that.) `item-var < 0` stays tested: it cannot
+;; happen (`index >= 0` and the De Bruijn table holds 0..31) but it is the other
+;; half of the range proof, not a redundant test.
+;;
+;; The pointers stay valid across the loop. Nothing resizes these arrays --
+;; `compiler-reg-segment-flush-var!` writes `segment-starts`/`segment-ends`
+;; slots and one `segments` slot, and the sequence it appends to is a fresh
+;; allocation -- and heap allocation is a bump into the active arena that never
+;; moves or frees a live value. flush-var!'s own writes go through the handles
+;; while this loop reads and writes through the pointers, but both name the same
+;; backing store, so the -1 it parks in the flushed row is exactly what the next
+;; `ptr-read` of that row sees.
 (define (compiler-reg-extend-segment-after-words!
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
@@ -2968,6 +3000,34 @@
   (let
     [after-words : i64 (live.compiler-live-set-word-count live-after)]
     [after-data : (MutPtr i64) (live.compiler-live-set-word-data live-after)]
+    [starts-len : i64 (array-length starts)]
+    [ends-len : i64 (array-length ends)]
+    [segment-starts-len : i64 (array-length segment-starts)]
+    [segment-ends-len : i64 (array-length segment-ends)]
+    [coarse-limit : i64
+      (if (< starts-len ends-len)
+        starts-len
+        ends-len)]
+    [segment-limit : i64
+      (if (< segment-starts-len segment-ends-len)
+        segment-starts-len
+        segment-ends-len)]
+    [var-limit : i64
+      (if (< coarse-limit segment-limit)
+        coarse-limit
+        segment-limit)]
+    [starts-data : (MutPtr i64)
+      (unsafe
+        (array-data starts))]
+    [ends-data : (MutPtr i64)
+      (unsafe
+        (array-data ends))]
+    [segment-starts-data : (MutPtr i64)
+      (unsafe
+        (array-data segment-starts))]
+    [segment-ends-data : (MutPtr i64)
+      (unsafe
+        (array-data segment-ends))]
     [next : i64 (+ point 1)]
     [index : i64 0]
     (while (< index after-words)
@@ -2980,16 +3040,80 @@
               [item-var : i64
                 (+
                   (* index (live.compiler-live-set-word-bits))
-                  (compiler-reg-low-bit-index32 after-bits))]
+                  (compiler-reg-low-bit-index32-nonzero after-bits))]
               (begin
-                (compiler-reg-segment-note-span!
-                  segments
-                  segment-starts
-                  segment-ends
-                  item-var
-                  point
-                  next)
-                (compiler-reg-extend-interval starts ends item-var next)
+                (if (or (< item-var 0) (>= item-var var-limit))
+                  unit
+                  (let
+                    [open-start : i64
+                      (unsafe
+                        (ptr-read (ptr-offset segment-starts-data item-var)))]
+                    (begin
+                      (if (< open-start 0)
+                        (unsafe
+                          (begin
+                            (ptr-write!
+                              (ptr-offset segment-starts-data item-var)
+                              point)
+                            (ptr-write!
+                              (ptr-offset segment-ends-data item-var)
+                              next)))
+                        (let
+                          [open-end : i64
+                            (unsafe
+                              (ptr-read (ptr-offset segment-ends-data item-var)))]
+                          (if (<= point (+ open-end 1))
+                            (if (> next open-end)
+                              (unsafe
+                                (ptr-write!
+                                  (ptr-offset segment-ends-data item-var)
+                                  next))
+                              unit)
+                            (begin
+                              (compiler-reg-segment-flush-var!
+                                segments
+                                segment-starts
+                                segment-ends
+                                item-var)
+                              (unsafe
+                                (begin
+                                  (ptr-write!
+                                    (ptr-offset segment-starts-data item-var)
+                                    point)
+                                  (ptr-write!
+                                    (ptr-offset segment-ends-data item-var)
+                                    next)))))))
+                      (let
+                        [start : i64
+                          (unsafe
+                            (ptr-read (ptr-offset starts-data item-var)))]
+                        [end : i64
+                          (unsafe
+                            (ptr-read (ptr-offset ends-data item-var)))]
+                        (begin
+                          (if (< start 0)
+                            (unsafe
+                              (begin
+                                (ptr-write!
+                                  (ptr-offset starts-data item-var)
+                                  next)
+                                (ptr-write!
+                                  (ptr-offset ends-data item-var)
+                                  next)))
+                            (begin
+                              (if (< next start)
+                                (unsafe
+                                  (ptr-write!
+                                    (ptr-offset starts-data item-var)
+                                    next))
+                                unit)
+                              (if (> next end)
+                                (unsafe
+                                  (ptr-write!
+                                    (ptr-offset ends-data item-var)
+                                    next))
+                                unit)))
+                          unit)))))
                 (set! after-bits (bit-and after-bits (- after-bits 1))))))
           (set! index (+ index 1)))))))
 
@@ -3167,7 +3291,7 @@
   (if (= bits 0)
     unit
     (let
-      [index : i64 (compiler-reg-low-bit-index32 bits)]
+      [index : i64 (compiler-reg-low-bit-index32-nonzero bits)]
       (begin
         (compiler-reg-extend-interval starts ends (+ var index) point)
         (compiler-reg-extend-set-word-bits
@@ -3623,14 +3747,13 @@
           point)
         (set! index (+ index 1))))))
 
-;; The `compiler-reg-segment-note-span!` body is spelled out here rather than
-;; called: that helper has exactly ONE other call site (the conservative
-;; `compiler-reg-extend-segment-after-words!`), where it is inlined into the
-;; per-live-bit loop, and adding a second caller would push it out of line and
-;; charge the conservative walk a call per live bit. The steps and their order
-;; are identical to the helper's -- open the segment when none is open,
-;; otherwise raise its end when `point` still adjoins it, and otherwise flush
-;; and reopen -- so the rows produced are the same.
+;; The segment-bridge body is spelled out here rather than called, exactly as
+;; the conservative walk (`compiler-reg-extend-segment-after-words!`) spells out
+;; its own copy: a shared helper would be a call per live bit in BOTH walks, and
+;; two callers keep it out of line. The steps and their order are identical in
+;; both -- open the segment when none is open, otherwise raise its end when
+;; `point` still adjoins it, and otherwise flush and reopen -- so the rows
+;; produced are the same.
 (define (compiler-reg-ep-after-words!
   [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
   [segment-starts : (__tl_dyn-array i64)]

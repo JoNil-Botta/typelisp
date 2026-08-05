@@ -30155,6 +30155,53 @@
           (tc-name-bound-id? env name-id)
           (tc-top-level-value-owned-by-module-id? ctx module-id name-id))))))
 
+;; Compiler-private text inspectors expose ordinary callable signatures to
+;; move/borrow analysis even though their direct calls still use intrinsic
+;; result checking below. Keeping these signatures out of general expression
+;; lookup preserves normal shadowing and avoids making CTFE evaluate the private
+;; implementation functions while it is constructing their definitions.
+(define (tc-private-string-intrinsic-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : ResultTcType
+  (if (tc-private-intrinsic-unshadowed-id? ctx env name-id)
+    (let
+      [text : ast.AstType
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-value (ast.AstType.Str))]
+      [left : ast.AstType
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-left (ast.AstType.Str))]
+      [right : ast.AstType
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-right (ast.AstType.Str))]
+      (cond
+        [(= name-id cbi.compiler-builtin-id-tl-private-string-length)
+          (ResultTcType.Ok (tc-fn1 text (ast.AstType.I64)))]
+        [(= name-id cbi.compiler-builtin-id-tl-private-string-ref)
+          (ResultTcType.Ok (tc-fn2 text (ast.AstType.I64) (ast.AstType.Char)))]
+        [(= name-id cbi.compiler-builtin-id-tl-private-string-eq)
+          (ResultTcType.Ok (tc-fn2 left right (ast.AstType.Bool)))]
+        [(= name-id cbi.compiler-builtin-id-tl-private-string-to-int)
+          (ResultTcType.Ok (tc-fn1 text (ast.AstType.I64)))]
+        [else (ResultTcType.Err "")]))
+    (ResultTcType.Err "")))
+
+(define (tc-private-string-intrinsic-call-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]) : ResultTcType
+  (match (ast.ast-expr-unspan func)
+    [(ast.AstExpr.Var raw-name)
+      (let
+        [raw-text : String (tc-hygiene-name-text-id raw-name)]
+        [hygiene-global : bool (tc-hygiene-global-name-id? raw-name)]
+        [name : String
+          (if (and hygiene-global (not (macro-hygiene-global-id? raw-name)))
+            (tc-hygiene-global-call-name raw-text)
+            raw-text)]
+        [name-id : i64 (tc-builtin-call-name-id raw-name hygiene-global)]
+        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+        (tc-private-string-intrinsic-type ctx env lookup-id))]
+    [_ (ResultTcType.Err "")]))
+
 ;; Source-level builtin dispatch historically observed module-local declaration
 ;; copies through `tc-name-bound-id?`. Dotted modules keep the authoritative
 ;; declaration under its qualified top-env key instead, so consult symbol
@@ -31690,7 +31737,18 @@
             (match (tc-lookup-visible-id ctx env name)
               [(ResultTcType.Ok got)
                 (tc-call-effective-var-arg-type ctx name got)]
-              [(ResultTcType.Err message) (ResultTcType.Err message)]))]
+              [(ResultTcType.Err message)
+                ;; Qualified module values are ordinary variable expressions,
+                ;; but are not stored under their surface dotted id in the
+                ;; lexical env. Let normal expression lookup resolve them
+                ;; before deciding whether the typed reference formal can
+                ;; auto-borrow the resulting place.
+                (match (tc-call-arg-expr-type ctx env arg)
+                  [(ResultTcType.Ok got)
+                    (if (tc-call-actual-immutable-reference? ctx got)
+                      (ResultTcType.Ok got)
+                      (tc-call-auto-borrow-type ctx env arg))]
+                  [(ResultTcType.Err _) (ResultTcType.Err message)])]))]
         [_
           (match (tc-call-arg-expr-type ctx env arg)
             [(ResultTcType.Ok got)
@@ -31742,7 +31800,17 @@
               (match (tc-lookup-visible-id ctx env name)
                 [(ResultTcType.Ok got)
                   (tc-call-effective-var-arg-expr ctx name got arg)]
-                [(ResultTcType.Err message) (ResultTcExpr.Err message)]))]
+                [(ResultTcType.Err message)
+                  (match (tc-call-arg-expr-type ctx env arg)
+                    [(ResultTcType.Ok got)
+                      (if (tc-call-actual-immutable-reference? ctx got)
+                        (ResultTcExpr.Ok arg)
+                        (match (tc-call-auto-borrow-type ctx env arg)
+                          [(ResultTcType.Ok _)
+                            (ResultTcExpr.Ok (tc-call-auto-borrow-expr arg))]
+                          [(ResultTcType.Err borrow-message)
+                            (ResultTcExpr.Err borrow-message)]))]
+                    [(ResultTcType.Err _) (ResultTcExpr.Err message)])]))]
           [_
             (match (tc-call-arg-expr-type ctx env arg)
               [(ResultTcType.Ok got)
@@ -47276,7 +47344,14 @@
           [(ResultTcExprId.Err message) (ResultTcBorrowPlace.Err message)])
         (match (tc-lookup-visible-id ctx env name)
           [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
-          [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)]))]
+          [(ResultTcType.Err message)
+            (match (tc-var-expr-after-local-field-check
+              ctx
+              env
+              name
+              (tc-hygiene-name-text-id name))
+              [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
+              [(ResultTcType.Err _) (ResultTcBorrowPlace.Err message)])]))]
     [(ast.AstExpr.StructGet receiver-box field)
       (let
         [receiver : ast.AstExpr
@@ -61740,6 +61815,32 @@
     [(ast.AstType.EnumArgs _ _) (ResultTcTypeList.Ok (ast.ast-type-list-new))]
     [_ (ResultTcTypeList.Err "typecheck: call target is not a function")]))
 
+(define (tc-borrow-call-substituted-return-lifetimes
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [args : ast.AstExprList]
+  [params : ast.AstTypeList]
+  [ret : ast.AstType]
+  [result-lifetimes : TcNameIdList]) : TcBorrowCallReturnLifetimes
+  (let
+    [lifetimes : ast.AstLifetimeList (tc-call-function-lifetimes params ret)]
+    (if (ast.ast-lifetime-list-empty? (& lifetimes))
+      (TcBorrowCallReturnLifetimes.Known result-lifetimes)
+      (match (tc-infer-call-lifetime-subst
+        ctx
+        env
+        func
+        args
+        params
+        lifetimes
+        TcLifetimeSubst.Nil)
+        [(ResultTcLifetimeSubst.Ok subst)
+          (TcBorrowCallReturnLifetimes.Known
+            (tc-type-collect-reference-lifetimes
+              (tc-resolve-type ctx (tc-lifetime-subst-type subst ret))))]
+        [(ResultTcLifetimeSubst.Err _) (TcBorrowCallReturnLifetimes.Fallback)]))))
+
 (define (tc-borrow-call-return-lifetimes-from-function
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -61753,25 +61854,23 @@
       [(ast.AstMaybeType.Some _) (TcBorrowCallReturnLifetimes.Fallback)]
       [(ast.AstMaybeType.No)
         (let
-          [lifetimes : ast.AstLifetimeList
-            (tc-call-function-lifetimes params ret)]
-          (if (ast.ast-lifetime-list-empty? (& lifetimes))
-            (TcBorrowCallReturnLifetimes.Known
-              (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ret)))
-            (match (tc-infer-call-lifetime-subst
-              ctx
-              env
-              func
-              args
-              params
-              lifetimes
-              TcLifetimeSubst.Nil)
-              [(ResultTcLifetimeSubst.Ok subst)
-                (TcBorrowCallReturnLifetimes.Known
-                  (tc-type-collect-reference-lifetimes
-                    (tc-resolve-type ctx (tc-lifetime-subst-type subst ret))))]
-              [(ResultTcLifetimeSubst.Err _)
-                (TcBorrowCallReturnLifetimes.Fallback)])))])))
+          [result-lifetimes : TcNameIdList
+            (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ret))]
+          ;; Input-only lifetimes cannot affect post-call retention. Avoid
+          ;; re-inferring borrowed inspector arguments when the scalar result
+          ;; carries no lifetime at all.
+          (match result-lifetimes
+            [(TcNameIdList.Nil)
+              (TcBorrowCallReturnLifetimes.Known TcNameIdList.Nil)]
+            [_
+              (tc-borrow-call-substituted-return-lifetimes
+                ctx
+                env
+                func
+                args
+                params
+                ret
+                result-lifetimes)]))])))
 
 (define (tc-borrow-call-info-from-type
   [ctx : TcContext]
@@ -61814,7 +61913,11 @@
     (match (tc-expr-id ctx env func-id)
       [(ResultTcType.Ok fn-ty)
         (tc-borrow-call-info-from-type ctx env func args fn-ty)]
-      [(ResultTcType.Err message) (ResultTcBorrowCallInfo.Err message)])))
+      [(ResultTcType.Err message)
+        (match (tc-private-string-intrinsic-call-type ctx env func)
+          [(ResultTcType.Ok fn-ty)
+            (tc-borrow-call-info-from-type ctx env func args fn-ty)]
+          [(ResultTcType.Err _) (ResultTcBorrowCallInfo.Err message)])])))
 
 (define (tc-borrow-call-info-id-with-facts
   [site : String]
@@ -61844,9 +61947,14 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func-id : i64]) : ResultTcTypeList
-  (match (tc-expr-id ctx env func-id)
-    [(ResultTcType.Ok fn-ty) (tc-move-call-param-types-from-type fn-ty)]
-    [(ResultTcType.Err message) (ResultTcTypeList.Err message)]))
+  (let
+    [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
+    (match (tc-expr-id ctx env func-id)
+      [(ResultTcType.Ok fn-ty) (tc-move-call-param-types-from-type fn-ty)]
+      [(ResultTcType.Err message)
+        (match (tc-private-string-intrinsic-call-type ctx env func)
+          [(ResultTcType.Ok fn-ty) (tc-move-call-param-types-from-type fn-ty)]
+          [(ResultTcType.Err _) (ResultTcTypeList.Err message)])])))
 
 (define (tc-move-call-param-types-id-with-facts
   [site : String]
@@ -63583,27 +63691,9 @@
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(ast.AstExpr.TypeLiteral _) (TcMoveResult.Ok moved)]
     [(ast.AstExpr.Init _) (TcMoveResult.Ok moved)]
-    [(ast.AstExpr.Comptime inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (begin
-          ;; Compile-time code cannot cause a runtime early exit in the
-          ;; containing function; mirror lower's existing RVO scanner.
-          (tc-body-early-exit-suppress-push! (tc-context-body-state ctx))
-          (let
-            [result : TcMoveResult
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                locals
-                loop-carried
-                moved
-                inner)]
-            (begin
-              (tc-body-early-exit-suppress-pop! (tc-context-body-state ctx))
-              result))))]
+    ;; The CTFE evaluator consumes this subtree before the runtime body exists.
+    ;; Its source operands therefore cannot move runtime locals.
+    [(ast.AstExpr.Comptime _) (TcMoveResult.Ok moved)]
     [(ast.AstExpr.Quote _) (TcMoveResult.Ok moved)]
     [(ast.AstExpr.Quasiquote _) (TcMoveResult.Ok moved)]
     [(ast.AstExpr.Unquote _) (TcMoveResult.Ok moved)]
@@ -65646,41 +65736,6 @@
         0
         suffix-len))))
 
-(define (tc-hashmap-mutating-call-name? [name : String]) : bool
-  (cond
-    [(tc-string-has-suffix? name "-map-insert") true]
-    [(tc-string-has-suffix? name "-map-put") true]
-    [(tc-string-has-suffix? name "-map-remove") true]
-    [(tc-string-has-suffix? name "-map-remove-borrowed") true]
-    [(tc-string-has-suffix? name "-map-update-if-present") true]
-    [(tc-string-has-suffix? name "-map-update-borrowed-if-present") true]
-    [(tc-string-has-suffix? name "-map-insert-or-update") true]
-    [(tc-string-has-suffix? name "-map-entry-or-insert") true]
-    [(tc-string-has-suffix? name "-map-resized") true]
-    [(tc-string-has-suffix? name "-map-grow") true]
-    [else false]))
-
-(define (tc-borrow-check-first-call-arg-root-mutation
-  [expr-bases : i64]
-  [locals : TcMovedSet]
-  [borrowed : TcMovedSet]
-  [args : ast.AstExprList]) : TcBorrowCheckResult
-  (if (ast.ast-expr-list-empty? (& args))
-    (TcBorrowCheckResult.Ok borrowed)
-    (let
-      [arg : ast.AstExpr
-        (ast.ast-expr-segment-bases-get
-          expr-bases
-          (ast.ast-expr-list-get (& args) 0 0))]
-      (match (tc-borrow-check-root-mutation-conflict
-        expr-bases
-        locals
-        borrowed
-        arg
-        arg)
-        [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
-        [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)]))))
-
 (define (tc-borrow-check-after-call-effects
   [ctx : TcContext]
   [expr-bases : i64]
@@ -65701,37 +65756,15 @@
     func
     args)
     [(TcBorrowCheckResult.Ok borrowed0)
-      (let
-        [nid : i64 (tc-expr-var-name-id func)]
-        (if (and
-          (>= nid 0)
-          (tc-hashmap-mutating-call-name? (tc-hygiene-name-text-id nid)))
-          (match (tc-borrow-check-first-call-arg-root-mutation
-            expr-bases
-            locals
-            borrowed0
-            args)
-            [(TcBorrowCheckResult.Ok _)
-              (tc-borrow-check-after-returning-call
-                ctx
-                expr-bases
-                env
-                locals
-                borrowed0
-                call-expr
-                args
-                return-lifetimes)]
-            [(TcBorrowCheckResult.Err message)
-              (TcBorrowCheckResult.Err message)])
-          (tc-borrow-check-after-returning-call
-            ctx
-            expr-bases
-            env
-            locals
-            borrowed0
-            call-expr
-            args
-            return-lifetimes)))]
+      (tc-borrow-check-after-returning-call
+        ctx
+        expr-bases
+        env
+        locals
+        borrowed0
+        call-expr
+        args
+        return-lifetimes)]
     [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
 
 (define (tc-borrow-check-add-names [locals : TcMovedSet] [names : TcNameIdList]) : TcMovedSet
@@ -66262,26 +66295,6 @@
       [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)])
     (TcBorrowCheckResult.Ok borrowed)))
 
-(define (tc-borrow-check-string-helper-intrinsic-call?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan func)
-    [(ast.AstExpr.Var raw-name)
-      (let
-        [raw-text : String (tc-hygiene-name-text-id raw-name)]
-        [hygiene-global : bool (tc-hygiene-global-name-id? raw-name)]
-        [name : String
-          (if (and hygiene-global (not (macro-hygiene-global-id? raw-name)))
-            (tc-hygiene-global-call-name raw-text)
-            raw-text)]
-        [name-id : i64 (tc-builtin-call-name-id raw-name hygiene-global)]
-        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
-        (or
-          (tc-string-length-helper-call-id? ctx env name-id lookup-id)
-          (tc-string-ref-helper-call-id? ctx env name-id lookup-id)))]
-    [_ false]))
-
 (define (tc-borrow-check-call-args-with-types
   [ctx : TcContext]
   [expr-bases : i64]
@@ -66293,98 +66306,95 @@
   [args : ast.AstExprList]
   [types : ast.AstTypeList]
   [return-lifetimes : TcBorrowCallReturnLifetimes]) : TcBorrowCheckResult
-  (if (tc-borrow-check-string-helper-intrinsic-call? ctx env func)
-    (match (tc-borrow-check-read-exprs
-      ctx
-      expr-bases
-      env
-      locals
-      (tc-moved-clone borrowed)
-      args)
+  (let
+    [validation-borrowed : TcMovedSet (tc-moved-clone borrowed)]
+    [validation-result : TcBorrowCheckResult
+      (tc-borrow-check-call-args-two-phase-with-types
+        ctx
+        expr-bases
+        env
+        locals
+        validation-borrowed
+        false
+        call-expr
+        args
+        types)]
+    (match validation-result
       [(TcBorrowCheckResult.Ok _)
-        (tc-borrow-check-after-call-effects
-          ctx
-          expr-bases
-          env
-          locals
-          borrowed
-          call-expr
-          func
-          args
-          return-lifetimes)]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])
-    (let
-      [validation-borrowed : TcMovedSet (tc-moved-clone borrowed)]
-      [validation-result : TcBorrowCheckResult
-        (tc-borrow-check-call-args-two-phase-with-types
-          ctx
-          expr-bases
-          env
-          locals
-          validation-borrowed
-          false
-          call-expr
-          args
-          types)]
-      (match validation-result
-        [(TcBorrowCheckResult.Ok _)
-          (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
-            (match (tc-borrow-check-auto-borrowed-call-args
-              ctx
-              expr-bases
-              env
-              locals
-              borrowed
-              args
-              types)
-              [(TcBorrowCheckResult.Ok borrowed2)
-                (match (tc-borrow-check-thread-channel-send-message
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  borrowed2
-                  func
-                  args
-                  types)
-                  [(TcBorrowCheckResult.Ok borrowed3)
-                    (tc-borrow-check-after-call-effects
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      borrowed3
-                      call-expr
-                      func
-                      args
-                      return-lifetimes)]
-                  [(TcBorrowCheckResult.Err message)
-                    (TcBorrowCheckResult.Err message)])]
-              [(TcBorrowCheckResult.Err message)
-                (TcBorrowCheckResult.Err message)])
-            (match (tc-borrow-check-thread-channel-send-message
-              ctx
-              expr-bases
-              env
-              locals
-              borrowed
-              func
-              args
-              types)
-              [(TcBorrowCheckResult.Ok borrowed2)
-                (tc-borrow-check-after-call-effects
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  borrowed2
-                  call-expr
-                  func
-                  args
-                  return-lifetimes)]
-              [(TcBorrowCheckResult.Err message)
-                (TcBorrowCheckResult.Err message)]))]
-        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))))
+        (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
+          (match (tc-borrow-check-auto-borrowed-call-args
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            args
+            types)
+            [(TcBorrowCheckResult.Ok borrowed2)
+              (match (tc-borrow-check-thread-channel-send-message
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed2
+                func
+                args
+                types)
+                [(TcBorrowCheckResult.Ok borrowed3)
+                  (match (tc-borrow-check-after-call-effects
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    borrowed3
+                    call-expr
+                    func
+                    args
+                    return-lifetimes)
+                    [(TcBorrowCheckResult.Ok borrowed4)
+                      ;; Auto-borrows are call temporaries unless the resolved
+                      ;; result type retains their lifetime. This is the same
+                      ;; type-driven lifetime pruning used for assignment
+                      ;; values; it must not depend on the callee's spelling.
+                      (if (= (tc-moved-len borrowed2) (tc-moved-len borrowed))
+                        (TcBorrowCheckResult.Ok borrowed4)
+                        (TcBorrowCheckResult.Ok
+                          (tc-borrow-check-prune-value-temporaries
+                            ctx
+                            expr-bases
+                            env
+                            borrowed
+                            borrowed4
+                            call-expr)))]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)])]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])
+          (match (tc-borrow-check-thread-channel-send-message
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            func
+            args
+            types)
+            [(TcBorrowCheckResult.Ok borrowed2)
+              (tc-borrow-check-after-call-effects
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed2
+                call-expr
+                func
+                args
+                return-lifetimes)]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)]))]
+      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
 
 (define (tc-borrow-check-exprs-retry-after-prune
   [ctx : TcContext]
@@ -69004,11 +69014,9 @@
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(ast.AstExpr.TypeLiteral _) (TcBorrowCheckResult.Ok borrowed)]
     [(ast.AstExpr.Init _) (TcBorrowCheckResult.Ok borrowed)]
-    [(ast.AstExpr.Comptime inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
+    ;; As in move analysis, a folded CTFE subtree cannot retain a runtime
+    ;; borrow. The ordinary typecheck/CTFE pass has already validated it.
+    [(ast.AstExpr.Comptime _) (TcBorrowCheckResult.Ok borrowed)]
     [(ast.AstExpr.Quote _) (TcBorrowCheckResult.Ok borrowed)]
     [(ast.AstExpr.Quasiquote _) (TcBorrowCheckResult.Ok borrowed)]
     [(ast.AstExpr.Unquote _) (TcBorrowCheckResult.Ok borrowed)]

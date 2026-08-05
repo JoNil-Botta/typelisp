@@ -3429,7 +3429,10 @@ move-only values and as copies for copyable values:
   creates no moved state. Arguments are evaluated left-to-right, so earlier
   moves are visible while checking later arguments and the remaining
   expression. Unmarked parameters retain their established compatibility
-  behavior, including any type-specific intrinsic consuming rules.
+  behavior. During that compatibility transition, an unmarked by-value `Box`,
+  thread-safe runtime handle, or cleanup-owning struct parameter consumes a
+  move-only argument. This is a closed, type-driven set; the callee's name,
+  module, qualification, or generated identity does not affect consumption.
 - Function returns. Returning a move-only local or parameter moves it to the
   caller. Returning from a `with` owner scope is still rejected when it would
   bypass required cleanup.
@@ -3466,29 +3469,26 @@ without moving it. In v1 these are limited to:
   their explicit-lifetime forms.
 - Borrowed enum matches over `(& place)` / `(& lifetime place)`. The match
   inspects the active enum variant without moving the enum owner.
-- Compatibility inspection calls whose signatures are not reference-typed:
-  imported `stdlib.string` helpers `string-length`, `string-ref`/`char-at`,
-  `string-eq`/`string=?`, `string->int`, `print-string`/`print-str`,
-  `print-error`, compatibility dynamic-array `length`/`array-length`,
-  `array-ref` when the element type is copyable, `struct-get` when the
-  selected field type is copyable, and stdlib predicates that only inspect
-  their aggregate argument.
-- `array-set!` and `array-push!` on an owned array receiver or mutable
-  reference receiver. These operations mutate the array storage and do not
-  move the array handle; immutable-reference receivers are rejected.
-- Struct field-place assignment `(set! (struct-get place field) value)` on an
-  owned struct receiver or mutable-reference receiver. Local dotted sugar such
-  as `(set! place.field value)` is the same place operation. This mutates only
-  the selected field; immutable-reference receivers are rejected.
-- Box-place assignment `(set! (box-get place) value)` and mutable borrows of
-  `(box-get place)` through a live box storage place. These operations mutate
-  or borrow the boxed storage and do not move the box handle.
+- Calls and typed operations whose parameter or receiver is `(& lifetime T)`
+  or `(&mut lifetime T)`. The ordinary call rules in section 3.10 insert an
+  immutable auto-borrow or reborrow when the formal parameter is an immutable
+  reference. This rule is identical for stdlib, compiler-owned, user-defined,
+  qualified, indirect, lambda, and generated callees: only the resolved
+  signature determines whether the argument is borrowed.
+
+Array, tuple, struct, and box projections produce typed places. Reading a
+copyable projected value copies it; borrowing or mutating a projected place is
+governed by its reference or place type. `array-set!`, `array-push!`, field-place
+assignment, and box-place assignment therefore mutate checked storage without
+moving the receiver handle. These are typed place operations, not callee-name
+exceptions; immutable-reference receivers remain rejected.
 
 Ordinary user-defined function parameters are by-value unless their type is a
 reference type, but an unmarked parameter does not opt a broad move-only value
 into call-site consumption. Use `(:consume)` when the callee takes ownership.
-This opt-in preserves compatibility for existing unmarked APIs. Types with an
-independent intrinsic consuming rule keep that rule.
+This opt-in preserves compatibility for existing unmarked APIs. The closed
+type-driven transition set above is the only additional call-site consumption
+rule; there is no intrinsic or inspection rule selected by a function name.
 
 The internal ABI may pass a nominal `Struct` or `Enum` that is too large for
 the register-value representation by address. An unmarked by-value parameter
@@ -6651,10 +6651,13 @@ and not a general manual memory management feature.
   projections retain the aliasing behavior of their own types. Explicit
   reference parameters express borrowed access to the caller's aggregate
   storage.
-- Non-consuming inspection builtins read an aggregate handle without moving
-  it. A function parameter marked `(:consume)` transfers a move-only argument;
-  unmarked parameters preserve compatibility behavior, while reference-typed
-  parameters provide checked borrowed access (sections 3.3 and 3.11).
+- Non-consuming aggregate inspection is expressed by a reference-typed
+  parameter or receiver. Typed place operations such as projections carry the
+  same read/borrow distinction in their semantic type. A function parameter
+  marked `(:consume)` transfers a move-only argument; the closed unmarked
+  compatibility transition in section 4.7.2 is type-driven, while
+  reference-typed parameters provide checked borrowed access (sections 3.3
+  and 3.11).
 - `String` values are immutable at the source level. String literals may
   share `.rodata`; `substring`, `string-slice`, `str-cat`, low-level concat
   primitives, `read-file`, `arg`, and `int->string` return fresh

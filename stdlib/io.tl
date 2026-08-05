@@ -276,7 +276,7 @@
     (ptr-cast (array-data buf) : (Ptr u8))))
 
 ;: Return a const pointer to a String's byte storage.
-(define (string-const-ptr [text : String]) : (Ptr u8)
+(define (string-const-ptr [text : (& text str)]) : (Ptr u8)
   (unsafe
     (string-data text)))
 
@@ -506,7 +506,7 @@
       status)))
 
 ;: Write a whole String to `fd`, returning a host status code.
-(define (write-string-fd-status [fd : i64] [text : String]) : i64
+(define (write-string-fd-status [fd : i64] [text : (& text str)]) : i64
   (write-all-fd-status fd (string-const-ptr text) (string-length text)))
 
 ;: Write an immutable borrowed byte view to `fd`.
@@ -518,7 +518,7 @@
     (byte_buf.bytes-length contents)))
 
 ;: Write a string to stdout without adding a newline.
-(define (print-string [text : String]) : unit
+(define (print-string [text : (& text str)]) : unit
   (let
     [status : i64 (write-string-fd-status 1 text)]
     (if (= status 0)
@@ -526,7 +526,7 @@
       (platform-exit 134))))
 
 ;: Compatibility alias for `print-string`.
-(define (print-str [text : String]) : unit
+(define (print-str [text : (& text str)]) : unit
   (print-string text))
 
 ;: Write a trailing newline to stdout.
@@ -1443,7 +1443,7 @@
   (print-string (stdlib.io.format-float value)))
 
 ;: Write a string to stderr without adding a newline.
-(define (print-error [text : String]) : unit
+(define (print-error [text : (& text str)]) : unit
   (let
     [status : i64 (write-string-fd-status 2 text)]
     (if (= status 0)
@@ -1451,13 +1451,13 @@
       (platform-exit 134))))
 
 ;: Abort the process after writing `message` to stderr.
-(define (panic [message : String]) : never
+(define (panic [message : (& message str)]) : never
   (begin
     (print-error message)
     (platform-exit 134)))
 
 ;: Alias for `panic`.
-(define (error [message : String]) : never
+(define (error [message : (& message str)]) : never
   (panic message))
 
 ;: Return the number of process argv entries.

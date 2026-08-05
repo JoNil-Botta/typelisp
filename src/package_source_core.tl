@@ -7,7 +7,6 @@
 ;; ordinary package source discovery skips them. Hosts without directory
 ;; enumeration fall back to the manifest entry source.
 (import stdlib.fs)
-(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
@@ -758,69 +757,67 @@
       (if (<= count 0)
         "package source set must contain at least one source"
         "")]
-    (begin
-      (while (and (= (string.string-length error) 0) (< index count))
-        (let
-          [path : String (svec.get (& sources) index "")]
-          [relative : String (package-source-binding-relative-path root path)]
-          (if (= (string.string-length relative) 0)
+    (while (and (= (string.string-length error) 0) (< index count))
+      (let
+        [path : String (svec.get (& sources) index "")]
+        [relative : String (package-source-binding-relative-path root path)]
+        (cond
+          [(= (string.string-length relative) 0)
             (set!
               error
               (package-source-binding-invalid-set-error
                 source-set
                 path
-                "source path is not a safe nonempty relative path under package root"))
-            (if (if (= (string.string-length previous-relative) 0)
+                "source path is not a safe nonempty relative path under package root"))]
+          [(if (= (string.string-length previous-relative) 0)
               false
               (not (package-source-string-less? previous-relative relative)))
-              (set!
-                error
-                (package-source-binding-invalid-set-error
-                  source-set
-                  path
-                  "source paths must be unique and in deterministic order"))
-              (if (not (package-source-relative-parent-eligible? root relative))
+            (set!
+              error
+              (package-source-binding-invalid-set-error
+                source-set
+                path
+                "source paths must be unique and in deterministic order"))]
+          [(not (package-source-relative-parent-eligible? root relative))
+            (set!
+              error
+              (package-source-binding-invalid-set-error
+                source-set
+                path
+                "source is excluded by package discovery policy"))]
+          [else
+            (match (fs.try-file-kind-no-follow (& path))
+              [(fs.ErrFsFileKind io-error)
                 (set!
                   error
-                  (package-source-binding-invalid-set-error
-                    source-set
-                    path
-                    "source is excluded by package discovery policy"))
-                (match (fs.try-file-kind-no-follow (& path))
-                  [(fs.ErrFsFileKind io-error)
-                    (set!
-                      error
-                      (package-source-binding-read-error
-                        source-set
-                        path
-                        io-error))]
-                  [(fs.OkFsFileKind kind)
-                    (if (not (package-source-include-kind? path kind))
+                  (package-source-binding-read-error source-set path io-error))]
+              [(fs.OkFsFileKind kind)
+                (if (not (package-source-include-kind? path kind))
+                  (set!
+                    error
+                    (package-source-binding-invalid-set-error
+                      source-set
+                      path
+                      "source is no longer a regular TypeLisp file"))
+                  (match (io.try-read-file (& path))
+                    [(io.ErrIoBytes io-error)
                       (set!
                         error
-                        (package-source-binding-invalid-set-error
+                        (package-source-binding-read-error
                           source-set
                           path
-                          "source is no longer a regular TypeLisp file"))
-                      (match (io.try-read-file (& path))
-                        [(io.ErrIoBytes io-error)
-                          (set!
-                            error
-                            (package-source-binding-read-error
-                              source-set
-                              path
-                              io-error))]
-                        [(io.OkIoBytes contents)
-                          (let
-                            [bytes : (__tl_dyn-array u8)
-                              (byte_buf.to-array contents)]
-                            (set!
-                              hash
-                              (package-source-binding-hash-source
-                                hash
-                                relative
-                                bytes))
-                            (set! previous-relative relative))]))])))))
+                          io-error))]
+                    [(io.OkIoBytes contents)
+                      (let
+                        [bytes : (__tl_dyn-array u8)
+                          (byte_buf.to-array contents)]
+                        (set!
+                          hash
+                          (package-source-binding-hash-source
+                            hash
+                            relative
+                            bytes))
+                        (set! previous-relative relative))]))])])
         (set! index (+ index 1))))
     (if (> (string.string-length error) 0)
       (ResultPackageSourceDigest.Err error)
@@ -963,7 +960,7 @@
     [payload : (__tl_dyn-array u8)]) : (__tl_dyn-array u8)
     (let
       [sections : (__tl_dyn-array tlci.TlciAuxSection)
-        (array.make-array tlci.TlciAuxSection 1)]
+        (make-array tlci.TlciAuxSection 1)]
       (begin
         (array-set!
           sections

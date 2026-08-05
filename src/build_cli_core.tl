@@ -3967,20 +3967,19 @@
     [out : cli_svec.Vec (cli_svec.new)]
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
-    (let
-      [owned-sources : build_string_i64_map.Map
-        (build-package-tlci-source-map (struct-get source-set sources))]
-      (begin
-        (build-package-tlci-collect-macros-into!
-          decls
-          paths
-          ""
-          ""
-          (struct-get manifest name)
-          owned-sources
-          (&mut out)
-          (&mut captures))
-        (build-package-tlci-finish-macro-collector (&mut out) captures)))))
+    [owned-sources : build_string_i64_map.Map
+      (build-package-tlci-source-map (struct-get source-set sources))]
+    (begin
+      (build-package-tlci-collect-macros-into!
+        decls
+        paths
+        ""
+        ""
+        (struct-get manifest name)
+        owned-sources
+        (&mut out)
+        (&mut captures))
+      (build-package-tlci-finish-macro-collector (&mut out) captures))))
 
 (cfg
   test

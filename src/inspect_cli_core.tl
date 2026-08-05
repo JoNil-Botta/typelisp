@@ -1,6 +1,5 @@
 ;; inspect_cli_core.tl - Public tlci inspection command.
 (import stdlib.byte_buf)
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -297,7 +296,7 @@ Summary:
     tlci-inspect-source-binding-shapes
     (let
       [sections : (__tl_dyn-array tlci_core.TlciAuxSection)
-        (array.make-array tlci_core.TlciAuxSection 1)]
+        (make-array tlci_core.TlciAuxSection 1)]
       [bound : String ""]
       [unsupported : String ""]
       [malformed : String ""]

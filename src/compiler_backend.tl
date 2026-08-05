@@ -26160,6 +26160,16 @@
 ;; gep displacement here instead of `addq $disp` on a staged base copy, so a
 ;; register-homed base serves as the store base directly. Callers guarantee
 ;; dst-bias + remaining fits imm32; plain copies pass 0 (byte-identical).
+;;
+;; CONTRACT: `dst-reg` and `src-reg` are memory-operand BASE SPELLINGS, not
+;; necessarily bare registers. They reach the output only through
+;; `compiler-backend-copy-address`, which parenthesizes the spelling and
+;; prefixes the displacement, so a `base,index,scale` SIB triple renders as
+;; `disp(base,index,scale)` through the same path a register renders as
+;; `disp(%reg)`. `compiler-backend-copy-gep-element-spelling` relies on this to
+;; address a fused gep element without materializing it. Any future use of
+;; either parameter as a register (sizing it, comparing it to a home, emitting
+;; it as an operand) must first reject the SIB form.
 (define (compiler-backend-emit-copy-bytes-chunks
   [type-segment-bases : i64]
   [dst-reg : String]
@@ -26777,45 +26787,237 @@
     [src-home : String
       (compiler-backend-address-base-filter
         (compiler-backend-value-scalar-register assignments src))]
-    [scav-base : String
-      (if (string.eq planned-dst "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-scavenge-exclude-merge
-            (compiler-backend-two-exclude src-home offset-home)
-            2
-            protect
-            protect-n)
-          (+ 2 protect-n)
-          "%r10")
-        planned-dst)]
-    (match (compiler-backend-emit-copy-gep-dyn-address
-      assignments
-      base
-      offset
-      scale
-      scav-base
-      base-home
-      offset-home
-      src-home
-      protect
-      protect-n
-      gep-disp
-      planned-index)
-      [(ResultCompilerBackend.Ok addr-asm)
+    ;; When base and index are register-homed under a SIB scale the element
+    ;; address does not need to exist: every chunk STORE spells
+    ;; `disp(base,index,scale)` directly and the composing `leaq` disappears.
+    ;; This is the destination-side twin of
+    ;; `compiler-backend-emit-copy-bytes-gep-src`; the same register argument
+    ;; applies (the chunks write only the scratch and the destination MEMORY, so
+    ;; both operand homes stay valid across the whole run).
+    [dst-spelling : String
+      (compiler-backend-copy-gep-element-spelling
+        type-segment-bases
+        assignments
+        base
+        offset
+        elem-ty
+        size)]
+    (if (not (string.eq dst-spelling ""))
+      (compiler-backend-emit-copy-bytes-gep-dst
+        type-segment-bases
+        assignments
+        src
+        base
+        offset
+        dst-spelling
+        gep-disp
+        size
+        protect
+        protect-n
+        planned-src
+        planned-value
+        planned-xmm)
+      ;; M-D: `scav-base` is bound INSIDE the declining branch. Scavenging is
+      ;; not a query -- under full occupancy it emergency-adds the picked
+      ;; register to the global pending set -- so a pick made for a path that is
+      ;; not taken leaks a stray restore into the surrounding emission.
+      (let
+        [scav-base : String
+          (if (string.eq planned-dst "")
+            (compiler-backend-scavenge-reg-here
+              (compiler-backend-scavenge-exclude-merge
+                (compiler-backend-two-exclude src-home offset-home)
+                2
+                protect
+                protect-n)
+              (+ 2 protect-n)
+              "%r10")
+            planned-dst)]
+        (match (compiler-backend-emit-copy-gep-dyn-address
+          assignments
+          base
+          offset
+          scale
+          scav-base
+          base-home
+          offset-home
+          src-home
+          protect
+          protect-n
+          gep-disp
+          planned-index)
+          [(ResultCompilerBackend.Ok addr-asm)
+            (let
+              [src-reg : String
+                (if (string.eq src-home "")
+                  (if (string.eq planned-src "")
+                    (compiler-backend-scavenge-reg-here
+                      (compiler-backend-scavenge-exclude-merge
+                        (compiler-backend-one-exclude scav-base)
+                        1
+                        protect
+                        protect-n)
+                      (+ 1 protect-n)
+                      "%r9")
+                    planned-src)
+                  src-home)]
+              [copy-xmm : String
+                (compiler-backend-copy-xmm-scratch size planned-xmm)]
+              [copy-gp : String
+                (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+                  (if (string.eq planned-value "")
+                    (compiler-backend-scavenge-reg-here
+                      (compiler-backend-scavenge-exclude-merge
+                        (compiler-backend-two-exclude scav-base src-reg)
+                        2
+                        protect
+                        protect-n)
+                      (+ 2 protect-n)
+                      "%r8")
+                    planned-value)
+                  "")]
+              (match (if (string.eq src-home "")
+                (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  src
+                  src-reg)
+                (ResultCompilerBackend.Ok ""))
+                [(ResultCompilerBackend.Ok src-asm)
+                  (ResultCompilerBackend.Ok
+                    (str_cat.str-cat
+                      addr-asm
+                      (str_cat.str-cat
+                        src-asm
+                        (compiler-backend-emit-copy-bytes-chunks
+                          type-segment-bases
+                          scav-base
+                          src-reg
+                          copy-gp
+                          copy-xmm
+                          0
+                          size
+                          0))))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])))))
+
+;; --- gep element addressing folded into the copy chunks --------------------
+;; A fused Gep+CopyBytes used to COMPOSE the element address into a register
+;; (`leaq (base,index,scale), %r`) and then address every chunk off `(%r)`. A
+;; register-homed base and index under a SIB scale make that register
+;; unnecessary: each chunk spells `disp(base,index,scale)` itself and the leaq
+;; disappears. The two emitters below apply that on each side --
+;; `-gep-src` where the element is the copy SOURCE (`(array-ref xs i)` on a
+;; multi-word struct, which had no fusion at all before) and `-gep-dst` where it
+;; is the DESTINATION (the staged half of
+;; `compiler-backend-emit-copy-bytes-from-gep-dyn`).
+;;
+;; REGISTER SAFETY. The chunk copies write only the xmm/gp scratch and the
+;; destination MEMORY; base and index are read, never written, so their homes
+;; stay valid across every chunk and no live range is extended -- the fold is
+;; sound against the register plan already in force. The scavenge exclusions in
+;; each emitter additionally keep the staged pointer and the gp scratch off both
+;; operand homes.
+;;
+;; ORDINAL SAFETY. Admission is decided from the scale, the operand homes and
+;; the size ALONE -- never from the GAP9 displacement -- so a declined shape
+;; leaves `compiler-backend-gep-fold-next!` for the ordinary gep emission to
+;; consume exactly once. `compiler-backend-gep-fold-k-bound` bounds a folded
+;; displacement far below imm32, so every chunk address stays encodable.
+;; The chunk base SPELLING for a fused gep element: a `base,index,scale` SIB
+;; triple, or "" to decline. The spelling is consumed by
+;; `compiler-backend-mem-base-address`, which parenthesizes it and prefixes the
+;; displacement, so it renders through the ordinary chunk address path.
+;;
+;; #rbp-base: `address-base-filter` rejects a %rbp home -- the gep index already
+;; occupies the SIB index slot, so it cannot also take the base slot. A %rbp
+;; INDEX is admitted, as at every other dynamic gep site: the FPO rsp-rebase
+;; pass and the peephole slot recognizers key frame slots on the `(%rbp)` base
+;; spelling, which `(base,%rbp,scale)` does not match.
+;;
+;; CONSTANT gep offsets are deliberately NOT admitted. Their element address is
+;; `disp(base)`, whose displacement is a source constant with no bound --
+;; admitting it would need an imm32 range test over a range that depends on the
+;; GAP9 displacement this admission must not read. The measured win is entirely
+;; on the variable-index form, so the constant form keeps its existing emission.
+(define (compiler-backend-copy-gep-element-spelling
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [size : i64]) : String
+  (if (<= size 0)
+    ""
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some _) ""]
+      [(option_i64.None)
         (let
-          [src-reg : String
-            (if (string.eq src-home "")
-              (if (string.eq planned-src "")
-                (compiler-backend-scavenge-reg-here
-                  (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-one-exclude scav-base)
-                    1
-                    protect
-                    protect-n)
-                  (+ 1 protect-n)
-                  "%r9")
-                planned-src)
-              src-home)]
+          [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
+          [base-home : String
+            (compiler-backend-address-base-filter
+              (compiler-backend-value-scalar-register assignments base))]
+          [offset-home : String
+            (compiler-backend-value-scalar-register assignments offset)]
+          (if (and
+            (compiler-backend-gep-sib-scale? scale)
+            (not (string.eq base-home ""))
+            (not (string.eq offset-home "")))
+            (str_cat.str-cat
+              base-home
+              ","
+              offset-home
+              ","
+              (string.int->string scale))
+            ""))])))
+
+;; Emit the fused copy. `src-spelling` is the non-empty result of
+;; `-src-base-spelling`; `src-disp` its starting displacement. Chunk source
+;; addresses run from `src-disp`, so the destination bias cancels it back to 0.
+(define (compiler-backend-emit-copy-bytes-gep-src
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [dst : compiler_ir_types.CompilerIrValue]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [src-spelling : String]
+  [src-disp : i64]
+  [size : i64]
+  [protect : (Array String)]
+  [protect-n : i64]
+  [planned-dst : String]
+  [planned-value : String]
+  [planned-xmm : String]) : ResultCompilerBackend
+  (let
+    ;; The two registers the fused source operand READS. Excluded from every
+    ;; scavenge below so no staged destination load can overwrite the address
+    ;; the chunk copies are still reading from.
+    [operand-a : String
+      (compiler-backend-value-scalar-register assignments base)]
+    [operand-b : String
+      (compiler-backend-value-scalar-register assignments offset)]
+    [dst-home : String
+      (compiler-backend-address-base-filter-direct
+        (compiler-backend-value-register-home assignments dst))]
+    [dst-reg : String
+      (if (string.eq dst-home "")
+        (if (string.eq planned-dst "")
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-scavenge-exclude-merge
+              (compiler-backend-two-exclude operand-a operand-b)
+              2
+              protect
+              protect-n)
+            (+ 2 protect-n)
+            "%r10")
+          planned-dst)
+        dst-home)]
+    (match (if (string.eq dst-home "")
+      (compiler-backend-emit-load-value-with-plan assignments dst dst-reg)
+      (ResultCompilerBackend.Ok ""))
+      [(ResultCompilerBackend.Ok dst-asm)
+        (let
           [copy-xmm : String
             (compiler-backend-copy-xmm-scratch size planned-xmm)]
           [copy-gp : String
@@ -26823,34 +27025,102 @@
               (if (string.eq planned-value "")
                 (compiler-backend-scavenge-reg-here
                   (compiler-backend-scavenge-exclude-merge
-                    (compiler-backend-two-exclude scav-base src-reg)
-                    2
+                    (compiler-backend-three-exclude dst-reg operand-a operand-b)
+                    3
                     protect
                     protect-n)
-                  (+ 2 protect-n)
+                  (+ 3 protect-n)
                   "%r8")
                 planned-value)
               "")]
-          (match (if (string.eq src-home "")
-            (compiler-backend-emit-load-value-with-plan assignments src src-reg)
-            (ResultCompilerBackend.Ok ""))
-            [(ResultCompilerBackend.Ok src-asm)
-              (ResultCompilerBackend.Ok
-                (str_cat.str-cat
-                  addr-asm
-                  (str_cat.str-cat
-                    src-asm
-                    (compiler-backend-emit-copy-bytes-chunks
-                      type-segment-bases
-                      scav-base
-                      src-reg
-                      copy-gp
-                      copy-xmm
-                      0
-                      size
-                      0))))]
-            [(ResultCompilerBackend.Err message)
-              (ResultCompilerBackend.Err message)]))]
+          (ResultCompilerBackend.Ok
+            (string.append
+              dst-asm
+              (compiler-backend-emit-copy-bytes-chunks
+                type-segment-bases
+                dst-reg
+                src-spelling
+                copy-gp
+                copy-xmm
+                src-disp
+                size
+                (- 0 src-disp)))))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+
+;; Destination-side twin of the emitter above: the gep element is the copy
+;; DESTINATION, so `dst-spelling` addresses the chunk STORES and the source
+;; pointer keeps its ordinary register. Chunk destination addresses run from
+;; `dst-disp` (the GAP9 fold) via the bias; source addresses start at 0.
+(define (compiler-backend-emit-copy-bytes-gep-dst
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [src : compiler_ir_types.CompilerIrValue]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [dst-spelling : String]
+  [dst-disp : i64]
+  [size : i64]
+  [protect : (Array String)]
+  [protect-n : i64]
+  [planned-src : String]
+  [planned-value : String]
+  [planned-xmm : String]) : ResultCompilerBackend
+  (let
+    ;; The two registers the fused destination operand READS; excluded from
+    ;; every scavenge so a staged source load cannot overwrite the address the
+    ;; chunk stores are still writing through.
+    [operand-a : String
+      (compiler-backend-value-scalar-register assignments base)]
+    [operand-b : String
+      (compiler-backend-value-scalar-register assignments offset)]
+    [src-home : String
+      (compiler-backend-address-base-filter-direct
+        (compiler-backend-value-scalar-register assignments src))]
+    [src-reg : String
+      (if (string.eq src-home "")
+        (if (string.eq planned-src "")
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-scavenge-exclude-merge
+              (compiler-backend-two-exclude operand-a operand-b)
+              2
+              protect
+              protect-n)
+            (+ 2 protect-n)
+            "%r9")
+          planned-src)
+        src-home)]
+    (match (if (string.eq src-home "")
+      (compiler-backend-emit-load-value-with-plan assignments src src-reg)
+      (ResultCompilerBackend.Ok ""))
+      [(ResultCompilerBackend.Ok src-asm)
+        (let
+          [copy-xmm : String
+            (compiler-backend-copy-xmm-scratch size planned-xmm)]
+          [copy-gp : String
+            (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+              (if (string.eq planned-value "")
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-scavenge-exclude-merge
+                    (compiler-backend-three-exclude src-reg operand-a operand-b)
+                    3
+                    protect
+                    protect-n)
+                  (+ 3 protect-n)
+                  "%r8")
+                planned-value)
+              "")]
+          (ResultCompilerBackend.Ok
+            (string.append
+              src-asm
+              (compiler-backend-emit-copy-bytes-chunks
+                type-segment-bases
+                dst-spelling
+                src-reg
+                copy-gp
+                copy-xmm
+                0
+                size
+                dst-disp))))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 ;; Compose the dynamic gep element address into scav-base for the fused copy.
@@ -46869,6 +47139,99 @@
             out)]))
     (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
+;; CopyBytes whose SOURCE is the gep element (the mirror of the copy-dst rule
+;; beside every caller). Fuses when the source spelling admits -- a SIB
+;; base+index for a variable gep index, the base home for a constant one -- so
+;; the chunk loads address the element directly and the `leaq` that materialized
+;; it disappears. A declined spelling falls through to ordinary emission, which
+;; consumes the GAP9 gep ordinal itself; the admission test never reads that
+;; ordinal, so exactly one side consumes it on every path.
+(define (compiler-backend-emit-gep-copy-src-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [gep-dst : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [copy-dst : compiler_ir_types.CompilerIrValue]
+  [copy-src : compiler_ir_types.CompilerIrValue]
+  [copy-size : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [after-gep : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
+  (let
+    [spelling : String
+      (if (compiler-backend-branch-uses-var? copy-src gep-dst)
+        (compiler-backend-copy-gep-element-spelling
+          ctx.type-segment-bases
+          ctx.assignments
+          base
+          offset
+          elem-ty
+          copy-size)
+        "")]
+    (if (string.eq spelling "")
+      (compiler-backend-emit-instrs-normal
+        ctx
+        fallthrough
+        instr
+        instrs
+        index
+        out)
+      (let
+        [protect-n : i64
+          (compiler-backend-copy-run-protect-count
+            ctx.assignments
+            instrs
+            after-gep)]
+        [protect : (Array String)
+          (compiler-backend-copy-run-protect-exclude
+            ctx.assignments
+            instrs
+            after-gep)]
+        ;; Variable-index geps only (the spelling declined every constant one),
+        ;; so the whole starting displacement is the GAP9 fold.
+        [src-disp : i64
+          (compiler-backend-gep-fold-next!
+            ctx.type-segment-bases
+            offset
+            elem-ty)]
+        (compiler-backend-emit-fused-result-rest
+          ctx
+          fallthrough
+          (compiler-backend-emit-copy-bytes-gep-src
+            ctx.type-segment-bases
+            ctx.assignments
+            copy-dst
+            base
+            offset
+            spelling
+            src-disp
+            copy-size
+            protect
+            protect-n
+            (compiler-backend-scratch-plan-register-ahead
+              (compiler-backend-runtime-plan-scratch ctx.plan)
+              0
+              0)
+            (compiler-backend-scratch-plan-register-ahead
+              (compiler-backend-runtime-plan-scratch ctx.plan)
+              1
+              (if (>= copy-size 16)
+                3
+                2))
+            (if (>= copy-size 16)
+              (compiler-backend-scratch-plan-register-ahead
+                (compiler-backend-runtime-plan-scratch ctx.plan)
+                1
+                2)
+              ""))
+          instrs
+          after-gep
+          out)))))
+
 ;; The `Gep` fusion cluster of `compiler-backend-emit-instrs-step`, extracted
 ;; unchanged (refs #5177). It is the peephole family that folds a single-use
 ;; address computation into the instruction that consumes it -- load, store,
@@ -47420,12 +47783,20 @@
                       instrs
                       after-gep
                       out))
-                  (compiler-backend-emit-instrs-normal
+                  (compiler-backend-emit-gep-copy-src-rest
                     ctx
                     fallthrough
                     instr
+                    gep-dst
+                    base
+                    offset
+                    elem-ty
+                    copy-dst
+                    copy-src
+                    copy-size
                     instrs
                     index
+                    after-gep
                     out))]
               [_
                 (compiler-backend-emit-instrs-normal

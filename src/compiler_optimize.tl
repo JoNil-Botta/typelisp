@@ -70989,9 +70989,453 @@
           types
           (opt-global-cell-word-count globals addr-taken 0))))))
 
+;; --- condition (a): stores a later read can OBSERVE ---------------------------
+;;
+;; The pass hoists ONE entry-block load of `@G` and rewrites every in-function
+;; `@G` read to it, so it is correct exactly when no `set! G` this function
+;; performs can be observed by one of those reads. Conditions (b) and (c)
+;; already exclude every OTHER writer -- no address-taken cell can be reached
+;; through a pointer, and a function containing any call is rejected outright --
+;; so only this function's own `Store G` instructions matter. A `Store G` at
+;; block B, instruction index k, is observable exactly when some `@G` read runs
+;; after it on some execution path, i.e. when either
+;;   (i)  B reads `@G` at an index > k, or
+;;   (ii) some block reachable from B's SUCCESSORS reads `@G`.
+;; Everything else about G is unobservable: the cell's post-store value never
+;; reaches a read in this activation, and the entry load still returns what a
+;; per-use load would have returned, exactly as the pass header argues.
+;;
+;; (i) is decided by one backward walk per store-bearing block, accumulating the
+;; globals read at strictly greater indices; the store's OWN value operand is
+;; added only after the check, because it reads the pre-store value.
+;; (ii) is decided by a successor walk with a visited set. The successor CSR
+;; that `opt-cfg-index-build` fills already carries fallthrough edges
+;; (`opt-cfg-block-successors-with-next`), and a block inside a cycle reaches
+;; ITSELF, so a read placed lexically BEFORE the store still disqualifies G --
+;; which is right, because the next iteration's read observes the store.
+;;
+;; Whenever the answer cannot be trusted -- duplicate block labels or an
+;; unresolved successor target (both optimizer-verifier errors), or a walk that
+;; exceeds its step budget -- every store in scope is reported observable, which
+;; is precisely the whole-function rule this refinement replaces. The common
+;; shape needs no CFG index at all: when every store-bearing block ends in
+;; `Return` it has no successors, so (ii) is vacuous and only the backward walk
+;; runs. That is the `gvn-facts-reset` shape -- a `set!` group in the returning
+;; loop-exit block, after the loop whose bound reads the same cell.
+(defstruct OptGlobalCellStoreScan
+  (seen OptGlobalCellScan)
+  (out opt_i64_i64_map.Map))
+
+(defstruct OptGlobalCellStorePass
+  (out opt_i64_i64_map.Map)
+  (needs-reach bool))
+
+;; Successor-walk step budget: blocks popped, summed over every store-bearing
+;; block in the function. Exhausting it falls back to the whole-function rule
+;; for the block being walked, so the cap trades sites for bounded compile time.
+(define (opt-global-cell-reach-step-cap) : i64
+  4096)
+
+(define (opt-global-cell-block-return-terminated?
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (= count 0)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Return _) true]
+        [_ false]))))
+
+(define (opt-global-cell-block-has-store?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Store _ _ _) true]
+      [_ (opt-global-cell-block-has-store? instrs (+ index 1) count)])))
+
+;; Insert every `Store` target in [index, count) whose symbol id `filter`
+;; contains, or every target at all when `all?` (the untrusted-CFG fallback).
+(define (opt-global-cell-mark-stores-in
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [filter : opt_i64_i64_map.Map]
+  [all? : bool]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (>= index count)
+    out
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Store name _ _)
+        (let
+          [id : i64 (ir.compiler-ir-symbol-id name)]
+          [next : opt_i64_i64_map.Map out]
+          (begin
+            (if (or all? (opt_i64_i64_map.contains? (& filter) id))
+              (opt_i64_i64_map.insert-ref! (&mut next) id 1)
+              unit)
+            (opt-global-cell-mark-stores-in
+              instrs
+              (+ index 1)
+              count
+              filter
+              all?
+              next)))]
+      [_
+        (opt-global-cell-mark-stores-in
+          instrs
+          (+ index 1)
+          count
+          filter
+          all?
+          out)])))
+
+;; Backward walk of one block. `seen` accumulates the globals read at indices
+;; strictly greater than the current one, so testing it at a `Store G` answers
+;; clause (i) exactly.
+(define (opt-global-cell-store-scan-back
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : OptGlobalCellStoreScan (:consume)]) : OptGlobalCellStoreScan
+  (if (< index 0)
+    acc
+    (match acc
+      [(OptGlobalCellStoreScan seen out)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          [next-out : opt_i64_i64_map.Map out]
+          (begin
+            (match instr
+              [(ir.CompilerIrInstr.Store name _ _)
+                (if (opt_i64_i64_map.contains?
+                  (& (struct-get seen refs))
+                  (ir.compiler-ir-symbol-id name))
+                  (opt_i64_i64_map.insert-ref!
+                    (&mut next-out)
+                    (ir.compiler-ir-symbol-id name)
+                    1)
+                  unit)]
+              [_ unit])
+            (opt-global-cell-store-scan-back
+              instrs
+              (- index 1)
+              (OptGlobalCellStoreScan
+                (opt-global-cell-scan-instr seen false instr)
+                next-out))))])))
+
+(define (opt-global-cell-refs-add
+  [refs : OptI64List]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match refs
+    [(OptI64List.Nil) out]
+    [(OptI64List.Cons name rest)
+      (let
+        [next : opt_i64_i64_map.Map out]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut next) name 1)
+          (opt-global-cell-refs-add (box-get rest) next)))]))
+
+(define (opt-global-cell-scan-block-by-id [index : OptCfgIndex] [id : i64]) : OptGlobalCellScan
+  (match (opt-cfg-index-block index id)
+    [(OptMaybeBlock.No) (opt-global-cell-scan-new)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-cell-scan-seq-from
+            (opt-global-cell-scan-new)
+            instrs
+            0
+            (ir.compiler-ir-instr-seq-count instrs)
+            false)])]))
+
+;; Push every not-yet-visited successor of `id`, marking at push time so each
+;; block enters the stack at most once (stack capacity = block count).
+(define (opt-global-cell-reach-push-succs!
+  [index : OptCfgIndex]
+  [visited : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [sp-cell : (__tl_dyn-array i64)]
+  [id : i64]) : unit
+  (let
+    [csr : OptCfgCsr (struct-get index succs)]
+    [edges : (__tl_dyn-array i64) (struct-get csr edges)]
+    [edge : i64 (array-ref (struct-get csr offsets) id)]
+    [end : i64 (array-ref (struct-get csr offsets) (+ id 1))]
+    (begin
+      (while (< edge end)
+        (begin
+          (if (and
+            (>= (array-ref edges edge) 0)
+            (< (array-ref edges edge) (array-length visited))
+            (not (array-ref visited (array-ref edges edge))))
+            (begin
+              (array-set! visited (array-ref edges edge) true)
+              (array-set! stack (array-ref sp-cell 0) (array-ref edges edge))
+              (array-set! sp-cell 0 (+ (array-ref sp-cell 0) 1)))
+            unit)
+          (set! edge (+ edge 1))))
+      unit)))
+
+;; `budget` slot 0 = remaining pops, slot 1 = truncated flag.
+(define (opt-global-cell-reach-drain
+  [index : OptCfgIndex]
+  [visited : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [sp-cell : (__tl_dyn-array i64)]
+  [budget : (__tl_dyn-array i64)]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (<= (array-ref sp-cell 0) 0)
+    out
+    (if (<= (array-ref budget 0) 0)
+      (begin
+        (array-set! budget 1 1)
+        out)
+      (let
+        [id : i64 (array-ref stack (- (array-ref sp-cell 0) 1))]
+        (begin
+          (array-set! sp-cell 0 (- (array-ref sp-cell 0) 1))
+          (array-set! budget 0 (- (array-ref budget 0) 1))
+          (opt-global-cell-reach-push-succs! index visited stack sp-cell id)
+          (opt-global-cell-reach-drain
+            index
+            visited
+            stack
+            sp-cell
+            budget
+            (opt-global-cell-refs-add
+              (struct-get (opt-global-cell-scan-block-by-id index id) ref-list)
+              out)))))))
+
+(define (opt-global-cell-observable-stores-reach-block
+  [index : OptCfgIndex]
+  [visited : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [sp-cell : (__tl_dyn-array i64)]
+  [budget : (__tl_dyn-array i64)]
+  [id : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (begin
+    (opt-cfg-fill-bool! visited (array-length visited) false)
+    (array-set! sp-cell 0 0)
+    (array-set! budget 1 0)
+    (opt-global-cell-reach-push-succs! index visited stack sp-cell id)
+    (let
+      [reach : opt_i64_i64_map.Map
+        (opt-global-cell-reach-drain
+          index
+          visited
+          stack
+          sp-cell
+          budget
+          (opt_i64_i64_map.with-capacity 8))]
+      (opt-global-cell-mark-stores-in
+        instrs
+        0
+        (ir.compiler-ir-instr-seq-count instrs)
+        reach
+        (= (array-ref budget 1) 1)
+        out))))
+
+(define (opt-global-cell-observable-stores-reach
+  [index : OptCfgIndex]
+  [visited : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [sp-cell : (__tl_dyn-array i64)]
+  [budget : (__tl_dyn-array i64)]
+  [id : i64]
+  [count : i64]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (>= id count)
+    out
+    (match (opt-cfg-index-block index id)
+      [(OptMaybeBlock.No)
+        (opt-global-cell-observable-stores-reach
+          index
+          visited
+          stack
+          sp-cell
+          budget
+          (+ id 1)
+          count
+          out)]
+      [(OptMaybeBlock.Some block)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-global-cell-observable-stores-reach
+              index
+              visited
+              stack
+              sp-cell
+              budget
+              (+ id 1)
+              count
+              (if (and
+                (opt-global-cell-block-has-store?
+                  instrs
+                  0
+                  (ir.compiler-ir-instr-seq-count instrs))
+                (not (opt-global-cell-block-return-terminated? instrs)))
+                (opt-global-cell-observable-stores-reach-block
+                  index
+                  visited
+                  stack
+                  sp-cell
+                  budget
+                  id
+                  instrs
+                  out)
+                out))])])))
+
+;; Clause (i) for every block, plus "does any store-bearing block have
+;; successors at all" so the CFG index is built only when clause (ii) can fire.
+(define (opt-global-cell-observable-stores-local-block
+  [instrs : ir.CompilerIrInstrSeq]
+  [acc : OptGlobalCellStorePass (:consume)]) : OptGlobalCellStorePass
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (not (opt-global-cell-block-has-store? instrs 0 count))
+      acc
+      (match acc
+        [(OptGlobalCellStorePass out needs-reach)
+          (OptGlobalCellStorePass
+            (struct-get
+              (opt-global-cell-store-scan-back
+                instrs
+                (- count 1)
+                (OptGlobalCellStoreScan (opt-global-cell-scan-new) out))
+              out)
+            (or
+              needs-reach
+              (not (opt-global-cell-block-return-terminated? instrs))))]))))
+
+(define (opt-global-cell-observable-stores-local-seq
+  [seq : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [count : i64]
+  [acc : OptGlobalCellStorePass (:consume)]) : OptGlobalCellStorePass
+  (if (>= index count)
+    acc
+    (match (ir.compiler-ir-block-seq-ref seq index)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (opt-global-cell-observable-stores-local-seq
+          seq
+          (+ index 1)
+          count
+          (opt-global-cell-observable-stores-local-block instrs acc))])))
+
+(define (opt-global-cell-observable-stores-local
+  [blocks : ir.CompilerIrBlockList]
+  [acc : OptGlobalCellStorePass (:consume)]) : OptGlobalCellStorePass
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-cell-observable-stores-local
+            (box-get rest)
+            (opt-global-cell-observable-stores-local-block instrs acc))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-cell-observable-stores-local-seq
+        seq
+        0
+        (ir.compiler-ir-block-seq-count seq)
+        acc)]))
+
+(define (opt-global-cell-all-stores-seq
+  [seq : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [count : i64]
+  [filter : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (>= index count)
+    out
+    (match (ir.compiler-ir-block-seq-ref seq index)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (opt-global-cell-all-stores-seq
+          seq
+          (+ index 1)
+          count
+          filter
+          (opt-global-cell-mark-stores-in
+            instrs
+            0
+            (ir.compiler-ir-instr-seq-count instrs)
+            filter
+            true
+            out))])))
+
+(define (opt-global-cell-all-stores
+  [blocks : ir.CompilerIrBlockList]
+  [filter : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) out]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-cell-all-stores
+            (box-get rest)
+            filter
+            (opt-global-cell-mark-stores-in
+              instrs
+              0
+              (ir.compiler-ir-instr-seq-count instrs)
+              filter
+              true
+              out))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-cell-all-stores-seq
+        seq
+        0
+        (ir.compiler-ir-block-seq-count seq)
+        filter
+        out)]))
+
+(define (opt-global-cell-observable-stores-indexed
+  [blocks : ir.CompilerIrBlockList]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (let
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    [budget : (__tl_dyn-array i64) (array.make-array i64 2)]
+    (begin
+      (array-set! budget 0 (opt-global-cell-reach-step-cap))
+      (array-set! budget 1 0)
+      (if (or
+        (<= count 0)
+        (not (opt-cfg-index-labels-unique? index))
+        (not (struct-get index targets-known)))
+        (opt-global-cell-all-stores
+          blocks
+          (opt_i64_i64_map.with-capacity 1)
+          out)
+        (opt-global-cell-observable-stores-reach
+          index
+          (array.make-array bool count)
+          (array.make-array i64 count)
+          (array.make-array i64 1)
+          budget
+          0
+          count
+          out)))))
+
+(define (opt-global-cell-observable-stores [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
+  (match (opt-global-cell-observable-stores-local
+    blocks
+    (OptGlobalCellStorePass (opt_i64_i64_map.with-capacity 8) false))
+    [(OptGlobalCellStorePass out needs-reach)
+      (if needs-reach
+        (opt-global-cell-observable-stores-indexed blocks out)
+        out)]))
+
 ;; Hoist plan for one function: candidate global symbol id -> fresh SSA var.
-;; A referenced global is a candidate unless this function stores it (a), the
-;; program takes its address (b), or its cell is not a single word.
+;; A referenced global is a candidate unless this function has a store of it
+;; that a later read can observe (a), the program takes its address (b), or its
+;; cell is not a single word.
 (defstruct OptGlobalCellPlan
   (map opt_i64_i64_map.Map)
   (count i64))
@@ -71621,7 +72065,7 @@
                   [planned : OptGlobalCellPlan
                     (opt-global-cell-plan-build
                       cell
-                      (struct-get scan stores)
+                      (opt-global-cell-observable-stores blocks)
                       (struct-get scan ref-list)
                       frame-cell
                       (opt_i64_i64_map.with-capacity 8)

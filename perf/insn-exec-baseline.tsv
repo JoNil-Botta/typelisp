@@ -23,7 +23,7 @@ benchmark/typelisp/spmd_reduce	1477213867
 benchmark/c-scalar/spmd_reduce	3381322973
 benchmark/typelisp/cfg_domloops	1006979295
 benchmark/c-scalar/cfg_domloops	423136951
-benchmark/typelisp/gvn_table	1441430044
+benchmark/typelisp/gvn_table	1398969454
 benchmark/c-scalar/gvn_table	625075892
 benchmark/typelisp/intern_table	669135696
 benchmark/c-scalar/intern_table	296287351

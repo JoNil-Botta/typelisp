@@ -39383,30 +39383,12 @@
             (struct-get symbols arr)))
         14]
       [(not (= (opt-gc-test-plain-hoist-ok? out-a) 42)) 15]
-      ;; fixture B: gc_arr hoists (fresh var 7), gc_k stays a direct global
-      [(not (= (compiler_optimize.opt-function-frame out-b) 8)) 20]
-      [(not (= (opt-gc-test-block-instr-count blocks-b 0) 2)) 21]
-      [(match (opt-gc-test-instr-at blocks-b 0 0)
-          [(compiler_ir_types.CompilerIrInstr.Mov d src _)
-            (not (and (= d 7) (opt-gc-test-is-global-named? src "gc_arr")))]
-          [_ true])
-        22]
-      [(match (opt-gc-test-instr-at blocks-b 1 0)
-          [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
-            (not (opt-gc-test-is-var? base 7))]
-          [_ true])
-        23]
-      [(match (opt-gc-test-instr-at blocks-b 1 2)
-          [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ rhs _)
-            (not (opt-gc-test-is-global-named? rhs "gc_k"))]
-          [_ true])
-        24]
-      [(match (opt-gc-test-instr-at blocks-b 1 3)
-          [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
-            (not (opt-gc-test-is-global-named? src "gc_k"))]
-          [_ true])
-        25]
-      [(not (= (opt-gc-test-stray-blocks blocks-b true 0) 3)) 26]
+      ;; fixture B: the function's only `Store gc_k` is the last instruction of
+      ;; a returning block, so NO read can observe it -- condition (a) is per
+      ;; store, not per function, and B hoists exactly like A. The store itself
+      ;; survives (the pass rewrites reads only). The negatives that DO bite
+      ;; live in compiler-optimize-global-cell-observable-store-self-test.
+      [(not (= (opt-gc-test-plain-hoist-ok? out-b) 42)) 20]
       [(match (opt-gc-test-instr-at blocks-b 1 6)
           [(compiler_ir_types.CompilerIrInstr.Store _ _ _) false]
           [_ true])
@@ -39448,6 +39430,251 @@
             (not (opt-gc-test-is-var? base 8))]
           [_ true])
         63]
+      [else 42])))
+
+;; --- global-cell condition (a): per-store observability ----------------------
+;;
+;; Condition (a) is not "this function stores G" but "this function has a store
+;; of G that a later read can observe". These four fixtures pin every clause of
+;; that predicate. Each negative was checked load-bearing by mutating the
+;; implementation and confirming THIS test is what fails:
+;;   * `opt-global-cell-store-scan-back`'s same-block `contains?` forced false
+;;     -> code 10 (G2 wrongly hoists); G3/G4 still pass.
+;;   * `opt-global-cell-observable-stores-reach-block`'s `reach` replaced by an
+;;     empty map -> code 20 (G3 wrongly hoists).
+;;   * `opt-global-cell-reach-push-succs!` restricted to successors with a
+;;     HIGHER block id (a lexical-forward-only walk) -> code 30 (G4 wrongly
+;;     hoists) while G3 still passes, so the two clauses are independent.
+;;
+;;   G1 positive : loop bound reads @gc_k, the RETURNING loop-exit block set!s
+;;                 gc_k after the loop -- no read can observe it, so gc_k
+;;                 hoists. (The gvn-facts-reset shape.)
+;;   G2 negative : the same exit block reads @gc_k AFTER the set!.
+;;   G3 negative : the set! block jumps to a block that reads @gc_k.
+;;   G4 negative : the set! sits INSIDE the loop, so the header's read -- which
+;;                 is lexically before it -- observes it on the next iteration.
+;;                 (Pins the "a block in a cycle reaches itself" rule.)
+(define (opt-gc-obs-entry-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        0
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "head"))
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; head: %1 = lt %0, @gc_k ; branch %1 body exit
+(define (opt-gc-obs-head-block [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "head")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        1
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Global (struct-get symbols k))
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-label "exit"))
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; body: [store gc_k when in-loop?] %2 = add %0, 1 ; jump head
+(define (opt-gc-obs-body-block
+  [symbols : OptGcTestSymbols]
+  [in-loop-store? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "body")
+    (if in-loop-store?
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Store
+          (struct-get symbols k)
+          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ast_types.AstType.I64))
+        (opt-gc-obs-body-tail))
+      (opt-gc-obs-body-tail))))
+
+(define (opt-gc-obs-body-tail) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      2
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "head"))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-gc-obs-read-k-return) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var 3)))
+    compiler_ir_types.CompilerIrInstrList.Nil))
+
+;; mode 0 = tail store then return         (G1 positive)
+;; mode 1 = tail store, read @gc_k, return (G2 same-block negative)
+;; mode 2 = tail store then jump to tail   (G3 reachable negative)
+;; mode 3 = no store at all                (G4 uses the in-loop store instead)
+(define (opt-gc-obs-exit-block [symbols : OptGcTestSymbols] [mode : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "exit")
+    (if (= mode 3)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        compiler_ir_types.CompilerIrInstrList.Nil)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Store
+          (struct-get symbols k)
+          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ast_types.AstType.I64))
+        (cond
+          [(= mode 1)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Mov
+                3
+                (compiler_ir_types.CompilerIrValue.Global
+                  (struct-get symbols k))
+                (compiler_ast_types.AstType.I64))
+              (opt-gc-obs-read-k-return))]
+          [(= mode 2)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "tail"))
+              compiler_ir_types.CompilerIrInstrList.Nil)]
+          [else
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 0)))
+              compiler_ir_types.CompilerIrInstrList.Nil)])))))
+
+(define (opt-gc-obs-tail-block [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "tail")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        3
+        (compiler_ir_types.CompilerIrValue.Global (struct-get symbols k))
+        (compiler_ast_types.AstType.I64))
+      (opt-gc-obs-read-k-return))))
+
+(define (opt-gc-obs-blocks [symbols : OptGcTestSymbols] [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-gc-obs-entry-block)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-gc-obs-head-block symbols)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-gc-obs-body-block symbols (= mode 3))
+        (if (= mode 2)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-gc-obs-exit-block symbols mode)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-gc-obs-tail-block symbols)
+              compiler_ir_types.CompilerIrBlockList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-gc-obs-exit-block symbols mode)
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-gc-obs-function [symbols : OptGcTestSymbols] [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (struct-get symbols reader)
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    4
+    (opt-gc-obs-blocks symbols mode)))
+
+(define (opt-gc-obs-run [symbols : OptGcTestSymbols] [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-gc-obs-function symbols mode)]
+    (compiler_optimize.opt-global-cell-function
+      (opt-gc-test-summaries symbols (opt-gc-test-functions1 func))
+      func)))
+
+;; the head block's `lt` right-hand side after the pass: hoisted (Var 4) or
+;; still a direct cell read (Global gc_k)
+(define (opt-gc-obs-head-rhs-hoisted?
+  [out : compiler_ir_types.CompilerIrFunction]) : bool
+  (match (opt-gc-test-instr-at (compiler_optimize.opt-function-blocks out) 1 0)
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ rhs _)
+      (opt-gc-test-is-var? rhs 4)]
+    [_ false]))
+
+(define (opt-gc-obs-head-rhs-direct?
+  [out : compiler_ir_types.CompilerIrFunction]) : bool
+  (match (opt-gc-test-instr-at (compiler_optimize.opt-function-blocks out) 1 0)
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ rhs _)
+      (opt-gc-test-is-global-named? rhs "gc_k")]
+    [_ false]))
+
+(define (compiler-optimize-global-cell-observable-store-self-test) : i64
+  (let
+    [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
+    [g1 : compiler_ir_types.CompilerIrFunction (opt-gc-obs-run symbols 0)]
+    [g2 : compiler_ir_types.CompilerIrFunction (opt-gc-obs-run symbols 1)]
+    [g3 : compiler_ir_types.CompilerIrFunction (opt-gc-obs-run symbols 2)]
+    [g4 : compiler_ir_types.CompilerIrFunction (opt-gc-obs-run symbols 3)]
+    (cond
+      ;; G1: gc_k hoists to a fresh entry Mov and the loop bound reads it
+      [(not (= (compiler_optimize.opt-function-frame g1) 5)) 1]
+      [(not
+          (=
+            (opt-gc-test-block-instr-count
+              (compiler_optimize.opt-function-blocks g1)
+              0)
+            3))
+        2]
+      [(match (opt-gc-test-instr-at
+          (compiler_optimize.opt-function-blocks g1)
+          0
+          0)
+          [(compiler_ir_types.CompilerIrInstr.Mov d src _)
+            (not (and (= d 4) (opt-gc-test-is-global-named? src "gc_k")))]
+          [_ true])
+        3]
+      [(not (opt-gc-obs-head-rhs-hoisted? g1)) 4]
+      ;; the set! itself survives untouched (only reads are rewritten)
+      [(match (opt-gc-test-instr-at
+          (compiler_optimize.opt-function-blocks g1)
+          3
+          0)
+          [(compiler_ir_types.CompilerIrInstr.Store _ _ _) false]
+          [_ true])
+        5]
+      ;; G2: a read after the set! in the SAME block keeps the cell direct
+      [(not (= (compiler_optimize.opt-function-frame g2) 4)) 10]
+      [(not
+          (=
+            (opt-gc-test-block-instr-count
+              (compiler_optimize.opt-function-blocks g2)
+              0)
+            2))
+        11]
+      [(not (opt-gc-obs-head-rhs-direct? g2)) 12]
+      ;; G3: a read in a block reachable from the set! keeps the cell direct
+      [(not (= (compiler_optimize.opt-function-frame g3) 4)) 20]
+      [(not
+          (=
+            (opt-gc-test-block-instr-count
+              (compiler_optimize.opt-function-blocks g3)
+              0)
+            2))
+        21]
+      [(not (opt-gc-obs-head-rhs-direct? g3)) 22]
+      ;; G4: the set! inside the loop is observed by the header's earlier read
+      [(not (= (compiler_optimize.opt-function-frame g4) 4)) 30]
+      [(not (opt-gc-obs-head-rhs-direct? g4)) 31]
       [else 42])))
 
 ;; --- global-cell pipeline self-test (bce_version unblocked) ------------------
@@ -39912,6 +40139,13 @@
     (compiler-optimize-global-cell-self-test)
     42
     "global-cell entry-load + rewrite with store/call/address-taken exclusions and idempotence"))
+
+(test
+  global-cell-observable-store
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-observable-store-self-test)
+    42
+    "condition (a) is per-store: an unobservable tail set! still hoists, a same-block, a reachable and a loop-carried read do not"))
 
 (test
   global-cell-pipeline-bce

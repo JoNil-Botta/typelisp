@@ -34687,7 +34687,24 @@
                   dst
                   reg
                   ty))
-              (if (string.eq compiler-backend-current-phi-planned-stage "")
+              ;; P34 #phi-empty-load: an EMPTY load means the loader elided a
+              ;; same-register move -- the source value is ALREADY in `reg`. The
+              ;; pair is then just the store, which reads `reg` and writes
+              ;; memory: nothing between the bracket's push and pop can modify
+              ;; `reg`, so there is no occupant to preserve and the bracket saves
+              ;; and restores the very value it is storing. Dropping it removes
+              ;; two instructions AND two memory accesses; the remaining
+              ;; (clobbering) loads keep the bracket for the reason above.
+              (if (or
+                (string.eq load "")
+                (not (string.eq compiler-backend-current-phi-planned-stage "")))
+                (string.append
+                  load
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    reg
+                    ty))
                 (str_cat.str-cat
                   "    pushq "
                   reg
@@ -34700,14 +34717,7 @@
                     ty)
                   "    popq "
                   reg
-                  "\n")
-                (string.append
-                  load
-                  (compiler-backend-emit-store-typed-var-with-plan
-                    assignments
-                    dst
-                    reg
-                    ty))))
+                  "\n")))
             load))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 

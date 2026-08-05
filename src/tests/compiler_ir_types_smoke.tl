@@ -55,6 +55,9 @@
       cbi.compiler-builtin-id-tl-array-zero
       compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-mem-fill8
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
       cbi.compiler-builtin-id-tl-flush-stdout-label
       compiler_ir_types.CompilerIrEffect.MemoryWrite)
     (compiler-ir-smoke-call-effect-id-is?

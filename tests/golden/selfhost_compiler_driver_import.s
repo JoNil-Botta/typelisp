@@ -144,7 +144,6 @@ tl_current_arena:
 .text
 .globl _tl_start
 .globl _tl_stdlib_runtime_stdlib_runtime_os_write
-    .type _tl_stdlib_runtime_stdlib_runtime_os_write,@function
 _tl_stdlib_runtime_stdlib_runtime_os_write:
     pushq %rbp
     movq %rsp, %rbp
@@ -163,10 +162,8 @@ _tl_stdlib_runtime_stdlib_runtime_os_write:
     movq %rax, -56(%rbp)
     leave
     ret
-    .size _tl_stdlib_runtime_stdlib_runtime_os_write, . - _tl_stdlib_runtime_stdlib_runtime_os_write
 
 .globl _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .type _tl_stdlib_runtime_stdlib_runtime_os_exit,@function
 _tl_stdlib_runtime_stdlib_runtime_os_exit:
     pushq %rbp
     movq %rsp, %rbp
@@ -179,10 +176,8 @@ _tl_stdlib_runtime_stdlib_runtime_os_exit:
     movq -8(%rbp), %rdi
     leave
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size _tl_stdlib_runtime_stdlib_runtime_os_exit, . - _tl_stdlib_runtime_stdlib_runtime_os_exit
 
 .globl _tl_stdlib_runtime_stdlib_runtime_abort_write
-    .type _tl_stdlib_runtime_stdlib_runtime_abort_write,@function
 _tl_stdlib_runtime_stdlib_runtime_abort_write:
     subq $104, %rsp
     movq %rdi, 88(%rsp)
@@ -197,10 +192,8 @@ _tl_stdlib_runtime_stdlib_runtime_abort_write:
     call _tl_stdlib_runtime_stdlib_runtime_os_write
     addq $104, %rsp
     ret
-    .size _tl_stdlib_runtime_stdlib_runtime_abort_write, . - _tl_stdlib_runtime_stdlib_runtime_abort_write
 
 .globl _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal
-    .type _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal,@function
 _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal:
     subq $184, %rsp
     movq %rdi, 168(%rsp)
@@ -240,10 +233,8 @@ _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal:
     call _tl_stdlib_runtime_stdlib_runtime_os_write
     addq $184, %rsp
     ret
-    .size _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal, . - _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal
 
 .globl _tl_stdlib_runtime_stdlib_runtime_abort_write_negative_decimal
-    .type _tl_stdlib_runtime_stdlib_runtime_abort_write_negative_decimal,@function
 _tl_stdlib_runtime_stdlib_runtime_abort_write_negative_decimal:
     subq $184, %rsp
     movq %rdi, 168(%rsp)
@@ -289,10 +280,8 @@ _tl_stdlib_runtime_stdlib_runtime_abort_write_negative_decimal:
     call _tl_stdlib_runtime_stdlib_runtime_os_write
     addq $184, %rsp
     ret
-    .size _tl_stdlib_runtime_stdlib_runtime_abort_write_negative_decimal, . - _tl_stdlib_runtime_stdlib_runtime_abort_write_negative_decimal
 
 .globl _tl_stdlib_runtime_stdlib_runtime_abort_write_signed_decimal
-    .type _tl_stdlib_runtime_stdlib_runtime_abort_write_signed_decimal,@function
 _tl_stdlib_runtime_stdlib_runtime_abort_write_signed_decimal:
     subq $56, %rsp
     movq %rdi, 40(%rsp)
@@ -311,10 +300,8 @@ _tl_stdlib_runtime_stdlib_runtime_abort_write_signed_decimal:
     movq %r8, %rdi
     addq $56, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal
-    .size _tl_stdlib_runtime_stdlib_runtime_abort_write_signed_decimal, . - _tl_stdlib_runtime_stdlib_runtime_abort_write_signed_decimal
 
 .globl tl_oob_abort
-    .type tl_oob_abort,@function
 tl_oob_abort:
     subq $40, %rsp
 .Lf6_entry:
@@ -324,10 +311,8 @@ tl_oob_abort:
     movl $134, %edi
     addq $40, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size tl_oob_abort, . - tl_oob_abort
 
 .globl tl_div_abort
-    .type tl_div_abort,@function
 tl_div_abort:
     subq $40, %rsp
 .Lf7_entry:
@@ -337,10 +322,8 @@ tl_div_abort:
     movl $135, %edi
     addq $40, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size tl_div_abort, . - tl_div_abort
 
 .globl tl_shift_abort
-    .type tl_shift_abort,@function
 tl_shift_abort:
     subq $40, %rsp
 .Lf8_entry:
@@ -350,10 +333,8 @@ tl_shift_abort:
     movl $129, %edi
     addq $40, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size tl_shift_abort, . - tl_shift_abort
 
 .globl _tl_stdlib_runtime_stdlib_runtime_abort_write_site
-    .type _tl_stdlib_runtime_stdlib_runtime_abort_write_site,@function
 _tl_stdlib_runtime_stdlib_runtime_abort_write_site:
     subq $264, %rsp
     movq %rdi, 248(%rsp)
@@ -387,10 +368,8 @@ _tl_stdlib_runtime_stdlib_runtime_abort_write_site:
     movq %r8, %rdi
     addq $264, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_abort_write
-    .size _tl_stdlib_runtime_stdlib_runtime_abort_write_site, . - _tl_stdlib_runtime_stdlib_runtime_abort_write_site
 
 .globl tl_oob_abort_at
-    .type tl_oob_abort_at,@function
 tl_oob_abort_at:
     subq $136, %rsp
     movq %rdi, 120(%rsp)
@@ -418,10 +397,8 @@ tl_oob_abort_at:
     movl $134, %edi
     addq $136, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size tl_oob_abort_at, . - tl_oob_abort_at
 
 .globl tl_div_abort_at
-    .type tl_div_abort_at,@function
 tl_div_abort_at:
     subq $136, %rsp
     movq %rdi, 120(%rsp)
@@ -449,10 +426,8 @@ tl_div_abort_at:
     movl $135, %edi
     addq $136, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size tl_div_abort_at, . - tl_div_abort_at
 
 .globl tl_shift_abort_at
-    .type tl_shift_abort_at,@function
 tl_shift_abort_at:
     subq $168, %rsp
     movq %rdi, 152(%rsp)
@@ -490,10 +465,8 @@ tl_shift_abort_at:
     movl $129, %edi
     addq $168, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size tl_shift_abort_at, . - tl_shift_abort_at
 
 .globl tl_panic_at
-    .type tl_panic_at,@function
 tl_panic_at:
     subq $264, %rsp
     movq %rdi, 248(%rsp)
@@ -546,10 +519,8 @@ tl_panic_at:
     movl $134, %edi
     addq $264, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size tl_panic_at, . - tl_panic_at
 
 .globl tl_abort_string
-    .type tl_abort_string,@function
 tl_abort_string:
     subq $40, %rsp
     movq %rdi, 24(%rsp)
@@ -559,10 +530,8 @@ tl_abort_string:
     movl $134, %edi
     addq $40, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size tl_abort_string, . - tl_abort_string
 
 .globl tl_array_fill8
-    .type tl_array_fill8,@function
 tl_array_fill8:
     subq $104, %rsp
     movq %rdi, 88(%rsp)
@@ -588,10 +557,8 @@ tl_array_fill8:
 .Lf15_while_exit.2:
     addq $104, %rsp
     ret
-    .size tl_array_fill8, . - tl_array_fill8
 
 .globl tl_region_abort
-    .type tl_region_abort,@function
 tl_region_abort:
     subq $40, %rsp
 .Lf16_entry:
@@ -601,10 +568,8 @@ tl_region_abort:
     movl $134, %edi
     addq $40, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size tl_region_abort, . - tl_region_abort
 
 .globl tl_oom_abort
-    .type tl_oom_abort,@function
 tl_oom_abort:
     subq $40, %rsp
 .Lf17_entry:
@@ -614,10 +579,8 @@ tl_oom_abort:
     movl $134, %edi
     addq $40, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-    .size tl_oom_abort, . - tl_oom_abort
 
 .globl _tl_helper_helper_helper_opaque
-    .type _tl_helper_helper_helper_opaque,@function
 _tl_helper_helper_helper_opaque:
     subq $72, %rsp
     movq %rdi, 56(%rsp)
@@ -641,10 +604,8 @@ _tl_helper_helper_helper_opaque:
     movq 56(%rsp), %rax
     addq $72, %rsp
     ret
-    .size _tl_helper_helper_helper_opaque, . - _tl_helper_helper_helper_opaque
 
 .globl _tl_helper_helper_helper
-    .type _tl_helper_helper_helper,@function
 _tl_helper_helper_helper:
     subq $40, %rsp
 .Lf19_entry:
@@ -655,10 +616,8 @@ _tl_helper_helper_helper:
     movl $1, %esi
     addq $40, %rsp
     jmp _tl_helper_helper_helper_opaque
-    .size _tl_helper_helper_helper, . - _tl_helper_helper_helper
 
 .globl main
-    .type main,@function
 main:
     subq $24, %rsp
 .Lf20_entry:
@@ -667,10 +626,8 @@ main:
     addq %r8, %rax
     addq $24, %rsp
     ret
-    .size main, . - main
 
     .globl tl_memcpy
-    .type tl_memcpy,@function
 tl_memcpy:
     movq %rdx, %rcx
     cmpq %rsi, %rdi
@@ -693,9 +650,7 @@ tl_memcpy:
     andq $7, %rcx
     rep movsb
     ret
-    .size tl_memcpy, . - tl_memcpy
     .globl tl_memchr
-    .type tl_memchr,@function
 tl_memchr:
     testq %rsi, %rsi
     jle .Ltl_memchr_not_found
@@ -711,9 +666,7 @@ tl_memchr:
     movq $-1, %rax
 .Ltl_memchr_found:
     ret
-    .size tl_memchr, . - tl_memchr
     .globl tl_array_zero
-    .type tl_array_zero,@function
 tl_array_zero:
     cmpq $64, %rsi
     jb .Ltl_array_zero_fill
@@ -735,9 +688,16 @@ tl_array_zero:
     andq $7, %rcx
     rep stosb
     ret
-    .size tl_array_zero, . - tl_array_zero
+    .globl tl_mem_fill8
+tl_mem_fill8:
+    testq %rsi, %rsi
+    jle .Ltl_mem_fill8_done
+    movq %rsi, %rcx
+    movq %rdx, %rax
+    rep stosq
+.Ltl_mem_fill8_done:
+    ret
     .globl tl_tlci_call_image_entry
-    .type tl_tlci_call_image_entry,@function
 tl_tlci_call_image_entry:
     movq %rdi, %rax
     movq %rsi, %rdi
@@ -746,10 +706,8 @@ tl_tlci_call_image_entry:
     call *%rax
     addq $8, %rsp
     ret
-    .size tl_tlci_call_image_entry, . - tl_tlci_call_image_entry
 
     .globl tl_thread_init
-    .type tl_thread_init,@function
 tl_thread_init:
     movq $4096, %rsi
     xorq %rdi, %rdi
@@ -774,17 +732,13 @@ tl_thread_init:
     movq $60, %rax
     movq $134, %rdi
     syscall
-    .size tl_thread_init, . - tl_thread_init
 
     .globl tl_arena_current
-    .type tl_arena_current,@function
 tl_arena_current:
     movq %fs:tl_current_arena@tpoff, %rax
     ret
-    .size tl_arena_current, . - tl_arena_current
 
     .globl tl_arena_set
-    .type tl_arena_set,@function
 tl_arena_set:
     testq %rdi, %rdi
     jz .L_tl_arena_set_store
@@ -795,24 +749,18 @@ tl_arena_set:
 .L_tl_arena_set_store:
     movq %rdi, %fs:tl_current_arena@tpoff
     ret
-    .size tl_arena_set, . - tl_arena_set
 
     .globl tl_arena_poison_enable
-    .type tl_arena_poison_enable,@function
 tl_arena_poison_enable:
     movq $1, .L_tl_arena_poison_enabled(%rip)
     ret
-    .size tl_arena_poison_enable, . - tl_arena_poison_enable
 
     .globl tl_arena_make
-    .type tl_arena_make,@function
 tl_arena_make:
     movq $0x4000000, %rsi
     jmp .L_tl_arena_make_sized
-    .size tl_arena_make, . - tl_arena_make
 
     .globl tl_arena_make_small
-    .type tl_arena_make_small,@function
 tl_arena_make_small:
     movq $0x1000000, %rsi
 .L_tl_arena_make_sized:
@@ -841,10 +789,8 @@ tl_arena_make_small:
     movq $60, %rax
     movq $134, %rdi
     syscall
-    .size tl_arena_make_small, . - tl_arena_make_small
 
     .globl tl_arena_make_atomic
-    .type tl_arena_make_atomic,@function
 tl_arena_make_atomic:
     movq $0x4000000, %rsi
     xorq %rdi, %rdi
@@ -872,10 +818,8 @@ tl_arena_make_atomic:
     movq $60, %rax
     movq $134, %rdi
     syscall
-    .size tl_arena_make_atomic, . - tl_arena_make_atomic
 
     .globl tl_arena_destroy
-    .type tl_arena_destroy,@function
 tl_arena_destroy:
     push %rbx
     push %r12
@@ -943,9 +887,7 @@ tl_arena_destroy:
     pop %r12
     pop %rbx
     ret
-    .size tl_arena_destroy, . - tl_arena_destroy
 
-    .type _tl_start,@function
 _tl_start:
     movq (%rsp), %rax
     movq %rax, .L_tl_argc(%rip)
@@ -972,7 +914,6 @@ _tl_start:
     movq %rax, %rdi
     movq $60, %rax
     syscall
-    .size _tl_start, . - _tl_start
     .section .rodata
 .L_tl_main_stack_mmap_error:
     .ascii "typelisp runtime: 1 GiB main-stack mmap failed\n"

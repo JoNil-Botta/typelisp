@@ -939,6 +939,32 @@ tl_memchr:
     .size tl_memchr, . - tl_memchr
 ")
 
+;; Fill `count` pointer-sized slots at `buf` with `value`, one instruction per
+;; slot under the deterministic instruction-count gate (a `rep stosq` is one Ir
+;; per iteration). This is `tl_array_zero`'s fill body and DELIBERATELY NOT
+;; tl_array_zero itself: that helper is allowed to skip its fill entirely when
+;; the current arena's top chunk has never been rewound, because the only
+;; storage it is ever asked to clear is storage the bump allocator just handed
+;; out of that chunk, which the OS already delivered zeroed. A general fill
+;; target is an arbitrary live buffer -- typically one being cleared for the
+;; SECOND time -- and the virgin-arena bit says nothing about it, so reusing
+;; tl_array_zero here would silently skip the clear. There is no early-out and
+;; no TLS read.
+;; A non-positive count writes nothing: `rep stosq` reads %rcx as UNSIGNED, so
+;; a negative count would run ~2^64 stores; the explicit `jle` is load-bearing.
+;; Arguments are SysV: %rdi = buf, %rsi = count (slots), %rdx = value.
+(define (compiler-backend-runtime-mem-fill8-functions) : String
+  "    .globl tl_mem_fill8
+tl_mem_fill8:
+    testq %rsi, %rsi
+    jle .Ltl_mem_fill8_done
+    movq %rsi, %rcx
+    movq %rdx, %rax
+    rep stosq
+.Ltl_mem_fill8_done:
+    ret
+")
+
 ;; Arena pages arrive zeroed from the OS and the bump allocator only moves
 ;; forward until tl_region_reset marks the arena as reused (flags bit 2).
 ;; While the current arena has never been rewound (and is not atomic, whose
@@ -1041,6 +1067,7 @@ tl_tlci_call_macro_entry:
     [memcpy-asm : String (compiler-backend-runtime-memcpy-functions)]
     [memchr-asm : String (compiler-backend-runtime-memchr-functions)]
     [array-zero-asm : String (compiler-backend-runtime-array-zero-functions)]
+    [mem-fill8-asm : String (compiler-backend-runtime-mem-fill8-functions)]
     [tlci-entry-asm : String (compiler-backend-runtime-tlci-entry-functions)]
     [tlci-macro-entry-asm : String
       (if (runtime_common.compiler-backend-runtime-features-tlci-macro-entry?
@@ -1055,18 +1082,20 @@ tl_tlci_call_macro_entry:
           (string.append
             array-zero-asm
             (string.append
-              tlci-entry-asm
+              mem-fill8-asm
               (string.append
-                tlci-macro-entry-asm
+                tlci-entry-asm
                 (string.append
-                  arena-asm
+                  tlci-macro-entry-asm
                   (string.append
-                    profile-asm
-                    (str_cat.str-cat
-                      startup-profile-asm
-                      alloc-asm
-                      region-mark-asm
-                      region-reset-asm))))))))]
+                    arena-asm
+                    (string.append
+                      profile-asm
+                      (str_cat.str-cat
+                        startup-profile-asm
+                        alloc-asm
+                        region-mark-asm
+                        region-reset-asm)))))))))]
     [libc-shims-asm : String
       (compiler-backend-runtime-linux-libc-shim-functions)]
     [thread-asm : String ""]

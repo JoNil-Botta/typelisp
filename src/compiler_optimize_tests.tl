@@ -39432,6 +39432,478 @@
         63]
       [else 42])))
 
+;; --- constant fill -> tl_mem_fill8 (fill_call) self-tests ---------------------
+;;
+;; F1 positive : a `__bce_fast` clone whose whole body is `base[i] = 0`, entered
+;;               from its own `__bce_guard`, becomes one tl_mem_fill8 call and a
+;;               Jump; the loop, the store and the self edge are all gone.
+;; F2 negative : the SAME loop as the CHECKED original (label `while_body.9`,
+;;               entered from a preheader, carrying a BoundsCheck) is left
+;;               exactly as it was -- that path must keep aborting at the same
+;;               element.
+;; F3 negative : a fast clone that stores the COUNTER instead of a literal is
+;;               not a constant fill and is left alone.
+;; F4 negative : a fast clone whose predecessor is some other block, not the
+;;               matching `__bce_guard`, loses the seed<bound / seed>=0 facts
+;;               the rewrite relies on and is left alone.
+;; F5 positive : the shape the versioner ACTUALLY emits on the round that
+;;               creates the clone -- a second (bool) loop-carried phi whose
+;;               back-edge input is the loop compare itself, dead literal
+;;               copies, a copy of the counter, and a compare reading a COPY of
+;;               the counter's next value. `opt-unroll-block-shape` REJECTS
+;;               this (the compare is not terminator-only), which is why the
+;;               recognizer here is self-contained; F5 is what pins that.
+;; F6 negative : step 2 instead of 1 -- the visited indices are not the
+;;               contiguous run `rep stosq` writes.
+;; F7 negative : the compare's bound is defined inside the block, so it is not
+;;               the loop's end index and the slot count would be wrong.
+;;
+;; Each negative was checked load-bearing by mutating the implementation and
+;; confirming THIS test is what fails:
+;;   * `opt-fill-call-scan-body`'s literal-store arm widened to accept a Var
+;;     store value -> code 20 (F3 wrongly rewrites).
+;;   * `opt-fill-call-pred-in-version-namespace?` forced true -> code 30 (F4
+;;     wrongly rewrites).
+;;   * `opt-fill-call-shape-step`'s `(= step 1)` dropped -> code 50 (F6).
+;;   * `opt-fill-call-shape-cond`'s `opt-unroll-invariant-bound?` forced true
+;;     -> code 60 (F7).
+;;   * `opt-fill-call-shape-scan` given the unroller's extra "the compare's only
+;;     in-block use is the terminator" gate -> code 41 (F5 stops rewriting)
+;;     while F1 still passes: that gate, and nothing else, is what made
+;;     `opt-unroll-block-shape` reject the real clone.
+(define (opt-fc-test-label [name : String]) : i64
+  (compiler_ir_types.compiler-ir-label name))
+
+(define (opt-fc-test-i64) : compiler_ast_types.AstType
+  (compiler_ast_types.AstType.I64))
+
+(define (opt-fc-test-entry-block [pred : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-fc-test-label "fc.entry")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump pred)
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-fc-test-pred-block [pred : i64] [loop : i64] [exit : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    pred
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        2
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          loop
+          exit)
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-fc-test-loop-tail
+  [loop : i64]
+  [exit : i64]
+  [value : compiler_ir_types.CompilerIrValue]
+  [step : i64]
+  [bound : compiler_ir_types.CompilerIrValue]
+  [local-bound? : bool]) : compiler_ir_types.CompilerIrInstrList
+  (opt-fc-test-maybe-local-bound
+    local-bound?
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        4
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (opt-fc-test-i64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          value
+          (opt-fc-test-i64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 step)
+            (opt-fc-test-i64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              6
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              bound
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                loop
+                exit)
+              compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; F7's block-local bound: `%7 = mov %1` inside the loop, compared against
+;; instead of the parameter. Emitting a real copy (rather than reusing the
+;; counter's own next value) is what makes the fixture NON-vacuous: with the
+;; invariance clause removed the rewrite is still valid SSA, so it fires and
+;; the assertion -- not the IR verifier -- is what catches it.
+(define (opt-fc-test-maybe-local-bound
+  [local-bound? : bool]
+  [rest : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (if local-bound?
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        7
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (opt-fc-test-i64))
+      rest)
+    rest))
+
+(define (opt-fc-test-loop-block
+  [loop : i64]
+  [pred : i64]
+  [exit : i64]
+  [value : compiler_ir_types.CompilerIrValue]
+  [checked? : bool]
+  [step : i64]
+  [bound : compiler_ir_types.CompilerIrValue]
+  [local-bound? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    loop
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        3
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          pred
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            loop
+            compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (opt-fc-test-i64))
+      (if checked?
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (opt-fc-test-label "fc.bounds"))
+          (opt-fc-test-loop-tail loop exit value step bound local-bound?))
+        (opt-fc-test-loop-tail loop exit value step bound local-bound?)))))
+
+(define (opt-fc-test-exit-block [exit : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    exit
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.I64 0)))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-fc-test-function
+  [loop-name : String]
+  [pred-name : String]
+  [value : compiler_ir_types.CompilerIrValue]
+  [checked? : bool]
+  [step : i64]
+  [bound : compiler_ir_types.CompilerIrValue]
+  [local-bound? : bool]
+  [frame : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [loop : i64 (opt-fc-test-label loop-name)]
+    [pred : i64 (opt-fc-test-label pred-name)]
+    [exit : i64 (opt-fc-test-label "fc.exit")]
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "fc_fn")
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "base"
+          (compiler_ast_types.AstType.U64)
+          0)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param "bound" (opt-fc-test-i64) 1)
+          compiler_ir_types.CompilerIrParamList.Nil))
+      (opt-fc-test-i64)
+      frame
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-fc-test-entry-block pred)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-fc-test-pred-block pred loop exit)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-fc-test-loop-block
+              loop
+              pred
+              exit
+              value
+              checked?
+              step
+              bound
+              local-bound?)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-fc-test-exit-block exit)
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The real post-`bce_version` clone body, instruction for instruction:
+;;
+;;   %3  = phi [0, pred], [%5, loop] : i64      counter
+;;   %8  = phi [%2, pred], [%6, loop] : bool    the versioner's bool phi, whose
+;;                                              back-edge input is the compare
+;;   %9  = mov 0                                dead literal copy
+;;   %10 = mov %3                               dead counter copy
+;;   %4  = gep %0, %3
+;;   store_ptr %4, 0
+;;   %11 = mov 1                                dead literal copy
+;;   %5  = add %3, 1
+;;   %12 = mov %5                               copy of the next value
+;;   %6  = lt %12, %1                           compare reads the COPY
+;;   branch %6, loop, exit
+(define (opt-fc-test-real-mov
+  [dst : i64]
+  [src : compiler_ir_types.CompilerIrValue]
+  [rest : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Mov dst src (opt-fc-test-i64))
+    rest))
+
+(define (opt-fc-test-real-loop-block [loop : i64] [pred : i64] [exit : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    loop
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        3
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          pred
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            loop
+            compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (opt-fc-test-i64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          8
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            pred
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              loop
+              compiler_ir_types.CompilerIrPhiInputList.Nil))
+          (compiler_ast_types.AstType.Bool))
+        (opt-fc-test-real-mov
+          9
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (opt-fc-test-real-mov
+            10
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                4
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (opt-fc-test-i64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.StorePtr
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (opt-fc-test-i64))
+                (opt-fc-test-real-mov
+                  11
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.BinOp
+                      5
+                      (compiler_ir_types.CompilerIrBinOp.Add)
+                      (compiler_ir_types.CompilerIrValue.Var 3)
+                      (compiler_ir_types.CompilerIrValue.I64 1)
+                      (opt-fc-test-i64))
+                    (opt-fc-test-real-mov
+                      12
+                      (compiler_ir_types.CompilerIrValue.Var 5)
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.BinOp
+                          6
+                          (compiler_ir_types.CompilerIrBinOp.Lt)
+                          (compiler_ir_types.CompilerIrValue.Var 12)
+                          (compiler_ir_types.CompilerIrValue.Var 1)
+                          (compiler_ast_types.AstType.Bool))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Branch
+                            (compiler_ir_types.CompilerIrValue.Var 6)
+                            loop
+                            exit)
+                          compiler_ir_types.CompilerIrInstrList.Nil)))))))))))))
+
+(define (opt-fc-test-real-function) : compiler_ir_types.CompilerIrFunction
+  (let
+    [loop : i64 (opt-fc-test-label "while_body.7__bce_fast")]
+    [pred : i64 (opt-fc-test-label "while_body.7__bce_guard")]
+    [exit : i64 (opt-fc-test-label "fc.exit")]
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "fc_real_fn")
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "base"
+          (compiler_ast_types.AstType.U64)
+          0)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param "bound" (opt-fc-test-i64) 1)
+          compiler_ir_types.CompilerIrParamList.Nil))
+      (opt-fc-test-i64)
+      13
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-fc-test-entry-block pred)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-fc-test-pred-block pred loop exit)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-fc-test-real-loop-block loop pred exit)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-fc-test-exit-block exit)
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-fc-test-loop-instr-count
+  [out : compiler_ir_types.CompilerIrFunction]) : i64
+  (opt-gc-test-block-instr-count (compiler_optimize.opt-function-blocks out) 2))
+
+(define (opt-fc-test-loop-has-call?
+  [out : compiler_ir_types.CompilerIrFunction]
+  [index : i64]) : bool
+  (match (opt-gc-test-instr-at
+    (compiler_optimize.opt-function-blocks out)
+    2
+    index)
+    [(compiler_ir_types.CompilerIrInstr.Call _ name _ _)
+      (cbi.compiler-builtin-backend-tl-mem-fill8-id? name)]
+    [_ false]))
+
+(define (opt-fc-test-loop-has-store?
+  [out : compiler_ir_types.CompilerIrFunction]
+  [index : i64]) : bool
+  (match (opt-gc-test-instr-at
+    (compiler_optimize.opt-function-blocks out)
+    2
+    index)
+    [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) true]
+    [_ false]))
+
+(define (opt-fc-test-loop-ends-in-jump?
+  [out : compiler_ir_types.CompilerIrFunction]) : bool
+  (match (opt-gc-test-instr-at
+    (compiler_optimize.opt-function-blocks out)
+    2
+    (- (opt-fc-test-loop-instr-count out) 1))
+    [(compiler_ir_types.CompilerIrInstr.Jump _) true]
+    [_ false]))
+
+(define (opt-fc-test-unchanged?
+  [out : compiler_ir_types.CompilerIrFunction]
+  [frame : i64]) : bool
+  (and
+    (= (compiler_optimize.opt-function-frame out) frame)
+    (not (opt-fc-test-loop-ends-in-jump? out))))
+
+(define (opt-fc-test-loop-store-count
+  [out : compiler_ir_types.CompilerIrFunction]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index count)
+    0
+    (+
+      (if (opt-fc-test-loop-has-store? out index)
+        1
+        0)
+      (opt-fc-test-loop-store-count out (+ index 1) count))))
+
+(define (opt-fc-test-plain
+  [loop-name : String]
+  [pred-name : String]
+  [value : compiler_ir_types.CompilerIrValue]
+  [checked? : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-fill-call-function
+    (opt-fc-test-function
+      loop-name
+      pred-name
+      value
+      checked?
+      1
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      false
+      7)))
+
+(define (compiler-optimize-fill-call-self-test) : i64
+  (let
+    [f1 : compiler_ir_types.CompilerIrFunction
+      (opt-fc-test-plain
+        "while_body.1__bce_fast"
+        "while_body.1__bce_guard"
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        false)]
+    [f2 : compiler_ir_types.CompilerIrFunction
+      (opt-fc-test-plain
+        "while_body.9"
+        "while_body.9__preheader"
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        true)]
+    [f3 : compiler_ir_types.CompilerIrFunction
+      (opt-fc-test-plain
+        "while_body.3__bce_fast"
+        "while_body.3__bce_guard"
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        false)]
+    [f4 : compiler_ir_types.CompilerIrFunction
+      (opt-fc-test-plain
+        "while_body.5__bce_fast"
+        "while_body.5__somewhere_else"
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        false)]
+    [f5 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-fill-call-function (opt-fc-test-real-function))]
+    [f6 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-fill-call-function
+        (opt-fc-test-function
+          "while_body.11__bce_fast"
+          "while_body.11__bce_guard"
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          false
+          2
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          false
+          7))]
+    [f7 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-fill-call-function
+        (opt-fc-test-function
+          "while_body.13__bce_fast"
+          "while_body.13__bce_guard"
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          false
+          1
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          true
+          8))]
+    (cond
+      ;; F1: phi, gep, call, mov(inext), lt, jump
+      [(not (= (opt-fc-test-loop-instr-count f1) 6)) 1]
+      [(not (opt-fc-test-loop-has-call? f1 2)) 2]
+      [(not (= (opt-fc-test-loop-store-count f1 0 6) 0)) 3]
+      [(not (opt-fc-test-loop-ends-in-jump? f1)) 4]
+      [(not (= (compiler_optimize.opt-function-frame f1) 8)) 5]
+      [(not (opt-fc-test-unchanged? f2 7)) 10]
+      [(not (opt-fc-test-loop-has-store? f2 3)) 11]
+      [(not (opt-fc-test-unchanged? f3 7)) 20]
+      [(not (opt-fc-test-loop-has-store? f3 2)) 21]
+      [(not (opt-fc-test-unchanged? f4 7)) 30]
+      [(not (opt-fc-test-loop-has-store? f4 2)) 31]
+      ;; F5: 2 phis, mov, mov, gep, call, mov, mov(inext), mov, lt, jump
+      [(not (= (opt-fc-test-loop-instr-count f5) 11)) 40]
+      [(not (opt-fc-test-loop-has-call? f5 5)) 41]
+      [(not (= (opt-fc-test-loop-store-count f5 0 11) 0)) 45]
+      [(not (opt-fc-test-loop-ends-in-jump? f5)) 43]
+      [(not (= (compiler_optimize.opt-function-frame f5) 14)) 44]
+      [(not (opt-fc-test-unchanged? f6 7)) 50]
+      [(not (opt-fc-test-loop-has-store? f6 2)) 51]
+      [(not (opt-fc-test-unchanged? f7 8)) 60]
+      [(not (opt-fc-test-loop-has-store? f7 3)) 61]
+      [else 42])))
+
 ;; --- global-cell condition (a): per-store observability ----------------------
 ;;
 ;; Condition (a) is not "this function stores G" but "this function has a store
@@ -40139,6 +40611,13 @@
     (compiler-optimize-global-cell-self-test)
     42
     "global-cell entry-load + rewrite with store/call/address-taken exclusions and idempotence"))
+
+(test
+  fill-call-constant-fill
+  (test.assert-i64-eq
+    (compiler-optimize-fill-call-self-test)
+    42
+    "a constant fill in a __bce_fast clone becomes tl_mem_fill8 (including the versioner's real copy-and-bool-phi shape); checked, non-constant, wrong-predecessor, non-unit-step and block-local-bound loops do not"))
 
 (test
   global-cell-observable-store

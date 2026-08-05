@@ -50975,11 +50975,7 @@
           (backend_label_i64_map.insert-ref!
             (&mut counts)
             label
-            (+
-              1
-              (match (backend_label_i64_map.get (& counts) label)
-                [(backend_label_i64_map.LookupFound v) v]
-                [(backend_label_i64_map.LookupMissing) 0])))
+            (+ 1 (backend_label_i64_map.get-value-or (& counts) label 0)))
           (compiler-backend-peephole-predcount-bump
             counts
             (compiler_optimize.opt-label-tail labels))))]))
@@ -51111,9 +51107,7 @@
               (not (compiler-backend-peephole-prev-splits-edge? prev))
               (=
                 1
-                (match (backend_label_i64_map.get (& predcount) cur-label)
-                  [(backend_label_i64_map.LookupFound v) v]
-                  [(backend_label_i64_map.LookupMissing) 0]))
+                (backend_label_i64_map.get-value-or (& predcount) cur-label 0))
               (compiler_optimize.opt-label-contains
                 (compiler_optimize.opt-cfg-block-successors-with-next
                   prev
@@ -51149,9 +51143,7 @@
               (not (compiler-backend-peephole-prev-splits-edge? prev))
               (=
                 1
-                (match (backend_label_i64_map.get (& predcount) cur-label)
-                  [(backend_label_i64_map.LookupFound v) v]
-                  [(backend_label_i64_map.LookupMissing) 0]))
+                (backend_label_i64_map.get-value-or (& predcount) cur-label 0))
               (compiler_optimize.opt-label-contains
                 (compiler_optimize.opt-cfg-block-successors-with-next
                   prev

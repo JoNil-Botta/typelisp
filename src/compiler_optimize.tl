@@ -11200,9 +11200,7 @@
   (Result ir.CompilerIrInstrList OptSsaRenameEnv i64))
 
 (define (opt-ssa-count [counts : opt_i64_i64_map.Map] [var : i64]) : i64
-  (match (opt_i64_i64_map.get (& counts) var)
-    [(opt_i64_i64_map.LookupFound n) n]
-    [(opt_i64_i64_map.LookupMissing) 0]))
+  (opt_i64_i64_map.get-value-or (& counts) var 0))
 
 (define (opt-ssa-count-add
   [counts : opt_i64_i64_map.Map (:consume)]
@@ -31309,9 +31307,7 @@
 ;; Number of times `var` appears as a definition site (instruction destination
 ;; or seeded parameter) in the collected value-source list.
 (define (opt-gvn-count [sources : opt_i64_i64_map.Map] [var : i64]) : i64
-  (match (opt_i64_i64_map.get (& sources) var)
-    [(opt_i64_i64_map.LookupFound n) n]
-    [(opt_i64_i64_map.LookupMissing) 0]))
+  (opt_i64_i64_map.get-value-or (& sources) var 0))
 
 ;; Record one more definition of `var` in the value-source multiset.
 (define (opt-gvn-defs-add
@@ -74012,9 +74008,7 @@
         (opt-load-loc-kind-decode (array-ref (struct-get work kinds) var)))]))
 
 (define (opt-load-kinds-ref-count [refs : opt_i64_i64_map.Map] [base : i64]) : i64
-  (match (opt_i64_i64_map.get (& refs) base)
-    [(opt_i64_i64_map.LookupFound value) value]
-    [(opt_i64_i64_map.LookupMissing) 0]))
+  (opt_i64_i64_map.get-value-or (& refs) base 0))
 
 (define (opt-load-kinds-dense-ref-count
   [work : OptLoadKindsDenseWork]

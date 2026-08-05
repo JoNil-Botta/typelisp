@@ -5454,9 +5454,10 @@
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.
 (define (lower-module-decl-index-slot [module-id : i64]) : i64
-  (match (lower_i64_i64_map.get (& lower-module-decl-index-modules) module-id)
-    [(lower_i64_i64_map.LookupFound slot) slot]
-    [(lower_i64_i64_map.LookupMissing) -1]))
+  (lower_i64_i64_map.get-value-or
+    (& lower-module-decl-index-modules)
+    module-id
+    -1))
 
 (define (lower-name-env-add-module-aliases-cache
   [decls : ast.AstDeclList]

@@ -6887,7 +6887,8 @@
           "%r14"
           diag
           index
-          1))]
+          1
+          (struct-get index backend-state)))]
     [asm-text : String
       (match asm
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -6923,7 +6924,8 @@
         "%r14"
         diag
         index
-        1)]
+        1
+        (struct-get index backend-state))]
     [asm9-text : String
       (match asm9
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -6959,7 +6961,8 @@
         "%r14"
         diag
         index
-        1)]
+        1
+        (struct-get index backend-state))]
     [asm11-text : String
       (match asm11
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -6996,7 +6999,8 @@
         0
         0
         index
-        2)]
+        2
+        (struct-get index backend-state))]
     [_reset-xmm : unit
       (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
         "")]
@@ -30218,7 +30222,8 @@
         "%r14"
         diag
         index
-        1)]
+        1
+        (struct-get index backend-state))]
     [pressure-call : String
       (match pressure-call-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -30247,7 +30252,8 @@
         0
         0
         index
-        7)]
+        7
+        (struct-get index backend-state))]
     [pressure-param : String
       (match pressure-param-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -30271,7 +30277,8 @@
         0
         0
         index
-        7)]
+        7
+        (struct-get index backend-state))]
     [memory-param : String
       (match memory-param-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -30309,7 +30316,8 @@
         "%r14"
         diag
         index
-        1)]
+        1
+        (struct-get index backend-state))]
     [mixed-call : String
       (match mixed-call-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -30327,7 +30335,8 @@
         0
         0
         index
-        1)]
+        1
+        (struct-get index backend-state))]
     [mixed-param : String
       (match mixed-param-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -30374,7 +30383,8 @@
         "%r14"
         diag
         index
-        2)]
+        2
+        (struct-get index backend-state))]
     [exhausted-call : String
       (match exhausted-call-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -30397,7 +30407,8 @@
         6
         0
         index
-        2)]
+        2
+        (struct-get index backend-state))]
     [exhausted-param : String
       (match exhausted-param-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]

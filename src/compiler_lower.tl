@@ -14275,94 +14275,105 @@
                             ret-ty
                             classification)))])])])])]))
 
-(define (lower-prepare-internal-return-value
+(define (lower-prepare-internal-return-no
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [value : ir.CompilerIrValue]
   [ret-ty : ast.AstType]) : ResultLowerExpr
   (let
-    [class : LowerCAbiAggregate
-      (lower-internal-return-class-for-name
-        ctx
-        (lower-state-mode state)
-        (lower-state-current-function state)
-        ret-ty)]
-    (match class
-      [(LowerCAbiAggregate.Integer scalar-ty _)
-        (match (lower-load-at-offset state value 0 scalar-ty)
-          [(LowerExpr.Expr loaded loaded-value _)
-            (ResultLowerExpr.Ok (LowerExpr.Expr loaded loaded-value scalar-ty))])]
-      [(LowerCAbiAggregate.Register slots _)
-        (if (= (lower-c-abi-slot-list-count slots) 1)
-          (match (lower-c-abi-slot-list-ref slots 0)
-            [(LowerCAbiSlot.Slot scalar-ty offset)
-              (match (lower-load-at-offset state value offset scalar-ty)
-                [(LowerExpr.Expr loaded loaded-value _)
-                  (ResultLowerExpr.Ok
-                    (LowerExpr.Expr loaded loaded-value scalar-ty))])])
-          (lower-internal-return-register-two
-            ctx
-            state
-            value
-            ret-ty
-            class
-            (lower-c-abi-slot-list-ref slots 0)
-            (lower-c-abi-slot-list-ref slots 1)))]
-      [(LowerCAbiAggregate.Sret size)
-        (let
-          [sret-var : i64 (lower-current-sret-var env)]
-          (if (< sret-var 0)
-            (ResultLowerExpr.Err
-              (box
-                (lower-diagnostic
-                  "lower: structural return missing hidden sret parameter")))
-            (ResultLowerExpr.Ok
-              (LowerExpr.Expr
-                (lower-copy-bytes
-                  state
-                  (ir.CompilerIrValue.Var sret-var)
-                  0
-                  value
-                  0
-                  size)
+    [sret-var : i64 (lower-current-sret-var env)]
+    (if (and
+      (>= sret-var 0)
+      (lower-type-inline-struct-or-enum? ctx ret-ty)
+      (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
+      (match (lower-inline-aggregate-copy-size ctx ret-ty)
+        [(ResultLowerSize.Ok size)
+          (ResultLowerExpr.Ok
+            (LowerExpr.Expr
+              (lower-copy-bytes
+                state
                 (ir.CompilerIrValue.Var sret-var)
-                (ast.AstType.U64)))))]
-      [(LowerCAbiAggregate.No)
-        (let
-          [sret-var : i64 (lower-current-sret-var env)]
-          (if (and
-            (>= sret-var 0)
-            (lower-type-inline-struct-or-enum? ctx ret-ty)
-            (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty))
-            (match (lower-inline-aggregate-copy-size ctx ret-ty)
-              [(ResultLowerSize.Ok size)
-                (ResultLowerExpr.Ok
-                  (LowerExpr.Expr
-                    (lower-copy-bytes
-                      state
-                      (ir.CompilerIrValue.Var sret-var)
-                      0
-                      value
-                      0
-                      size)
+                0
+                value
+                0
+                size)
+              (ir.CompilerIrValue.Var sret-var)
+              ret-ty))]
+        [(ResultLowerSize.Err message)
+          (ResultLowerExpr.Err (box (lower-diagnostic message)))])
+      (lower-return-abi-value ctx state value ret-ty))))
+
+(define (lower-prepare-internal-return-value
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [value : ir.CompilerIrValue]
+  [ret-ty : ast.AstType]) : ResultLowerExpr
+  (if (lower-internal-structural-resolved-type? ret-ty)
+    (let
+      [class : LowerCAbiAggregate
+        (lower-internal-return-class-for-name
+          ctx
+          (lower-state-mode state)
+          (lower-state-current-function state)
+          ret-ty)]
+      (match class
+        [(LowerCAbiAggregate.Integer scalar-ty _)
+          (match (lower-load-at-offset state value 0 scalar-ty)
+            [(LowerExpr.Expr loaded loaded-value _)
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr loaded loaded-value scalar-ty))])]
+        [(LowerCAbiAggregate.Register slots _)
+          (if (= (lower-c-abi-slot-list-count slots) 1)
+            (match (lower-c-abi-slot-list-ref slots 0)
+              [(LowerCAbiSlot.Slot scalar-ty offset)
+                (match (lower-load-at-offset state value offset scalar-ty)
+                  [(LowerExpr.Expr loaded loaded-value _)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr loaded loaded-value scalar-ty))])])
+            (lower-internal-return-register-two
+              ctx
+              state
+              value
+              ret-ty
+              class
+              (lower-c-abi-slot-list-ref slots 0)
+              (lower-c-abi-slot-list-ref slots 1)))]
+        [(LowerCAbiAggregate.Sret size)
+          (let
+            [sret-var : i64 (lower-current-sret-var env)]
+            (if (< sret-var 0)
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic
+                    "lower: structural return missing hidden sret parameter")))
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr
+                  (lower-copy-bytes
+                    state
                     (ir.CompilerIrValue.Var sret-var)
-                    ret-ty))]
-              [(ResultLowerSize.Err message)
-                (ResultLowerExpr.Err (box (lower-diagnostic message)))])
-            (lower-return-abi-value ctx state value ret-ty)))]
-      [(LowerCAbiAggregate.ByRef _)
-        (ResultLowerExpr.Err
-          (box
-            (lower-diagnostic
-              "lower: byref return classification is unsupported")))]
-      [(LowerCAbiAggregate.Memory _)
-        (ResultLowerExpr.Err
-          (box
-            (lower-diagnostic
-              "lower: memory return classification is unsupported")))]
-      [(LowerCAbiAggregate.Unsupported message)
-        (ResultLowerExpr.Err (box (lower-diagnostic message)))])))
+                    0
+                    value
+                    0
+                    size)
+                  (ir.CompilerIrValue.Var sret-var)
+                  (ast.AstType.U64)))))]
+        [(LowerCAbiAggregate.No)
+          (lower-prepare-internal-return-no ctx state env value ret-ty)]
+        [(LowerCAbiAggregate.ByRef _)
+          (ResultLowerExpr.Err
+            (box
+              (lower-diagnostic
+                "lower: byref return classification is unsupported")))]
+        [(LowerCAbiAggregate.Memory _)
+          (ResultLowerExpr.Err
+            (box
+              (lower-diagnostic
+                "lower: memory return classification is unsupported")))]
+        [(LowerCAbiAggregate.Unsupported message)
+          (ResultLowerExpr.Err (box (lower-diagnostic message)))]))
+    (lower-prepare-internal-return-no ctx state env value ret-ty)))
 
 (define (lower-raw-pointer-ir-type [ty : ast.AstType]) : ast.AstType
   (match (tc_core.tc-type-strip-region ty)
@@ -19212,6 +19223,8 @@
         (if structural-sret?
           2
           1)]
+      [structural-params? : bool
+        (lower-internal-param-list-contains-structural? ctx params)]
       [sret-var : i64
         (if structural-sret?
           1
@@ -19272,15 +19285,20 @@
                     captured-env)]
                 [type-env : tc_core.TcTypeEnv
                   (tc_core.tc-bind-params ctx captured-type-env params)]
-                (match (lower-bind-internal-params
-                  ctx
-                  mode
-                  params
-                  source-start
-                  captured-state
-                  initial-env
-                  type-env
-                  body)
+                (match (if structural-params?
+                  (lower-bind-internal-params
+                    ctx
+                    mode
+                    params
+                    source-start
+                    captured-state
+                    initial-env
+                    type-env
+                    body)
+                  (ResultLowerEnv.Ok
+                    captured-state
+                    (lower-bind-params params source-start initial-env)
+                    type-env))
                   [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
                     (match (lower-tail-expr
                       ctx
@@ -19293,12 +19311,31 @@
                       [(ResultLowerState.Ok final-state)
                         (let
                           [source-params : ir.CompilerIrParamList
-                            (lower-captured-internal-param-list
-                              ctx
-                              mode
-                              params
-                              source-start
-                              structural-sret?)]
+                            (if structural-params?
+                              (lower-captured-internal-param-list
+                                ctx
+                                mode
+                                params
+                                source-start
+                                structural-sret?)
+                              (let
+                                [source : ir.CompilerIrParamList
+                                  (lower-param-list ctx params source-start)]
+                                [with-sret : ir.CompilerIrParamList
+                                  (if structural-sret?
+                                    (ir.compiler-ir-param-cons
+                                      (ir.CompilerIrParam.Param
+                                        "__sret"
+                                        (ast.AstType.U64)
+                                        1)
+                                      source)
+                                    source)]
+                                (ir.compiler-ir-param-cons
+                                  (ir.CompilerIrParam.Param
+                                    "__tl_env"
+                                    (ast.AstType.U64)
+                                    0)
+                                  with-sret)))]
                           [all-params : ir.CompilerIrParamList
                             (if nominal-sret?
                               (lower-param-list-append-sret
@@ -28854,6 +28891,35 @@
     [(ast.AstType.Array _ _) true]
     [_ false]))
 
+;; Call sites pass a type list resolved by the type checker already. Keep this
+;; root-only check free of another per-element type resolution on the scalar
+;; fast path; regions are transparent for the ABI gate.
+(define (lower-internal-structural-resolved-type? [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region ty)
+    [(ast.AstType.Tuple _) true]
+    [(ast.AstType.Array _ _) true]
+    [_ false]))
+
+(define (lower-internal-structural-resolved-type-list?
+  [ctx : tc_core.TcContext]
+  [types : ast.AstTypeList]) : bool
+  (lower-internal-structural-resolved-type-list-at? ctx (& types) 0))
+
+(define (lower-internal-structural-resolved-type-list-at?
+  [ctx : tc_core.TcContext]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len types))
+    false
+    (let
+      [ty : ast.AstType
+        (tc_core.tc-context-type-get
+          ctx
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+      (or
+        (lower-internal-structural-resolved-type? ty)
+        (lower-internal-structural-resolved-type-list-at? ctx types (+ index 1))))))
+
 (define (lower-internal-structural-type-list?
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]) : bool
@@ -29944,7 +30010,9 @@
   [values : ir.CompilerIrValueList]
   [types : ast.AstTypeList]
   [origin : ast.AstExpr]) : ResultLowerArgs
-  (lower-internal-call-args-at ctx mode state values (& types) 0 origin))
+  (if (lower-internal-structural-resolved-type-list? ctx types)
+    (lower-internal-call-args-at ctx mode state values (& types) 0 origin)
+    (ResultLowerArgs.Ok state values)))
 
 (define (lower-internal-materialize-result-two
   [call-value : ir.CompilerIrValue]
@@ -59325,6 +59393,26 @@
 (define (lower-param-count [params : ast.AstParamList]) : i64
   (ast.ast-param-list-len (& params)))
 
+(define (lower-internal-param-list-contains-structural?
+  [ctx : tc_core.TcContext]
+  [params : ast.AstParamList]) : bool
+  (lower-internal-param-list-contains-structural-at? ctx (& params) 0))
+
+(define (lower-internal-param-list-contains-structural-at?
+  [ctx : tc_core.TcContext]
+  [params : (& params ast.AstParamList)]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-param-list-len params))
+    false
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param _ ty _ _)
+        (or
+          (lower-internal-structural-type? ctx ty)
+          (lower-internal-param-list-contains-structural-at?
+            ctx
+            params
+            (+ index 1)))])))
+
 (define (lower-bind-params
   [params : ast.AstParamList]
   [idx : i64]
@@ -59715,6 +59803,8 @@
         (if structural-sret?
           1
           0)]
+      [structural-params? : bool
+        (lower-internal-param-list-contains-structural? ctx params)]
       [sret-var : i64
         (if structural-sret?
           0
@@ -59773,15 +59863,20 @@
                     (lower-sret-param-marker-id)
                     sret-var)
                   (sym_i64_env.sym-i64-empty))]
-              (match (lower-bind-internal-params
-                ctx
-                mode
-                params
-                source-start
-                state
-                initial-env
-                type-env
-                body)
+              (match (if structural-params?
+                (lower-bind-internal-params
+                  ctx
+                  mode
+                  params
+                  source-start
+                  state
+                  initial-env
+                  type-env
+                  body)
+                (ResultLowerEnv.Ok
+                  state
+                  (lower-bind-params params source-start initial-env)
+                  type-env))
                 [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
                   (match (lower-tail-expr
                     ctx
@@ -59794,12 +59889,24 @@
                     [(ResultLowerState.Ok final-state)
                       (let
                         [source-params : ir.CompilerIrParamList
-                          (lower-internal-param-list
-                            ctx
-                            mode
-                            params
-                            source-start
-                            structural-sret?)]
+                          (if structural-params?
+                            (lower-internal-param-list
+                              ctx
+                              mode
+                              params
+                              source-start
+                              structural-sret?)
+                            (let
+                              [source : ir.CompilerIrParamList
+                                (lower-param-list ctx params source-start)]
+                              (if structural-sret?
+                                (ir.compiler-ir-param-cons
+                                  (ir.CompilerIrParam.Param
+                                    "__sret"
+                                    (ast.AstType.U64)
+                                    (- source-start 1))
+                                  source)
+                                source)))]
                         [all-params : ir.CompilerIrParamList
                           (if nominal-sret?
                             (lower-param-list-append-sret

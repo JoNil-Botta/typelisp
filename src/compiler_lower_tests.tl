@@ -348,9 +348,19 @@
   "(define (main) : i64
   (let
     [base : i64 10]
-    (tuple-ref
+     (tuple-ref
       ((lambda ([value : i64]) : (Tuple i64 i64)
          (tuple base value))
+       32)
+       1)))")
+
+(define (compiler-lower-capturing-lambda-structural-sret-source) : String
+  "(define (main) : i64
+  (let
+    [base : i64 10]
+    (tuple-ref
+      ((lambda ([value : i64]) : (Tuple i64 i64 i64)
+         (tuple base value 0))
        32)
       1)))")
 
@@ -4639,6 +4649,39 @@
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
         name)]))
 
+(define (lower-test-param-name-at
+  [params : compiler_ir_types.CompilerIrParamList]
+  [index : i64]) : String
+  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
+    [(compiler_ir_types.CompilerIrParamList.Nil) ""]
+    [(compiler_ir_types.CompilerIrParamList.Array seq)
+      (lower-test-param-name-at
+        (compiler_ir_types.compiler-ir-param-seq-to-list seq)
+        index)]
+    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
+      (if (= index 0)
+        (match param
+          [(compiler_ir_types.CompilerIrParam.Param name _ _) name])
+        (lower-test-param-name-at (box-get rest) (- index 1)))]))
+
+(define (lower-test-function-param-name
+  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [name : String]
+  [index : i64]) : String
+  (match funcs
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) ""]
+    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function fname params _ _ _)
+          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
+            (lower-test-param-name-at params index)
+            (lower-test-function-param-name (box-get rest) name index))])]
+    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
+      (lower-test-function-param-name
+        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
+        name
+        index)]))
+
 (define (lower-test-function-phi-count
   [funcs : compiler_ir_types.CompilerIrFunctionList]
   [name : String]) : i64
@@ -8096,6 +8139,22 @@
               1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-capturing-lambda-structural-sret-params-ok?) : bool
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-capturing-lambda-structural-sret-source))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (= (compiler_ir_types.compiler-ir-function-list-count functions) 2)
+            (string.eq
+              (lower-test-function-param-name functions "__tl_lambda_main_0" 0)
+              "__tl_env")
+            (string.eq
+              (lower-test-function-param-name functions "__tl_lambda_main_0" 1)
+              "__sret"))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-capturing-lambda-shadow-shape-ok?) : bool
   (match (compiler_lower.lower-compiler-source
     (compiler-lower-capturing-lambda-shadow-source))
@@ -8168,6 +8227,7 @@
     (compiler-lower-capturing-lambda-fat-handle-shape-ok?)
     (compiler-lower-capturing-lambda-aggregate-shape-ok?)
     (compiler-lower-capturing-lambda-structural-return-shape-ok?)
+    (compiler-lower-capturing-lambda-structural-sret-params-ok?)
     (compiler-lower-capturing-lambda-shadow-shape-ok?)
     (compiler-lower-capturing-lambda-reference-shape-ok?)
     (compiler-lower-capturing-lambda-reference-immediate-shape-ok?)))
@@ -13794,6 +13854,12 @@
     "capturing lambda structural return transport"))
 
 (test
+  compiler-lower-capturing-lambda-structural-sret-params
+  (test.assert-true
+    (compiler-lower-capturing-lambda-structural-sret-params-ok?)
+    "capturing lambda keeps env before structural sret"))
+
+(test
   compiler-lower-defdispatch-structural-shape
   (test.assert-true
     (compiler-lower-defdispatch-structural-shape-ok?)
@@ -13849,6 +13915,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-capturing-lambda-structural-return-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-capturing-lambda-structural-sret-params-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-defdispatch-structural-shape-ok?)

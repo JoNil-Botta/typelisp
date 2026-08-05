@@ -13981,6 +13981,7 @@
         (string.eq name "tl_memcpy")
         (string.eq name "tl_memchr")
         (string.eq name "tl_array_zero")
+        (string.eq name "tl_mem_fill8")
         (string.eq name "tl_tlci_call_image_entry")
         (string.eq name "tl_tlci_call_macro_entry")))))
 
@@ -32502,6 +32503,14 @@
         (compiler_ast_types.ast-type-cons
           (compiler_ast_types.AstType.I64)
           (compiler_ast_types.ast-type-list-new)))]
+    [(cbi.compiler-builtin-backend-tl-mem-fill8-id? name-id)
+      (compiler_ast_types.ast-type-cons
+        (compiler_ast_types.ast-ty-mut-ptr (compiler_ast_types.AstType.U8))
+        (compiler_ast_types.ast-type-cons
+          (compiler_ast_types.AstType.I64)
+          (compiler_ast_types.ast-type-cons
+            (compiler_ast_types.AstType.U64)
+            (compiler_ast_types.ast-type-list-new))))]
     [else (compiler_ast_types.ast-type-list-new)]))
 
 (define (compiler-backend-varargs-linux-vector-count
@@ -36129,6 +36138,38 @@
 (define compiler-backend-phi-xmm-cycle-fallback-count : i64
   0)
 
+;; P22-B: interval point of the phi edge TARGET block's entry -- twice its
+;; structural instruction prefix, the SAME coordinate `emit-instr-post-base`
+;; accumulates over the emitted block list, so it is directly comparable with
+;; the scavenge's `2 * (post-base - current-count)`. The phi-edge block scans
+;; already walk that list to find the target block, so the prefix is accumulated
+;; on the way at no extra cost. -1 means "not an edge emission / target not
+;; found" and keeps the conservative bracket.
+(define compiler-backend-current-phi-target-point : i64
+  -1)
+
+;; True iff the phi edge currently being emitted runs FORWARD in emission order:
+;; the target block starts at or after the end of the block being emitted.
+;; `post-base` is the cumulative instruction count THROUGH the current block, so
+;; `2 * post-base` is the point just past its last instruction; a target prefix
+;; at or beyond that is a strictly later block, and anything below it is the
+;; current block itself or an earlier one (a back edge).
+;;
+;; This is the un-bracket test the staging path needs. On a forward edge every
+;; var live at the target's entry was defined before this edge and is next used
+;; at or after the target, so its interval [def, use] spans the emission point
+;; and the occupancy query the scavenge already runs reports its home OCCUPIED --
+;; the staging register it hands back cannot be one of them. Only a back edge
+;; can present a value that reads free here (a loop carry whose next use is the
+;; next iteration, i.e. at a LOWER point) and still has to survive the jump, so
+;; back edges keep the pushq/popq bracket.
+(define (compiler-backend-phi-edge-forward?) : bool
+  (and
+    (>= compiler-backend-current-phi-target-point 0)
+    (>=
+      compiler-backend-current-phi-target-point
+      (* 2 compiler-backend-emit-instr-post-base))))
+
 (cfg
   scratch-vreg
   (define (compiler-backend-phi-planned-avoiding-value-home
@@ -36861,8 +36902,15 @@
     ;; dominates the edge and its use is ahead), so the occupancy query the
     ;; scavenge already runs is sufficient there; only a loop carry whose next use
     ;; is in the next iteration reads free here while having to survive the jump.
-    ;; Distinguishing the two needs the target label's point, which this emitter
-    ;; is not yet given.
+    ;;
+    ;; P22-B implements exactly that: the phi-edge block scans now record the
+    ;; TARGET label's point, and `phi-edge-forward?` compares it with the current
+    ;; block's end. A forward edge drops the bracket; a back edge (and any edge
+    ;; whose target point is unknown) keeps it.
+    [bracket? : bool
+      (and
+        (string.eq compiler-backend-current-phi-planned-stage "")
+        (not (compiler-backend-phi-edge-forward?)))]
     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
       type-segment-bases
       assignments
@@ -36882,7 +36930,7 @@
                   reg
                   ty
                   backend-state))
-              (if (string.eq compiler-backend-current-phi-planned-stage "")
+              (if bracket?
                 (str_cat.str-cat
                   "    pushq "
                   reg
@@ -37454,6 +37502,47 @@
       (ResultCompilerBackend.Err
         (box (compiler_diagnostic.compiler-diagnostic-at-start "" message)))]))
 
+;; P22-B: emission-order point of block `target-label`'s entry -- twice the IR
+;; instruction count of every block emitted BEFORE it, which is exactly the
+;; value `emit-instr-post-base` holds minus the target block's own length when
+;; that block starts emitting. -1 when the label is not in the list, which the
+;; forward test reads as "unknown" and keeps the bracket. Same list and same
+;; order the emitter walks, so the two coordinates are directly comparable.
+(define (compiler-backend-phi-target-point-scan
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [target-label : i64]
+  [prefix : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) -1]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
+          (if (= block-label target-label)
+            (* 2 prefix)
+            (compiler-backend-phi-target-point-scan
+              (box-get rest)
+              target-label
+              (+ prefix (struct-get instrs len))))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (compiler-backend-phi-target-point-scan-seq seq 0 target-label prefix)]))
+
+(define (compiler-backend-phi-target-point-scan-seq
+  [blocks : compiler_ir_types.CompilerIrBlockSeq]
+  [index : i64]
+  [target-label : i64]
+  [prefix : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
+    -1
+    (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+      [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
+        (if (= block-label target-label)
+          (* 2 prefix)
+          (compiler-backend-phi-target-point-scan-seq
+            blocks
+            (+ index 1)
+            target-label
+            (+ prefix (struct-get instrs len))))])))
+
 (define (compiler-backend-emit-phi-edge-copies
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
@@ -37469,6 +37558,9 @@
     (set! compiler-backend-current-phi-planned-cycle planned-cycle)
     (set! compiler-backend-current-phi-planned-stage planned-stage)
     (set! compiler-backend-current-phi-planned-xmm-cycle planned-xmm-cycle)
+    (set!
+      compiler-backend-current-phi-target-point
+      (compiler-backend-phi-target-point-scan blocks target-label 0))
     (compiler-backend-emit-phi-edge-copies-scan
       type-segment-bases
       assignments
@@ -37597,6 +37689,9 @@
           moved-src
           planned-stage)
         planned-stage))
+    (set!
+      compiler-backend-current-phi-target-point
+      (compiler-backend-phi-target-point-scan blocks target-label 0))
     (compiler-backend-emit-mov-phi-copy-edge-scan
       type-segment-bases
       assignments
@@ -67756,6 +67851,45 @@
           (set! i (+ i 1))))
       found)))
 
+;; P22-A2: true iff the operand range [start,end) READS the tracked GP register
+;; whose dense owner index is `reg`. Every register mention in an AT&T operand
+;; starts with '%', so scan '%'-prefixed tokens and classify each through the
+;; same table the owner map uses; sub-register spellings (%r9d/%r9w/%r9b/%eax)
+;; map to their 64-bit parent, so a partial read still counts. Memory operands
+;; (`8(%rax,%r9,4)`) are covered because their base/index tokens are '%'-
+;; prefixed too, and untracked tokens (%rbp/%rsp/%xmmN/%rip) classify to -1 and
+;; never match a tracked `reg` >= 0.
+(define (compiler-backend-peephole-range-mentions-reg-index?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]
+  [reg : i64]) : bool
+  (if (< reg 0)
+    false
+    (let
+      [i : i64 start]
+      [found : bool false]
+      (begin
+        (while (and (not found) (< i end))
+          (if (= (compiler-backend-peephole-byte-at data i) 37)
+            (let
+              [j : i64 (+ i 1)]
+              (begin
+                (while (and
+                  (< j end)
+                  (let
+                    [b : i64 (compiler-backend-peephole-byte-at data j)]
+                    (or (and (>= b 97) (<= b 122)) (and (>= b 48) (<= b 57)))))
+                  (set! j (+ j 1)))
+                (if (=
+                  (compiler-backend-peephole-token-reg-index-range data i j)
+                  reg)
+                  (set! found true)
+                  unit)
+                (set! i j)))
+            (set! i (+ i 1))))
+        found))))
+
 ;; ---- transient line descriptor packing -------------------------------------
 ;; Low/high halves of the `span` and `mnemonic` words.
 (define compiler-backend-peephole-desc-pack-shift : i64
@@ -69341,6 +69475,30 @@
                           (+ nend 1)
                           nend)))))
                 4]
+              ;; P22-A2: dead definition. `movq SRC, %rX` immediately followed
+              ;; by `movq SRC2, %rX` that does not read %rX rewrites the whole
+              ;; 64-bit register before anything can observe the first value, so
+              ;; the first line is dead and is dropped (action 1). Nothing may
+              ;; sit between the two lines -- the pair rules only see textually
+              ;; adjacent lines -- and `movq` touches no flags, so the drop has
+              ;; no other effect. `desc-op-dst-reg` is the dense OWNER index, so
+              ;; %rbp/%rsp/%xmm destinations classify to -1 and are excluded, and
+              ;; the mention scan maps sub-register reads to their 64-bit parent.
+              ;; The dropped line's owner transfer is skipped with it, which is
+              ;; exactly right: it would have set owners[%rX] and the surviving
+              ;; line overwrites that same entry.
+              [(and
+                  (>= (compiler-backend-peephole-desc-op-dst-reg pending) 0)
+                  (=
+                    (compiler-backend-peephole-desc-op-dst-reg next)
+                    (compiler-backend-peephole-desc-op-dst-reg pending))
+                  (not
+                    (compiler-backend-peephole-range-mentions-reg-index?
+                      nd
+                      nss
+                      nse
+                      (compiler-backend-peephole-desc-op-dst-reg pending))))
+                1]
               [else 0]))
           0))
       0)))
@@ -69395,6 +69553,26 @@
           (compiler-backend-peephole-owner-key-eq?
             (compiler-backend-peephole-owners-get-index owners dst-reg)
             src-key))]
+      ;; P22-A1: dead spill store. `movq %rX, SLOT` where the owner map already
+      ;; records %rX as mirroring SLOT writes back the value SLOT already holds,
+      ;; so the store is a no-op. The invariant is exactly the one the reload
+      ;; elision above relies on: an owner entry survives only while neither the
+      ;; register nor the location has been written since the mirror was
+      ;; established (a location write runs `owners-clear-slot`, a register write
+      ;; clears that register, a call keeps only stack owners in callee-saved
+      ;; registers), so `owners[%rX] == SLOT` means memory at SLOT equals %rX.
+      ;; Restricted to packed stack keys, matching the store arm of the owner
+      ;; transfer: a global (SYM(%rip)) destination clears the whole map there
+      ;; and is deliberately not elided here either. This is what removes the
+      ;; emergency-scavenge `restore ... resave` pairs, which are separated by
+      ;; carry-safe block labels and so are invisible to the adjacent pair rules.
+      [src-mirrors-dst : bool
+        (and
+          (>= src-reg 0)
+          (compiler-backend-peephole-owner-key-stack? dst-key)
+          (compiler-backend-peephole-owner-key-eq?
+            (compiler-backend-peephole-owners-get-index owners src-reg)
+            dst-key))]
       [ry : String
         (if (and is-slot (not dst-owns) (>= dst-reg 0))
           (compiler-backend-peephole-owners-find-reg-for-slot-index
@@ -69405,6 +69583,7 @@
       [_pushed : unit
         (cond
           [dst-owns unit]
+          [src-mirrors-dst unit]
           [(not (string.eq ry ""))
             (compiler-backend-peephole-records-push!
               (compiler-backend-peephole-owned-line

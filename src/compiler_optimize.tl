@@ -18696,7 +18696,21 @@
       (or (opt-licm-store-summary-clean? legacy-summary) legacy-special-safe?)]
     [_
       (and
-        (not any-call?)
+        ;; A call in the body used to close this path outright. That is what a
+        ;; call whose effects are unknown demands, but a DIRECT call already
+        ;; proven memory-clean contributes `opt-licm-store-summary-empty` (see
+        ;; opt-licm-store-summary-for-direct-call), so it can write neither the
+        ;; loaded root nor any other object: nothing it does can invalidate a
+        ;; load the summaries already certify. Recognizing that is the same
+        ;; refinement the Gep arm of opt-licm-candidate? already applies, moved
+        ;; here so the Load arm shares it. `any-call?` still closes the path for
+        ;; indirect, C-ABI and SPMD calls, which set call-or-unknown? in both
+        ;; summaries and therefore fail this disjunct.
+        (or
+          (not any-call?)
+          (and
+            (not (struct-get root-summary call-or-unknown?))
+            (not (struct-get legacy-summary call-or-unknown?))))
         (or
           ;; Root identity is a coarse object-level fact. Preserve the older,
           ;; more precise descriptor-header proof when stores touch only data
@@ -22662,8 +22676,10 @@
 ;;
 ;; Placed between `induction` and `bce_version`. Conversion only shrinks what
 ;; the versioner has to fit: the clearing arm leaves the loop, so a converted
-;; body loses a block (seven labels to six on `it-slice-eq?`, against an
-;; `opt-bce-mb-block-max` of eight), and the top-tested shape the versioner
+;; body loses a block and everything in it (seven labels to six on
+;; `it-slice-eq?`, and the dropped instructions come straight off the
+;; versioner's `opt-bce-mb-instr-max` growth budget), and the top-tested
+;; shape the versioner
 ;; matches survives untouched -- the header still ends `Branch c, body, exit`
 ;; with the body target inside the loop. In practice a lowered `while` spends
 ;; pipeline iteration 1 with its flag still live at a non-phi reader (C4), so
@@ -25641,6 +25657,15 @@
   (No)
   (Some ir.CompilerIrInstrSeq i64 ir.CompilerIrInstr bool))
 
+;; Where the branch that consumes a merge phi actually lives: the block holding
+;; it, the variable it tests, and its two successors. The block is the phi's own
+;; block in the shape the fuser was written for, and some later block reached
+;; through pure fallthrough in the shape `opt-bool-branch-resolve-branch-site`
+;; recovers.
+(defenum OptBoolBranchBranchSite
+  (No)
+  (Some i64 i64 i64 i64))
+
 (define (opt-bool-branch-compare-op? [op : ir.CompilerIrBinOp]) : bool
   (ir.compiler-ir-binop-compare? op))
 
@@ -26640,12 +26665,17 @@
             (opt-label-tail preds)
             target-label)))]))
 
+;; `merge-label` is the block holding the phi, whose predecessors are the edges
+;; being retargeted; `branch-label` is the block holding the branch, whose label
+;; is the one the successors' phis record for this edge. They are the same block
+;; unless the site was reached through a fallthrough chain.
 (define (opt-bool-branch-fuse-constant-phi!
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (__tl_dyn-array i64)]
   [merge-label : i64]
+  [branch-label : i64]
   [dst : i64]
   [inputs : ir.CompilerIrPhiInputList]
   [ty : ast.AstType]
@@ -26686,20 +26716,20 @@
                 (opt-bool-branch-target-phis-repairable?
                   blocks
                   true-label
-                  merge-label
+                  branch-label
                   all-preds))
               (or
                 (not
                   (opt-bool-branch-target-phis-repairable?
                     blocks
                     true-label
-                    merge-label
+                    branch-label
                     true-preds))
                 (not
                   (opt-bool-branch-target-phis-repairable?
                     blocks
                     false-label
-                    merge-label
+                    branch-label
                     false-preds)))))
             false
             (begin
@@ -26715,18 +26745,18 @@
                 (opt-bool-branch-repair-target-phis!
                   blocks
                   true-label
-                  merge-label
+                  branch-label
                   all-preds)
                 (begin
                   (opt-bool-branch-repair-target-phis!
                     blocks
                     true-label
-                    merge-label
+                    branch-label
                     true-preds)
                   (opt-bool-branch-repair-target-phis!
                     blocks
                     false-label
-                    merge-label
+                    branch-label
                     false-preds)))
               true)))])))
 
@@ -26878,6 +26908,7 @@
   [index : OptCfgIndex]
   [uses : (__tl_dyn-array i64)]
   [merge-label : i64]
+  [branch-label : i64]
   [dst : i64]
   [inputs : ir.CompilerIrPhiInputList]
   [ty : ast.AstType]
@@ -26890,6 +26921,7 @@
     index
     uses
     merge-label
+    branch-label
     dst
     inputs
     ty
@@ -26910,6 +26942,82 @@
       true-label
       false-label)))
 
+;; A merge phi and the branch that consumes it do not have to share a block. The
+;; front end routinely emits the boolean merge and the `if` it feeds as two
+;; blocks -- the phi block falls through into a merge block that holds nothing
+;; but the branch -- and longer runs of fallthrough appear where nested merges
+;; land on the same join. In the emitted assembly that reads as two labels in a
+;; row followed by `test %r,%r; jcc`, with the phi's constants materialized by
+;; the predecessors: exactly the sequence this pass exists to delete, rejected
+;; only because the branch sat one block further on.
+;;
+;; Those sites are the same rewrite. What the fuser needs is the branch's
+;; condition and successors, and that the whole run from the phi block to the
+;; branch block dies when the phi block's predecessors are retargeted. The walk
+;; below only continues through a block that is a pure fallthrough owned by the
+;; run: exactly one instruction, an unconditional jump, and exactly one
+;; predecessor, which can only be the block that got us here. A block reached
+;; from anywhere else, a block carrying real instructions, and the function
+;; entry (reachable with no edge at all) each stop the walk, because each would
+;; leave a reader of the phi's result alive after the phi block is gone.
+;;
+;; This widens the match only. No block on the chain is collapsed, merged, or
+;; removed here -- the run is left for the normal unreachable-block cleanup --
+;; so the fallthrough block structure that later passes and the backend depend
+;; on is not disturbed.
+(define (opt-bool-branch-resolve-branch-site
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [merge-label : i64]
+  [label : i64]
+  [fuel : i64]) : OptBoolBranchBranchSite
+  (if (or
+    (<= fuel 0)
+    (= label merge-label)
+    (= label (opt-cfg-entry-label blocks))
+    (not (= (opt-label-count (opt-cfg-index-predecessors index label)) 1)))
+    (OptBoolBranchBranchSite.No)
+    (match (opt-cfg-find-block blocks label)
+      [(OptMaybeBlock.No) (OptBoolBranchBranchSite.No)]
+      [(OptMaybeBlock.Some block)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (if (not (= (ir.compiler-ir-instr-seq-count instrs) 1))
+              (OptBoolBranchBranchSite.No)
+              (match (ir.compiler-ir-instr-seq-ref instrs 0)
+                [(ir.CompilerIrInstr.Branch
+                    (ir.CompilerIrValue.Var cond-var)
+                    true-label
+                    false-label)
+                  (OptBoolBranchBranchSite.Some
+                    label
+                    cond-var
+                    true-label
+                    false-label)]
+                [(ir.CompilerIrInstr.Jump next)
+                  (opt-bool-branch-resolve-branch-site
+                    blocks
+                    index
+                    merge-label
+                    next
+                    (- fuel 1))]
+                [_ (OptBoolBranchBranchSite.No)]))])])))
+
+(define (opt-bool-branch-branch-site
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [merge-label : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : OptBoolBranchBranchSite
+  (match (ir.compiler-ir-instr-seq-ref instrs 1)
+    [(ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var cond-var)
+        true-label
+        false-label)
+      (OptBoolBranchBranchSite.Some merge-label cond-var true-label false-label)]
+    [(ir.CompilerIrInstr.Jump next)
+      (opt-bool-branch-resolve-branch-site blocks index merge-label next 8)]
+    [_ (OptBoolBranchBranchSite.No)]))
+
 (define (opt-bool-branch-fuse-block!
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -26922,9 +27030,11 @@
         false
         (match (ir.compiler-ir-instr-seq-ref instrs 0)
           [(ir.CompilerIrInstr.Phi dst inputs ty)
-            (match (ir.compiler-ir-instr-seq-ref instrs 1)
-              [(ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Var cond-var)
+            (match (opt-bool-branch-branch-site blocks index merge-label instrs)
+              [(OptBoolBranchBranchSite.No) false]
+              [(OptBoolBranchBranchSite.Some
+                  branch-label
+                  cond-var
                   true-label
                   false-label)
                 (opt-bool-branch-fuse-phi!
@@ -26933,13 +27043,13 @@
                   index
                   uses
                   merge-label
+                  branch-label
                   dst
                   inputs
                   ty
                   cond-var
                   true-label
-                  false-label)]
-              [_ false])]
+                  false-label)])]
           [_ false]))]))
 
 (define (opt-bool-branch-fuse-first-list!
@@ -27049,7 +27159,9 @@
     frame
     remaining))
 
-(define (opt-bool-branch-block-candidate?
+;; `[bool phi, branch on that phi]` -- the shape the fuser was originally
+;; written for, and the only one decidable from a single block.
+(define (opt-bool-branch-block-direct-candidate?
   [type-segment-bases : i64]
   [block : ir.CompilerIrBlock]) : bool
   (match block
@@ -27069,21 +27181,144 @@
                 [_ false]))]
           [_ false]))]))
 
-(define (opt-bool-branch-blocks-have-candidate?
+;; `[bool phi, jump L]` -- a fallthrough chain can start here, and L is the one
+;; block worth looking at for it. `label-none` when the block is not that shape.
+(define (opt-bool-branch-block-chain-start
   [type-segment-bases : i64]
-  [blocks : ir.CompilerIrBlockList]) : bool
+  [block : ir.CompilerIrBlock]) : i64
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (if (not (= (ir.compiler-ir-instr-seq-count instrs) 2))
+        (ir.compiler-ir-label-none)
+        (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          [(ir.CompilerIrInstr.Phi _ _ ty)
+            (if (not (opt-type-eq type-segment-bases ty (ast.AstType.Bool)))
+              (ir.compiler-ir-label-none)
+              (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                [(ir.CompilerIrInstr.Jump target) target]
+                [_ (ir.compiler-ir-label-none)]))]
+          [_ (ir.compiler-ir-label-none)]))]))
+
+(define (opt-bool-branch-gate-collect-start
+  [type-segment-bases : i64]
+  [starts : OptLabelSet]
+  [block : ir.CompilerIrBlock]) : OptLabelSet
+  (let
+    [start : i64 (opt-bool-branch-block-chain-start type-segment-bases block)]
+    (if (ir.compiler-ir-label-some? start)
+      (opt-label-add starts start)
+      starts)))
+
+;; Pass one's answer: either a block already carries phi and branch together, or
+;; these are the jump targets a chain could start from.
+(defenum OptBoolBranchGateScan
+  (Direct)
+  (Starts OptLabelSet))
+
+(define (opt-bool-branch-gate-scan
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [starts : OptLabelSet]) : OptBoolBranchGateScan
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (OptBoolBranchGateScan.Starts starts)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (opt-bool-branch-block-direct-candidate? type-segment-bases block)
+        (OptBoolBranchGateScan.Direct)
+        (opt-bool-branch-gate-scan
+          type-segment-bases
+          (box-get rest)
+          (opt-bool-branch-gate-collect-start type-segment-bases starts block)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [pos : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [found : OptLabelSet starts]
+        (begin
+          (while (< pos count)
+            (let
+              [block : ir.CompilerIrBlock
+                (ir.compiler-ir-block-seq-ref seq pos)]
+              (if (opt-bool-branch-block-direct-candidate?
+                type-segment-bases
+                block)
+                (return (OptBoolBranchGateScan.Direct))
+                (begin
+                  (set!
+                    found
+                    (opt-bool-branch-gate-collect-start
+                      type-segment-bases
+                      found
+                      block))
+                  (set! pos (+ pos 1))))))
+          (OptBoolBranchGateScan.Starts found)))]))
+
+;; A chain can only continue into a block that is nothing but an unconditional
+;; jump or nothing but a branch, so one of the collected starts has to name such
+;; a block. `starts` holds one or two labels in the functions that reach here at
+;; all, which is why it is walked linearly instead of indexed.
+(define (opt-bool-branch-gate-step-block?
+  [starts : OptLabelSet]
+  [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (and
+        (= (ir.compiler-ir-instr-seq-count instrs) 1)
+        (opt-label-contains starts label)
+        (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          [(ir.CompilerIrInstr.Jump _) true]
+          [(ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var _) _ _) true]
+          [_ false]))]))
+
+(define (opt-bool-branch-gate-starts-open?
+  [blocks : ir.CompilerIrBlockList]
+  [starts : OptLabelSet]) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Nil) false]
     [(ir.CompilerIrBlockList.Cons block rest)
-      (if (opt-bool-branch-block-candidate? type-segment-bases block)
+      (if (opt-bool-branch-gate-step-block? starts block)
         true
-        (opt-bool-branch-blocks-have-candidate?
-          type-segment-bases
-          (box-get rest)))]
+        (opt-bool-branch-gate-starts-open? (box-get rest) starts))]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-bool-branch-blocks-have-candidate?
-        type-segment-bases
-        (ir.compiler-ir-block-seq-to-list seq))]))
+      (let
+        [pos : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (begin
+          (while (< pos count)
+            (if (opt-bool-branch-gate-step-block?
+              starts
+              (ir.compiler-ir-block-seq-ref seq pos))
+              (return true)
+              (set! pos (+ pos 1))))
+          false))]))
+
+;; Cheap admission test for the whole pass, run over every block of every
+;; function. Resolving a fallthrough chain needs `opt-cfg-find-block`, and one
+;; linear block search per candidate would make the gate quadratic -- the exact
+;; cost the `and`-chain gate below was rewritten to remove. So the gate is two
+;; sequential passes over the same dense block array and no lookups at all:
+;;
+;;   1. A block that already carries the phi and the branch together answers yes
+;;      outright. Otherwise collect the jump targets of the `[bool phi, jump]`
+;;      blocks -- the only places a chain can begin. That set is empty in almost
+;;      every function, and the walk stops there without allocating.
+;;   2. A chain can only continue into a single-jump or single-branch block, so
+;;      answer yes only when a collected target names one.
+;;
+;; Everything past that first hop -- the predecessor counts, the branch's
+;; condition, the phi's inputs -- belongs to `opt-bool-branch-branch-site` and
+;; the fusers, which by then have the CFG index this gate deliberately does not
+;; build. Admitting a function the matcher then declines is only wasted work,
+;; never a wrong answer; rejecting one it would have fused would be a miss, so
+;; both passes stay strictly weaker than what the matcher checks.
+(define (opt-bool-branch-blocks-have-candidate?
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match (opt-bool-branch-gate-scan type-segment-bases blocks (OptLabelSet.Nil))
+    [(OptBoolBranchGateScan.Direct) true]
+    [(OptBoolBranchGateScan.Starts starts)
+      (and
+        (> (opt-label-count starts) 0)
+        (opt-bool-branch-gate-starts-open? blocks starts))]))
 
 (define (opt-bool-branch-function-with-context-result
   [type-segment-bases : i64]
@@ -30011,23 +30246,28 @@
         (opt-cfg-simplify-blocks-with-context-result
           (OptBlockCtxResult.Result blocks context true)))]))
 
-;; Pipeline entry point that skips the nested cfg-simplify: the pipeline's own
-;; cfg pass runs immediately after sccp and canonicalizes once (literal
-;; branches folded, unreachable blocks filtered, phis cleaned -- a second
-;; application is a no-op), so simplifying here duplicated that stage
-;; back-to-back. opt-sccp-blocks-with-context-result keeps the nested
-;; simplify for the sccp self-test, which pins it. The context stays valid
-;; for the rewrite output exactly when no branch condition folded to a
-;; literal (opt-sccp-blocks-change-successors?).
-;; Pipeline entry point that skips the nested cfg-simplify: the pipeline's own
-;; cfg pass runs immediately after sccp and canonicalizes once (literal
-;; branches folded, unreachable blocks filtered, phis cleaned -- a second
-;; application is a no-op), so simplifying here duplicated that stage
-;; back-to-back. opt-sccp-blocks-with-context-result keeps the nested
-;; simplify for the sccp self-test, which pins it. The context stays valid
-;; for the rewrite output exactly when no branch condition folded to a
+;; Pipeline entry point that skips the nested cfg-simplify when it can: the
+;; pipeline's own cfg pass canonicalizes further down (literal branches folded,
+;; unreachable blocks filtered, phis cleaned -- a second application is a
+;; no-op), so simplifying here duplicated that stage.
+;; opt-sccp-blocks-with-context-result keeps the nested simplify
+;; unconditionally for the sccp self-test, which pins it. The context stays
+;; valid for the rewrite output exactly when no branch condition folded to a
 ;; literal (opt-sccp-blocks-change-successors?). The lattice env is sized by
 ;; the function frame (dense var ids), skipping the max-var walks.
+;;
+;; When a branch condition *does* fold, the skip cannot be taken. Rewriting
+;; `branch <const>, a, b` to `jump a` deletes the edge to `b`, but the phis in
+;; `b` still carry an input recorded under this block's label, so the raw
+;; rewrite hands on a function that fails `optimizer verify: phi predecessor
+;; mismatch`. That was harmless while the cfg pass was the next thing to run,
+;; and is not any more: the bool-branch fuser and the jump threader both sit
+;; between sccp and cfg and both verify-gate their input, so one folded branch
+;; anywhere in a function silently switched both passes off for the whole
+;; function -- which is how the merge chains `(when (and a b c) ...)` lowers to
+;; kept their `mov $1; jmp; test; je` all the way to the assembler.
+;; Canonicalizing here costs one extra simplify on exactly the functions whose
+;; CFG changed, and hands every pass downstream IR that verifies.
 (define (opt-sccp-blocks-with-context-result-raw
   [type-segment-bases : i64]
   [context : OptCfgContext]
@@ -30042,10 +30282,17 @@
     frame)
     [(OptSccpState.State _ _ env _ _)
       (if (opt-sccp-env-any-const? env 0)
-        (OptBlockCtxResult.Result
-          (opt-sccp-rewrite-blocks env blocks)
-          context
-          (not (opt-sccp-blocks-change-successors? env blocks)))
+        (let
+          [successors-changed? : bool
+            (opt-sccp-blocks-change-successors? env blocks)]
+          [rewritten : ir.CompilerIrBlockList
+            (opt-sccp-rewrite-blocks env blocks)]
+          (OptBlockCtxResult.Result
+            (if successors-changed?
+              (opt-cfg-simplify-blocks rewritten)
+              rewritten)
+            context
+            (not successors-changed?)))
         ;; No constants: the rewrite is the identity and the context is
         ;; valid as-is (no branch condition can have folded to a literal).
         (OptBlockCtxResult.Result blocks context true))]))
@@ -40620,6 +40867,814 @@
           (array-ref cell 0)
           true))]))
 
+;; --- constant fill -> tl_mem_fill8 (fill_call) --------------------------------
+;;
+;; A counted loop whose whole body is `base[i] = K` for a literal K becomes one
+;; `tl_mem_fill8(&base[seed], bound - seed, K)` call. The runtime helper is a
+;; `rep stosq`, which the deterministic instruction-count gate charges ONE
+;; instruction per slot; the x16 unroller this pass pre-empts charges 19 per 16
+;; slots in its body PLUS an 11-instruction version guard PLUS 4 per slot in the
+;; sub-16 remainder, and the corpus's fills average ~20 slots, so the remainder
+;; and the guard -- not the steady state -- are what this recovers.
+;;
+;; WHY IT IS SOUND TO DROP THE BOUNDS CHECKS: this pass rewrites ONLY the
+;; `__bce_fast` clone the versioner produced, and only when the clone's single
+;; non-self predecessor is that loop's own `__bce_guard`. That guard is built by
+;; `opt-bce-version-guard-finish`, which for every counter-bearing loop emits
+;;   seed >= 0   AND   seed < bound   AND   the per-check bound conditions
+;; into the guard before branching to the fast clone -- see its comment: the
+;; do-while's FIRST body iteration runs before any compare, so without
+;; `seed < bound` "a loop entered with seed >= bound would run one unchecked
+;; fast iteration at an index the slow path would have aborted on". So on the
+;; only edge that reaches the clone: seed is non-negative, the trip count is
+;; exactly `bound - seed` (>= 1, counter step is 1), and every index in
+;; [seed, bound) was already proven in bounds -- which is precisely why the
+;; clone carries no BoundsCheck. The call therefore writes exactly the slots the
+;; loop wrote and, like the loop, cannot abort. The CHECKED original is left
+;; untouched, so a program that would abort mid-fill still takes that path and
+;; still aborts at the same element.
+;;
+;; The rewrite keeps the block: it drops the self-edge phi inputs, keeps the
+;; address Gep (whose index is now the phi's seed value), replaces the store
+;; with the call, redefines the counter's `next` as `bound` (its exit value),
+;; and ends with a Jump. Instructions that merely copy `next` or the loop
+;; compare therefore keep computing their exit values, which is why those are
+;; the only in-block definitions allowed to escape the block.
+(defstruct OptFillCallSite
+  (store-index i64)
+  (gep-index i64)
+  (base ir.CompilerIrValue)
+  (value i64)
+  (ty ast.AstType))
+
+(defenum OptFillCallMaybeSite
+  (No)
+  (Some OptFillCallSite))
+
+;; The loop facts this rewrite needs. Deliberately NOT `OptUnrollShape`: the
+;; unroller's recognizer describes the same family of counted self-loops but
+;; carries preconditions that exist for ITS rewrite and reject the shape the
+;; versioner actually emits.
+;;   * `opt-unroll-shape-scan` requires the compare's only in-block use to be
+;;     the terminator, because the unroller DROPS the compare from its clones.
+;;     A freshly versioned clone still carries the loop's bool phi, whose
+;;     back-edge input is that very compare, so the gate fires. This rewrite
+;;     KEEPS the compare -- redefining `inext` as `bound` leaves it computing
+;;     the loop's exit value -- so the gate does not apply here.
+;;   * `opt-unroll-pred-retargetable?` exists because the unroller splices a
+;;     guard block in front of the loop. This rewrite never retargets a
+;;     predecessor; it edits the block in place.
+;;   * the `__unroll_guard` / `__unroll_body` existence checks are the
+;;     unroller's own idempotence latch.
+;; Waiting for a later pipeline round to clean the copies away (which would let
+;; the unroller's recognizer accept) is not an option either: by then the
+;; unroller is racing this pass for the same block, and it runs in the same
+;; iteration immediately after.
+(defstruct OptFillCallShape
+  (pred-label i64)
+  (exit-label i64)
+  (phi-count i64)
+  (iphi i64)
+  (inext i64)
+  (cond-var i64)
+  (ity ast.AstType)
+  (bound ir.CompilerIrValue))
+
+(defenum OptFillCallMaybeShape
+  (No)
+  (Some OptFillCallShape))
+
+;; A rotated counted self-loop: `B: phis...; body...; branch c B EXIT`.
+(define (opt-fill-call-shape [entry-label : i64] [block : ir.CompilerIrBlock]) : OptFillCallMaybeShape
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        ;; counter phi + gep + store + add + compare + branch
+        (if (or (< count 6) (= label entry-label))
+          (OptFillCallMaybeShape.No)
+          (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+            [(ir.CompilerIrInstr.Branch cond then-label else-label)
+              (match cond
+                [(ir.CompilerIrValue.Var cond-var)
+                  (if (and
+                    (= then-label label)
+                    (not (= else-label label))
+                    (opt-fill-call-fast-clone-label? label))
+                    (opt-fill-call-shape-scan
+                      label
+                      instrs
+                      count
+                      cond-var
+                      else-label)
+                    (OptFillCallMaybeShape.No))]
+                [_ (OptFillCallMaybeShape.No)])]
+            [_ (OptFillCallMaybeShape.No)])))]))
+
+;; Only the versioner's fast clones are candidates, and testing that BEFORE the
+;; counter/bound analysis is what keeps this stage off every other rotated
+;; self-loop. It matters most at opt1, where the versioner does not run at all:
+;; without this gate the pass paid a defs scan and a map allocation per loop for
+;; a rewrite that can never fire (measured +0.021% on the opt1 self-compile).
+(define (opt-fill-call-fast-clone-label? [label : i64]) : bool
+  (let
+    [text : String (ir.compiler-ir-label-text label)]
+    [suffix : String "__bce_fast"]
+    [n : i64 (string.string-length (& text))]
+    [m : i64 (string.string-length (& suffix))]
+    (and (> n m) (string.eq (string.substring (& text) (- n m) m) suffix))))
+
+(define (opt-fill-call-shape-scan
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [count : i64]
+  [cond-var : i64]
+  [exit-label : i64]) : OptFillCallMaybeShape
+  (let
+    [last : i64 (- count 1)]
+    [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
+    ;; The body cap is a compile-time bound on the quadratic gep lookup, not a
+    ;; correctness condition; a versioned fill body is 4 to 8 instructions.
+    (if (or
+      (< phi-count 1)
+      (< (- last phi-count) 4)
+      (> (- last phi-count) 16)
+      (not (opt-unroll-no-phi-from? instrs phi-count)))
+      (OptFillCallMaybeShape.No)
+      (opt-fill-call-shape-cond label instrs phi-count last cond-var exit-label))))
+
+;; `c = <counter-ish> < <bound>` with a loop-invariant bound. The bound becomes
+;; the fill's end index, so a block-local bound would make the count wrong.
+(define (opt-fill-call-shape-cond
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [cond-var : i64]
+  [exit-label : i64]) : OptFillCallMaybeShape
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [cond-index : i64 (opt-unroll-def-index slots phi-count last cond-var)]
+    (if (< cond-index 0)
+      (OptFillCallMaybeShape.No)
+      (match (ir.compiler-ir-instr-seq-ref instrs cond-index)
+        [(ir.CompilerIrInstr.BinOp _ cmp-op cmp-lhs cmp-rhs _)
+          (match cmp-op
+            [(ir.CompilerIrBinOp.Lt)
+              (match cmp-lhs
+                ;; the compare's lhs is often a COPY of the counter's next
+                ;; value rather than the value itself.
+                [(ir.CompilerIrValue.Var cmp-src)
+                  (if (opt-unroll-invariant-bound?
+                    (opt-unroll-block-defs
+                      slots
+                      0
+                      (+ last 1)
+                      (opt_i64_i64_map.with-capacity 32))
+                    cmp-rhs)
+                    (opt-fill-call-shape-step
+                      label
+                      instrs
+                      phi-count
+                      last
+                      cond-var
+                      exit-label
+                      (opt-unroll-resolve-copy instrs phi-count last cmp-src 16)
+                      cmp-rhs)
+                    (OptFillCallMaybeShape.No))]
+                [_ (OptFillCallMaybeShape.No)])]
+            [_ (OptFillCallMaybeShape.No)])]
+        [_ (OptFillCallMaybeShape.No)]))))
+
+;; `inext = iphi + 1`. Step 1 is what makes the visited index set exactly
+;; [seed, bound) -- the contiguous run `rep stosq` writes.
+(define (opt-fill-call-shape-step
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [cond-var : i64]
+  [exit-label : i64]
+  [inext : i64]
+  [bound : ir.CompilerIrValue]) : OptFillCallMaybeShape
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
+    (if (< inext-index 0)
+      (OptFillCallMaybeShape.No)
+      (match (ir.compiler-ir-instr-seq-ref instrs inext-index)
+        [(ir.CompilerIrInstr.BinOp _ add-op add-lhs add-rhs ity)
+          (match add-op
+            [(ir.CompilerIrBinOp.Add)
+              (match add-lhs
+                [(ir.CompilerIrValue.Var add-src)
+                  (match add-rhs
+                    [(ir.CompilerIrValue.I64 step)
+                      (if (and (= step 1) (opt-integer-type? ity))
+                        (opt-fill-call-shape-phi
+                          label
+                          instrs
+                          phi-count
+                          last
+                          cond-var
+                          exit-label
+                          (opt-unroll-resolve-copy
+                            instrs
+                            phi-count
+                            last
+                            add-src
+                            16)
+                          inext
+                          ity
+                          bound)
+                        (OptFillCallMaybeShape.No))]
+                    [_ (OptFillCallMaybeShape.No)])]
+                [_ (OptFillCallMaybeShape.No)])]
+            [_ (OptFillCallMaybeShape.No)])]
+        [_ (OptFillCallMaybeShape.No)]))))
+
+;; The counter phi: exactly two inputs, the back edge carrying `inext` and the
+;; single other edge seeding LITERAL 0.
+;;
+;; Seed 0 is required rather than merely handled. It is what makes the count
+;; `bound - 0 = bound`, and a rotated `while (< i bound)` whose counter starts
+;; at 0 can only be entered when `0 < bound` held -- the rotation guard tests
+;; exactly that expression -- so the trip count is >= 1 independently of the
+;; version guard's own `seed < bound` condition. Both facts point the same way;
+;; requiring the literal keeps the second one available.
+(define (opt-fill-call-shape-phi
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [cond-var : i64]
+  [exit-label : i64]
+  [iphi : i64]
+  [inext : i64]
+  [ity : ast.AstType]
+  [bound : ir.CompilerIrValue]) : OptFillCallMaybeShape
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [iphi-index : i64 (opt-unroll-def-index slots 0 phi-count iphi)]
+    (if (< iphi-index 0)
+      (OptFillCallMaybeShape.No)
+      (match (ir.compiler-ir-instr-seq-ref instrs iphi-index)
+        [(ir.CompilerIrInstr.Phi _ inputs _)
+          (match (opt-unroll-split-phi-inputs inputs label)
+            [(OptUnrollPhiSplit.Split seed back pred-label)
+              (if (and
+                (not (= pred-label label))
+                (opt-fill-call-zero-seed? seed)
+                (opt-unroll-back-resolves-to? instrs phi-count last back inext)
+                (opt-fill-call-other-phis-ok?
+                  instrs
+                  0
+                  phi-count
+                  label
+                  pred-label
+                  iphi))
+                (OptFillCallMaybeShape.Some
+                  (OptFillCallShape
+                    pred-label
+                    exit-label
+                    phi-count
+                    iphi
+                    inext
+                    cond-var
+                    ity
+                    bound))
+                (OptFillCallMaybeShape.No))]
+            [(OptUnrollPhiSplit.No) (OptFillCallMaybeShape.No)])]
+        [_ (OptFillCallMaybeShape.No)]))))
+
+(define (opt-fill-call-zero-seed? [seed : ir.CompilerIrValue]) : bool
+  (match seed
+    [(ir.CompilerIrValue.I64 k) (= k 0)]
+    [_ false]))
+
+;; Every other phi -- the versioner leaves a bool phi carrying the loop compare
+;; behind -- must split over the SAME two edges. A phi naming a third
+;; predecessor would mean the block has an entry that does not come through the
+;; version guard, and the seed/bound facts would not hold on it.
+(define (opt-fill-call-other-phis-ok?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [label : i64]
+  [pred-label : i64]
+  [iphi : i64]) : bool
+  (if (>= index phi-count)
+    true
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Phi dst inputs _)
+        (if (= dst iphi)
+          (opt-fill-call-other-phis-ok?
+            instrs
+            (+ index 1)
+            phi-count
+            label
+            pred-label
+            iphi)
+          (match (opt-unroll-split-phi-inputs inputs label)
+            [(OptUnrollPhiSplit.Split _ _ split-pred)
+              (and
+                (= split-pred pred-label)
+                (opt-fill-call-other-phis-ok?
+                  instrs
+                  (+ index 1)
+                  phi-count
+                  label
+                  pred-label
+                  iphi))]
+            [(OptUnrollPhiSplit.No) false]))]
+      [_ false])))
+
+;; `rep stosq` writes 8-byte slots, so only pointer-width integer element types
+;; qualify. Narrower fills would need a different helper and wider ones do not
+;; exist; f64 is excluded because its literal would not be an integer operand.
+(define (opt-fill-call-slot-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [_ false]))
+
+(define (opt-fill-call-versioned-prefix [loop-label : i64]) : String
+  (let
+    [text : String (ir.compiler-ir-label-text loop-label)]
+    [suffix : String "__bce_fast"]
+    [n : i64 (string.string-length (& text))]
+    [m : i64 (string.string-length (& suffix))]
+    (if (or
+      (<= n m)
+      (not (string.eq (string.substring (& text) (- n m) m) suffix)))
+      ""
+      (string.substring (& text) 0 (- n m)))))
+
+;; The clone's entry facts come from `<prefix>__bce_guard`, but that guard is not
+;; always the IMMEDIATE predecessor: the versioner emits its `and` chain as
+;; `<prefix>__bce_guard__bool_and.N` once a later pipeline round splits it, and
+;; the unroller inserts `<prefix>__bce_fast__preheader`. Every one of those is a
+;; versioner-generated forwarding block in the SAME `<prefix>__bce_` namespace
+;; and none of them redefines the counter or the bound, so requiring the
+;; predecessor to live in that namespace -- and the guard block itself to exist
+;; -- still pins the clone to exactly one entry, the guard's true edge. A change
+;; to the versioner's naming makes this stop matching, which is the safe
+;; direction.
+(define (opt-fill-call-pred-in-version-namespace?
+  [blocks : ir.CompilerIrBlockList]
+  [prefix : String]
+  [pred-label : i64]) : bool
+  (let
+    [pred : String (ir.compiler-ir-label-text pred-label)]
+    [want : String (string.append prefix "__bce_")]
+    [n : i64 (string.string-length (& pred))]
+    [m : i64 (string.string-length (& want))]
+    (and
+      (> (string.string-length (& prefix)) 0)
+      (>= n m)
+      (string.eq (string.substring (& pred) 0 m) want)
+      (opt-cfg-block-exists?
+        blocks
+        (ir.compiler-ir-label (string.append prefix "__bce_guard"))))))
+
+;; The body must be exactly: one `store_ptr <gep(base, iphi)>, K`, plus copies
+;; and the counter arithmetic. Any Load, BoundsCheck, second store, call or
+;; other instruction rejects -- the first two because they would mean the clone
+;; is not the check-free fill this pass reasons about.
+(define (opt-fill-call-scan-body
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [iphi : i64]
+  [found : OptFillCallMaybeSite]) : OptFillCallMaybeSite
+  (if (>= index last)
+    found
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.StorePtr ptr value ty)
+        (match found
+          [(OptFillCallMaybeSite.Some _) (OptFillCallMaybeSite.No)]
+          [(OptFillCallMaybeSite.No)
+            (match ptr
+              [(ir.CompilerIrValue.Var ptr-var)
+                (match value
+                  [(ir.CompilerIrValue.I64 k)
+                    (if (not (opt-fill-call-slot-type? ty))
+                      (OptFillCallMaybeSite.No)
+                      (match (opt-fill-call-gep-of instrs 0 last ptr-var iphi)
+                        [(OptFillCallMaybeSite.No) (OptFillCallMaybeSite.No)]
+                        [(OptFillCallMaybeSite.Some site)
+                          (opt-fill-call-scan-body
+                            instrs
+                            (+ index 1)
+                            last
+                            iphi
+                            (OptFillCallMaybeSite.Some
+                              (OptFillCallSite
+                                index
+                                (struct-get site gep-index)
+                                (struct-get site base)
+                                k
+                                ty)))]))]
+                  [_ (OptFillCallMaybeSite.No)])]
+              [_ (OptFillCallMaybeSite.No)])])]
+      [(ir.CompilerIrInstr.Mov _ _ _)
+        (opt-fill-call-scan-body instrs (+ index 1) last iphi found)]
+      [(ir.CompilerIrInstr.Gep _ _ _ _)
+        (opt-fill-call-scan-body instrs (+ index 1) last iphi found)]
+      [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+        (if (opt-fill-call-binop-ok? op)
+          (opt-fill-call-scan-body instrs (+ index 1) last iphi found)
+          (OptFillCallMaybeSite.No))]
+      [_ (OptFillCallMaybeSite.No)])))
+
+;; The body runs ONCE after the rewrite instead of once per slot, so an
+;; operation that can fault must not appear in it: a division whose divisor
+;; only reaches zero on a later index would fault in the loop and not in the
+;; call. Every other BinOp is total.
+(define (opt-fill-call-binop-ok? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Div) false]
+    [(ir.CompilerIrBinOp.Mod) false]
+    [(ir.CompilerIrBinOp.SafeDiv) false]
+    [(ir.CompilerIrBinOp.SafeMod) false]
+    [_ true]))
+
+;; Locate `ptr-var`'s defining `gep base, iphi` and check the base is
+;; loop-invariant (defined outside the block).
+(define (opt-fill-call-gep-of
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [ptr-var : i64]
+  [iphi : i64]) : OptFillCallMaybeSite
+  (if (>= index last)
+    (OptFillCallMaybeSite.No)
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Gep dst base offset _)
+        (if (not (= dst ptr-var))
+          (opt-fill-call-gep-of instrs (+ index 1) last ptr-var iphi)
+          (match offset
+            [(ir.CompilerIrValue.Var offset-var)
+              (if (and
+                (= offset-var iphi)
+                (not
+                  (opt-used-contains
+                    (opt-unroll-block-defs
+                      (struct-get instrs slots)
+                      0
+                      last
+                      (opt_i64_i64_map.with-capacity 32))
+                    (opt-fill-call-value-var base))))
+                (OptFillCallMaybeSite.Some
+                  (OptFillCallSite index index base 0 (ast.AstType.I64)))
+                (OptFillCallMaybeSite.No))]
+            [_ (OptFillCallMaybeSite.No)]))]
+      [_ (opt-fill-call-gep-of instrs (+ index 1) last ptr-var iphi)])))
+
+;; -1 for a non-Var value: never a block-local definition, so always invariant.
+(define (opt-fill-call-value-var [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var id) id]
+    [_ (- 0 1)]))
+
+;; Only `inext` (whose exit value the rewrite materialises as `bound`) and the
+;; loop compare (which keeps computing `bound < bound` = false) may be observed
+;; from outside the block; every other in-block definition would change value.
+(define (opt-fill-call-escape-ok?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [last : i64]
+  [outside : opt_i64_i64_map.Map]
+  [inext : i64]
+  [cond-var : i64]) : bool
+  (if (>= index last)
+    true
+    (let
+      [dst : i64
+        (match (ir.compiler-ir-instr-seq-ref instrs index)
+          [(ir.CompilerIrInstr.Phi d _ _) d]
+          [(ir.CompilerIrInstr.Mov d _ _) d]
+          [(ir.CompilerIrInstr.Gep d _ _ _) d]
+          [(ir.CompilerIrInstr.BinOp d _ _ _ _) d]
+          [_ (- 0 1)])]
+      (if (and
+        (>= dst 0)
+        (opt-used-contains outside dst)
+        (not (= dst cond-var))
+        (not (= (opt-unroll-resolve-copy instrs phi-count last dst 16) inext)))
+        false
+        (opt-fill-call-escape-ok?
+          instrs
+          (+ index 1)
+          phi-count
+          last
+          outside
+          inext
+          cond-var)))))
+
+(define (opt-fill-call-outside-uses
+  [blocks : ir.CompilerIrBlockList]
+  [skip-label : i64]
+  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) set]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (opt-fill-call-outside-uses
+            (box-get rest)
+            skip-label
+            (if (= label skip-label)
+              set
+              (opt-collect-instr-seq-uses set instrs)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-fill-call-outside-uses
+        (ir.compiler-ir-block-seq-to-list seq)
+        skip-label
+        set)]))
+
+;; Rebuild one phi without its self-edge input.
+(define (opt-fill-call-phi-drop-self
+  [inputs : ir.CompilerIrPhiInputList]
+  [self-label : i64]) : ir.CompilerIrPhiInputList
+  (match inputs
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (if (= label self-label)
+        (opt-fill-call-phi-drop-self (box-get rest) self-label)
+        (ir.compiler-ir-phi-input-cons-linked
+          value
+          label
+          (opt-fill-call-phi-drop-self (box-get rest) self-label)))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-fill-call-phi-drop-self
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        self-label)]))
+
+(define (opt-fill-call-symbol) : i64
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    cbi.compiler-builtin-id-tl-mem-fill8))
+
+(define (opt-fill-call-alloc-var [cell : (__tl_dyn-array i64)]) : i64
+  (let
+    [next : i64 (array-ref cell 0)]
+    (begin
+      (array-set! cell 0 (+ next 1))
+      next)))
+
+(define (opt-fill-call-emit-body!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [last : i64]
+  [shape : OptFillCallShape]
+  [site : OptFillCallSite]
+  [frame-cell : (__tl_dyn-array i64)]) : unit
+  (if (>= index last)
+    unit
+    (begin
+      (if (= index (struct-get site store-index))
+        ;; The store becomes the fill call. The slot count is `bound - seed`
+        ;; and the recognizer pinned the seed to literal 0, so it is exactly
+        ;; `bound` -- no subtract is emitted.
+        (let
+          [call-var : i64 (opt-fill-call-alloc-var frame-cell)]
+          [ptr : ir.CompilerIrValue
+            (match (ir.compiler-ir-instr-seq-ref
+              instrs
+              (struct-get site store-index))
+              [(ir.CompilerIrInstr.StorePtr p _ _) p]
+              [_ (ir.CompilerIrValue.I64 0)])]
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Call
+              call-var
+              (opt-fill-call-symbol)
+              (ir.compiler-ir-call-args-array
+                (ir.compiler-ir-value-cons
+                  ptr
+                  (ir.compiler-ir-value-cons
+                    (struct-get shape bound)
+                    (ir.compiler-ir-value-cons
+                      (ir.CompilerIrValue.I64 (struct-get site value))
+                      ir.CompilerIrValueList.Nil))))
+              (ast.AstType.Unit))))
+        ;; the counter's `next` is redefined as its exit value, `bound`
+        (if (opt-fill-call-defines-inext? instrs index (struct-get shape inext))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Mov
+              (struct-get shape inext)
+              (struct-get shape bound)
+              (struct-get shape ity)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.compiler-ir-instr-seq-ref instrs index))))
+      (opt-fill-call-emit-body!
+        (&mut builder)
+        instrs
+        (+ index 1)
+        phi-count
+        last
+        shape
+        site
+        frame-cell))))
+
+(define (opt-fill-call-defines-inext?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [inext : i64]) : bool
+  (match (ir.compiler-ir-instr-seq-ref instrs index)
+    [(ir.CompilerIrInstr.BinOp dst _ _ _ _) (= dst inext)]
+    [_ false]))
+
+(define (opt-fill-call-emit-phis!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [self-label : i64]) : unit
+  (if (>= index phi-count)
+    unit
+    (begin
+      (match (ir.compiler-ir-instr-seq-ref instrs index)
+        [(ir.CompilerIrInstr.Phi dst inputs ty)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Phi
+              dst
+              (ir.compiler-ir-phi-input-list-compact
+                (opt-fill-call-phi-drop-self inputs self-label))
+              ty))]
+        [_
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.compiler-ir-instr-seq-ref instrs index))])
+      (opt-fill-call-emit-phis!
+        (&mut builder)
+        instrs
+        (+ index 1)
+        phi-count
+        self-label))))
+
+(define (opt-fill-call-rewrite-block
+  [block : ir.CompilerIrBlock]
+  [shape : OptFillCallShape]
+  [site : OptFillCallSite]
+  [frame-cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [phi-count : i64 (struct-get shape phi-count)]
+        [builder : ir.CompilerIrInstrBuilder
+          (ir.compiler-ir-instr-builder-with-capacity (+ count 2))]
+        (begin
+          (opt-fill-call-emit-phis! (&mut builder) instrs 0 phi-count label)
+          (opt-fill-call-emit-body!
+            (&mut builder)
+            instrs
+            phi-count
+            phi-count
+            (- count 1)
+            shape
+            site
+            frame-cell)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Jump (struct-get shape exit-label)))
+          (ir.CompilerIrBlock.Block
+            label
+            (ir.compiler-ir-instr-builder-to-seq builder))))]))
+
+(defenum OptFillCallMaybeShapeSite
+  (No)
+  (Some OptFillCallShape OptFillCallSite))
+
+;; `outside` is only built once the cheap structural checks have passed, so the
+;; whole-function use scan is paid per CANDIDATE block, not per block.
+(define (opt-fill-call-block-match
+  [blocks : ir.CompilerIrBlockList]
+  [entry-label : i64]
+  [block : ir.CompilerIrBlock]) : OptFillCallMaybeShapeSite
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (match (opt-fill-call-shape entry-label block)
+        [(OptFillCallMaybeShape.No) (OptFillCallMaybeShapeSite.No)]
+        [(OptFillCallMaybeShape.Some shape)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [last : i64 (- count 1)]
+            [prefix : String (opt-fill-call-versioned-prefix label)]
+            (if (not
+              (opt-fill-call-pred-in-version-namespace?
+                blocks
+                prefix
+                (struct-get shape pred-label)))
+              (OptFillCallMaybeShapeSite.No)
+              (match (opt-fill-call-scan-body
+                instrs
+                (struct-get shape phi-count)
+                last
+                (struct-get shape iphi)
+                (OptFillCallMaybeSite.No))
+                [(OptFillCallMaybeSite.No) (OptFillCallMaybeShapeSite.No)]
+                [(OptFillCallMaybeSite.Some site)
+                  (if (opt-fill-call-escape-ok?
+                    instrs
+                    0
+                    (struct-get shape phi-count)
+                    last
+                    (opt-fill-call-outside-uses
+                      blocks
+                      label
+                      (opt_i64_i64_map.with-capacity 64))
+                    (struct-get shape inext)
+                    (struct-get shape cond-var))
+                    (OptFillCallMaybeShapeSite.Some shape site)
+                    (OptFillCallMaybeShapeSite.No))])))])]))
+
+(define (opt-fill-call-rewrite-blocks
+  [all-blocks : ir.CompilerIrBlockList]
+  [blocks : ir.CompilerIrBlockList]
+  [entry-label : i64]
+  [frame-cell : (__tl_dyn-array i64)]
+  [changed-cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (match (opt-fill-call-block-match all-blocks entry-label block)
+          [(OptFillCallMaybeShapeSite.No) block]
+          [(OptFillCallMaybeShapeSite.Some shape site)
+            (begin
+              (array-set! changed-cell 0 1)
+              (opt-fill-call-rewrite-block block shape site frame-cell))])
+        (opt-fill-call-rewrite-blocks
+          all-blocks
+          (box-get rest)
+          entry-label
+          frame-cell
+          changed-cell))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-fill-call-rewrite-blocks
+        all-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        entry-label
+        frame-cell
+        changed-cell)]))
+
+(define (opt-fill-call-function-with-context-result
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
+  (match (opt-verify-gate verified? func context)
+    [(ResultCompilerOptimizeVerify.Ok)
+      (match func
+        [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+          (let
+            [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+            [changed-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+            [_seed : unit (array-set! frame-cell 0 frame)]
+            [_seed2 : unit (array-set! changed-cell 0 0)]
+            [rewritten : ir.CompilerIrBlockList
+              (opt-fill-call-rewrite-blocks
+                blocks
+                blocks
+                (opt-cfg-entry-label blocks)
+                frame-cell
+                changed-cell)]
+            (if (= (array-ref changed-cell 0) 0)
+              (OptFunctionCtxResult.Result func context)
+              (let
+                [next : ir.CompilerIrFunction
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    (array-ref frame-cell 0)
+                    rewritten)]
+                [next-context : OptCfgContext
+                  (opt-cfg-context-build (opt-function-blocks next))]
+                (match (opt-verify-function-with-context next next-context)
+                  [(ResultCompilerOptimizeVerify.Ok)
+                    (OptFunctionCtxResult.Result next next-context)]
+                  [(ResultCompilerOptimizeVerify.Err _)
+                    (OptFunctionCtxResult.Result func context)]))))])]
+    [(ResultCompilerOptimizeVerify.Err _)
+      (OptFunctionCtxResult.Result func context)]))
+
+;; Standalone driver for tests and ad-hoc runs.
+(define (opt-fill-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-fill-call-function-with-context-result
+    (opt-cfg-context-build (opt-function-blocks func))
+    false
+    func)
+    [(OptFunctionCtxResult.Result out _) out]))
+
 ;; --- constant-trip full unrolling ---------------------------------------------
 ;;
 ;; A rotated single-block self-loop whose counter phi has a LITERAL seed, a
@@ -47378,7 +48433,9 @@
 ;;   seed >= 0 && seed < bound && bound <= len.
 ;; This pass recognizes such a loop from its natural-loop back edge (header
 ;; dominating latch, a single dedicated preheader whose only successor is the
-;; header, <= (opt-bce-mb-block-max) blocks, clonable whitelist instructions
+;; header, a clone that fits the growth budget -- <= (opt-bce-mb-instr-max)
+;; non-phi instructions across the loop, with (opt-bce-mb-block-max) only a
+;; bookkeeping safety bound -- clonable whitelist instructions
 ;; only, Jump/Branch/Switch or intra-loop fallthrough terminators only) and versions
 ;; like the single-block pass: a guard block on the preheader edge branches
 ;; to a fast clone of the whole loop when the guard conjunction holds and to
@@ -47475,8 +48532,27 @@
   (No)
   (Some OptBceMbShape))
 
+;; Growth budget for the clone, measured the way the clone actually grows:
+;; in INSTRUCTIONS. Block count is the wrong metric here. A `when (and a b c)`
+;; body lowers to a fan of one-armed forwarders and merges -- `mov false` +
+;; `jump`, or a bare `jump` -- so a counting loop whose real work is ~30
+;; instructions can span thirteen blocks. Under a block cap those loops were
+;; rejected while the single-block pass happily versions a 48-instruction
+;; body, which is backwards: the and-chain loop clones LESS code. The cap
+;; counts every non-phi instruction across the loop's blocks (terminators
+;; included -- an empty forwarder still costs its jump) and phis are excluded
+;; for the same reason the single-block pass's `opt-bce-version-body-max`
+;; excludes them: a phi is register-transfer bookkeeping the backend
+;; coalesces, not per-iteration work the clone duplicates.
+(define (opt-bce-mb-instr-max) : i64
+  96)
+
+;; Safety bound on the loop's block count. NOT the growth metric (the
+;; instruction budget above is): this only keeps the per-loop bookkeeping --
+;; label sets, remap maps, the repeated whole-loop def scans, the exit-wiring
+;; walks -- inside the sizes those structures are tuned for.
 (define (opt-bce-mb-block-max) : i64
-  8)
+  24)
 
 ;; The (SSA single-def) instruction defining var anywhere in the loop.
 (define (opt-bce-mb-find-def-instrs
@@ -47952,6 +49028,26 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-mb-body-checks (ir.compiler-ir-block-seq-to-list seq) acc)]))
 
+;; Non-phi instructions across the loop: exactly what the fast clone
+;; duplicates, and the quantity (opt-bce-mb-instr-max) budgets. Cheap enough
+;; to run ahead of the string-building admission checks, so it doubles as an
+;; early rejection for the loops that would never fit.
+(define (opt-bce-mb-body-instrs [blocks : ir.CompilerIrBlockList] [acc : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-body-instrs
+            (box-get rest)
+            (+
+              acc
+              (-
+                (ir.compiler-ir-instr-seq-count instrs)
+                (opt-unroll-phi-prefix-count instrs 0))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-body-instrs (ir.compiler-ir-block-seq-to-list seq) acc)]))
+
 ;; Exhaustive enum dispatches carry an explicit TotalEnumSwitch proof until the
 ;; dedicated late rewrite. Cloning one of these high-fanout
 ;; interpreter loops duplicates every arm, pushes the combined CFG over the
@@ -48087,6 +49183,7 @@
     (if (or
       (< (opt-label-count body-labels) 2)
       (> (opt-label-count body-labels) (opt-bce-mb-block-max))
+      (> (opt-bce-mb-body-instrs body-blocks 0) (opt-bce-mb-instr-max))
       (opt-cfg-block-exists?
         blocks
         (ir.compiler-ir-label
@@ -59462,7 +60559,7 @@
                       ;; output and ahead of versioning: the loop it hands the
                       ;; versioner has lost its flag test and its clearing arm,
                       ;; so the clone the versioner has to fit inside
-                      ;; `opt-bce-mb-block-max` is strictly smaller.
+                      ;; `opt-bce-mb-instr-max` is strictly smaller.
                       [_t-flag-exit : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [flag-exit-result : OptFunctionCtxResult
@@ -59523,6 +60620,41 @@
                             name
                             _t-bce-version)
                           unit)]
+                      ;; Constant fills become one tl_mem_fill8 call BEFORE the
+                      ;; unroller sees them: unrolling a fill spends an 11-
+                      ;; instruction version guard and a 4-per-slot remainder to
+                      ;; reach 1.19 instructions per slot, while the runtime
+                      ;; helper's `rep stosq` is 1.0 flat with neither. Running
+                      ;; here also means the rewrite reads the versioner's own
+                      ;; freshly built `__bce_guard`, which is what licenses
+                      ;; dropping the loop (see the pass header).
+                      [_t-fill-call : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [fill-call-result : OptFunctionCtxResult
+                        (if run-loop?
+                          (opt-fill-call-function-with-context-result
+                            bce-version-context
+                            loop-cluster-verified?
+                            bce-version)
+                          bce-version-result)]
+                      [fill-call : ir.CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "fill_call"
+                          (match fill-call-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
+                      [fill-call-context : OptCfgContext
+                        (match fill-call-result
+                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
+                      [_p-fill-call : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "fill_call"
+                            name
+                            _t-fill-call)
+                          unit)]
                       ;; Canonical counted-loop unrolling (x4) runs on
                       ;; the versioned blocks. A successful rewrite
                       ;; versions at most one loop per pipeline iteration and
@@ -59533,10 +60665,10 @@
                         (if run-loop?
                           (opt-unroll-function-with-context-result
                             type-segment-bases
-                            bce-version-context
+                            fill-call-context
                             loop-cluster-verified?
-                            bce-version)
-                          bce-version-result)]
+                            fill-call)
+                          fill-call-result)]
                       [unrolled : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61556,16 +62688,59 @@
       (opt_i64_i64_map.contains? (& (struct-get census addrtaken)) slot)]
     [(option_i64.None) false]))
 
+;; The caller-independent half of the absorbable test: exactly one static
+;; reference, not address-taken, not `main`. A function that passes this is one
+;; the pipeline expects to disappear into its unique call site, so asking it of
+;; the CALLER answers "would growing this body cost it its own inline?".
+(define (opt-inline-census-single-site?
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [name : i64]) : bool
+  (and
+    (= (opt-inline-census-refcount index census name) 1)
+    (not (opt-inline-census-address-taken? index census name))
+    (not (string.eq (ir.compiler-ir-symbol-text name) "main"))))
+
 (define (opt-inline-census-absorbable?
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [caller-name : i64]
   [callee-name : i64]) : bool
   (and
-    (= (opt-inline-census-refcount index census callee-name) 1)
-    (not (opt-inline-census-address-taken? index census callee-name))
-    (not (string.eq (ir.compiler-ir-symbol-text callee-name) "main"))
+    (opt-inline-census-single-site? index census callee-name)
     (not (ir.compiler-ir-symbol-eq? caller-name callee-name))))
+
+;; Largest static reference count a callee may carry and still be treated as
+;; belonging to its call sites. 1 is absorption: the body moves and nothing is
+;; left behind. 2 is duplication: the body is copied into both sites, and the
+;; measured leaves that qualify (see opt-inline-dup-absorb-ok?) are small enough
+;; that the copy is cheaper than the boundary it retires.
+(define (opt-inline-dup-max-refcount) : i64
+  2)
+
+;; The reference class of a callee seen from one caller, and the one census
+;; query the multiblock sites make: 0 when the callee belongs to no site,
+;; otherwise its reference count (1 = absorbable, up to
+;; opt-inline-dup-max-refcount = duplicable). Address-taken callees, `main`, and
+;; self-calls are class 0 for the same reasons opt-inline-census-absorbable?
+;; refuses them. Class 1 is exactly opt-inline-census-absorbable?, so the sites
+;; that used to ask that question read this number instead of paying for a
+;; second refcount lookup.
+(define (opt-inline-census-absorb-class
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [caller-name : i64]
+  [callee-name : i64]) : i64
+  (let
+    [refs : i64 (opt-inline-census-refcount index census callee-name)]
+    (if (or
+      (< refs 1)
+      (> refs (opt-inline-dup-max-refcount))
+      (ir.compiler-ir-symbol-eq? caller-name callee-name)
+      (opt-inline-census-address-taken? index census callee-name)
+      (string.eq (ir.compiler-ir-symbol-text callee-name) "main"))
+      0
+      refs)))
 
 (define (opt-callgraph-callee-count [graph : OptCallGraph] [from-slot : i64]) : i64
   (if (or (< from-slot 0) (>= from-slot (struct-get graph count)))
@@ -62442,6 +63617,45 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-inline-blocks-have-bounds-check?
         (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; A body with no call of any kind. Used by the duplicating admission below:
+;; the clone the duplication makes is bounded by the callee's own size only when
+;; nothing inside it can bring another body along, and the multiblock clone path
+;; is known to miscompile call-carrying clones (#6307), so a duplicated callee
+;; stays a leaf by construction.
+(define (opt-inline-instr-call? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Call _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult _) true]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
+    [(ir.CompilerIrInstr.SpmdCall _) true]
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) true]
+    [(ir.CompilerIrInstr.Syscall _ _) true]
+    [_ false]))
+
+(define (opt-inline-instr-seq-call-free-from?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (if (opt-inline-instr-call? (ir.compiler-ir-instr-seq-ref instrs index))
+      false
+      (opt-inline-instr-seq-call-free-from? instrs (+ index 1)))))
+
+(define (opt-inline-blocks-call-free? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (opt-inline-instr-seq-call-free-from? instrs 0)
+            (opt-inline-blocks-call-free? (box-get rest))
+            false)])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-inline-blocks-call-free? (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-inline-multiblock-instrs-ok-from?
   [instrs : ir.CompilerIrInstrSeq]
@@ -63983,14 +65197,327 @@
     [name : String (ir.compiler-ir-symbol-text callee-name)]
     (opt-symbol-leaf-matches-from? name (opt-symbol-leaf-start name) "vm-run")))
 
+;; --- loop-bearing bounds callee admission -----------------------------------
+;;
+;; A bounds-carrying callee whose body contains a loop used to be refused
+;; outright, with the single measured `vm-run` name exception above. That
+;; refusal is what keeps `intern_table`'s `it-load-word` behind a call: an
+;; eight-iteration byte-compose loop that the constant-trip unroll and the
+;; byte-compose-to-wide-load fold both rewrite into one 8-byte load as soon as
+;; they can see it inside its caller. Retiring that one call boundary is worth
+;; -6.6% on the row, and it lowers pressure rather than raising it: the callee
+;; that absorbs it loses fourteen frame operations because the absorbed loop
+;; stops existing.
+;;
+;; The same admission applied to every absorbable callee loses badly. What it
+;; also absorbs is once-called `init`/`fill` setup helpers, into whichever
+;; function holds the benchmark's hot loop. That trade buys a single call
+;; boundary and pays the caller's whole allocation for it: spmd_scan's inner
+;; loop went from seven to thirteen executed instructions per element -- four
+;; frame operations plus a push/pop scratch pair -- to retire a call that runs
+;; once per program. Three conditions separate the measured win from the
+;; measured loss:
+;;
+;;   1. the census proves the callee absorbable, so the program does not grow;
+;;   2. the callee is small, by opt-inline-bounds-loop-max-body and
+;;      opt-inline-bounds-loop-max-blocks;
+;;   3. the CALL SITE lies in a natural loop of the caller, so the retired
+;;      boundary is repaid per iteration instead of once per program.
+;;
+;; A fourth, caller-side condition is owned by
+;; opt-inline-bounds-loop-cascade-safe? below.
+;;
+;; The band is set from the measured leaf and the next size class above it.
+;; `it-load-word` presents here as 26 instructions in 4 blocks; the smallest
+;; corpus callees that lose are 30 instructions in 7 blocks and 51 in 15. 32
+;; and 6 sit above the admitted shape and below both, so a body that needs a
+;; second nesting level or a second working set is refused on structure rather
+;; than on a count that happens to land right.
+(define (opt-inline-bounds-loop-max-body) : i64
+  32)
+
+(define (opt-inline-bounds-loop-max-blocks) : i64
+  6)
+
+(define (opt-inline-bounds-loop-small?
+  [blocks : ir.CompilerIrBlockList]
+  [callee-instrs : i64]) : bool
+  (and
+    (<= callee-instrs (opt-inline-bounds-loop-max-body))
+    (<=
+      (ir.compiler-ir-block-list-count blocks)
+      (opt-inline-bounds-loop-max-blocks))))
+
+;; Facts about the caller currently being rewritten. They are installed per
+;; caller, but the two that cost real work -- the natural-loop label set and
+;; the bounds-check scan -- are computed on first demand and only when a small
+;; absorbable loop-bearing candidate has already passed the free tests above.
+;; Computing them for every function instead is +0.36% of the opt2 self-compile
+;; spent on facts that almost no caller reads.
+(define opt-inline-caller-facts-blocks : ir.CompilerIrBlockList
+  (ir.CompilerIrBlockList.Nil))
+(define opt-inline-caller-single-site? : bool
+  false)
+(define opt-inline-caller-facts-ready? : bool
+  false)
+(define opt-inline-caller-loop-labels : OptLabelSet
+  (OptLabelSet.Nil))
+(define opt-inline-caller-has-bounds? : bool
+  false)
+(define opt-inline-current-block-label : i64
+  0)
+
+(define (opt-inline-loop-label-union-from
+  [acc : OptLabelSet]
+  [other : OptLabelSet]
+  [index : i64]
+  [count : i64]) : OptLabelSet
+  (if (>= index count)
+    acc
+    (opt-inline-loop-label-union-from
+      (opt-label-add acc (opt-label-ref other index))
+      other
+      (+ index 1)
+      count)))
+
+(define (opt-inline-loop-labels-add
+  [loops : OptNaturalLoopList]
+  [acc : OptLabelSet]) : OptLabelSet
+  (match loops
+    [(OptNaturalLoopList.Nil) acc]
+    [(OptNaturalLoopList.Cons loop rest)
+      (let
+        [body : OptLabelSet (opt-natural-loop-body loop)]
+        (opt-inline-loop-labels-add
+          (box-get rest)
+          (opt-inline-loop-label-union-from acc body 0 (opt-label-count body))))]))
+
+(define (opt-inline-caller-facts-install!
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [name : i64]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (begin
+    (set! opt-inline-caller-facts-blocks blocks)
+    (set!
+      opt-inline-caller-single-site?
+      (opt-inline-census-single-site? index census name))
+    (set! opt-inline-caller-facts-ready? false)
+    (set! opt-inline-caller-loop-labels (OptLabelSet.Nil))
+    (set! opt-inline-caller-has-bounds? false)
+    (set! opt-inline-current-block-label (ir.compiler-ir-label-none))))
+
+(define (opt-inline-caller-facts-ensure!) : unit
+  (if opt-inline-caller-facts-ready?
+    unit
+    (begin
+      (set!
+        opt-inline-caller-loop-labels
+        (opt-inline-loop-labels-add
+          (opt-cfg-natural-loops opt-inline-caller-facts-blocks)
+          (OptLabelSet.Nil)))
+      (set!
+        opt-inline-caller-has-bounds?
+        (opt-inline-blocks-have-bounds-check? opt-inline-caller-facts-blocks))
+      (set! opt-inline-caller-facts-ready? true))))
+
+(define (opt-inline-bounds-loop-site-in-loop?) : bool
+  (begin
+    (opt-inline-caller-facts-ensure!)
+    (opt-label-contains
+      opt-inline-caller-loop-labels
+      opt-inline-current-block-label)))
+
+;; The one measured way a hot-site, small, absorbable import still loses.
+;; opt_quicksort's `qs-bench` is itself a single-reference function carrying no
+;; bounds checks, so it inlines into `main` for free. Importing `qs-fill` --
+;; 24 instructions at a genuine in-loop site -- gives `qs-bench` its first
+;; bounds-carrying loop, and this very gate then refuses `qs-bench` at its own
+;; call site. The caller stops being absorbed, is emitted standalone, and
+;; allocates worse: four frame operations inside `main` became thirty-six in
+;; the evicted `qs-bench`, +0.285% on the row to retire a boundary worth far
+;; less. The import is admissible; what it costs is the caller's own inline.
+;;
+;; So an import that would hand a bounds-free single-reference caller its first
+;; bounds check is refused. A caller that already carries one is already
+;; subject to this gate at its own site and has nothing further to lose, and a
+;; caller with more than one reference was never going to be absorbed anyway.
+(define (opt-inline-bounds-loop-cascade-safe?) : bool
+  (begin
+    (opt-inline-caller-facts-ensure!)
+    (or (not opt-inline-caller-single-site?) opt-inline-caller-has-bounds?)))
+
+;; Ordered so the two free tests run first: the lazy caller facts are only
+;; forced for a candidate that is already claimed by this site and already
+;; small. `claimed?` is the reference-class verdict -- absorption for a
+;; single-reference callee, duplication for the two-reference case below -- so
+;; both paths share one copy of the size, site, and cascade clauses.
+(define (opt-inline-bounds-loop-absorb-ok?
+  [claimed? : bool]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    claimed?
+    (opt-inline-bounds-loop-small? blocks callee-instrs)
+    (opt-inline-bounds-loop-site-in-loop?)
+    (opt-inline-bounds-loop-cascade-safe?)))
+
+;; --- duplicating a two-reference leaf into its in-loop sites ----------------
+;;
+;; The admission above requires the callee to have exactly one static reference,
+;; because absorption is what pays for it: the body moves, and the program does
+;; not grow. A leaf with two references cannot be absorbed, only copied -- and
+;; the measured population of two-reference callees that reach an in-loop site
+;; is a family of character-class predicates, nine instructions in five blocks,
+;; sitting one per element inside a scan loop. Copying nine instructions twice
+;; to retire a call per character is the same trade the single-reference gate
+;; already makes, and it measures the same way: gvn_table -1.356%, liveness_scan
+;; -1.098%, cfg_domloops -0.680%, with no other row moving anywhere and the
+;; corpus binaries 160 bytes SMALLER in total, because the retired call sequence
+;; costs more static bytes than the duplicated body.
+;;
+;; The autopsy signature is the opposite of the inlining pathology this gate
+;; exists to avoid: ln-fill-tokens goes from ten frame operations to one and
+;; from five reloads to none, and cfg-scan-ints keeps its instruction count
+;; exactly and loses two calls. Nine-instruction bodies do not move the
+;; allocator.
+;;
+;; Everything the single-reference admission asks is asked here unchanged --
+;; size, in-loop site, cascade -- through the same predicate, plus one condition
+;; of its own: the body must be call-free. A clone is bounded by the callee's
+;; measured size only while nothing inside it can bring another body along, and
+;; the multiblock clone path miscompiles call-carrying clones (#6307).
+;;
+;; The clause order is the cost argument. Every multiblock call site in the
+;; program reaches this predicate, so the reference-class compare -- already
+;; computed, one integer test -- runs first, before the block scan and before
+;; the lazy caller facts. The call-free scan runs last, on the few candidates
+;; that have already cleared size, site, and cascade.
+;;
+;; The site and cascade clauses are asked once per CALLER, from that caller's
+;; own facts, so a two-reference leaf is duplicated only into those of its
+;; callers that individually clear them and one caller taking the body does not
+;; commit the other. (The cascade question a caller asks is still "am I a
+;; single-reference function that would lose my own inline", which a
+;; two-reference caller now answers "no" while itself being duplicable. That
+;; caller-side widening is a separate probe; no corpus or self-compile row
+;; exercises it today.)
+;;
+;; This has to grant the absorb credit, not merely pass the bounds gate: the
+;; cost model prices a nine-instruction body in five blocks at 9 + 6*6 = 45
+;; against a threshold of 4, so the block weight alone refuses every one of
+;; these leaves. The single-reference bonus is what admits them, and a
+;; duplication that has cleared the clauses above is the same bet.
+(define (opt-inline-dup-absorb-ok?
+  [absorb-class : i64]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    (>= absorb-class 2)
+    (opt-inline-bounds-loop-absorb-ok? true callee-instrs blocks)
+    (opt-inline-blocks-call-free? blocks)))
+
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]
+  [absorbable? : bool]
+  [callee-instrs : i64]
   [callee-name : i64]
   [blocks : ir.CompilerIrBlockList]) : bool
   (or
     (not has-bounds?)
+    (opt-inline-bounds-loop-absorb-ok? absorbable? callee-instrs blocks)
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
     (opt-inline-vm-run-bounds-loop-exception? callee-name)))
+
+;; --- shared acyclic accessors -----------------------------------------------
+;;
+;; Everything above decides whether a callee BELONGS to its call sites: one
+;; reference is absorbed, two are duplicated, and past that the census stops
+;; answering. That leaves an entire measured class outside every gate here --
+;; the per-element accessor, referenced from everywhere, which C compiles to a
+;; single load and which this compiler was keeping behind a call at every one of
+;; its sites. peephole_lines spent 431.7M instructions, 40.8% of the row, inside
+;; one 27-instruction function reached from 146 call sites.
+;;
+;; Such an accessor is refused today by exactly one clause. It is acyclic, so
+;; the loop gate above already passes it; it carries a bounds check, so
+;; opt-inline-bounds-inline-ok? demands that it be absorbable or called with
+;; all-constant arguments, and at 146 references it is neither. The cost model
+;; would refuse it a second time: block weight 6 prices a nine-block body at
+;; 27 + 6 * 10 = 87 against a threshold of 4.
+;;
+;; Admission is a dedicated disjunct and a cost-gate bypass, NOT an extension of
+;; the absorb credit. The distinction is semantic, not stylistic: this callee is
+;; not absorbed. It keeps its own body and stays out of line at every site this
+;; gate does not take -- 12 of 146 on the measured row -- so claiming the
+;; single-reference bonus would assert something false, and that bonus is read
+;; by opt-inline-bounds-inline-ok? and by the phi-predecessor suppression as
+;; well as by the cost model. A separate predicate states exactly what is true:
+;; this shape is admitted on its own terms. It keeps the two structural budgets
+;; that bound the growth -- the heavy gate and the per-caller block fuel, the
+;; same pair opt-inline-bounds-leaf-cost-inline? keeps -- and those budgets are
+;; what turn 146 references into 12 admitted sites and 4104 bytes.
+;;
+;; Measured: peephole_lines -12.264%, lex_source -0.178%, every other row byte
+;; identical, opt2 self-compile -0.0289% (an improvement, on 60 admissions per
+;; compile), and no banked duplication evicted anywhere.
+(define (opt-inline-shared-accessor-max-body) : i64
+  28)
+
+(define (opt-inline-shared-accessor-max-blocks) : i64
+  10)
+
+;; What separates the accessors that win from the ones that lose is how often
+;; they run, and nothing here can see that. The reference count is the available
+;; proxy, and the measured split is wide enough to act on: pl-byte-at is
+;; referenced 146 times and pays -12.3% on its row, while cfg-byte-at and
+;; gvn-byte-at -- the same shape, same class, same in-loop sites -- are
+;; referenced 4 times each and cost +0.771% and +1.571%, because importing a
+;; bounds check into the one scan loop that uses them takes cfg-scan-ints from
+;; six frame operations to twenty-three and evicts a banked duplication on the
+;; way. This floor sits one above that measured loser, the same construction the
+;; instruction band uses.
+;;
+;; The sensitivity curve is flat in both directions and the corpus fixes the
+;; number exactly: 3 and 4 admit the two byte-at losers, 5 admits both winners,
+;; and 6 through 146 drop ls-digit? (referenced 5 times) and with it the
+;; lex_source win, while the opt2 self-compile stays within 0.01% across the
+;; whole range. 5 is the only value that takes every measured win and no
+;; measured loss.
+;;
+;; This is the opposite end of the same census the rest of this file uses:
+;; absorption wants a callee referenced once, duplication twice, and this path
+;; wants one referenced many times.
+(define (opt-inline-shared-accessor-min-refcount) : i64
+  5)
+
+;; Ordered by cost: the reference count and the two size caps are integer tests
+;; on values the site already has, the budgets are arithmetic, and only then do
+;; the three scans run -- call-free over the callee, the memoized caller facts,
+;; and last the acyclic check, which builds a CFG index per candidate.
+(define (opt-inline-shared-accessor-ok?
+  [refs : i64]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (and
+    (>= refs (opt-inline-shared-accessor-min-refcount))
+    (<= callee-instrs (opt-inline-shared-accessor-max-body))
+    (<=
+      (ir.compiler-ir-block-list-count blocks)
+      (opt-inline-shared-accessor-max-blocks))
+    (not
+      (opt-inline-cost-crosses-heavy-gate?
+        caller-blocks
+        added-so-far
+        added-blocks))
+    (<= (+ added-so-far added-blocks) (opt-inline-cost-block-fuel))
+    (opt-inline-blocks-call-free? blocks)
+    (opt-inline-bounds-loop-site-in-loop?)
+    (opt-inline-bounds-loop-cascade-safe?)
+    (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
 
 (define (opt-inline-bounds-leaf-cost-inline?
   [callee-instrs : i64]
@@ -64429,12 +65956,22 @@
                       np
                       0))]
                 [const-args : i64 (opt-inline-args-const-count cargs)]
-                [absorbable : bool
-                  (opt-inline-census-absorbable?
+                [absorb-class : i64
+                  (opt-inline-census-absorb-class
                     index
                     census
                     func-name
                     callee-name)]
+                ;; The site-level verdict: this site claims the callee's body,
+                ;; either because it is the only one (class 1, absorption) or
+                ;; because the duplicating clauses admit a copy (class 2).
+                [absorbable-here? : bool
+                  (or
+                    (= absorb-class 1)
+                    (opt-inline-dup-absorb-ok?
+                      absorb-class
+                      callee-instrs
+                      cblocks))]
                 ;; Splitting a loop phi predecessor can lengthen live ranges.
                 ;; Keep ordinary cost-model admission available here, but do
                 ;; not let the unconditional single-reference absorb bonus
@@ -64447,15 +65984,28 @@
                 ;; measured vm-run leaf selected by the shared gate (#5325).
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
+                ;; A shared acyclic accessor is admitted on its own terms.
+                [shared-accessor? : bool
+                  (opt-inline-shared-accessor-ok?
+                    (opt-inline-census-refcount index census callee-name)
+                    callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
                 [bounds-ok? : bool
-                  (opt-inline-bounds-inline-ok?
-                    has-bounds?
-                    absorbable
-                    const-args
-                    np)]
+                  (or
+                    (opt-inline-bounds-inline-ok?
+                      has-bounds?
+                      absorbable-here?
+                      const-args
+                      np)
+                    shared-accessor?)]
                 [bounds-loop-ok? : bool
                   (opt-inline-multiblock-bounds-loop-ok?
                     has-bounds?
+                    absorbable-here?
+                    callee-instrs
                     callee-name
                     cblocks)]
                 [inline? : bool
@@ -64468,7 +66018,7 @@
                         added-blocks
                         const-args
                         (and
-                          absorbable
+                          absorbable-here?
                           (not opt-inline-current-phi-predecessor?))
                         caller-blocks
                         added-so-far)
@@ -64479,7 +66029,8 @@
                           added-blocks
                           const-args
                           caller-blocks
-                          added-so-far))))]
+                          added-so-far))
+                      shared-accessor?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-from
                     instrs
@@ -64759,6 +66310,7 @@
           (set!
             opt-inline-current-phi-predecessor?
             (opt-label-contains phi-predecessors label))
+          (set! opt-inline-current-block-label label)
           (opt-inline-try-multiblock-rewrite-seq-from
             seq
             0
@@ -65052,12 +66604,20 @@
                       np
                       0))]
                 [const-args : i64 (opt-inline-args-const-count cargs)]
-                [absorbable : bool
-                  (opt-inline-census-absorbable?
+                [absorb-class : i64
+                  (opt-inline-census-absorb-class
                     index
                     census
                     func-name
                     callee-name)]
+                ;; Same site-level verdict as the non-span path.
+                [absorbable-here? : bool
+                  (or
+                    (= absorb-class 1)
+                    (opt-inline-dup-absorb-ok?
+                      absorb-class
+                      callee-instrs
+                      cblocks))]
                 [tiny-predicate? : bool
                   (and
                     (not stage-args?)
@@ -65065,15 +66625,28 @@
                 ;; Keep the span-aware path on the same exact vm-run decision.
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
+                ;; A shared acyclic accessor is admitted on its own terms.
+                [shared-accessor? : bool
+                  (opt-inline-shared-accessor-ok?
+                    (opt-inline-census-refcount index census callee-name)
+                    callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
                 [bounds-ok? : bool
-                  (opt-inline-bounds-inline-ok?
-                    has-bounds?
-                    absorbable
-                    const-args
-                    np)]
+                  (or
+                    (opt-inline-bounds-inline-ok?
+                      has-bounds?
+                      absorbable-here?
+                      const-args
+                      np)
+                    shared-accessor?)]
                 [bounds-loop-ok? : bool
                   (opt-inline-multiblock-bounds-loop-ok?
                     has-bounds?
+                    absorbable-here?
+                    callee-instrs
                     callee-name
                     cblocks)]
                 [inline? : bool
@@ -65086,7 +66659,7 @@
                         added-blocks
                         const-args
                         (and
-                          absorbable
+                          absorbable-here?
                           (not opt-inline-current-phi-predecessor?))
                         caller-blocks
                         added-so-far)
@@ -65097,7 +66670,8 @@
                           added-blocks
                           const-args
                           caller-blocks
-                          added-so-far))))]
+                          added-so-far))
+                      shared-accessor?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-with-spans-from
                     instrs
@@ -65401,6 +66975,7 @@
           (set!
             opt-inline-current-phi-predecessor?
             (opt-label-contains phi-predecessors label))
+          (set! opt-inline-current-block-label label)
           (opt-inline-try-multiblock-span-rewrite-seq-from
             seq
             0
@@ -65699,6 +67274,7 @@
         [_reset-sites : unit
           (begin
             (set! opt-inline-caller-site-count 0)
+            (opt-inline-caller-facts-install! index census name blocks)
             (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
         (match (opt-inline-blocks
           blocks
@@ -65748,6 +67324,7 @@
         [_reset-sites : unit
           (begin
             (set! opt-inline-caller-site-count 0)
+            (opt-inline-caller-facts-install! index census name blocks)
             (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
         (match (opt-inline-blocks-with-spans
           blocks
@@ -68619,6 +70196,8 @@
 ;;                     summarized, so any reuse of freed storage still wipes.)
 ;;   - tl_array_zero : writes only through its first parameter.
 ;;   - tl_array_fill8: writes only through its first parameter.
+;;   - tl_mem_fill8  : writes only through its first parameter (hand-asm
+;;                     `rep stosq`; reads nothing but its own arguments).
 ;;
 ;; Symbols are raw interned ids (`compiler-ir-symbol-id` is the identity and
 ;; `compiler-ir-symbol-eq?` is `=`), so the seed key is the builtin id itself --
@@ -68645,10 +70224,13 @@
     (cbi.compiler-builtin-refresh!)
     (opt-call-memory-seed-builtin
       (opt-call-memory-seed-builtin
-        (opt-call-memory-seed-builtin out cbi.compiler-builtin-id-tl-alloc 0)
-        cbi.compiler-builtin-id-tl-array-zero
+        (opt-call-memory-seed-builtin
+          (opt-call-memory-seed-builtin out cbi.compiler-builtin-id-tl-alloc 0)
+          cbi.compiler-builtin-id-tl-array-zero
+          (shl 1 0))
+        cbi.compiler-builtin-id-tl-array-fill8
         (shl 1 0))
-      cbi.compiler-builtin-id-tl-array-fill8
+      cbi.compiler-builtin-id-tl-mem-fill8
       (shl 1 0))))
 
 (define (opt-call-memory-build-fixed
@@ -69191,6 +70773,47 @@
   ;; tiny. Keep the fixpoint summary pass bounded, but high enough for those cases.
   1024)
 
+;; Every function whose call-memory summary is exactly 0 writes no memory at
+;; all: no parameter-rooted write (bits 0..59), no global storage write
+;; (bit 60), no unknown effect (bit 61). That is exactly the fact
+;; `direct-call-clean` stands for at a LICM call site, and the call-memory
+;; builder proves it with a callgraph fixpoint whose deliberately partial map
+;; leaves recursive cycles and over-limit programs unresolved -- so unioning it
+;; in can only ADD leaves that provably write nothing, never relax a callee the
+;; older syntactic walk had already rejected on effects.
+;;
+;; Only functions of the program's own list are considered: a name absent from
+;; the map is unresolved and stays opaque, and indirect/C-ABI/SPMD call sites
+;; have no callee name to look up and keep their unconditional
+;; `opt-licm-store-summary-call-or-unknown`.
+(define (opt-loop-bce-direct-call-clean-add-memory-clean
+  [functions : ir.CompilerIrFunctionList]
+  [call-memory : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match functions
+    [(ir.CompilerIrFunctionList.Nil) out]
+    [(ir.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(ir.CompilerIrFunction.Function name _ _ _ _)
+          (let
+            [name-id : i64 (ir.compiler-ir-symbol-id name)]
+            [_record : unit
+              (match (opt_i64_i64_map.get (& call-memory) name-id)
+                [(opt_i64_i64_map.LookupFound summary)
+                  (if (= summary 0)
+                    (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)
+                    unit)]
+                [(opt_i64_i64_map.LookupMissing) unit])]
+            (opt-loop-bce-direct-call-clean-add-memory-clean
+              (box-get rest)
+              call-memory
+              out))])]
+    [(ir.CompilerIrFunctionList.Array seq)
+      (opt-loop-bce-direct-call-clean-add-memory-clean
+        (ir.compiler-ir-function-seq-to-list seq)
+        call-memory
+        out)]))
+
 (define (opt-loop-bce-build-summaries-with-direct-call-clean
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionList]
@@ -69210,13 +70833,19 @@
         functions
         (opt_i64_i64_map.with-capacity capacity))
         [(OptLoopBceCleanPass.Pass clean _) clean])]
-    [direct-call-clean : opt_i64_i64_map.Map
-      (if build-direct-call-clean
-        (opt-loop-bce-direct-call-clean-map functions capacity)
-        (opt_i64_i64_map.with-capacity 1))]
     [call-memory : opt_i64_i64_map.Map
       (if build-call-memory
         (opt-call-memory-build type-segment-bases functions capacity)
+        (opt_i64_i64_map.with-capacity 1))]
+    ;; `call-memory` is built first so the clean map can union in its
+    ;; provably-write-nothing leaves. `build-direct-call-clean` is the level>=2
+    ;; gate, so opt0/opt1 keep an empty map and stay byte-identical.
+    [direct-call-clean : opt_i64_i64_map.Map
+      (if build-direct-call-clean
+        (opt-loop-bce-direct-call-clean-add-memory-clean
+          functions
+          call-memory
+          (opt-loop-bce-direct-call-clean-map functions capacity))
         (opt_i64_i64_map.with-capacity 1))]
     (OptLoopBceSummaries
       true
@@ -70208,9 +71837,453 @@
           types
           (opt-global-cell-word-count globals addr-taken 0))))))
 
+;; --- condition (a): stores a later read can OBSERVE ---------------------------
+;;
+;; The pass hoists ONE entry-block load of `@G` and rewrites every in-function
+;; `@G` read to it, so it is correct exactly when no `set! G` this function
+;; performs can be observed by one of those reads. Conditions (b) and (c)
+;; already exclude every OTHER writer -- no address-taken cell can be reached
+;; through a pointer, and a function containing any call is rejected outright --
+;; so only this function's own `Store G` instructions matter. A `Store G` at
+;; block B, instruction index k, is observable exactly when some `@G` read runs
+;; after it on some execution path, i.e. when either
+;;   (i)  B reads `@G` at an index > k, or
+;;   (ii) some block reachable from B's SUCCESSORS reads `@G`.
+;; Everything else about G is unobservable: the cell's post-store value never
+;; reaches a read in this activation, and the entry load still returns what a
+;; per-use load would have returned, exactly as the pass header argues.
+;;
+;; (i) is decided by one backward walk per store-bearing block, accumulating the
+;; globals read at strictly greater indices; the store's OWN value operand is
+;; added only after the check, because it reads the pre-store value.
+;; (ii) is decided by a successor walk with a visited set. The successor CSR
+;; that `opt-cfg-index-build` fills already carries fallthrough edges
+;; (`opt-cfg-block-successors-with-next`), and a block inside a cycle reaches
+;; ITSELF, so a read placed lexically BEFORE the store still disqualifies G --
+;; which is right, because the next iteration's read observes the store.
+;;
+;; Whenever the answer cannot be trusted -- duplicate block labels or an
+;; unresolved successor target (both optimizer-verifier errors), or a walk that
+;; exceeds its step budget -- every store in scope is reported observable, which
+;; is precisely the whole-function rule this refinement replaces. The common
+;; shape needs no CFG index at all: when every store-bearing block ends in
+;; `Return` it has no successors, so (ii) is vacuous and only the backward walk
+;; runs. That is the `gvn-facts-reset` shape -- a `set!` group in the returning
+;; loop-exit block, after the loop whose bound reads the same cell.
+(defstruct OptGlobalCellStoreScan
+  (seen OptGlobalCellScan)
+  (out opt_i64_i64_map.Map))
+
+(defstruct OptGlobalCellStorePass
+  (out opt_i64_i64_map.Map)
+  (needs-reach bool))
+
+;; Successor-walk step budget: blocks popped, summed over every store-bearing
+;; block in the function. Exhausting it falls back to the whole-function rule
+;; for the block being walked, so the cap trades sites for bounded compile time.
+(define (opt-global-cell-reach-step-cap) : i64
+  4096)
+
+(define (opt-global-cell-block-return-terminated?
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (= count 0)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Return _) true]
+        [_ false]))))
+
+(define (opt-global-cell-block-has-store?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Store _ _ _) true]
+      [_ (opt-global-cell-block-has-store? instrs (+ index 1) count)])))
+
+;; Insert every `Store` target in [index, count) whose symbol id `filter`
+;; contains, or every target at all when `all?` (the untrusted-CFG fallback).
+(define (opt-global-cell-mark-stores-in
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [filter : opt_i64_i64_map.Map]
+  [all? : bool]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (>= index count)
+    out
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Store name _ _)
+        (let
+          [id : i64 (ir.compiler-ir-symbol-id name)]
+          [next : opt_i64_i64_map.Map out]
+          (begin
+            (if (or all? (opt_i64_i64_map.contains? (& filter) id))
+              (opt_i64_i64_map.insert-ref! (&mut next) id 1)
+              unit)
+            (opt-global-cell-mark-stores-in
+              instrs
+              (+ index 1)
+              count
+              filter
+              all?
+              next)))]
+      [_
+        (opt-global-cell-mark-stores-in
+          instrs
+          (+ index 1)
+          count
+          filter
+          all?
+          out)])))
+
+;; Backward walk of one block. `seen` accumulates the globals read at indices
+;; strictly greater than the current one, so testing it at a `Store G` answers
+;; clause (i) exactly.
+(define (opt-global-cell-store-scan-back
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : OptGlobalCellStoreScan (:consume)]) : OptGlobalCellStoreScan
+  (if (< index 0)
+    acc
+    (match acc
+      [(OptGlobalCellStoreScan seen out)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          [next-out : opt_i64_i64_map.Map out]
+          (begin
+            (match instr
+              [(ir.CompilerIrInstr.Store name _ _)
+                (if (opt_i64_i64_map.contains?
+                  (& (struct-get seen refs))
+                  (ir.compiler-ir-symbol-id name))
+                  (opt_i64_i64_map.insert-ref!
+                    (&mut next-out)
+                    (ir.compiler-ir-symbol-id name)
+                    1)
+                  unit)]
+              [_ unit])
+            (opt-global-cell-store-scan-back
+              instrs
+              (- index 1)
+              (OptGlobalCellStoreScan
+                (opt-global-cell-scan-instr seen false instr)
+                next-out))))])))
+
+(define (opt-global-cell-refs-add
+  [refs : OptI64List]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match refs
+    [(OptI64List.Nil) out]
+    [(OptI64List.Cons name rest)
+      (let
+        [next : opt_i64_i64_map.Map out]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut next) name 1)
+          (opt-global-cell-refs-add (box-get rest) next)))]))
+
+(define (opt-global-cell-scan-block-by-id [index : OptCfgIndex] [id : i64]) : OptGlobalCellScan
+  (match (opt-cfg-index-block index id)
+    [(OptMaybeBlock.No) (opt-global-cell-scan-new)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-cell-scan-seq-from
+            (opt-global-cell-scan-new)
+            instrs
+            0
+            (ir.compiler-ir-instr-seq-count instrs)
+            false)])]))
+
+;; Push every not-yet-visited successor of `id`, marking at push time so each
+;; block enters the stack at most once (stack capacity = block count).
+(define (opt-global-cell-reach-push-succs!
+  [index : OptCfgIndex]
+  [visited : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [sp-cell : (__tl_dyn-array i64)]
+  [id : i64]) : unit
+  (let
+    [csr : OptCfgCsr (struct-get index succs)]
+    [edges : (__tl_dyn-array i64) (struct-get csr edges)]
+    [edge : i64 (array-ref (struct-get csr offsets) id)]
+    [end : i64 (array-ref (struct-get csr offsets) (+ id 1))]
+    (begin
+      (while (< edge end)
+        (begin
+          (if (and
+            (>= (array-ref edges edge) 0)
+            (< (array-ref edges edge) (array-length visited))
+            (not (array-ref visited (array-ref edges edge))))
+            (begin
+              (array-set! visited (array-ref edges edge) true)
+              (array-set! stack (array-ref sp-cell 0) (array-ref edges edge))
+              (array-set! sp-cell 0 (+ (array-ref sp-cell 0) 1)))
+            unit)
+          (set! edge (+ edge 1))))
+      unit)))
+
+;; `budget` slot 0 = remaining pops, slot 1 = truncated flag.
+(define (opt-global-cell-reach-drain
+  [index : OptCfgIndex]
+  [visited : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [sp-cell : (__tl_dyn-array i64)]
+  [budget : (__tl_dyn-array i64)]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (<= (array-ref sp-cell 0) 0)
+    out
+    (if (<= (array-ref budget 0) 0)
+      (begin
+        (array-set! budget 1 1)
+        out)
+      (let
+        [id : i64 (array-ref stack (- (array-ref sp-cell 0) 1))]
+        (begin
+          (array-set! sp-cell 0 (- (array-ref sp-cell 0) 1))
+          (array-set! budget 0 (- (array-ref budget 0) 1))
+          (opt-global-cell-reach-push-succs! index visited stack sp-cell id)
+          (opt-global-cell-reach-drain
+            index
+            visited
+            stack
+            sp-cell
+            budget
+            (opt-global-cell-refs-add
+              (struct-get (opt-global-cell-scan-block-by-id index id) ref-list)
+              out)))))))
+
+(define (opt-global-cell-observable-stores-reach-block
+  [index : OptCfgIndex]
+  [visited : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [sp-cell : (__tl_dyn-array i64)]
+  [budget : (__tl_dyn-array i64)]
+  [id : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (begin
+    (opt-cfg-fill-bool! visited (array-length visited) false)
+    (array-set! sp-cell 0 0)
+    (array-set! budget 1 0)
+    (opt-global-cell-reach-push-succs! index visited stack sp-cell id)
+    (let
+      [reach : opt_i64_i64_map.Map
+        (opt-global-cell-reach-drain
+          index
+          visited
+          stack
+          sp-cell
+          budget
+          (opt_i64_i64_map.with-capacity 8))]
+      (opt-global-cell-mark-stores-in
+        instrs
+        0
+        (ir.compiler-ir-instr-seq-count instrs)
+        reach
+        (= (array-ref budget 1) 1)
+        out))))
+
+(define (opt-global-cell-observable-stores-reach
+  [index : OptCfgIndex]
+  [visited : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [sp-cell : (__tl_dyn-array i64)]
+  [budget : (__tl_dyn-array i64)]
+  [id : i64]
+  [count : i64]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (>= id count)
+    out
+    (match (opt-cfg-index-block index id)
+      [(OptMaybeBlock.No)
+        (opt-global-cell-observable-stores-reach
+          index
+          visited
+          stack
+          sp-cell
+          budget
+          (+ id 1)
+          count
+          out)]
+      [(OptMaybeBlock.Some block)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-global-cell-observable-stores-reach
+              index
+              visited
+              stack
+              sp-cell
+              budget
+              (+ id 1)
+              count
+              (if (and
+                (opt-global-cell-block-has-store?
+                  instrs
+                  0
+                  (ir.compiler-ir-instr-seq-count instrs))
+                (not (opt-global-cell-block-return-terminated? instrs)))
+                (opt-global-cell-observable-stores-reach-block
+                  index
+                  visited
+                  stack
+                  sp-cell
+                  budget
+                  id
+                  instrs
+                  out)
+                out))])])))
+
+;; Clause (i) for every block, plus "does any store-bearing block have
+;; successors at all" so the CFG index is built only when clause (ii) can fire.
+(define (opt-global-cell-observable-stores-local-block
+  [instrs : ir.CompilerIrInstrSeq]
+  [acc : OptGlobalCellStorePass (:consume)]) : OptGlobalCellStorePass
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (not (opt-global-cell-block-has-store? instrs 0 count))
+      acc
+      (match acc
+        [(OptGlobalCellStorePass out needs-reach)
+          (OptGlobalCellStorePass
+            (struct-get
+              (opt-global-cell-store-scan-back
+                instrs
+                (- count 1)
+                (OptGlobalCellStoreScan (opt-global-cell-scan-new) out))
+              out)
+            (or
+              needs-reach
+              (not (opt-global-cell-block-return-terminated? instrs))))]))))
+
+(define (opt-global-cell-observable-stores-local-seq
+  [seq : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [count : i64]
+  [acc : OptGlobalCellStorePass (:consume)]) : OptGlobalCellStorePass
+  (if (>= index count)
+    acc
+    (match (ir.compiler-ir-block-seq-ref seq index)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (opt-global-cell-observable-stores-local-seq
+          seq
+          (+ index 1)
+          count
+          (opt-global-cell-observable-stores-local-block instrs acc))])))
+
+(define (opt-global-cell-observable-stores-local
+  [blocks : ir.CompilerIrBlockList]
+  [acc : OptGlobalCellStorePass (:consume)]) : OptGlobalCellStorePass
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-cell-observable-stores-local
+            (box-get rest)
+            (opt-global-cell-observable-stores-local-block instrs acc))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-cell-observable-stores-local-seq
+        seq
+        0
+        (ir.compiler-ir-block-seq-count seq)
+        acc)]))
+
+(define (opt-global-cell-all-stores-seq
+  [seq : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [count : i64]
+  [filter : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (if (>= index count)
+    out
+    (match (ir.compiler-ir-block-seq-ref seq index)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (opt-global-cell-all-stores-seq
+          seq
+          (+ index 1)
+          count
+          filter
+          (opt-global-cell-mark-stores-in
+            instrs
+            0
+            (ir.compiler-ir-instr-seq-count instrs)
+            filter
+            true
+            out))])))
+
+(define (opt-global-cell-all-stores
+  [blocks : ir.CompilerIrBlockList]
+  [filter : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) out]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-global-cell-all-stores
+            (box-get rest)
+            filter
+            (opt-global-cell-mark-stores-in
+              instrs
+              0
+              (ir.compiler-ir-instr-seq-count instrs)
+              filter
+              true
+              out))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-global-cell-all-stores-seq
+        seq
+        0
+        (ir.compiler-ir-block-seq-count seq)
+        filter
+        out)]))
+
+(define (opt-global-cell-observable-stores-indexed
+  [blocks : ir.CompilerIrBlockList]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (let
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    [budget : (__tl_dyn-array i64) (array.make-array i64 2)]
+    (begin
+      (array-set! budget 0 (opt-global-cell-reach-step-cap))
+      (array-set! budget 1 0)
+      (if (or
+        (<= count 0)
+        (not (opt-cfg-index-labels-unique? index))
+        (not (struct-get index targets-known)))
+        (opt-global-cell-all-stores
+          blocks
+          (opt_i64_i64_map.with-capacity 1)
+          out)
+        (opt-global-cell-observable-stores-reach
+          index
+          (array.make-array bool count)
+          (array.make-array i64 count)
+          (array.make-array i64 1)
+          budget
+          0
+          count
+          out)))))
+
+(define (opt-global-cell-observable-stores [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
+  (match (opt-global-cell-observable-stores-local
+    blocks
+    (OptGlobalCellStorePass (opt_i64_i64_map.with-capacity 8) false))
+    [(OptGlobalCellStorePass out needs-reach)
+      (if needs-reach
+        (opt-global-cell-observable-stores-indexed blocks out)
+        out)]))
+
 ;; Hoist plan for one function: candidate global symbol id -> fresh SSA var.
-;; A referenced global is a candidate unless this function stores it (a), the
-;; program takes its address (b), or its cell is not a single word.
+;; A referenced global is a candidate unless this function has a store of it
+;; that a later read can observe (a), the program takes its address (b), or its
+;; cell is not a single word.
 (defstruct OptGlobalCellPlan
   (map opt_i64_i64_map.Map)
   (count i64))
@@ -70840,7 +72913,7 @@
                   [planned : OptGlobalCellPlan
                     (opt-global-cell-plan-build
                       cell
-                      (struct-get scan stores)
+                      (opt-global-cell-observable-stores blocks)
                       (struct-get scan ref-list)
                       frame-cell
                       (opt_i64_i64_map.with-capacity 8)

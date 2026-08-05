@@ -125,6 +125,16 @@
         "minimal Linux functions keep array zero")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
+          (& linux-min-functions)
+          ".globl tl_mem_fill8")
+        "minimal Linux functions keep the general slot fill")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& windows-min-functions)
+          ".globl tl_mem_fill8")
+        "minimal Windows functions keep the general slot fill")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
           (& windows-min-functions)
           ".globl tl_tlci_call_image_entry")
         "minimal Windows functions keep the TLCI image bridge")

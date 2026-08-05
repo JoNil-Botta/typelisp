@@ -12772,6 +12772,778 @@
       (opt-inline-switch-case-result-ok? other-opt2 other-text 1 0)
       (opt-inline-switch-case-result-ok? vm-opt1 vm-text 1 0))))
 
+;; --- loop-bearing bounds callee admission (in-loop site + cascade) ----------
+;;
+;; The callee under test is the cyclic bounds-carrying Switch leaf above, which
+;; the shared gate refuses everywhere except at an in-loop site. Only the
+;; CALLER varies across these fixtures, so each test isolates exactly one
+;; clause of opt-inline-bounds-loop-absorb-ok?.
+(define (opt-inline-loop-site-call [callee-name : i64] [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (array.make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (array-set! args 0 (compiler_ir_types.CompilerIrValue.Var 1))
+      (array-set! args 1 (compiler_ir_types.CompilerIrValue.Var 0))
+      (array-set! args 2 (compiler_ir_types.CompilerIrValue.Var 2))
+      (compiler_ir_types.CompilerIrInstr.Call
+        dst
+        callee-name
+        (compiler_ir_types.CompilerIrCallArgs.Array args)
+        (compiler_ast_types.AstType.I64)))))
+
+;; entry -> header -> {body -> latch -> header, exit}. The call sits in `body`,
+;; a member of the natural loop headed by `header`. The back edge leaves from
+;; `latch` rather than from `body` so the call block is not a phi predecessor:
+;; that suppression of the absorb bonus is a separate, already-measured rule
+;; (#5193), and mixing it in would stop this fixture from testing the site
+;; condition it exists to test.
+(define (opt-inline-loop-site-caller-blocks
+  [callee-name : i64]
+  [entry-instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      entry-instrs)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "latch")
+                compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-inline-loop-site-call callee-name 5)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 4)))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-inline-loop-site-entry-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Mov
+      3
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "header"))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+;; Same entry, plus a bounds check the caller already owns. Used to flip the
+;; cascade clause without touching anything else.
+(define (opt-inline-loop-site-bounds-entry-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BoundsCheck
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ir_types.compiler-ir-label "caller_bounds_ok"))
+    (opt-inline-loop-site-entry-instrs)))
+
+(define (opt-inline-loop-site-function
+  [func-name : i64]
+  [callee-name : i64]
+  [entry-instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (opt-inline-loop-site-caller-blocks callee-name entry-instrs)))
+
+;; `main` calls the leaf from inside a loop: the boundary is repaid per
+;; iteration, so the gate admits it.
+(define (compiler-optimize-inline-bounds-loop-in-loop-site-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-loop-site-function
+            (struct-get symbols main)
+            callee-name
+            (opt-inline-loop-site-entry-instrs))
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-switch-callee-named callee-name)
+            compiler_ir_types.CompilerIrFunctionList.Nil))
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 0)
+            (= (compiler_optimize.opt-count-bounds-blocks blocks) 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; The identical callee at a straight-line site stays refused: retiring a
+;; boundary that runs once cannot pay for the caller's allocation.
+(define (compiler-optimize-inline-bounds-loop-cold-site-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-switch-caller-named symbols callee-name)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-switch-callee-named callee-name)
+            compiler_ir_types.CompilerIrFunctionList.Nil))
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 1)
+            (= (compiler_optimize.opt-count-bounds-blocks blocks) 0)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+(define (opt-inline-cascade-program
+  [symbols : OptInlineMultiTestSymbols]
+  [mid-entry : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunctionList
+  (let
+    [mid-name : i64 (struct-get symbols inline-nonleaf)]
+    [leaf-name : i64 (struct-get symbols inline-switch)]
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-switch-caller-named symbols mid-name)
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-inline-loop-site-function mid-name leaf-name mid-entry)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-switch-callee-named leaf-name)
+          compiler_ir_types.CompilerIrFunctionList.Nil)))))
+
+;; `mid` is single-reference and carries no bounds checks, so it is inlined at
+;; its own call site for free. Importing the bounds-carrying loop leaf would
+;; hand it its first bounds check and cost it that inline, so the import is
+;; refused even though the site is in a loop.
+(define (compiler-optimize-inline-bounds-loop-cascade-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-cascade-program symbols (opt-inline-loop-site-entry-instrs))
+        2)]
+    [admitted : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-cascade-program
+          symbols
+          (opt-inline-loop-site-bounds-entry-instrs))
+        2)]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          refused
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          admitted
+          "inline_nonleaf"
+          "inline_switch")
+        0))))
+
+;; --- duplicating a two-reference leaf into its in-loop sites ----------------
+;;
+;; The leaf under test is the cyclic bounds-carrying Switch leaf again, built
+;; here in two versions that differ in exactly one instruction: whether the
+;; `zero` case makes a call. Everything else across these fixtures varies only
+;; in the CALLERS, so each test isolates one clause of
+;; opt-inline-dup-absorb-ok?.
+(define (opt-inline-dup-leaf-named
+  [callee-name : i64]
+  [vars : i64]
+  [zero-instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    vars
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-inline-switch-loop-bounds-instr
+              (compiler_ir_types.compiler-ir-label "switch_bounds_ok"))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Switch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                0
+                (opt-inline-switch-cases
+                  (compiler_ir_types.compiler-ir-label "zero")
+                  (compiler_ir_types.compiler-ir-label "one"))
+                (compiler_ir_types.compiler-ir-label "loop"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "zero")
+            zero-instrs)
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "one")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "join")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-inline-switch-loop-phi-instr)
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 3)))
+                    compiler_ir_types.CompilerIrInstrList.Nil)))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-dup-leaf-jump-zero-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Jump
+      (compiler_ir_types.compiler-ir-label "join"))
+    compiler_ir_types.CompilerIrInstrList.Nil))
+
+;; The same case block, plus one call to a helper the program does not define,
+;; so nothing can inline it away before the leaf itself is offered.
+(define (opt-inline-dup-leaf-call-zero-instrs [helper-name : i64]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (array.make-array compiler_ir_types.CompilerIrValue 1)]
+    (begin
+      (array-set! args 0 (compiler_ir_types.CompilerIrValue.Var 0))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          helper-name
+          (compiler_ir_types.CompilerIrCallArgs.Array args)
+          (compiler_ast_types.AstType.I64))
+        (opt-inline-dup-leaf-jump-zero-instrs)))))
+
+(define (opt-inline-dup-leaf-plain [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-dup-leaf-named
+    callee-name
+    4
+    (opt-inline-dup-leaf-jump-zero-instrs)))
+
+(define (opt-inline-dup-leaf-calling [callee-name : i64] [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-dup-leaf-named
+    callee-name
+    5
+    (opt-inline-dup-leaf-call-zero-instrs helper-name)))
+
+;; N in-loop callers of one leaf, so the leaf's static reference count is
+;; exactly the number of callers. None of the callers is referenced itself, so
+;; the cascade clause is satisfied for all of them and only the reference count
+;; separates the cases.
+(define (opt-inline-dup-caller-chain
+  [names : compiler_optimize.OptSlotList]
+  [callee-name : i64]
+  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  (match names
+    [(compiler_optimize.OptSlotList.Nil) tail]
+    [(compiler_optimize.OptSlotList.Cons name rest)
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-inline-loop-site-function
+          name
+          callee-name
+          (opt-inline-loop-site-entry-instrs))
+        (opt-inline-dup-caller-chain (box-get rest) callee-name tail))]))
+
+(define (opt-inline-dup-two-caller-names [symbols : OptInlineMultiTestSymbols]) : compiler_optimize.OptSlotList
+  (compiler_optimize.OptSlotList.Cons
+    (struct-get symbols main)
+    (box
+      (compiler_optimize.OptSlotList.Cons
+        (struct-get symbols inline-nonleaf)
+        (box (compiler_optimize.OptSlotList.Nil))))))
+
+(define (opt-inline-dup-three-caller-names
+  [symbols : OptInlineMultiTestSymbols]) : compiler_optimize.OptSlotList
+  (compiler_optimize.OptSlotList.Cons
+    (struct-get symbols inline-loop)
+    (box (opt-inline-dup-two-caller-names symbols))))
+
+(define (opt-inline-dup-optimized
+  [callers : compiler_optimize.OptSlotList]
+  [callee-name : i64]
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_optimize.opt-inline-program-functions
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-inline-dup-caller-chain
+      callers
+      callee-name
+      (compiler_ir_types.compiler-ir-function-cons
+        leaf
+        compiler_ir_types.CompilerIrFunctionList.Nil))
+    2))
+
+;; Two in-loop callers duplicate the leaf into both; a third reference puts the
+;; callee outside opt-inline-dup-max-refcount and all three sites keep the call.
+(define (compiler-optimize-inline-dup-two-site-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [two : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-two-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-plain callee-name))]
+    [three : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-three-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-plain callee-name))]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list two "main" "inline_switch")
+        0)
+      (=
+        (opt-count-direct-call-name-function-list
+          two
+          "inline_nonleaf"
+          "inline_switch")
+        0)
+      (=
+        (opt-count-direct-call-name-function-list three "main" "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          three
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          three
+          "inline_loop"
+          "inline_switch")
+        1))))
+
+;; The identical two-reference leaf, at two in-loop sites, one of whose callers
+;; is itself a single-reference bounds-free function: that caller would lose its
+;; own inline by taking the leaf's bounds check, so the cascade clause refuses
+;; the copy THERE and admits it at the other site. One caller taking the body
+;; does not commit the other.
+(define (compiler-optimize-inline-dup-cascade-per-caller-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [mid-name : i64 (struct-get symbols inline-nonleaf)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-cons
+          (opt-inline-switch-caller-named symbols mid-name)
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-loop-site-function
+              mid-name
+              callee-name
+              (opt-inline-loop-site-entry-instrs))
+            (compiler_ir_types.compiler-ir-function-cons
+              (opt-inline-loop-site-function
+                (struct-get symbols inline-loop)
+                callee-name
+                (opt-inline-loop-site-entry-instrs))
+              (compiler_ir_types.compiler-ir-function-cons
+                (opt-inline-dup-leaf-plain callee-name)
+                compiler_ir_types.CompilerIrFunctionList.Nil))))
+        2)]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_loop"
+          "inline_switch")
+        0))))
+
+;; The same two-reference leaf with one call in its body stays out of line at
+;; both sites: a duplicated body is bounded by its own size only while nothing
+;; inside it can bring another body along, and the multiblock clone path
+;; miscompiles call-carrying clones (#6307).
+(define (compiler-optimize-inline-dup-call-bearing-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-two-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-calling
+          callee-name
+          (struct-get symbols external-helper)))]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")
+        1))))
+
+;; --- shared acyclic accessor admission --------------------------------------
+;;
+;; The callee under test is an ACYCLIC bounds-carrying Switch leaf reached from
+;; several in-loop sites -- the measured pl-byte-at shape. Every fixture below
+;; builds the same program and varies exactly one thing: the number of callers
+;; (the reference floor), whether the body makes a call, whether the body is
+;; cyclic, and whether the sites sit in loops.
+(define (opt-inline-shared-accessor-leaf-named
+  [callee-name : i64]
+  [vars : i64]
+  [zero-instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    vars
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "switch_bounds_ok"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Switch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              0
+              (opt-inline-switch-cases
+                (compiler_ir_types.compiler-ir-label "zero")
+                (compiler_ir_types.compiler-ir-label "one"))
+              (compiler_ir_types.compiler-ir-label "other"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "zero")
+          zero-instrs)
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "one")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "join"))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "other")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "join")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    3
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "zero")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 20)
+                        (compiler_ir_types.compiler-ir-label "one")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 30)
+                          (compiler_ir_types.compiler-ir-label "other")
+                          compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 3)))
+                    compiler_ir_types.CompilerIrInstrList.Nil)))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-shared-accessor-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-shared-accessor-leaf-named
+    callee-name
+    4
+    (opt-inline-dup-leaf-jump-zero-instrs)))
+
+(define (opt-inline-shared-accessor-calling-leaf
+  [callee-name : i64]
+  [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-shared-accessor-leaf-named
+    callee-name
+    5
+    (opt-inline-dup-leaf-call-zero-instrs helper-name)))
+
+;; A cyclic body with no bounds check: the loop gate above lets a bounds-free
+;; callee through untouched, so this shape reaches the accessor admission and
+;; isolates its acyclic clause. (A cyclic body that DOES carry bounds is already
+;; refused one gate earlier, which would make the fixture vacuous.)
+(define (opt-inline-shared-cyclic-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    4
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Switch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              0
+              (opt-inline-switch-cases
+                (compiler_ir_types.compiler-ir-label "zero")
+                (compiler_ir_types.compiler-ir-label "one"))
+              (compiler_ir_types.compiler-ir-label "loop"))
+            compiler_ir_types.CompilerIrInstrList.Nil))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "zero")
+            (opt-inline-dup-leaf-jump-zero-instrs))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "one")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "join")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-inline-switch-loop-phi-instr)
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 3)))
+                    compiler_ir_types.CompilerIrInstrList.Nil)))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; Straight-line callers, for the site clause.
+(define (opt-inline-shared-flat-caller-chain
+  [names : compiler_optimize.OptSlotList]
+  [callee-name : i64]
+  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  (match names
+    [(compiler_optimize.OptSlotList.Nil) tail]
+    [(compiler_optimize.OptSlotList.Cons name rest)
+      (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.CompilerIrFunction.Function
+          name
+          (opt-inline-switch-params)
+          (compiler_ast_types.AstType.I64)
+          4
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-inline-switch-caller-call-named callee-name)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 3)))
+                  compiler_ir_types.CompilerIrInstrList.Nil)))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        (opt-inline-shared-flat-caller-chain (box-get rest) callee-name tail))]))
+
+(define (opt-inline-shared-caller-names
+  [symbols : OptInlineMultiTestSymbols]
+  [count : i64]) : compiler_optimize.OptSlotList
+  (let
+    [all : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [acc : compiler_optimize.OptSlotList (compiler_optimize.OptSlotList.Nil)]
+    [i : i64 0]
+    (begin
+      (array-set! all 0 (struct-get symbols main))
+      (array-set! all 1 (struct-get symbols inline-nonleaf))
+      (array-set! all 2 (struct-get symbols inline-loop))
+      (array-set! all 3 (struct-get symbols mb-bounds))
+      (array-set! all 4 (struct-get symbols inline-branch))
+      (while (< i count)
+        (begin
+          (set!
+            acc
+            (compiler_optimize.OptSlotList.Cons (array-ref all i) (box acc)))
+          (set! i (+ i 1))))
+      acc)))
+
+;; Total direct calls to `call-name` left across the first `count` caller names.
+(define (opt-inline-shared-remaining-calls
+  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [count : i64]) : i64
+  (let
+    [names : (__tl_dyn-array String) (array.make-array String 5)]
+    [total : i64 0]
+    [i : i64 0]
+    (begin
+      (array-set! names 0 "main")
+      (array-set! names 1 "inline_nonleaf")
+      (array-set! names 2 "inline_loop")
+      (array-set! names 3 "mb_bounds")
+      (array-set! names 4 "inline_branch")
+      (while (< i count)
+        (begin
+          (set!
+            total
+            (+
+              total
+              (opt-count-direct-call-name-function-list
+                functions
+                (array-ref names i)
+                "inline_switch")))
+          (set! i (+ i 1))))
+      total)))
+
+(define (opt-inline-shared-accessor-optimized
+  [symbols : OptInlineMultiTestSymbols]
+  [count : i64]
+  [in-loop? : bool]
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  (let
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [names : compiler_optimize.OptSlotList
+      (opt-inline-shared-caller-names symbols count)]
+    [tail : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-function-cons
+        leaf
+        compiler_ir_types.CompilerIrFunctionList.Nil)]
+    (compiler_optimize.opt-inline-program-functions
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (if in-loop?
+        (opt-inline-dup-caller-chain names callee-name tail)
+        (opt-inline-shared-flat-caller-chain names callee-name tail))
+      2)))
+
+;; Five in-loop callers put the leaf at the reference floor and every site takes
+;; it; four leave it one short and every site keeps its call.
+(define (compiler-optimize-inline-shared-accessor-floor-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [admitted : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        5
+        true
+        (opt-inline-shared-accessor-leaf callee-name))]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        4
+        true
+        (opt-inline-shared-accessor-leaf callee-name))]
+    (and
+      (= (opt-inline-shared-remaining-calls admitted 5) 0)
+      (= (opt-inline-shared-remaining-calls refused 4) 4))))
+
+;; The same leaf with one call in its body stays out of line at all five sites:
+;; a clone is bounded by its own size only while nothing inside it can bring
+;; another body along (#6307).
+(define (compiler-optimize-inline-shared-accessor-call-free-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        5
+        true
+        (opt-inline-shared-accessor-calling-leaf
+          callee-name
+          (struct-get symbols external-helper)))]
+    (= (opt-inline-shared-remaining-calls refused 5) 5)))
+
+;; A cyclic body at the same five in-loop sites stays refused: this admission is
+;; for the acyclic accessor, and a loop-bearing callee at five references is
+;; outside the absorb and duplicate census as well.
+(define (compiler-optimize-inline-shared-accessor-acyclic-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        5
+        true
+        (opt-inline-shared-cyclic-leaf callee-name))]
+    (= (opt-inline-shared-remaining-calls refused 5) 5)))
+
+;; The identical leaf at five STRAIGHT-LINE sites stays refused: a boundary that
+;; runs once per call cannot repay a duplicated body.
+(define (compiler-optimize-inline-shared-accessor-in-loop-site-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        5
+        false
+        (opt-inline-shared-accessor-leaf callee-name))]
+    (= (opt-inline-shared-remaining-calls refused 5) 5)))
+
 (define (opt-inline-phi-span-ok-instr-seq-from?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [pos : i64]
@@ -16996,6 +17768,179 @@
                   (compiler_ir_types.CompilerIrInstrList.Nil)))
               (compiler_ir_types.CompilerIrBlockList.Nil))))))))
 
+;; A bool merge whose consuming branch sits past the merge block: `merge` holds
+;; the phi and falls through to `gap`, `gap` falls through to `branch-site`, and
+;; only `branch-site` tests the phi. That is what the front end emits whenever a
+;; boolean merge and the `if` reading it land on separate joins, and the fuser
+;; has to look through the run to see the same rewrite. Modes:
+;;   0 -- `gap` is a pure fallthrough owned by the merge: fusible.
+;;   1 -- `gap` carries a real instruction, so the run cannot simply die.
+;;   2 -- `side` also reaches `gap`, so the run is not the merge's to retarget.
+(define (opt-bool-branch-merge-chain-gap-instrs [mode : i64]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [tail : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "branch-site"))
+        (compiler_ir_types.CompilerIrInstrList.Nil))]
+    (if (= mode 1)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          7
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        tail)
+      tail)))
+
+(define (opt-bool-branch-merge-chain-tail [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "true-left")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "merge"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "false-middle")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "true-right")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "merge"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Phi
+                4
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Bool true)
+                  (compiler_ir_types.compiler-ir-label "true-left")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Bool false)
+                    (compiler_ir_types.compiler-ir-label "false-middle")
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "true-right")
+                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "gap"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "gap")
+              (opt-bool-branch-merge-chain-gap-instrs mode))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "branch-site")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ir_types.compiler-ir-label "yes")
+                    (compiler_ir_types.compiler-ir-label "no"))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "yes")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      5
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 11)
+                        (compiler_ir_types.compiler-ir-label "branch-site")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 5)))
+                      (compiler_ir_types.CompilerIrInstrList.Nil))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "no")
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        6
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 22)
+                          (compiler_ir_types.compiler-ir-label "branch-site")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Return
+                          (compiler_ir_types.CompilerIrMaybeValue.Some
+                            (compiler_ir_types.CompilerIrValue.Var 6)))
+                        (compiler_ir_types.CompilerIrInstrList.Nil))))
+                  (if (= mode 2)
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.compiler-ir-block
+                        (compiler_ir_types.compiler-ir-label "side")
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Jump
+                            (compiler_ir_types.compiler-ir-label "gap"))
+                          (compiler_ir_types.CompilerIrInstrList.Nil)))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))
+                    (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))
+
+(define (opt-bool-branch-merge-chain-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (if (= mode 2)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "spread")
+            (compiler_ir_types.compiler-ir-label "choose"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "spread")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "true-left")
+              (compiler_ir_types.compiler-ir-label "side"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "choose")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "false-middle")
+                (compiler_ir_types.compiler-ir-label "true-right"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (opt-bool-branch-merge-chain-tail mode))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "true-left")
+            (compiler_ir_types.compiler-ir-label "choose"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "choose")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "false-middle")
+              (compiler_ir_types.compiler-ir-label "true-right"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (opt-bool-branch-merge-chain-tail mode)))))
+
 (define (opt-bool-branch-constant-test-function
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -17004,6 +17949,161 @@
     (compiler_ast_types.AstType.I64)
     16
     blocks))
+
+;; The chain shape of `opt-bool-branch-merge-chain-blocks 0` reached through a
+;; block whose branch sccp folds. `entry` tests a var sccp proves `true`, so the
+;; edge `entry -> join` dies and `join`'s phi keeps an input for a label that is
+;; no longer one of its predecessors. Every pass that verify-gates its input --
+;; the bool-branch fuser included -- then declines the WHOLE function, and the
+;; fusible chain further down survives untouched. The pipeline's sccp entry
+;; point has to hand on blocks that verify for this fixture to fuse.
+(define (opt-sccp-folded-edge-chain-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          10
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.compiler-ir-label "pick")
+            (compiler_ir_types.compiler-ir-label "join"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "pick")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "true-left")
+            (compiler_ir_types.compiler-ir-label "choose"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "choose")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "false-middle")
+              (compiler_ir_types.compiler-ir-label "true-right"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (opt-sccp-folded-edge-chain-tail)))))
+
+(define (opt-sccp-folded-edge-chain-tail) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "true-left")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "merge"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "false-middle")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "true-right")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "merge"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Phi
+                4
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Bool true)
+                  (compiler_ir_types.compiler-ir-label "true-left")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Bool false)
+                    (compiler_ir_types.compiler-ir-label "false-middle")
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "true-right")
+                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "gap"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "gap")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "branch-site"))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "branch-site")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ir_types.compiler-ir-label "yes")
+                    (compiler_ir_types.compiler-ir-label "no"))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "yes")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      5
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 11)
+                        (compiler_ir_types.compiler-ir-label "branch-site")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Jump
+                        (compiler_ir_types.compiler-ir-label "join"))
+                      (compiler_ir_types.CompilerIrInstrList.Nil))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "no")
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        6
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 22)
+                          (compiler_ir_types.compiler-ir-label "branch-site")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Jump
+                          (compiler_ir_types.compiler-ir-label "join"))
+                        (compiler_ir_types.CompilerIrInstrList.Nil))))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.compiler-ir-block
+                      (compiler_ir_types.compiler-ir-label "join")
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Phi
+                          7
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.I64 0)
+                            (compiler_ir_types.compiler-ir-label "entry")
+                            (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.CompilerIrValue.Var 5)
+                              (compiler_ir_types.compiler-ir-label "yes")
+                              (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.CompilerIrValue.Var 6)
+                                (compiler_ir_types.compiler-ir-label "no")
+                                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                          (compiler_ast_types.AstType.I64))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Return
+                            (compiler_ir_types.CompilerIrMaybeValue.Some
+                              (compiler_ir_types.CompilerIrValue.Var 7)))
+                          (compiler_ir_types.CompilerIrInstrList.Nil))))
+                    (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))
 
 (define (opt-bool-branch-first-phi-has-label?
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -19894,6 +20994,17 @@
             (compiler_ir_types.CompilerIrCallArgs.Nil)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstrList.Nil))]
+      ;; An indirect call through the raw parameter. There is no callee name to
+      ;; resolve, so no clean map can describe it: the LICM store summaries take
+      ;; `call-or-unknown?` unconditionally here.
+      [(= mode 3)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.CallIndirect
+            11
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrCallArgs.Nil)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstrList.Nil))]
       [else (compiler_ir_types.CompilerIrInstrList.Nil)])))
 
 (cfg
@@ -20366,6 +21477,44 @@
             (opt-licm-checked-root-blocks 1 2 2)))]
       [call-blocks : compiler_ir_types.CompilerIrBlockList
         (compiler_optimize.opt-function-blocks call-func)]
+      ;; The clean-callee refinement of opt-licm-memory-safe?: the same
+      ;; direct-call barrier as `call-blocks`, but with the callee named in the
+      ;; direct-call-clean map. `call-blocks` above keeps the absent-summary
+      ;; negative (nothing proves `touch` clean, so the load stays put); this
+      ;; arm is the positive, and `clean-indirect` shows the map cannot rescue a
+      ;; call site with no callee name to look up.
+      [clean-touch-map : opt_i64_i64_map.Map
+        (let
+          [map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+          (begin
+            (opt_i64_i64_map.insert-ref!
+              (&mut map)
+              (compiler_ir_types.compiler-ir-symbol-id
+                (opt-test-symbol "touch"))
+              1)
+            map))]
+      [clean-call-func : compiler_ir_types.CompilerIrFunction
+        (compiler_optimize.opt-licm-function-with-direct-call-clean
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 2 2))
+          clean-touch-map)]
+      [clean-call : compiler_ir_types.CompilerIrBlockList
+        (compiler_optimize.opt-function-blocks clean-call-func)]
+      [clean-indirect-func : compiler_ir_types.CompilerIrFunction
+        (compiler_optimize.opt-licm-function-with-direct-call-clean
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 2 3))
+          clean-touch-map)]
+      [clean-indirect : compiler_ir_types.CompilerIrBlockList
+        (compiler_optimize.opt-function-blocks clean-indirect-func)]
       [fresh-func : compiler_ir_types.CompilerIrFunction
         (compiler_optimize.opt-licm-function
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -20571,6 +21720,42 @@
                 (compiler_ir_types.compiler-ir-label "loop"))
               0))
           25]
+        [(not
+            (compiler_optimize.opt-verify-ok?
+              (compiler_optimize.opt-verify-function clean-call-func)))
+          26]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                clean-call
+                (compiler_ir_types.compiler-ir-label "entry"))
+              1))
+          27]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                clean-call
+                (compiler_ir_types.compiler-ir-label "loop"))
+              0))
+          28]
+        [(not
+            (compiler_optimize.opt-verify-ok?
+              (compiler_optimize.opt-verify-function clean-indirect-func)))
+          29]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                clean-indirect
+                (compiler_ir_types.compiler-ir-label "entry"))
+              0))
+          30]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                clean-indirect
+                (compiler_ir_types.compiler-ir-label "loop"))
+              1))
+          31]
         [else 42]))))
 
 (define (compiler-optimize-licm-self-test) : i64
@@ -20713,6 +21898,19 @@
       (compiler_optimize.opt-loop-bce-direct-call-clean-map
         (opt-licm-direct-call-clean-test-functions symbols)
         8)]
+    ;; The call-memory union that feeds the clean-callee LICM refinement. Over
+    ;; the same three fixtures: `leaf` writes no memory at all, so its packed
+    ;; summary is exactly 0 and the union admits it; `writer` carries a StorePtr
+    ;; and does not; `probe` is self-recursive, so the deliberately partial
+    ;; fixpoint never resolves it and an absent summary stays opaque.
+    [direct-clean-union : opt_i64_i64_map.Map
+      (compiler_optimize.opt-loop-bce-direct-call-clean-add-memory-clean
+        (opt-licm-direct-call-clean-test-functions symbols)
+        (compiler_optimize.opt-call-memory-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-licm-direct-call-clean-test-functions symbols)
+          8)
+        (opt_i64_i64_map.with-capacity 8))]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -21136,6 +22334,19 @@
               (compiler_ir_types.compiler-ir-label "loop"))
             2))
         81]
+      [(not
+          (opt_i64_i64_map.contains?
+            (& direct-clean-union)
+            (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols leaf))))
+        82]
+      [(opt_i64_i64_map.contains?
+          (& direct-clean-union)
+          (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols writer)))
+        83]
+      [(opt_i64_i64_map.contains?
+          (& direct-clean-union)
+          (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols probe)))
+        84]
       [else 42])))
 
 (define (opt-licm-unswitch-test-params) : compiler_ir_types.CompilerIrParamList
@@ -25381,9 +26592,43 @@
       (compiler_ir_types.CompilerIrInstr.Jump target)
       (compiler_ir_types.CompilerIrInstrList.Nil))))
 
-;; Nine loop blocks -- one over the multi-block cap -- so even a fully
-;; derivable counted loop must stay unversioned.
-(define (opt-bce-mb-test-chain-blocks) : compiler_ir_types.CompilerIrBlockList
+;; `pad` dead movs ahead of a forwarder's jump: the knob that sizes the chain
+;; fixture against the versioner's INSTRUCTION budget without changing its
+;; block count. Each mov takes its own var, counting up from `var`.
+(define (opt-bce-mb-test-pad-instrs
+  [pad : i64]
+  [var : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (if (<= pad 0)
+    tail
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        var
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (opt-bce-mb-test-pad-instrs (- pad 1) (+ var 1) tail))))
+
+(define (opt-bce-mb-test-chain-block
+  [label : i64]
+  [target : i64]
+  [pad : i64]
+  [var : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (opt-bce-mb-test-pad-instrs
+      pad
+      var
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump target)
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+;; Nine loop blocks -- ONE OVER the old eight-block cap -- reached through
+;; seven forwarders, the shape an `(and a b c)` body lowers to. `pad` sets
+;; each forwarder's instruction count, so the same fixture drives both sides
+;; of the instruction budget: pad 1 costs 19 cloned instructions and must
+;; version (block count is not the growth metric), pad 13 costs 103 and must
+;; not (that IS the growth metric).
+(define (opt-bce-mb-test-chain-blocks [pad : i64]) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (opt-bce-mb-test-jump-block
       (compiler_ir_types.compiler-ir-label "entry")
@@ -25412,33 +26657,47 @@
                 (compiler_ir_types.compiler-ir-label "b1"))
               (compiler_ir_types.CompilerIrInstrList.Nil)))))
       (compiler_ir_types.compiler-ir-block-cons
-        (opt-bce-mb-test-jump-block
+        (opt-bce-mb-test-chain-block
           (compiler_ir_types.compiler-ir-label "b1")
-          (compiler_ir_types.compiler-ir-label "b2"))
+          (compiler_ir_types.compiler-ir-label "b2")
+          pad
+          (+ 10 (* 0 pad)))
         (compiler_ir_types.compiler-ir-block-cons
-          (opt-bce-mb-test-jump-block
+          (opt-bce-mb-test-chain-block
             (compiler_ir_types.compiler-ir-label "b2")
-            (compiler_ir_types.compiler-ir-label "b3"))
+            (compiler_ir_types.compiler-ir-label "b3")
+            pad
+            (+ 10 (* 1 pad)))
           (compiler_ir_types.compiler-ir-block-cons
-            (opt-bce-mb-test-jump-block
+            (opt-bce-mb-test-chain-block
               (compiler_ir_types.compiler-ir-label "b3")
-              (compiler_ir_types.compiler-ir-label "b4"))
+              (compiler_ir_types.compiler-ir-label "b4")
+              pad
+              (+ 10 (* 2 pad)))
             (compiler_ir_types.compiler-ir-block-cons
-              (opt-bce-mb-test-jump-block
+              (opt-bce-mb-test-chain-block
                 (compiler_ir_types.compiler-ir-label "b4")
-                (compiler_ir_types.compiler-ir-label "b5"))
+                (compiler_ir_types.compiler-ir-label "b5")
+                pad
+                (+ 10 (* 3 pad)))
               (compiler_ir_types.compiler-ir-block-cons
-                (opt-bce-mb-test-jump-block
+                (opt-bce-mb-test-chain-block
                   (compiler_ir_types.compiler-ir-label "b5")
-                  (compiler_ir_types.compiler-ir-label "b6"))
+                  (compiler_ir_types.compiler-ir-label "b6")
+                  pad
+                  (+ 10 (* 4 pad)))
                 (compiler_ir_types.compiler-ir-block-cons
-                  (opt-bce-mb-test-jump-block
+                  (opt-bce-mb-test-chain-block
                     (compiler_ir_types.compiler-ir-label "b6")
-                    (compiler_ir_types.compiler-ir-label "b7"))
+                    (compiler_ir_types.compiler-ir-label "b7")
+                    pad
+                    (+ 10 (* 5 pad)))
                   (compiler_ir_types.compiler-ir-block-cons
-                    (opt-bce-mb-test-jump-block
+                    (opt-bce-mb-test-chain-block
                       (compiler_ir_types.compiler-ir-label "b7")
-                      (compiler_ir_types.compiler-ir-label "latch"))
+                      (compiler_ir_types.compiler-ir-label "latch")
+                      pad
+                      (+ 10 (* 6 pad)))
                     (compiler_ir_types.compiler-ir-block-cons
                       (compiler_ir_types.compiler-ir-block
                         (compiler_ir_types.compiler-ir-label "latch")
@@ -25472,6 +26731,16 @@
                             (compiler_ir_types.CompilerIrInstrList.Nil)))
                         (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))))
 
+;; Frame leaves room for the pad movs (vars 10 up); everything else the chain
+;; uses lives below 10.
+(define (opt-bce-mb-test-chain-function [pad : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_mb_chain_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    (+ 10 (* 7 pad))
+    (opt-bce-mb-test-chain-blocks pad)))
+
 (define (compiler-optimize-bce-version-mb-self-test) : i64
   (let
     [versioned : compiler_ir_types.CompilerIrFunction
@@ -25484,6 +26753,11 @@
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 13)))]
     [scaled-out : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks scaled)]
+    [chain : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-mb-test-chain-function 1))]
+    [chain-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks chain)]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -25570,6 +26844,45 @@
               (compiler_ir_types.CompilerIrBinOp.Div))
             1))
         14]
+      ;; NINE loop blocks -- over the old eight-block cap -- but only 19
+      ;; cloned instructions, so the growth budget admits it and the counted
+      ;; check versions. This is the and-chain counting-loop shape: block
+      ;; count says "too big", instruction count says "cheaper than a
+      ;; single-block body".
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function chain)))
+        15]
+      ;; entry + guard + nine fast clones + nine slow blocks + exit
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count chain-out) 21))
+        16]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              chain-out
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        17]
+      [(match (compiler_optimize.opt-cfg-find-block
+          chain-out
+          (compiler_ir_types.compiler-ir-label "body__bce_guard"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        18]
+      [(match (compiler_optimize.opt-cfg-find-block
+          chain-out
+          (compiler_ir_types.compiler-ir-label "b7__bce_fast"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        19]
+      ;; the slow loop is untouched and keeps its check.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              chain-out
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        20]
       [else 42])))
 
 (define (opt-bce-mb-test-cloned-switch-cases-ok?
@@ -26040,15 +27353,14 @@
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-bce-version-function
           (opt-bce-mb-test-function (opt-bce-mb-test-blocks 3))))]
+    ;; The same nine-block chain the positive fixture versions, with each
+    ;; forwarder padded to fourteen instructions: 103 cloned instructions
+    ;; against a budget of 96, so the growth cap -- and nothing else --
+    ;; rejects it.
     [too-big : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-bce-version-function
-          (compiler_ir_types.CompilerIrFunction.Function
-            (opt-test-symbol "bce_version_mb_chain_fixture")
-            (opt-bce-version-test-params)
-            (compiler_ast_types.AstType.I64)
-            10
-            (opt-bce-mb-test-chain-blocks))))]
+          (opt-bce-mb-test-chain-function 13)))]
     (cond
       ;; every rejection leaves the function untouched.
       [(not (= (compiler_ir_types.compiler-ir-block-list-count with-call) 6)) 1]
@@ -31751,6 +33063,99 @@
     [multi-phi-changed : bool
       (match multi-phi-result
         [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [chain-merge-source : compiler_ir_types.CompilerIrBlockList
+      (opt-bool-branch-merge-chain-blocks 0)]
+    [chain-merge-function : compiler_ir_types.CompilerIrFunction
+      (opt-bool-branch-constant-test-function chain-merge-source)]
+    [chain-merge-result : compiler_optimize.OptFunctionPassResult
+      (compiler_optimize.opt-bool-branch-function-with-context-result
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build chain-merge-source)
+        false
+        chain-merge-function)]
+    [chain-merge-optimized : compiler_ir_types.CompilerIrFunction
+      (match chain-merge-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+    [chain-merge-changed : bool
+      (match chain-merge-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [chain-merge-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks chain-merge-optimized)]
+    [chain-busy-source : compiler_ir_types.CompilerIrBlockList
+      (opt-bool-branch-merge-chain-blocks 1)]
+    [chain-busy-function : compiler_ir_types.CompilerIrFunction
+      (opt-bool-branch-constant-test-function chain-busy-source)]
+    [chain-busy-result : compiler_optimize.OptFunctionPassResult
+      (compiler_optimize.opt-bool-branch-function-with-context-result
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build chain-busy-source)
+        false
+        chain-busy-function)]
+    [chain-busy-optimized : compiler_ir_types.CompilerIrFunction
+      (match chain-busy-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+    [chain-busy-changed : bool
+      (match chain-busy-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    ;; The same shape past the admission gate, which rejects it on the
+    ;; intermediate block's instruction count before the matcher ever sees it.
+    ;; This entry point has no gate, so it is what holds the matcher's own
+    ;; fallthrough test.
+    [chain-busy-raw-result : compiler_optimize.OptBlockListPassResult
+      (compiler_optimize.opt-bool-branch-fuse-blocks
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-bool-branch-merge-chain-blocks 1)
+        16
+        16)]
+    [chain-busy-raw-blocks : compiler_ir_types.CompilerIrBlockList
+      (match chain-busy-raw-result
+        [(compiler_optimize.OptBlockListPassResult.Result blocks _) blocks])]
+    [chain-busy-raw-changed : bool
+      (match chain-busy-raw-result
+        [(compiler_optimize.OptBlockListPassResult.Result _ changed) changed])]
+    [chain-shared-result : compiler_optimize.OptBlockListPassResult
+      (compiler_optimize.opt-bool-branch-fuse-blocks
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-bool-branch-merge-chain-blocks 2)
+        16
+        16)]
+    [chain-shared-blocks : compiler_ir_types.CompilerIrBlockList
+      (match chain-shared-result
+        [(compiler_optimize.OptBlockListPassResult.Result blocks _) blocks])]
+    [chain-shared-changed : bool
+      (match chain-shared-result
+        [(compiler_optimize.OptBlockListPassResult.Result _ changed) changed])]
+    [sccp-folded-edge-source : compiler_ir_types.CompilerIrBlockList
+      (opt-sccp-folded-edge-chain-blocks)]
+    [sccp-folded-edge-result : compiler_optimize.OptBlockCtxResult
+      (compiler_optimize.opt-sccp-blocks-with-context-result-raw
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build sccp-folded-edge-source)
+        (opt-bool-branch-two-cond-params)
+        sccp-folded-edge-source
+        16)]
+    [sccp-folded-edge-blocks : compiler_ir_types.CompilerIrBlockList
+      (match sccp-folded-edge-result
+        [(compiler_optimize.OptBlockCtxResult.Result blocks _ _) blocks])]
+    [sccp-folded-edge-valid : bool
+      (match sccp-folded-edge-result
+        [(compiler_optimize.OptBlockCtxResult.Result _ _ valid) valid])]
+    [sccp-folded-edge-function : compiler_ir_types.CompilerIrFunction
+      (opt-bool-branch-constant-test-function sccp-folded-edge-blocks)]
+    [sccp-folded-edge-fused-result : compiler_optimize.OptFunctionPassResult
+      (compiler_optimize.opt-bool-branch-function-with-context-result
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build sccp-folded-edge-blocks)
+        false
+        sccp-folded-edge-function)]
+    [sccp-folded-edge-fused-function : compiler_ir_types.CompilerIrFunction
+      (match sccp-folded-edge-fused-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+    [sccp-folded-edge-fused-changed : bool
+      (match sccp-folded-edge-fused-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [sccp-folded-edge-fused-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks sccp-folded-edge-fused-function)]
     [and-chain-result : compiler_optimize.OptFunctionPassResult
       (opt-bool-branch-chain-test-run 0)]
     [and-chain-function : compiler_ir_types.CompilerIrFunction
@@ -32023,6 +33428,151 @@
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function multi-phi-optimized)))
         (return 44))
+      ;; The branch sits two blocks past the phi: the phi block falls through to
+      ;; `gap`, `gap` to `branch-site`. Fusing it retargets the merge's own
+      ;; predecessors, and the successors' phis record the edge under the
+      ;; BRANCH block's label -- repairing them against the phi block's label
+      ;; instead finds nothing to repair and rejects the site.
+      (unless chain-merge-changed (return 69))
+      (unless
+        (and
+          (not
+            (opt-block-list-has-label?
+              chain-merge-blocks
+              (compiler_ir_types.compiler-ir-label "merge")))
+          (not
+            (opt-block-list-has-label?
+              chain-merge-blocks
+              (compiler_ir_types.compiler-ir-label "gap")))
+          (not
+            (opt-block-list-has-label?
+              chain-merge-blocks
+              (compiler_ir_types.compiler-ir-label "branch-site"))))
+        (return 70))
+      (unless
+        (and
+          (=
+            (opt-count-jump-to-blocks
+              chain-merge-blocks
+              (compiler_ir_types.compiler-ir-label "yes"))
+            2)
+          (=
+            (opt-count-jump-to-blocks
+              chain-merge-blocks
+              (compiler_ir_types.compiler-ir-label "no"))
+            1))
+        (return 71))
+      (unless (= (opt-count-phi-blocks chain-merge-blocks) 1) (return 72))
+      (unless
+        (and
+          (opt-bool-branch-first-phi-has-label?
+            chain-merge-blocks
+            (compiler_ir_types.compiler-ir-label "yes")
+            (compiler_ir_types.compiler-ir-label "true-left"))
+          (opt-bool-branch-first-phi-has-label?
+            chain-merge-blocks
+            (compiler_ir_types.compiler-ir-label "yes")
+            (compiler_ir_types.compiler-ir-label "true-right")))
+        (return 73))
+      (unless
+        (compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function chain-merge-optimized))
+        (return 74))
+      ;; An intermediate block that carries a real instruction is not free to
+      ;; disappear with the edge, so the run is not a fallthrough chain.
+      (unless (not chain-busy-changed) (return 75))
+      (unless
+        (and
+          (opt-block-list-has-label?
+            (compiler_optimize.opt-function-blocks chain-busy-optimized)
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_optimize.opt-function-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            chain-busy-function
+            chain-busy-optimized))
+        (return 76))
+      (unless (not chain-busy-raw-changed) (return 79))
+      (unless
+        (and
+          (opt-block-list-has-label?
+            chain-busy-raw-blocks
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (opt-block-list-has-label?
+            chain-busy-raw-blocks
+            (compiler_ir_types.compiler-ir-label "branch-site")))
+        (return 80))
+      ;; An intermediate block reached from outside the run survives the
+      ;; retargeting, and would then branch on a phi whose block is gone.
+      (unless (not chain-shared-changed) (return 77))
+      (unless
+        (and
+          (opt-block-list-has-label?
+            chain-shared-blocks
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (opt-block-list-has-label?
+            chain-shared-blocks
+            (compiler_ir_types.compiler-ir-label "branch-site")))
+        (return 78))
+      ;; Folding `entry`'s branch deletes the edge `entry -> join`. The
+      ;; pipeline's sccp entry point owes its caller blocks whose phis agree
+      ;; with the predecessors it just changed: `join` keeps the `yes` and `no`
+      ;; inputs and loses the `entry` one, and the reported context is stale.
+      (unless (not sccp-folded-edge-valid) (return 81))
+      (unless
+        (and
+          (not
+            (opt-bool-branch-first-phi-has-label?
+              sccp-folded-edge-blocks
+              (compiler_ir_types.compiler-ir-label "join")
+              (compiler_ir_types.compiler-ir-label "entry")))
+          (opt-bool-branch-first-phi-has-label?
+            sccp-folded-edge-blocks
+            (compiler_ir_types.compiler-ir-label "join")
+            (compiler_ir_types.compiler-ir-label "yes"))
+          (opt-bool-branch-first-phi-has-label?
+            sccp-folded-edge-blocks
+            (compiler_ir_types.compiler-ir-label "join")
+            (compiler_ir_types.compiler-ir-label "no")))
+        (return 82))
+      (unless
+        (compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function sccp-folded-edge-function))
+        (return 83))
+      ;; And the payoff: the bool-branch fuser verify-gates its input, so it
+      ;; declines every function sccp hands it in that state. With the phis
+      ;; repaired the merge chain downstream of the folded branch fuses exactly
+      ;; as `chain-merge` does on its own.
+      (unless sccp-folded-edge-fused-changed (return 84))
+      (unless
+        (and
+          (not
+            (opt-block-list-has-label?
+              sccp-folded-edge-fused-blocks
+              (compiler_ir_types.compiler-ir-label "merge")))
+          (not
+            (opt-block-list-has-label?
+              sccp-folded-edge-fused-blocks
+              (compiler_ir_types.compiler-ir-label "gap")))
+          (not
+            (opt-block-list-has-label?
+              sccp-folded-edge-fused-blocks
+              (compiler_ir_types.compiler-ir-label "branch-site")))
+          (=
+            (opt-count-jump-to-blocks
+              sccp-folded-edge-fused-blocks
+              (compiler_ir_types.compiler-ir-label "yes"))
+            2)
+          (=
+            (opt-count-jump-to-blocks
+              sccp-folded-edge-fused-blocks
+              (compiler_ir_types.compiler-ir-label "no"))
+            1))
+        (return 85))
+      (unless
+        (compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function
+            sccp-folded-edge-fused-function))
+        (return 86))
       (unless and-chain-changed (return 46))
       (unless
         (= (compiler_ir_types.compiler-ir-block-list-count and-chain-blocks) 5)
@@ -37833,30 +39383,12 @@
             (struct-get symbols arr)))
         14]
       [(not (= (opt-gc-test-plain-hoist-ok? out-a) 42)) 15]
-      ;; fixture B: gc_arr hoists (fresh var 7), gc_k stays a direct global
-      [(not (= (compiler_optimize.opt-function-frame out-b) 8)) 20]
-      [(not (= (opt-gc-test-block-instr-count blocks-b 0) 2)) 21]
-      [(match (opt-gc-test-instr-at blocks-b 0 0)
-          [(compiler_ir_types.CompilerIrInstr.Mov d src _)
-            (not (and (= d 7) (opt-gc-test-is-global-named? src "gc_arr")))]
-          [_ true])
-        22]
-      [(match (opt-gc-test-instr-at blocks-b 1 0)
-          [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
-            (not (opt-gc-test-is-var? base 7))]
-          [_ true])
-        23]
-      [(match (opt-gc-test-instr-at blocks-b 1 2)
-          [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ rhs _)
-            (not (opt-gc-test-is-global-named? rhs "gc_k"))]
-          [_ true])
-        24]
-      [(match (opt-gc-test-instr-at blocks-b 1 3)
-          [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
-            (not (opt-gc-test-is-global-named? src "gc_k"))]
-          [_ true])
-        25]
-      [(not (= (opt-gc-test-stray-blocks blocks-b true 0) 3)) 26]
+      ;; fixture B: the function's only `Store gc_k` is the last instruction of
+      ;; a returning block, so NO read can observe it -- condition (a) is per
+      ;; store, not per function, and B hoists exactly like A. The store itself
+      ;; survives (the pass rewrites reads only). The negatives that DO bite
+      ;; live in compiler-optimize-global-cell-observable-store-self-test.
+      [(not (= (opt-gc-test-plain-hoist-ok? out-b) 42)) 20]
       [(match (opt-gc-test-instr-at blocks-b 1 6)
           [(compiler_ir_types.CompilerIrInstr.Store _ _ _) false]
           [_ true])
@@ -37898,6 +39430,723 @@
             (not (opt-gc-test-is-var? base 8))]
           [_ true])
         63]
+      [else 42])))
+
+;; --- constant fill -> tl_mem_fill8 (fill_call) self-tests ---------------------
+;;
+;; F1 positive : a `__bce_fast` clone whose whole body is `base[i] = 0`, entered
+;;               from its own `__bce_guard`, becomes one tl_mem_fill8 call and a
+;;               Jump; the loop, the store and the self edge are all gone.
+;; F2 negative : the SAME loop as the CHECKED original (label `while_body.9`,
+;;               entered from a preheader, carrying a BoundsCheck) is left
+;;               exactly as it was -- that path must keep aborting at the same
+;;               element.
+;; F3 negative : a fast clone that stores the COUNTER instead of a literal is
+;;               not a constant fill and is left alone.
+;; F4 negative : a fast clone whose predecessor is some other block, not the
+;;               matching `__bce_guard`, loses the seed<bound / seed>=0 facts
+;;               the rewrite relies on and is left alone.
+;; F5 positive : the shape the versioner ACTUALLY emits on the round that
+;;               creates the clone -- a second (bool) loop-carried phi whose
+;;               back-edge input is the loop compare itself, dead literal
+;;               copies, a copy of the counter, and a compare reading a COPY of
+;;               the counter's next value. `opt-unroll-block-shape` REJECTS
+;;               this (the compare is not terminator-only), which is why the
+;;               recognizer here is self-contained; F5 is what pins that.
+;; F6 negative : step 2 instead of 1 -- the visited indices are not the
+;;               contiguous run `rep stosq` writes.
+;; F7 negative : the compare's bound is defined inside the block, so it is not
+;;               the loop's end index and the slot count would be wrong.
+;;
+;; Each negative was checked load-bearing by mutating the implementation and
+;; confirming THIS test is what fails:
+;;   * `opt-fill-call-scan-body`'s literal-store arm widened to accept a Var
+;;     store value -> code 20 (F3 wrongly rewrites).
+;;   * `opt-fill-call-pred-in-version-namespace?` forced true -> code 30 (F4
+;;     wrongly rewrites).
+;;   * `opt-fill-call-shape-step`'s `(= step 1)` dropped -> code 50 (F6).
+;;   * `opt-fill-call-shape-cond`'s `opt-unroll-invariant-bound?` forced true
+;;     -> code 60 (F7).
+;;   * `opt-fill-call-shape-scan` given the unroller's extra "the compare's only
+;;     in-block use is the terminator" gate -> code 41 (F5 stops rewriting)
+;;     while F1 still passes: that gate, and nothing else, is what made
+;;     `opt-unroll-block-shape` reject the real clone.
+(define (opt-fc-test-label [name : String]) : i64
+  (compiler_ir_types.compiler-ir-label name))
+
+(define (opt-fc-test-i64) : compiler_ast_types.AstType
+  (compiler_ast_types.AstType.I64))
+
+(define (opt-fc-test-entry-block [pred : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (opt-fc-test-label "fc.entry")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump pred)
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-fc-test-pred-block [pred : i64] [loop : i64] [exit : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    pred
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        2
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          loop
+          exit)
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-fc-test-loop-tail
+  [loop : i64]
+  [exit : i64]
+  [value : compiler_ir_types.CompilerIrValue]
+  [step : i64]
+  [bound : compiler_ir_types.CompilerIrValue]
+  [local-bound? : bool]) : compiler_ir_types.CompilerIrInstrList
+  (opt-fc-test-maybe-local-bound
+    local-bound?
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        4
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (opt-fc-test-i64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          value
+          (opt-fc-test-i64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 step)
+            (opt-fc-test-i64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              6
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              bound
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                loop
+                exit)
+              compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; F7's block-local bound: `%7 = mov %1` inside the loop, compared against
+;; instead of the parameter. Emitting a real copy (rather than reusing the
+;; counter's own next value) is what makes the fixture NON-vacuous: with the
+;; invariance clause removed the rewrite is still valid SSA, so it fires and
+;; the assertion -- not the IR verifier -- is what catches it.
+(define (opt-fc-test-maybe-local-bound
+  [local-bound? : bool]
+  [rest : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (if local-bound?
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        7
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (opt-fc-test-i64))
+      rest)
+    rest))
+
+(define (opt-fc-test-loop-block
+  [loop : i64]
+  [pred : i64]
+  [exit : i64]
+  [value : compiler_ir_types.CompilerIrValue]
+  [checked? : bool]
+  [step : i64]
+  [bound : compiler_ir_types.CompilerIrValue]
+  [local-bound? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    loop
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        3
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          pred
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            loop
+            compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (opt-fc-test-i64))
+      (if checked?
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (opt-fc-test-label "fc.bounds"))
+          (opt-fc-test-loop-tail loop exit value step bound local-bound?))
+        (opt-fc-test-loop-tail loop exit value step bound local-bound?)))))
+
+(define (opt-fc-test-exit-block [exit : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    exit
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.I64 0)))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-fc-test-function
+  [loop-name : String]
+  [pred-name : String]
+  [value : compiler_ir_types.CompilerIrValue]
+  [checked? : bool]
+  [step : i64]
+  [bound : compiler_ir_types.CompilerIrValue]
+  [local-bound? : bool]
+  [frame : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [loop : i64 (opt-fc-test-label loop-name)]
+    [pred : i64 (opt-fc-test-label pred-name)]
+    [exit : i64 (opt-fc-test-label "fc.exit")]
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "fc_fn")
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "base"
+          (compiler_ast_types.AstType.U64)
+          0)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param "bound" (opt-fc-test-i64) 1)
+          compiler_ir_types.CompilerIrParamList.Nil))
+      (opt-fc-test-i64)
+      frame
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-fc-test-entry-block pred)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-fc-test-pred-block pred loop exit)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-fc-test-loop-block
+              loop
+              pred
+              exit
+              value
+              checked?
+              step
+              bound
+              local-bound?)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-fc-test-exit-block exit)
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The real post-`bce_version` clone body, instruction for instruction:
+;;
+;;   %3  = phi [0, pred], [%5, loop] : i64      counter
+;;   %8  = phi [%2, pred], [%6, loop] : bool    the versioner's bool phi, whose
+;;                                              back-edge input is the compare
+;;   %9  = mov 0                                dead literal copy
+;;   %10 = mov %3                               dead counter copy
+;;   %4  = gep %0, %3
+;;   store_ptr %4, 0
+;;   %11 = mov 1                                dead literal copy
+;;   %5  = add %3, 1
+;;   %12 = mov %5                               copy of the next value
+;;   %6  = lt %12, %1                           compare reads the COPY
+;;   branch %6, loop, exit
+(define (opt-fc-test-real-mov
+  [dst : i64]
+  [src : compiler_ir_types.CompilerIrValue]
+  [rest : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Mov dst src (opt-fc-test-i64))
+    rest))
+
+(define (opt-fc-test-real-loop-block [loop : i64] [pred : i64] [exit : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    loop
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        3
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          pred
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            loop
+            compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (opt-fc-test-i64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          8
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            pred
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              loop
+              compiler_ir_types.CompilerIrPhiInputList.Nil))
+          (compiler_ast_types.AstType.Bool))
+        (opt-fc-test-real-mov
+          9
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (opt-fc-test-real-mov
+            10
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                4
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (opt-fc-test-i64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.StorePtr
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (opt-fc-test-i64))
+                (opt-fc-test-real-mov
+                  11
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.BinOp
+                      5
+                      (compiler_ir_types.CompilerIrBinOp.Add)
+                      (compiler_ir_types.CompilerIrValue.Var 3)
+                      (compiler_ir_types.CompilerIrValue.I64 1)
+                      (opt-fc-test-i64))
+                    (opt-fc-test-real-mov
+                      12
+                      (compiler_ir_types.CompilerIrValue.Var 5)
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.BinOp
+                          6
+                          (compiler_ir_types.CompilerIrBinOp.Lt)
+                          (compiler_ir_types.CompilerIrValue.Var 12)
+                          (compiler_ir_types.CompilerIrValue.Var 1)
+                          (compiler_ast_types.AstType.Bool))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Branch
+                            (compiler_ir_types.CompilerIrValue.Var 6)
+                            loop
+                            exit)
+                          compiler_ir_types.CompilerIrInstrList.Nil)))))))))))))
+
+(define (opt-fc-test-real-function) : compiler_ir_types.CompilerIrFunction
+  (let
+    [loop : i64 (opt-fc-test-label "while_body.7__bce_fast")]
+    [pred : i64 (opt-fc-test-label "while_body.7__bce_guard")]
+    [exit : i64 (opt-fc-test-label "fc.exit")]
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "fc_real_fn")
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "base"
+          (compiler_ast_types.AstType.U64)
+          0)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param "bound" (opt-fc-test-i64) 1)
+          compiler_ir_types.CompilerIrParamList.Nil))
+      (opt-fc-test-i64)
+      13
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-fc-test-entry-block pred)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-fc-test-pred-block pred loop exit)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-fc-test-real-loop-block loop pred exit)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-fc-test-exit-block exit)
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-fc-test-loop-instr-count
+  [out : compiler_ir_types.CompilerIrFunction]) : i64
+  (opt-gc-test-block-instr-count (compiler_optimize.opt-function-blocks out) 2))
+
+(define (opt-fc-test-loop-has-call?
+  [out : compiler_ir_types.CompilerIrFunction]
+  [index : i64]) : bool
+  (match (opt-gc-test-instr-at
+    (compiler_optimize.opt-function-blocks out)
+    2
+    index)
+    [(compiler_ir_types.CompilerIrInstr.Call _ name _ _)
+      (cbi.compiler-builtin-backend-tl-mem-fill8-id? name)]
+    [_ false]))
+
+(define (opt-fc-test-loop-has-store?
+  [out : compiler_ir_types.CompilerIrFunction]
+  [index : i64]) : bool
+  (match (opt-gc-test-instr-at
+    (compiler_optimize.opt-function-blocks out)
+    2
+    index)
+    [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) true]
+    [_ false]))
+
+(define (opt-fc-test-loop-ends-in-jump?
+  [out : compiler_ir_types.CompilerIrFunction]) : bool
+  (match (opt-gc-test-instr-at
+    (compiler_optimize.opt-function-blocks out)
+    2
+    (- (opt-fc-test-loop-instr-count out) 1))
+    [(compiler_ir_types.CompilerIrInstr.Jump _) true]
+    [_ false]))
+
+(define (opt-fc-test-unchanged?
+  [out : compiler_ir_types.CompilerIrFunction]
+  [frame : i64]) : bool
+  (and
+    (= (compiler_optimize.opt-function-frame out) frame)
+    (not (opt-fc-test-loop-ends-in-jump? out))))
+
+(define (opt-fc-test-loop-store-count
+  [out : compiler_ir_types.CompilerIrFunction]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index count)
+    0
+    (+
+      (if (opt-fc-test-loop-has-store? out index)
+        1
+        0)
+      (opt-fc-test-loop-store-count out (+ index 1) count))))
+
+(define (opt-fc-test-plain
+  [loop-name : String]
+  [pred-name : String]
+  [value : compiler_ir_types.CompilerIrValue]
+  [checked? : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-fill-call-function
+    (opt-fc-test-function
+      loop-name
+      pred-name
+      value
+      checked?
+      1
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      false
+      7)))
+
+(define (compiler-optimize-fill-call-self-test) : i64
+  (let
+    [f1 : compiler_ir_types.CompilerIrFunction
+      (opt-fc-test-plain
+        "while_body.1__bce_fast"
+        "while_body.1__bce_guard"
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        false)]
+    [f2 : compiler_ir_types.CompilerIrFunction
+      (opt-fc-test-plain
+        "while_body.9"
+        "while_body.9__preheader"
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        true)]
+    [f3 : compiler_ir_types.CompilerIrFunction
+      (opt-fc-test-plain
+        "while_body.3__bce_fast"
+        "while_body.3__bce_guard"
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        false)]
+    [f4 : compiler_ir_types.CompilerIrFunction
+      (opt-fc-test-plain
+        "while_body.5__bce_fast"
+        "while_body.5__somewhere_else"
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        false)]
+    [f5 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-fill-call-function (opt-fc-test-real-function))]
+    [f6 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-fill-call-function
+        (opt-fc-test-function
+          "while_body.11__bce_fast"
+          "while_body.11__bce_guard"
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          false
+          2
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          false
+          7))]
+    [f7 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-fill-call-function
+        (opt-fc-test-function
+          "while_body.13__bce_fast"
+          "while_body.13__bce_guard"
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          false
+          1
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          true
+          8))]
+    (cond
+      ;; F1: phi, gep, call, mov(inext), lt, jump
+      [(not (= (opt-fc-test-loop-instr-count f1) 6)) 1]
+      [(not (opt-fc-test-loop-has-call? f1 2)) 2]
+      [(not (= (opt-fc-test-loop-store-count f1 0 6) 0)) 3]
+      [(not (opt-fc-test-loop-ends-in-jump? f1)) 4]
+      [(not (= (compiler_optimize.opt-function-frame f1) 8)) 5]
+      [(not (opt-fc-test-unchanged? f2 7)) 10]
+      [(not (opt-fc-test-loop-has-store? f2 3)) 11]
+      [(not (opt-fc-test-unchanged? f3 7)) 20]
+      [(not (opt-fc-test-loop-has-store? f3 2)) 21]
+      [(not (opt-fc-test-unchanged? f4 7)) 30]
+      [(not (opt-fc-test-loop-has-store? f4 2)) 31]
+      ;; F5: 2 phis, mov, mov, gep, call, mov, mov(inext), mov, lt, jump
+      [(not (= (opt-fc-test-loop-instr-count f5) 11)) 40]
+      [(not (opt-fc-test-loop-has-call? f5 5)) 41]
+      [(not (= (opt-fc-test-loop-store-count f5 0 11) 0)) 45]
+      [(not (opt-fc-test-loop-ends-in-jump? f5)) 43]
+      [(not (= (compiler_optimize.opt-function-frame f5) 14)) 44]
+      [(not (opt-fc-test-unchanged? f6 7)) 50]
+      [(not (opt-fc-test-loop-has-store? f6 2)) 51]
+      [(not (opt-fc-test-unchanged? f7 8)) 60]
+      [(not (opt-fc-test-loop-has-store? f7 3)) 61]
+      [else 42])))
+
+;; --- global-cell condition (a): per-store observability ----------------------
+;;
+;; Condition (a) is not "this function stores G" but "this function has a store
+;; of G that a later read can observe". These four fixtures pin every clause of
+;; that predicate. Each negative was checked load-bearing by mutating the
+;; implementation and confirming THIS test is what fails:
+;;   * `opt-global-cell-store-scan-back`'s same-block `contains?` forced false
+;;     -> code 10 (G2 wrongly hoists); G3/G4 still pass.
+;;   * `opt-global-cell-observable-stores-reach-block`'s `reach` replaced by an
+;;     empty map -> code 20 (G3 wrongly hoists).
+;;   * `opt-global-cell-reach-push-succs!` restricted to successors with a
+;;     HIGHER block id (a lexical-forward-only walk) -> code 30 (G4 wrongly
+;;     hoists) while G3 still passes, so the two clauses are independent.
+;;
+;;   G1 positive : loop bound reads @gc_k, the RETURNING loop-exit block set!s
+;;                 gc_k after the loop -- no read can observe it, so gc_k
+;;                 hoists. (The gvn-facts-reset shape.)
+;;   G2 negative : the same exit block reads @gc_k AFTER the set!.
+;;   G3 negative : the set! block jumps to a block that reads @gc_k.
+;;   G4 negative : the set! sits INSIDE the loop, so the header's read -- which
+;;                 is lexically before it -- observes it on the next iteration.
+;;                 (Pins the "a block in a cycle reaches itself" rule.)
+(define (opt-gc-obs-entry-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        0
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "head"))
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; head: %1 = lt %0, @gc_k ; branch %1 body exit
+(define (opt-gc-obs-head-block [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "head")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        1
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Global (struct-get symbols k))
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-label "exit"))
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; body: [store gc_k when in-loop?] %2 = add %0, 1 ; jump head
+(define (opt-gc-obs-body-block
+  [symbols : OptGcTestSymbols]
+  [in-loop-store? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "body")
+    (if in-loop-store?
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Store
+          (struct-get symbols k)
+          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ast_types.AstType.I64))
+        (opt-gc-obs-body-tail))
+      (opt-gc-obs-body-tail))))
+
+(define (opt-gc-obs-body-tail) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      2
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "head"))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-gc-obs-read-k-return) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var 3)))
+    compiler_ir_types.CompilerIrInstrList.Nil))
+
+;; mode 0 = tail store then return         (G1 positive)
+;; mode 1 = tail store, read @gc_k, return (G2 same-block negative)
+;; mode 2 = tail store then jump to tail   (G3 reachable negative)
+;; mode 3 = no store at all                (G4 uses the in-loop store instead)
+(define (opt-gc-obs-exit-block [symbols : OptGcTestSymbols] [mode : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "exit")
+    (if (= mode 3)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 0)))
+        compiler_ir_types.CompilerIrInstrList.Nil)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Store
+          (struct-get symbols k)
+          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ast_types.AstType.I64))
+        (cond
+          [(= mode 1)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Mov
+                3
+                (compiler_ir_types.CompilerIrValue.Global
+                  (struct-get symbols k))
+                (compiler_ast_types.AstType.I64))
+              (opt-gc-obs-read-k-return))]
+          [(= mode 2)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "tail"))
+              compiler_ir_types.CompilerIrInstrList.Nil)]
+          [else
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 0)))
+              compiler_ir_types.CompilerIrInstrList.Nil)])))))
+
+(define (opt-gc-obs-tail-block [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "tail")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        3
+        (compiler_ir_types.CompilerIrValue.Global (struct-get symbols k))
+        (compiler_ast_types.AstType.I64))
+      (opt-gc-obs-read-k-return))))
+
+(define (opt-gc-obs-blocks [symbols : OptGcTestSymbols] [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-gc-obs-entry-block)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-gc-obs-head-block symbols)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-gc-obs-body-block symbols (= mode 3))
+        (if (= mode 2)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-gc-obs-exit-block symbols mode)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-gc-obs-tail-block symbols)
+              compiler_ir_types.CompilerIrBlockList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-gc-obs-exit-block symbols mode)
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-gc-obs-function [symbols : OptGcTestSymbols] [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (struct-get symbols reader)
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    4
+    (opt-gc-obs-blocks symbols mode)))
+
+(define (opt-gc-obs-run [symbols : OptGcTestSymbols] [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-gc-obs-function symbols mode)]
+    (compiler_optimize.opt-global-cell-function
+      (opt-gc-test-summaries symbols (opt-gc-test-functions1 func))
+      func)))
+
+;; the head block's `lt` right-hand side after the pass: hoisted (Var 4) or
+;; still a direct cell read (Global gc_k)
+(define (opt-gc-obs-head-rhs-hoisted?
+  [out : compiler_ir_types.CompilerIrFunction]) : bool
+  (match (opt-gc-test-instr-at (compiler_optimize.opt-function-blocks out) 1 0)
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ rhs _)
+      (opt-gc-test-is-var? rhs 4)]
+    [_ false]))
+
+(define (opt-gc-obs-head-rhs-direct?
+  [out : compiler_ir_types.CompilerIrFunction]) : bool
+  (match (opt-gc-test-instr-at (compiler_optimize.opt-function-blocks out) 1 0)
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ rhs _)
+      (opt-gc-test-is-global-named? rhs "gc_k")]
+    [_ false]))
+
+(define (compiler-optimize-global-cell-observable-store-self-test) : i64
+  (let
+    [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
+    [g1 : compiler_ir_types.CompilerIrFunction (opt-gc-obs-run symbols 0)]
+    [g2 : compiler_ir_types.CompilerIrFunction (opt-gc-obs-run symbols 1)]
+    [g3 : compiler_ir_types.CompilerIrFunction (opt-gc-obs-run symbols 2)]
+    [g4 : compiler_ir_types.CompilerIrFunction (opt-gc-obs-run symbols 3)]
+    (cond
+      ;; G1: gc_k hoists to a fresh entry Mov and the loop bound reads it
+      [(not (= (compiler_optimize.opt-function-frame g1) 5)) 1]
+      [(not
+          (=
+            (opt-gc-test-block-instr-count
+              (compiler_optimize.opt-function-blocks g1)
+              0)
+            3))
+        2]
+      [(match (opt-gc-test-instr-at
+          (compiler_optimize.opt-function-blocks g1)
+          0
+          0)
+          [(compiler_ir_types.CompilerIrInstr.Mov d src _)
+            (not (and (= d 4) (opt-gc-test-is-global-named? src "gc_k")))]
+          [_ true])
+        3]
+      [(not (opt-gc-obs-head-rhs-hoisted? g1)) 4]
+      ;; the set! itself survives untouched (only reads are rewritten)
+      [(match (opt-gc-test-instr-at
+          (compiler_optimize.opt-function-blocks g1)
+          3
+          0)
+          [(compiler_ir_types.CompilerIrInstr.Store _ _ _) false]
+          [_ true])
+        5]
+      ;; G2: a read after the set! in the SAME block keeps the cell direct
+      [(not (= (compiler_optimize.opt-function-frame g2) 4)) 10]
+      [(not
+          (=
+            (opt-gc-test-block-instr-count
+              (compiler_optimize.opt-function-blocks g2)
+              0)
+            2))
+        11]
+      [(not (opt-gc-obs-head-rhs-direct? g2)) 12]
+      ;; G3: a read in a block reachable from the set! keeps the cell direct
+      [(not (= (compiler_optimize.opt-function-frame g3) 4)) 20]
+      [(not
+          (=
+            (opt-gc-test-block-instr-count
+              (compiler_optimize.opt-function-blocks g3)
+              0)
+            2))
+        21]
+      [(not (opt-gc-obs-head-rhs-direct? g3)) 22]
+      ;; G4: the set! inside the loop is observed by the header's earlier read
+      [(not (= (compiler_optimize.opt-function-frame g4) 4)) 30]
+      [(not (opt-gc-obs-head-rhs-direct? g4)) 31]
       [else 42])))
 
 ;; --- global-cell pipeline self-test (bce_version unblocked) ------------------
@@ -38362,6 +40611,20 @@
     (compiler-optimize-global-cell-self-test)
     42
     "global-cell entry-load + rewrite with store/call/address-taken exclusions and idempotence"))
+
+(test
+  fill-call-constant-fill
+  (test.assert-i64-eq
+    (compiler-optimize-fill-call-self-test)
+    42
+    "a constant fill in a __bce_fast clone becomes tl_mem_fill8 (including the versioner's real copy-and-bool-phi shape); checked, non-constant, wrong-predecessor, non-unit-step and block-local-bound loops do not"))
+
+(test
+  global-cell-observable-store
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-observable-store-self-test)
+    42
+    "condition (a) is per-store: an unobservable tail set! still hoists, a same-block, a reachable and a loop-carried read do not"))
 
 (test
   global-cell-pipeline-bce

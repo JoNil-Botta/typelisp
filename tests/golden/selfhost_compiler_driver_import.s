@@ -518,10 +518,8 @@ tl_panic_at:
     sete %r8b
     movzbq %r8b, %r8
     movq %r8, 136(%rsp)
-    pushq %r8
-    movzbq 144(%rsp), %r8
-    movq %r8, 128(%rsp)
-    popq %r8
+    movzbq 136(%rsp), %r8
+    movq %r8, 120(%rsp)
     jmp .Lf13_if_merge.2
 .Lf13_if_else.1:
     movq $0, 120(%rsp)
@@ -738,6 +736,15 @@ tl_array_zero:
     rep stosb
     ret
     .size tl_array_zero, . - tl_array_zero
+    .globl tl_mem_fill8
+tl_mem_fill8:
+    testq %rsi, %rsi
+    jle .Ltl_mem_fill8_done
+    movq %rsi, %rcx
+    movq %rdx, %rax
+    rep stosq
+.Ltl_mem_fill8_done:
+    ret
     .globl tl_tlci_call_image_entry
     .type tl_tlci_call_image_entry,@function
 tl_tlci_call_image_entry:

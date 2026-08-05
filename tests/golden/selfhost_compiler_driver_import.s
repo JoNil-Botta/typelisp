@@ -518,10 +518,8 @@ tl_panic_at:
     sete %r8b
     movzbq %r8b, %r8
     movq %r8, 136(%rsp)
-    pushq %r8
-    movzbq 144(%rsp), %r8
-    movq %r8, 128(%rsp)
-    popq %r8
+    movzbq 136(%rsp), %r8
+    movq %r8, 120(%rsp)
     jmp .Lf13_if_merge.2
 .Lf13_if_else.1:
     movq $0, 120(%rsp)

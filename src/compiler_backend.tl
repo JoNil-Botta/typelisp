@@ -34027,6 +34027,77 @@
 (define compiler-backend-phi-xmm-cycle-fallback-count : i64
   0)
 
+;; #phi-staged-copy: program point (2 x global instruction index -- the scavenge
+;; coordinate) of the FIRST instruction of the phi edge's TARGET block, or -1
+;; when no edge scan has established one. The edge scan already walks the block
+;; list to find the target block, so accumulating the prefix sum of block
+;; instruction counts on the way costs one add per skipped block and lands in
+;; exactly the coordinate emit-instr-post-base builds (both walk the same list in
+;; the same order, adding the same per-block instruction count).
+(define compiler-backend-current-phi-target-point : i64
+  -1)
+
+;; Pooled-register-home bit mask of every dst in the ORIGINAL phi-copy list of
+;; the edge being marshalled. -1 (every bit set) is the conservative default: with
+;; no list installed nothing can be proven free. This is the same exclusion the
+;; cycle-break Temp pick applies (see phi-temp-pick-reg): an already-drained copy
+;; has placed a final phi value in its dst register which must survive to the
+;; merge block entry, and the occupancy mask -- which models the allocation, not
+;; these transient marshalling values -- does not show it.
+(define compiler-backend-current-phi-dst-home-mask : i64
+  -1)
+
+;; #phi-staged-copy: may the spilled-dst phi copy stage through `reg` WITHOUT the
+;; pushq/popq bracket? Three obligations, all discharged from state the emitter
+;; already holds:
+;;   (1) `reg` is a pooled register -- a spelling with no scavenge bit (%rbp,
+;;       %rsp) cannot be tested at all and is refused;
+;;   (2) `reg` is FREE over the scavenge staging window at this point. This is the
+;;       same query the scavenge itself ran, re-asked so an EMERGENCY pick (which
+;;       returns an OCCUPIED register plus a pending save) keeps its bracket. On a
+;;       BACK edge (target point <= this point) `reg` must ALSO be free at the
+;;       TARGET block's entry: a value carried around the loop whose next use is
+;;       the next iteration's phi is what a point-local query at the bottom of the
+;;       body can fail to see, and the header entry point is where it is
+;;       guaranteed occupied. On a forward or fall-through edge every value live
+;;       into the target has an interval covering this point already (its def
+;;       dominates the edge and its use is ahead), so the point-local query is
+;;       sufficient there -- exactly the split the bracket's own comment named.
+;;   (3) `reg` is not the home of ANY dst of this edge's copy list, so no drained
+;;       copy's placed phi value is sitting in it.
+;; With all three the value in `reg` at this point is dead, so the bracket saves
+;; and restores a dead value. Dropping it leaves `movq SRC,%rX` / `movq %rX,DST`:
+;; two instructions and two memory ops in a load->store chain, strictly fewer
+;; memory operations AND a shorter dependency chain than the bracketed four.
+(define (compiler-backend-phi-staged-copy-proven? [reg : String]) : bool
+  (let
+    [bit : i64 (compiler-backend-scavenge-reg-bit reg)]
+    [point : i64
+      (*
+        2
+        (-
+          compiler-backend-emit-instr-post-base
+          compiler-backend-emit-current-count))]
+    [target : i64 compiler-backend-current-phi-target-point]
+    (and
+      (not (= bit 0))
+      (>= target 0)
+      (= (bit-and compiler-backend-current-phi-dst-home-mask bit) 0)
+      (=
+        (bit-and
+          (compiler-backend-scavenge-occupied-mask-over-range
+            point
+            (+ point compiler-backend-scavenge-staging-window))
+          bit)
+        0)
+      (or
+        (> target point)
+        (=
+          (bit-and
+            (compiler-backend-scavenge-occupied-mask-at-point target)
+            bit)
+          0)))))
+
 (cfg
   scratch-vreg
   (define (compiler-backend-phi-planned-avoiding-value-home
@@ -34649,26 +34720,25 @@
         dst-home)]
     ;; The scavenged staging register may host a value live through the edge even
     ;; when the point-local occupancy mask reads it free. Back edges hit this
-    ;; when a loop-carried value's next use is in the next iteration; forward
-    ;; edges into a merge inside a loop can hit the same class when a live-through
-    ;; register is next used after the merge. Bracket spilled-dst scalar GP phi
-    ;; copies so the occupant survives the edge marshalling. Homes are
-    ;; frame-relative at emission, so the transient %rsp shift cannot skew the
-    ;; operands, and the FPO audit tracks push/pop deltas.
+    ;; when a loop-carried value's next use is in the next iteration; a drained
+    ;; copy of this same edge may also have placed a phi value in it, which the
+    ;; occupancy mask (a model of the ALLOCATION, not of edge marshalling) never
+    ;; shows. Bracket spilled-dst scalar GP phi copies so the occupant survives
+    ;; the edge marshalling. Homes are frame-relative at emission, so the
+    ;; transient %rsp shift cannot skew the operands, and the FPO audit tracks
+    ;; push/pop deltas.
     ;;
     ;; A function-wide "is this register a plan home at all?" test does NOT
     ;; un-bracket this: the allocator homes short-lived temporaries in %r8 (the
     ;; preferred staging fallback) in essentially every function that also has a
     ;; spilled phi dst, so the mask is set even though nothing is live in %r8
     ;; across the edge. Measured: 0 of 2044 sites in the benchmark corpus plus
-    ;; stage2.s un-bracket that way. What the test actually needs is per-EDGE
-    ;; liveness, and only for BACK edges -- on a forward edge every var live at
-    ;; the target's entry has an interval covering this point already (its def
-    ;; dominates the edge and its use is ahead), so the occupancy query the
-    ;; scavenge already runs is sufficient there; only a loop carry whose next use
-    ;; is in the next iteration reads free here while having to survive the jump.
-    ;; Distinguishing the two needs the target label's point, which this emitter
-    ;; is not yet given.
+    ;; stage2.s un-bracket that way. #phi-staged-copy discharges the real
+    ;; obligations instead -- per-EDGE occupancy (point-local on forward and
+    ;; fall-through edges, unioned with the TARGET block entry on back edges) plus
+    ;; the edge's dst-home mask -- and drops the bracket when they hold, leaving
+    ;; the 2-instruction register-staged copy. See
+    ;; compiler-backend-phi-staged-copy-proven?.
     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
       type-segment-bases
       assignments
@@ -34697,7 +34767,8 @@
               ;; (clobbering) loads keep the bracket for the reason above.
               (if (or
                 (string.eq load "")
-                (not (string.eq compiler-backend-current-phi-planned-stage "")))
+                (not (string.eq compiler-backend-current-phi-planned-stage ""))
+                (compiler-backend-phi-staged-copy-proven? reg))
                 (string.append
                   load
                   (compiler-backend-emit-store-typed-var-with-plan
@@ -34998,14 +35069,22 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [outer-active : bool]) : ResultCompilerBackend
-  (compiler-backend-emit-phi-copy-list-with-all
-    type-segment-bases
-    assignments
-    copies
-    copies
-    program-index
-    vars
-    outer-active))
+  (begin
+    ;; #phi-staged-copy: install this edge's dst-home mask once, at the single
+    ;; entry to the marshalling recursion, so every copy's staging proof can
+    ;; exclude registers holding placed phi values without rebuilding the mask
+    ;; per copy. The recursion re-enters -with-all, never this function.
+    (set!
+      compiler-backend-current-phi-dst-home-mask
+      (compiler-backend-phi-copy-list-dst-home-mask assignments copies))
+    (compiler-backend-emit-phi-copy-list-with-all
+      type-segment-bases
+      assignments
+      copies
+      copies
+      program-index
+      vars
+      outer-active)))
 
 ;; `all` is the ORIGINAL (top-level) phi-copy list, carried unchanged through the
 ;; recursion so the cycle-break Temp pick can exclude every dst register of the
@@ -35239,6 +35318,9 @@
     (set! compiler-backend-current-phi-planned-cycle planned-cycle)
     (set! compiler-backend-current-phi-planned-stage planned-stage)
     (set! compiler-backend-current-phi-planned-xmm-cycle planned-xmm-cycle)
+    ;; #phi-staged-copy: cleared on entry so a scan that never reaches the target
+    ;; leaves no previous edge's point behind; the scan below sets it.
+    (set! compiler-backend-current-phi-target-point -1)
     (compiler-backend-emit-phi-edge-copies-scan
       type-segment-bases
       assignments
@@ -35246,8 +35328,12 @@
       target-label
       from-label
       program-index
-      vars)))
+      vars
+      0)))
 
+;; `point` is the running prefix sum of block instruction counts in scavenge
+;; coordinates (2 per instruction) over the blocks already skipped -- the target
+;; block's entry point once the label matches. See #phi-staged-copy.
 (define (compiler-backend-emit-phi-edge-copies-scan
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
@@ -35255,7 +35341,8 @@
   [target-label : i64]
   [from-label : i64]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [point : i64]) : ResultCompilerBackend
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil)
       (ResultCompilerBackend.Err
@@ -35269,13 +35356,15 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
           (if (= block-label target-label)
-            (compiler-backend-emit-leading-phi-copies
-              type-segment-bases
-              assignments
-              instrs
-              from-label
-              program-index
-              vars)
+            (begin
+              (set! compiler-backend-current-phi-target-point point)
+              (compiler-backend-emit-leading-phi-copies
+                type-segment-bases
+                assignments
+                instrs
+                from-label
+                program-index
+                vars))
             (compiler-backend-emit-phi-edge-copies-scan
               type-segment-bases
               assignments
@@ -35283,7 +35372,8 @@
               target-label
               from-label
               program-index
-              vars))])]
+              vars
+              (+ point (* 2 (struct-get instrs len)))))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-phi-edge-copies-scan-seq
         type-segment-bases
@@ -35293,7 +35383,8 @@
         target-label
         from-label
         program-index
-        vars)]))
+        vars
+        point)]))
 
 (define (compiler-backend-emit-phi-edge-copies-scan-seq
   [type-segment-bases : i64]
@@ -35303,7 +35394,8 @@
   [target-label : i64]
   [from-label : i64]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [point : i64]) : ResultCompilerBackend
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     (ResultCompilerBackend.Err
       (box
@@ -35315,13 +35407,15 @@
     (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
       [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
         (if (= block-label target-label)
-          (compiler-backend-emit-leading-phi-copies
-            type-segment-bases
-            assignments
-            instrs
-            from-label
-            program-index
-            vars)
+          (begin
+            (set! compiler-backend-current-phi-target-point point)
+            (compiler-backend-emit-leading-phi-copies
+              type-segment-bases
+              assignments
+              instrs
+              from-label
+              program-index
+              vars))
           (compiler-backend-emit-phi-edge-copies-scan-seq
             type-segment-bases
             assignments
@@ -35330,7 +35424,8 @@
             target-label
             from-label
             program-index
-            vars))])))
+            vars
+            (+ point (* 2 (struct-get instrs len)))))])))
 
 (define (compiler-backend-emit-mov-phi-copy-edge
   [type-segment-bases : i64]
@@ -35367,6 +35462,8 @@
           moved-src
           planned-stage)
         planned-stage))
+    ;; #phi-staged-copy: see emit-phi-edge-copies.
+    (set! compiler-backend-current-phi-target-point -1)
     (compiler-backend-emit-mov-phi-copy-edge-scan
       type-segment-bases
       assignments
@@ -35376,7 +35473,8 @@
       moved-dst
       moved-src
       program-index
-      vars)))
+      vars
+      0)))
 
 (define (compiler-backend-emit-mov-phi-copy-edge-scan
   [type-segment-bases : i64]
@@ -35387,7 +35485,8 @@
   [moved-dst : i64]
   [moved-src : compiler_ir_types.CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [point : i64]) : ResultCompilerBackend
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil)
       (ResultCompilerBackend.Err
@@ -35412,18 +35511,20 @@
                   ;; #orphan-push: the substituted source can share its dst's
                   ;; home -- re-apply the build-time same-home filter or the
                   ;; cycle break emits an orphaned push (see drop-same-home).
-                  (compiler-backend-emit-phi-copy-list
-                    type-segment-bases
-                    assignments
-                    (compiler-backend-phi-copy-list-drop-same-home
+                  (begin
+                    (set! compiler-backend-current-phi-target-point point)
+                    (compiler-backend-emit-phi-copy-list
+                      type-segment-bases
                       assignments
-                      (compiler-backend-phi-copy-list-replace-source-var
-                        copies
-                        moved-dst
-                        moved-src))
-                    program-index
-                    vars
-                    false)
+                      (compiler-backend-phi-copy-list-drop-same-home
+                        assignments
+                        (compiler-backend-phi-copy-list-replace-source-var
+                          copies
+                          moved-dst
+                          moved-src))
+                      program-index
+                      vars
+                      false))
                   (ResultCompilerBackend.Ok ""))]
               [(ResultBackendPhiCopies.Err message)
                 (ResultCompilerBackend.Err
@@ -35440,7 +35541,8 @@
               moved-dst
               moved-src
               program-index
-              vars))])]
+              vars
+              (+ point (* 2 (struct-get instrs len)))))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-mov-phi-copy-edge-scan-seq
         type-segment-bases
@@ -35452,7 +35554,8 @@
         moved-dst
         moved-src
         program-index
-        vars)]))
+        vars
+        point)]))
 
 (define (compiler-backend-emit-mov-phi-copy-edge-scan-seq
   [type-segment-bases : i64]
@@ -35464,7 +35567,8 @@
   [moved-dst : i64]
   [moved-src : compiler_ir_types.CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [point : i64]) : ResultCompilerBackend
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     (ResultCompilerBackend.Err
       (box
@@ -35484,18 +35588,20 @@
               (if (compiler-backend-phi-copy-list-has-source-var?
                 copies
                 moved-dst)
-                (compiler-backend-emit-phi-copy-list
-                  type-segment-bases
-                  assignments
-                  (compiler-backend-phi-copy-list-drop-same-home
+                (begin
+                  (set! compiler-backend-current-phi-target-point point)
+                  (compiler-backend-emit-phi-copy-list
+                    type-segment-bases
                     assignments
-                    (compiler-backend-phi-copy-list-replace-source-var
-                      copies
-                      moved-dst
-                      moved-src))
-                  program-index
-                  vars
-                  false)
+                    (compiler-backend-phi-copy-list-drop-same-home
+                      assignments
+                      (compiler-backend-phi-copy-list-replace-source-var
+                        copies
+                        moved-dst
+                        moved-src))
+                    program-index
+                    vars
+                    false))
                 (ResultCompilerBackend.Ok ""))]
             [(ResultBackendPhiCopies.Err message)
               (ResultCompilerBackend.Err
@@ -35511,7 +35617,8 @@
             moved-dst
             moved-src
             program-index
-            vars))])))
+            vars
+            (+ point (* 2 (struct-get instrs len)))))])))
 
 (define (compiler-backend-instr-seq-starts-with-phi?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
@@ -52717,8 +52824,17 @@
 (define compiler-backend-sweep-line-flag-win64-rbp-set : i64
   512)
 
-;; An indexed / truncated `(%rsp` reference, or a `popq` whose operand
-;; addresses the frame: both disable the whole function unconditionally.
+;; An indexed / truncated `(%rsp` reference: disables the whole function
+;; unconditionally (the sweep cannot bound what such a line touches).
+;;
+;; A `popq` whose operand addresses the frame used to be fatal here too. It is
+;; not: a pop's frame operand is a perfectly ordinary bounded reference, it just
+;; sits at a %rsp that has ALREADY been incremented, so the replay canonicalizes
+;; it at delta-8 (matching the FPO rebase pass, which lowers delta before
+;; rewriting a pop's refs). Production emission contains no `popq MEM` today, so
+;; the fatal arms were unreachable -- but a single such line would have silently
+;; disqualified its whole function from the dead-frame-store sweep (+7,292 dead
+;; stores measured when one was emitted experimentally).
 (define compiler-backend-sweep-line-flag-fatal-mem : i64
   1024)
 
@@ -53422,8 +53538,7 @@
                                 (compiler-backend-peephole-record-width line)]
                               [k : i64 0]
                               (begin
-                                ;; "(%rsp," indexed / truncated, or popq MEM
-                                ;; (which addresses AFTER the bump).
+                                ;; "(%rsp," indexed / truncated.
                                 (when
                                   (compiler-backend-sweep-line-flag?
                                     flags
@@ -53449,6 +53564,14 @@
                                   (set! sweepable false))
                                 (while (< k mem-count)
                                   (let
+                                    ;; `popq MEM` increments %rsp BEFORE computing
+                                    ;; its destination address, so its frame
+                                    ;; operand is canonical at delta-8 -- the same
+                                    ;; bias the FPO rebase pass applies (it lowers
+                                    ;; delta before rewriting a pop's refs). Every
+                                    ;; other line, push included (`push m` reads its
+                                    ;; operand at the ORIGINAL %rsp), is canonical
+                                    ;; at delta.
                                     [c : i64
                                       (-
                                         (if (= k 0)
@@ -53461,7 +53584,9 @@
                                             (compiler-backend-peephole-record-end
                                               line)
                                             k))
-                                        delta)]
+                                        (if pop?
+                                          (- delta 8)
+                                          delta))]
                                     (begin
                                       (if leaq?
                                         ;; address taken: poison upward
@@ -55885,6 +56010,10 @@
       compiler-backend-current-phi-targets
       (compiler-backend-empty-label-seq))
     (set! compiler-backend-current-phi-target-count 0)
+    ;; #phi-staged-copy: both are edge-scoped, but a function that never emits a
+    ;; phi edge must not inherit the previous function's coordinates.
+    (set! compiler-backend-current-phi-target-point -1)
+    (set! compiler-backend-current-phi-dst-home-mask -1)
     (set! compiler-backend-emit-instr-post-base 0)
     (set! compiler-backend-emit-current-count 0)
     (set! compiler-backend-emit-current-site 0)
@@ -65423,23 +65552,19 @@
                                           (bit-or
                                             walk-flags
                                             compiler-backend-sweep-line-flag-fatal-mem))
-                                        (if pop?
-                                          ;; popq MEM addresses AFTER the bump
-                                          (set!
-                                            walk-flags
-                                            (bit-or
-                                              walk-flags
-                                              compiler-backend-sweep-line-flag-fatal-mem))
-                                          (begin
-                                            (when
-                                              (= mem-count 0)
-                                              (set!
-                                                mem-off
-                                                (compiler-backend-sweep-rsp-ref-offset
-                                                  data
-                                                  ms
-                                                  q)))
-                                            (set! mem-count (+ mem-count 1)))))
+                                        ;; A `popq MEM` frame operand is recorded
+                                        ;; like any other; the sweep replay
+                                        ;; canonicalizes it at delta-8.
+                                        (begin
+                                          (when
+                                            (= mem-count 0)
+                                            (set!
+                                              mem-off
+                                              (compiler-backend-sweep-rsp-ref-offset
+                                                data
+                                                ms
+                                                q)))
+                                          (set! mem-count (+ mem-count 1))))
                                       (set!
                                         walk-flags
                                         (bit-or
@@ -65506,22 +65631,16 @@
                                     (bit-or
                                       walk-flags
                                       compiler-backend-sweep-line-flag-fatal-mem))
-                                  (if pop?
-                                    (set!
-                                      walk-flags
-                                      (bit-or
-                                        walk-flags
-                                        compiler-backend-sweep-line-flag-fatal-mem))
-                                    (begin
-                                      (when
-                                        (= mem-count 0)
-                                        (set!
-                                          mem-off
-                                          (compiler-backend-sweep-rsp-ref-offset
-                                            data
-                                            ms
-                                            i)))
-                                      (set! mem-count (+ mem-count 1)))))
+                                  (begin
+                                    (when
+                                      (= mem-count 0)
+                                      (set!
+                                        mem-off
+                                        (compiler-backend-sweep-rsp-ref-offset
+                                          data
+                                          ms
+                                          i)))
+                                    (set! mem-count (+ mem-count 1))))
                                 (set!
                                   walk-flags
                                   (bit-or

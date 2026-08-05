@@ -11005,12 +11005,22 @@
                 (compiler_backend.compiler-backend-string-contains?
                   cycle
                   "    movq %r10, -16(%rbp)\n")
+                ;; The spilled mem->mem copy of the break stages through the
+                ;; scavenged GP register. It used to carry a pushq/popq bracket
+                ;; around the staging register; #phi-staged-copy proves the
+                ;; register free per edge (no register homes exist in this
+                ;; assignment list, and no copy dst homes one), so the bracket is
+                ;; gone and the pair itself is what the shape asserts.
                 (compiler_backend.compiler-backend-string-contains?
                   cycle
-                  "    pushq %r8\n")
+                  "    movq -16(%rbp), %r8\n")
                 (compiler_backend.compiler-backend-string-contains?
                   cycle
-                  "    popq %r8\n")
+                  "    movq %r8, -8(%rbp)\n")
+                (not
+                  (compiler_backend.compiler-backend-string-contains?
+                    cycle
+                    "    pushq %r8\n"))
                 (not
                   (compiler_backend.compiler-backend-string-contains?
                     cycle

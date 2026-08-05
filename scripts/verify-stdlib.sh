@@ -231,7 +231,6 @@ text_buf.tl
 text_buf_borrowed.tl
 text_buf_family.tl
 vector.tl
-vector_slice.tl
 EOF
 }
 
@@ -314,7 +313,9 @@ stdlib/tests/hashmap_macro_mut_entry_insert_live.tl|fail|typecheck: cannot read 
 stdlib/tests/core_macros_for_missing_protocol.tl|fail|is missing protocol function
 stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
-stdlib/tests/vector_slice_escape.tl|fail|typecheck: reference value would escape lexical scope
+stdlib/tests/vector_native_slice_escape.tl|fail|typecheck: reference value would escape lexical scope
+stdlib/tests/vector_native_slice_grow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `items`
+stdlib/tests/vector_native_slice_alias_reject.tl|fail|typecheck: cannot read mutably borrowed place `items`
 EOF
 }
 

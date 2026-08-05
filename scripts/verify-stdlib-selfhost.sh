@@ -97,8 +97,12 @@ reject_diag() {
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/string_caller_result_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
-        stdlib/tests/vector_slice_escape.tl)
+        stdlib/tests/vector_native_slice_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
+        stdlib/tests/vector_native_slice_grow_live.tl)
+            printf 'typecheck: cannot mutably borrow borrowed place `items`' ;;
+        stdlib/tests/vector_native_slice_alias_reject.tl)
+            printf 'typecheck: cannot read mutably borrowed place `items`' ;;
         *) printf '' ;;
     esac
 }

@@ -35560,19 +35560,14 @@
   (match source
     [(TcSliceViewSourceInfo.Direct direct-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx direct-ty))
-        [(ast.AstType.Array elem _)
-          (tc-borrow-referent-type (ast.ty-node-get elem))]
-        [(ast.AstType.DynArray elem)
-          (tc-borrow-referent-type (ast.ty-node-get elem))]
+        [(ast.AstType.Array elem _) (ast.ty-node-get elem)]
+        [(ast.AstType.DynArray elem) (ast.ty-node-get elem)]
         [_ (ast.AstType.Unit)])]
     [(TcSliceViewSourceInfo.Borrow _ _ referent)
       (match (tc-type-strip-region (tc-resolve-type ctx referent))
-        [(ast.AstType.Array elem _)
-          (tc-borrow-referent-type (ast.ty-node-get elem))]
-        [(ast.AstType.DynArray elem)
-          (tc-borrow-referent-type (ast.ty-node-get elem))]
-        [(ast.AstType.Slice elem)
-          (tc-borrow-referent-type (ast.ty-node-get elem))]
+        [(ast.AstType.Array elem _) (ast.ty-node-get elem)]
+        [(ast.AstType.DynArray elem) (ast.ty-node-get elem)]
+        [(ast.AstType.Slice elem) (ast.ty-node-get elem)]
         [_ (ast.AstType.Unit)])]
     [_ (ast.AstType.Unit)]))
 

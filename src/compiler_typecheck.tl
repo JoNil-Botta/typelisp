@@ -2128,7 +2128,7 @@
                     [(tc_core.ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc_core.tc-layout-info-size info) 8)
-                        (= (tc_core.tc-layout-info-align info) 8))
+                        (= (tc_core.tc-layout-info-align info) 4))
                         unit
                         (set! ok false))]
                     [(tc_core.ResultTcLayoutInfo.Err _) (set! ok false)])
@@ -2143,7 +2143,7 @@
                     [(tc_core.ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc_core.tc-layout-info-size info) 16)
-                        (= (tc_core.tc-layout-info-align info) 8))
+                        (= (tc_core.tc-layout-info-align info) 4))
                         unit
                         (set! ok false))]
                     [(tc_core.ResultTcLayoutInfo.Err _) (set! ok false)])
@@ -10813,6 +10813,18 @@
   "(define (bad [items : (Array i64 3)]) : unit
   (array-set! items 0 7))")
 
+(define (compiler-typecheck-param-storage-tuple-source) : String
+  "(define (bad [items : (Tuple (Array i64 1) i64)]) : unit
+  (array-set! (tuple-ref items 0) 0 7))")
+
+(define (compiler-typecheck-param-storage-nominal-tuple-array-source) : String
+  "(defstruct BigTuple
+  (items (Tuple (Array i64 1) i64))
+  (pad0 i64)
+  (pad1 i64))
+(define (bad [value : BigTuple]) : unit
+  (array-set! (tuple-ref (struct-get value items) 0) 0 7))")
+
 (define (compiler-typecheck-param-storage-let-alias-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (bad [value : Big]) : unit
@@ -10881,9 +10893,12 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-param-storage-direct-struct-source)
       "typecheck: cannot mutate storage derived from by-value memory-aggregate parameter `value`; declare the parameter as `&mut` and pass an explicit mutable borrow")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-param-storage-fixed-array-source))
+    (compiler-typecheck-ok? (compiler-typecheck-param-storage-tuple-source))
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-param-storage-fixed-array-source)
-      "typecheck: cannot mutate storage derived from by-value memory-aggregate parameter `items`; declare the parameter as `&mut` and pass an explicit mutable borrow")
+      (compiler-typecheck-param-storage-nominal-tuple-array-source)
+      "typecheck: cannot mutate storage derived from by-value memory-aggregate parameter `value`; declare the parameter as `&mut` and pass an explicit mutable borrow")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-param-storage-let-alias-source)
       "typecheck: cannot mutate storage derived from by-value memory-aggregate parameter `value`; declare the parameter as `&mut` and pass an explicit mutable borrow")

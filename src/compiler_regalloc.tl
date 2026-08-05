@@ -18086,6 +18086,56 @@
       (compiler-reg-c-memory-marker-array-from? values 1)]
     [_ false]))
 
+(define (compiler-reg-call-arg-private-memory?
+  [type-segment-bases : i64]
+  [types : CompilerRegVarTypes]
+  [value : ir.CompilerIrValue]) : bool
+  (match (compiler-reg-var-types-lookup
+    types
+    (match value
+      [(ir.CompilerIrValue.Var id) id]
+      [_ -1]))
+    [(CompilerRegMaybeType.Some ty)
+      (compiler-reg-private-memory-type? type-segment-bases ty)]
+    [(CompilerRegMaybeType.No) false]))
+
+(define (compiler-reg-call-args-array-have-private-memory?
+  [type-segment-bases : i64]
+  [types : CompilerRegVarTypes]
+  [values : (__tl_dyn-array ir.CompilerIrValue)]
+  [index : i64]) : bool
+  (if (>= index (array-length values))
+    false
+    (or
+      (compiler-reg-call-arg-private-memory?
+        type-segment-bases
+        types
+        (array-ref values index))
+      (compiler-reg-call-args-array-have-private-memory?
+        type-segment-bases
+        types
+        values
+        (+ index 1)))))
+
+(define (compiler-reg-call-args-have-private-memory?
+  [type-segment-bases : i64]
+  [types : CompilerRegVarTypes]
+  [args : ir.CompilerIrCallArgs]) : bool
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) false]
+    [(ir.CompilerIrCallArgs.One value)
+      (compiler-reg-call-arg-private-memory? type-segment-bases types value)]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (or
+        (compiler-reg-call-arg-private-memory? type-segment-bases types a)
+        (compiler-reg-call-arg-private-memory? type-segment-bases types b))]
+    [(ir.CompilerIrCallArgs.Array values)
+      (compiler-reg-call-args-array-have-private-memory?
+        type-segment-bases
+        types
+        values
+        0)]))
+
 ;; The aggregate type name a value carries (mirror of
 ;; compiler-backend-aggregate-type-name); empty for non-aggregate types.
 (define (compiler-reg-reference-to-slice?
@@ -18097,19 +18147,77 @@
     [(ast.AstType.Slice _) true]
     [_ false]))
 
+(define (compiler-reg-nominal-name-id-display [name-id : i64]) : String
+  (if (ir.compiler-ir-symbol-owned? name-id)
+    (ir.compiler-ir-symbol-text name-id)
+    (ast.ast-nominal-name-id-display name-id)))
+
 (define (compiler-reg-aggregate-type-name-with-seg-bases
   [type-segment-bases : i64]
   [ty : ast.AstType]) : String
   (match ty
-    [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
-    [(ast.AstType.StructArgs name _) (ast.ast-nominal-name-id-display name)]
-    [(ast.AstType.Enum name) (ast.ast-nominal-name-id-display name)]
-    [(ast.AstType.EnumArgs name _) (ast.ast-nominal-name-id-display name)]
+    [(ast.AstType.Struct name) (compiler-reg-nominal-name-id-display name)]
+    [(ast.AstType.StructArgs name _)
+      (compiler-reg-nominal-name-id-display name)]
+    [(ast.AstType.Enum name) (compiler-reg-nominal-name-id-display name)]
+    [(ast.AstType.EnumArgs name _) (compiler-reg-nominal-name-id-display name)]
     [(ast.AstType.Region _ inner)
       (compiler-reg-aggregate-type-name-with-seg-bases
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]
     [_ ""]))
+
+;; Backend-private SysV MEMORY transport values retain a nominal Struct name
+;; carrying `__tl_internal_abi_mem_s<SIZE>__...`.  Regalloc only needs a
+;; conservative prefix/shape test to reserve staging scratch; the backend's
+;; bounded decoder is authoritative for the actual byte count.
+(define (compiler-reg-private-memory-name? [name : String]) : bool
+  (let
+    [prefix : String "__tl_internal_abi_mem_s"]
+    [prefix-len : i64 (string.string-length prefix)]
+    [n : i64 (string.string-length name)]
+    [i : i64 prefix-len]
+    [digits : i64 0]
+    [delimiter? : bool false]
+    [valid : bool
+      (and
+        (>= n prefix-len)
+        (string.eq (string.substring name 0 prefix-len) prefix))]
+    (begin
+      (while (and valid (< i n))
+        (let
+          [digit : i64 (cast (string.string-ref name i) : i64)]
+          (if (and (>= digit 48) (<= digit 57))
+            (begin
+              (set! digits (+ digits 1))
+              (set! i (+ i 1)))
+            (if (and
+              (= (cast (string.string-ref name i) : i64) 95)
+              (< (+ i 1) n)
+              (= (cast (string.string-ref name (+ i 1)) : i64) 95))
+              (begin
+                (set! delimiter? true)
+                (set! i n))
+              (set! valid false)))))
+      (and valid (> digits 0) delimiter?))))
+
+(define (compiler-reg-private-memory-type?
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Struct name)
+      (and
+        (ir.compiler-ir-symbol-owned? name)
+        (compiler-reg-private-memory-name? (ir.compiler-ir-symbol-text name)))]
+    [(ast.AstType.StructArgs name _)
+      (and
+        (ir.compiler-ir-symbol-owned? name)
+        (compiler-reg-private-memory-name? (ir.compiler-ir-symbol-text name)))]
+    [(ast.AstType.Region _ inner)
+      (compiler-reg-private-memory-type?
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [_ false]))
 
 ;; True when a var's type is a >=2-word register-group per the program map.
 (define (compiler-reg-type-register-group?
@@ -28613,7 +28721,15 @@
           (compiler-reg-c-memory-call-name? name))
           2
           1)]
-      [(ir.CompilerIrInstr.CallIndirect _ _ _ _) 2]
+      [(ir.CompilerIrInstr.CallIndirect _ _ args _)
+        (if (and
+          (compiler-reg-linux-abi? _abi)
+          (compiler-reg-call-args-have-private-memory?
+            _type-segment-bases
+            _types
+            args))
+          3
+          2)]
       [(ir.CompilerIrInstr.CallIndirectC _ _ args _)
         (if (and
           (compiler-reg-linux-abi? _abi)
@@ -28636,8 +28752,21 @@
             (compiler-reg-call-args-have-c-memory-marker? args))
             3
             2))]
-      [(ir.CompilerIrInstr.TailCall _ _ _) 1]
-      [(ir.CompilerIrInstr.TailCallIndirect _ _ _) 2]
+      [(ir.CompilerIrInstr.TailCall name _ _)
+        (if (and
+          (compiler-reg-linux-abi? _abi)
+          (compiler-reg-c-memory-call-name? name))
+          2
+          1)]
+      [(ir.CompilerIrInstr.TailCallIndirect _ args _)
+        (if (and
+          (compiler-reg-linux-abi? _abi)
+          (compiler-reg-call-args-have-private-memory?
+            _type-segment-bases
+            _types
+            args))
+          3
+          2)]
       [(ir.CompilerIrInstr.Pack _ _ _) 2]
       [(ir.CompilerIrInstr.Word _ _ _ _) 1]
       [(ir.CompilerIrInstr.Jump target)

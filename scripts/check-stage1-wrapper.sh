@@ -502,6 +502,8 @@ EOF
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "tlci image"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "package-name: stage1_pkg"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "producer-compiler-identity: $PRODUCER_IDENTITY"
+    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "source-set-binding-schema: 1"
+    assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "source-set-digest: unavailable"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset="
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset=0 bytes=0"
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "  (none)"

@@ -54,7 +54,7 @@ instead, which the sweep does not require to be reachable.
 | Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog) |
 | Check public CLI behavior | `verify-public-tools.sh`, `check-stage1-wrapper.sh` |
 | Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh`, `verify-native-link-windows.sh` |
-| Check codegen shape and parity | `verify-asm-shape-gates.sh`, `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |
+| Check codegen shape and parity | `verify-asm-shape-gates.sh`, `verify-by-value-aggregate-abi.sh` (internal Tuple/Array physical ABI shapes), `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |
 | Check SPMD behavior | `verify-spmd-simd.sh`, `verify-spmd-runtime-dispatch.sh`, `verify-spmd-package-calls.sh`, `verify-spmd-broadcast.sh`, `verify-spmd-lane-identity.sh` |
 | Check ISPC corpus contracts | `verify-ispc-perfbench-loads.sh`, `verify-ispc-perfbench-stores.sh`, `verify-ispc-perfbench-gathers.sh`, `verify-ispc-mandelbrot.sh`, `verify-ispc-point-transform.sh` |
 | Check gate wiring | `check-gate-reachability.sh`, `check-cli-gate-coverage.sh` |

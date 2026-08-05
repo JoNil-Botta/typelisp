@@ -279,20 +279,22 @@ unbound unless a program declares such names.
 ### 3.2 Aggregate types
 
 **Tuple:** `(Tuple t1 t2 ... tn)`
-- Fixed-size, heterogeneous. Layout is sequential with natural alignment per
-  element.
-- Tuple literals lower to pointer values over inline element storage, and
-  `tuple-ref` reads tuple values in local/expression positions.
-- Tuple function parameters and by-value tuple returns are not part of the
-  backend ABI; tuples travel by pointer handle.
+- Fixed-size, heterogeneous inline structural values. Layout is sequential
+  with natural alignment per element, recursively through nested aggregates.
+- Tuple literals and `tuple-ref` use that inline representation. Non-empty
+  tuples can cross internal function boundaries as by-value parameters and
+  returns; their target-specific transport is specified in section 11.
 
 **Fixed array:** `(Array type size)`
 - Size must be a compile-time constant.
-- Fixed-array literals lower to inline element storage. Values are passed
-  around by pointer handle inside compiled code.
+- Fixed-array literals are inline structural values with recursive natural
+  layout. Non-empty fixed arrays can cross internal function boundaries as
+  by-value parameters and returns; their target-specific transport is
+  specified in section 11.
 - `array-ref` and `array-set!` on fixed arrays are bounds-checked and use the
-  compile-time length. By-value fixed-array returns are rejected by backend
-  validation.
+  compile-time length. Zero-sized fixed arrays have no internal transport
+  representation and are rejected when used as internal parameters or
+  returns.
 - Public `Array` means this fixed-size form only. Fixed arrays, stdlib
   vectors, and slices are the collection surface of the language; growable or
   runtime-sized collections use the vector and slice surfaces.
@@ -3098,7 +3100,9 @@ Example:
   named `<package-name>.tlci` in the same profile directory; dependency DAG
   builds produce each dependency's tlci next to its static archive without
   changing runtime link behavior. Macro-free packages emit metadata-only
-  images. Packages with package-owned macro declarations emit deterministic
+  images with an auxiliary source-set binding in rodata (the code, fixup,
+  entry, symbol, and import sections remain empty). Packages with
+  package-owned macro declarations emit deterministic
   code-bearing images and one registration-table record per macro. Supported
   expression/value transformer bodies execute compiled template (nested calls,
   literals, plain symbols, unquoted operands, unquote-splicing), literal,
@@ -3486,17 +3490,24 @@ into call-site consumption. Use `(:consume)` when the callee takes ownership.
 This opt-in preserves compatibility for existing unmarked APIs. Types with an
 independent intrinsic consuming rule keep that rule.
 
-The internal ABI passes a struct, enum, or fixed array too large for the
-register-value representation by address. Such an unmarked by-value parameter
-is read-only through that storage path: the checker rejects field or
-fixed-array element assignment and mutable borrowing of the parameter. The
+The internal ABI may pass a nominal `Struct` or `Enum` that is too large for
+the register-value representation by address. An unmarked by-value parameter
+of that memory class is read-only through that storage path: the checker
+rejects field assignment and mutable borrowing of the parameter. The
 restriction follows same-storage aliases introduced by local binding and match
 patterns. Reassigning the whole parameter binding establishes an independent
 local value and is permitted. Projections that produce shallow handle values,
-such as a dynamic array, tuple, `Box`, or reference field, are not storage
-aliases for this rule; their own mutation and borrowing rules still apply.
-Declare the parameter as a mutable reference and pass an explicit mutable
-borrow when mutation of the caller's aggregate place is intended.
+such as a dynamic array, `Box`, or reference field, are not storage aliases
+for this rule; their own mutation and borrowing rules still apply. Tuples and
+fixed arrays remain inline storage, so provenance continues through an
+embedded tuple/`tuple-ref` and then through nested fixed-array projections.
+
+Tuple and fixed-array by-value parameters always expose private callee storage,
+including when the target transport is indirect/by-reference. Ordinary type
+rules therefore permit callee-local mutation of their elements; caller storage
+is neither aliased nor mutated. Declare a nominal `Struct`/`Enum` parameter as
+a mutable reference and pass an explicit mutable borrow when mutation of the
+caller's nominal aggregate place is intended.
 A `(:consume)` parameter is excluded from this restriction and explicitly
 opts the callee into ownership-style access to the whole value under the
 existing consume and move rules.
@@ -4976,8 +4987,10 @@ Exclusions:
 #### 5.17.1 TypeLisp comptime image (`.tlci`) v2
 
 A TypeLisp comptime image (`tlci`) is the package compile-time interface. Every
-package emits one: a metadata-only image carries signature/layout metadata, and
-a package that defines macros additionally carries compiled comptime code. The
+package emits one: a metadata-only image carries signature/layout metadata and
+the auxiliary source-set binding (its code/fixup/entry/symbol/import sections
+remain empty), and a package that defines macros additionally carries compiled
+comptime code. The
 runtime archive (`lib<name>.a` / `<name>.lib`) is separate. This section
 specifies the v2 container and its independently versioned metadata schemas.
 
@@ -5031,6 +5044,31 @@ The content hash is a deterministic integrity check over the full file with the
 `hash = (hash * 131 + byte) mod 2147483647` with seed `1`. This is an
 integrity/versioning guard, not a cryptographic authenticity mechanism. A
 loader must reject hash mismatches before trusting offsets or metadata.
+
+Package images also carry a reproducible source-set provenance identity. This
+is an integrity/rebuild identity, not a cryptographic signature or proof of
+authenticity. The source binding is independent of producer-compiler identity,
+the image content hash, and runtime ABI/target checks. Its transcript schema is
+version `1`, and uses the same rolling algorithm above (seed `1`). The canonical
+transcript bytes are, in order:
+
+1. u64 little-endian byte length of the ASCII domain
+   `typelisp-package-source-set`, followed by those domain bytes;
+2. u64 little-endian transcript schema version (`1`);
+3. u64 little-endian source count;
+4. for every source in deterministic package discovery order, u64 little-endian
+   byte length of its normalized package-relative `/` path, the exact path
+   bytes, u64 little-endian file byte length, and the exact file bytes.
+
+Paths are derived only after normalizing the manifest directory/root and source
+path. A source that is empty, unsafe, outside the normalized root, duplicated,
+or out of order is invalid. Source reads use exact bytes; failures are
+recoverable diagnostics. The resulting digest is stored as one little-endian
+u64 payload in auxiliary kind `8`, schema `1` (section 5.17.1.1). A verifier
+must compare the current-source digest first and the image digest second, and
+must keep missing/legacy, unsupported-schema, malformed, unreadable, and
+mismatch outcomes distinct. No image code is mapped or executed by this
+verification.
 
 The load-base fixup table contains `count` records of one little-endian u64
 offset each. The table is valid but empty when generated comptime code is fully
@@ -5093,7 +5131,14 @@ section kind, positive section schema version, payload offset, payload byte
 length, and the v1 rolling hash of that payload. Kinds are strictly increasing,
 payloads do not overlap the base payload, directory, or each other, and every
 payload offset is 8-byte aligned. V1 assigns kinds `1 = package identity`,
-`2 = frontend AST`, `3 = frontend types`, and `4 = frontend facts`.
+`2 = frontend AST`, `3 = frontend types`, `4 = frontend facts`, and `8 = package
+source-set binding`. Kind 8 schema `1` is exactly one little-endian u64 source
+digest in `[0, 2147483647)` as specified in section 5.17.1. Unknown positive
+kinds remain ignorable; an unknown source-binding schema is an explicit
+unsupported outcome and its payload must not be interpreted. A missing
+trailer or missing kind 8 is
+`missing-or-legacy` and fails closed for source admission. A malformed
+directory, payload length, or schema-1 digest is malformed.
 
 The trailer contains six little-endian u64 fields: magic `TLCIAUX1`, auxiliary
 format version (`1`), base-rodata byte length, directory offset, record count,
@@ -7140,6 +7185,31 @@ until runtime aggregate reflection is available.
 - Scalar `f64` and `f32` both use the float (`%xmm`) registers: `f64` moves with
   `movsd`, `f32` with single-precision `movss`.
 - Return value: `%rax` (integer), `%xmm0` (float, `f64` or `f32`).
+- **Internal structural values.** Every non-empty finite Tuple or fixed
+  `(Array T N)` has an inline representation laid out recursively with the
+  natural alignment of each element. The TypeLisp internal ABI classifies a
+  structural value of size at most 16 bytes one eightbyte at a time: an
+  eightbyte containing only floating leaves is `SSE`; all other eightbytes are
+  `INTEGER`. Nested tuples and arrays contribute their leaves recursively, so
+  a value may have one `INTEGER` and one `SSE` eightbyte. Parameters consume
+  the independent integer and SSE register banks shown above. If either bank
+  cannot allocate every eightbyte required by one aggregate, register
+  allocation is rolled back for that aggregate and the complete value falls
+  back to the normal stack argument area; an aggregate is never split between
+  registers and stack.
+  Structural returns use the corresponding result-bank cursors independently:
+  INTEGER eightbytes use `%rax` then `%rdx`, while SSE eightbytes use `%xmm0`
+  then `%xmm1`; thus a mixed INTEGER/SSE result uses `%rax` and `%xmm0`. A
+  value larger than 16 bytes is `MEMORY`: its parameter is passed in the stack
+  argument area and its return uses a leading caller-owned sret pointer; the
+  callee returns that pointer in `%rax`.
+- Structural values are copied shallowly by representation. Passing or
+  returning one never inserts an implicit clone, destructor, or drop.
+- Empty tuples and zero-sized fixed arrays are rejected in internal parameter
+  and return positions with the stable target-specific, source-located lower
+  diagnostic: they have no transport representation. This rule concerns only
+  the TypeLisp internal ABI; it does not broaden or change extern C aggregate
+  eligibility or contracts.
 - Internal TypeLisp borrowed Slice references use two consecutive integer
   argument words, data pointer then signed `i64` length. A first Slice occupies
   `%rdi`/`%rsi`; a Slice return uses `%rax`/`%rdx` in that order. This is an
@@ -7162,6 +7232,22 @@ until runtime aggregate reflection is available.
 - Scalar `f64` and `f32` both use the float (`%xmm`) registers: `f64` moves with
   `movsd`, `f32` with single-precision `movss`.
 - Return value: `%rax` (integer), `%xmm0` (float, `f64` or `f32`).
+- **Internal structural values.** Non-empty finite Tuple and fixed
+  `(Array T N)` values use the same recursive, naturally aligned inline layout
+  described above. A structural value of size 1, 2, 4, or 8 bytes is passed by
+  value in the integer register/value transport (`%rcx`, `%rdx`, `%r8`, or
+  `%r9`, then the stack area after shadow space). Every other parameter size
+  is passed indirectly through a pointer to a private caller-created
+  temporary. A return of 1, 2, 4, or 8 bytes uses `%rax`; every other
+  structural return size uses a leading caller-owned sret pointer and returns
+  that pointer in `%rax`.
+- Structural values are copied shallowly by representation. Passing or
+  returning one never inserts an implicit clone, destructor, or drop.
+- Empty tuples and zero-sized fixed arrays are rejected in internal parameter
+  and return positions with the stable target-specific, source-located lower
+  diagnostic: they have no transport representation. This rule concerns only
+  the TypeLisp internal ABI; it does not broaden or change extern C aggregate
+  eligibility or contracts.
 - Internal TypeLisp borrowed Slice references use two consecutive integer
   argument words, data pointer then signed `i64` length. A first Slice occupies
   `%rcx`/`%rdx`; a Slice return uses `%rax`/`%rdx` in that order. This is an

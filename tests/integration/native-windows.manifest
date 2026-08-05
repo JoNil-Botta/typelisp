@@ -188,6 +188,7 @@ global_initializer|tests/integration/global_initializer.tl|120|-|-|-
 hello|tests/integration/hello.tl|42|-|-|-
 parameter_set_rebind|tests/integration/parameter_set_rebind.tl|42|-|-|-
 by_value_memory_aggregate_explicit_mut|tests/integration/by_value_memory_aggregate_explicit_mut.tl|42|-|-|-
+by_value_aggregate_abi|tests/integration/by_value_aggregate_abi.tl|42|-|-|stdlib/string.tl
 i16_min_div_neg1_trap|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/i16_min_div_neg1_trap/i16_min_div_neg1_trap.tl:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
 i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/i16_min_rem_neg1_trap/i16_min_rem_neg1_trap.tl:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
 lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|stdlib/string.tl
@@ -373,6 +374,7 @@ in_arena|tests/integration/in_arena.tl|42|-|-|-
 arena_phase_rewind_destroy|tests/integration/arena_phase_rewind_destroy.tl|42|-|-|-
 arena_rewind_make_array_zero|tests/integration/arena_rewind_make_array_zero.tl|42|-|-|-
 make_array_default_reads_zero|tests/integration/make_array_default_reads_zero.tl|42|-|-|stdlib/arena.tl
+mem_fill8_runtime_contract|tests/integration/mem_fill8_runtime_contract.tl|42|-|-|stdlib/arena.tl stdlib/runtime.tl
 arena_atomic_rewind_destroy_safe|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
 resource_with_arg_cycle|tests/integration/resource_with_arg_cycle.tl|42|-|-|-

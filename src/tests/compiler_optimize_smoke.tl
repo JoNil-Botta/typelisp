@@ -3346,6 +3346,66 @@
     "only exact vm-run bounds loop inlines at opt2; qs-partition and opt1 stay refused"))
 
 (test
+  inline-bounds-loop-in-loop-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-in-loop-site-ok?)
+    "small absorbable bounds loop leaf inlines at an in-loop call site"))
+
+(test
+  inline-bounds-loop-cold-site-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cold-site-refusal-ok?)
+    "the same leaf stays refused at a straight-line call site"))
+
+(test
+  inline-bounds-loop-cascade-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cascade-refusal-ok?)
+    "import refused when it would cost a bounds-free single-site caller its own inline"))
+
+(test
+  inline-dup-two-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-dup-two-site-ok?)
+    "a two-reference call-free leaf is duplicated into both in-loop sites; three references stay out of line"))
+
+(test
+  inline-dup-cascade-per-caller
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-dup-cascade-per-caller-ok?)
+    "the cascade clause is asked per caller: the same duplicable leaf is refused at one site and admitted at the other"))
+
+(test
+  inline-dup-call-bearing-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-dup-call-bearing-refusal-ok?)
+    "a two-reference leaf carrying a call stays out of line at both sites"))
+
+(test
+  inline-shared-accessor-floor
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-floor-ok?)
+    "an acyclic accessor at the reference floor is taken at every in-loop site; one reference short stays out of line"))
+
+(test
+  inline-shared-accessor-call-free
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-call-free-ok?)
+    "a shared accessor carrying a call stays out of line at every site"))
+
+(test
+  inline-shared-accessor-acyclic
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-acyclic-ok?)
+    "a cyclic body at the same shared sites stays out of line"))
+
+(test
+  inline-shared-accessor-in-loop-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-in-loop-site-ok?)
+    "the same accessor at straight-line sites stays out of line"))
+
+(test
   inline-vm-run-bounds-loop-span-positive
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-switch-span-case-code

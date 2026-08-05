@@ -3087,6 +3087,8 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "tlci image"
     assert_contains "$out" "package-name: public_tool_pkg"
     assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
+    assert_contains "$out" "source-set-binding-schema: 1"
+    assert_not_contains "$out" "source-set-digest: unavailable"
     assert_contains "$out" "metadata-version: v1"
     assert_contains "$out" "code: offset="
     assert_not_contains "$out" "code: offset=0 bytes=0"
@@ -3097,6 +3099,8 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "tlci image"
     assert_contains "$out" "package-name: math"
     assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
+    assert_contains "$out" "source-set-binding-schema: 1"
+    assert_not_contains "$out" "source-set-digest: unavailable"
     assert_contains "$out" "code: offset="
     assert_not_contains "$out" "code: offset=0 bytes=0"
     BAD_TLCI="$WORKDIR/bad.tlci"
@@ -3206,6 +3210,8 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "host-arch: x86_64"
     assert_contains "$out" "package-name: split_pkg"
     assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
+    assert_contains "$out" "source-set-binding-schema: 1"
+    assert_not_contains "$out" "source-set-digest: unavailable"
     assert_contains "$out" "code: offset="
     assert_not_contains "$out" "code: offset=0 bytes=0"
     # cli-gate-case package-host-target-split-native-verify wrapper run_cmd
@@ -3226,6 +3232,9 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_stderr_empty
     assert_contains "$out" "host-arch: x86_64"
     assert_contains "$out" "package-name: split_math"
+    assert_contains "$out" "source-set-binding-schema: 1"
+    assert_not_contains "$out" "source-set-digest: unavailable"
+    assert_contains "$out" "code: offset=0 bytes=0"
 fi
 
 SPLIT_ROOT_DEV_ARCHIVE="$SPLIT_PKG/target/dev/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_pkg${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"

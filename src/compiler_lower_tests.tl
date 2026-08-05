@@ -344,6 +344,26 @@
                [(Rect w h) (* w h)]
                [(None) 0]))))))))")
 
+(define (compiler-lower-capturing-lambda-structural-return-source) : String
+  "(define (main) : i64
+  (let
+    [base : i64 10]
+     (tuple-ref
+      ((lambda ([value : i64]) : (Tuple i64 i64)
+         (tuple base value))
+       32)
+       1)))")
+
+(define (compiler-lower-capturing-lambda-structural-sret-source) : String
+  "(define (main) : i64
+  (let
+    [base : i64 10]
+    (tuple-ref
+      ((lambda ([value : i64]) : (Tuple i64 i64 i64)
+         (tuple base value 0))
+       32)
+      1)))")
+
 (define (compiler-lower-capturing-lambda-shadow-source) : String
   "(define (main) : i64
   (let
@@ -399,6 +419,13 @@
 (define (dot-avx512 [x : i64]) : i64 (+ x 5))
 (defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
 (define (main [x : i64]) : i64 (dot x))")
+
+(define (compiler-lower-defdispatch-structural-source) : String
+  "(define (dot-scalar [x : (Tuple i64 i64)]) : (Tuple i64 i64) x)
+(define (dot-avx2 [x : (Tuple i64 i64)]) : (Tuple i64 i64) x)
+(define (dot-avx512 [x : (Tuple i64 i64)]) : (Tuple i64 i64) x)
+(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
+(define (main) : i64 (tuple-ref (dot (tuple 1 2)) 1))")
 
 (define (compiler-lower-defdispatch-shared-helper-source) : String
   "(define (dispatch-helper [x : i64]) : i64 (+ x 1))
@@ -598,6 +625,24 @@
       (string.eq
         (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
         want)]
+    [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
+
+(define (compiler-lower-mode-diagnostic-ok?
+  [src : String]
+  [mode : compiler_lower.CompilerLowerMode]
+  [want : String]
+  [line : i64]
+  [col : i64]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode src mode)
+    [(compiler_lower.ResultCompilerLower.Err diag-box)
+      (let
+        [diag : compiler_diagnostic.CompilerDiagnostic (box-get diag-box)]
+        (and
+          (string.eq
+            (compiler_diagnostic.compiler-diagnostic-message diag)
+            want)
+          (= (compiler_diagnostic.compiler-diagnostic-line diag) line)
+          (= (compiler_diagnostic.compiler-diagnostic-col diag) col)))]
     [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
 
 (define (compiler-lower-inline-error-ok? [src : String] [want : String]) : bool
@@ -1735,6 +1780,108 @@
     [(Wrap w) w]))
 (define (main) : i64
   (struct-get (from-choice (Make 40)) c))")
+
+;; Internal structural ABI smoke: tuple register groups and fixed-array memory
+;; aggregates must cross ordinary (non-extern) calls using the classifier's
+;; physical transport while the source expressions remain pointer-shaped.
+(define (compiler-lower-internal-structural-call-source) : String
+  "(define (tuple-roundtrip [value : (Tuple i64 f64)]) : (Tuple i64 f64)
+  value)
+(define (array-roundtrip [items : (Array i64 3)]) : (Array i64 3)
+  items)
+(define (main) : i64
+  (let
+    [pair : (Tuple i64 f64) (tuple 40 2.5)]
+    [items : (Array i64 3) (array 1 2 3)]
+    (+
+      (tuple-ref (tuple-roundtrip pair) 0)
+      (array-ref (array-roundtrip items) 2))))")
+
+(define (compiler-lower-internal-windows-byref-sret-source) : String
+  "(define (array-roundtrip [items : (Array i64 3)]) : (Array i64 3)
+  items)
+(define (scalar-roundtrip [items : (Array i64 1)]) : (Array i64 1)
+  items)
+(define (main) : i64
+  (let
+    [items : (Array i64 3) (array 1 2 3)]
+    [scalar : (Array i64 1) (array 7)]
+    (+
+      (array-ref (array-roundtrip items) 2)
+      (array-ref (scalar-roundtrip scalar) 0))))")
+
+(define (compiler-lower-internal-windows-u8-three-source) : String
+  "(define (roundtrip [value : (Array u8 3)]) : (Array u8 3)
+  value)
+(define (main) : i64
+  (let [value : (Array u8 3) (array (cast 1 : u8) (cast 2 : u8) (cast 3 : u8))]
+    (cast (array-ref (roundtrip value) 2) : i64)))")
+
+(define (compiler-lower-internal-early-return-source) : String
+  "(define (tuple-early [value : i64]) : (Tuple i64 i64)
+  (begin
+    (if (> value 0)
+      (return (tuple value 2))
+      unit)
+    (tuple value 3)))
+(define (array-early [value : i64]) : (Array i64 3)
+  (begin
+    (if (> value 0)
+      (return (array value 2 3))
+      unit)
+    (array value 4 5)))
+(define (main) : i64
+  (+
+    (tuple-ref (tuple-early 1) 1)
+    (array-ref (array-early 1) 2)))")
+
+(define (compiler-lower-internal-indirect-structural-source) : String
+  "(define (tuple-roundtrip [value : (Tuple i64 i64)]) : (Tuple i64 i64)
+  value)
+(define (main) : i64
+  (let
+    [f : (-> (Tuple i64 i64) (Tuple i64 i64)) tuple-roundtrip]
+    (tuple-ref (f (tuple 1 2)) 1)))")
+
+(define (compiler-lower-internal-tail-structural-source) : String
+  "(define (loop [n : i64] [value : (Tuple i64 i64)]) : (Tuple i64 i64)
+  (if (= n 0)
+    value
+    (loop (- n 1) value)))
+(define (main) : i64 (tuple-ref (loop 3 (tuple 1 2)) 1))")
+
+(define (compiler-lower-internal-zero-array-param-source) : String
+  "(define (bad [items : (Array u8 0)]) : i64
+  42)")
+
+(define (compiler-lower-internal-empty-tuple-return-source) : String
+  "(define (bad) : (Tuple)
+  (tuple))")
+
+(define (compiler-lower-internal-zero-array-indirect-call-source) : String
+  "(define (main [f : (-> (Array u8 0) i64)]) : i64
+  (f (array)))")
+
+(define (compiler-lower-internal-zero-array-direct-call-source) : String
+  "(define (caller) : i64
+  (bad (array)))
+(define (bad [items : (Array u8 0)]) : i64
+  42)
+(define (main) : i64 (caller))")
+
+(define (compiler-lower-internal-direct-tail-structural-param-source) : String
+  "(define (finish [items : (Array i64 2)]) : i64
+  (array-ref items 1))
+(define (step [value : i64]) : i64
+  (finish (array value 2)))
+(define (main) : i64 (step 40))")
+
+(define (compiler-lower-internal-indirect-tail-structural-param-source) : String
+  "(define (finish [items : (Array i64 2)]) : i64
+  (array-ref items 1))
+(define (step [f : (-> (Array i64 2) i64)] [value : i64]) : i64
+  (f (array value 2)))
+(define (main) : i64 (step finish 40))")
 
 (define (compiler-lower-inline-hot-loop-struct-source) : String
   "(defstruct Pair (x i64) (y i64))
@@ -4486,6 +4633,55 @@
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
         name)]))
 
+(define (lower-test-function-param-count
+  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function fname params _ _ _)
+          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
+            (compiler_ir_types.compiler-ir-param-list-count params)
+            (lower-test-function-param-count (box-get rest) name))])]
+    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
+      (lower-test-function-param-count
+        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
+        name)]))
+
+(define (lower-test-param-name-at
+  [params : compiler_ir_types.CompilerIrParamList]
+  [index : i64]) : String
+  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
+    [(compiler_ir_types.CompilerIrParamList.Nil) ""]
+    [(compiler_ir_types.CompilerIrParamList.Array seq)
+      (lower-test-param-name-at
+        (compiler_ir_types.compiler-ir-param-seq-to-list seq)
+        index)]
+    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
+      (if (= index 0)
+        (match param
+          [(compiler_ir_types.CompilerIrParam.Param name _ _) name])
+        (lower-test-param-name-at (box-get rest) (- index 1)))]))
+
+(define (lower-test-function-param-name
+  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [name : String]
+  [index : i64]) : String
+  (match funcs
+    [(compiler_ir_types.CompilerIrFunctionList.Nil) ""]
+    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function fname params _ _ _)
+          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
+            (lower-test-param-name-at params index)
+            (lower-test-function-param-name (box-get rest) name index))])]
+    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
+      (lower-test-function-param-name
+        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
+        name
+        index)]))
+
 (define (lower-test-function-phi-count
   [funcs : compiler_ir_types.CompilerIrFunctionList]
   [name : String]) : i64
@@ -5367,6 +5563,19 @@
                 unit
                 (set! ok false))
               ok))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-defdispatch-structural-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-defdispatch-structural-source)
+    (compiler_lower.CompilerLowerMode.LinuxScalar))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (lower-test-function-defined? functions "dot")
+            (= (lower-test-function-call-count functions "main" "dot") 1)
+            (>= (lower-test-function-indirect-call-count functions "dot") 1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-defdispatch-shared-helper-ok?) : bool
@@ -7916,6 +8125,36 @@
               ok))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-capturing-lambda-structural-return-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-capturing-lambda-structural-return-source))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (= (compiler_ir_types.compiler-ir-function-list-count functions) 2)
+            (= (lower-test-function-indirect-call-count functions "main") 1)
+            (>=
+              (lower-test-function-pack-count functions "__tl_lambda_main_0")
+              1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-capturing-lambda-structural-sret-params-ok?) : bool
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-capturing-lambda-structural-sret-source))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (= (compiler_ir_types.compiler-ir-function-list-count functions) 2)
+            (string.eq
+              (lower-test-function-param-name functions "__tl_lambda_main_0" 0)
+              "__tl_env")
+            (string.eq
+              (lower-test-function-param-name functions "__tl_lambda_main_0" 1)
+              "__sret"))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-capturing-lambda-shadow-shape-ok?) : bool
   (match (compiler_lower.lower-compiler-source
     (compiler-lower-capturing-lambda-shadow-source))
@@ -7987,6 +8226,8 @@
     (compiler-lower-capturing-lambda-function-value-shape-ok?)
     (compiler-lower-capturing-lambda-fat-handle-shape-ok?)
     (compiler-lower-capturing-lambda-aggregate-shape-ok?)
+    (compiler-lower-capturing-lambda-structural-return-shape-ok?)
+    (compiler-lower-capturing-lambda-structural-sret-params-ok?)
     (compiler-lower-capturing-lambda-shadow-shape-ok?)
     (compiler-lower-capturing-lambda-reference-shape-ok?)
     (compiler-lower-capturing-lambda-reference-immediate-shape-ok?)))
@@ -13037,6 +13278,593 @@
         unit)
       ok)))
 
+;; Anonymous tuples use the same aligned, recursive layout walk as nominal
+;; aggregates.  Exercise the layout and the packet-1 internal ABI classifier
+;; directly with private pool types so extern C selection can be checked in the
+;; same fixture.
+(define (compiler-lower-internal-tuple-array-layout-ok?) : bool
+  (let
+    [active-before : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 64)]
+    [u8-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.U8))]
+    [u64-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.U64))]
+    [f32-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.F32))]
+    [f64-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.F64))]
+    [string-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.String))]
+    [slice-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.Slice u8-id))]
+    [empty-elements : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-list-new)]
+    [u8-elements : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-list-cons-id
+        u8-id
+        (compiler_ast_types.ast-type-list-new))]
+    [u8-u64-elements : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-list-cons-id
+        u8-id
+        (compiler_ast_types.ast-type-list-cons-id
+          u64-id
+          (compiler_ast_types.ast-type-list-new)))]
+    [f32-f32-elements : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-list-cons-id
+        f32-id
+        (compiler_ast_types.ast-type-list-cons-id
+          f32-id
+          (compiler_ast_types.ast-type-list-new)))]
+    [u8-f64-elements : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-list-cons-id
+        u8-id
+        (compiler_ast_types.ast-type-list-cons-id
+          f64-id
+          (compiler_ast_types.ast-type-list-new)))]
+    [string-elements : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-list-cons-id
+        string-id
+        (compiler_ast_types.ast-type-list-new))]
+    [slice-ref-elements : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-list-cons-id
+        (compiler_ast_types.ast-node-pool-context-type-push
+          pools
+          (compiler_ast_types.AstType.Ref 1 slice-id))
+        (compiler_ast_types.ast-type-list-new))]
+    [nested-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.Tuple (box u8-u64-elements)))]
+    [array-u8-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        pools
+        (compiler_ast_types.AstType.Array u8-id 3))]
+    [nested-elements : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-list-cons-id
+        nested-id
+        (compiler_ast_types.ast-type-list-cons-id
+          u8-id
+          (compiler_ast_types.ast-type-list-new)))]
+    [tuple-array-elements : compiler_ast_types.AstTypeList
+      (compiler_ast_types.ast-type-list-cons-id
+        array-u8-id
+        (compiler_ast_types.ast-type-list-cons-id
+          u64-id
+          (compiler_ast_types.ast-type-list-new)))]
+    [ctx : compiler_typecheck_core.TcContext
+      (compiler_typecheck_core.tc-context-new
+        (compiler_ast_types.ast-program (compiler_ast_types.ast-decl-list-new))
+        (compiler_symbols.compiler-symbols-empty)
+        (compiler_symbols.compiler-registries-empty)
+        ""
+        0
+        pools)]
+    [empty : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Tuple (box empty-elements))]
+    [u8-tuple : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Tuple (box u8-elements))]
+    [u8-u64 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Tuple (box u8-u64-elements))]
+    [f32-f32 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Tuple (box f32-f32-elements))]
+    [u8-f64 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Tuple (box u8-f64-elements))]
+    [nested : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Tuple (box nested-elements))]
+    [tuple-array : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Tuple (box tuple-array-elements))]
+    [tuple-string : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Tuple (box string-elements))]
+    [array-string : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Array string-id 2)]
+    [slice-ref-tuple : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Tuple (box slice-ref-elements))]
+    [array-u8 : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Array u8-id 3)]
+    [array-nested : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Array nested-id 2)]
+    [ok : bool false]
+    (begin
+      (compiler_ast_types.ast-node-pool-context-install! pools)
+      (set!
+        ok
+        (and
+          (= (compiler_lower.lower-type-size ctx empty) 0)
+          (= (compiler_lower.lower-type-align ctx empty) 1)
+          (= (compiler_lower.lower-type-size ctx u8-tuple) 1)
+          (= (compiler_lower.lower-type-align ctx u8-tuple) 1)
+          (= (compiler_lower.lower-type-size ctx u8-u64) 16)
+          (= (compiler_lower.lower-type-align ctx u8-u64) 8)
+          (= (compiler_lower.lower-type-size ctx f32-f32) 8)
+          (= (compiler_lower.lower-type-align ctx f32-f32) 4)
+          (= (compiler_lower.lower-type-size ctx nested) 24)
+          (= (compiler_lower.lower-type-align ctx nested) 8)
+          (= (compiler_lower.lower-type-size ctx array-u8) 3)
+          (= (compiler_lower.lower-type-align ctx array-u8) 1)
+          (= (compiler_lower.lower-type-size ctx array-nested) 32)
+          (= (compiler_lower.lower-type-align ctx array-nested) 8)
+          (= (compiler_lower.lower-type-size ctx tuple-array) 16)
+          (= (compiler_lower.lower-type-align ctx tuple-array) 8)
+          (= (compiler_lower.lower-type-size ctx tuple-string) 8)
+          (= (compiler_lower.lower-type-size ctx array-string) 16)
+          (= (compiler_lower.lower-type-size ctx slice-ref-tuple) 16)
+          (compiler_lower.lower-type-inline-storage? ctx u8-u64)
+          (not (compiler_lower.lower-type-register-resident? ctx u8-u64))
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            u8-tuple)
+            [(compiler_lower.LowerCAbiAggregate.Register slots size)
+              (and
+                (= size 1)
+                (= (compiler_lower.lower-c-abi-slot-list-count slots) 1)
+                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                  [(compiler_lower.LowerCAbiSlot.Slot ty _)
+                    (compiler_typecheck_core.tc-type-eq
+                      ty
+                      (compiler_ast_types.AstType.U8))]))]
+            [_ false])
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            f32-f32)
+            [(compiler_lower.LowerCAbiAggregate.Register slots size)
+              (and
+                (= size 8)
+                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                  [(compiler_lower.LowerCAbiSlot.Slot ty offset)
+                    (and
+                      (= offset 0)
+                      (compiler_typecheck_core.tc-type-eq
+                        ty
+                        (compiler_ast_types.AstType.F64)))]))]
+            [_ false])
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            u8-f64)
+            [(compiler_lower.LowerCAbiAggregate.Register slots size)
+              (and
+                (= size 16)
+                (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
+                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                  [(compiler_lower.LowerCAbiSlot.Slot ty _)
+                    (compiler_typecheck_core.tc-type-eq
+                      ty
+                      (compiler_ast_types.AstType.U64))])
+                (match (compiler_lower.lower-c-abi-slot-list-ref slots 1)
+                  [(compiler_lower.LowerCAbiSlot.Slot ty _)
+                    (compiler_typecheck_core.tc-type-eq
+                      ty
+                      (compiler_ast_types.AstType.F64))]))]
+            [_ false])
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            tuple-string)
+            [(compiler_lower.LowerCAbiAggregate.Register slots size)
+              (and
+                (= size 8)
+                (= (compiler_lower.lower-c-abi-slot-list-count slots) 1)
+                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                  [(compiler_lower.LowerCAbiSlot.Slot ty _)
+                    (compiler_typecheck_core.tc-type-eq
+                      ty
+                      (compiler_ast_types.AstType.U64))]))]
+            [_ false])
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            array-string)
+            [(compiler_lower.LowerCAbiAggregate.Register slots size)
+              (and
+                (= size 16)
+                (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
+                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                  [(compiler_lower.LowerCAbiSlot.Slot ty _)
+                    (compiler_typecheck_core.tc-type-eq
+                      ty
+                      (compiler_ast_types.AstType.U64))])
+                (match (compiler_lower.lower-c-abi-slot-list-ref slots 1)
+                  [(compiler_lower.LowerCAbiSlot.Slot ty _)
+                    (compiler_typecheck_core.tc-type-eq
+                      ty
+                      (compiler_ast_types.AstType.U64))]))]
+            [_ false])
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            array-nested)
+            [(compiler_lower.LowerCAbiAggregate.Memory size) (= size 32)]
+            [_ false])
+          (match (compiler_lower.lower-internal-return-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            array-nested)
+            [(compiler_lower.LowerCAbiAggregate.Sret size) (= size 32)]
+            [_ false])
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.WindowsScalar)
+            array-u8)
+            [(compiler_lower.LowerCAbiAggregate.ByRef size) (= size 3)]
+            [_ false])
+          (match (compiler_lower.lower-internal-return-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.WindowsScalar)
+            array-u8)
+            [(compiler_lower.LowerCAbiAggregate.Sret size) (= size 3)]
+            [_ false])
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.WindowsScalar)
+            tuple-string)
+            [(compiler_lower.LowerCAbiAggregate.Integer ty size)
+              (and
+                (= size 8)
+                (compiler_typecheck_core.tc-type-eq
+                  ty
+                  (compiler_ast_types.AstType.U64)))]
+            [_ false])
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            slice-ref-tuple)
+            [(compiler_lower.LowerCAbiAggregate.Register slots size)
+              (and
+                (= size 16)
+                (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
+                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                  [(compiler_lower.LowerCAbiSlot.Slot ty _)
+                    (compiler_typecheck_core.tc-type-eq
+                      ty
+                      (compiler_ast_types.AstType.U64))])
+                (match (compiler_lower.lower-c-abi-slot-list-ref slots 1)
+                  [(compiler_lower.LowerCAbiSlot.Slot ty _)
+                    (compiler_typecheck_core.tc-type-eq
+                      ty
+                      (compiler_ast_types.AstType.U64))]))]
+            [_ false])
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.WindowsScalar)
+            u8-u64)
+            [(compiler_lower.LowerCAbiAggregate.ByRef size) (= size 16)]
+            [_ false])
+          (match (compiler_lower.lower-internal-return-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.WindowsScalar)
+            u8-u64)
+            [(compiler_lower.LowerCAbiAggregate.Sret size) (= size 16)]
+            [_ false])
+          (match (compiler_lower.lower-internal-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            empty)
+            [(compiler_lower.LowerCAbiAggregate.Unsupported _) true]
+            [_ false])
+          ;; Extern C aggregate selection remains nominal-only.
+          (match (compiler_lower.lower-c-abi-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            u8-u64)
+            [(compiler_lower.LowerCAbiAggregate.No) true]
+            [_ false])
+          (match (compiler_lower.lower-c-abi-return-aggregate-class
+            ctx
+            (compiler_lower.CompilerLowerMode.LinuxScalar)
+            array-u8)
+            [(compiler_lower.LowerCAbiAggregate.No) true]
+            [_ false])))
+      (compiler_ast_types.ast-node-pool-context-install! active-before)
+      ok)))
+
+(test
+  compiler-lower-internal-tuple-array-layout
+  (test.assert-true
+    (compiler-lower-internal-tuple-array-layout-ok?)
+    "recursive tuple/array layout and internal ABI classifier"))
+
+(define (compiler-lower-internal-structural-call-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-internal-structural-call-source)
+    (compiler_lower.CompilerLowerMode.LinuxScalar))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (lower-test-function-defined? functions "tuple-roundtrip")
+            (lower-test-function-defined? functions "array-roundtrip")
+            (= (lower-test-function-param-count functions "tuple-roundtrip") 1)
+            (= (lower-test-function-param-count functions "array-roundtrip") 2)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "tuple-roundtrip")
+              1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "array-roundtrip")
+              1)
+            (>=
+              (lower-test-function-store-ptr-count functions "tuple-roundtrip")
+              2)
+            (>=
+              (lower-test-function-copy-bytes-count functions "array-roundtrip")
+              1)
+            ;; Tuple register-group transport is packed at the call boundary;
+            ;; the array return takes the leading hidden sret path.
+            (>= (lower-test-function-pack-count functions "main") 1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(test
+  compiler-lower-internal-structural-call-shape
+  (test.assert-true
+    (compiler-lower-internal-structural-call-shape-ok?)
+    "tuple/array internal call and return transport"))
+
+(define (compiler-lower-internal-windows-byref-sret-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-internal-windows-byref-sret-source)
+    (compiler_lower.CompilerLowerMode.WindowsScalar))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (lower-test-function-defined? functions "array-roundtrip")
+            (lower-test-function-defined? functions "scalar-roundtrip")
+            (= (lower-test-function-param-count functions "array-roundtrip") 2)
+            (= (lower-test-function-param-count functions "scalar-roundtrip") 1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "array-roundtrip")
+              1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "scalar-roundtrip")
+              1)
+            (>=
+              (lower-test-function-copy-bytes-count functions "array-roundtrip")
+              1)
+            ;; Win64 ByRef parameters are copied into a private caller buffer;
+            ;; the >8-byte result uses a leading sret pointer.
+            (>= (lower-test-function-copy-bytes-count functions "main") 1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-internal-windows-u8-three-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-internal-windows-u8-three-source)
+    (compiler_lower.CompilerLowerMode.WindowsScalar))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (lower-test-function-defined? functions "roundtrip")
+            ;; Leading caller-owned sret plus one ByRef source parameter.
+            (= (lower-test-function-param-count functions "roundtrip") 2)
+            (= (lower-test-function-call-count functions "main" "roundtrip") 1)
+            ;; Three-byte copies lower to two scalar load/store chunks rather
+            ;; than a bulk CopyBytes instruction. The callee copies into sret;
+            ;; main has three literal stores plus the two ByRef-copy stores.
+            (>= (lower-test-function-store-ptr-count functions "roundtrip") 2)
+            (>= (lower-test-function-store-ptr-count functions "main") 5))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-internal-early-return-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-internal-early-return-source)
+    (compiler_lower.CompilerLowerMode.LinuxScalar))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (>= (lower-test-function-pack-count functions "tuple-early") 1)
+            (>=
+              (lower-test-function-copy-bytes-count functions "array-early")
+              1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-internal-indirect-structural-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-internal-indirect-structural-source))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (= (lower-test-function-indirect-call-count functions "main") 1)
+            (>= (lower-test-function-pack-count functions "main") 1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-internal-tail-structural-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-internal-tail-structural-source))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (= (lower-test-function-tail-call-count functions "loop" "loop") 0)
+            (> (lower-test-function-call-count functions "loop" "loop") 0))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-internal-unsupported-diagnostics-ok?) : bool
+  (and
+    (compiler-lower-mode-diagnostic-ok?
+      (compiler-lower-internal-zero-array-param-source)
+      (compiler_lower.CompilerLowerMode.LinuxScalar)
+      "lower: unsupported linux-x86_64 internal aggregate ABI for (Array u8 0); tuple/fixed-array parameters and returns require a non-zero finite inline layout"
+      2
+      3)
+    (compiler-lower-mode-diagnostic-ok?
+      (compiler-lower-internal-zero-array-param-source)
+      (compiler_lower.CompilerLowerMode.WindowsScalar)
+      "lower: unsupported windows-x86_64 internal aggregate ABI for (Array u8 0); tuple/fixed-array parameters and returns require a non-zero finite inline layout"
+      2
+      3)
+    (compiler-lower-mode-diagnostic-ok?
+      (compiler-lower-internal-empty-tuple-return-source)
+      (compiler_lower.CompilerLowerMode.LinuxScalar)
+      "lower: unsupported linux-x86_64 internal aggregate ABI for (Tuple ); tuple/fixed-array parameters and returns require a non-zero finite inline layout"
+      2
+      3)
+    (compiler-lower-mode-diagnostic-ok?
+      (compiler-lower-internal-empty-tuple-return-source)
+      (compiler_lower.CompilerLowerMode.WindowsScalar)
+      "lower: unsupported windows-x86_64 internal aggregate ABI for (Tuple ); tuple/fixed-array parameters and returns require a non-zero finite inline layout"
+      2
+      3)
+    ;; Direct and indirect call conversion must stamp classifier errors at the
+    ;; call expression, including when no concrete indirect callee exists.
+    (compiler-lower-mode-diagnostic-ok?
+      (compiler-lower-internal-zero-array-direct-call-source)
+      (compiler_lower.CompilerLowerMode.LinuxScalar)
+      "lower: unsupported linux-x86_64 internal aggregate ABI for (Array u8 0); tuple/fixed-array parameters and returns require a non-zero finite inline layout"
+      2
+      4)
+    (compiler-lower-mode-diagnostic-ok?
+      (compiler-lower-internal-zero-array-indirect-call-source)
+      (compiler_lower.CompilerLowerMode.WindowsScalar)
+      "lower: unsupported windows-x86_64 internal aggregate ABI for (Array u8 0); tuple/fixed-array parameters and returns require a non-zero finite inline layout"
+      2
+      4)))
+
+(define (compiler-lower-internal-direct-tail-structural-param-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-internal-direct-tail-structural-param-source)
+    (compiler_lower.CompilerLowerMode.LinuxScalar))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-tail-call-count functions "step" "finish")
+              0)
+            (= (lower-test-function-call-count functions "step" "finish") 1)
+            (>= (lower-test-function-pack-count functions "step") 1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-internal-indirect-tail-structural-param-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-internal-indirect-tail-structural-param-source)
+    (compiler_lower.CompilerLowerMode.LinuxScalar))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-indirect-tail-call-count functions "step")
+              0)
+            (= (lower-test-function-indirect-call-count functions "step") 1)
+            (>= (lower-test-function-pack-count functions "step") 1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(test
+  compiler-lower-internal-windows-byref-sret-shape
+  (test.assert-true
+    (compiler-lower-internal-windows-byref-sret-shape-ok?)
+    "Windows ByRef aggregate and leading sret transport"))
+
+(test
+  compiler-lower-internal-windows-u8-three-shape
+  (test.assert-true
+    (compiler-lower-internal-windows-u8-three-shape-ok?)
+    "Windows three-byte ByRef parameter and leading sret transport"))
+
+(test
+  compiler-lower-internal-early-return-shape
+  (test.assert-true
+    (compiler-lower-internal-early-return-shape-ok?)
+    "structural register and sret explicit returns"))
+
+(test
+  compiler-lower-internal-indirect-structural-shape
+  (test.assert-true
+    (compiler-lower-internal-indirect-structural-shape-ok?)
+    "noncapturing indirect structural call transport"))
+
+(test
+  compiler-lower-internal-tail-structural-shape
+  (test.assert-true
+    (compiler-lower-internal-tail-structural-shape-ok?)
+    "structural tail/RVO suppression"))
+
+(test
+  compiler-lower-internal-unsupported-diagnostics
+  (test.assert-true
+    (compiler-lower-internal-unsupported-diagnostics-ok?)
+    "internal tuple/array ABI diagnostics are mode-specific and source-located"))
+
+(test
+  compiler-lower-internal-direct-tail-structural-param-shape
+  (test.assert-true
+    (compiler-lower-internal-direct-tail-structural-param-shape-ok?)
+    "direct structural-parameter tail call uses ordinary ABI conversion"))
+
+(test
+  compiler-lower-internal-indirect-tail-structural-param-shape
+  (test.assert-true
+    (compiler-lower-internal-indirect-tail-structural-param-shape-ok?)
+    "indirect structural-parameter tail call uses ordinary ABI conversion"))
+
+(test
+  compiler-lower-capturing-lambda-structural-return-shape
+  (test.assert-true
+    (compiler-lower-capturing-lambda-structural-return-shape-ok?)
+    "capturing lambda structural return transport"))
+
+(test
+  compiler-lower-capturing-lambda-structural-sret-params
+  (test.assert-true
+    (compiler-lower-capturing-lambda-structural-sret-params-ok?)
+    "capturing lambda keeps env before structural sret"))
+
+(test
+  compiler-lower-defdispatch-structural-shape
+  (test.assert-true
+    (compiler-lower-defdispatch-structural-shape-ok?)
+    "defdispatch structural thunk transport"))
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -13054,6 +13882,45 @@
         unit
         (set! ok false))
       (if (compiler-lower-slice-reference-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-internal-tuple-array-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-internal-structural-call-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-internal-windows-byref-sret-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-internal-windows-u8-three-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-internal-early-return-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-internal-indirect-structural-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-internal-tail-structural-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-internal-unsupported-diagnostics-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-internal-direct-tail-structural-param-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-internal-indirect-tail-structural-param-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-capturing-lambda-structural-return-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-capturing-lambda-structural-sret-params-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-defdispatch-structural-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-slice-whole-array-pack-shape-ok?)

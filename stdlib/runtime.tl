@@ -730,6 +730,14 @@
           (set! i (+ i 1))))
       unit)))
 
+;: Fill `count` pointer-sized slots at `buf` with `value`. The backend provides
+;: the body as a `rep stosq` (see compiler-backend-runtime-mem-fill8-functions),
+;: one instruction per slot under the deterministic instruction-count gate, and
+;: a non-positive `count` writes nothing. Unlike `array-zero` this NEVER skips
+;: its fill: array-zero's virgin-arena early-out is sound only for storage the
+;: bump allocator just handed out, never for an arbitrary live buffer.
+(extern (mem-fill8 [buf : (MutPtr u8)] [count : i64] [value : u64]) : unit (:symbol "tl_mem_fill8"))
+
 ;: Zero `byte-count` bytes starting at `buf`. The backend provides the body
 ;: as a qword `rep stosq` plus a byte `rep stosb` tail (see
 ;: compiler-backend-runtime-array-zero-functions), which costs one instruction

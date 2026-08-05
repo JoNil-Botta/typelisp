@@ -5,6 +5,7 @@
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
 (import stdlib.fs)
+(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.env)
 (import stdlib.io)
@@ -3958,7 +3959,7 @@
                   (set! path-cursor path-rest)])))]))))
 
 (define (build-package-tlci-macro-collector
-  [manifest-path : String]
+  [source-set : package_source_core.PackageSourceSet]
   [manifest : load.CompilerPkgManifest]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : BuildPackageTlciMacroCollector
@@ -3966,25 +3967,18 @@
     [out : cli_svec.Vec (cli_svec.new)]
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
+    [owned-sources : build_string_i64_map.Map
+      (build-package-tlci-source-map (struct-get source-set sources))]
     (begin
-      (match (package_source_core.package-source-discover-for
-        "build"
-        manifest-path
-        true)
-        [(package_source_core.ResultPackageSourceSet.Err _) unit]
-        [(package_source_core.ResultPackageSourceSet.Ok source-set)
-          (let
-            [owned-sources : build_string_i64_map.Map
-              (build-package-tlci-source-map (struct-get source-set sources))]
-            (build-package-tlci-collect-macros-into!
-              decls
-              paths
-              ""
-              ""
-              (struct-get manifest name)
-              owned-sources
-              (&mut out)
-              (&mut captures)))])
+      (build-package-tlci-collect-macros-into!
+        decls
+        paths
+        ""
+        ""
+        (struct-get manifest name)
+        owned-sources
+        (&mut out)
+        (&mut captures))
       (build-package-tlci-finish-macro-collector (&mut out) captures))))
 
 (cfg
@@ -4153,44 +4147,34 @@
       current)))
 
 (define (build-package-tlci-callable-collector
-  [manifest-path : String]
+  [source-set : package_source_core.PackageSourceSet]
   [manifest : load.CompilerPkgManifest]
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : BuildPackageTlciCallableCollector
-  (match (package_source_core.package-source-discover-for
-    "build"
-    manifest-path
-    true)
-    [(package_source_core.ResultPackageSourceSet.Err message)
-      (BuildPackageTlciCallableCollector
-        (tlci.tlci-spmd-callables-empty)
-        message)]
-    [(package_source_core.ResultPackageSourceSet.Ok source-set)
-      (let
-        [owned-sources : build_string_i64_map.Map
-          (build-package-tlci-source-map (struct-get source-set sources))]
-        (build-package-tlci-collect-callables-into!
-          decls
-          paths
-          ""
-          ""
-          (struct-get manifest name)
-          mode
-          owned-sources
-          (BuildPackageTlciCallableCollector
-            (tlci.tlci-spmd-callables-empty)
-            "")))]))
+  (let
+    [owned-sources : build_string_i64_map.Map
+      (build-package-tlci-source-map (struct-get source-set sources))]
+    (build-package-tlci-collect-callables-into!
+      decls
+      paths
+      ""
+      ""
+      (struct-get manifest name)
+      mode
+      owned-sources
+      (BuildPackageTlciCallableCollector (tlci.tlci-spmd-callables-empty) ""))))
 
 (define (build-package-tlci-image
   [metadata : tlci.TlciMetadata]
-  [producer-identity : String]) : tlci.TlciImage
+  [producer-identity : String]
+  [rodata : (__tl_dyn-array u8)]) : tlci.TlciImage
   (tlci.TlciImage
     tlci.tlci-host-arch-x86-64
     tlci.tlci-callback-abi-version
     producer-identity
     metadata
-    (tlci.tlci-empty-bytes)
+    rodata
     (tlci.tlci-empty-bytes)
     (tlci.tlci-empty-bytes)
     (tlci.tlci-empty-bytes)
@@ -4200,6 +4184,14 @@
 (defenum ResultBuildPackageTlciText
   (Ok String)
   (Err String))
+
+(define (build-package-tlci-source-binding-rodata [digest : i64]) : tlci.ResultTlciAuxBytes
+  (let
+    [sections : (__tl_dyn-array tlci.TlciAuxSection)
+      (array.make-array tlci.TlciAuxSection 1)]
+    (begin
+      (array-set! sections 0 (tlci.tlci-package-source-binding-section digest))
+      (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections))))
 
 (define (build-package-tlci-text
   [manifest-path : String]
@@ -4211,48 +4203,88 @@
   (if (not (tlci.tlci-producer-identity-valid? producer-identity))
     (ResultBuildPackageTlciText.Err
       "build: exact producer compiler identity is unavailable")
-    (let
-      [collector : BuildPackageTlciCallableCollector
-        (build-package-tlci-callable-collector
-          manifest-path
-          manifest
-          mode
-          decls
-          paths)]
-      [macro-collector : BuildPackageTlciMacroCollector
-        (build-package-tlci-macro-collector manifest-path manifest decls paths)]
-      [macro-names : (__tl_dyn-array String) (struct-get macro-collector names)]
-      (if (> (string.string-length (struct-get collector error)) 0)
-        (ResultBuildPackageTlciText.Err (struct-get collector error))
-        (let
-          [metadata : tlci.TlciMetadata
-            (build-package-tlci-metadata manifest (struct-get collector items))]
-          (if (= (array-length macro-names) 0)
-            (match (tlci.tlci-emit-image
-              (build-package-tlci-image metadata producer-identity))
-              [(tlci.ResultTlciBytes.Err message)
+    (match (package_source_core.package-source-discover-for
+      "build"
+      manifest-path
+      true)
+      [(package_source_core.ResultPackageSourceSet.Err message)
+        (ResultBuildPackageTlciText.Err message)]
+      [(package_source_core.ResultPackageSourceSet.Ok source-set)
+        (match (package_source_core.package-source-set-digest source-set)
+          [(package_source_core.ResultPackageSourceDigest.Err message)
+            (ResultBuildPackageTlciText.Err
+              (str_cat.str-cat
+                "build: failed to compute package source digest: "
+                message))]
+          [(package_source_core.ResultPackageSourceDigest.Ok digest)
+            (match (build-package-tlci-source-binding-rodata digest)
+              [(tlci.ResultTlciAuxBytes.Err message)
                 (ResultBuildPackageTlciText.Err
                   (str_cat.str-cat
-                    "build: failed to emit package tlci: "
+                    "build: failed to pack package source binding: "
                     message))]
-              [(tlci.ResultTlciBytes.Ok bytes)
-                (ResultBuildPackageTlciText.Ok
-                  (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])
-            (match (compiler_tlci_native_producer.embedded-native-emit-package
-              (tlci.tlci-metadata-emit metadata)
-              producer-identity
-              (cfg windows true false)
-              (tlci.tlci-empty-bytes)
-              macro-names
-              (& (struct-get macro-collector captures)))
-              [(compiler_tlci_native_producer.ResultProducerBytes.Err message)
-                (ResultBuildPackageTlciText.Err
-                  (str_cat.str-cat
-                    "build: failed to emit package tlci: "
-                    message))]
-              [(compiler_tlci_native_producer.ResultProducerBytes.Ok bytes)
-                (ResultBuildPackageTlciText.Ok
-                  (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])))))))
+              [(tlci.ResultTlciAuxBytes.Ok rodata)
+                (let
+                  [collector : BuildPackageTlciCallableCollector
+                    (build-package-tlci-callable-collector
+                      source-set
+                      manifest
+                      mode
+                      decls
+                      paths)]
+                  [macro-collector : BuildPackageTlciMacroCollector
+                    (build-package-tlci-macro-collector
+                      source-set
+                      manifest
+                      decls
+                      paths)]
+                  [macro-names : (__tl_dyn-array String)
+                    (struct-get macro-collector names)]
+                  (if (> (string.string-length (struct-get collector error)) 0)
+                    (ResultBuildPackageTlciText.Err
+                      (struct-get collector error))
+                    (let
+                      [metadata : tlci.TlciMetadata
+                        (build-package-tlci-metadata
+                          manifest
+                          (struct-get collector items))]
+                      (if (= (array-length macro-names) 0)
+                        (match (tlci.tlci-emit-image
+                          (build-package-tlci-image
+                            metadata
+                            producer-identity
+                            rodata))
+                          [(tlci.ResultTlciBytes.Err message)
+                            (ResultBuildPackageTlciText.Err
+                              (str_cat.str-cat
+                                "build: failed to emit package tlci: "
+                                message))]
+                          [(tlci.ResultTlciBytes.Ok bytes)
+                            (ResultBuildPackageTlciText.Ok
+                              (tlci.tlci-bytes->string
+                                bytes
+                                0
+                                (array-length bytes)))])
+                        (match (compiler_tlci_native_producer.embedded-native-emit-package
+                          (tlci.tlci-metadata-emit metadata)
+                          producer-identity
+                          (cfg windows true false)
+                          rodata
+                          macro-names
+                          (& (struct-get macro-collector captures)))
+                          [(compiler_tlci_native_producer.ResultProducerBytes.Err
+                              message)
+                            (ResultBuildPackageTlciText.Err
+                              (str_cat.str-cat
+                                "build: failed to emit package tlci: "
+                                message))]
+                          [(compiler_tlci_native_producer.ResultProducerBytes.Ok
+                              bytes)
+                            (ResultBuildPackageTlciText.Ok
+                              (tlci.tlci-bytes->string
+                                bytes
+                                0
+                                (array-length bytes)))])))))])])])))
 
 ;; This producer load is disposable; only the caller-owned TLCI text crosses
 ;; the reset before the final lowering load.

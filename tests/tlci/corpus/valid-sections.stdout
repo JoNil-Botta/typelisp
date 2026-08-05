@@ -3,6 +3,8 @@ format-version: 2
 host-arch: x86_64 (1)
 callback-abi-version: 2
 producer-compiler-identity: tlci-v2-corpus
+source-set-binding-schema: missing-or-legacy
+source-set-digest: unavailable
 content-hash: 1447515808
 file-size: 8272
 metadata-version: v1

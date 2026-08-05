@@ -3249,13 +3249,29 @@
 (define (ast-type-id-fallback) : i64
   0)
 
+;; Shared zero-length backing store for the empty i64-slot lists below.
+;;
+;; `(make-array i64 0)` is not free: it still runs `tl_alloc` and the
+;; `tl_array_zero` call the make-array lowering emits for a non-literal length,
+;; and the self-compile builds millions of empty lists (`ast-variant-def-fallback`
+;; alone builds one type list and one cleanup list per call). A zero-length array
+;; can never be indexed and never be written -- `push` only stores after `grow`
+;; has replaced `slots` with private storage, because `len < array-length slots`
+;; is false at capacity 0 -- so one program-lifetime array is safe to hand to
+;; every empty list. Only the `slots` fat pointer is shared; the list struct
+;; itself is a per-value copy, so a later `grow` rebinds that copy's field and
+;; leaves this array untouched. Same discipline as
+;; `tc-moved-exact-path-index-empty-facts`.
+;;
+;; This global is initialized at startup in the program arena, so it outlives
+;; every per-phase arena that can hold a list pointing at it.
+(define ast-empty-i64-slots : (__tl_dyn-array i64)
+  (array.make-array i64 0))
+
 (define (ast-type-list-with-capacity [capacity : i64]) : AstTypeList
-  (let
-    [cap : i64
-      (if (< capacity 0)
-        0
-        capacity)]
-    (AstTypeList (array.make-array i64 cap) 0)))
+  (if (<= capacity 0)
+    (AstTypeList ast-empty-i64-slots 0)
+    (AstTypeList (array.make-array i64 capacity) 0)))
 
 (define (ast-type-list-new) : AstTypeList
   (ast-type-list-with-capacity 0))
@@ -3485,12 +3501,9 @@
   cbi.compiler-builtin-id-fix-empty)
 
 (define (ast-lifetime-list-with-capacity [capacity : i64]) : AstLifetimeList
-  (let
-    [cap : i64
-      (if (< capacity 0)
-        0
-        capacity)]
-    (AstLifetimeList (array.make-array i64 cap) 0)))
+  (if (<= capacity 0)
+    (AstLifetimeList ast-empty-i64-slots 0)
+    (AstLifetimeList (array.make-array i64 capacity) 0)))
 
 (define (ast-lifetime-list-new) : AstLifetimeList
   (ast-lifetime-list-with-capacity 0))
@@ -4402,18 +4415,24 @@
 (define (ast-variant-payload-cleanup-fallback) : AstVariantPayloadCleanup
   AstVariantPayloadCleanup.No)
 
+;; Zero-length shared backing, same discipline as `ast-empty-i64-slots`.
+(define ast-empty-variant-payload-cleanup-slots : (__tl_dyn-array
+    AstVariantPayloadCleanup)
+  (array.make-array AstVariantPayloadCleanup 0))
+
 (define (ast-variant-payload-cleanup-list-with-capacity [capacity : i64]) : AstVariantPayloadCleanupList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
+  (if (<= capacity 0)
+    (AstVariantPayloadCleanupList ast-empty-variant-payload-cleanup-slots 0)
     (AstVariantPayloadCleanupList
-      (array.make-array AstVariantPayloadCleanup cap)
+      (array.make-array AstVariantPayloadCleanup capacity)
       0)))
 
+;; Starts empty rather than at capacity 4: a self-compile builds 1.71M of these
+;; lists and pushes onto ~7.5K of them, so the eager four-slot buffer was
+;; allocated and zeroed almost entirely for lists that stay empty. `push` grows
+;; 0 -> 1 -> 2 -> 4 for the rare list that does fill.
 (define (ast-variant-payload-cleanup-list-new) : AstVariantPayloadCleanupList
-  (ast-variant-payload-cleanup-list-with-capacity 4))
+  (ast-variant-payload-cleanup-list-with-capacity 0))
 
 (define (ast-variant-payload-cleanup-list-len
   [v : (& v AstVariantPayloadCleanupList)]) : i64
@@ -4491,11 +4510,28 @@
   [cleanups : AstVariantPayloadCleanupList]) : AstVariantDef
   (AstVariantDef.Def name fields cleanups))
 
-(define (ast-variant-def-fallback) : AstVariantDef
+;; One shared fallback value instead of one per call.
+;;
+;; Every one of this function's ~55 call sites is the default argument of a
+;; bounds-checked `ast-variant-def-list-get`, so the value is built eagerly on
+;; every lookup and discarded on every hit -- 1.71M constructions in a
+;; self-compile, each allocating two list structs plus the enum. Sharing is safe
+;; for the same reason the hit path is: `ast-variant-def-list-get` hands back a
+;; value callers only destructure and read (a caller that mutated it would
+;; already be writing into the stored element on the hit path), and both payload
+;; lists are empty with the shared zero-length backing, so even a `push` on a
+;; copy grows into private storage before it stores anything.
+;;
+;; Declared after `ast-empty-i64-slots` and
+;; `ast-empty-variant-payload-cleanup-slots`, which its initializer reads.
+(define ast-variant-def-fallback-value : AstVariantDef
   (AstVariantDef.Def
     0
     (ast-type-list-new)
     (ast-variant-payload-cleanup-list-new)))
+
+(define (ast-variant-def-fallback) : AstVariantDef
+  ast-variant-def-fallback-value)
 
 (define (ast-variant-def-list-with-capacity [capacity : i64]) : AstVariantDefList
   (let

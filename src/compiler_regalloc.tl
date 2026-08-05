@@ -2796,6 +2796,12 @@
 ;; mask, an `and`, a `test`/`jne` pair, and -- because the dead `31` arm is a
 ;; second definition of the result -- a stack slot to phi the two arms through,
 ;; which costs a store on this arm and a reload at the merge.
+;;
+;; The bits-0..31 property survives everything the walks do to a word on the way
+;; here: `bit-or` of two live-set words and `bit-and` with a phi-touched mask
+;; word set no new positions, and `bits & (bits - 1)` -- how every one of these
+;; loops advances -- only clears. So a word that reaches a use site nonzero has
+;; a nonzero low half, whether it arrived raw, masked, or part-consumed.
 (defmacro (compiler-reg-low-bit-index32-nonzero [bits : i64]) : i64
   `(let
     [value : i64 ,bits]
@@ -3201,7 +3207,8 @@
           (begin
             (while (not (= touched 0))
               (let
-                [item-var : i64 (+ base (compiler-reg-low-bit-index32 touched))]
+                [item-var : i64
+                  (+ base (compiler-reg-low-bit-index32-nonzero touched))]
                 (begin
                   (compiler-reg-extend-segment-touch!
                     starts
@@ -3754,6 +3761,40 @@
 ;; both -- open the segment when none is open, otherwise raise its end when
 ;; `point` still adjoins it, and otherwise flush and reopen -- so the rows
 ;; produced are the same.
+;;
+;; This is the phi-masked twin of `compiler-reg-extend-segment-after-words!` and
+;; it takes the same treatment for the same reason. `flush-var!` sits in the
+;; cold reopen arm, and a call in the loop stops the optimizer hoisting anything
+;; out of it, so every live bit re-read a handle, the length behind it and the
+;; data pointer behind that, for each of the two arrays it touches -- array
+;; metadata for reads the loop had already proven in range. The three word
+;; arrays and the live-after backing are read through pointers taken once in the
+;; preheader, and the word's bit base moves into the item expression so the
+;; inner walk's preheader charges it to the words that carry a bit rather than
+;; to every word. Same words, same order, same values.
+;;
+;; Both range proofs are LOCAL and neither rests on a caller contract:
+;;   * `limit` is the minimum of `after-words`, `mask-limit` AND the mask array's
+;;     own length, so `0 <= index < limit` is inside both backings. The third
+;;     term never binds -- `compiler-reg-ep-mask-word-limit` counts down from
+;;     `(array-length words)` -- but taking it here is what makes the raw mask
+;;     read sound without knowing that.
+;;   * `var-limit` is the MINIMUM of the two segment array lengths, so
+;;     `0 <= item-var < var-limit` puts the index inside both. The guard is new
+;;     only in the sense that the bounds check used to be the array-ref's own:
+;;     `item-var` is already in range on every path (the mask word only carries
+;;     bits for `v < vars`, and both arrays are `vars` long), so the arm the
+;;     guard adds is dead. `item-var < 0` cannot happen either -- `index >= 0`
+;;     and the De Bruijn table holds 0..31 -- but it is the other half of the
+;;     range proof, not a redundant test.
+;; The pointers stay valid across the loop for the reason the conservative walk
+;; gives: heap allocation is a bump into the active arena that never moves or
+;; frees a live value, nothing here resizes these arrays, and nothing writes to
+;; `live-after` or `mask-words`. `flush-var!` writes `segment-starts` /
+;; `segment-ends` slots through the handles while this loop reads and writes
+;; through the pointers, but both name the same backing store, so the -1 it
+;; parks in the flushed row is exactly what the next `ptr-read` of that row
+;; sees.
 (define (compiler-reg-ep-after-words!
   [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
   [segment-starts : (__tl_dyn-array i64)]
@@ -3764,44 +3805,88 @@
   [point : i64]) : unit
   (let
     [after-words : i64 (live.compiler-live-set-word-count live-after)]
-    [limit : i64
+    [after-data : (MutPtr i64) (live.compiler-live-set-word-data live-after)]
+    [mask-len : i64 (array-length mask-words)]
+    [mask-data : (MutPtr i64)
+      (unsafe
+        (array-data mask-words))]
+    [word-limit : i64
       (if (< after-words mask-limit)
         after-words
         mask-limit)]
+    [limit : i64
+      (if (< word-limit mask-len)
+        word-limit
+        mask-len)]
+    [segment-starts-len : i64 (array-length segment-starts)]
+    [segment-ends-len : i64 (array-length segment-ends)]
+    [var-limit : i64
+      (if (< segment-starts-len segment-ends-len)
+        segment-starts-len
+        segment-ends-len)]
+    [segment-starts-data : (MutPtr i64)
+      (unsafe
+        (array-data segment-starts))]
+    [segment-ends-data : (MutPtr i64)
+      (unsafe
+        (array-data segment-ends))]
     [next : i64 (+ point 1)]
     [index : i64 0]
     (while (< index limit)
       (let
-        [base : i64 (* index (live.compiler-live-set-word-bits))]
         [after-bits : i64
           (bit-and
-            (live.compiler-live-set-word-at-bounded live-after index)
-            (array-ref mask-words index))]
+            (live.compiler-live-set-word-at-data after-data index)
+            (unsafe
+              (ptr-read (ptr-offset mask-data index))))]
         (begin
           (while (not (= after-bits 0))
             (let
               [item-var : i64
-                (+ base (compiler-reg-low-bit-index32 after-bits))]
-              [open-start : i64 (array-ref segment-starts item-var)]
+                (+
+                  (* index (live.compiler-live-set-word-bits))
+                  (compiler-reg-low-bit-index32-nonzero after-bits))]
               (begin
-                (if (< open-start 0)
-                  (begin
-                    (array-set! segment-starts item-var point)
-                    (array-set! segment-ends item-var next))
+                (if (or (< item-var 0) (>= item-var var-limit))
+                  unit
                   (let
-                    [open-end : i64 (array-ref segment-ends item-var)]
-                    (if (<= point (+ open-end 1))
-                      (if (> next open-end)
-                        (array-set! segment-ends item-var next)
-                        unit)
-                      (begin
-                        (compiler-reg-segment-flush-var!
-                          segments
-                          segment-starts
-                          segment-ends
-                          item-var)
-                        (array-set! segment-starts item-var point)
-                        (array-set! segment-ends item-var next)))))
+                    [open-start : i64
+                      (unsafe
+                        (ptr-read (ptr-offset segment-starts-data item-var)))]
+                    (if (< open-start 0)
+                      (unsafe
+                        (begin
+                          (ptr-write!
+                            (ptr-offset segment-starts-data item-var)
+                            point)
+                          (ptr-write!
+                            (ptr-offset segment-ends-data item-var)
+                            next)))
+                      (let
+                        [open-end : i64
+                          (unsafe
+                            (ptr-read (ptr-offset segment-ends-data item-var)))]
+                        (if (<= point (+ open-end 1))
+                          (if (> next open-end)
+                            (unsafe
+                              (ptr-write!
+                                (ptr-offset segment-ends-data item-var)
+                                next))
+                            unit)
+                          (begin
+                            (compiler-reg-segment-flush-var!
+                              segments
+                              segment-starts
+                              segment-ends
+                              item-var)
+                            (unsafe
+                              (begin
+                                (ptr-write!
+                                  (ptr-offset segment-starts-data item-var)
+                                  point)
+                                (ptr-write!
+                                  (ptr-offset segment-ends-data item-var)
+                                  next)))))))))
                 (set! after-bits (bit-and after-bits (- after-bits 1))))))
           (set! index (+ index 1)))))))
 
@@ -3844,7 +3929,8 @@
           (begin
             (while (not (= touched 0))
               (let
-                [item-var : i64 (+ base (compiler-reg-low-bit-index32 touched))]
+                [item-var : i64
+                  (+ base (compiler-reg-low-bit-index32-nonzero touched))]
                 (begin
                   (compiler-reg-segment-note-point!
                     segments
@@ -4384,7 +4470,7 @@
   (if (= bits 0)
     unit
     (let
-      [i : i64 (compiler-reg-low-bit-index32 bits)]
+      [i : i64 (compiler-reg-low-bit-index32-nonzero bits)]
       (begin
         (compiler-reg-bits-set! row base (+ var-base i))
         (compiler-reg-chunk->row! row base (bit-and bits (- bits 1)) var-base)))))
@@ -4943,7 +5029,7 @@
   (if (= bits 0)
     false
     (let
-      [i : i64 (compiler-reg-low-bit-index32 bits)]
+      [i : i64 (compiler-reg-low-bit-index32-nonzero bits)]
       [c : i64 (+ var-base i)]
       (if (if (<= start c)
         (< c end)

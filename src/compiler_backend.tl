@@ -26936,11 +26936,47 @@
 ;; pass and the peephole slot recognizers key frame slots on the `(%rbp)` base
 ;; spelling, which `(base,%rbp,scale)` does not match.
 ;;
-;; CONSTANT gep offsets are deliberately NOT admitted. Their element address is
-;; `disp(base)`, whose displacement is a source constant with no bound --
-;; admitting it would need an imm32 range test over a range that depends on the
-;; GAP9 displacement this admission must not read. The measured win is entirely
-;; on the variable-index form, so the constant form keeps its existing emission.
+;; CONSTANT gep offsets are admitted through a BOUND, never through the GAP9
+;; displacement. Their element address is `disp(base)` with `disp = n * scale`
+;; read straight off the instruction, so the chunk addresses span
+;; `[disp, disp + size)`. The GAP9 fold contributes nothing to a constant
+;; offset -- `compiler-backend-gep-fold-rewrite-seq` records displacement 0 for
+;; every non-Var offset kind -- but admission still must not READ that entry
+;; (reading is consuming), so it charges the fold's own magnitude cap,
+;; `compiler-backend-gep-fold-k-bound`, against the range instead. `n` is
+;; range-checked before the multiply and `scale` is a type size, so the product
+;; and the sum below are computed without overflow. A declined shape emits
+;; exactly once, as before.
+(define (compiler-backend-copy-gep-const-disp-ok?
+  [n : i64]
+  [scale : i64]
+  [size : i64]) : bool
+  (if (and
+    (compiler-backend-imm32? n)
+    (> scale 0)
+    (< scale 65536)
+    (>= size 0)
+    (< size 65536))
+    (let
+      [disp : i64 (* n scale)]
+      [slack : i64 (+ size (compiler-backend-gep-fold-k-bound))]
+      (and
+        (compiler-backend-imm32? (+ disp slack))
+        (compiler-backend-imm32? (- disp slack))))
+    false))
+
+;; The constant part of a gep element's byte displacement (0 for a dynamic
+;; index). Callers add the GAP9 fold on top; for a constant offset that fold is
+;; structurally 0.
+(define (compiler-backend-gep-const-element-disp
+  [type-segment-bases : i64]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]) : i64
+  (match (compiler-backend-value-as-i64 offset)
+    [(option_i64.Some n)
+      (* n (compiler-backend-type-size type-segment-bases elem-ty))]
+    [(option_i64.None) 0]))
+
 (define (compiler-backend-copy-gep-element-spelling
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
@@ -26951,7 +26987,22 @@
   (if (<= size 0)
     ""
     (match (compiler-backend-value-as-i64 offset)
-      [(option_i64.Some _) ""]
+      [(option_i64.Some n)
+        ;; Constant index: the element address is the base home alone, with the
+        ;; whole displacement carried by the chunk addresses. The base occupies
+        ;; the operand's BASE slot ALONE, so GAP7 admits a %rbp home here (spelled
+        ;; `disp(,%rbp,1)` by compiler-backend-mem-base-address) exactly as at the
+        ;; other const-offset fused gep sites.
+        (let
+          [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
+          [base-home : String
+            (compiler-backend-address-base-filter-direct
+              (compiler-backend-value-scalar-register assignments base))]
+          (if (and
+            (not (string.eq base-home ""))
+            (compiler-backend-copy-gep-const-disp-ok? n scale size))
+            base-home
+            ""))]
       [(option_i64.None)
         (let
           [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
@@ -47258,11 +47309,12 @@
 
 ;; CopyBytes whose SOURCE is the gep element (the mirror of the copy-dst rule
 ;; beside every caller). Fuses when the source spelling admits -- a SIB
-;; base+index for a variable gep index, the base home for a constant one -- so
-;; the chunk loads address the element directly and the `leaq` that materialized
-;; it disappears. A declined spelling falls through to ordinary emission, which
-;; consumes the GAP9 gep ordinal itself; the admission test never reads that
-;; ordinal, so exactly one side consumes it on every path.
+;; base+index for a variable gep index, the base home for a constant one (whose
+;; displacement is admitted through a static bound, never by reading the GAP9
+;; entry) -- so the chunk loads address the element directly and the `leaq` that
+;; materialized it disappears. A declined spelling falls through to ordinary
+;; emission, which consumes the GAP9 gep ordinal itself; the admission test never
+;; reads that ordinal, so exactly one side consumes it on every path.
 (define (compiler-backend-emit-gep-copy-src-rest
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -47308,13 +47360,20 @@
             ctx.assignments
             instrs
             after-gep)]
-        ;; Variable-index geps only (the spelling declined every constant one),
-        ;; so the whole starting displacement is the GAP9 fold.
+        ;; A dynamic index carries no constant part, so the whole starting
+        ;; displacement is the GAP9 fold; a constant index carries `n * scale`
+        ;; and the fold contributes 0. The ordinal is consumed exactly once
+        ;; here, only on the admitted path.
         [src-disp : i64
-          (compiler-backend-gep-fold-next!
-            ctx.type-segment-bases
-            offset
-            elem-ty)]
+          (+
+            (compiler-backend-gep-const-element-disp
+              ctx.type-segment-bases
+              offset
+              elem-ty)
+            (compiler-backend-gep-fold-next!
+              ctx.type-segment-bases
+              offset
+              elem-ty))]
         (compiler-backend-emit-fused-result-rest
           ctx
           fallthrough
@@ -47647,12 +47706,26 @@
                       instrs
                       after-load
                       out))
-                  (compiler-backend-emit-instrs-normal
+                  ;; Not the copy DESTINATION (or out of imm32 range there):
+                  ;; the source-side rule owns the mirror shape and declines
+                  ;; back to ordinary emission itself, so the ordinal is
+                  ;; consumed exactly once either way. A copy whose dst AND src
+                  ;; are both this gep cannot reach either rule: that is two
+                  ;; uses, and the whole cluster is behind a single-use gate.
+                  (compiler-backend-emit-gep-copy-src-rest
                     ctx
                     fallthrough
                     instr
+                    gep-dst
+                    base
+                    offset
+                    elem-ty
+                    copy-dst
+                    copy-src
+                    copy-size
                     instrs
                     index
+                    after-load
                     out))]
               [_
                 (compiler-backend-emit-instrs-normal

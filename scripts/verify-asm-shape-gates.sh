@@ -666,6 +666,7 @@ check_gep_copy_sib() {
             tests/integration/gep_copy_sib_shape.tl "$_target")
         _take=$(function_body "$_asm" _tl_gep_copy_sib_shape_take)
         _put=$(function_body "$_asm" _tl_gep_copy_sib_shape_put)
+        _take_const=$(function_body "$_asm" _tl_gep_copy_sib_shape_take_const)
 
         # The 32-byte element keeps its stride shift; only the element ADDRESS
         # register is gone.
@@ -697,6 +698,17 @@ check_gep_copy_sib() {
         assert_not_matches "$_put" \
             '^[[:space:]]+leaq -?[0-9]*\((%rsp|%rbp)\), %r[a-z0-9]+$' \
             "gep-copy-sib-put-no-stage-$_target"
+
+        # CONSTANT index: no index register at all, so both chunks address the
+        # element as disp(base) with the element offset (3 * 32 = 96) folded in.
+        assert_regex_count_eq "$_take_const" \
+            '^[[:space:]]+movups (96|112)\(%r[a-z0-9]+\), %xmm[0-9]+$' 2 \
+            "gep-copy-const-chunks-$_target"
+
+        # ...and the materialized element address is gone.
+        assert_not_matches "$_take_const" \
+            '^[[:space:]]+leaq 96\(%r[a-z0-9]+\), %r[a-z0-9]+$' \
+            "gep-copy-const-no-addr-$_target"
     done
 }
 

@@ -23,6 +23,17 @@
 ;; `take` exercises the element-as-SOURCE side and `put` the element-as-
 ;; DESTINATION side; scripts/verify-asm-shape-gates.sh asserts both shapes.
 ;;
+;; `take-const` is the CONSTANT-index sibling of `take`. There is no index
+;; register at all: the element address is `disp(base)` with the whole element
+;; offset (3 * 32 = 96) in the displacement, so the same chunk fold applies with
+;; no SIB operand:
+;;     movups 96(%rBASE), %xmm2
+;;     movups %xmm2, (%rDST)
+;;     movups 112(%rBASE), %xmm2
+;;     movups %xmm2, 16(%rDST)
+;; It is a forcing test for the constant-offset admission, which is decided from
+;; a static bound on `n * scale` rather than from the GAP9 displacement entry.
+;;
 ;; The never-taken self-recursion blocks inlining, which would otherwise fold
 ;; the index to a constant and remove the dynamic gep the gate is about. The
 ;; runtime body round-trips every field through both directions, so a wrong
@@ -43,6 +54,11 @@
   (if (> i 1000000)
     (put xs (- i 1000000) v)
     (array-set! xs i v)))
+
+(define (take-const [xs : (Array Quad)] [i : i64]) : Quad
+  (if (> i 1000000)
+    (take-const xs (- i 1000000))
+    (array-ref xs 3)))
 
 (define (main) : i64
   (let
@@ -67,7 +83,14 @@
                   (+ (struct-get q a) (struct-get q b))
                   (+ (struct-get q c) (struct-get q d)))))
             (set! i (+ i 1)))))
-      ;; sum over i in 0..7 of (4i + 10) = 4*28 + 80 = 192
-      (if (= acc 192)
-        42
-        1))))
+      ;; xs[3] is (4, 5, 6, 7), so the constant-index read sums to 22.
+      (let
+        [q3 : Quad (take-const xs 0)]
+        [const-acc : i64
+          (+
+            (+ (struct-get q3 a) (struct-get q3 b))
+            (+ (struct-get q3 c) (struct-get q3 d)))]
+        ;; sum over i in 0..7 of (4i + 10) = 4*28 + 80 = 192
+        (if (and (= acc 192) (= const-acc 22))
+          42
+          1)))))

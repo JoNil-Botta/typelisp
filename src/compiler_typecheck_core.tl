@@ -29624,7 +29624,7 @@
     [(ast.AstExpr.BoxTake inner-box)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-box-take-expr-with-expected-or-actual ctx env inner expected))]
+        (tc-deref-expr-with-expected-or-actual ctx env inner expected))]
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
@@ -47258,6 +47258,26 @@
           (ResultTcBorrowPlace.Err
             "typecheck: box-get borrow requires Box place")])]))
 
+(define (tc-borrow-place-deref
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [receiver : ast.AstExpr]) : ResultTcBorrowPlace
+  (match (tc-expr ctx env receiver)
+    [(ResultTcType.Ok receiver-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+        [(ast.AstType.Box _)
+          (match (tc-borrow-place ctx expr-bases env receiver)
+            [(ResultTcBorrowPlace.Ok place) (tc-borrow-place-box-get ctx place)]
+            [(ResultTcBorrowPlace.Err message)
+              (ResultTcBorrowPlace.Err message)])]
+        [(ast.AstType.Ref _ _) (tc-borrow-place ctx expr-bases env receiver)]
+        [(ast.AstType.MutRef _ _) (tc-borrow-place ctx expr-bases env receiver)]
+        [_
+          (ResultTcBorrowPlace.Err
+            "typecheck: deref borrow requires Box or reference place")])]
+    [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)]))
+
 (define (tc-borrow-place
   [ctx : TcContext]
   [expr-bases : i64]
@@ -47316,6 +47336,12 @@
         (match (tc-borrow-place ctx expr-bases env box-expr)
           [(ResultTcBorrowPlace.Ok place) (tc-borrow-place-box-get ctx place)]
           [(ResultTcBorrowPlace.Err message) (ResultTcBorrowPlace.Err message)]))]
+    [(ast.AstExpr.BoxTake receiver-box)
+      (tc-borrow-place-deref
+        ctx
+        expr-bases
+        env
+        (ast.ast-expr-segment-bases-get expr-bases receiver-box))]
     [_ (ResultTcBorrowPlace.Err (tc-borrow-place-error-message))]))
 
 (define (tc-mut-borrow-by-value-place-message) : String
@@ -47374,6 +47400,18 @@
                   [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcNameId.Err message) (ResultTcUnit.Err message)]))]
+    [(ast.AstExpr.BoxTake receiver-box)
+      (let
+        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
+        (match (tc-store-place-lifetime ctx env receiver)
+          [(ResultTcNameId.Ok _)
+            (match (tc-expr ctx env receiver)
+              [(ResultTcType.Ok receiver-ty)
+                (match (tc-box-set-inner-type ctx receiver-ty)
+                  [(ResultTcType.Ok _) ResultTcUnit.Ok]
+                  [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
+              [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
+          [(ResultTcNameId.Err message) (ResultTcUnit.Err message)]))]
     [_ ResultTcUnit.Ok]))
 
 (define (tc-store-place-lifetime-var [name : i64] [ty : ast.AstType]) : ResultTcNameId
@@ -47420,6 +47458,15 @@
           [(ResultTcType.Ok box-ty)
             (match (tc-box-set-inner-type ctx box-ty)
               [(ResultTcType.Ok _) (tc-store-place-lifetime ctx env box-expr)]
+              [(ResultTcType.Err message) (ResultTcNameId.Err message)])]
+          [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
+    [(ast.AstExpr.BoxTake receiver-box)
+      (let
+        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
+        (match (tc-expr ctx env receiver)
+          [(ResultTcType.Ok receiver-ty)
+            (match (tc-box-set-inner-type ctx receiver-ty)
+              [(ResultTcType.Ok _) (tc-store-place-lifetime ctx env receiver)]
               [(ResultTcType.Err message) (ResultTcNameId.Err message)])]
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [_ (ResultTcNameId.Err "typecheck: expression is not a storage place")]))
@@ -50753,14 +50800,62 @@
         (ResultTcType.Err "typecheck: box-take requires Box type")
         (ResultTcType.Err message))]))
 
+(define (tc-deref-result-type [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcType
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(ast.AstType.Box inner-ty)
+      (ResultTcType.Ok
+        (tc-project-from-region-container
+          receiver-ty
+          (ast.ty-node-get inner-ty)))]
+    [(ast.AstType.Ref lifetime referent-ty)
+      (ResultTcType.Ok (tc-tag-region lifetime (ast.ty-node-get referent-ty)))]
+    [(ast.AstType.MutRef lifetime referent-ty)
+      (ResultTcType.Ok (tc-tag-region lifetime (ast.ty-node-get referent-ty)))]
+    [_ (ResultTcType.Err "typecheck: deref requires Box or reference type")]))
+
+(define (tc-deref-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [receiver : ast.AstExpr]) : ResultTcType
+  (match (tc-expr ctx env receiver)
+    [(ResultTcType.Ok receiver-ty) (tc-deref-result-type ctx receiver-ty)]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+
+(define (tc-deref-expr-with-expected-or-actual
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [receiver : ast.AstExpr]
+  [expected : ast.AstType]) : ResultTcType
+  (match (tc-expr ctx env receiver)
+    [(ResultTcType.Ok receiver-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+        [(ast.AstType.Box _)
+          (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)]
+        [_
+          (match (tc-deref-result-type ctx receiver-ty)
+            [(ResultTcType.Ok projected)
+              (if (tc-type-compatible? expected projected)
+                (ResultTcType.Ok (tc-contextual-result-type expected projected))
+                (ResultTcType.Ok projected))]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])])]
+    [(ResultTcType.Err _)
+      ;; Preserve contextual inference for `(deref (box (init)))`.
+      (match (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)
+        [(ResultTcType.Ok inner-ty) (ResultTcType.Ok inner-ty)]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]))
+
 (define (tc-box-set-inner-type [ctx : TcContext] [box-ty : ast.AstType]) : ResultTcType
   (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
     [(ast.AstType.Box inner-ty)
       (ResultTcType.Ok
         (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
+    [(ast.AstType.MutRef _ referent-ty)
+      (ResultTcType.Ok (ast.ty-node-get referent-ty))]
     [(ast.AstType.Ref _ _)
-      (ResultTcType.Err "typecheck: set! box requires mutable Box access")]
-    [_ (ResultTcType.Err "typecheck: set! box requires Box type")]))
+      (ResultTcType.Err "typecheck: set! deref requires mutable access")]
+    [_
+      (ResultTcType.Err
+        "typecheck: set! deref requires Box or mutable reference")]))
 
 (define (tc-box-mutation-value
   [ctx : TcContext]
@@ -51784,21 +51879,44 @@
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
+(define (tc-tuple-set-element-type
+  [ctx : TcContext]
+  [receiver-ty : ast.AstType]
+  [index : i64]) : ResultTcType
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(ast.AstType.Tuple elems)
+      (match (tc-type-list-ref (box-get elems) index)
+        [(ResultTcType.Ok elem-ty)
+          (ResultTcType.Ok
+            (tc-project-from-region-container receiver-ty elem-ty))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ast.AstType.MutRef _ referent-ty)
+      (tc-tuple-set-element-type ctx (ast.ty-node-get referent-ty) index)]
+    [(ast.AstType.Ref _ _)
+      (ResultTcType.Err
+        "typecheck: set! tuple element requires mutable tuple access")]
+    [_ (ResultTcType.Err "typecheck: set! tuple element requires tuple")]))
+
 (define (tc-struct-set-field-type-id
   [ctx : TcContext]
   [receiver-ty : ast.AstType]
   [field-id : i64]) : ResultTcType
-  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-    [(ast.AstType.Struct _)
-      (tc-struct-get-result-type-id ctx receiver-ty field-id)]
-    [(ast.AstType.StructArgs _ _)
-      (tc-struct-get-result-type-id ctx receiver-ty field-id)]
-    [(ast.AstType.MutRef _ _)
-      (tc-struct-get-result-type-id ctx receiver-ty field-id)]
-    [(ast.AstType.Ref _ _)
-      (ResultTcType.Err
-        "typecheck: set! struct field requires mutable struct access")]
-    [_ (ResultTcType.Err "typecheck: set! struct field requires struct")]))
+  (if (ast.ast-tuple-set-field-id? field-id)
+    (tc-tuple-set-element-type
+      ctx
+      receiver-ty
+      (ast.ast-tuple-set-index-from-field-id field-id))
+    (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+      [(ast.AstType.Struct _)
+        (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+      [(ast.AstType.StructArgs _ _)
+        (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+      [(ast.AstType.MutRef _ _)
+        (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+      [(ast.AstType.Ref _ _)
+        (ResultTcType.Err
+          "typecheck: set! struct field requires mutable struct access")]
+      [_ (ResultTcType.Err "typecheck: set! struct field requires struct")])))
 
 (define (tc-struct-field-mutation-value-id
   [ctx : TcContext]
@@ -51817,7 +51935,9 @@
                   (match (tc-expect
                     value-ty
                     field-ty
-                    "typecheck: struct field assignment type mismatch")
+                    (if (ast.ast-tuple-set-field-id? field-id)
+                      "typecheck: tuple element assignment type mismatch"
+                      "typecheck: struct field assignment type mismatch"))
                     [(ResultTcUnit.Ok)
                       (match (tc-ensure-cleanup-resource-not-stored-expr
                         env
@@ -51827,14 +51947,18 @@
                             env
                             field-ty
                             value-ty
-                            "struct field")
+                            (if (ast.ast-tuple-set-field-id? field-id)
+                              "tuple element"
+                              "struct field"))
                             [(ResultTcUnit.Ok)
                               (match (tc-ensure-reference-value-can-store-in-place
                                 ctx
                                 env
                                 receiver
                                 value-ty
-                                "struct field")
+                                (if (ast.ast-tuple-set-field-id? field-id)
+                                  "tuple element"
+                                  "struct field"))
                                 [(ResultTcUnit.Ok)
                                   (ResultTcType.Ok (ast.AstType.Unit))]
                                 [(ResultTcUnit.Err message)
@@ -52650,7 +52774,7 @@
     [(ast.AstExpr.BoxTake inner-box)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-box-take-expr ctx env inner))]
+        (tc-deref-expr ctx env inner))]
     [(ast.AstExpr.BoxSet box-box value-box)
       (let
         [box-expr : ast.AstExpr (ast.ast-node-get box-box)]
@@ -59670,6 +59794,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-move-root-projection-var-id expr-bases inner))]
+    [(ast.AstExpr.BoxTake inner-box)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-root-projection-var-id expr-bases inner))]
     [(ast.AstExpr.Var name) (TcMaybeNameId.Some name)]
     [_ (TcMaybeNameId.No)]))
 
@@ -60051,7 +60180,12 @@
   [field-id : i64]) : TcMaybeMovePath
   (match (tc-move-direct-root-base-path expr-bases receiver)
     [(TcMaybeMovePath.Some base)
-      (TcMaybeMovePath.Some (tc-move-path-append base field-id))]
+      (TcMaybeMovePath.Some
+        (if (ast.ast-tuple-set-field-id? field-id)
+          (tc-move-tuple-index-path
+            base
+            (ast.ast-tuple-set-index-from-field-id field-id))
+          (tc-move-path-append base field-id)))]
     [(TcMaybeMovePath.No) (TcMaybeMovePath.No)]))
 
 (define (tc-move-reinitialize-array-set-path
@@ -63532,17 +63666,32 @@
           moved
           inner)
           [(TcMoveResult.Ok moved1)
-            (match (tc-expr ctx env inner)
-              [(ResultTcType.Ok box-ty)
-                (tc-move-after-consuming-value
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  loop-carried
-                  moved1
-                  inner
-                  box-ty)]
+            (match (tc-expr ctx env expr)
+              [(ResultTcType.Ok result-ty)
+                (if (tc-type-move-only? ctx result-ty)
+                  (match (tc-expr ctx env inner)
+                    [(ResultTcType.Ok receiver-ty)
+                      (match (tc-type-strip-region
+                        (tc-resolve-type ctx receiver-ty))
+                        [(ast.AstType.Box _)
+                          (tc-move-after-consuming-value
+                            ctx
+                            expr-bases
+                            env
+                            locals
+                            loop-carried
+                            moved1
+                            inner
+                            receiver-ty)]
+                        [(ast.AstType.Ref _ _)
+                          (TcMoveResult.Err
+                            "typecheck: cannot move non-Copy value through shared reference")]
+                        [(ast.AstType.MutRef _ _)
+                          (TcMoveResult.Err
+                            "typecheck: cannot move non-Copy value through mutable reference without replacement")]
+                        [_ (TcMoveResult.Ok moved1)])]
+                    [(ResultTcType.Err _) (TcMoveResult.Ok moved1)])
+                  (TcMoveResult.Ok moved1))]
               [(ResultTcType.Err _) (TcMoveResult.Ok moved1)])]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(ast.AstExpr.BoxSet box-box value-box)
@@ -68945,15 +69094,35 @@
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (match (tc-borrow-check-expr ctx expr-bases env locals borrowed inner)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-expr ctx env inner)
-              [(ResultTcType.Ok box-ty)
-                (tc-borrow-check-after-consuming-value
-                  ctx
-                  expr-bases
-                  locals
-                  borrowed1
-                  inner
-                  box-ty)]
+            (match (tc-expr ctx env expr)
+              [(ResultTcType.Ok result-ty)
+                (if (tc-type-move-only? ctx result-ty)
+                  (match (tc-expr ctx env inner)
+                    [(ResultTcType.Ok receiver-ty)
+                      (match (tc-type-strip-region
+                        (tc-resolve-type ctx receiver-ty))
+                        [(ast.AstType.Box _)
+                          (tc-borrow-check-after-consuming-value
+                            ctx
+                            expr-bases
+                            locals
+                            borrowed1
+                            inner
+                            receiver-ty)]
+                        [(ast.AstType.Ref _ _)
+                          (TcBorrowCheckResult.Err
+                            "typecheck: cannot move non-Copy value through shared reference")]
+                        [(ast.AstType.MutRef _ _)
+                          (TcBorrowCheckResult.Err
+                            "typecheck: cannot move non-Copy value through mutable reference without replacement")]
+                        [_ (TcBorrowCheckResult.Ok borrowed1)])]
+                    [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed1)])
+                  (tc-borrow-check-place-read-conflict
+                    expr-bases
+                    locals
+                    borrowed1
+                    expr
+                    expr))]
               [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed1)])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(ast.AstExpr.BoxSet box-box value-box)

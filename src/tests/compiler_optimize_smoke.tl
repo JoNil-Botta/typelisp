@@ -3382,6 +3382,30 @@
     "a two-reference leaf carrying a call stays out of line at both sites"))
 
 (test
+  inline-shared-accessor-floor
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-floor-ok?)
+    "an acyclic accessor at the reference floor is taken at every in-loop site; one reference short stays out of line"))
+
+(test
+  inline-shared-accessor-call-free
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-call-free-ok?)
+    "a shared accessor carrying a call stays out of line at every site"))
+
+(test
+  inline-shared-accessor-acyclic
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-acyclic-ok?)
+    "a cyclic body at the same shared sites stays out of line"))
+
+(test
+  inline-shared-accessor-in-loop-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-in-loop-site-ok?)
+    "the same accessor at straight-line sites stays out of line"))
+
+(test
   inline-vm-run-bounds-loop-span-positive
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-switch-span-case-code

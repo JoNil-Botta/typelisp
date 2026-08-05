@@ -13240,6 +13240,310 @@
           "inline_switch")
         1))))
 
+;; --- shared acyclic accessor admission --------------------------------------
+;;
+;; The callee under test is an ACYCLIC bounds-carrying Switch leaf reached from
+;; several in-loop sites -- the measured pl-byte-at shape. Every fixture below
+;; builds the same program and varies exactly one thing: the number of callers
+;; (the reference floor), whether the body makes a call, whether the body is
+;; cyclic, and whether the sites sit in loops.
+(define (opt-inline-shared-accessor-leaf-named
+  [callee-name : i64]
+  [vars : i64]
+  [zero-instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    vars
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "switch_bounds_ok"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Switch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              0
+              (opt-inline-switch-cases
+                (compiler_ir_types.compiler-ir-label "zero")
+                (compiler_ir_types.compiler-ir-label "one"))
+              (compiler_ir_types.compiler-ir-label "other"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "zero")
+          zero-instrs)
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "one")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "join"))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "other")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "join")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    3
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "zero")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 20)
+                        (compiler_ir_types.compiler-ir-label "one")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 30)
+                          (compiler_ir_types.compiler-ir-label "other")
+                          compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 3)))
+                    compiler_ir_types.CompilerIrInstrList.Nil)))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-shared-accessor-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-shared-accessor-leaf-named
+    callee-name
+    4
+    (opt-inline-dup-leaf-jump-zero-instrs)))
+
+(define (opt-inline-shared-accessor-calling-leaf
+  [callee-name : i64]
+  [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-shared-accessor-leaf-named
+    callee-name
+    5
+    (opt-inline-dup-leaf-call-zero-instrs helper-name)))
+
+;; A cyclic body with no bounds check: the loop gate above lets a bounds-free
+;; callee through untouched, so this shape reaches the accessor admission and
+;; isolates its acyclic clause. (A cyclic body that DOES carry bounds is already
+;; refused one gate earlier, which would make the fixture vacuous.)
+(define (opt-inline-shared-cyclic-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    4
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Switch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              0
+              (opt-inline-switch-cases
+                (compiler_ir_types.compiler-ir-label "zero")
+                (compiler_ir_types.compiler-ir-label "one"))
+              (compiler_ir_types.compiler-ir-label "loop"))
+            compiler_ir_types.CompilerIrInstrList.Nil))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "zero")
+            (opt-inline-dup-leaf-jump-zero-instrs))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "one")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "join")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-inline-switch-loop-phi-instr)
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 3)))
+                    compiler_ir_types.CompilerIrInstrList.Nil)))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; Straight-line callers, for the site clause.
+(define (opt-inline-shared-flat-caller-chain
+  [names : compiler_optimize.OptSlotList]
+  [callee-name : i64]
+  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  (match names
+    [(compiler_optimize.OptSlotList.Nil) tail]
+    [(compiler_optimize.OptSlotList.Cons name rest)
+      (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.CompilerIrFunction.Function
+          name
+          (opt-inline-switch-params)
+          (compiler_ast_types.AstType.I64)
+          4
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-inline-switch-caller-call-named callee-name)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 3)))
+                  compiler_ir_types.CompilerIrInstrList.Nil)))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        (opt-inline-shared-flat-caller-chain (box-get rest) callee-name tail))]))
+
+(define (opt-inline-shared-caller-names
+  [symbols : OptInlineMultiTestSymbols]
+  [count : i64]) : compiler_optimize.OptSlotList
+  (let
+    [all : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [acc : compiler_optimize.OptSlotList (compiler_optimize.OptSlotList.Nil)]
+    [i : i64 0]
+    (begin
+      (array-set! all 0 (struct-get symbols main))
+      (array-set! all 1 (struct-get symbols inline-nonleaf))
+      (array-set! all 2 (struct-get symbols inline-loop))
+      (array-set! all 3 (struct-get symbols mb-bounds))
+      (array-set! all 4 (struct-get symbols inline-branch))
+      (while (< i count)
+        (begin
+          (set!
+            acc
+            (compiler_optimize.OptSlotList.Cons (array-ref all i) (box acc)))
+          (set! i (+ i 1))))
+      acc)))
+
+;; Total direct calls to `call-name` left across the first `count` caller names.
+(define (opt-inline-shared-remaining-calls
+  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [count : i64]) : i64
+  (let
+    [names : (__tl_dyn-array String) (array.make-array String 5)]
+    [total : i64 0]
+    [i : i64 0]
+    (begin
+      (array-set! names 0 "main")
+      (array-set! names 1 "inline_nonleaf")
+      (array-set! names 2 "inline_loop")
+      (array-set! names 3 "mb_bounds")
+      (array-set! names 4 "inline_branch")
+      (while (< i count)
+        (begin
+          (set!
+            total
+            (+
+              total
+              (opt-count-direct-call-name-function-list
+                functions
+                (array-ref names i)
+                "inline_switch")))
+          (set! i (+ i 1))))
+      total)))
+
+(define (opt-inline-shared-accessor-optimized
+  [symbols : OptInlineMultiTestSymbols]
+  [count : i64]
+  [in-loop? : bool]
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  (let
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [names : compiler_optimize.OptSlotList
+      (opt-inline-shared-caller-names symbols count)]
+    [tail : compiler_ir_types.CompilerIrFunctionList
+      (compiler_ir_types.compiler-ir-function-cons
+        leaf
+        compiler_ir_types.CompilerIrFunctionList.Nil)]
+    (compiler_optimize.opt-inline-program-functions
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (if in-loop?
+        (opt-inline-dup-caller-chain names callee-name tail)
+        (opt-inline-shared-flat-caller-chain names callee-name tail))
+      2)))
+
+;; Five in-loop callers put the leaf at the reference floor and every site takes
+;; it; four leave it one short and every site keeps its call.
+(define (compiler-optimize-inline-shared-accessor-floor-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [admitted : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        5
+        true
+        (opt-inline-shared-accessor-leaf callee-name))]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        4
+        true
+        (opt-inline-shared-accessor-leaf callee-name))]
+    (and
+      (= (opt-inline-shared-remaining-calls admitted 5) 0)
+      (= (opt-inline-shared-remaining-calls refused 4) 4))))
+
+;; The same leaf with one call in its body stays out of line at all five sites:
+;; a clone is bounded by its own size only while nothing inside it can bring
+;; another body along (#6307).
+(define (compiler-optimize-inline-shared-accessor-call-free-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        5
+        true
+        (opt-inline-shared-accessor-calling-leaf
+          callee-name
+          (struct-get symbols external-helper)))]
+    (= (opt-inline-shared-remaining-calls refused 5) 5)))
+
+;; A cyclic body at the same five in-loop sites stays refused: this admission is
+;; for the acyclic accessor, and a loop-bearing callee at five references is
+;; outside the absorb and duplicate census as well.
+(define (compiler-optimize-inline-shared-accessor-acyclic-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        5
+        true
+        (opt-inline-shared-cyclic-leaf callee-name))]
+    (= (opt-inline-shared-remaining-calls refused 5) 5)))
+
+;; The identical leaf at five STRAIGHT-LINE sites stays refused: a boundary that
+;; runs once per call cannot repay a duplicated body.
+(define (compiler-optimize-inline-shared-accessor-in-loop-site-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        5
+        false
+        (opt-inline-shared-accessor-leaf callee-name))]
+    (= (opt-inline-shared-remaining-calls refused 5) 5)))
+
 (define (opt-inline-phi-span-ok-instr-seq-from?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [pos : i64]

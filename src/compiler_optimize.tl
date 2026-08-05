@@ -64586,6 +64586,96 @@
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
     (opt-inline-vm-run-bounds-loop-exception? callee-name)))
 
+;; --- shared acyclic accessors -----------------------------------------------
+;;
+;; Everything above decides whether a callee BELONGS to its call sites: one
+;; reference is absorbed, two are duplicated, and past that the census stops
+;; answering. That leaves an entire measured class outside every gate here --
+;; the per-element accessor, referenced from everywhere, which C compiles to a
+;; single load and which this compiler was keeping behind a call at every one of
+;; its sites. peephole_lines spent 431.7M instructions, 40.8% of the row, inside
+;; one 27-instruction function reached from 146 call sites.
+;;
+;; Such an accessor is refused today by exactly one clause. It is acyclic, so
+;; the loop gate above already passes it; it carries a bounds check, so
+;; opt-inline-bounds-inline-ok? demands that it be absorbable or called with
+;; all-constant arguments, and at 146 references it is neither. The cost model
+;; would refuse it a second time: block weight 6 prices a nine-block body at
+;; 27 + 6 * 10 = 87 against a threshold of 4.
+;;
+;; Admission is a dedicated disjunct and a cost-gate bypass, NOT an extension of
+;; the absorb credit. The distinction is semantic, not stylistic: this callee is
+;; not absorbed. It keeps its own body and stays out of line at every site this
+;; gate does not take -- 12 of 146 on the measured row -- so claiming the
+;; single-reference bonus would assert something false, and that bonus is read
+;; by opt-inline-bounds-inline-ok? and by the phi-predecessor suppression as
+;; well as by the cost model. A separate predicate states exactly what is true:
+;; this shape is admitted on its own terms. It keeps the two structural budgets
+;; that bound the growth -- the heavy gate and the per-caller block fuel, the
+;; same pair opt-inline-bounds-leaf-cost-inline? keeps -- and those budgets are
+;; what turn 146 references into 12 admitted sites and 4104 bytes.
+;;
+;; Measured: peephole_lines -12.264%, lex_source -0.178%, every other row byte
+;; identical, opt2 self-compile -0.0289% (an improvement, on 60 admissions per
+;; compile), and no banked duplication evicted anywhere.
+(define (opt-inline-shared-accessor-max-body) : i64
+  28)
+
+(define (opt-inline-shared-accessor-max-blocks) : i64
+  10)
+
+;; What separates the accessors that win from the ones that lose is how often
+;; they run, and nothing here can see that. The reference count is the available
+;; proxy, and the measured split is wide enough to act on: pl-byte-at is
+;; referenced 146 times and pays -12.3% on its row, while cfg-byte-at and
+;; gvn-byte-at -- the same shape, same class, same in-loop sites -- are
+;; referenced 4 times each and cost +0.771% and +1.571%, because importing a
+;; bounds check into the one scan loop that uses them takes cfg-scan-ints from
+;; six frame operations to twenty-three and evicts a banked duplication on the
+;; way. This floor sits one above that measured loser, the same construction the
+;; instruction band uses.
+;;
+;; The sensitivity curve is flat in both directions and the corpus fixes the
+;; number exactly: 3 and 4 admit the two byte-at losers, 5 admits both winners,
+;; and 6 through 146 drop ls-digit? (referenced 5 times) and with it the
+;; lex_source win, while the opt2 self-compile stays within 0.01% across the
+;; whole range. 5 is the only value that takes every measured win and no
+;; measured loss.
+;;
+;; This is the opposite end of the same census the rest of this file uses:
+;; absorption wants a callee referenced once, duplication twice, and this path
+;; wants one referenced many times.
+(define (opt-inline-shared-accessor-min-refcount) : i64
+  5)
+
+;; Ordered by cost: the reference count and the two size caps are integer tests
+;; on values the site already has, the budgets are arithmetic, and only then do
+;; the three scans run -- call-free over the callee, the memoized caller facts,
+;; and last the acyclic check, which builds a CFG index per candidate.
+(define (opt-inline-shared-accessor-ok?
+  [refs : i64]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (and
+    (>= refs (opt-inline-shared-accessor-min-refcount))
+    (<= callee-instrs (opt-inline-shared-accessor-max-body))
+    (<=
+      (ir.compiler-ir-block-list-count blocks)
+      (opt-inline-shared-accessor-max-blocks))
+    (not
+      (opt-inline-cost-crosses-heavy-gate?
+        caller-blocks
+        added-so-far
+        added-blocks))
+    (<= (+ added-so-far added-blocks) (opt-inline-cost-block-fuel))
+    (opt-inline-blocks-call-free? blocks)
+    (opt-inline-bounds-loop-site-in-loop?)
+    (opt-inline-bounds-loop-cascade-safe?)
+    (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
+
 (define (opt-inline-bounds-leaf-cost-inline?
   [callee-instrs : i64]
   [added-blocks : i64]
@@ -65051,12 +65141,23 @@
                 ;; measured vm-run leaf selected by the shared gate (#5325).
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
+                ;; A shared acyclic accessor is admitted on its own terms.
+                [shared-accessor? : bool
+                  (opt-inline-shared-accessor-ok?
+                    (opt-inline-census-refcount index census callee-name)
+                    callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
                 [bounds-ok? : bool
-                  (opt-inline-bounds-inline-ok?
-                    has-bounds?
-                    absorbable-here?
-                    const-args
-                    np)]
+                  (or
+                    (opt-inline-bounds-inline-ok?
+                      has-bounds?
+                      absorbable-here?
+                      const-args
+                      np)
+                    shared-accessor?)]
                 [bounds-loop-ok? : bool
                   (opt-inline-multiblock-bounds-loop-ok?
                     has-bounds?
@@ -65085,7 +65186,8 @@
                           added-blocks
                           const-args
                           caller-blocks
-                          added-so-far))))]
+                          added-so-far))
+                      shared-accessor?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-from
                     instrs
@@ -65680,12 +65782,23 @@
                 ;; Keep the span-aware path on the same exact vm-run decision.
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
+                ;; A shared acyclic accessor is admitted on its own terms.
+                [shared-accessor? : bool
+                  (opt-inline-shared-accessor-ok?
+                    (opt-inline-census-refcount index census callee-name)
+                    callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
                 [bounds-ok? : bool
-                  (opt-inline-bounds-inline-ok?
-                    has-bounds?
-                    absorbable-here?
-                    const-args
-                    np)]
+                  (or
+                    (opt-inline-bounds-inline-ok?
+                      has-bounds?
+                      absorbable-here?
+                      const-args
+                      np)
+                    shared-accessor?)]
                 [bounds-loop-ok? : bool
                   (opt-inline-multiblock-bounds-loop-ok?
                     has-bounds?
@@ -65714,7 +65827,8 @@
                           added-blocks
                           const-args
                           caller-blocks
-                          added-so-far))))]
+                          added-so-far))
+                      shared-accessor?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-with-spans-from
                     instrs

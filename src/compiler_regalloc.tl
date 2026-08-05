@@ -9701,6 +9701,127 @@
                 (compiler-reg-ref-counts-seq! counts instrs)])
             (set! i (+ i 1)))))]))
 
+;; Boolean "does this variable appear in the IR at all?" walk.
+;;
+;; `compiler-reg-color-stack-slots` is the only consumer of the UNWEIGHTED
+;; counts above, and it only ever asks whether a count is zero -- a variable no
+;; instruction mentions needs no frame slot. This chain answers exactly that
+;; question with one byte per variable.
+;;
+;; It marks the same variables the weighted walk would have left nonzero: every
+;; write there adds weight 1 at the same variable positions, and the counts
+;; start at zero, so "nonzero count" and "marked" name the same set. What it
+;; drops is the read-modify-write, the weight parameter, and the
+;; add-instr!/add-set-weighted! forwarding layers. The weighted chain above is
+;; untouched -- the spill-weight, remat, and merge consumers keep exact counts,
+;; as does the regalloc test that asserts them.
+;;
+;; The per-variable store is spelled inline at each site instead of going
+;; through a shared helper: that helper would be a real call on the hottest
+;; edge of the pass (P28's single-caller inlining cliff -- several callers here
+;; would keep it out of line), so the body is written out the way P29 spelled
+;; segment-note-span! inline.
+(define (compiler-reg-ref-mark-word!
+  [marks : (__tl_dyn-array bool)]
+  [bits : i64]
+  [var-base : i64]) : unit
+  (if (= bits 0)
+    unit
+    (let
+      [var : i64 (+ var-base (compiler-reg-low-bit-index32 bits))]
+      (begin
+        (if (and (>= var 0) (< var (array-length marks)))
+          (array-set! marks var true)
+          unit)
+        (compiler-reg-ref-mark-word! marks (bit-and bits (- bits 1)) var-base)))))
+
+(define (compiler-reg-ref-mark-set-words!
+  [marks : (__tl_dyn-array bool)]
+  [set : live.CompilerLiveI64Set]
+  [word-index : i64]) : unit
+  (if (>= word-index (live.compiler-live-set-word-count set))
+    unit
+    (begin
+      ;; Same empty-word shortcut the weighted walk uses.
+      (let
+        [bits : i64 (live.compiler-live-set-word-at-bounded set word-index)]
+        (if (= bits 0)
+          unit
+          (compiler-reg-ref-mark-word!
+            marks
+            bits
+            (* word-index (live.compiler-live-set-word-bits)))))
+      (compiler-reg-ref-mark-set-words! marks set (+ word-index 1)))))
+
+(define (compiler-reg-ref-mark-instr!
+  [marks : (__tl_dyn-array bool)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (let
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+    (if (< id-count 0)
+      (begin
+        (compiler-reg-ref-mark-set-words!
+          marks
+          (live.compiler-live-instr-uses instr)
+          0)
+        (compiler-reg-ref-mark-set-words!
+          marks
+          (live.compiler-live-instr-defs instr)
+          0))
+      (let
+        [index : i64 0]
+        (begin
+          ;; Uses first, then the def -- the same order and the same variable
+          ;; set the weighted walk visited; only the stored value differs.
+          (while (< index id-count)
+            (let
+              [var : i64 (array-ref ids index)]
+              (begin
+                (if (and (>= var 0) (< var (array-length marks)))
+                  (array-set! marks var true)
+                  unit)
+                (set! index (+ index 1)))))
+          (let
+            [def-var : i64 (live.compiler-live-instr-def-var instr)]
+            (if (and (>= def-var 0) (< def-var (array-length marks)))
+              (array-set! marks def-var true)
+              unit)))))))
+
+(define (compiler-reg-ref-mark-seq!
+  [marks : (__tl_dyn-array bool)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (compiler-reg-ref-mark-instr! marks (array-ref slots index))
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-ref-marks-blocks!
+  [marks : (__tl_dyn-array bool)]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (compiler-reg-ref-mark-seq! marks instrs)])
+        (compiler-reg-ref-marks-blocks! marks (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (while (< i count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref seq i)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (compiler-reg-ref-mark-seq! marks instrs)])
+            (set! i (+ i 1)))))]))
+
 (define (compiler-reg-ref-counts-blocks-weighted!
   [counts : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
@@ -23534,7 +23655,7 @@
 ;; from gaps in the monotonic variable-id watermark.
 (define (compiler-reg-color-reference-intervals!
   [intervals : CompilerRegIntervalSeq]
-  [references : (__tl_dyn-array i64)]) : unit
+  [references : (__tl_dyn-array bool)]) : unit
   (let
     [index : i64 0]
     (while (< index (compiler-reg-interval-seq-count intervals))
@@ -23543,7 +23664,7 @@
           [var : i64
             (struct-get (compiler-reg-interval-seq-ref intervals index) var)]
           (if (and (>= var 0) (< var (array-length references)))
-            (array-set! references var 1)
+            (array-set! references var true)
             unit))
         (set! index (+ index 1))))))
 
@@ -23646,7 +23767,7 @@
 
 (define (compiler-reg-spmd-avx2-special-param-references!
   [params : ir.CompilerIrParamList]
-  [references : (__tl_dyn-array i64)]) : unit
+  [references : (__tl_dyn-array bool)]) : unit
   ;; The backend materializes every private ABI parameter before instruction
   ;; emission, including an active mask unused by the helper body. Keep those
   ;; prologue-only writes in the private-range allocation census.
@@ -23664,7 +23785,7 @@
               (compiler-reg-spmd-avx2-special-param? name)
               (>= var 0)
               (< var (array-length references)))
-              (array-set! references var (+ (array-ref references var) 1))
+              (array-set! references var true)
               unit)])
         (compiler-reg-spmd-avx2-special-param-references!
           (box-get rest)
@@ -24371,72 +24492,52 @@
               false))))]
     [_ 0]))
 
-;; One block's share of a propagation round.
+;; One block's share of the FIRST propagation round.
 ;;
 ;; `cursor` carries the walk's position across blocks: slot 0 is the ordinal of
-;; this block's first instruction, slot 1 is the read/write position in
-;; `candidates`, and slot 2 is the number of candidates the first round found.
+;; this block's first instruction and slot 1 is the write position in
+;; `candidates`.
 ;;
 ;; The FIRST round visits every instruction and records, in `candidates`, the
 ;; function-wide ordinal of each one whose form can set a root. Later rounds
-;; replay only those. An instruction the first round did not record is one that
-;; fell through to the `_` arm above -- it reads nothing and writes nothing on
-;; any input, so replaying it can only return "no change". Skipping it therefore
-;; leaves the sequence of writes, and so the fixpoint, exactly as it was.
+;; replay only those, through compiler-reg-color-propagate-root-replay below. An
+;; instruction the first round did not record is one that fell through to the
+;; `_` arm above -- it reads nothing and writes nothing on any input, so
+;; replaying it can only return "no change". Skipping it therefore leaves the
+;; sequence of writes, and so the fixpoint, exactly as it was.
 (define (compiler-reg-color-propagate-root-seq
   [instrs : ir.CompilerIrInstrSeq]
   [range-of-var : (__tl_dyn-array i64)]
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]
   [candidates : (__tl_dyn-array i64)]
-  [cursor : (__tl_dyn-array i64)]
-  [collect : bool]) : bool
+  [cursor : (__tl_dyn-array i64)]) : bool
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [base : i64 (array-ref cursor 0)]
     [at : i64 (array-ref cursor 1)]
     [changed : bool false]
+    [i : i64 0]
     (begin
-      (if collect
+      (while (< i len)
         (let
-          [i : i64 0]
-          (while (< i len)
-            (let
-              [code : i64
-                (compiler-reg-color-propagate-root-instr
-                  (array-ref slots i)
-                  range-of-var
-                  roots
-                  invalid)]
+          [code : i64
+            (compiler-reg-color-propagate-root-instr
+              (array-ref slots i)
+              range-of-var
+              roots
+              invalid)]
+          (begin
+            (if (= (bit-and code 2) 0)
+              unit
+              (set! changed true))
+            (if (= (bit-and code 1) 0)
+              unit
               (begin
-                (if (= (bit-and code 2) 0)
-                  unit
-                  (set! changed true))
-                (if (= (bit-and code 1) 0)
-                  unit
-                  (begin
-                    (array-set! candidates at (+ base i))
-                    (set! at (+ at 1))))
-                (set! i (+ i 1))))))
-        (let
-          [end : i64 (array-ref cursor 2)]
-          [limit : i64 (+ base len)]
-          (while (if (< at end)
-            (< (array-ref candidates at) limit)
-            false)
-            (let
-              [code : i64
-                (compiler-reg-color-propagate-root-instr
-                  (array-ref slots (- (array-ref candidates at) base))
-                  range-of-var
-                  roots
-                  invalid)]
-              (begin
-                (if (= (bit-and code 2) 0)
-                  unit
-                  (set! changed true))
-                (set! at (+ at 1)))))))
+                (array-set! candidates at (+ base i))
+                (set! at (+ at 1))))
+            (set! i (+ i 1)))))
       (array-set! cursor 1 at)
       (array-set! cursor 0 (+ base len))
       changed)))
@@ -24447,8 +24548,7 @@
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]
   [candidates : (__tl_dyn-array i64)]
-  [cursor : (__tl_dyn-array i64)]
-  [collect : bool]) : bool
+  [cursor : (__tl_dyn-array i64)]) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Nil) false]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -24462,8 +24562,7 @@
                 roots
                 invalid
                 candidates
-                cursor
-                collect)]
+                cursor)]
             [tail : bool
               (compiler-reg-color-propagate-root-blocks
                 (box-get rest)
@@ -24471,8 +24570,7 @@
                 roots
                 invalid
                 candidates
-                cursor
-                collect)]
+                cursor)]
             (or head tail))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -24489,12 +24587,125 @@
                     roots
                     invalid
                     candidates
-                    cursor
-                    collect)
+                    cursor)
                     (set! changed true)
                     unit)])
               (set! i (+ i 1))))
           changed))]))
+
+;; Rounds two and up.
+;;
+;; `candidates[0, count)` holds, in block order, the function-wide ordinal of
+;; every instruction the first round recorded. The ordinals are strictly
+;; increasing and each block's share is one contiguous run, so a single pass
+;; over the block list -- with `base` tracking the ordinal of the current
+;; block's first instruction -- reaches exactly those instructions, in exactly
+;; the order the per-block routine above reached them, and touches nothing else.
+;; The sequence of compiler-reg-color-propagate-root-instr calls, and so the
+;; sequence of writes to `roots`/`invalid`, is therefore identical to replaying
+;; through that routine; only the walk that delivers them is different.
+;;
+;; The walk is spelled iteratively with the per-block body inline in both list
+;; shapes. That is the whole point of the split: a later round pays no call per
+;; block, no `cursor` round-trip, and no collect/replay branch -- it keeps
+;; `base` and the `candidates` position in registers across the entire round.
+;;
+;; Two details keep the inner loop to one compare and one add of bookkeeping.
+;; `ord` carries `candidates[at]` across the whole round, refilled with
+;; `max-ordinal` once the list is exhausted; since every `limit` is a sum of
+;; instruction counts it is far below that sentinel, so `(< ord limit)` decides
+;; the block window and the end of the list in a single test, and the ordinal is
+;; read once instead of once per guard and once per body. `changed-bits`
+;; accumulates the result codes with `bit-or` instead of branching per
+;; instruction: bit 1 of the accumulated word is set exactly when some attempt
+;; set it, which is the same disjunction the per-block flag computed.
+(define (compiler-reg-color-propagate-root-replay
+  [blocks : ir.CompilerIrBlockList]
+  [range-of-var : (__tl_dyn-array i64)]
+  [roots : (__tl_dyn-array i64)]
+  [invalid : (__tl_dyn-array bool)]
+  [candidates : (__tl_dyn-array i64)]
+  [count : i64]) : bool
+  (let
+    [max-ordinal : i64 9223372036854775807]
+    [cur : ir.CompilerIrBlockList blocks]
+    [at : i64 0]
+    [ord : i64
+      (if (< 0 count)
+        (array-ref candidates 0)
+        max-ordinal)]
+    [base : i64 0]
+    [changed-bits : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur
+          [(ir.CompilerIrBlockList.Nil) (set! done true)]
+          [(ir.CompilerIrBlockList.Cons block rest)
+            (begin
+              (match block
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (let
+                    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+                      (struct-get instrs slots)]
+                    [limit : i64
+                      (+ base (ir.compiler-ir-instr-seq-count instrs))]
+                    (begin
+                      (while (< ord limit)
+                        (begin
+                          (set!
+                            changed-bits
+                            (bit-or
+                              changed-bits
+                              (compiler-reg-color-propagate-root-instr
+                                (array-ref slots (- ord base))
+                                range-of-var
+                                roots
+                                invalid)))
+                          (set! at (+ at 1))
+                          (set!
+                            ord
+                            (if (< at count)
+                              (array-ref candidates at)
+                              max-ordinal))))
+                      (set! base limit)))])
+              (set! cur (box-get rest)))]
+          [(ir.CompilerIrBlockList.Array seq)
+            (let
+              [i : i64 0]
+              [n : i64 (ir.compiler-ir-block-seq-count seq)]
+              (begin
+                (while (< i n)
+                  (begin
+                    (match (ir.compiler-ir-block-seq-ref seq i)
+                      [(ir.CompilerIrBlock.Block _ instrs)
+                        (let
+                          [slots : (__tl_dyn-array ir.CompilerIrInstr)
+                            (struct-get instrs slots)]
+                          [limit : i64
+                            (+ base (ir.compiler-ir-instr-seq-count instrs))]
+                          (begin
+                            (while (< ord limit)
+                              (begin
+                                (set!
+                                  changed-bits
+                                  (bit-or
+                                    changed-bits
+                                    (compiler-reg-color-propagate-root-instr
+                                      (array-ref slots (- ord base))
+                                      range-of-var
+                                      roots
+                                      invalid)))
+                                (set! at (+ at 1))
+                                (set!
+                                  ord
+                                  (if (< at count)
+                                    (array-ref candidates at)
+                                    max-ordinal))))
+                            (set! base limit)))])
+                    (set! i (+ i 1))))
+                (set! done true)))]))
+      (not (= (bit-and changed-bits 2) 0)))))
 
 ;; Total instruction count over the block list, from the per-sequence lengths
 ;; only -- it never touches an instruction.
@@ -24528,30 +24739,37 @@
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]) : unit
   (let
-    [changed : bool true]
-    [rounds : i64 0]
     [limit : i64 (array-length roots)]
-    [candidates : (__tl_dyn-array i64)
-      (array.make-array i64 (compiler-reg-color-instr-total blocks 0))]
-    [cursor : (__tl_dyn-array i64) (array.make-array i64 3)]
-    (while (and changed (< rounds limit))
-      (begin
-        (array-set! cursor 0 0)
-        (array-set! cursor 1 0)
-        (set!
-          changed
+    ;; `limit` is the round cap the loop below already enforced; at zero the
+    ;; original loop ran no round at all, so nothing is collected either.
+    (if (< limit 1)
+      unit
+      (let
+        [candidates : (__tl_dyn-array i64)
+          (array.make-array i64 (compiler-reg-color-instr-total blocks 0))]
+        [cursor : (__tl_dyn-array i64) (array.make-array i64 2)]
+        [changed : bool
           (compiler-reg-color-propagate-root-blocks
             blocks
             range-of-var
             roots
             invalid
             candidates
-            cursor
-            (= rounds 0)))
-        (if (= rounds 0)
-          (array-set! cursor 2 (array-ref cursor 1))
-          unit)
-        (set! rounds (+ rounds 1))))))
+            cursor)]
+        [count : i64 (array-ref cursor 1)]
+        [rounds : i64 1]
+        (while (and changed (< rounds limit))
+          (begin
+            (set!
+              changed
+              (compiler-reg-color-propagate-root-replay
+                blocks
+                range-of-var
+                roots
+                invalid
+                candidates
+                count))
+            (set! rounds (+ rounds 1))))))))
 
 (define (compiler-reg-color-invalidate-root!
   [invalid : (__tl_dyn-array bool)]
@@ -25073,17 +25291,17 @@
   [remap : (__tl_dyn-array i64)]
   [vars : i64]
   [from : i64]) : i64
+  ;; Detection reads and writes only the three arrays it is handed, and most
+  ;; functions have no storage range at all, so only those three are allocated
+  ;; and seeded up front; the six the rest of the pass needs are built inside
+  ;; the non-empty branch. `range-size` is not seeded: `array.make-array`
+  ;; zero-fills, detection writes [0, range-count) itself, and
+  ;; `compiler-reg-color-storage-ranges` reads no element past that bound.
+  ;; `invalid` likewise starts all-false from the zero-fill.
   (let
     [range-of-var : (__tl_dyn-array i64) (array.make-array i64 vars)]
     [range-base : (__tl_dyn-array i64) (array.make-array i64 vars)]
     [range-size : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [range-starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [range-ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [invalid : (__tl_dyn-array bool) (array.make-array bool vars)]
-    [roots : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [max-start : i64 9223372036854775807]
     [_cleared : unit
       (let
         [i : i64 0]
@@ -25091,13 +25309,6 @@
           (begin
             (array-set! range-of-var i (- 0 1))
             (array-set! range-base i (- 0 1))
-            (array-set! range-size i 0)
-            (array-set! range-starts i max-start)
-            (array-set! range-ends i (- 0 1))
-            (array-set! invalid i false)
-            (array-set! roots i (- 0 1))
-            (array-set! starts i (- 0 1))
-            (array-set! ends i (- 0 1))
             (set! i (+ i 1)))))]
     [range-count : i64
       (compiler-reg-color-detect-storage-blocks
@@ -25108,26 +25319,45 @@
         0)]
     (if (= range-count 0)
       from
-      (begin
-        (compiler-reg-color-fill-interval-bounds intervals starts ends)
-        (compiler-reg-color-propagate-roots blocks range-of-var roots invalid)
-        (compiler-reg-color-invalidate-blocks! blocks roots invalid)
-        (compiler-reg-color-range-liveness!
-          roots
-          starts
-          ends
-          range-starts
-          range-ends)
-        (compiler-reg-color-storage-ranges
-          slot-ends
-          remap
-          range-base
-          range-size
-          range-starts
-          range-ends
-          invalid
-          range-count
-          from)))))
+      (let
+        [range-starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [range-ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [invalid : (__tl_dyn-array bool) (array.make-array bool vars)]
+        [roots : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [max-start : i64 9223372036854775807]
+        [_seeded : unit
+          (let
+            [i : i64 0]
+            (while (< i vars)
+              (begin
+                (array-set! range-starts i max-start)
+                (array-set! range-ends i (- 0 1))
+                (array-set! roots i (- 0 1))
+                (array-set! starts i (- 0 1))
+                (array-set! ends i (- 0 1))
+                (set! i (+ i 1)))))]
+        (begin
+          (compiler-reg-color-fill-interval-bounds intervals starts ends)
+          (compiler-reg-color-propagate-roots blocks range-of-var roots invalid)
+          (compiler-reg-color-invalidate-blocks! blocks roots invalid)
+          (compiler-reg-color-range-liveness!
+            roots
+            starts
+            ends
+            range-starts
+            range-ends)
+          (compiler-reg-color-storage-ranges
+            slot-ends
+            remap
+            range-base
+            range-size
+            range-starts
+            range-ends
+            invalid
+            range-count
+            from))))))
 
 ;; Rebuild the var-type table on remapped keys. Storage-range coloring may alias
 ;; multiple old inline-storage vars onto the same new id, but those ids are
@@ -26575,8 +26805,15 @@
         [ineligible : live.CompilerLiveI64Set
           (compiler-reg-plan-ineligible plan)]
         [colorable : (__tl_dyn-array bool) (array.make-array bool vars)]
-        [references : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        ;; Boolean, not a count: the only question asked below is whether the
+        ;; variable is referenced at all (see compiler-reg-ref-marks-blocks!).
+        [references : (__tl_dyn-array bool) (array.make-array bool vars)]
         [remap : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        ;; `colorable` is not cleared here: `array.make-array` zero-fills its
+        ;; backing store (bool's default is the all-zero byte), so every element
+        ;; already reads `false`, and `compiler-reg-color-flags` below only
+        ;; overwrites the entries it decides. `references` above relies on the
+        ;; same zero-fill for its "no IR reference" default.
         [_cleared : unit
           (let
             [i : i64 0]
@@ -26588,7 +26825,6 @@
               (set! i 0)
               (while (< i vars)
                 (begin
-                  (array-set! colorable i false)
                   (array-set! remap i (- 0 1))
                   (set! i (+ i 1))))))]
         [_flagged : unit
@@ -26623,7 +26859,7 @@
         [_referenced : unit
           (begin
             (compiler-reg-color-reference-intervals! intervals references)
-            (compiler-reg-ref-counts-blocks! references blocks)
+            (compiler-reg-ref-marks-blocks! references blocks)
             (compiler-reg-spmd-avx2-special-param-references! params references))]
         [var-tys : (__tl_dyn-array ast.AstType)
           (array.make-array ast.AstType vars)]
@@ -26753,7 +26989,7 @@
               (while (and (< i vars) (< i slot-candidate-vars))
                 (begin
                   (if (or
-                    (= (array-ref references i) 0)
+                    (not (array-ref references i))
                     (>= (array-ref remap i) 0))
                     unit
                     (let
@@ -26831,16 +27067,13 @@
           ;; past vars would be silently dropped by the raw-var-sized rebuild
           ;; arrays and side tables. A register-homed variable never touches
           ;; its formula slot, so a free id below the watermark is safe.
+          ;; `taken` starts all-false from the zero-filled allocation, as
+          ;; `references` and `colorable` above do.
           (let
             [taken : (__tl_dyn-array bool) (array.make-array bool vars)]
             [i : i64 0]
             [free : i64 0]
             (begin
-              (while (< i vars)
-                (begin
-                  (array-set! taken i false)
-                  (set! i (+ i 1))))
-              (set! i 0)
               (while (< i vars)
                 (begin
                   (if (and

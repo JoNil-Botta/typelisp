@@ -30246,23 +30246,28 @@
         (opt-cfg-simplify-blocks-with-context-result
           (OptBlockCtxResult.Result blocks context true)))]))
 
-;; Pipeline entry point that skips the nested cfg-simplify: the pipeline's own
-;; cfg pass runs immediately after sccp and canonicalizes once (literal
-;; branches folded, unreachable blocks filtered, phis cleaned -- a second
-;; application is a no-op), so simplifying here duplicated that stage
-;; back-to-back. opt-sccp-blocks-with-context-result keeps the nested
-;; simplify for the sccp self-test, which pins it. The context stays valid
-;; for the rewrite output exactly when no branch condition folded to a
-;; literal (opt-sccp-blocks-change-successors?).
-;; Pipeline entry point that skips the nested cfg-simplify: the pipeline's own
-;; cfg pass runs immediately after sccp and canonicalizes once (literal
-;; branches folded, unreachable blocks filtered, phis cleaned -- a second
-;; application is a no-op), so simplifying here duplicated that stage
-;; back-to-back. opt-sccp-blocks-with-context-result keeps the nested
-;; simplify for the sccp self-test, which pins it. The context stays valid
-;; for the rewrite output exactly when no branch condition folded to a
+;; Pipeline entry point that skips the nested cfg-simplify when it can: the
+;; pipeline's own cfg pass canonicalizes further down (literal branches folded,
+;; unreachable blocks filtered, phis cleaned -- a second application is a
+;; no-op), so simplifying here duplicated that stage.
+;; opt-sccp-blocks-with-context-result keeps the nested simplify
+;; unconditionally for the sccp self-test, which pins it. The context stays
+;; valid for the rewrite output exactly when no branch condition folded to a
 ;; literal (opt-sccp-blocks-change-successors?). The lattice env is sized by
 ;; the function frame (dense var ids), skipping the max-var walks.
+;;
+;; When a branch condition *does* fold, the skip cannot be taken. Rewriting
+;; `branch <const>, a, b` to `jump a` deletes the edge to `b`, but the phis in
+;; `b` still carry an input recorded under this block's label, so the raw
+;; rewrite hands on a function that fails `optimizer verify: phi predecessor
+;; mismatch`. That was harmless while the cfg pass was the next thing to run,
+;; and is not any more: the bool-branch fuser and the jump threader both sit
+;; between sccp and cfg and both verify-gate their input, so one folded branch
+;; anywhere in a function silently switched both passes off for the whole
+;; function -- which is how the merge chains `(when (and a b c) ...)` lowers to
+;; kept their `mov $1; jmp; test; je` all the way to the assembler.
+;; Canonicalizing here costs one extra simplify on exactly the functions whose
+;; CFG changed, and hands every pass downstream IR that verifies.
 (define (opt-sccp-blocks-with-context-result-raw
   [type-segment-bases : i64]
   [context : OptCfgContext]
@@ -30277,10 +30282,17 @@
     frame)
     [(OptSccpState.State _ _ env _ _)
       (if (opt-sccp-env-any-const? env 0)
-        (OptBlockCtxResult.Result
-          (opt-sccp-rewrite-blocks env blocks)
-          context
-          (not (opt-sccp-blocks-change-successors? env blocks)))
+        (let
+          [successors-changed? : bool
+            (opt-sccp-blocks-change-successors? env blocks)]
+          [rewritten : ir.CompilerIrBlockList
+            (opt-sccp-rewrite-blocks env blocks)]
+          (OptBlockCtxResult.Result
+            (if successors-changed?
+              (opt-cfg-simplify-blocks rewritten)
+              rewritten)
+            context
+            (not successors-changed?)))
         ;; No constants: the rewrite is the identity and the context is
         ;; valid as-is (no branch condition can have folded to a literal).
         (OptBlockCtxResult.Result blocks context true))]))

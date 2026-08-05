@@ -17178,6 +17178,161 @@
     16
     blocks))
 
+;; The chain shape of `opt-bool-branch-merge-chain-blocks 0` reached through a
+;; block whose branch sccp folds. `entry` tests a var sccp proves `true`, so the
+;; edge `entry -> join` dies and `join`'s phi keeps an input for a label that is
+;; no longer one of its predecessors. Every pass that verify-gates its input --
+;; the bool-branch fuser included -- then declines the WHOLE function, and the
+;; fusible chain further down survives untouched. The pipeline's sccp entry
+;; point has to hand on blocks that verify for this fixture to fuse.
+(define (opt-sccp-folded-edge-chain-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          10
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.compiler-ir-label "pick")
+            (compiler_ir_types.compiler-ir-label "join"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "pick")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "true-left")
+            (compiler_ir_types.compiler-ir-label "choose"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "choose")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "false-middle")
+              (compiler_ir_types.compiler-ir-label "true-right"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (opt-sccp-folded-edge-chain-tail)))))
+
+(define (opt-sccp-folded-edge-chain-tail) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "true-left")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "merge"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "false-middle")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "true-right")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "merge"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Phi
+                4
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Bool true)
+                  (compiler_ir_types.compiler-ir-label "true-left")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Bool false)
+                    (compiler_ir_types.compiler-ir-label "false-middle")
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "true-right")
+                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "gap"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "gap")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "branch-site"))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "branch-site")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ir_types.compiler-ir-label "yes")
+                    (compiler_ir_types.compiler-ir-label "no"))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "yes")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      5
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 11)
+                        (compiler_ir_types.compiler-ir-label "branch-site")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Jump
+                        (compiler_ir_types.compiler-ir-label "join"))
+                      (compiler_ir_types.CompilerIrInstrList.Nil))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "no")
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        6
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 22)
+                          (compiler_ir_types.compiler-ir-label "branch-site")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Jump
+                          (compiler_ir_types.compiler-ir-label "join"))
+                        (compiler_ir_types.CompilerIrInstrList.Nil))))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.compiler-ir-block
+                      (compiler_ir_types.compiler-ir-label "join")
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Phi
+                          7
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.I64 0)
+                            (compiler_ir_types.compiler-ir-label "entry")
+                            (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.CompilerIrValue.Var 5)
+                              (compiler_ir_types.compiler-ir-label "yes")
+                              (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.CompilerIrValue.Var 6)
+                                (compiler_ir_types.compiler-ir-label "no")
+                                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                          (compiler_ast_types.AstType.I64))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Return
+                            (compiler_ir_types.CompilerIrMaybeValue.Some
+                              (compiler_ir_types.CompilerIrValue.Var 7)))
+                          (compiler_ir_types.CompilerIrInstrList.Nil))))
+                    (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))
+
 (define (opt-bool-branch-first-phi-has-label?
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [block-label : i64]
@@ -32198,6 +32353,37 @@
     [chain-shared-changed : bool
       (match chain-shared-result
         [(compiler_optimize.OptBlockListPassResult.Result _ changed) changed])]
+    [sccp-folded-edge-source : compiler_ir_types.CompilerIrBlockList
+      (opt-sccp-folded-edge-chain-blocks)]
+    [sccp-folded-edge-result : compiler_optimize.OptBlockCtxResult
+      (compiler_optimize.opt-sccp-blocks-with-context-result-raw
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build sccp-folded-edge-source)
+        (opt-bool-branch-two-cond-params)
+        sccp-folded-edge-source
+        16)]
+    [sccp-folded-edge-blocks : compiler_ir_types.CompilerIrBlockList
+      (match sccp-folded-edge-result
+        [(compiler_optimize.OptBlockCtxResult.Result blocks _ _) blocks])]
+    [sccp-folded-edge-valid : bool
+      (match sccp-folded-edge-result
+        [(compiler_optimize.OptBlockCtxResult.Result _ _ valid) valid])]
+    [sccp-folded-edge-function : compiler_ir_types.CompilerIrFunction
+      (opt-bool-branch-constant-test-function sccp-folded-edge-blocks)]
+    [sccp-folded-edge-fused-result : compiler_optimize.OptFunctionPassResult
+      (compiler_optimize.opt-bool-branch-function-with-context-result
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build sccp-folded-edge-blocks)
+        false
+        sccp-folded-edge-function)]
+    [sccp-folded-edge-fused-function : compiler_ir_types.CompilerIrFunction
+      (match sccp-folded-edge-fused-result
+        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+    [sccp-folded-edge-fused-changed : bool
+      (match sccp-folded-edge-fused-result
+        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+    [sccp-folded-edge-fused-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks sccp-folded-edge-fused-function)]
     [and-chain-result : compiler_optimize.OptFunctionPassResult
       (opt-bool-branch-chain-test-run 0)]
     [and-chain-function : compiler_ir_types.CompilerIrFunction
@@ -32555,6 +32741,66 @@
             chain-shared-blocks
             (compiler_ir_types.compiler-ir-label "branch-site")))
         (return 78))
+      ;; Folding `entry`'s branch deletes the edge `entry -> join`. The
+      ;; pipeline's sccp entry point owes its caller blocks whose phis agree
+      ;; with the predecessors it just changed: `join` keeps the `yes` and `no`
+      ;; inputs and loses the `entry` one, and the reported context is stale.
+      (unless (not sccp-folded-edge-valid) (return 81))
+      (unless
+        (and
+          (not
+            (opt-bool-branch-first-phi-has-label?
+              sccp-folded-edge-blocks
+              (compiler_ir_types.compiler-ir-label "join")
+              (compiler_ir_types.compiler-ir-label "entry")))
+          (opt-bool-branch-first-phi-has-label?
+            sccp-folded-edge-blocks
+            (compiler_ir_types.compiler-ir-label "join")
+            (compiler_ir_types.compiler-ir-label "yes"))
+          (opt-bool-branch-first-phi-has-label?
+            sccp-folded-edge-blocks
+            (compiler_ir_types.compiler-ir-label "join")
+            (compiler_ir_types.compiler-ir-label "no")))
+        (return 82))
+      (unless
+        (compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function sccp-folded-edge-function))
+        (return 83))
+      ;; And the payoff: the bool-branch fuser verify-gates its input, so it
+      ;; declines every function sccp hands it in that state. With the phis
+      ;; repaired the merge chain downstream of the folded branch fuses exactly
+      ;; as `chain-merge` does on its own.
+      (unless sccp-folded-edge-fused-changed (return 84))
+      (unless
+        (and
+          (not
+            (opt-block-list-has-label?
+              sccp-folded-edge-fused-blocks
+              (compiler_ir_types.compiler-ir-label "merge")))
+          (not
+            (opt-block-list-has-label?
+              sccp-folded-edge-fused-blocks
+              (compiler_ir_types.compiler-ir-label "gap")))
+          (not
+            (opt-block-list-has-label?
+              sccp-folded-edge-fused-blocks
+              (compiler_ir_types.compiler-ir-label "branch-site")))
+          (=
+            (opt-count-jump-to-blocks
+              sccp-folded-edge-fused-blocks
+              (compiler_ir_types.compiler-ir-label "yes"))
+            2)
+          (=
+            (opt-count-jump-to-blocks
+              sccp-folded-edge-fused-blocks
+              (compiler_ir_types.compiler-ir-label "no"))
+            1))
+        (return 85))
+      (unless
+        (compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function
+            sccp-folded-edge-fused-function))
+        (return 86))
       (unless and-chain-changed (return 46))
       (unless
         (= (compiler_ir_types.compiler-ir-block-list-count and-chain-blocks) 5)

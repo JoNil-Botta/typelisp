@@ -21,7 +21,7 @@ benchmark/typelisp/opt_quicksort	443683263
 benchmark/c-scalar/opt_quicksort	398372863
 benchmark/typelisp/spmd_reduce	1477213867
 benchmark/c-scalar/spmd_reduce	3381322973
-benchmark/typelisp/cfg_domloops	1024765379
+benchmark/typelisp/cfg_domloops	1013870027
 benchmark/c-scalar/cfg_domloops	423136951
 benchmark/typelisp/gvn_table	1461245180
 benchmark/c-scalar/gvn_table	625075892

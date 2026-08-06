@@ -1708,6 +1708,55 @@
   (Ok TcInlineAggregateLayout)
   (Err String))
 
+(defenum TcAggLayoutCacheSlot
+  (Empty)
+  (Full i64 TcInlineAggregateLayout))
+
+;; One global value owns the persistent arena and every table whose backing
+;; storage is allocated in it. Keeping the owner beside its dependents makes a
+;; later branded generation swap a whole-state move instead of a protocol over
+;; unrelated globals. Refs #6257.
+(defstruct TcLazyGlobalTableState
+  (owner arena.Arena)
+  (type-needs-resolution-slots (__tl_dyn-array i64))
+  (unused-unsafe-block-spans (__tl_dyn-array ast.AstSourceSpan))
+  (unused-unsafe-block-paths (__tl_dyn-array String))
+  (unused-unsafe-block-used (__tl_dyn-array bool))
+  (lazy-import-stub-module-ids (__tl_dyn-array i64))
+  (lazy-import-stub-alias-ids (__tl_dyn-array i64))
+  (lazy-import-stub-target-ids (__tl_dyn-array i64))
+  (lazy-import-stub-summary-backed (__tl_dyn-array bool))
+  (lazy-import-stub-index-slots (__tl_dyn-array i64))
+  (agg-layout-cache (__tl_dyn-array TcAggLayoutCacheSlot))
+  (agg-size-cache (__tl_dyn-array i64))
+  (agg-align-cache (__tl_dyn-array i64))
+  (agg-regwords-cache (__tl_dyn-array i64))
+  (macro-abstract-proof-qualified-keys (__tl_dyn-array String))
+  (macro-unqualified-import-cache-module-keys (__tl_dyn-array i64))
+  (macro-unqualified-import-cache-name-keys (__tl_dyn-array i64))
+  (macro-unqualified-import-cache-values (__tl_dyn-array i64)))
+
+(define tc-lazy-global-table-state : TcLazyGlobalTableState
+  (TcLazyGlobalTableState
+    (arena.Arena 0)
+    (array.make-array i64 0)
+    (array.make-array ast.AstSourceSpan 128)
+    (array.make-array String 128)
+    (array.make-array bool 128)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array bool 0)
+    (array.make-array i64 0)
+    (array.make-array TcAggLayoutCacheSlot 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array String 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)))
+
 ;; Aggregate layouts outlive transient typecheck/lowering scratch regions.
 ;; Keep their dense metadata arrays in a cache-owned arena and retain its newest
 ;; segment after every allocation. A fixed node-pool arena handle becomes stale
@@ -11146,12 +11195,6 @@
   "")
 (define tc-unused-unsafe-target-path : String
   "")
-(define tc-unused-unsafe-block-spans : (__tl_dyn-array ast.AstSourceSpan)
-  (array.make-array ast.AstSourceSpan 128))
-(define tc-unused-unsafe-block-paths : (__tl_dyn-array String)
-  (array.make-array String 128))
-(define tc-unused-unsafe-block-used : (__tl_dyn-array bool)
-  (array.make-array bool 128))
 (define tc-unused-unsafe-block-len : i64
   0)
 
@@ -11199,18 +11242,24 @@
     (if tc-unused-unsafe-blocks-stable
       unit
       (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-        [_set-owner : unit
-          (unsafe
-            (arena.tl_arena_set owner))]
+        [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
         (begin
-          (set!
-            tc-unused-unsafe-block-spans
-            (array.make-array ast.AstSourceSpan 128))
-          (set! tc-unused-unsafe-block-paths (array.make-array String 128))
-          (set! tc-unused-unsafe-block-used (array.make-array bool 128))
-          (tc-lazy-global-table-arena-finish! previous owner)
+          (in-arena
+            owner
+            (begin
+              (set!
+                (struct-get
+                  tc-lazy-global-table-state
+                  unused-unsafe-block-spans)
+                (array.make-array ast.AstSourceSpan 128))
+              (set!
+                (struct-get
+                  tc-lazy-global-table-state
+                  unused-unsafe-block-paths)
+                (array.make-array String 128))
+              (set!
+                (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
+                (array.make-array bool 128))))
           (set! tc-unused-unsafe-blocks-stable true))))
     (set! tc-unused-unsafe-block-len 0)))
 
@@ -11219,17 +11268,23 @@
 
 (define (tc-unused-unsafe-block-path [index : i64]) : String
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
-    (array-ref tc-unused-unsafe-block-paths index)
+    (array-ref
+      (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
+      index)
     ""))
 
 (define (tc-unused-unsafe-block-span [index : i64]) : ast.AstSourceSpan
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
-    (array-ref tc-unused-unsafe-block-spans index)
+    (array-ref
+      (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)
+      index)
     (tc-unused-unsafe-no-span)))
 
 (define (tc-unused-unsafe-block-used? [index : i64]) : bool
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
-    (array-ref tc-unused-unsafe-block-used index)
+    (array-ref
+      (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
+      index)
     false))
 
 (define (tc-unused-unsafe-set-current-path! [path : String]) : String
@@ -11262,9 +11317,15 @@
   (if (>= index tc-unused-unsafe-block-len)
     -1
     (if (and
-      (string.eq (array-ref tc-unused-unsafe-block-paths index) path)
+      (string.eq
+        (array-ref
+          (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
+          index)
+        path)
       (tc-unused-unsafe-span-eq?
-        (array-ref tc-unused-unsafe-block-spans index)
+        (array-ref
+          (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)
+          index)
         span))
       index
       (tc-unused-unsafe-find-existing path span (+ index 1)))))
@@ -11280,33 +11341,47 @@
       (array-set!
         new-spans
         index
-        (array-ref tc-unused-unsafe-block-spans index))
+        (array-ref
+          (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)
+          index))
       (array-set!
         new-paths
         index
-        (array-ref tc-unused-unsafe-block-paths index))
-      (array-set! new-used index (array-ref tc-unused-unsafe-block-used index))
+        (array-ref
+          (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
+          index))
+      (array-set!
+        new-used
+        index
+        (array-ref
+          (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
+          index))
       (tc-unused-unsafe-grow-copy new-spans new-paths new-used (+ index 1)))))
 
 (define (tc-unused-unsafe-grow!) : unit
   (let
-    [old-cap : i64 (array.length tc-unused-unsafe-block-spans)]
+    [old-cap : i64
+      (array.length
+        (struct-get tc-lazy-global-table-state unused-unsafe-block-spans))]
     [new-cap : i64 (* old-cap 2)]
-    [previous : i64 (arena.tl_arena_current)]
-    [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
+    [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
     [new-spans : (__tl_dyn-array ast.AstSourceSpan)
-      (array.make-array ast.AstSourceSpan new-cap)]
-    [new-paths : (__tl_dyn-array String) (array.make-array String new-cap)]
-    [new-used : (__tl_dyn-array bool) (array.make-array bool new-cap)]
+      (in-arena owner (array.make-array ast.AstSourceSpan new-cap))]
+    [new-paths : (__tl_dyn-array String)
+      (in-arena owner (array.make-array String new-cap))]
+    [new-used : (__tl_dyn-array bool)
+      (in-arena owner (array.make-array bool new-cap))]
     (begin
       (tc-unused-unsafe-grow-copy new-spans new-paths new-used 0)
-      (set! tc-unused-unsafe-block-spans new-spans)
-      (set! tc-unused-unsafe-block-paths new-paths)
-      (set! tc-unused-unsafe-block-used new-used)
-      (tc-lazy-global-table-arena-finish! previous owner))))
+      (set!
+        (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)
+        new-spans)
+      (set!
+        (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
+        new-paths)
+      (set!
+        (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
+        new-used))))
 
 (define (tc-unused-unsafe-push [span : ast.AstSourceSpan]) : i64
   (let
@@ -11317,15 +11392,24 @@
       (let
         [slot : i64 tc-unused-unsafe-block-len]
         (begin
-          (if (>= slot (array.length tc-unused-unsafe-block-spans))
+          (if (>=
+            slot
+            (array.length
+              (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)))
             (tc-unused-unsafe-grow!)
             unit)
-          (array-set! tc-unused-unsafe-block-spans slot span)
           (array-set!
-            tc-unused-unsafe-block-paths
+            (struct-get tc-lazy-global-table-state unused-unsafe-block-spans)
+            slot
+            span)
+          (array-set!
+            (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
             slot
             tc-unused-unsafe-current-path)
-          (array-set! tc-unused-unsafe-block-used slot false)
+          (array-set!
+            (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
+            slot
+            false)
           (set! tc-unused-unsafe-block-len (+ tc-unused-unsafe-block-len 1))
           slot)))))
 
@@ -11357,7 +11441,10 @@
     tc-unused-unsafe-tracking-enabled
     (>= tc-unused-unsafe-current-block 0)
     (< tc-unused-unsafe-current-block tc-unused-unsafe-block-len))
-    (array-set! tc-unused-unsafe-block-used tc-unused-unsafe-current-block true)
+    (array-set!
+      (struct-get tc-lazy-global-table-state unused-unsafe-block-used)
+      tc-unused-unsafe-current-block
+      true)
     unit))
 
 (define (tc-unsafe-begin-list-with-expected
@@ -16914,50 +17001,39 @@
 ;; the epoch bumps when the pool generation changes (truncation or a pool
 ;; swap), and growth drops warm entries, which the epoch guard treats as
 ;; unfilled.
-;; Fixed persistent capacity: the slots are allocated on first use in a
-;; dedicated never-reset arena (allocating under a caller's transient arena
-;; would leave the global dangling), and ids beyond it fall back to the
+;; Fixed persistent capacity: the slots are allocated on first use in the
+;; dedicated lazy-global table state (allocating under a caller's transient
+;; arena would leave the table dangling), and ids beyond it fall back to the
 ;; uncached walk.
-(define tc-lazy-global-table-arena : i64
-  0)
-
-(define (tc-lazy-global-table-arena-ensure!) : i64
-  (if (= tc-lazy-global-table-arena 0)
-    (begin
-      (set! tc-lazy-global-table-arena (arena.tl_arena_make_small))
-      tc-lazy-global-table-arena)
-    tc-lazy-global-table-arena))
-
-(define (tc-lazy-global-table-arena-finish! [previous : i64] [owner : i64]) : unit
+(define (tc-lazy-global-table-arena-ensure!) : arena.Arena
   (let
-    [head : i64 (arena.tl_arena_current)]
-    (begin
-      (set! tc-lazy-global-table-arena head)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            head
-            previous))))))
+    [owner : arena.Arena (struct-get tc-lazy-global-table-state owner)]
+    (if (= (arena.raw-handle owner) 0)
+      (let
+        [fresh : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+        (begin
+          (set! (struct-get tc-lazy-global-table-state owner) fresh)
+          fresh))
+      owner)))
 
-(define tc-type-needs-resolution-slots : (__tl_dyn-array i64)
-  (array.make-array i64 0))
 (define tc-type-needs-resolution-epoch : i64
   1)
 (define tc-type-needs-resolution-generation : i64
   -1)
 
 (define (tc-type-needs-resolution-storage-ensure!) : unit
-  (if (= (array-length tc-type-needs-resolution-slots) 131072)
+  (if (=
+    (array-length
+      (struct-get (& tc-lazy-global-table-state) type-needs-resolution-slots))
+    131072)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (set! tc-type-needs-resolution-slots (array.make-array i64 131072))
-        (tc-lazy-global-table-arena-finish! previous owner)))))
+      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+      (in-arena
+        owner
+        (set!
+          (struct-get tc-lazy-global-table-state type-needs-resolution-slots)
+          (array.make-array i64 131072))))))
 
 (define (tc-type-needs-resolution-ensure-current!) : unit
   (if (=
@@ -16975,17 +17051,29 @@
     (tc-type-needs-resolution-storage-ensure!)
     (tc-type-needs-resolution-ensure-current!)
     (when
-      (>= ty-id (array-length tc-type-needs-resolution-slots))
+      (>=
+        ty-id
+        (array-length
+          (struct-get
+            (& tc-lazy-global-table-state)
+            type-needs-resolution-slots)))
       (return (tc-type-needs-resolution? (ast.ty-node-get ty-id))))
     (let
-      [slot : i64 (array-ref tc-type-needs-resolution-slots ty-id)]
+      [slot : i64
+        (array-ref
+          (struct-get
+            (& tc-lazy-global-table-state)
+            type-needs-resolution-slots)
+          ty-id)]
       (if (= (shr slot 1) tc-type-needs-resolution-epoch)
         (= (bit-and slot 1) 1)
         (let
           [answer : bool (tc-type-needs-resolution? (ast.ty-node-get ty-id))]
           (begin
             (array-set!
-              tc-type-needs-resolution-slots
+              (struct-get
+                (& tc-lazy-global-table-state)
+                type-needs-resolution-slots)
               ty-id
               (bit-or
                 (shl tc-type-needs-resolution-epoch 1)
@@ -18765,16 +18853,6 @@
   (tc-lazy-import-stub-list-empty))
 (define tc-lazy-import-stub-capacity : i64
   65536)
-(define tc-lazy-import-stub-module-ids : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define tc-lazy-import-stub-alias-ids : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define tc-lazy-import-stub-target-ids : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define tc-lazy-import-stub-summary-backed : (__tl_dyn-array bool)
-  (array.make-array bool 0))
-(define tc-lazy-import-stub-index-slots : (__tl_dyn-array i64)
-  (array.make-array i64 0))
 (define tc-lazy-import-stub-record-count : i64
   0)
 (define tc-lazy-import-stub-generation : i64
@@ -18786,32 +18864,32 @@
 
 (define (tc-lazy-import-stub-storage-ensure!) : unit
   (if (=
-    (array-length tc-lazy-import-stub-index-slots)
+    (array-length
+      (struct-get (& tc-lazy-global-table-state) lazy-import-stub-index-slots))
     tc-lazy-import-stub-capacity)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (set!
-          tc-lazy-import-stub-module-ids
-          (array.make-array i64 tc-lazy-import-stub-capacity))
-        (set!
-          tc-lazy-import-stub-alias-ids
-          (array.make-array i64 tc-lazy-import-stub-capacity))
-        (set!
-          tc-lazy-import-stub-target-ids
-          (array.make-array i64 tc-lazy-import-stub-capacity))
-        (set!
-          tc-lazy-import-stub-summary-backed
-          (array.make-array bool tc-lazy-import-stub-capacity))
-        (set!
-          tc-lazy-import-stub-index-slots
-          (array.make-array i64 tc-lazy-import-stub-capacity))
-        (tc-lazy-global-table-arena-finish! previous owner)))))
+      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+      (in-arena
+        owner
+        (begin
+          (set!
+            (struct-get tc-lazy-global-table-state lazy-import-stub-module-ids)
+            (array.make-array i64 tc-lazy-import-stub-capacity))
+          (set!
+            (struct-get tc-lazy-global-table-state lazy-import-stub-alias-ids)
+            (array.make-array i64 tc-lazy-import-stub-capacity))
+          (set!
+            (struct-get tc-lazy-global-table-state lazy-import-stub-target-ids)
+            (array.make-array i64 tc-lazy-import-stub-capacity))
+          (set!
+            (struct-get
+              tc-lazy-global-table-state
+              lazy-import-stub-summary-backed)
+            (array.make-array bool tc-lazy-import-stub-capacity))
+          (set!
+            (struct-get tc-lazy-global-table-state lazy-import-stub-index-slots)
+            (array.make-array i64 tc-lazy-import-stub-capacity)))))))
 
 ;; Return either the matching record-index slot or the first empty slot. Slots
 ;; store record index + 1, so reset can clear the index without touching the
@@ -18824,16 +18902,31 @@
   (if (>= probes tc-lazy-import-stub-capacity)
     -1
     (let
-      [entry : i64 (array-ref tc-lazy-import-stub-index-slots cursor)]
+      [entry : i64
+        (array-ref
+          (struct-get
+            (& tc-lazy-global-table-state)
+            lazy-import-stub-index-slots)
+          cursor)]
       (if (= entry 0)
         cursor
         (let
           [record-index : i64 (- entry 1)]
           (if (and
             (=
-              (array-ref tc-lazy-import-stub-module-ids record-index)
+              (array-ref
+                (struct-get
+                  (& tc-lazy-global-table-state)
+                  lazy-import-stub-module-ids)
+                record-index)
               importer-module-id)
-            (= (array-ref tc-lazy-import-stub-alias-ids record-index) alias-id))
+            (=
+              (array-ref
+                (struct-get
+                  (& tc-lazy-global-table-state)
+                  lazy-import-stub-alias-ids)
+                record-index)
+              alias-id))
             cursor
             (tc-lazy-import-stub-index-probe
               importer-module-id
@@ -18856,7 +18949,12 @@
     [slot : i64 0]
     (while (< slot tc-lazy-import-stub-capacity)
       (begin
-        (array-set! tc-lazy-import-stub-index-slots slot 0)
+        (array-set!
+          (struct-get
+            (& tc-lazy-global-table-state)
+            lazy-import-stub-index-slots)
+          slot
+          0)
         (set! slot (+ slot 1))))))
 
 (define (tc-lazy-import-stub-index-record!
@@ -18869,12 +18967,28 @@
     (if (< slot 0)
       unit
       (let
-        [entry : i64 (array-ref tc-lazy-import-stub-index-slots slot)]
+        [entry : i64
+          (array-ref
+            (struct-get
+              (& tc-lazy-global-table-state)
+              lazy-import-stub-index-slots)
+            slot)]
         (if (or
           (= entry 0)
           (not (= target-module-id alias-id))
-          (= (array-ref tc-lazy-import-stub-target-ids (- entry 1)) alias-id))
-          (array-set! tc-lazy-import-stub-index-slots slot (+ record-index 1))
+          (=
+            (array-ref
+              (struct-get
+                (& tc-lazy-global-table-state)
+                lazy-import-stub-target-ids)
+              (- entry 1))
+            alias-id))
+          (array-set!
+            (struct-get
+              (& tc-lazy-global-table-state)
+              lazy-import-stub-index-slots)
+            slot
+            (+ record-index 1))
           unit)))))
 
 (define (tc-lazy-import-stubs-reset!) : unit
@@ -18929,10 +19043,30 @@
       (let
         [index : i64 tc-lazy-import-stub-record-count]
         (begin
-          (array-set! tc-lazy-import-stub-module-ids index importer-module-id)
-          (array-set! tc-lazy-import-stub-alias-ids index alias-id)
-          (array-set! tc-lazy-import-stub-target-ids index target-module-id)
-          (array-set! tc-lazy-import-stub-summary-backed index summary-backed)
+          (array-set!
+            (struct-get
+              (& tc-lazy-global-table-state)
+              lazy-import-stub-module-ids)
+            index
+            importer-module-id)
+          (array-set!
+            (struct-get
+              (& tc-lazy-global-table-state)
+              lazy-import-stub-alias-ids)
+            index
+            alias-id)
+          (array-set!
+            (struct-get
+              (& tc-lazy-global-table-state)
+              lazy-import-stub-target-ids)
+            index
+            target-module-id)
+          (array-set!
+            (struct-get
+              (& tc-lazy-global-table-state)
+              lazy-import-stub-summary-backed)
+            index
+            summary-backed)
           (tc-lazy-import-stub-index-record!
             index
             importer-module-id
@@ -18969,11 +19103,20 @@
       (if (< slot 0)
         (TcMaybeNameId.No)
         (let
-          [entry : i64 (array-ref tc-lazy-import-stub-index-slots slot)]
+          [entry : i64
+            (array-ref
+              (struct-get
+                (& tc-lazy-global-table-state)
+                lazy-import-stub-index-slots)
+              slot)]
           (if (= entry 0)
             (TcMaybeNameId.No)
             (TcMaybeNameId.Some
-              (array-ref tc-lazy-import-stub-target-ids (- entry 1)))))))))
+              (array-ref
+                (struct-get
+                  (& tc-lazy-global-table-state)
+                  lazy-import-stub-target-ids)
+                (- entry 1)))))))))
 
 (define (tc-lazy-import-stub-target-id
   [importer-module-id : i64]
@@ -18999,8 +19142,17 @@
         (while (and (not ambiguous) (>= index 0))
           (let
             [stub-alias-id : i64
-              (array-ref tc-lazy-import-stub-alias-ids index)]
-            [target-id : i64 (array-ref tc-lazy-import-stub-target-ids index)]
+              (array-ref
+                (struct-get
+                  (& tc-lazy-global-table-state)
+                  lazy-import-stub-alias-ids)
+                index)]
+            [target-id : i64
+              (array-ref
+                (struct-get
+                  (& tc-lazy-global-table-state)
+                  lazy-import-stub-target-ids)
+                index)]
             (begin
               (if (and (= stub-alias-id alias-id) (not (= target-id alias-id)))
                 (let
@@ -45284,31 +45436,23 @@
 ;; persistent program arena (node-pool-base-arena) before storing -- a layout
 ;; computed while a transient lowering scratch arena is active would otherwise
 ;; dangle after the arena rewinds (the scratch-arena hazard).
-(defenum TcAggLayoutCacheSlot
-  (Empty)
-  (Full i64 TcInlineAggregateLayout))
-
 (define tc-agg-layout-cache-capacity : i64
   65536)
-(define tc-agg-layout-cache : (__tl_dyn-array TcAggLayoutCacheSlot)
-  (array.make-array TcAggLayoutCacheSlot 0))
 (define tc-agg-layout-cache-generation : i64
   -1)
 
 (define (tc-agg-layout-cache-table-storage-ensure!) : unit
-  (if (= (array-length tc-agg-layout-cache) tc-agg-layout-cache-capacity)
+  (if (=
+    (array-length (struct-get (& tc-lazy-global-table-state) agg-layout-cache))
+    tc-agg-layout-cache-capacity)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
+      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+      (in-arena
+        owner
         (set!
-          tc-agg-layout-cache
-          (array.make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity))
-        (tc-lazy-global-table-arena-finish! previous owner)))))
+          (struct-get tc-lazy-global-table-state agg-layout-cache)
+          (array.make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity))))))
 
 ;; `make-array` does not produce valid Empty enum slots, so the fill is
 ;; mandatory before the first probe; generation -1 forces it on first use.
@@ -45323,7 +45467,10 @@
           (tc-agg-layout-cache-storage-reset!)
           (while (< i tc-agg-layout-cache-capacity)
             (begin
-              (array-set! tc-agg-layout-cache i (TcAggLayoutCacheSlot.Empty))
+              (array-set!
+                (struct-get (& tc-lazy-global-table-state) agg-layout-cache)
+                i
+                (TcAggLayoutCacheSlot.Empty))
               (set! i (+ i 1))))
           (set! tc-agg-layout-cache-generation (ci.intern-generation)))))))
 
@@ -45343,7 +45490,9 @@
     [steps : i64 0]
     (begin
       (while (< steps tc-agg-layout-cache-capacity)
-        (match (array-ref tc-agg-layout-cache cursor)
+        (match (array-ref
+          (struct-get (& tc-lazy-global-table-state) agg-layout-cache)
+          cursor)
           [(TcAggLayoutCacheSlot.Empty) (return cursor)]
           [(TcAggLayoutCacheSlot.Full cached-id _)
             (if (= cached-id name-id)
@@ -45364,7 +45513,7 @@
   [name-id : i64]
   [layout : TcInlineAggregateLayout]) : unit
   (array-set!
-    tc-agg-layout-cache
+    (struct-get (& tc-lazy-global-table-state) agg-layout-cache)
     slot
     (TcAggLayoutCacheSlot.Full name-id layout)))
 
@@ -45416,7 +45565,9 @@
     [(ResultTcInlineAggregateLayout.Ok layout)
       (begin
         (tc-agg-layout-cache-store! slot name-id layout)
-        (match (array-ref tc-agg-layout-cache slot)
+        (match (array-ref
+          (struct-get tc-lazy-global-table-state agg-layout-cache)
+          slot)
           [(TcAggLayoutCacheSlot.Full _ cached)
             (ResultTcInlineAggregateLayout.Ok cached)]
           [(TcAggLayoutCacheSlot.Empty)
@@ -45455,7 +45606,9 @@
                 name-id
                 handle
                 stack))
-            (match (array-ref tc-agg-layout-cache slot)
+            (match (array-ref
+              (struct-get tc-lazy-global-table-state agg-layout-cache)
+              slot)
               [(TcAggLayoutCacheSlot.Full _ layout)
                 (begin
                   (cfg compile-profile (tc-lp-note 12))
@@ -45667,8 +45820,6 @@
 ;; the next query to clear them at lower boundaries.
 (define tc-agg-scalar-cache-capacity : i64
   400000)
-(define tc-agg-size-cache : (__tl_dyn-array i64)
-  (array.make-array i64 0))
 
 ;; These scalar caches used to be keyed by symbol-handle INDEX, which is
 ;; only meaningful for one snapshot of a program's symbol table. Specialization
@@ -45682,19 +45833,17 @@
   -1)
 
 (define (tc-agg-size-cache-storage-ensure!) : unit
-  (if (= (array-length tc-agg-size-cache) tc-agg-scalar-cache-capacity)
+  (if (=
+    (array-length (struct-get (& tc-lazy-global-table-state) agg-size-cache))
+    tc-agg-scalar-cache-capacity)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
+      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+      (in-arena
+        owner
         (set!
-          tc-agg-size-cache
-          (array.make-array i64 tc-agg-scalar-cache-capacity))
-        (tc-lazy-global-table-arena-finish! previous owner)))))
+          (struct-get tc-lazy-global-table-state agg-size-cache)
+          (array.make-array i64 tc-agg-scalar-cache-capacity))))))
 
 (define (tc-agg-size-cache-ensure!) : unit
   (begin
@@ -45706,7 +45855,10 @@
         (begin
           (while (< i tc-agg-scalar-cache-capacity)
             (begin
-              (array-set! tc-agg-size-cache i 0)
+              (array-set!
+                (struct-get (& tc-lazy-global-table-state) agg-size-cache)
+                i
+                0)
               (set! i (+ i 1))))
           (set! tc-agg-size-cache-generation (ci.intern-generation)))))))
 
@@ -45733,7 +45885,10 @@
             (tc-inline-aggregate-layout-size layout)]
           [(ResultTcInlineAggregateLayout.Err _) fallback])
         (let
-          [cached : i64 (array-ref tc-agg-size-cache key)]
+          [cached : i64
+            (array-ref
+              (struct-get (& tc-lazy-global-table-state) agg-size-cache)
+              key)]
           (if (> cached 0)
             (- cached 1)
             (match (tc-inline-aggregate-layout-for-with-stack
@@ -45745,32 +45900,31 @@
                 (let
                   [size : i64 (tc-inline-aggregate-layout-size layout)]
                   (begin
-                    (array-set! tc-agg-size-cache key (+ size 1))
+                    (array-set!
+                      (struct-get (& tc-lazy-global-table-state) agg-size-cache)
+                      key
+                      (+ size 1))
                     size))]
               [(ResultTcInlineAggregateLayout.Err _) fallback])))))))
 
 ;; Same arena-safe fixed cache for bare aggregate ALIGN queries. Lowering
 ;; asks for alignment on the same hot aggregate paths as size; rebuilding the full
 ;; layout here defeats the size/regword caches.
-(define tc-agg-align-cache : (__tl_dyn-array i64)
-  (array.make-array i64 0))
 (define tc-agg-align-cache-generation : i64
   -1)
 
 (define (tc-agg-align-cache-storage-ensure!) : unit
-  (if (= (array-length tc-agg-align-cache) tc-agg-scalar-cache-capacity)
+  (if (=
+    (array-length (struct-get (& tc-lazy-global-table-state) agg-align-cache))
+    tc-agg-scalar-cache-capacity)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
+      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+      (in-arena
+        owner
         (set!
-          tc-agg-align-cache
-          (array.make-array i64 tc-agg-scalar-cache-capacity))
-        (tc-lazy-global-table-arena-finish! previous owner)))))
+          (struct-get tc-lazy-global-table-state agg-align-cache)
+          (array.make-array i64 tc-agg-scalar-cache-capacity))))))
 
 (define (tc-agg-align-cache-ensure!) : unit
   (begin
@@ -45782,7 +45936,10 @@
         (begin
           (while (< i tc-agg-scalar-cache-capacity)
             (begin
-              (array-set! tc-agg-align-cache i 0)
+              (array-set!
+                (struct-get (& tc-lazy-global-table-state) agg-align-cache)
+                i
+                0)
               (set! i (+ i 1))))
           (set! tc-agg-align-cache-generation (ci.intern-generation)))))))
 
@@ -45804,7 +45961,10 @@
             (tc-inline-aggregate-layout-align layout)]
           [(ResultTcInlineAggregateLayout.Err _) fallback])
         (let
-          [cached : i64 (array-ref tc-agg-align-cache key)]
+          [cached : i64
+            (array-ref
+              (struct-get (& tc-lazy-global-table-state) agg-align-cache)
+              key)]
           (if (> cached 0)
             (- cached 1)
             (match (tc-inline-aggregate-layout-for-with-stack
@@ -45816,7 +45976,12 @@
                 (let
                   [align : i64 (tc-inline-aggregate-layout-align layout)]
                   (begin
-                    (array-set! tc-agg-align-cache key (+ align 1))
+                    (array-set!
+                      (struct-get
+                        (& tc-lazy-global-table-state)
+                        agg-align-cache)
+                      key
+                      (+ align 1))
                     align))]
               [(ResultTcInlineAggregateLayout.Err _) fallback])))))))
 
@@ -45825,28 +45990,24 @@
 ;; fixed array as the size cache; this is the hot query for every aggregate
 ;; construct / struct-get / copy (lower-name-register-words). Encoded as
 ;; words+1 (0 = uncached). Only fully-resolved layouts are cached.
-(define tc-agg-regwords-cache : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-
-;; Same per-program keying as tc-agg-size-cache, so it is gated on
+;; Same per-program keying as the size cache, so it is gated on
 ;; intern-generation and explicitly invalidated at lower boundaries.
 (define tc-agg-regwords-cache-generation : i64
   -1)
 
 (define (tc-agg-regwords-cache-storage-ensure!) : unit
-  (if (= (array-length tc-agg-regwords-cache) tc-agg-scalar-cache-capacity)
+  (if (=
+    (array-length
+      (struct-get (& tc-lazy-global-table-state) agg-regwords-cache))
+    tc-agg-scalar-cache-capacity)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
+      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+      (in-arena
+        owner
         (set!
-          tc-agg-regwords-cache
-          (array.make-array i64 tc-agg-scalar-cache-capacity))
-        (tc-lazy-global-table-arena-finish! previous owner)))))
+          (struct-get tc-lazy-global-table-state agg-regwords-cache)
+          (array.make-array i64 tc-agg-scalar-cache-capacity))))))
 
 (define (tc-agg-caches-reset!) : unit
   (begin
@@ -45865,7 +46026,10 @@
         (begin
           (while (< i tc-agg-scalar-cache-capacity)
             (begin
-              (array-set! tc-agg-regwords-cache i 0)
+              (array-set!
+                (struct-get (& tc-lazy-global-table-state) agg-regwords-cache)
+                i
+                0)
               (set! i (+ i 1))))
           (set! tc-agg-regwords-cache-generation (ci.intern-generation)))))))
 
@@ -45889,7 +46053,10 @@
       (if (< key 0)
         (tc-inline-aggregate-regwords-compute ctx name-id)
         (let
-          [cached : i64 (array-ref tc-agg-regwords-cache key)]
+          [cached : i64
+            (array-ref
+              (struct-get (& tc-lazy-global-table-state) agg-regwords-cache)
+              key)]
           (if (> cached 0)
             (- cached 1)
             (match (tc-inline-aggregate-layout-for-with-stack
@@ -45904,7 +46071,12 @@
                       (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
                       0)]
                   (begin
-                    (array-set! tc-agg-regwords-cache key (+ words 1))
+                    (array-set!
+                      (struct-get
+                        (& tc-lazy-global-table-state)
+                        agg-regwords-cache)
+                      key
+                      (+ words 1))
                     words))]
               [(ResultTcInlineAggregateLayout.Err _) 0])))))))
 
@@ -54651,8 +54823,6 @@
   0)
 (define requested-capacity : i64
   4096)
-(define qualified-key-id : (__tl_dyn-array String)
-  (array.make-array String 0))
 (define required-count : i64
   0)
 (define map-ready : bool
@@ -54833,13 +55003,23 @@
   (if (>= steps requested-capacity)
     unit
     (let
-      [slot : String (array-ref qualified-key-id cursor)]
+      [slot : String
+        (array-ref
+          (struct-get
+            tc-lazy-global-table-state
+            macro-abstract-proof-qualified-keys)
+          cursor)]
       (cond
         [(= (string.string-length slot) 0)
           (if (>= (* required-count 2) requested-capacity)
             unit
             (begin
-              (array-set! qualified-key-id cursor (text-copy macro-key))
+              (array-set!
+                (struct-get
+                  tc-lazy-global-table-state
+                  macro-abstract-proof-qualified-keys)
+                cursor
+                (text-copy macro-key))
               (set! required-count (+ required-count 1))
               (set! active? true)))]
         [(string.eq slot macro-key) (set! active? true)]
@@ -54849,22 +55029,33 @@
             (bit-and (+ cursor 1) (- requested-capacity 1))
             (+ steps 1))]))))
 
+(define (tc-macro-abstract-proof-qualified-key-storage-ensure!) : unit
+  (if (=
+    (array-length
+      (struct-get
+        tc-lazy-global-table-state
+        macro-abstract-proof-qualified-keys))
+    requested-capacity)
+    unit
+    (let
+      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+      (in-arena
+        owner
+        (set!
+          (struct-get
+            tc-lazy-global-table-state
+            macro-abstract-proof-qualified-keys)
+          (array.make-array String requested-capacity))))))
+
 (define (record-count [macro-key : String]) : unit
   (if (= (string.string-length macro-key) 0)
     unit
     (begin
       (if map-ready
         unit
-        (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-          [_set-owner : unit
-            (unsafe
-              (arena.tl_arena_set owner))]
-          (begin
-            (set! qualified-key-id (array.make-array String requested-capacity))
-            (set! map-ready true)
-            (tc-lazy-global-table-arena-finish! previous owner))))
+        (begin
+          (tc-macro-abstract-proof-qualified-key-storage-ensure!)
+          (set! map-ready true)))
       (if any-active
         unit
         (let
@@ -54872,7 +55063,12 @@
           (begin
             (while (< index requested-capacity)
               (begin
-                (array-set! qualified-key-id index "")
+                (array-set!
+                  (struct-get
+                    tc-lazy-global-table-state
+                    macro-abstract-proof-qualified-keys)
+                  index
+                  "")
                 (set! index (+ index 1))))
             (set! required-count 0)
             (set! any-active true)
@@ -54900,7 +55096,12 @@
   (if (>= steps requested-capacity)
     false
     (let
-      [slot : String (array-ref qualified-key-id cursor)]
+      [slot : String
+        (array-ref
+          (struct-get
+            tc-lazy-global-table-state
+            macro-abstract-proof-qualified-keys)
+          cursor)]
       (if (= (string.string-length slot) 0)
         false
         (if (string.eq slot macro-key)
@@ -78956,12 +79157,6 @@
   -1)
 (define macro-unqualified-import-cache-capacity : i64
   65536)
-(define macro-unqualified-import-cache-module-keys : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define macro-unqualified-import-cache-name-keys : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define macro-unqualified-import-cache-values : (__tl_dyn-array i64)
-  (array.make-array i64 0))
 (define macro-unqualified-import-cache-count : i64
   0)
 (define macro-unqualified-import-cache-generation : i64
@@ -78996,26 +79191,32 @@
 
 (define (macro-unqualified-import-cache-storage-ensure!) : unit
   (if (=
-    (array-length macro-unqualified-import-cache-module-keys)
+    (array-length
+      (struct-get
+        (& tc-lazy-global-table-state)
+        macro-unqualified-import-cache-module-keys))
     macro-unqualified-import-cache-capacity)
     unit
     (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 (tc-lazy-global-table-arena-ensure!)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (set!
-          macro-unqualified-import-cache-module-keys
-          (array.make-array i64 macro-unqualified-import-cache-capacity))
-        (set!
-          macro-unqualified-import-cache-name-keys
-          (array.make-array i64 macro-unqualified-import-cache-capacity))
-        (set!
-          macro-unqualified-import-cache-values
-          (array.make-array i64 macro-unqualified-import-cache-capacity))
-        (tc-lazy-global-table-arena-finish! previous owner)))))
+      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
+      (in-arena
+        owner
+        (begin
+          (set!
+            (struct-get
+              tc-lazy-global-table-state
+              macro-unqualified-import-cache-module-keys)
+            (array.make-array i64 macro-unqualified-import-cache-capacity))
+          (set!
+            (struct-get
+              tc-lazy-global-table-state
+              macro-unqualified-import-cache-name-keys)
+            (array.make-array i64 macro-unqualified-import-cache-capacity))
+          (set!
+            (struct-get
+              tc-lazy-global-table-state
+              macro-unqualified-import-cache-values)
+            (array.make-array i64 macro-unqualified-import-cache-capacity)))))))
 
 (define (tc-unused-unsafe-storage-lifetime-fill! [index : i64]) : unit
   (if (>= index 129)
@@ -79259,20 +79460,71 @@
     [scratch : arena.Arena (arena.make)]
     [initially-lazy? : bool
       (and
-        (= tc-lazy-global-table-arena 0)
-        (= (array-length tc-type-needs-resolution-slots) 0)
-        (= (array-length tc-agg-size-cache) 0)
-        (= (array-length tc-agg-align-cache) 0)
-        (= (array-length tc-agg-regwords-cache) 0)
-        (= (array-length tc-lazy-import-stub-module-ids) 0)
-        (= (array-length tc-lazy-import-stub-alias-ids) 0)
-        (= (array-length tc-lazy-import-stub-target-ids) 0)
-        (= (array-length tc-lazy-import-stub-summary-backed) 0)
-        (= (array-length tc-lazy-import-stub-index-slots) 0)
-        (= (array-length tc-agg-layout-cache) 0)
-        (= (array-length macro-unqualified-import-cache-module-keys) 0)
-        (= (array-length macro-unqualified-import-cache-name-keys) 0)
-        (= (array-length macro-unqualified-import-cache-values) 0))]
+        (= (arena.raw-handle (struct-get tc-lazy-global-table-state owner)) 0)
+        (=
+          (array-length
+            (struct-get tc-lazy-global-table-state type-needs-resolution-slots))
+          0)
+        (=
+          (array-length (struct-get tc-lazy-global-table-state agg-size-cache))
+          0)
+        (=
+          (array-length (struct-get tc-lazy-global-table-state agg-align-cache))
+          0)
+        (=
+          (array-length
+            (struct-get tc-lazy-global-table-state agg-regwords-cache))
+          0)
+        (=
+          (array-length
+            (struct-get tc-lazy-global-table-state lazy-import-stub-module-ids))
+          0)
+        (=
+          (array-length
+            (struct-get tc-lazy-global-table-state lazy-import-stub-alias-ids))
+          0)
+        (=
+          (array-length
+            (struct-get tc-lazy-global-table-state lazy-import-stub-target-ids))
+          0)
+        (=
+          (array-length
+            (struct-get
+              tc-lazy-global-table-state
+              lazy-import-stub-summary-backed))
+          0)
+        (=
+          (array-length
+            (struct-get tc-lazy-global-table-state lazy-import-stub-index-slots))
+          0)
+        (=
+          (array-length
+            (struct-get tc-lazy-global-table-state agg-layout-cache))
+          0)
+        (=
+          (array-length
+            (struct-get
+              tc-lazy-global-table-state
+              macro-abstract-proof-qualified-keys))
+          0)
+        (=
+          (array-length
+            (struct-get
+              tc-lazy-global-table-state
+              macro-unqualified-import-cache-module-keys))
+          0)
+        (=
+          (array-length
+            (struct-get
+              tc-lazy-global-table-state
+              macro-unqualified-import-cache-name-keys))
+          0)
+        (=
+          (array-length
+            (struct-get
+              tc-lazy-global-table-state
+              macro-unqualified-import-cache-values))
+          0))]
     [_set-scratch : unit
       (unsafe
         (arena.set! scratch))]
@@ -79282,70 +79534,195 @@
     [_regwords : unit (tc-agg-regwords-cache-storage-ensure!)]
     [_lazy-import : unit (tc-lazy-import-stub-storage-ensure!)]
     [_layout : unit (tc-agg-layout-cache-table-storage-ensure!)]
+    [_macro-proof : unit
+      (tc-macro-abstract-proof-qualified-key-storage-ensure!)]
     [_macro-import : unit (macro-unqualified-import-cache-storage-ensure!)]
     [restored-caller? : bool (arena.eq? (arena.current) scratch)]
     [exact-capacities? : bool
       (and
-        (= (array-length tc-type-needs-resolution-slots) 131072)
-        (= (array-length tc-agg-size-cache) tc-agg-scalar-cache-capacity)
-        (= (array-length tc-agg-align-cache) tc-agg-scalar-cache-capacity)
-        (= (array-length tc-agg-regwords-cache) tc-agg-scalar-cache-capacity)
         (=
-          (array-length tc-lazy-import-stub-module-ids)
+          (array-length
+            (struct-get tc-lazy-global-table-state type-needs-resolution-slots))
+          131072)
+        (=
+          (array-length (struct-get tc-lazy-global-table-state agg-size-cache))
+          tc-agg-scalar-cache-capacity)
+        (=
+          (array-length (struct-get tc-lazy-global-table-state agg-align-cache))
+          tc-agg-scalar-cache-capacity)
+        (=
+          (array-length
+            (struct-get tc-lazy-global-table-state agg-regwords-cache))
+          tc-agg-scalar-cache-capacity)
+        (=
+          (array-length
+            (struct-get tc-lazy-global-table-state lazy-import-stub-module-ids))
           tc-lazy-import-stub-capacity)
         (=
-          (array-length tc-lazy-import-stub-alias-ids)
+          (array-length
+            (struct-get tc-lazy-global-table-state lazy-import-stub-alias-ids))
           tc-lazy-import-stub-capacity)
         (=
-          (array-length tc-lazy-import-stub-target-ids)
+          (array-length
+            (struct-get tc-lazy-global-table-state lazy-import-stub-target-ids))
           tc-lazy-import-stub-capacity)
         (=
-          (array-length tc-lazy-import-stub-summary-backed)
+          (array-length
+            (struct-get
+              tc-lazy-global-table-state
+              lazy-import-stub-summary-backed))
           tc-lazy-import-stub-capacity)
         (=
-          (array-length tc-lazy-import-stub-index-slots)
+          (array-length
+            (struct-get tc-lazy-global-table-state lazy-import-stub-index-slots))
           tc-lazy-import-stub-capacity)
-        (= (array-length tc-agg-layout-cache) tc-agg-layout-cache-capacity)
         (=
-          (array-length macro-unqualified-import-cache-module-keys)
+          (array-length
+            (struct-get tc-lazy-global-table-state agg-layout-cache))
+          tc-agg-layout-cache-capacity)
+        (=
+          (array-length
+            (struct-get
+              tc-lazy-global-table-state
+              macro-abstract-proof-qualified-keys))
+          requested-capacity)
+        (=
+          (array-length
+            (struct-get
+              tc-lazy-global-table-state
+              macro-unqualified-import-cache-module-keys))
           macro-unqualified-import-cache-capacity)
         (=
-          (array-length macro-unqualified-import-cache-name-keys)
+          (array-length
+            (struct-get
+              tc-lazy-global-table-state
+              macro-unqualified-import-cache-name-keys))
           macro-unqualified-import-cache-capacity)
         (=
-          (array-length macro-unqualified-import-cache-values)
+          (array-length
+            (struct-get
+              tc-lazy-global-table-state
+              macro-unqualified-import-cache-values))
           macro-unqualified-import-cache-capacity))]
     (begin
       (unsafe
         (arena.set! caller))
       (unsafe
         (arena.destroy scratch))
-      (array-set! tc-type-needs-resolution-slots 0 17)
-      (array-set! tc-agg-size-cache 0 29)
-      (array-set! tc-agg-align-cache 0 31)
-      (array-set! tc-agg-regwords-cache 0 37)
-      (array-set! tc-lazy-import-stub-module-ids 0 41)
-      (array-set! tc-agg-layout-cache 0 (TcAggLayoutCacheSlot.Empty))
-      (array-set! macro-unqualified-import-cache-module-keys 0 43)
+      (array-set!
+        (struct-get tc-lazy-global-table-state type-needs-resolution-slots)
+        0
+        17)
+      (array-set! (struct-get tc-lazy-global-table-state agg-size-cache) 0 29)
+      (array-set! (struct-get tc-lazy-global-table-state agg-align-cache) 0 31)
+      (array-set!
+        (struct-get tc-lazy-global-table-state agg-regwords-cache)
+        0
+        37)
+      (array-set!
+        (struct-get tc-lazy-global-table-state lazy-import-stub-module-ids)
+        0
+        41)
+      (array-set!
+        (struct-get tc-lazy-global-table-state agg-layout-cache)
+        0
+        (TcAggLayoutCacheSlot.Empty))
+      (array-set!
+        (struct-get
+          tc-lazy-global-table-state
+          macro-abstract-proof-qualified-keys)
+        0
+        "tc-lazy-table-storage")
+      (array-set!
+        (struct-get
+          tc-lazy-global-table-state
+          macro-unqualified-import-cache-module-keys)
+        0
+        43)
       (let
         [survived? : bool
           (and
-            (= (array-ref tc-type-needs-resolution-slots 0) 17)
-            (= (array-ref tc-agg-size-cache 0) 29)
-            (= (array-ref tc-agg-align-cache 0) 31)
-            (= (array-ref tc-agg-regwords-cache 0) 37)
-            (= (array-ref tc-lazy-import-stub-module-ids 0) 41)
-            (match (array-ref tc-agg-layout-cache 0)
+            (=
+              (array-ref
+                (struct-get
+                  tc-lazy-global-table-state
+                  type-needs-resolution-slots)
+                0)
+              17)
+            (=
+              (array-ref
+                (struct-get tc-lazy-global-table-state agg-size-cache)
+                0)
+              29)
+            (=
+              (array-ref
+                (struct-get tc-lazy-global-table-state agg-align-cache)
+                0)
+              31)
+            (=
+              (array-ref
+                (struct-get tc-lazy-global-table-state agg-regwords-cache)
+                0)
+              37)
+            (=
+              (array-ref
+                (struct-get
+                  tc-lazy-global-table-state
+                  lazy-import-stub-module-ids)
+                0)
+              41)
+            (match (array-ref
+              (struct-get tc-lazy-global-table-state agg-layout-cache)
+              0)
               [(TcAggLayoutCacheSlot.Empty) true]
               [_ false])
-            (= (array-ref macro-unqualified-import-cache-module-keys 0) 43))]
+            (string.eq
+              (array-ref
+                (struct-get
+                  tc-lazy-global-table-state
+                  macro-abstract-proof-qualified-keys)
+                0)
+              "tc-lazy-table-storage")
+            (=
+              (array-ref
+                (struct-get
+                  (& tc-lazy-global-table-state)
+                  macro-unqualified-import-cache-module-keys)
+                0)
+              43))]
         (begin
-          (array-set! tc-type-needs-resolution-slots 0 0)
-          (array-set! tc-agg-size-cache 0 0)
-          (array-set! tc-agg-align-cache 0 0)
-          (array-set! tc-agg-regwords-cache 0 0)
-          (array-set! tc-lazy-import-stub-module-ids 0 0)
-          (array-set! macro-unqualified-import-cache-module-keys 0 0)
+          (array-set!
+            (struct-get tc-lazy-global-table-state type-needs-resolution-slots)
+            0
+            0)
+          (array-set!
+            (struct-get tc-lazy-global-table-state agg-size-cache)
+            0
+            0)
+          (array-set!
+            (struct-get tc-lazy-global-table-state agg-align-cache)
+            0
+            0)
+          (array-set!
+            (struct-get tc-lazy-global-table-state agg-regwords-cache)
+            0
+            0)
+          (array-set!
+            (struct-get tc-lazy-global-table-state lazy-import-stub-module-ids)
+            0
+            0)
+          (array-set!
+            (struct-get
+              tc-lazy-global-table-state
+              macro-abstract-proof-qualified-keys)
+            0
+            "")
+          (array-set!
+            (struct-get
+              tc-lazy-global-table-state
+              macro-unqualified-import-cache-module-keys)
+            0
+            0)
           (let
             [unused-unsafe-lifetime? : bool
               (tc-unused-unsafe-storage-lifetime-ok?)]
@@ -79395,7 +79772,12 @@
         (begin
           (while (< i macro-unqualified-import-cache-capacity)
             (begin
-              (array-set! macro-unqualified-import-cache-module-keys i 0)
+              (array-set!
+                (struct-get
+                  tc-lazy-global-table-state
+                  macro-unqualified-import-cache-module-keys)
+                i
+                0)
               (set! i (+ i 1))))
           (set! macro-unqualified-import-cache-count 0)
           (set!
@@ -79426,18 +79808,30 @@
         (< steps macro-unqualified-import-cache-capacity))
         (let
           [slot : i64
-            (array-ref macro-unqualified-import-cache-module-keys cursor)]
+            (array-ref
+              (struct-get
+                (& tc-lazy-global-table-state)
+                macro-unqualified-import-cache-module-keys)
+              cursor)]
           (if (= slot 0)
             (set! done true)
             (if (and
               (= slot module-key)
               (=
-                (array-ref macro-unqualified-import-cache-name-keys cursor)
+                (array-ref
+                  (struct-get
+                    (& tc-lazy-global-table-state)
+                    macro-unqualified-import-cache-name-keys)
+                  cursor)
                 name-key))
               (begin
                 (set!
                   out
-                  (array-ref macro-unqualified-import-cache-values cursor))
+                  (array-ref
+                    (struct-get
+                      (& tc-lazy-global-table-state)
+                      macro-unqualified-import-cache-values)
+                    cursor))
                 (set! done true))
               (begin
                 (set!
@@ -79468,18 +79862,31 @@
           (< steps macro-unqualified-import-cache-capacity))
           (let
             [slot : i64
-              (array-ref macro-unqualified-import-cache-module-keys cursor)]
+              (array-ref
+                (struct-get
+                  (& tc-lazy-global-table-state)
+                  macro-unqualified-import-cache-module-keys)
+                cursor)]
             (if (= slot 0)
               (begin
                 (array-set!
-                  macro-unqualified-import-cache-module-keys
+                  (struct-get
+                    (& tc-lazy-global-table-state)
+                    macro-unqualified-import-cache-module-keys)
                   cursor
                   module-key)
                 (array-set!
-                  macro-unqualified-import-cache-name-keys
+                  (struct-get
+                    (& tc-lazy-global-table-state)
+                    macro-unqualified-import-cache-name-keys)
                   cursor
                   name-key)
-                (array-set! macro-unqualified-import-cache-values cursor value)
+                (array-set!
+                  (struct-get
+                    (& tc-lazy-global-table-state)
+                    macro-unqualified-import-cache-values)
+                  cursor
+                  value)
                 (set!
                   macro-unqualified-import-cache-count
                   (+ macro-unqualified-import-cache-count 1))
@@ -79487,7 +79894,11 @@
               (if (and
                 (= slot module-key)
                 (=
-                  (array-ref macro-unqualified-import-cache-name-keys cursor)
+                  (array-ref
+                    (struct-get
+                      (& tc-lazy-global-table-state)
+                      macro-unqualified-import-cache-name-keys)
+                    cursor)
                   name-key))
                 (set! done true)
                 (begin

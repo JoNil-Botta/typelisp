@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# Build the host-native stdlib comptime image catalog consumed by include-bin.
+# Build the host-native stdlib comptime image catalog consumed by the
+# compiler's `include-str-lzss` deployment envelope.
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 

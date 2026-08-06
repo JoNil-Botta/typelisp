@@ -7,7 +7,8 @@ set -eu
 # scalar-fair clang -O2 -fno-vectorize/-fno-slp-vectorize row. Measurement may
 # also report auto-vectorized clang -O2, but a baseline chooses whether that row
 # is gated by including benchmark/c/<name>. The self-compile metric carries a
-# small CI tolerance, but its absolute cachegrind count is not portable between
+# one-part-per-million CI tolerance, but its absolute cachegrind count is not
+# portable between
 # local WSL/Linux environments and GitHub-hosted Linux. Local comparisons
 # therefore report that row without gating it; reviewers measure branch deltas
 # by running measure-instruction-counts.sh on both trees on one host.
@@ -29,9 +30,11 @@ DEFAULT_WORKDIR="target/instruction-count-check"
 BASELINE=${TYPELISP_IR_CHECK_BASELINE:-$DEFAULT_BASELINE}
 RUNS=${TYPELISP_IR_CHECK_RUNS:-1}
 BENCHMARKS=${TYPELISP_IR_CHECK_BENCHMARKS:-$DEFAULT_BENCHMARKS}
-SELF_COMPILE_TOLERANCE_PPM=${TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM:-5000}
+SELF_COMPILE_TOLERANCE_PPM=${TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM:-1}
 STALE_BUDGET_PCT=${TYPELISP_IR_STALE_BUDGET_PCT:-60}
 WORKDIR=${TYPELISP_IR_CHECK_OUT:-$DEFAULT_WORKDIR}
+BASELINE_SOURCE=${TYPELISP_IR_BASELINE_SOURCE:-$ROOT/perf/insn-exec-baseline-source.txt}
+PR_BASE_SHA=${TYPELISP_IR_PR_BASE_SHA:-}
 UPDATE_BASELINE=0
 BENCHMARKS_ONLY=0
 SELF_COMPILE_ONLY=0
@@ -73,7 +76,11 @@ Environment:
   TYPELISP_IR_CHECK_BENCHMARKS  Default --benchmarks
   TYPELISP_IR_CHECK_BASELINE    Default --baseline
   TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM
-                                Default self_compile tolerance in ppm (5000 = 0.5%)
+                                Default self_compile tolerance in ppm (1 = 0.0001%)
+  TYPELISP_IR_BASELINE_SOURCE   File containing the commit whose main-tree
+                                self_compile inputs were measured
+  TYPELISP_IR_PR_BASE_SHA       Pull-request base commit used to distinguish a
+                                stale main baseline from this PR's own delta
   TYPELISP_IR_STALE_BUDGET_PCT  Warn when a tolerated row uses this share of its
                                 tolerance (default 60), so accumulated drift is
                                 visible before it lands on an unrelated change
@@ -340,6 +347,73 @@ compare_counts() {
         "$IR_COMPARE_AWK" "$1" "$2"
 }
 
+print_self_compile_failure_origin() {
+    _psfo_kind=$1
+    _psfo_source=$2
+    _psfo_base=$3
+    case "$_psfo_kind" in
+        stale)
+            echo "[ir-check] baseline-stale: main changed self_compile inputs after" >&2
+            echo "[ir-check] measured commit $_psfo_source and before PR base $_psfo_base." >&2
+            echo "[ir-check] Do not attribute the accumulated delta to this PR. The post-merge" >&2
+            echo "[ir-check] ratchet lane should open a CI-owned refresh PR for current main." >&2
+            ;;
+        pr)
+            echo "[ir-check] pr-delta: the baseline covers this PR's main base ($_psfo_base)." >&2
+            echo "[ir-check] This branch changed self_compile; ratchet an intentional change" >&2
+            echo "[ir-check] to the exact current value printed above in the same PR." >&2
+            ;;
+        *)
+            echo "[ir-check] self_compile attribution unavailable; compare the baseline's" >&2
+            echo "[ir-check] measured main commit with this PR base before assigning the delta." >&2
+            ;;
+    esac
+}
+
+report_self_compile_failure_origin() {
+    _rsfo_diff=$1
+    if ! grep -E '^self_compile/compile_cli_opt1 .* (REGRESSION|IMPROVEMENT)' \
+        "$_rsfo_diff" >/dev/null; then
+        return 0
+    fi
+
+    _rsfo_source=
+    if [ -f "$BASELINE_SOURCE" ]; then
+        _rsfo_source=$(sed -n '1p' "$BASELINE_SOURCE" | tr -d '\r')
+    fi
+    case "$_rsfo_source" in
+        "" | *[!0-9a-fA-F]*)
+            print_self_compile_failure_origin unknown "<unknown>" "${PR_BASE_SHA:-<unknown>}"
+            return 0
+            ;;
+    esac
+    case "$PR_BASE_SHA" in
+        "" | *[!0-9a-fA-F]*)
+            print_self_compile_failure_origin unknown "$_rsfo_source" "<unknown>"
+            return 0
+            ;;
+    esac
+    if ! git cat-file -e "$_rsfo_source^{commit}" 2>/dev/null ||
+        ! git cat-file -e "$PR_BASE_SHA^{commit}" 2>/dev/null; then
+        print_self_compile_failure_origin unknown "$_rsfo_source" "$PR_BASE_SHA"
+        return 0
+    fi
+
+    # These are the inputs to the opt2-built compiler and its compile of
+    # src/main.tl. Gate-only scripts are deliberately absent: changing a report
+    # must not make a previously current compiler measurement look stale.
+    if git diff --quiet "$_rsfo_source" "$PR_BASE_SHA" -- \
+        src stdlib \
+        scripts/build-stage0.sh \
+        scripts/check-bootstrap-fixpoint.sh \
+        scripts/lib-native-link.sh \
+        scripts/measure-instruction-counts.sh; then
+        print_self_compile_failure_origin pr "$_rsfo_source" "$PR_BASE_SHA"
+    else
+        print_self_compile_failure_origin stale "$_rsfo_source" "$PR_BASE_SHA"
+    fi
+}
+
 # Host-independent coverage for the comparison itself: no compiler, no
 # valgrind, no measurement. Fixtures use the real numbers from the runs that
 # motivated the budget annotation so the cases stay recognizable.
@@ -515,21 +589,21 @@ self_test() {
     SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
     BENCHMARKS=arith_loop
     # 55356290376 is the committed self_compile baseline these cases were taken
-    # against; 276781451 is its 0.5% tolerance.
+    # against; 55356 is its one-part-per-million tolerance.
     self_test_row 437500077 55356290376 > "$SELF_TEST_DIR/base.tsv"
-    self_test_row 437500077 55608478646 > "$SELF_TEST_DIR/drifted.tsv"
-    self_test_row 437500077 55667745289 > "$SELF_TEST_DIR/regressed.tsv"
-    self_test_row 437500077 55366290376 > "$SELF_TEST_DIR/small.tsv"
+    self_test_row 437500077 55356340376 > "$SELF_TEST_DIR/drifted.tsv"
+    self_test_row 437500077 55356352376 > "$SELF_TEST_DIR/regressed.tsv"
+    self_test_row 437500077 55356300376 > "$SELF_TEST_DIR/small.tsv"
     self_test_row 437500077 55356290376 > "$SELF_TEST_DIR/exact.tsv"
     self_test_row 437000000 55356290376 > "$SELF_TEST_DIR/improved.tsv"
     printf 'name\tir_count\nself_compile/compile_cli_opt1\t55356290376\n' \
         > "$SELF_TEST_DIR/missing-row.tsv"
 
     _st_status=0
-    # A tolerated row at 91% of budget still passes, and says so. This is the
+    # A tolerated row at 90% of budget still passes, and says so. This is the
     # case that silently consumed the budget before the annotation existed.
     self_test_case drifted "$SELF_TEST_DIR/drifted.tsv" \
-        "within-tolerance (91% of tolerance)" 0 yes || _st_status=1
+        "within-tolerance (90% of tolerance)" 0 yes || _st_status=1
     # A regression still fails, now with the share of budget it used.
     self_test_case regressed "$SELF_TEST_DIR/regressed.tsv" \
         "REGRESSION (112% of tolerance)" 1 yes || _st_status=1
@@ -543,6 +617,27 @@ self_test() {
     # Fail-closed shapes are unchanged.
     self_test_case missing-row "$SELF_TEST_DIR/missing-row.tsv" \
         "missing-current" 1 no || _st_status=1
+
+    _st_origin_stale=$(print_self_compile_failure_origin \
+        stale 1111111111111111111111111111111111111111 \
+        2222222222222222222222222222222222222222 2>&1)
+    _st_origin_pr=$(print_self_compile_failure_origin \
+        pr 1111111111111111111111111111111111111111 \
+        2222222222222222222222222222222222222222 2>&1)
+    case "$_st_origin_stale" in
+        *"baseline-stale:"*"Do not attribute"*) ;;
+        *)
+            echo "self-test failure-origin-stale: missing stale-baseline guidance" >&2
+            _st_status=1
+            ;;
+    esac
+    case "$_st_origin_pr" in
+        *"pr-delta:"*"same PR"*) ;;
+        *)
+            echo "self-test failure-origin-pr: missing PR-delta guidance" >&2
+            _st_status=1
+            ;;
+    esac
 
     SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=0
     set +e
@@ -904,6 +999,7 @@ if compare_counts "$BASELINE" "$CURRENT" > "$DIFF_OUT"; then
     echo "[ir-check] instruction-count baseline matches $BASELINE"
 else
     cat "$DIFF_OUT" >&2
+    report_self_compile_failure_origin "$DIFF_OUT"
     echo "[ir-check] instruction counts differ from $BASELINE" >&2
     echo "[ir-check] update intentional changes with: $update_command" >&2
     exit 1

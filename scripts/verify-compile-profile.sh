@@ -114,6 +114,9 @@ LAYOUT_STDERR="$WORKDIR/profile-layout.stderr"
 CONCAT_ASM="$WORKDIR/profile-string-concat.s"
 CONCAT_STDOUT="$WORKDIR/profile-string-concat.stdout"
 CONCAT_STDERR="$WORKDIR/profile-string-concat.stderr"
+SPECIALIZATION_ASM="$WORKDIR/profile-specialization.s"
+SPECIALIZATION_STDOUT="$WORKDIR/profile-specialization.stdout"
+SPECIALIZATION_STDERR="$WORKDIR/profile-specialization.stderr"
 OPT_ASM="$WORKDIR/profile-opt.s"
 OPT_STDOUT="$WORKDIR/profile-opt.stdout"
 OPT_STDERR="$WORKDIR/profile-opt.stderr"
@@ -1242,6 +1245,60 @@ assert_profile_live_counter_eq_in \
 assert_contains "$CONCAT_STDERR" "compile-profile|intern.render_calls|"
 assert_contains "$CONCAT_STDERR" "compile-profile-detail|intern.phase.render|"
 assert_contains "$CONCAT_STDERR" "compile-profile-detail|intern.lower_phase.render|"
+assert_contains "$CONCAT_STDERR" \
+    "compile-profile|lower.specialization.structural_keys.created|"
+assert_contains "$CONCAT_STDERR" \
+    "compile-profile|lower.specialization.structural_keys.reused|"
+assert_contains "$CONCAT_STDERR" \
+    "compile-profile|lower.specialization.generated_text.materialized|"
+assert_contains "$CONCAT_STDERR" \
+    "compile-profile|lower.specialization.render.calls|"
+assert_contains "$CONCAT_STDERR" \
+    "compile-profile|lower.specialization.render.cache_hits|"
+assert_contains "$CONCAT_STDERR" \
+    "compile-profile|lower.specialization.render.cache_misses|"
+
+echo "[compile-profile] compile specialization counter fixture"
+if ! "$PROFILE_BIN" compile tests/integration/comptime_type_specialization.tl \
+    -o "$SPECIALIZATION_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$SPECIALIZATION_STDOUT" 2> "$SPECIALIZATION_STDERR"; then
+    show_failure_logs "$SPECIALIZATION_STDOUT" "$SPECIALIZATION_STDERR"
+    fail "profiled specialization fixture compile failed"
+fi
+assert_profile_live_counter_at_least_in \
+    "$SPECIALIZATION_STDERR" \
+    "lower.specialization.structural_keys.created" \
+    1 \
+    "$SPECIALIZATION_STDOUT" \
+    "$SPECIALIZATION_STDERR"
+assert_profile_live_counter_eq_in \
+    "$SPECIALIZATION_STDERR" \
+    "lower.specialization.generated_text.materialized" \
+    0 \
+    "$SPECIALIZATION_STDOUT" \
+    "$SPECIALIZATION_STDERR"
+assert_profile_live_counter_eq_in \
+    "$SPECIALIZATION_STDERR" \
+    "lower.specialization.render.calls" \
+    1 \
+    "$SPECIALIZATION_STDOUT" \
+    "$SPECIALIZATION_STDERR"
+assert_profile_live_counter_eq_in \
+    "$SPECIALIZATION_STDERR" \
+    "lower.specialization.render.cache_hits" \
+    0 \
+    "$SPECIALIZATION_STDOUT" \
+    "$SPECIALIZATION_STDERR"
+assert_profile_live_counter_eq_in \
+    "$SPECIALIZATION_STDERR" \
+    "lower.specialization.render.cache_misses" \
+    1 \
+    "$SPECIALIZATION_STDOUT" \
+    "$SPECIALIZATION_STDERR"
 
 echo "[compile-profile] check macro detail fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_macro_detail.tl \

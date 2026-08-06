@@ -14,9 +14,7 @@
 
 (defstruct GenRegistry
   (index spec_id_i64_map.Map)
-  (key-ids (__tl_dyn-array i64))
   (decls (__tl_dyn-array ast.AstDecl))
-  (next (__tl_dyn-array i64))
   (len i64))
 
 (defenum SpecTemplate
@@ -41,6 +39,22 @@
   (values (__tl_dyn-array SpecMaybeTemplate))
   (shadowed SpecTemplateShadowList))
 
+;; Comptime argument vectors and the two substitution environments keep their
+;; head at slot 0, so every lookup scans forward from the newest binding and
+;; shadowing still resolves head-first. `cons` copies into a right-sized buffer
+;; so an inner instantiation can never write into the slot of an outer subst
+;; that is still in use; the lists are one entry per comptime parameter.
+(defstruct SpecValueList
+  (slots (__tl_dyn-array ctfe.CompilerCtfeValue))
+  (len i64))
+
+;; A generated function symbol is a normal one-word name handle backed by this
+;; session-owned structural recipe until the specialization-to-lowering text
+;; boundary materializes its deterministic spelling.
+(defenum SpecGeneratedSymbolRecords
+  (Nil)
+  (Cons i64 i64 String SpecValueList (Box SpecGeneratedSymbolRecords)))
+
 ;; All production specialization work is anchored to one compile-job owner.
 ;; Expression reads use the stable segment-bases snapshot; pushes and type
 ;; reads/construction continue through the explicit pool context because the
@@ -48,7 +62,8 @@
 (defstruct SpecOwnerContext
   (pools ast.AstNodePoolContext)
   (expr-segment-bases i64)
-  (intern-state spec_ci.InternCompatState))
+  (intern-state spec_ci.InternCompatState)
+  (generated-symbol-records (__tl_dyn-array SpecGeneratedSymbolRecords)))
 
 (define (spec-owner-context-new
   [pools : ast.AstNodePoolContext]
@@ -56,7 +71,8 @@
   (SpecOwnerContext
     pools
     (ast.ast-node-pool-context-expr-segment-bases pools)
-    intern-state))
+    intern-state
+    (array.make-array SpecGeneratedSymbolRecords 1)))
 
 (define (spec-owner-pools [owner : SpecOwnerContext]) : ast.AstNodePoolContext
   (struct-get owner pools))
@@ -85,19 +101,120 @@
     (spec_ci.intern-source-name-session-handle-from-state
       (spec-owner-intern-state owner))))
 
-;; The specialization cache (key -> generated function name) is a
-;; generated-name-id -> generated-name-id hashmap.
+;; The specialization cache maps a canonical structural-key handle directly to
+;; its session-owned generated-symbol handle.
 (defenum SpecState
   (State ast.AstDeclList spec_id_i64_map.Map ctfe.CtfeEnv SpecOwnerContext))
 
-;; Comptime argument vectors and the two substitution environments keep their
-;; head at slot 0, so every lookup scans forward from the newest binding and
-;; shadowing still resolves head-first. `cons` copies into a right-sized buffer
-;; so an inner instantiation can never write into the slot of an outer subst
-;; that is still in use; the lists are one entry per comptime parameter.
-(defstruct SpecValueList
-  (slots (__tl_dyn-array ctfe.CompilerCtfeValue))
-  (len i64))
+;; Specialization identity is a one-word handle into the compile session's
+;; canonical structural table. The handle is intentionally distinct from an
+;; interned renderable name: cache lookup must never require mangling text.
+(defstruct SpecStructuralKey
+  (value i64))
+
+(defmacro (spec-structural-key-raw [key : Expr]) : i64
+  `(struct-get ,key value))
+
+(cfg
+  compile-profile
+  (define spec-profile-structural-key-created : i64
+    0))
+(cfg
+  compile-profile
+  (define spec-profile-structural-key-reused : i64
+    0))
+(cfg
+  compile-profile
+  (define spec-profile-name-render-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define spec-profile-name-render-cache-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define spec-profile-name-render-cache-misses : i64
+    0))
+(cfg
+  compile-profile
+  (define spec-profile-generated-text-materialized : i64
+    0))
+
+(define (spec-profile-reset!) : unit
+  (cfg
+    compile-profile
+    (begin
+      (set! spec-profile-structural-key-created 0)
+      (set! spec-profile-structural-key-reused 0)
+      (set! spec-profile-name-render-calls 0)
+      (set! spec-profile-name-render-cache-hits 0)
+      (set! spec-profile-name-render-cache-misses 0)
+      (set! spec-profile-generated-text-materialized 0))
+    unit))
+
+(define (spec-profile-note-generated-text-materialized) : unit
+  (cfg
+    compile-profile
+    (set!
+      spec-profile-generated-text-materialized
+      (+ spec-profile-generated-text-materialized 1))
+    unit))
+
+(define (spec-profile-note-structural-key [created? : bool]) : unit
+  (cfg
+    compile-profile
+    (if created?
+      (set!
+        spec-profile-structural-key-created
+        (+ spec-profile-structural-key-created 1))
+      (set!
+        spec-profile-structural-key-reused
+        (+ spec-profile-structural-key-reused 1)))
+    unit))
+
+(define (spec-profile-note-name-render [cache-hit? : bool]) : unit
+  (cfg
+    compile-profile
+    (begin
+      (set! spec-profile-name-render-calls (+ spec-profile-name-render-calls 1))
+      (if cache-hit?
+        (set!
+          spec-profile-name-render-cache-hits
+          (+ spec-profile-name-render-cache-hits 1))
+        (set!
+          spec-profile-name-render-cache-misses
+          (+ spec-profile-name-render-cache-misses 1))))
+    unit))
+
+(cfg
+  compile-profile
+  (define (spec-profile-structural-key-created-value) : i64
+    spec-profile-structural-key-created))
+
+(cfg
+  compile-profile
+  (define (spec-profile-structural-key-reused-value) : i64
+    spec-profile-structural-key-reused))
+
+(cfg
+  compile-profile
+  (define (spec-profile-name-render-calls-value) : i64
+    spec-profile-name-render-calls))
+
+(cfg
+  compile-profile
+  (define (spec-profile-name-render-cache-hits-value) : i64
+    spec-profile-name-render-cache-hits))
+
+(cfg
+  compile-profile
+  (define (spec-profile-name-render-cache-misses-value) : i64
+    spec-profile-name-render-cache-misses))
+
+(cfg
+  compile-profile
+  (define (spec-profile-generated-text-materialized-value) : i64
+    spec-profile-generated-text-materialized))
 
 (defenum SpecValueBinding
   (Bind i64 ctfe.CompilerCtfeValue))
@@ -220,10 +337,6 @@
 (defenum SpecMaybeId
   (None)
   (Some i64))
-
-(defenum SpecGeneratedNameCacheProbe
-  (Found i64)
-  (Vacant i64))
 
 (defenum SpecMaybeDecl
   (None)
@@ -1283,82 +1396,648 @@
       name
       (string.append "_" (spec-values-key-with-owner owner values)))))
 
+;; Structural specialization records use only the pair/triple record kinds
+;; supplied by compiler_intern. A negative tag in the left lane gives every
+;; node an explicit domain; the remaining lanes contain scalar payloads,
+;; content atoms, or other session-owned structural handles.
+(define (spec-structural-node-with-owner
+  [owner : SpecOwnerContext]
+  [tag : i64]
+  [left : i64]
+  [right : i64]) : SpecStructuralKey
+  (let
+    [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
+    [before : i64 (spec_ci.intern-compat-state-structural-count intern-state)]
+    [raw : i64
+      (spec_ci.intern-compat-state-composite-triple-id
+        intern-state
+        tag
+        left
+        right)]
+    (begin
+      (spec-profile-note-structural-key
+        (> (spec_ci.intern-compat-state-structural-count intern-state) before))
+      (SpecStructuralKey raw))))
+
+(define (spec-structural-content-atom-with-owner
+  [owner : SpecOwnerContext]
+  [text : String]) : i64
+  ;; The enclosing structural tag defines the value domain. Canonicalizing the
+  ;; bytes here deliberately ignores parser/generated provenance, matching the
+  ;; old rendered-key equivalence without using a mangled String as identity.
+  (spec_ci.intern-compat-state-intern (spec-owner-intern-state owner) text))
+
+(define (spec-structural-generated-text-atom-with-owner
+  [owner : SpecOwnerContext]
+  [text : String]) : i64
+  (let
+    [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
+    (begin
+      (match (spec_ci.intern-compat-state-lookup intern-state text)
+        [(spec_ci.InternLookupFound _) unit]
+        [(spec_ci.InternLookupMissing)
+          (spec-profile-note-generated-text-materialized)])
+      (spec_ci.intern-compat-state-intern intern-state text))))
+
+(define (spec-type-list-structural-key-at-with-owner
+  [owner : SpecOwnerContext]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : SpecStructuralKey
+  (if (>= index (ast.ast-type-list-len types))
+    (SpecStructuralKey 0)
+    (let
+      [head : SpecStructuralKey
+        (spec-type-structural-key-with-owner
+          owner
+          (spec-owner-type-get
+            owner
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))]
+      [tail : SpecStructuralKey
+        (spec-type-list-structural-key-at-with-owner owner types (+ index 1))]
+      (spec-structural-node-with-owner
+        owner
+        -1
+        (spec-structural-key-raw head)
+        (spec-structural-key-raw tail)))))
+
+(define (spec-type-list-structural-key-with-owner
+  [owner : SpecOwnerContext]
+  [types : ast.AstTypeList]) : SpecStructuralKey
+  (spec-type-list-structural-key-at-with-owner owner (& types) 0))
+
+(define (spec-lifetime-list-structural-key-at-with-owner
+  [owner : SpecOwnerContext]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [index : i64]) : SpecStructuralKey
+  (if (>= index (ast.ast-lifetime-list-len lifetimes))
+    (SpecStructuralKey 0)
+    (let
+      [name-id : i64
+        (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback))]
+      [atom : i64
+        (spec-structural-content-atom-with-owner
+          owner
+          (spec_ci.intern-compat-state-str
+            (spec-owner-intern-state owner)
+            name-id))]
+      [tail : SpecStructuralKey
+        (spec-lifetime-list-structural-key-at-with-owner
+          owner
+          lifetimes
+          (+ index 1))]
+      (spec-structural-node-with-owner
+        owner
+        -2
+        atom
+        (spec-structural-key-raw tail)))))
+
+(define (spec-lifetime-list-structural-key-with-owner
+  [owner : SpecOwnerContext]
+  [lifetimes : ast.AstLifetimeList]) : SpecStructuralKey
+  (spec-lifetime-list-structural-key-at-with-owner owner (& lifetimes) 0))
+
+(define (spec-type-structural-key-with-owner
+  [owner : SpecOwnerContext]
+  [ty : ast.AstType]) : SpecStructuralKey
+  (match ty
+    [(ast.AstType.I64) (spec-structural-node-with-owner owner -100 0 0)]
+    [(ast.AstType.I32) (spec-structural-node-with-owner owner -101 0 0)]
+    [(ast.AstType.I16) (spec-structural-node-with-owner owner -102 0 0)]
+    [(ast.AstType.I8) (spec-structural-node-with-owner owner -103 0 0)]
+    [(ast.AstType.U64) (spec-structural-node-with-owner owner -104 0 0)]
+    [(ast.AstType.U32) (spec-structural-node-with-owner owner -105 0 0)]
+    [(ast.AstType.U16) (spec-structural-node-with-owner owner -106 0 0)]
+    [(ast.AstType.U8) (spec-structural-node-with-owner owner -107 0 0)]
+    [(ast.AstType.F64) (spec-structural-node-with-owner owner -108 0 0)]
+    [(ast.AstType.F32) (spec-structural-node-with-owner owner -109 0 0)]
+    [(ast.AstType.Bool) (spec-structural-node-with-owner owner -110 0 0)]
+    [(ast.AstType.Char) (spec-structural-node-with-owner owner -111 0 0)]
+    [(ast.AstType.String) (spec-structural-node-with-owner owner -112 0 0)]
+    [(ast.AstType.Str) (spec-structural-node-with-owner owner -113 0 0)]
+    [(ast.AstType.Bytes) (spec-structural-node-with-owner owner -114 0 0)]
+    [(ast.AstType.Unit) (spec-structural-node-with-owner owner -115 0 0)]
+    [(ast.AstType.Never) (spec-structural-node-with-owner owner -116 0 0)]
+    [(ast.AstType.Expr) (spec-structural-node-with-owner owner -117 0 0)]
+    [(ast.AstType.ExprList) (spec-structural-node-with-owner owner -118 0 0)]
+    [(ast.AstType.Func args ret)
+      (let
+        [arg-key : SpecStructuralKey
+          (spec-type-list-structural-key-with-owner owner (box-get args))]
+        [ret-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner ret))]
+        (spec-structural-node-with-owner
+          owner
+          -119
+          (spec-structural-key-raw arg-key)
+          (spec-structural-key-raw ret-key)))]
+    [(ast.AstType.Tuple elems)
+      (let
+        [elem-key : SpecStructuralKey
+          (spec-type-list-structural-key-with-owner owner (box-get elems))]
+        (spec-structural-node-with-owner
+          owner
+          -120
+          (spec-structural-key-raw elem-key)
+          0))]
+    [(ast.AstType.Array elem count)
+      (let
+        [elem-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner elem))]
+        (spec-structural-node-with-owner
+          owner
+          -121
+          (spec-structural-key-raw elem-key)
+          count))]
+    [(ast.AstType.DynArray elem)
+      (let
+        [elem-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner elem))]
+        (spec-structural-node-with-owner
+          owner
+          -122
+          (spec-structural-key-raw elem-key)
+          0))]
+    [(ast.AstType.Slice elem)
+      (let
+        [elem-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner elem))]
+        (spec-structural-node-with-owner
+          owner
+          -123
+          (spec-structural-key-raw elem-key)
+          0))]
+    [(ast.AstType.Box elem)
+      (let
+        [elem-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner elem))]
+        (spec-structural-node-with-owner
+          owner
+          -124
+          (spec-structural-key-raw elem-key)
+          0))]
+    [(ast.AstType.Ptr elem)
+      (let
+        [elem-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner elem))]
+        (spec-structural-node-with-owner
+          owner
+          -125
+          (spec-structural-key-raw elem-key)
+          0))]
+    [(ast.AstType.MutPtr elem)
+      (let
+        [elem-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner elem))]
+        (spec-structural-node-with-owner
+          owner
+          -126
+          (spec-structural-key-raw elem-key)
+          0))]
+    [(ast.AstType.Ref region inner)
+      (let
+        [inner-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner inner))]
+        (spec-structural-node-with-owner
+          owner
+          -127
+          (spec-structural-content-atom-with-owner
+            owner
+            (spec_ci.intern-compat-state-str
+              (spec-owner-intern-state owner)
+              region))
+          (spec-structural-key-raw inner-key)))]
+    [(ast.AstType.MutRef region inner)
+      (let
+        [inner-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner inner))]
+        (spec-structural-node-with-owner
+          owner
+          -128
+          (spec-structural-content-atom-with-owner
+            owner
+            (spec_ci.intern-compat-state-str
+              (spec-owner-intern-state owner)
+              region))
+          (spec-structural-key-raw inner-key)))]
+    [(ast.AstType.Region region inner)
+      (let
+        [inner-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner inner))]
+        (spec-structural-node-with-owner
+          owner
+          -129
+          (spec-structural-content-atom-with-owner
+            owner
+            (spec_ci.intern-compat-state-str
+              (spec-owner-intern-state owner)
+              region))
+          (spec-structural-key-raw inner-key)))]
+    [(ast.AstType.Enum name)
+      (spec-structural-node-with-owner
+        owner
+        -130
+        (spec-structural-content-atom-with-owner
+          owner
+          (ast.ast-nominal-name-id-display-with-intern-state
+            (spec-owner-intern-state owner)
+            name))
+        0)]
+    [(ast.AstType.EnumArgs name lifetimes)
+      (let
+        [lifetime-key : SpecStructuralKey
+          (spec-lifetime-list-structural-key-with-owner
+            owner
+            (box-get lifetimes))]
+        (spec-structural-node-with-owner
+          owner
+          -131
+          (spec-structural-content-atom-with-owner
+            owner
+            (ast.ast-nominal-name-id-display-with-intern-state
+              (spec-owner-intern-state owner)
+              name))
+          (spec-structural-key-raw lifetime-key)))]
+    [(ast.AstType.Struct name)
+      (spec-structural-node-with-owner
+        owner
+        -132
+        (spec-structural-content-atom-with-owner
+          owner
+          (ast.ast-nominal-name-id-display-with-intern-state
+            (spec-owner-intern-state owner)
+            name))
+        0)]
+    [(ast.AstType.StructArgs name lifetimes)
+      (let
+        [lifetime-key : SpecStructuralKey
+          (spec-lifetime-list-structural-key-with-owner
+            owner
+            (box-get lifetimes))]
+        (spec-structural-node-with-owner
+          owner
+          -133
+          (spec-structural-content-atom-with-owner
+            owner
+            (ast.ast-nominal-name-id-display-with-intern-state
+              (spec-owner-intern-state owner)
+              name))
+          (spec-structural-key-raw lifetime-key)))]
+    [(ast.AstType.Var name)
+      (spec-structural-node-with-owner
+        owner
+        -134
+        (spec-structural-content-atom-with-owner
+          owner
+          (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) name))
+        0)]
+    [(ast.AstType.VarArgs name lifetimes)
+      (let
+        [lifetime-key : SpecStructuralKey
+          (spec-lifetime-list-structural-key-with-owner
+            owner
+            (box-get lifetimes))]
+        (spec-structural-node-with-owner
+          owner
+          -135
+          (spec-structural-content-atom-with-owner
+            owner
+            (spec_ci.intern-compat-state-str
+              (spec-owner-intern-state owner)
+              name))
+          (spec-structural-key-raw lifetime-key)))]
+    [(ast.AstType.Consume inner)
+      (let
+        [inner-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner inner))]
+        (spec-structural-node-with-owner
+          owner
+          -136
+          (spec-structural-key-raw inner-key)
+          0))]))
+
+(define (spec-value-structural-key-with-owner
+  [owner : SpecOwnerContext]
+  [value : ctfe.CompilerCtfeValue]) : SpecStructuralKey
+  (match value
+    [(ctfe.CompilerCtfeValue.I64 n)
+      (spec-structural-node-with-owner owner -200 n 0)]
+    [(ctfe.CompilerCtfeValue.F64 n)
+      (spec-structural-node-with-owner
+        owner
+        -201
+        (spec-structural-content-atom-with-owner
+          owner
+          (cfloat.compiler-float-format-f64 n))
+        0)]
+    [(ctfe.CompilerCtfeValue.F32 n)
+      (spec-structural-node-with-owner
+        owner
+        -202
+        (spec-structural-content-atom-with-owner
+          owner
+          (cfloat.compiler-float-format-f64
+            (cfloat.compiler-float-round-f32-as-f64 n)))
+        0)]
+    [(ctfe.CompilerCtfeValue.Bool b)
+      (spec-structural-node-with-owner
+        owner
+        -203
+        (if b
+          1
+          0)
+        0)]
+    [(ctfe.CompilerCtfeValue.Char c)
+      (spec-structural-node-with-owner owner -204 (cast c : i64) 0)]
+    [(ctfe.CompilerCtfeValue.String text _)
+      (spec-structural-node-with-owner
+        owner
+        -205
+        (spec-structural-generated-text-atom-with-owner owner text)
+        0)]
+    [(ctfe.CompilerCtfeValue.Name text _)
+      ;; String and Name intentionally share the old content equivalence.
+      (spec-structural-node-with-owner
+        owner
+        -205
+        (spec-structural-generated-text-atom-with-owner owner text)
+        0)]
+    [(ctfe.CompilerCtfeValue.Unit)
+      (spec-structural-node-with-owner owner -206 0 0)]
+    [(ctfe.CompilerCtfeValue.Type ty)
+      (let
+        [type-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner owner ty)]
+        (spec-structural-node-with-owner
+          owner
+          -207
+          (spec-structural-key-raw type-key)
+          0))]
+    [(ctfe.CompilerCtfeValue.Expr _ _)
+      (spec-structural-node-with-owner owner -208 0 0)]
+    [(ctfe.CompilerCtfeValue.CapturedExpr _ _ _)
+      (spec-structural-node-with-owner owner -208 0 0)]
+    [(ctfe.CompilerCtfeValue.ExprList _)
+      (spec-structural-node-with-owner owner -209 0 0)]
+    [(ctfe.CompilerCtfeValue.CapturedExprList _ _)
+      (spec-structural-node-with-owner owner -209 0 0)]
+    [(ctfe.CompilerCtfeValue.ExprClause _)
+      (spec-structural-node-with-owner owner -210 0 0)]
+    [(ctfe.CompilerCtfeValue.CapturedExprClause _ _)
+      (spec-structural-node-with-owner owner -210 0 0)]
+    [(ctfe.CompilerCtfeValue.ExprClauseList _)
+      (spec-structural-node-with-owner owner -211 0 0)]
+    [(ctfe.CompilerCtfeValue.CapturedExprClauseList _ _)
+      (spec-structural-node-with-owner owner -211 0 0)]
+    [(ctfe.CompilerCtfeValue.ExprBindingClause _)
+      (spec-structural-node-with-owner owner -212 0 0)]
+    [(ctfe.CompilerCtfeValue.ExprBindingClauseList _)
+      (spec-structural-node-with-owner owner -213 0 0)]
+    [(ctfe.CompilerCtfeValue.Pattern _)
+      (spec-structural-node-with-owner owner -214 0 0)]
+    [(ctfe.CompilerCtfeValue.PatternList _)
+      (spec-structural-node-with-owner owner -215 0 0)]
+    [(ctfe.CompilerCtfeValue.MatchArm _)
+      (spec-structural-node-with-owner owner -216 0 0)]
+    [(ctfe.CompilerCtfeValue.MatchArmList _)
+      (spec-structural-node-with-owner owner -217 0 0)]
+    [(ctfe.CompilerCtfeValue.LetBinding _)
+      (spec-structural-node-with-owner owner -218 0 0)]
+    [(ctfe.CompilerCtfeValue.LetBindingList _)
+      (spec-structural-node-with-owner owner -219 0 0)]
+    [(ctfe.CompilerCtfeValue.TypeInfo ty)
+      (let
+        [type-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner owner ty)]
+        (spec-structural-node-with-owner
+          owner
+          -220
+          (spec-structural-key-raw type-key)
+          0))]
+    [(ctfe.CompilerCtfeValue.TypeInfoBox ty)
+      (let
+        [type-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner owner ty)]
+        (spec-structural-node-with-owner
+          owner
+          -221
+          (spec-structural-key-raw type-key)
+          0))]
+    [(ctfe.CompilerCtfeValue.TypeInfoList _)
+      (spec-structural-node-with-owner owner -222 0 0)]
+    [(ctfe.CompilerCtfeValue.TypeField _ _)
+      (spec-structural-node-with-owner owner -223 0 0)]
+    [(ctfe.CompilerCtfeValue.TypeFieldList _)
+      (spec-structural-node-with-owner owner -224 0 0)]
+    [(ctfe.CompilerCtfeValue.TypeVariantPayload _)
+      (spec-structural-node-with-owner owner -225 0 0)]
+    [(ctfe.CompilerCtfeValue.TypeVariantPayloadList _)
+      (spec-structural-node-with-owner owner -226 0 0)]
+    [(ctfe.CompilerCtfeValue.TypeVariant _ _)
+      (spec-structural-node-with-owner owner -227 0 0)]
+    [(ctfe.CompilerCtfeValue.TypeVariantList _)
+      (spec-structural-node-with-owner owner -228 0 0)]))
+
+(define (spec-values-structural-key-at-with-owner
+  [owner : SpecOwnerContext]
+  [values : SpecValueList]
+  [index : i64]) : SpecStructuralKey
+  (if (>= index (struct-get values len))
+    (SpecStructuralKey 0)
+    (let
+      [head : SpecStructuralKey
+        (spec-value-structural-key-with-owner
+          owner
+          (array.ref (struct-get values slots) index))]
+      [tail : SpecStructuralKey
+        (spec-values-structural-key-at-with-owner owner values (+ index 1))]
+      (spec-structural-node-with-owner
+        owner
+        -3
+        (spec-structural-key-raw head)
+        (spec-structural-key-raw tail)))))
+
+(define (spec-values-structural-key-with-owner
+  [owner : SpecOwnerContext]
+  [values : SpecValueList]) : SpecStructuralKey
+  (spec-values-structural-key-at-with-owner owner values 0))
+
+(define (spec-specialization-structural-key-with-owner
+  [owner : SpecOwnerContext]
+  [template-name : String]
+  [values : SpecValueList]) : SpecStructuralKey
+  (let
+    ;; InternCompatState lazily initializes on its first content operation;
+    ;; perform that before allocating structural children because initialization
+    ;; also starts a fresh structural generation.
+    [template-atom : i64
+      (spec-structural-content-atom-with-owner owner template-name)]
+    [values-key : SpecStructuralKey
+      (spec-values-structural-key-with-owner owner values)]
+    (spec-structural-node-with-owner
+      owner
+      -300
+      template-atom
+      (spec-structural-key-raw values-key))))
+
+(define (spec-render-specialized-name-with-owner
+  [owner : SpecOwnerContext]
+  [key : SpecStructuralKey]
+  [template-name : String]
+  [values : SpecValueList]) : String
+  (let
+    [raw : i64 (spec-structural-key-raw key)]
+    [cached : String
+      (spec_ci.intern-compat-state-composite-rendered-name
+        (spec-owner-intern-state owner)
+        raw)]
+    (if (> (string.string-length cached) 0)
+      (begin
+        (spec-profile-note-name-render true)
+        cached)
+      (let
+        [rendered : String
+          (spec-specialized-name-with-owner owner template-name values)]
+        (begin
+          (spec-profile-note-name-render false)
+          (spec_ci.intern-compat-state-composite-rendered-name-record!
+            (spec-owner-intern-state owner)
+            raw
+            rendered))))))
+
+(define (spec-reserve-specialized-symbol-with-owner
+  [owner : SpecOwnerContext]
+  [key : SpecStructuralKey]
+  [template-name : String]
+  [values : SpecValueList]) : i64
+  (let
+    [handle : i64
+      (spec_ci.intern-compat-state-generated-symbol-handle
+        (spec-owner-intern-state owner))]
+    [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
+      (struct-get owner generated-symbol-records)]
+    (begin
+      (array-set!
+        records
+        0
+        (SpecGeneratedSymbolRecords.Cons
+          (spec-structural-key-raw key)
+          handle
+          template-name
+          values
+          (box (array-ref records 0))))
+      handle)))
+
+(define (spec-materialize-generated-symbol-records-with-owner!
+  [owner : SpecOwnerContext]
+  [records : SpecGeneratedSymbolRecords]) : unit
+  (let
+    [current : SpecGeneratedSymbolRecords records]
+    [done : bool false]
+    (while (not done)
+      (match current
+        [(SpecGeneratedSymbolRecords.Nil) (set! done true)]
+        [(SpecGeneratedSymbolRecords.Cons
+            raw
+            handle
+            template-name
+            values
+            tail-box)
+          (begin
+            (spec_ci.intern-compat-state-generated-symbol-materialize!
+              (spec-owner-intern-state owner)
+              handle
+              (spec-render-specialized-name-with-owner
+                owner
+                (SpecStructuralKey raw)
+                template-name
+                values))
+            (set! current (box-get tail-box)))]))))
+
+(define (spec-materialize-owner-generated-symbols! [owner : SpecOwnerContext]) : unit
+  (let
+    [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
+      (struct-get owner generated-symbol-records)]
+    (begin
+      (spec-materialize-generated-symbol-records-with-owner!
+        owner
+        (array-ref records 0))
+      (array-set! records 0 (SpecGeneratedSymbolRecords.Nil)))))
+
 (define (gen-registry-empty) : GenRegistry
   (let
     [capacity : i64 64]
-    [key-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
     [decls : (__tl_dyn-array ast.AstDecl)
       (array.make-array ast.AstDecl capacity)]
-    [next : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-    (GenRegistry (spec_id_i64_map.with-capacity capacity) key-ids decls next 0)))
+    (GenRegistry (spec_id_i64_map.with-capacity capacity) decls 0)))
 
-(define (gen-registry-name-key-id [module-id : i64] [name-id : i64]) : i64
-  (if (< module-id 0)
-    name-id
-    (spec_ci.intern-composite-pair-id module-id name-id)))
-
-(define (gen-registry-name-key-id-with-owner
+(define (gen-registry-structural-key-with-owner
   [owner : SpecOwnerContext]
   [module-id : i64]
-  [name-id : i64]) : i64
-  (if (< module-id 0)
-    name-id
-    (spec_ci.intern-compat-state-composite-pair-id
-      (spec-owner-intern-state owner)
-      module-id
-      name-id)))
-
-(define (gen-registry-lookup-slot
-  [registry : GenRegistry]
-  [key : String]
-  [slot : i64]) : GenMaybeEntry
-  (if (< slot 0)
-    (GenMaybeEntry.None)
-    (if (string.eq
-      (spec_ci.intern-str (array.ref (struct-get registry key-ids) slot))
-      key)
-      (GenMaybeEntry.Some (array.ref (struct-get registry decls) slot))
-      (gen-registry-lookup-slot
-        registry
-        key
-        (array.ref (struct-get registry next) slot)))))
-
-(define (gen-registry-lookup
-  [registry : GenRegistry]
-  [name-key-id : i64]
-  [key : String]) : GenMaybeEntry
-  (match (spec_id_i64_map.get (& (struct-get registry index)) name-key-id)
-    [(spec_id_i64_map.LookupFound slot)
-      (gen-registry-lookup-slot registry key slot)]
-    [(spec_id_i64_map.LookupMissing) (GenMaybeEntry.None)]))
-
-(define (gen-registry-lookup-slot-with-owner
-  [owner : SpecOwnerContext]
-  [registry : GenRegistry]
-  [key : String]
-  [slot : i64]) : GenMaybeEntry
-  (if (< slot 0)
-    (GenMaybeEntry.None)
-    (if (string.eq
-      (spec_ci.intern-compat-state-str
-        (spec-owner-intern-state owner)
-        (array.ref (struct-get registry key-ids) slot))
-      key)
-      (GenMaybeEntry.Some (array.ref (struct-get registry decls) slot))
-      (gen-registry-lookup-slot-with-owner
+  [_item-id : i64]
+  [generator : String]
+  [item : String]
+  [arg-key : String]) : SpecStructuralKey
+  (if (gen-full-key? arg-key)
+    ;; An explicitly supplied full key is already the complete identity. Keep
+    ;; its bytes as one tagged content atom without reparsing provenance.
+    (spec-structural-node-with-owner
+      owner
+      -400
+      (spec-structural-content-atom-with-owner owner arg-key)
+      0)
+    (let
+      [module-atom : i64
+        (spec-structural-content-atom-with-owner
+          owner
+          (if (< module-id 0)
+            ""
+            (spec_ci.intern-compat-state-str
+              (spec-owner-intern-state owner)
+              module-id)))]
+      [generator-atom : i64
+        (spec-structural-content-atom-with-owner owner generator)]
+      [item-atom : i64 (spec-structural-content-atom-with-owner owner item)]
+      [arg-atom : i64 (spec-structural-content-atom-with-owner owner arg-key)]
+      [scope : SpecStructuralKey
+        (spec-structural-node-with-owner owner -401 module-atom generator-atom)]
+      [payload : SpecStructuralKey
+        (spec-structural-node-with-owner owner -402 item-atom arg-atom)]
+      (spec-structural-node-with-owner
         owner
-        registry
-        key
-        (array.ref (struct-get registry next) slot)))))
+        -403
+        (spec-structural-key-raw scope)
+        (spec-structural-key-raw payload)))))
 
 (define (gen-registry-lookup-with-owner
-  [owner : SpecOwnerContext]
   [registry : GenRegistry]
-  [name-key-id : i64]
-  [key : String]) : GenMaybeEntry
-  (match (spec_id_i64_map.get (& (struct-get registry index)) name-key-id)
+  [key : SpecStructuralKey]) : GenMaybeEntry
+  (match (spec_id_i64_map.get
+    (& (struct-get registry index))
+    (spec-structural-key-raw key))
     [(spec_id_i64_map.LookupFound slot)
-      (gen-registry-lookup-slot-with-owner owner registry key slot)]
+      (GenMaybeEntry.Some (array.ref (struct-get registry decls) slot))]
     [(spec_id_i64_map.LookupMissing) (GenMaybeEntry.None)]))
 
 (define (gen-registry-copy-decls
@@ -1372,72 +2051,25 @@
       (array-set! dst index (array.ref src index))
       (gen-registry-copy-decls src dst (+ index 1) count))))
 
-(define (gen-registry-copy-i64s
-  [src : (__tl_dyn-array i64)]
-  [dst : (__tl_dyn-array i64)]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (array-set! dst index (array.ref src index))
-      (gen-registry-copy-i64s src dst (+ index 1) count))))
-
 (define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
   (let
     [old-index : spec_id_i64_map.Map (struct-get registry index)]
-    [old-key-ids : (__tl_dyn-array i64) (struct-get registry key-ids)]
     [old-decls : (__tl_dyn-array ast.AstDecl) (struct-get registry decls)]
-    [old-next : (__tl_dyn-array i64) (struct-get registry next)]
     [old-len : i64 (struct-get registry len)]
     [old-capacity : i64 (array.length old-decls)]
     [new-capacity : i64
       (if (< old-capacity 1)
         1
         (* old-capacity 2))]
-    [new-key-ids : (__tl_dyn-array i64) (array.make-array i64 new-capacity)]
     [new-decls : (__tl_dyn-array ast.AstDecl)
       (array.make-array ast.AstDecl new-capacity)]
-    [new-next : (__tl_dyn-array i64) (array.make-array i64 new-capacity)]
     (begin
-      (gen-registry-copy-i64s old-key-ids new-key-ids 0 old-len)
       (gen-registry-copy-decls old-decls new-decls 0 old-len)
-      (gen-registry-copy-i64s old-next new-next 0 old-len)
-      (GenRegistry old-index new-key-ids new-decls new-next old-len))))
-
-(define (gen-registry-insert
-  [registry : GenRegistry]
-  [name-key-id : i64]
-  [key : String]
-  [decl : ast.AstDecl]) : GenRegistry
-  (let
-    [ready : GenRegistry
-      (if (>=
-        (struct-get registry len)
-        (array.length (struct-get registry decls)))
-        (gen-registry-grow registry)
-        registry)]
-    [slot : i64 (struct-get ready len)]
-    [key-ids : (__tl_dyn-array i64) (struct-get ready key-ids)]
-    [decls : (__tl_dyn-array ast.AstDecl) (struct-get ready decls)]
-    [next : (__tl_dyn-array i64) (struct-get ready next)]
-    [index : spec_id_i64_map.Map (struct-get ready index)]
-    [previous : i64
-      (match (spec_id_i64_map.get (& index) name-key-id)
-        [(spec_id_i64_map.LookupFound previous-slot) previous-slot]
-        [(spec_id_i64_map.LookupMissing) -1])]
-    (begin
-      (array-set! key-ids slot (spec_ci.intern-generated-name key))
-      (array-set! decls slot decl)
-      (array-set! next slot previous)
-      (spec_id_i64_map.insert-ref! (&mut index) name-key-id slot)
-      (GenRegistry index key-ids decls next (+ slot 1)))))
+      (GenRegistry old-index new-decls old-len))))
 
 (define (gen-registry-insert-with-owner
-  [owner : SpecOwnerContext]
   [registry : GenRegistry]
-  [name-key-id : i64]
-  [key : String]
+  [key : SpecStructuralKey]
   [decl : ast.AstDecl]) : GenRegistry
   (let
     [ready : GenRegistry
@@ -1447,25 +2079,15 @@
         (gen-registry-grow registry)
         registry)]
     [slot : i64 (struct-get ready len)]
-    [key-ids : (__tl_dyn-array i64) (struct-get ready key-ids)]
     [decls : (__tl_dyn-array ast.AstDecl) (struct-get ready decls)]
-    [next : (__tl_dyn-array i64) (struct-get ready next)]
     [index : spec_id_i64_map.Map (struct-get ready index)]
-    [previous : i64
-      (match (spec_id_i64_map.get (& index) name-key-id)
-        [(spec_id_i64_map.LookupFound previous-slot) previous-slot]
-        [(spec_id_i64_map.LookupMissing) -1])]
     (begin
-      (array-set!
-        key-ids
-        slot
-        (spec_ci.intern-compat-state-generated-name
-          (spec-owner-intern-state owner)
-          key))
       (array-set! decls slot decl)
-      (array-set! next slot previous)
-      (spec_id_i64_map.insert-ref! (&mut index) name-key-id slot)
-      (GenRegistry index key-ids decls next (+ slot 1)))))
+      (spec_id_i64_map.insert-ref!
+        (&mut index)
+        (spec-structural-key-raw key)
+        slot)
+      (GenRegistry index decls (+ slot 1)))))
 
 (define (gen-decl-visible-name-id [decl : ast.AstDecl]) : SpecMaybeId
   (match decl
@@ -2610,40 +3232,47 @@
         (spec_ci.intern-compat-state-str
           (spec-owner-intern-state owner)
           module-id))]
-    [key : String (gen-registration-key module generator item arg-key)]
-    [name-key-id : i64
-      (gen-registry-name-key-id-with-owner owner module-id item-id)]
-    (match (gen-registry-lookup-with-owner owner registry name-key-id key)
+    [structural-key : SpecStructuralKey
+      (gen-registry-structural-key-with-owner
+        owner
+        module-id
+        item-id
+        generator
+        item
+        arg-key)]
+    (match (gen-registry-lookup-with-owner registry structural-key)
       [(GenMaybeEntry.None)
-        (ResultGenDecl.Ok
-          (gen-single-decl-list
-            (ast.ast-decl-comptime-decl-with-meta
-              (ast.AstGeneratedDeclMeta.Some generator item args key)
-              template))
-          (gen-registry-insert-with-owner
-            owner
-            registry
-            name-key-id
-            key
-            template)
-          module-id)]
+        (let
+          ;; AstGeneratedDeclMeta is a persisted diagnostic/output boundary and
+          ;; still carries the stable textual identity. Registry identity above
+          ;; is already structural and never probes this rendered spelling.
+          [key : String (gen-registration-key module generator item arg-key)]
+          (ResultGenDecl.Ok
+            (gen-single-decl-list
+              (ast.ast-decl-comptime-decl-with-meta
+                (ast.AstGeneratedDeclMeta.Some generator item args key)
+                template))
+            (gen-registry-insert-with-owner registry structural-key template)
+            module-id))]
       [(GenMaybeEntry.Some existing)
         (if (gen-decl-eq-with-owner owner env existing template)
           (ResultGenDecl.Ok (ast.ast-decl-list-new) registry module-id)
-          (ResultGenDecl.Err
-            (box
-              (spec-generated-context-diagnostic-with-owner
-                owner
-                (spec-generated-origin-diagnostic-with-owner
+          (let
+            [key : String (gen-registration-key module generator item arg-key)]
+            (ResultGenDecl.Err
+              (box
+                (spec-generated-context-diagnostic-with-owner
                   owner
-                  template
-                  args
-                  (string.append
-                    "generated-decl: duplicate generated key for "
-                    (string.append item " has incompatible payload")))
-                generator
-                item
-                key))))])))
+                  (spec-generated-origin-diagnostic-with-owner
+                    owner
+                    template
+                    args
+                    (string.append
+                      "generated-decl: duplicate generated key for "
+                      (string.append item " has incompatible payload")))
+                  generator
+                  item
+                  key)))))])))
 
 (define (gen-metadata-arg-key-with-owner
   [owner : SpecOwnerContext]
@@ -4315,60 +4944,6 @@
     (spec-owner-intern-state owner)
     name))
 
-(define (spec-generated-name-cache-key-id [name : String]) : i64
-  (- -1024 (bit-and (spec_ci.intern-hash name) 2305843009213693951)))
-
-(define (spec-generated-name-cache-probe-at
-  [cache : spec_id_i64_map.Map]
-  [name : String]
-  [key-id : i64]) : SpecGeneratedNameCacheProbe
-  (match (spec_id_i64_map.get (& cache) key-id)
-    [(spec_id_i64_map.LookupFound generated-name-id)
-      (if (string.eq (spec_ci.intern-str generated-name-id) name)
-        (SpecGeneratedNameCacheProbe.Found generated-name-id)
-        (spec-generated-name-cache-probe-at cache name (+ key-id 1)))]
-    [(spec_id_i64_map.LookupMissing)
-      (SpecGeneratedNameCacheProbe.Vacant key-id)]))
-
-(define (spec-generated-name-cache-probe
-  [cache : spec_id_i64_map.Map]
-  [name : String]) : SpecGeneratedNameCacheProbe
-  (spec-generated-name-cache-probe-at
-    cache
-    name
-    (spec-generated-name-cache-key-id name)))
-
-(define (spec-generated-name-cache-probe-at-with-owner
-  [owner : SpecOwnerContext]
-  [cache : spec_id_i64_map.Map]
-  [name : String]
-  [key-id : i64]) : SpecGeneratedNameCacheProbe
-  (match (spec_id_i64_map.get (& cache) key-id)
-    [(spec_id_i64_map.LookupFound generated-name-id)
-      (if (string.eq
-        (spec_ci.intern-compat-state-str
-          (spec-owner-intern-state owner)
-          generated-name-id)
-        name)
-        (SpecGeneratedNameCacheProbe.Found generated-name-id)
-        (spec-generated-name-cache-probe-at-with-owner
-          owner
-          cache
-          name
-          (+ key-id 1)))]
-    [(spec_id_i64_map.LookupMissing)
-      (SpecGeneratedNameCacheProbe.Vacant key-id)]))
-
-(define (spec-generated-name-cache-probe-with-owner
-  [owner : SpecOwnerContext]
-  [cache : spec_id_i64_map.Map]
-  [name : String]) : SpecGeneratedNameCacheProbe
-  (spec-generated-name-cache-probe-at-with-owner
-    owner
-    cache
-    name
-    (spec-generated-name-cache-key-id name)))
-
 (define (spec-ensure-specialization
   [template : SpecTemplate]
   [values : SpecValueList]
@@ -4384,23 +4959,23 @@
               (spec_ci.intern-compat-state-str
                 (spec-state-intern state)
                 name-id)]
-            [generated-name : String
-              (spec-specialized-name-with-owner
+            [structural-key : SpecStructuralKey
+              (spec-specialization-structural-key-with-owner
                 (spec-state-owner state)
                 name
                 values)]
-            (match (spec-generated-name-cache-probe-with-owner
-              pools
-              cache
-              generated-name)
-              [(SpecGeneratedNameCacheProbe.Found cached-name-id)
+            [cache-key-id : i64 (spec-structural-key-raw structural-key)]
+            (match (spec_id_i64_map.get (& cache) cache-key-id)
+              [(spec_id_i64_map.LookupFound cached-name-id)
                 (ResultSpecEnsure.Ok cached-name-id state)]
-              [(SpecGeneratedNameCacheProbe.Vacant cache-key-id)
+              [(spec_id_i64_map.LookupMissing)
                 (let
                   [generated-name-id : i64
-                    (spec-materialize-generated-name-id-with-owner
+                    (spec-reserve-specialized-symbol-with-owner
                       pools
-                      generated-name)]
+                      structural-key
+                      name
+                      values)]
                   (match (spec-build-specialization params values)
                     [(ResultSpecBuild.Ok runtime-params value-subs type-subs)
                       (match (spec-substitute-types-expr-with-owner
@@ -8074,9 +8649,11 @@
                   [(ResultSpecDecls.Ok rewritten state)
                     (match state
                       [(SpecState.State generated _ _ _)
-                        (ResultSpecProgram.Ok
-                          (ast.ast-program
-                            (spec-decl-list-append rewritten generated)))])]
+                        (begin
+                          (spec-materialize-owner-generated-symbols! owner)
+                          (ResultSpecProgram.Ok
+                            (ast.ast-program
+                              (spec-decl-list-append rewritten generated))))])]
                   [(ResultSpecDecls.Err diag) (ResultSpecProgram.Err diag)])))])]
       [(ResultGenProgram.Err diag) (ResultSpecProgram.Err diag)])))
 
@@ -8122,12 +8699,14 @@
                   [(ResultSpecDeclsWithPaths.Ok rewritten rewritten-paths state)
                     (match state
                       [(SpecState.State generated _ _ _)
-                        (ResultSpecProgramWithPaths.Ok
-                          (ast.ast-program
-                            (spec-decl-list-append rewritten generated))
-                          (spec-decl-path-list-append
-                            rewritten-paths
-                            (spec-generated-paths generated fallback-path)))])]
+                        (begin
+                          (spec-materialize-owner-generated-symbols! owner)
+                          (ResultSpecProgramWithPaths.Ok
+                            (ast.ast-program
+                              (spec-decl-list-append rewritten generated))
+                            (spec-decl-path-list-append
+                              rewritten-paths
+                              (spec-generated-paths generated fallback-path))))])]
                   [(ResultSpecDeclsWithPaths.Err diag)
                     (ResultSpecProgramWithPaths.Err diag)])))])]
       [(ResultGenProgramWithPaths.Err diag)
@@ -8427,6 +9006,122 @@
       (string.eq
         (spec-specialized-name "name" vals-string)
         "__tl_specialized_name_string_3_97_32_98_none"))))
+
+(define (compiler-specialize-structural-key-ok?) : bool
+  (let
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 32 32)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 32 32)]
+    [intern-a : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
+    [intern-b : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
+    [owner-a : SpecOwnerContext (spec-owner-context-new pools-a intern-a)]
+    [owner-b : SpecOwnerContext (spec-owner-context-new pools-b intern-b)]
+    [nested-a : ast.AstType
+      (ast.ast-ty-ptr-with-pools
+        pools-a
+        (ast.ast-ty-array-with-pools pools-a (ast.AstType.I64) 7))]
+    [nested-b : ast.AstType
+      (ast.ast-ty-ptr-with-pools
+        pools-b
+        (ast.ast-ty-array-with-pools pools-b (ast.AstType.I64) 7))]
+    [values-a : SpecValueList
+      (spec-value-cons
+        (ctfe.CompilerCtfeValue.Type nested-a)
+        (spec-value-cons
+          (ctfe.CompilerCtfeValue.I64 -3)
+          (spec-value-cons
+            (ctfe.CompilerCtfeValue.String "a b" 1)
+            (spec-value-list-new))))]
+    [values-a-name : SpecValueList
+      (spec-value-cons
+        (ctfe.CompilerCtfeValue.Type nested-a)
+        (spec-value-cons
+          (ctfe.CompilerCtfeValue.I64 -3)
+          (spec-value-cons
+            (ctfe.CompilerCtfeValue.Name "a b" 999)
+            (spec-value-list-new))))]
+    [values-b : SpecValueList
+      (spec-value-cons
+        (ctfe.CompilerCtfeValue.Type nested-b)
+        (spec-value-cons
+          (ctfe.CompilerCtfeValue.I64 -3)
+          (spec-value-cons
+            (ctfe.CompilerCtfeValue.Name "a b" 4)
+            (spec-value-list-new))))]
+    [key-a : SpecStructuralKey
+      (spec-specialization-structural-key-with-owner owner-a "alloc" values-a)]
+    [count-after-first : i64
+      (spec_ci.intern-compat-state-structural-count intern-a)]
+    [key-a-again : SpecStructuralKey
+      (spec-specialization-structural-key-with-owner
+        owner-a
+        "alloc"
+        values-a-name)]
+    [count-after-repeat : i64
+      (spec_ci.intern-compat-state-structural-count intern-a)]
+    [different : SpecStructuralKey
+      (spec-specialization-structural-key-with-owner
+        owner-a
+        "alloc"
+        (spec-value-cons
+          (ctfe.CompilerCtfeValue.Type nested-a)
+          (spec-value-cons
+            (ctfe.CompilerCtfeValue.I64 -4)
+            (spec-value-cons
+              (ctfe.CompilerCtfeValue.String "a b" 1)
+              (spec-value-list-new)))))]
+    [key-b : SpecStructuralKey
+      (spec-specialization-structural-key-with-owner owner-b "alloc" values-b)]
+    [render-before : String
+      (spec_ci.intern-compat-state-composite-rendered-name
+        intern-a
+        (spec-structural-key-raw key-a))]
+    [symbol-handle : i64
+      (spec-reserve-specialized-symbol-with-owner
+        owner-a
+        key-a
+        "alloc"
+        values-a)]
+    [symbol-before : String
+      (spec_ci.intern-compat-state-str intern-a symbol-handle)]
+    [_materialized : unit (spec-materialize-owner-generated-symbols! owner-a)]
+    [rendered : String (spec_ci.intern-compat-state-str intern-a symbol-handle)]
+    [rendered-again : String
+      (spec-render-specialized-name-with-owner owner-a key-a "alloc" values-a)]
+    [old-raw : i64 (spec-structural-key-raw key-a)]
+    (and
+      (> count-after-first 0)
+      (= count-after-first count-after-repeat)
+      (= (spec-structural-key-raw key-a) (spec-structural-key-raw key-a-again))
+      (not
+        (= (spec-structural-key-raw key-a) (spec-structural-key-raw different)))
+      (not (= (spec-structural-key-raw key-a) (spec-structural-key-raw key-b)))
+      (string.eq render-before "")
+      (string.eq symbol-before "")
+      (spec_ci.intern-compat-state-generated-id-active? intern-a symbol-handle)
+      (not (= symbol-handle (spec-structural-key-raw key-a)))
+      (string.eq
+        rendered
+        "__tl_specialized_alloc_type_ptr_array_i64_7_i64_m3_string_3_97_32_98_none")
+      (string.eq rendered rendered-again)
+      (begin
+        (spec_ci.intern-compat-state-reset-to! intern-a 0)
+        (and
+          (not
+            (spec_ci.intern-compat-state-generated-id-active?
+              intern-a
+              symbol-handle))
+          (not
+            (=
+              old-raw
+              (spec-structural-key-raw
+                (spec-specialization-structural-key-with-owner
+                  owner-a
+                  "alloc"
+                  (spec-value-cons
+                    (ctfe.CompilerCtfeValue.I64 -3)
+                    (spec-value-list-new)))))))))))
 
 ;: Count function declarations named `name` in `decls` (specialized decls are
 ;: emitted as ordinary `AstDecl.DefFn`s, so reuse means a count of exactly 1).
@@ -8944,6 +9639,10 @@
 
 (define (compiler-generated-registry-map-ok?) : bool
   (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
+    [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
     [name-id : i64 (spec-materialize-generated-name-id "RegistryBox")]
     [decl : ast.AstDecl
       (ast.ast-decl-def-struct-id
@@ -8951,16 +9650,17 @@
         ast.AstStructRepr.Default
         ast.AstStructCleanup.No
         (ast.ast-field-def-list-new))]
-    [registry : GenRegistry
-      (gen-registry-insert
-        (gen-registry-empty)
+    [key : SpecStructuralKey
+      (gen-registry-structural-key-with-owner
+        owner
+        -1
         cbi.compiler-builtin-id-fix-x
-        "generated-key"
-        decl)]
-    (match (gen-registry-lookup
-      registry
-      cbi.compiler-builtin-id-fix-x
-      "generated-key")
+        "registry-test"
+        "RegistryBox"
+        "generated-key")]
+    [registry : GenRegistry
+      (gen-registry-insert-with-owner (gen-registry-empty) key decl)]
+    (match (gen-registry-lookup-with-owner registry key)
       [(GenMaybeEntry.Some found) (gen-decl-eq? found decl)]
       [(GenMaybeEntry.None) false])))
 
@@ -9025,6 +9725,7 @@
     (unless (compiler-specialize-raw-pointer-type-ok?) (return 0))
     (unless (compiler-specialize-owner-slice-type-ok?) (return 0))
     (unless (compiler-specialize-name-key-ok?) (return 0))
+    (unless (compiler-specialize-structural-key-ok?) (return 0))
     (unless (compiler-specialize-reuse-ok?) (return 0))
     (unless (compiler-specialize-subst-ok?) (return 0))
     (unless (compiler-specialize-value-subst-ok?) (return 0))

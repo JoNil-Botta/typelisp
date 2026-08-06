@@ -1568,6 +1568,29 @@
 
 (cfg
   compile-profile
+  (define (compiler-lower-profile-specialization-counters) : unit
+    (begin
+      (compiler-lower-profile-counter
+        "specialization.structural_keys.created"
+        (spec.spec-profile-structural-key-created-value))
+      (compiler-lower-profile-counter
+        "specialization.structural_keys.reused"
+        (spec.spec-profile-structural-key-reused-value))
+      (compiler-lower-profile-counter
+        "specialization.generated_text.materialized"
+        (spec.spec-profile-generated-text-materialized-value))
+      (compiler-lower-profile-counter
+        "specialization.render.calls"
+        (spec.spec-profile-name-render-calls-value))
+      (compiler-lower-profile-counter
+        "specialization.render.cache_hits"
+        (spec.spec-profile-name-render-cache-hits-value))
+      (compiler-lower-profile-counter
+        "specialization.render.cache_misses"
+        (spec.spec-profile-name-render-cache-misses-value)))))
+
+(cfg
+  compile-profile
   (define (compiler-lower-profile-string-concat-reset) : unit
     (begin
       (set! compiler-lower-profile-string-concat-trees 0)
@@ -62962,6 +62985,7 @@
   [intern-state : ci.InternCompatState]) : ResultCompilerLower
   (begin
     (cfg compile-profile (compiler-lower-profile-name-reset))
+    (spec.spec-profile-reset!)
     (cfg compile-profile (compiler-lower-profile-start))
     (let
       [needs-specialization : bool
@@ -62998,6 +63022,9 @@
           [(spec.ResultSpecProgramWithPaths.Ok specialized specialized-paths)
             (begin
               (cfg compile-profile (compiler-lower-profile-finish "specialize"))
+              (cfg
+                compile-profile
+                (compiler-lower-profile-specialization-counters))
               (cfg compile-profile (compiler-lower-profile-start))
               (let
                 [prune-names : LowerNameEnv
@@ -63107,6 +63134,9 @@
           [(spec.ResultSpecProgramWithPaths.Err diag)
             (begin
               (cfg compile-profile (compiler-lower-profile-finish "specialize"))
+              (cfg
+                compile-profile
+                (compiler-lower-profile-specialization-counters))
               (ResultCompilerLower.Err
                 (box (lower-diagnostic-with-path (box-get diag) entry-path))))])))))
 

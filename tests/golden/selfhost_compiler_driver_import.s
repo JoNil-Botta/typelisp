@@ -184,18 +184,18 @@ _tl_stdlib_runtime_stdlib_runtime_os_exit:
 .globl _tl_stdlib_runtime_stdlib_runtime_abort_write
     .type _tl_stdlib_runtime_stdlib_runtime_abort_write,@function
 _tl_stdlib_runtime_stdlib_runtime_abort_write:
-    subq $104, %rsp
-    movq %rdi, 88(%rsp)
+    subq $88, %rsp
+    movq %rdi, 72(%rsp)
 .Lf2_entry:
-    movq 88(%rsp), %r10
+    movq 72(%rsp), %r10
     movq 8(%r10), %r8
-    movq %r8, 8(%rsp)
+    movq %r8, 56(%rsp)
     movq (%r10), %r8
     movl $2, %edi
     movq %r8, %rsi
-    movq 8(%rsp), %rdx
+    movq 56(%rsp), %rdx
     call _tl_stdlib_runtime_stdlib_runtime_os_write
-    addq $104, %rsp
+    addq $88, %rsp
     ret
     .size _tl_stdlib_runtime_stdlib_runtime_abort_write, . - _tl_stdlib_runtime_stdlib_runtime_abort_write
 
@@ -495,46 +495,46 @@ tl_shift_abort_at:
 .globl tl_panic_at
     .type tl_panic_at,@function
 tl_panic_at:
-    subq $264, %rsp
-    movq %rdi, 248(%rsp)
-    movq %rsi, 240(%rsp)
+    subq $248, %rsp
+    movq %rdi, 232(%rsp)
+    movq %rsi, 224(%rsp)
 .Lf13_entry:
-    movq 240(%rsp), %r10
+    movq 224(%rsp), %r10
     movq 8(%r10), %r8
-    movq %r8, 8(%rsp)
-    movq %r8, 224(%rsp)
-    cmpq $0, 8(%rsp)
+    movq %r8, 208(%rsp)
+    movq %r8, 200(%rsp)
+    cmpq $0, 208(%rsp)
     jle .Lf13_if_else.1
 .Lf13_if_then.0:
     movq (%r10), %r8
-    movq %r8, 192(%rsp)
-    movq 224(%rsp), %r8
+    movq %r8, 168(%rsp)
+    movq 200(%rsp), %r8
     subq $1, %r8
-    movq 192(%rsp), %r10
+    movq 168(%rsp), %r10
     movzbq (%r10,%r8,1), %r9
-    movq %r9, 160(%rsp)
-    movzbq 160(%rsp), %r8
+    movq %r9, 136(%rsp)
+    movzbq 136(%rsp), %r8
     cmpq $10, %r8
     sete %r8b
     movzbq %r8b, %r8
-    movq %r8, 136(%rsp)
-    movzbq 136(%rsp), %r8
-    movq %r8, 120(%rsp)
+    movq %r8, 112(%rsp)
+    movzbq 112(%rsp), %r8
+    movq %r8, 96(%rsp)
     jmp .Lf13_if_merge.2
 .Lf13_if_else.1:
-    movq $0, 120(%rsp)
+    movq $0, 96(%rsp)
 .Lf13_if_merge.2:
     leaq .L_tl_str_l4_264904958_75213898(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
-    movq 248(%rsp), %rdi
+    movq 232(%rsp), %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write_site
     leaq .L_tl_str_l7_910180273_741428058(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
-    movq 240(%rsp), %rdi
+    movq 224(%rsp), %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
-    cmpq $0, 120(%rsp)
+    cmpq $0, 96(%rsp)
     je .Lf13_if_else.4
 .Lf13_if_then.3:
     jmp .Lf13_if_merge.5
@@ -544,7 +544,7 @@ tl_panic_at:
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
 .Lf13_if_merge.5:
     movl $134, %edi
-    addq $264, %rsp
+    addq $248, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
     .size tl_panic_at, . - tl_panic_at
 

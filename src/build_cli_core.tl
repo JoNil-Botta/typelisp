@@ -4619,14 +4619,16 @@
     (if (or
       (> (string.string-length (struct-get compile-context error)) 0)
       (not (build-ensure-package-output-dirs manifest-dir name profile)))
-      (begin
-        (io.print-error
+      (let
+        [message : String
           (if (> (string.string-length (struct-get compile-context error)) 0)
             (struct-get compile-context error)
             (str_cat.str-cat
               "build: failed to create package output directory "
-              (build-package-output-dir-profile manifest-dir name profile))))
-        1)
+              (build-package-output-dir-profile manifest-dir name profile)))]
+        (begin
+          (io.print-error message)
+          1))
       (let
         [manifest-link-inputs : build_run_core.SourceToolLinkInputs
           (build-package-manifest-link-inputs

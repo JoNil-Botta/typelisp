@@ -143,7 +143,7 @@ set_bang_rvalue_reject|check-fail|tests/safety/set_bang_rvalue_reject.tl|-|borro
 hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
-auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|typecheck: call `same-owner` argument 2 (parameter `right`) type mismatch: expected (& same str), found (& right str)
+auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|source lifetime `right-life` does not outlive required lifetime `left-life`
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64
 auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 auto_borrow_move_before_last_use_reject|check-fail|tests/safety/auto_borrow_move_before_last_use_reject.tl|-|cannot move borrowed place `text`
@@ -410,3 +410,8 @@ deref_immutable_set_reject|check-fail|tests/safety/deref_immutable_set_reject.tl
 deref_box_use_after_move_reject|check-fail|tests/safety/deref_box_use_after_move_reject.tl|-|use of moved value `outer`
 deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|-|deref requires Box or reference type
 tuple_set_immutable_ref_reject|check-fail|tests/safety/tuple_set_immutable_ref_reject.tl|-|set! tuple element requires mutable tuple access
+lifetime_shortening_reverse_reject|check-fail|tests/safety/lifetime_shortening_reverse_reject.tl|-|source lifetime `inner` does not outlive required lifetime `outer`
+lifetime_shortening_mut_ref_referent_invariant_reject|check-fail|tests/safety/lifetime_shortening_mut_ref_referent_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because mutable reference referent type is invariant
+lifetime_shortening_mut_ptr_invariant_reject|check-fail|tests/safety/lifetime_shortening_mut_ptr_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because mutable raw pointer referent type is invariant
+lifetime_shortening_function_variance_reject|check-fail|tests/safety/lifetime_shortening_function_variance_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because function parameter/result variance failed
+lifetime_shortening_nominal_invariant_reject|check-fail|tests/safety/lifetime_shortening_nominal_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because lifetime parameter 1 of `InvariantView` is invariant

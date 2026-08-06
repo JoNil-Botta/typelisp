@@ -1743,8 +1743,9 @@ value/lambda call, or constructor call has a formal parameter of type
 `(& lifetime T)`, the checker may treat the corresponding source argument as
 `(& argument)` if the argument is a borrowable place and the inferred referent
 type is compatible with `T`. The inferred lifetime participates in ordinary
-call lifetime substitution: repeated formal lifetime names must infer the same
-caller lifetime, and fixed lifetime names must match exactly. The synthesized
+call lifetime substitution: repeated formal lifetime names infer the shortest
+comparable caller lifetime, and fixed lifetime names accept a proven
+long-to-short flow under section 3.10.3. The synthesized
 borrow ends at its last use under the non-lexical lifetime rule below;
 explicit borrow expressions use the same rule. An argument that is already an
 `(&mut actual-lifetime T)` place weakens to `(& actual-lifetime T)` through the
@@ -1896,9 +1897,10 @@ Lifetime argument type-use rules:
   a function signature lifetime, a declaration lifetime parameter, a current
   lexical owner name, a current `with-arena` name for local annotations, or the
   reserved `program` lifetime. Unknown names are rejected.
-- There is no lifetime subtyping or implicit lifetime coercion. Two nominal
-  lifetime types are equal only when they have the same nominal identity and
-  the same lifetime argument list after substitution.
+- Nominal type identity remains exact: two lifetime-bearing nominal types are
+  equal only when they have the same nominal identity and the same lifetime
+  argument list after substitution. The checked lifetime-shortening coercions
+  in section 3.10.3 do not change equality.
 - Nested uses are allowed wherever ordinary types are allowed, including
   function parameters and returns, `let` annotations, struct fields, enum
   payloads, tuple elements, arrays, boxes, pointers, and references.
@@ -1911,8 +1913,8 @@ boxes, pointers, and references.
 
 Struct constructor checking uses the substituted field types. A constructor
 call for a lifetime-parameterized struct produces the corresponding nominal
-lifetime type when every argument's stored lifetime matches the substituted
-field type:
+lifetime type when every argument's stored lifetime can satisfy the substituted
+field type under section 3.10.3:
 
 ```lisp test=ignore name=lifetime-parameterized-struct-constructor reason="illustrative constructor example; not a standalone program"
 (defstruct RefBox
@@ -1981,10 +1983,66 @@ possible:
 - Attempts to use type parameters, type expressions, or generic type
   constructors where only lifetime names are allowed.
 
-There are no runtime generics or type parameters, no trait-like bounds, and no
-lifetime subtyping or coercion. Function-signature reference elision is the
-only lifetime elision syntax; stored references and nominal lifetime arguments
-remain explicit.
+There are no runtime generics or type parameters and no trait-like bounds.
+Function-signature reference elision is the only lifetime elision syntax;
+stored references and nominal lifetime arguments remain explicit. Safe
+lifetime shortening is a checked coercion under the following rules, not a
+change to type identity.
+
+#### 3.10.3 Lifetime shortening and structural variance
+
+A lifetime-bearing value may flow from its source type to a required type with
+a shorter lifetime only when the existing lexical outlives relation proves that
+the source lifetime outlives the required lifetime. Equal lifetimes satisfy the
+relation. Reversed, unrelated, unknown, or no-longer-visible lifetimes do not.
+This proof never creates a new outlives edge and cannot extend a borrow.
+
+The relation is structural:
+
+- `(& source T)` is covariant in both `source` and `T`.
+- `(&mut source T)` is covariant in its outer lifetime `source` and invariant
+  in referent type `T`; shortening the exclusive borrow does not permit changing
+  what may be written through it.
+- `Box`, fixed `Array`, `Tuple`, struct and enum fields/payloads, immutable raw
+  `Ptr`, and native `Slice` are covariant through their contents. Compatibility
+  dynamic arrays remain invariant because they expose mutable element storage.
+  Mutable raw `MutPtr` is invariant through its referent.
+- Function parameters are contravariant and function results are covariant.
+  Entering a parameter position flips the surrounding polarity; entering a
+  result preserves it.
+- A lifetime parameter of a named struct or enum is inferred covariant when all
+  of its field/payload occurrences are positive, contravariant when all are
+  negative, and invariant when it occurs in both polarities or below an
+  invariant constructor. An unused parameter is bivariant. Nested named types
+  compose their inferred variance structurally; recursive occurrences transmit
+  the surrounding polarity, while any invariant edge keeps the cycle invariant.
+- An internal arena-owner wrapper may change from `source` to `required` only
+  when `source` outlives `required`. The wrapper remains checker-only metadata;
+  ordinary region escape checks still reject a value that would leave its
+  allocation arena.
+
+Lifetime shortening is considered only at checked typed boundaries: annotated
+`let` bindings, assignments, function and constructor arguments, function and
+lambda returns, `if`/`match` branch joins, closure flows, and native `Slice`
+flows. A successful coercion exposes the required shorter static type while
+retaining allocation-owner metadata needed by the escape checker. It inserts no
+runtime instruction and does not alter the value representation.
+
+Call lifetime substitution gathers constraints from every structural occurrence
+of a formal lifetime. Repeated covariant occurrences choose the shortest actual
+lifetime whose ordering is proven, contravariant occurrences choose the longest,
+and invariant occurrences must agree exactly. Mixed bounds are accepted only
+when the fully substituted argument types satisfy every structural constraint.
+Comparable candidates are independent of argument order; unrelated candidates
+reject instead of guessing a relationship. This final variance check preserves
+`&mut`, `MutPtr`, and mixed-polarity invariance.
+
+Type equality, hashing, mangling, layout, and ABI classification continue to use
+the exact lifetime-bearing type identity defined above. In particular, coercible
+types remain distinct for equality and cache keys, and lifetime shortening is
+byte-for-byte ABI-neutral. A failed lifetime coercion reports the source and
+required lifetime names and identifies either the missing outlives proof or the
+invariant/contravariant condition that failed.
 
 **Non-lexical lifetime rule.** A borrow lives until the last use of a
 reference value that carries the borrow lifetime. This shortening applies
@@ -2038,7 +2096,7 @@ owner or arena:
 - Assigning or storing a shorter-lived reference into a longer-lived local,
   global, aggregate field, enum payload, tuple element, or array element.
 - Capturing a reference in a closure value whose use is not proven
-  non-escaping by section 3.10.2.
+  non-escaping by section 3.10.4.
 - Letting a reference to `(in inner T)` data escape the `with-arena inner`
   body. Outer-arena references may be used inside inner arenas without gaining
   the inner lifetime.
@@ -2102,7 +2160,7 @@ owner or arena:
     (lambda () (takes-captured r))))
 ```
 
-#### 3.10.3 Closure reference captures
+#### 3.10.4 Closure reference captures
 
 A lambda may capture a binding whose type contains an immutable reference when
 the checker proves the closure value does not escape the reference's lifetime.
@@ -4055,7 +4113,7 @@ explicit constructors.
   reached by a captured value: `array-set!` on a captured dynamic array handle
   is legal when the receiver is otherwise mutable, and `Box` and
   mutable-reference APIs define their own explicit storage mutation rules.
-- Immutable reference captures follow §3.10.2: a local, non-escaping closure
+- Immutable reference captures follow §3.10.4: a local, non-escaping closure
   may capture immutable references; escaping closures reject reference-typed
   captures.
 

@@ -149,6 +149,19 @@
   (line i64)
   (col i64))
 
+;; Pure lexical context used by signature-help providers. Every offset is a
+;; byte offset into the current document; position conversion happens only at
+;; the public position-based entry point.
+(defstruct LspCallContext
+  (form-start i64)
+  (head-start i64)
+  (head-end i64)
+  (active-argument i64))
+
+(defenum LspCallContextLookup
+  (Found LspCallContext)
+  (Missing))
+
 ;; Folding-range scan position: 1-based line, 1-based negotiated column, and
 ;; whether anything other than whitespace has been seen on the current line.
 (defstruct LspFoldCursor
@@ -4194,6 +4207,499 @@
             (+ col (lsp-position-units-for-byte (string.string-ref text i))))
           (set! i (+ i 1))))
       i)))
+
+;; --------------------------------------------------------------------------
+;; Signature-help call context.
+;;
+;; This scanner intentionally stops at the cursor. It recognizes only enough
+;; reader structure to find the innermost open call and count its direct
+;; arguments; symbol resolution and signature selection belong to the later
+;; provider layer.
+;; --------------------------------------------------------------------------
+(define (lsp-call-frame-fallback) : lsp_vector_families.LspCallFrame
+  (lsp_vector_families.LspCallFrame 0 -1 -1 -1 2 0 false false))
+
+(define (lsp-call-token-delimiter? [c : char]) : bool
+  (or
+    (lsp-ws? c)
+    (= c '(')
+    (= c ')')
+    (= c '[')
+    (= c ']')
+    (= c ';')
+    (= c '"')
+    (= c '\'')
+    (= c '`')
+    (= c ',')))
+
+(define (lsp-call-scan-token [text : String] [start : i64] [limit : i64]) : i64
+  (let
+    [i : i64 start]
+    (begin
+      (while (and
+        (< i limit)
+        (not (lsp-call-token-delimiter? (string.string-ref text i))))
+        (set! i (+ i 1)))
+      i)))
+
+(define (lsp-call-clamp [offset : i64] [limit : i64]) : i64
+  (if (> offset limit)
+    limit
+    offset))
+
+;; Start another direct datum. Adjacent reader forms count separately even
+;; without whitespace; a chain of reader prefixes remains one incomplete
+;; datum until its payload completes.
+(define (lsp-call-frame-start-datum!
+  [frame : (&mut frame lsp_vector_families.LspCallFrame)]) : unit
+  (if (struct-get frame datum-active)
+    (if (struct-get frame datum-complete)
+      (begin
+        (set!
+          (struct-get frame argument-index)
+          (+ (struct-get frame argument-index) 1))
+        (set! (struct-get frame datum-complete) false))
+      unit)
+    (begin
+      (set! (struct-get frame datum-active) true)
+      (set! (struct-get frame datum-complete) false))))
+
+(define (lsp-call-frame-complete-datum!
+  [frame : (&mut frame lsp_vector_families.LspCallFrame)]) : unit
+  (begin
+    (if (not (struct-get frame datum-active))
+      (lsp-call-frame-start-datum! frame)
+      unit)
+    (set! (struct-get frame datum-complete) true)))
+
+;; A separator after a completed argument moves the cursor to the next
+;; zero-based argument. Separators after a quote prefix leave that datum open.
+(define (lsp-call-frame-separate!
+  [frame : (&mut frame lsp_vector_families.LspCallFrame)]) : unit
+  (if (and (struct-get frame datum-active) (struct-get frame datum-complete))
+    (begin
+      (set!
+        (struct-get frame argument-index)
+        (+ (struct-get frame argument-index) 1))
+      (set! (struct-get frame datum-active) false)
+      (set! (struct-get frame datum-complete) false))
+    unit))
+
+(define (lsp-call-frames-update-top-datum!
+  [frames : (&mut frames lsp_vector_families.LspCallFrames)]
+  [complete : bool]) : unit
+  (let
+    [index : i64 (- (lsp_vector_families.lsp-call-frames-len frames) 1)]
+    (if (< index 0)
+      unit
+      (let
+        [frame : lsp_vector_families.LspCallFrame
+          (lsp_vector_families.lsp-call-frames-get
+            frames
+            index
+            (lsp-call-frame-fallback))]
+        (begin
+          (if (and
+            (= (struct-get frame kind) 0)
+            (= (struct-get frame head-state) 0))
+            (set! (struct-get frame head-state) 2)
+            (begin
+              (lsp-call-frame-start-datum! (&mut frame))
+              (if complete
+                (lsp-call-frame-complete-datum! (&mut frame))
+                unit)))
+          (lsp_vector_families.lsp-call-frames-set! frames index frame))))))
+
+(define (lsp-call-frames-complete-top-datum!
+  [frames : (&mut frames lsp_vector_families.LspCallFrames)]) : unit
+  (let
+    [index : i64 (- (lsp_vector_families.lsp-call-frames-len frames) 1)]
+    (if (< index 0)
+      unit
+      (let
+        [frame : lsp_vector_families.LspCallFrame
+          (lsp_vector_families.lsp-call-frames-get
+            frames
+            index
+            (lsp-call-frame-fallback))]
+        (begin
+          (if (not
+            (and
+              (= (struct-get frame kind) 0)
+              (= (struct-get frame head-state) 0)))
+            (lsp-call-frame-complete-datum! (&mut frame))
+            unit)
+          (lsp_vector_families.lsp-call-frames-set! frames index frame))))))
+
+(define (lsp-call-frames-separate-top!
+  [frames : (&mut frames lsp_vector_families.LspCallFrames)]) : unit
+  (let
+    [index : i64 (- (lsp_vector_families.lsp-call-frames-len frames) 1)]
+    (if (< index 0)
+      unit
+      (let
+        [frame : lsp_vector_families.LspCallFrame
+          (lsp_vector_families.lsp-call-frames-get
+            frames
+            index
+            (lsp-call-frame-fallback))]
+        (begin
+          (lsp-call-frame-separate! (&mut frame))
+          (lsp_vector_families.lsp-call-frames-set! frames index frame))))))
+
+(define (lsp-call-context-from-frames
+  [frames : (& frames lsp_vector_families.LspCallFrames)]) : LspCallContextLookup
+  (let
+    [index : i64 (- (lsp_vector_families.lsp-call-frames-len frames) 1)]
+    [result : LspCallContextLookup LspCallContextLookup.Missing]
+    [found : bool false]
+    (begin
+      (while (and (>= index 0) (not found))
+        (let
+          [frame : lsp_vector_families.LspCallFrame
+            (lsp_vector_families.lsp-call-frames-get
+              frames
+              index
+              (lsp-call-frame-fallback))]
+          (begin
+            (if (and
+              (= (struct-get frame kind) 0)
+              (= (struct-get frame head-state) 1))
+              (begin
+                (set!
+                  result
+                  (LspCallContextLookup.Found
+                    (LspCallContext
+                      (struct-get frame form-start)
+                      (struct-get frame head-start)
+                      (struct-get frame head-end)
+                      (struct-get frame argument-index))))
+                (set! found true))
+              unit)
+            (set! index (- index 1)))))
+      result)))
+
+;; Scan bytes [0, limit). A cursor immediately before a closer therefore still
+;; belongs to that call, while one immediately after it does not.
+(define (lsp-call-context-at-offset [text : String] [limit : i64]) : LspCallContextLookup
+  (let
+    [n : i64 (string.string-length text)]
+    (if (or (< limit 0) (> limit n))
+      LspCallContextLookup.Missing
+      (let
+        [frames : lsp_vector_families.LspCallFrames
+          (lsp_vector_families.lsp-call-frames-new)]
+        [i : i64 0]
+        (begin
+          (while (< i limit)
+            (let
+              [c : char (string.string-ref text i)]
+              (cond
+                [(lsp-ws? c)
+                  (begin
+                    (lsp-call-frames-separate-top! (&mut frames))
+                    (set! i (lsp-skip-space text i limit)))]
+                [(= c ';')
+                  (begin
+                    (lsp-call-frames-separate-top! (&mut frames))
+                    (set! i (lsp-call-clamp (lsp-skip-line text i limit) limit)))]
+                [(= c '"')
+                  (let
+                    [raw-past : i64 (lsp-skip-string text i limit)]
+                    [past : i64 (lsp-call-clamp raw-past limit)]
+                    [complete : bool
+                      (and
+                        (<= raw-past limit)
+                        (> raw-past (+ i 1))
+                        (= (string.string-ref text (- raw-past 1)) '"'))]
+                    (begin
+                      (lsp-call-frames-update-top-datum! (&mut frames) complete)
+                      (set! i past)))]
+                [(= c '\'')
+                  (let
+                    [past : i64
+                      (lsp-call-clamp
+                        (lsp-skip-apostrophe-char-literal text i limit)
+                        limit)]
+                    (if (> past (+ i 1))
+                      (begin
+                        (lsp-call-frames-update-top-datum! (&mut frames) true)
+                        (set! i past))
+                      (begin
+                        (lsp-call-frames-update-top-datum! (&mut frames) false)
+                        (set! i (+ i 1)))))]
+                [(or (= c '`') (= c ','))
+                  (begin
+                    (lsp-call-frames-update-top-datum! (&mut frames) false)
+                    (if (and
+                      (= c ',')
+                      (< (+ i 1) limit)
+                      (= (string.string-ref text (+ i 1)) '@'))
+                      (set! i (+ i 2))
+                      (set! i (+ i 1))))]
+                [(or (= c '(') (= c '['))
+                  (begin
+                    (lsp-call-frames-update-top-datum! (&mut frames) false)
+                    (lsp_vector_families.lsp-call-frames-push!
+                      (&mut frames)
+                      (lsp_vector_families.LspCallFrame
+                        (if (= c '(')
+                          0
+                          1)
+                        i
+                        -1
+                        -1
+                        (if (= c '(')
+                          0
+                          2)
+                        0
+                        false
+                        false))
+                    (set! i (+ i 1)))]
+                [(or (= c ')') (= c ']'))
+                  (let
+                    [top-index : i64
+                      (- (lsp_vector_families.lsp-call-frames-len (& frames)) 1)]
+                    (if (< top-index 0)
+                      (set! i (+ i 1))
+                      (let
+                        [frame : lsp_vector_families.LspCallFrame
+                          (lsp_vector_families.lsp-call-frames-get
+                            (& frames)
+                            top-index
+                            (lsp-call-frame-fallback))]
+                        [close-kind : i64
+                          (if (= c ')')
+                            0
+                            1)]
+                        (begin
+                          (if (= (struct-get frame kind) close-kind)
+                            (begin
+                              (lsp_vector_families.lsp-call-frames-pop!
+                                (&mut frames))
+                              (lsp-call-frames-complete-top-datum!
+                                (&mut frames)))
+                            (lsp_vector_families.lsp-call-frames-clear!
+                              (&mut frames)))
+                          (set! i (+ i 1))))))]
+                [else
+                  (let
+                    [start : i64 i]
+                    [past : i64 (lsp-call-scan-token text i limit)]
+                    [exact : bool
+                      (or
+                        (< past limit)
+                        (= limit n)
+                        (and
+                          (< limit n)
+                          (lsp-call-token-delimiter?
+                            (string.string-ref text limit))))]
+                    [top-index : i64
+                      (- (lsp_vector_families.lsp-call-frames-len (& frames)) 1)]
+                    (begin
+                      (if (>= top-index 0)
+                        (let
+                          [frame : lsp_vector_families.LspCallFrame
+                            (lsp_vector_families.lsp-call-frames-get
+                              (& frames)
+                              top-index
+                              (lsp-call-frame-fallback))]
+                          (begin
+                            (if (and
+                              (= (struct-get frame kind) 0)
+                              (= (struct-get frame head-state) 0))
+                              (if exact
+                                (begin
+                                  (set! (struct-get frame head-start) start)
+                                  (set! (struct-get frame head-end) past)
+                                  (set! (struct-get frame head-state) 1))
+                                unit)
+                              (begin
+                                (lsp-call-frame-start-datum! (&mut frame))
+                                (if exact
+                                  (lsp-call-frame-complete-datum! (&mut frame))
+                                  unit)))
+                            (lsp_vector_families.lsp-call-frames-set!
+                              (&mut frames)
+                              top-index
+                              frame)))
+                        unit)
+                      (set! i past)))])))
+          (lsp-call-context-from-frames (& frames)))))))
+
+(define (lsp-call-context-at-position
+  [text : String]
+  [line0 : i64]
+  [char0 : i64]) : LspCallContextLookup
+  (if (or (< line0 0) (< char0 0))
+    LspCallContextLookup.Missing
+    (lsp-call-context-at-offset text (lsp-offset-at-position text line0 char0))))
+
+(define (lsp-call-context-is?
+  [lookup : LspCallContextLookup]
+  [form-start : i64]
+  [head-start : i64]
+  [head-end : i64]
+  [active-argument : i64]) : bool
+  (match lookup
+    [(LspCallContextLookup.Found context)
+      (and
+        (= (struct-get context form-start) form-start)
+        (= (struct-get context head-start) head-start)
+        (= (struct-get context head-end) head-end)
+        (= (struct-get context active-argument) active-argument))]
+    [(LspCallContextLookup.Missing) false]))
+
+(define (lsp-call-context-missing? [lookup : LspCallContextLookup]) : bool
+  (match lookup
+    [(LspCallContextLookup.Found _) false]
+    [(LspCallContextLookup.Missing) true]))
+
+(define (lsp-call-context-boundaries-ok?) : bool
+  (and
+    (lsp-call-context-is? (lsp-call-context-at-offset "(zero)" 5) 0 1 5 0)
+    (lsp-call-context-is? (lsp-call-context-at-offset "(one value)" 10) 0 1 4 0)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(one value )" 11)
+      0
+      1
+      4
+      1)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(many a b c)" 11)
+      0
+      1
+      5
+      2)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(many a b c )" 12)
+      0
+      1
+      5
+      3)
+    (lsp-call-context-is? (lsp-call-context-at-offset "(head tail)" 5) 0 1 5 0)
+    (lsp-call-context-is? (lsp-call-context-at-offset "(head tail)" 6) 0 1 5 0)
+    (lsp-call-context-missing? (lsp-call-context-at-offset "(head tail)" 4))
+    (lsp-call-context-missing? (lsp-call-context-at-offset "(head tail)" 11))
+    (lsp-call-context-missing? (lsp-call-context-at-offset "(head tail)" -1))
+    (lsp-call-context-missing? (lsp-call-context-at-offset "(head tail)" 12))))
+
+(define (lsp-call-context-nesting-ok?) : bool
+  (and
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer (inner x " 16)
+      7
+      8
+      13
+      1)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer [x y " 12)
+      0
+      1
+      6
+      0)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer (inner x)" 16)
+      0
+      1
+      6
+      0)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer (inner x) " 17)
+      0
+      1
+      6
+      1)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(multi\n first\n second " 22)
+      0
+      1
+      6
+      2)))
+
+(define (lsp-call-context-lexical-and-malformed-ok?) : bool
+  (and
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer \"x ) \\\" y\" next " 23)
+      0
+      1
+      6
+      2)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer \"line\n) still\" next " 27)
+      0
+      1
+      6
+      2)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer first ; ) ]\n second " 27)
+      0
+      1
+      6
+      2)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer '(' ')' '[' ']' " 23)
+      0
+      1
+      6
+      4)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer 'x `(inner y) ,z ,@w " 28)
+      0
+      1
+      6
+      4)
+    (lsp-call-context-is? (lsp-call-context-at-offset "(outer a ' " 11) 0 1 6 1)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer a 'x " 12)
+      0
+      1
+      6
+      2)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer [x]tail" 14)
+      0
+      1
+      6
+      1)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer \"tail\\" 13)
+      0
+      1
+      6
+      0)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer x ; ]" 12)
+      0
+      1
+      6
+      1)
+    (lsp-call-context-is?
+      (lsp-call-context-at-offset "(outer first ] (later x " 24)
+      15
+      16
+      21
+      1)
+    (lsp-call-context-is? (lsp-call-context-at-offset ")))(safe x " 11) 3 4 8 1)
+    (lsp-call-context-missing? (lsp-call-context-at-offset "(outer [x )" 12))))
+
+(test
+  lsp-call-context-boundaries
+  (unless
+    (lsp-call-context-boundaries-ok?)
+    (io.panic "lsp-call-context-boundaries failed")))
+
+(test
+  lsp-call-context-nesting
+  (unless
+    (lsp-call-context-nesting-ok?)
+    (io.panic "lsp-call-context-nesting failed")))
+
+(test
+  lsp-call-context-lexical-and-malformed
+  (unless
+    (lsp-call-context-lexical-and-malformed-ok?)
+    (io.panic "lsp-call-context-lexical-and-malformed failed")))
 
 ;; 1-based negotiated LSP line/column of a byte offset.
 (define (lsp-line-col-at-offset [text : String] [off : i64]) : LspLineCol

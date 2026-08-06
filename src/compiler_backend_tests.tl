@@ -21289,6 +21289,67 @@
             "    movq -24(%rbp), %r10\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-addr-of-forwarding-typed-load-shape-ok?) : bool
+  (and
+    ;; The forwarded AddrOf has one use, but its typed-copy destination has two.
+    ;; The defining AddrOf is suppressed, so the Mov must materialize the local
+    ;; address instead of reading the uninitialized allocator home for var 2.
+    (match (compiler-backend-emit-test-instrs
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.AddrOf 2 1)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            3
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ast_types.ast-ty-mut-ptr (compiler_ast_types.AstType.I32)))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ast_types.AstType.I32))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Load
+                4
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ast_types.AstType.I32))
+              compiler_ir_types.CompilerIrInstrList.Nil))))
+      compiler_regalloc.CompilerRegAssignmentList.Nil
+      5)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    leaq -16(%rbp), %r8\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r8, -32(%rbp)\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq -24(%rbp), %r8\n")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; The implicit typed return loader must honor the same forwarding map.
+    (match (compiler-backend-emit-test-instrs
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.AddrOf 2 1)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 2)))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      compiler_regalloc.CompilerRegAssignmentList.Nil
+      3)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    leaq -16(%rbp), %rax\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq -24(%rbp), %rax\n")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
 (define (compiler-backend-addr-of-register-home-shape-ok?) : bool
   (let
     [assignments : compiler_regalloc.CompilerRegAssignmentList
@@ -23261,6 +23322,7 @@
 (define (compiler-backend-address-mode-fusion-ok?) : bool
   (and
     (compiler-backend-forwarded-addr-of-register-home-refused-ok?)
+    (compiler-backend-addr-of-forwarding-typed-load-shape-ok?)
     (compiler_backend.backend-and8
       (compiler-backend-addr-of-forwarding-shape-ok?)
       (compiler-backend-addr-of-register-home-shape-ok?)

@@ -2762,21 +2762,29 @@ cat > "$WORKDIR/inline_test_pass.tl" <<'EOF'
 
 (test inc-basic
   (test.assert-i64-eq (inc 41) 42 "inc result"))
+
+(test inc-zero
+  (test.assert-i64-eq (inc 0) 1 "inc zero"))
 EOF
 
 # cli-gate-case inline-test-check wrapper run_cmd
 run_cmd inline-test-check "$COMPILER" test --check "$WORKDIR/inline_test_pass.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
-assert_contains "$out" "TypeLisp test typecheck passed: 1 test(s)"
+assert_contains "$out" "TypeLisp test typecheck passed: 2 test(s)"
 
+# #6190: opt0 once suppressed AddrOf, then read its uninitialized home while
+# preparing the Windows WriteFile byte-count pointer used by the final summary.
+# Keep a multi-test native harness here so both CI hosts execute that path.
 # cli-gate-case inline-test-pass wrapper run_cmd
-run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --target "$HOST_TARGET" --opt-level 0 --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stdout_empty
 assert_contains "$err" "test inc-basic"
 assert_contains "$err" "ok inc-basic"
-assert_contains "$err" "TypeLisp tests: 1 passed; 0 failed; 1 total"
+assert_contains "$err" "test inc-zero"
+assert_contains "$err" "ok inc-zero"
+assert_contains "$err" "TypeLisp tests: 2 passed; 0 failed; 2 total"
 [ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
 
 # cli-gate-case inline-test-normal-compile wrapper run_cmd

@@ -1085,6 +1085,10 @@ fi
 # crossed ast_expr_pool.macro_expand from 50 to 51 segments; the authoritative
 # Windows probe measured 3,284,058 used nodes and 106,954,752 physical payload
 # bytes.
+# #5937's persistent typechecker list storage and focused wide/deep tests
+# crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
+# Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload
+# bytes.
 # All four sit within a few percent of their next step, so expect these to move.
 # #5701 landed while
 # this was in review and consumed 4177 of the expr macro_expand headroom without
@@ -1140,16 +1144,17 @@ if [ "$NL_HOST_OS" = windows ]; then
     #
     # The type-pool macro_expand boundary is load-bearing beyond sizing: the
     # ordinary scalar `for` macro retains each source binding's produced type
-    # for expr-type inspection, so its macro-walk type footprint is part of the
-    # intentional exact selfhost allocation boundary.
+    # for expr-type inspection, and the native Vec slice-copy loop contributes
+    # its expanded loop types, so their macro-walk type footprint is part of
+    # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 51 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 30 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 31 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool typecheck 8 1024 24 \
@@ -2387,7 +2392,7 @@ assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR"
 
 # The constrained vector type operand is validated once at definition time.
-# The first concrete identity still checks all eleven generated declarations.
+# The first concrete identity still checks all thirteen generated declarations.
 # Later distinct identities may reuse persisted proofs for the four declarations
 # admitted as proven safe by the exact guard; all remaining declarations stay
 # on the ordinary check path.
@@ -2406,13 +2411,13 @@ assert_profile_counter_eq_in \
 assert_profile_counter_eq_in \
     "$VECTOR_ONE_STDERR" \
     "typecheck.macro.generated_decl_checks_invariant_eligible" \
-    11 \
+    13 \
     "$VECTOR_ONE_STDOUT" \
     "$VECTOR_ONE_STDERR"
 assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_decl_checks_invariant_eligible" \
-    55 \
+    65 \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 assert_profile_counter_eq_in \
@@ -2443,13 +2448,13 @@ assert_profile_counter_eq_in \
 assert_profile_counter_eq_in \
     "$VECTOR_ONE_STDERR" \
     "typecheck.macro.generated_decl_checks" \
-    11 \
+    13 \
     "$VECTOR_ONE_STDOUT" \
     "$VECTOR_ONE_STDERR"
 assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_decl_checks" \
-    39 \
+    49 \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 

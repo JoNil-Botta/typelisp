@@ -3415,7 +3415,6 @@
 (define (tltest-nested-module-macro-vector-source) : String
   "(import stdlib.vector)
 (import (vector.vector String) as cli_svec)
-(import stdlib.vector_slice)
 
 (defstruct Pair
   (value i64))
@@ -3423,11 +3422,10 @@
 (defmacro (slice-user [T : type]) : Module
   (let
     [module-name : Expr
-      (expr-var (string-append \"generated.slice_user.\" (type-key T)))]
+      (expr-var (string-append \"generated.native_slice_user.\" (type-key T)))]
     `(begin
       (module ,module-name)
       (import (vector.vector ,T) as vec)
-      (import (stdlib.vector_slice.slice ,T) as slice)
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let
           [items : vec.Vec (vec.new)]
@@ -3436,8 +3434,8 @@
           (let
             [has-one : bool
               (let
-                [view : (slice.Slice items) (slice.all-vec (& items))]
-                (= (slice.len view) 1))]
+                [view : (& items (Slice ,T)) (vec.view (& items))]
+                (= (array-length view) 1))]
             (if has-one
               (match (vec.pop (&mut items))
                 [(vec.Pop.Ok _) 42]
@@ -3448,13 +3446,13 @@
 (import (slice-user Pair) as pair-user)
 
 (test
-  generated-module-body-imports-slice-module-macro-i64
+  generated-module-body-uses-native-slice-i64
   (begin
     (user.score 7 0)
     unit))
 
 (test
-  generated-module-body-imports-slice-module-macro-struct
+  generated-module-body-uses-native-slice-struct
   (begin
     (pair-user.score (Pair 7) (Pair 0))
     unit))

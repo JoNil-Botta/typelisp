@@ -374,9 +374,8 @@
   (match (system-seed)
     [(OkSystemSeed seed-value) (seed seed-value)]
     [(ErrSystemSeed err)
-      (io.panic
-        (match err
-          [(RandomSystemSeedUnavailable message) message]))]))
+      (match err
+        [(RandomSystemSeedUnavailable message) (io.panic message)])]))
 
 ;: Inline test assertion for boolean predicates.
 (define (test-assert-true [condition : bool] [message : String]) : unit

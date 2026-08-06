@@ -139,6 +139,94 @@
   (slots (__tl_dyn-array LspFoldRange))
   (len i64))
 
+;; One open delimiter in the signature-help lexical scan. `kind` is 0 for a
+;; parenthesized form and 1 for a bracket group. Parenthesized frames progress
+;; from an unknown head (`head-state` 0), to an ordinary token head (1), or a
+;; non-call head (2). The datum fields track exactly one direct argument while
+;; prefixes and nested groups are still incomplete.
+(defstruct LspCallFrame
+  (kind i64)
+  (form-start i64)
+  (head-start i64)
+  (head-end i64)
+  (head-state i64)
+  (argument-index i64)
+  (datum-active bool)
+  (datum-complete bool))
+
+;; Kept hand-grown for the same code-size reason as `LspFoldRanges`. Popped
+;; slots are reused, so storage is proportional to maximum source nesting.
+(defstruct LspCallFrames
+  (slots (__tl_dyn-array LspCallFrame))
+  (len i64))
+
+(define (lsp-call-frames-new) : LspCallFrames
+  (LspCallFrames (array.make-array LspCallFrame 0) 0))
+
+(define (lsp-call-frames-len [frames : (& frames LspCallFrames)]) : i64
+  (struct-get frames len))
+
+(define (lsp-call-frames-get
+  [frames : (& frames LspCallFrames)]
+  [index : i64]
+  [fallback : LspCallFrame]) : LspCallFrame
+  (if (and (>= index 0) (< index (struct-get frames len)))
+    (array-ref (struct-get frames slots) index)
+    fallback))
+
+(define (lsp-call-frames-set!
+  [frames : (&mut frames LspCallFrames)]
+  [index : i64]
+  [value : LspCallFrame]) : unit
+  (if (and (>= index 0) (< index (struct-get frames len)))
+    (array-set! (struct-get frames slots) index value)
+    unit))
+
+(define (lsp-call-frames-copy-range!
+  [dst : (&mut dst (__tl_dyn-array LspCallFrame))]
+  [src : (& src (__tl_dyn-array LspCallFrame))]
+  [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (array-set! dst i (array-ref src i))
+        (set! i (+ i 1))))))
+
+(define (lsp-call-frames-grow! [frames : (&mut frames LspCallFrames)]) : unit
+  (let
+    [old-cap : i64 (array-length (struct-get frames slots))]
+    [new-cap : i64
+      (if (< old-cap 4)
+        4
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array LspCallFrame)
+      (array.make-array LspCallFrame new-cap)]
+    (begin
+      (lsp-call-frames-copy-range!
+        (&mut bigger)
+        (& (struct-get frames slots))
+        (struct-get frames len))
+      (set! (struct-get frames slots) bigger))))
+
+(define (lsp-call-frames-push!
+  [frames : (&mut frames LspCallFrames)]
+  [value : LspCallFrame]) : unit
+  (begin
+    (if (>= (struct-get frames len) (array-length (struct-get frames slots)))
+      (lsp-call-frames-grow! frames)
+      unit)
+    (array-set! (struct-get frames slots) (struct-get frames len) value)
+    (set! (struct-get frames len) (+ (struct-get frames len) 1))))
+
+(define (lsp-call-frames-pop! [frames : (&mut frames LspCallFrames)]) : unit
+  (if (> (struct-get frames len) 0)
+    (set! (struct-get frames len) (- (struct-get frames len) 1))
+    unit))
+
+(define (lsp-call-frames-clear! [frames : (&mut frames LspCallFrames)]) : unit
+  (set! (struct-get frames len) 0))
+
 (define (lsp-fold-ranges-new) : LspFoldRanges
   (LspFoldRanges (array.make-array LspFoldRange 0) 0))
 

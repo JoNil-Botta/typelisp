@@ -128,17 +128,15 @@
         ;; The nested walk must see source-pools' Ref at id 1, not the
         ;; installed pool's Bool at the same numeric id.
         [source-elision-answer : bool
-          (match (tc_core.tc-signature-input-lifetimes-into
-            (ast.ast-node-pool-context-type-segment-bases source-pools)
-            (ast.AstType.Array source-nested-id 1)
-            tc_core.TcNameIdList.Nil)
-            [(tc_core.TcNameIdList.Cons lifetime rest)
-              (and
-                (= lifetime nested-lifetime)
-                (match (box-get rest)
-                  [(tc_core.TcNameIdList.Nil) true]
-                  [_ false]))]
-            [_ false])]
+          (let
+            [lifetimes : tc_core.TcNameIdList
+              (tc_core.tc-signature-input-lifetimes-into
+                (ast.ast-node-pool-context-type-segment-bases source-pools)
+                (ast.AstType.Array source-nested-id 1)
+                tc_core.TcNameIdList.Nil)]
+            (and
+              (= (tc_core.tc-name-id-list-len lifetimes) 1)
+              (= (tc_core.tc-name-id-list-head lifetimes) nested-lifetime)))]
         [installed-unchanged : bool
           (=
             (ast.ast-node-pool-context-type-segment-bases

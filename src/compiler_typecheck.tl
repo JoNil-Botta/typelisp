@@ -38,11 +38,11 @@
 (extern (io.print-float [arg0 : f64]) : unit)
 (extern (io.print-char [arg0 : char]) : unit)
 (extern (print-newline) : unit)
-(extern (io.print-string [arg0 : String]) : unit)
-(extern (io.print-str [arg0 : String]) : unit)
-(extern (io.print-error [arg0 : String]) : unit)
-(extern (io.panic [arg0 : String]) : never)
-(extern (io.error [arg0 : String]) : never)
+(extern (io.print-string [arg0 : (& arg0 str)]) : unit)
+(extern (io.print-str [arg0 : (& arg0 str)]) : unit)
+(extern (io.print-error [arg0 : (& arg0 str)]) : unit)
+(extern (io.panic [arg0 : (& arg0 str)]) : never)
+(extern (io.error [arg0 : (& arg0 str)]) : never)
 (extern (arg-count) : i64)
 (extern (io.arg [arg0 : i64]) : String)
 (defstruct ByteBuf
@@ -2872,17 +2872,17 @@
   "(define (main) : i64
   (let
     [b : (Box i64) (box 7)]
-    (box-get b)))")
+    (deref b)))")
 
 (define (compiler-typecheck-box-direct-source) : String
-  "(define (main) : i64 (box-get (box 7)))")
+  "(define (main) : i64 (deref (box 7)))")
 
 (define (compiler-typecheck-box-region-source) : String
   "(define (main) : i64
   (with-arena r
     (let
       [b : (in r (Box i64)) (box 7)]
-      (box-get b))))")
+      (deref b))))")
 
 (define (compiler-typecheck-box-region-project-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
@@ -2890,7 +2890,7 @@
   (with-arena r
     (let
       [b : (in r (Box String)) (box (string.int->string 41))]
-      (box-get b))))"))
+      (deref b))))"))
 
 (define (compiler-typecheck-box-get-non-box-source) : String
   "(define (main) : i64 (box-get 1))")
@@ -2899,15 +2899,15 @@
   "(define (main) : i64
   (let
     [b : (Box i64) (box 7)]
-    (box-take b)))")
+    (deref b)))")
 
 (define (compiler-typecheck-box-set-source) : String
   "(define (main) : i64
   (let
     [b : (Box i64) (box 7)]
     (begin
-      (set! (box-get b) 9)
-      (box-get b))))")
+      (set! (deref b) 9)
+      (deref b))))")
 
 (define (compiler-typecheck-box-set-field-source) : String
   "(defstruct Pair (x i64) (y i64))
@@ -2915,17 +2915,17 @@
   (let
     [b : (Box Pair) (box (Pair 1 2))]
     (begin
-      (set! (struct-get (box-get b) x) 9)
-      (struct-get (box-get b) x))))")
+      (set! (struct-get (deref b) x) 9)
+      (struct-get (deref b) x))))")
 
 (define (compiler-typecheck-box-set-mismatch-source) : String
   "(define (main) : unit
   (let
     [b : (Box i64) (box 7)]
-    (set! (box-get b) false)))")
+    (set! (deref b) false)))")
 
 (define (compiler-typecheck-box-take-non-box-source) : String
-  "(define (main) : i64 (box-take 1))")
+  "(define (main) : i64 (deref 1))")
 
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
@@ -2961,7 +2961,7 @@
       "typecheck: box assignment type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-box-take-non-box-source)
-      "typecheck: box-take requires Box type")))
+      "typecheck: deref requires Box or reference type")))
 
 (define (compiler-typecheck-init-source) : String
   "(defstruct Point (x i64) (flag bool))
@@ -2977,7 +2977,7 @@
     [point : Point (init : Point)]
     [maybe : Maybe (init : Maybe)]
     [boxed : (Box i64) (init : (Box i64))]
-    (+ n (+ (struct-get point x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (box-get boxed)))))))")
+    (+ n (+ (struct-get point x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (deref boxed)))))))")
 
 (define (compiler-typecheck-contextual-init-source) : String
   "(defstruct Point (x i64) (flag bool))
@@ -9645,6 +9645,42 @@
   "(define (copy-reuse [n : i64]) : i64
   (let [t : i64 n] (+ n t)))")
 
+;; Formerly special-cased inspectors follow their reference parameter types.
+;; The same borrowed signature behaves identically when called directly,
+;; through a function value or lambda, and from a generated declaration. The
+;; compiler-private intrinsic also exposes that signature to ownership passes.
+(define (compiler-typecheck-move-type-driven-inspection-parity-source) : String
+  "(define (inspect-text [text : (& text str)]) : i64 0)
+(defmacro (emit-generated-inspector) : Decls
+  `(begin
+    (define (generated-inspect-text [text : (& text str)]) : i64 0)))
+(emit-generated-inspector)
+(define (inspect-direct [value : String]) : String
+  (begin (inspect-text value) value))
+(define (inspect-then-assign [value : String]) : String
+  (begin (inspect-text value) (set! value \"after\") value))
+(define (inspect-indirect [text : String]) : String
+  (let [inspect : (-> (& text str) i64) inspect-text]
+    (begin (inspect text) text)))
+(define (inspect-lambda [value : String]) : String
+  (begin
+    ((lambda ([text : (& text str)]) : i64 0) value)
+    value))
+(define (inspect-generated [value : String]) : String
+  (begin (generated-inspect-text value) value))
+(define (inspect-compiler-builtin [value : String]) : String
+  (begin (__tl_string_length value) value))
+(define (inspect-compiler-eq [value : String] [other : String]) : String
+  (begin (__tl_string_eq value other) (set! value \"after\") value))")
+
+(define (compiler-typecheck-move-qualified-inspection-parity-source) : String
+  "(module inspection_provider)
+(define (inspect-text [text : (& text str)]) : i64 0)
+(module inspection_user)
+(import inspection_provider as provider)
+(define (inspect-qualified [value : String]) : String
+  (begin (provider.inspect-text value) value))")
+
 ;; Structural Copy fixtures exercise the consuming-parameter path directly.
 ;; Ordinary by-value parameters intentionally remain covered by the legacy
 ;; compatibility fixtures below.
@@ -11091,6 +11127,14 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-type-driven-inspection-parity-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-qualified-inspection-parity-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         (compiler-typecheck-move-structural-copy-source))
         unit
         (set! ok false))
@@ -11928,13 +11972,17 @@
 
 ;; Runtime stdlib signature + shadowing coverage (migrated from
 ;; src/typechecker.rs). `io.print-string`/`print-str`/`io.print-error` are stdlib
-;; functions that take a `String`; `xgetbv` takes an integer; `cpuid` takes
+;; functions that borrow `str`; `xgetbv` takes an integer; `cpuid` takes
 ;; integers; `string.string-ref`/`char-at` require an integer index. A user declaration
 ;; may still define the same source-level name when no stdlib import brings it
 ;; into scope.
 (define (compiler-typecheck-runtime-builtin-print-string-ok-source) : String
   (compiler-typecheck-with-io-source
-    "(define (main) : i64 (begin (io.print-string \"hi\") 0))"))
+    "(define (main) : i64
+  (begin
+    (io.print-string \"hi\")
+    (io.print-string (begin \"ignored\" \"temporary\"))
+    0))"))
 
 (define (compiler-typecheck-runtime-builtin-print-str-ok-source) : String
   (compiler-typecheck-with-io-source
@@ -12064,13 +12112,13 @@
     (compiler-typecheck-ok? (compiler-typecheck-runtime-builtin-shadow-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-print-string-bad-source)
-      "typecheck: call `io.print-string` argument 1 type mismatch: expected String, found i32")
+      "typecheck: borrow requires a local, parameter, or aggregate place")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-print-str-bad-source)
-      "typecheck: call `io.print-str` argument 1 type mismatch: expected String, found i32")
+      "typecheck: borrow requires a local, parameter, or aggregate place")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-print-error-bad-source)
-      "typecheck: call `io.print-error` argument 1 type mismatch: expected String, found i32")
+      "typecheck: borrow requires a local, parameter, or aggregate place")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-xgetbv-bad-source)
       "typecheck: xgetbv index must be integer")
@@ -12154,12 +12202,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source "(define (f) : i64 (io.panic 5))")
-        "typecheck: call `io.panic` argument 1 type mismatch: expected String, found i32")
+        "typecheck: borrow requires a local, parameter, or aggregate place")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source "(define (f) : i64 (io.error true))")
-        "typecheck: call `io.error` argument 1 type mismatch: expected String, found bool")
+        "typecheck: borrow requires a local, parameter, or aggregate place")
         unit
         (set! ok false))
       ok)))

@@ -21,7 +21,7 @@
 ;# double-load when the entry program is given by an absolute path (its stdlib
 ;# imports would resolve to different path keys than a relative prelude load).
 ;: Windows kernel32 `GetStdHandle` binding for mapping fds 0/1/2 to handles.
-(define (string-length [text : String]) : i64
+(define (string-length [text : (& text str)]) : i64
   (__tl_string_length text))
 
 (cfg
@@ -184,7 +184,7 @@
       (os-exit code))))
 
 ;: Write a fixed diagnostic message to stderr (fd 2), ignoring partial writes.
-(define (abort-write [message : String]) : unit
+(define (abort-write [message : (& message str)]) : unit
   (let
     [len : i64 (string-length message)]
     [data : (Ptr u8)
@@ -417,7 +417,7 @@
 
 ;: Report a source-located panic message and exit with the legacy panic status.
 ;: A trailing newline in `message` is preserved without adding a second one.
-(define (panic-abort-at [site : (Ptr i64)] [message : String])
+(define (panic-abort-at [site : (Ptr i64)] [message : (& message str)])
   (:export-symbol "tl_panic_at") : never
   (let
     [len : i64 (string-length message)]
@@ -444,7 +444,7 @@
 ;: Exported as the fixed `tl_abort_string` symbol so `(panic …)` call sites and
 ;: the runtime's own error paths reach it unchanged (replaces the former
 ;: hand-written Linux/Windows `tl_abort_string` asm).
-(define (abort-string [message : String])
+(define (abort-string [message : (& message str)])
   (:export-symbol "tl_abort_string") : never
   (begin
     (abort-write message)

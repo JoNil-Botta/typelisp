@@ -766,6 +766,19 @@
   ;; translate errno.
   (Syscall AstExprList))
 
+;; Tuple-place writes reuse `StructSet` internally so the public place syntax
+;; can land without changing the serialized AstExpr ABI. Interned struct field
+;; IDs are non-negative; negative field IDs are therefore an unambiguous private
+;; encoding for literal tuple indexes.
+(define (ast-tuple-set-field-id-from-index [index : i64]) : i64
+  (- 0 (+ index 1)))
+
+(define (ast-tuple-set-field-id? [field-id : i64]) : bool
+  (< field-id 0))
+
+(define (ast-tuple-set-index-from-field-id [field-id : i64]) : i64
+  (- 0 (+ field-id 1)))
+
 ;; --- segmented AST node pool ---
 ;; AstExpr nodes live in fixed-size segments, referenced by AstNodeId (a flat
 ;; logical index) instead of i64. Parsing appends nodes without per-node boxes,

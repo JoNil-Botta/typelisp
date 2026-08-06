@@ -1134,6 +1134,108 @@
       (= (json.list-count wide) depth)
       (string.eq (lsp-fold-first-json wide) first-sibling))))
 
+(define (lsp-call-context-deep-source [depth : i64]) : String
+  (let
+    [buf : text_buf.TextBuf (text_buf.empty)]
+    [i : i64 0]
+    (begin
+      (while (< i depth)
+        (begin
+          (text_buf.append! buf "(f ")
+          (set! i (+ i 1))))
+      (text_buf.render buf))))
+
+(define (lsp-call-context-wide-source [count : i64]) : String
+  (let
+    [buf : text_buf.TextBuf (text_buf.empty)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (text_buf.append! buf "(f)")
+          (set! i (+ i 1))))
+      (text_buf.append! buf "(target x ")
+      (text_buf.render buf))))
+
+;; The scan and stack growth are iterative on both deep incomplete input and a
+;; wide stream of already-closed forms. Popped slots are reused before the
+;; final call in the wide source.
+(define (lsp-call-context-scale-smoke-ok?) : bool
+  (let
+    [depth : i64 2000]
+    [deep : String (lsp-call-context-deep-source depth)]
+    [wide : String (lsp-call-context-wide-source depth)]
+    [deep-form : i64 (* (- depth 1) 3)]
+    [wide-form : i64 (* depth 3)]
+    (and
+      (lsp_frame_core.lsp-call-context-is?
+        (lsp_frame_core.lsp-call-context-at-offset
+          deep
+          (string.string-length deep))
+        deep-form
+        (+ deep-form 1)
+        (+ deep-form 2)
+        0)
+      (lsp_frame_core.lsp-call-context-is?
+        (lsp_frame_core.lsp-call-context-at-offset
+          wide
+          (string.string-length wide))
+        wide-form
+        (+ wide-form 1)
+        (+ wide-form 7)
+        1))))
+
+;; The same byte spans are returned through either negotiated position unit.
+;; The lambda is before the call and the euro sign is its first argument.
+(define (lsp-call-context-position-smoke-ok?) : bool
+  (let
+    [source : String "λ (call € "]
+    [utf16-before-space : bool false]
+    [utf16-after-space : bool false]
+    [utf8-before-space : bool false]
+    [utf8-after-space : bool false]
+    (begin
+      (lsp_frame_core.lsp-position-encoding-use-utf16!)
+      (set!
+        utf16-before-space
+        (lsp_frame_core.lsp-call-context-is?
+          (lsp_frame_core.lsp-call-context-at-position source 0 9)
+          3
+          4
+          8
+          0))
+      (set!
+        utf16-after-space
+        (lsp_frame_core.lsp-call-context-is?
+          (lsp_frame_core.lsp-call-context-at-position source 0 10)
+          3
+          4
+          8
+          1))
+      (lsp_frame_core.lsp-position-encoding-use-utf8!)
+      (set!
+        utf8-before-space
+        (lsp_frame_core.lsp-call-context-is?
+          (lsp_frame_core.lsp-call-context-at-position source 0 12)
+          3
+          4
+          8
+          0))
+      (set!
+        utf8-after-space
+        (lsp_frame_core.lsp-call-context-is?
+          (lsp_frame_core.lsp-call-context-at-position source 0 13)
+          3
+          4
+          8
+          1))
+      (lsp_frame_core.lsp-position-encoding-use-utf16!)
+      (and
+        utf16-before-space
+        utf16-after-space
+        utf8-before-space
+        utf8-after-space))))
+
 (define (lsp-transcript-folding-range [uri : String] [id : i64]) : String
   (lsp_frame_core.lsp-str5
     "{\"jsonrpc\":\"2.0\",\"id\":"
@@ -1966,6 +2068,8 @@
         (unless (lsp-folding-range-malformed-smoke-ok?) (return 26))
         (unless (lsp-folding-range-utf16-smoke-ok?) (return 27))
         (unless (lsp-folding-range-scale-smoke-ok?) (return 28))
+        (unless (lsp-call-context-scale-smoke-ok?) (return 40))
+        (unless (lsp-call-context-position-smoke-ok?) (return 41))
         (unless (lsp-folding-range-transcript-smoke-ok?) (return 29))
         (unless (lsp-position-encoding-negotiation-smoke-ok?) (return 30))
         (unless (lsp-position-encoding-conversion-smoke-ok?) (return 31))

@@ -9090,6 +9090,12 @@
               (lower-test-function-vector-binop-count functions "fill")]
             [store-count : i64
               (lower-test-function-vector-store-count functions "fill")]
+            [pred-load-count : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            [pred-store-count : i64
+              (lower-test-function-predicated-store-count functions "fill")]
+            [tail-mask-count : i64
+              (lower-test-function-tail-mask-count functions "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
                 functions
@@ -9098,11 +9104,14 @@
                 elem-ty)]
             [tail-store-count : i64
               (lower-test-function-store-ptr-count functions "fill")]
-            (and
+            (compiler-lower-and8
               (= load-count 2)
-              (= binop-count 1)
+              (= binop-count 2)
               (= store-count 1)
-              (= shape-count 4)
+              (= pred-load-count 2)
+              (= pred-store-count 1)
+              (= tail-mask-count 1)
+              (= shape-count 8)
               (> tail-store-count 0)))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -9173,6 +9182,12 @@
               (lower-test-function-vector-binop-count functions "fill")]
             [store-count : i64
               (lower-test-function-vector-store-count functions "fill")]
+            [pred-load-count : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            [pred-store-count : i64
+              (lower-test-function-predicated-store-count functions "fill")]
+            [tail-mask-count : i64
+              (lower-test-function-tail-mask-count functions "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
                 functions
@@ -9181,11 +9196,14 @@
                 elem-ty)]
             [tail-store-count : i64
               (lower-test-function-store-ptr-count functions "fill")]
-            (and
+            (compiler-lower-and8
               (= load-count want-loads)
-              (= binop-count want-binops)
+              (= binop-count (* want-binops 2))
               (= store-count 1)
-              (= shape-count want-shapes)
+              (= pred-load-count want-loads)
+              (= pred-store-count 1)
+              (= tail-mask-count 1)
+              (= shape-count (* want-shapes 2))
               (> tail-store-count 0)))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 

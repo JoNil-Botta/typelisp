@@ -1525,6 +1525,9 @@
 (define (compiler-parse-tag-expr-box-take) : i64
   292)
 
+(define (compiler-parse-tag-expr-deref) : i64
+  304)
+
 (define (compiler-parse-tag-expr-string-data) : i64
   276)
 
@@ -2351,6 +2354,12 @@
           out
           "box-take"
           (compiler-parse-tag-expr-box-take)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "deref"
+          (compiler-parse-tag-expr-deref)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -4953,7 +4962,31 @@
                                   receiver-box
                                   field
                                   parsed-value))]
+                            [(ast.AstExpr.TupleRef receiver-box index)
+                              (if (< index 0)
+                                (ResultAstExpr.Err
+                                  "parse: tuple-ref assignment index must be non-negative")
+                                (ResultAstExpr.Ok
+                                  (ast.ast-expr-struct-set-id-with-pools
+                                    pools
+                                    receiver-box
+                                    (ast.ast-tuple-set-field-id-from-index
+                                      index)
+                                    parsed-value)))]
+                            [(ast.AstExpr.ArrayRef receiver-box index-box)
+                              (ResultAstExpr.Ok
+                                (ast.ast-expr-array-set-with-pools
+                                  pools
+                                  receiver-box
+                                  index-box
+                                  parsed-value))]
                             [(ast.AstExpr.BoxGet receiver-box)
+                              (ResultAstExpr.Ok
+                                (ast.ast-expr-box-set-with-pools
+                                  pools
+                                  receiver-box
+                                  parsed-value))]
+                            [(ast.AstExpr.BoxTake receiver-box)
                               (ResultAstExpr.Ok
                                 (ast.ast-expr-box-set-with-pools
                                   pools
@@ -4968,7 +5001,7 @@
                                   parsed-value))]
                             [_
                               (ResultAstExpr.Err
-                                "parse: set! target must be a name, struct field place, or box place")])]
+                                "parse: set! target must be a mutable place")])]
                         [(ResultAstExpr.Err message)
                           (ResultAstExpr.Err message)])])]
                 [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
@@ -6023,6 +6056,22 @@
             "parse: box-take expects exactly one expression"
             "parse: box expects exactly one expression")))]))
 
+(define (parse-ast-deref
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view rest)
+    [(reader.SpannedSexprView.Cons expr end _)
+      (match (reader.spanned-sexpr-view end)
+        [(reader.SpannedSexprView.Nil _)
+          (match (parse-ast-expr-with-pools dispatch pools expr)
+            [(ResultAstExpr.Ok parsed-expr)
+              (ResultAstExpr.Ok
+                (ast.ast-expr-box-take-with-pools pools parsed-expr))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: deref expects exactly one expression")])]
+    [_ (ResultAstExpr.Err "parse: deref expects exactly one expression")]))
+
 ;; `(ptr-null : T)` - a colon followed by a pointer type, no leading expression.
 ;; The parser accepts any type here; the typechecker rejects non-pointer `T`.
 (define (parse-ast-ptr-null
@@ -7008,6 +7057,8 @@
       (parse-ast-box-like dispatch pools rest true false)]
     [(= tag (compiler-parse-tag-expr-box-take))
       (parse-ast-box-like dispatch pools rest false true)]
+    [(= tag (compiler-parse-tag-expr-deref))
+      (parse-ast-deref dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-string-data))
       (parse-ast-string-data dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-string-from-bytes))

@@ -15946,6 +15946,17 @@
           box-expr
           origin
           result-ty))]
+    [(ast.AstExpr.BoxTake receiver-box)
+      (let
+        [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
+        (lower-box-storage-address
+          ctx
+          state
+          env
+          type-env
+          receiver
+          origin
+          result-ty))]
     [_
       (ResultLowerExpr.Err
         (box
@@ -26445,8 +26456,37 @@
     [(tc_core.ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr inner message)))]))
 
-;; Lower `(box-get b)`: evaluate the box handle and load the boxed value
-;; of type `T` (the result type) from offset 0 of the box storage.
+(define (lower-deref-from-expected-receiver
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [receiver : ast.AstExpr]
+  [receiver-ty : ast.AstType]
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-expr-expected
+    ctx
+    state
+    env
+    type-env
+    receiver
+    receiver-ty
+    receiver)
+    [(ResultLowerExpr.Ok lowered)
+      (match lowered
+        [(LowerExpr.Expr receiver-state receiver-value _)
+          (ResultLowerExpr.Ok
+            (lower-load-inline-value-at-offset
+              ctx
+              receiver-state
+              receiver-value
+              0
+              result-ty
+              (lower-state-mode receiver-state)))])]
+    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+
+;; Lower a Box/reference projection: both handles are pointers to the projected
+;; value's storage, so the load shape is identical after receiver validation.
 (define (lower-box-get
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -26454,31 +26494,50 @@
   [type-env : tc_core.TcTypeEnv]
   [inner : ast.AstExpr]
   [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (lower-expr-expected
+  (match (lower-expr-result-type-or-check
     ctx
-    state
     env
     type-env
-    inner
-    (ast.ast-ty-box result-ty)
+    (lower-state-type-cache state)
     inner)
-    [(ResultLowerExpr.Ok lowered)
-      (match lowered
-        [(LowerExpr.Expr box-state box-value _)
-          ;; When the boxed value is an inline aggregate, the box pointer
-          ;; already addresses the T storage, so box-get yields that pointer
-          ;; (offset 0) rather than scalar-loading the first 8 bytes (which would
-          ;; read only the leading word, e.g. an enum tag, and treat it as the
-          ;; whole value). Scalars still load. Mirrors lower-struct-get.
-          (ResultLowerExpr.Ok
-            (lower-load-inline-value-at-offset
-              ctx
-              box-state
-              box-value
-              0
-              result-ty
-              (lower-state-mode box-state)))])]
-    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    [(tc_core.ResultTcType.Ok receiver-ty)
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-resolve-type ctx receiver-ty))
+        [(ast.AstType.Box _)
+          (lower-deref-from-expected-receiver
+            ctx
+            state
+            env
+            type-env
+            inner
+            (ast.ast-ty-box result-ty)
+            result-ty)]
+        [(ast.AstType.Ref _ _)
+          (lower-deref-from-expected-receiver
+            ctx
+            state
+            env
+            type-env
+            inner
+            receiver-ty
+            result-ty)]
+        [(ast.AstType.MutRef _ _)
+          (lower-deref-from-expected-receiver
+            ctx
+            state
+            env
+            type-env
+            inner
+            receiver-ty
+            result-ty)]
+        [_
+          (ResultLowerExpr.Err
+            (box
+              (lower-diagnostic-at-expr
+                inner
+                "lower: deref requires Box or reference type")))])]
+    [(tc_core.ResultTcType.Err message)
+      (ResultLowerExpr.Err (box (lower-diagnostic-at-expr inner message)))]))
 
 (define (lower-box-storage-address
   [ctx : tc_core.TcContext]
@@ -26504,18 +26563,26 @@
                   (ResultLowerExpr.Ok
                     (LowerExpr.Expr box-state box-value result-ty))])]
             [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+        [(ast.AstType.MutRef _ _)
+          (match (lower-expr ctx state env type-env box-expr)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr receiver-state receiver-value _)
+                  (ResultLowerExpr.Ok
+                    (LowerExpr.Expr receiver-state receiver-value result-ty))])]
+            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
         [(ast.AstType.Ref _ _)
           (ResultLowerExpr.Err
             (box
               (lower-diagnostic-at-expr
                 origin
-                "lower: box-get requires Box storage")))]
+                "lower: deref mutation requires mutable access")))]
         [_
           (ResultLowerExpr.Err
             (box
               (lower-diagnostic-at-expr
                 origin
-                "lower: box-get requires Box type")))])]
+                "lower: deref requires Box or reference type")))])]
     [(tc_core.ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr box-expr message)))]))
 
@@ -36349,6 +36416,32 @@
           [(tc_core.ResultTcType.Err message)
             (ResultLowerExpr.Err
               (box (lower-diagnostic-at-expr box-expr message)))]))]
+    [(ast.AstExpr.BoxTake receiver-box)
+      (let
+        [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
+        (match (lower-expr-result-type-or-check
+          ctx
+          env
+          type-env
+          (lower-state-type-cache state)
+          receiver)
+          [(tc_core.ResultTcType.Ok receiver-ty)
+            (match (tc_core.tc-box-set-inner-type ctx receiver-ty)
+              [(tc_core.ResultTcType.Ok inner-ty)
+                (lower-box-storage-address
+                  ctx
+                  state
+                  env
+                  type-env
+                  receiver
+                  origin
+                  (tc_core.tc-type-without-regions inner-ty))]
+              [(tc_core.ResultTcType.Err message)
+                (ResultLowerExpr.Err
+                  (box (lower-diagnostic-at-expr origin message)))])]
+          [(tc_core.ResultTcType.Err message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr receiver message)))]))]
     [_
       (ResultLowerExpr.Err
         (box
@@ -36648,6 +36741,74 @@
             origin
             "lower: set! struct field requires local storage")))]))
 
+(define (lower-tuple-set
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [receiver : ast.AstExpr]
+  [receiver-ty : ast.AstType]
+  [index : i64]
+  [value : ast.AstExpr]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match (tc_core.tc-tuple-set-element-type ctx receiver-ty index)
+    [(tc_core.ResultTcType.Ok elem-ty)
+      (let
+        [elem-ir-ty : ast.AstType (tc_core.tc-type-without-regions elem-ty)]
+        (match (lower-mutable-place-address
+          ctx
+          state
+          env
+          type-env
+          receiver
+          origin)
+          [(ResultLowerExpr.Ok place-lowered)
+            (match place-lowered
+              [(LowerExpr.Expr place-state place-ptr place-ty)
+                (match (lower-tuple-field-address-from-place
+                  ctx
+                  place-state
+                  place-ptr
+                  place-ty
+                  index
+                  origin)
+                  [(ResultLowerExpr.Ok elem-lowered)
+                    (match elem-lowered
+                      [(LowerExpr.Expr elem-state elem-ptr _)
+                        (match (lower-store-expr-into-address-result
+                          ctx
+                          elem-state
+                          env
+                          type-env
+                          elem-ptr
+                          value
+                          elem-ir-ty
+                          value)
+                          [(ResultLowerExpr.Ok stored)
+                            (match stored
+                              [(LowerExpr.Expr store-state _ _)
+                                (match (lower-refresh-register-resident-root-after-store
+                                  ctx
+                                  store-state
+                                  env
+                                  type-env
+                                  receiver
+                                  origin)
+                                  [(ResultLowerState.Ok refreshed-state)
+                                    (ResultLowerExpr.Ok
+                                      (LowerExpr.Expr
+                                        refreshed-state
+                                        ir.CompilerIrValue.Unit
+                                        (ast.AstType.Unit)))]
+                                  [(ResultLowerState.Err message)
+                                    (ResultLowerExpr.Err message)])])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)])])]
+                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+          [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
+    [(tc_core.ResultTcType.Err message)
+      (ResultLowerExpr.Err (box (lower-diagnostic-at-expr origin message)))]))
+
 (define (lower-struct-set
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -36664,82 +36825,94 @@
     (lower-state-type-cache state)
     receiver)
     [(tc_core.ResultTcType.Ok receiver-ty)
-      (match (tc_core.tc-struct-set-field-type-id ctx receiver-ty field-id)
-        [(tc_core.ResultTcType.Ok field-ty)
-          (let
-            [field : String (tc_core.tc-env-key-name-text field-id)]
-            [field-ir-ty : ast.AstType
-              (tc_core.tc-type-without-regions field-ty)]
-            (if (lower-register-resident-local-place?
-              ctx
-              env
-              receiver
-              receiver-ty)
-              (lower-struct-set-register-resident-local
+      (if (ast.ast-tuple-set-field-id? field-id)
+        (lower-tuple-set
+          ctx
+          state
+          env
+          type-env
+          receiver
+          receiver-ty
+          (ast.ast-tuple-set-index-from-field-id field-id)
+          value
+          origin)
+        (match (tc_core.tc-struct-set-field-type-id ctx receiver-ty field-id)
+          [(tc_core.ResultTcType.Ok field-ty)
+            (let
+              [field : String (tc_core.tc-env-key-name-text field-id)]
+              [field-ir-ty : ast.AstType
+                (tc_core.tc-type-without-regions field-ty)]
+              (if (lower-register-resident-local-place?
                 ctx
-                state
                 env
-                type-env
                 receiver
-                receiver-ty
-                field
-                field-ir-ty
-                value
-                origin)
-              (match (lower-mutable-place-address
-                ctx
-                state
-                env
-                type-env
-                receiver
-                origin)
-                [(ResultLowerExpr.Ok place-lowered)
-                  (match place-lowered
-                    [(LowerExpr.Expr place-state place-ptr place-ty)
-                      (match (lower-struct-field-address-from-place
-                        ctx
-                        place-state
-                        place-ptr
-                        place-ty
-                        field
-                        origin)
-                        [(ResultLowerExpr.Ok field-lowered)
-                          (match field-lowered
-                            [(LowerExpr.Expr field-state field-ptr _)
-                              (match (lower-store-expr-into-address-result
-                                ctx
-                                field-state
-                                env
-                                type-env
-                                field-ptr
-                                value
-                                field-ir-ty
-                                value)
-                                [(ResultLowerExpr.Ok stored)
-                                  (match stored
-                                    [(LowerExpr.Expr store-state _ _)
-                                      (match (lower-refresh-register-resident-root-after-store
-                                        ctx
-                                        store-state
-                                        env
-                                        type-env
-                                        receiver
-                                        origin)
-                                        [(ResultLowerState.Ok refreshed-state)
-                                          (ResultLowerExpr.Ok
-                                            (LowerExpr.Expr
-                                              refreshed-state
-                                              ir.CompilerIrValue.Unit
-                                              (ast.AstType.Unit)))]
-                                        [(ResultLowerState.Err message)
-                                          (ResultLowerExpr.Err message)])])]
-                                [(ResultLowerExpr.Err message)
-                                  (ResultLowerExpr.Err message)])])]
-                        [(ResultLowerExpr.Err message)
-                          (ResultLowerExpr.Err message)])])]
-                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))]
-        [(tc_core.ResultTcType.Err message)
-          (ResultLowerExpr.Err (box (lower-diagnostic-at-expr origin message)))])]
+                receiver-ty)
+                (lower-struct-set-register-resident-local
+                  ctx
+                  state
+                  env
+                  type-env
+                  receiver
+                  receiver-ty
+                  field
+                  field-ir-ty
+                  value
+                  origin)
+                (match (lower-mutable-place-address
+                  ctx
+                  state
+                  env
+                  type-env
+                  receiver
+                  origin)
+                  [(ResultLowerExpr.Ok place-lowered)
+                    (match place-lowered
+                      [(LowerExpr.Expr place-state place-ptr place-ty)
+                        (match (lower-struct-field-address-from-place
+                          ctx
+                          place-state
+                          place-ptr
+                          place-ty
+                          field
+                          origin)
+                          [(ResultLowerExpr.Ok field-lowered)
+                            (match field-lowered
+                              [(LowerExpr.Expr field-state field-ptr _)
+                                (match (lower-store-expr-into-address-result
+                                  ctx
+                                  field-state
+                                  env
+                                  type-env
+                                  field-ptr
+                                  value
+                                  field-ir-ty
+                                  value)
+                                  [(ResultLowerExpr.Ok stored)
+                                    (match stored
+                                      [(LowerExpr.Expr store-state _ _)
+                                        (match (lower-refresh-register-resident-root-after-store
+                                          ctx
+                                          store-state
+                                          env
+                                          type-env
+                                          receiver
+                                          origin)
+                                          [(ResultLowerState.Ok refreshed-state)
+                                            (ResultLowerExpr.Ok
+                                              (LowerExpr.Expr
+                                                refreshed-state
+                                                ir.CompilerIrValue.Unit
+                                                (ast.AstType.Unit)))]
+                                          [(ResultLowerState.Err message)
+                                            (ResultLowerExpr.Err message)])])]
+                                  [(ResultLowerExpr.Err message)
+                                    (ResultLowerExpr.Err message)])])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)])])]
+                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))]
+          [(tc_core.ResultTcType.Err message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr origin message)))]))]
     [(tc_core.ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr receiver message)))]))
 

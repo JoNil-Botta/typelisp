@@ -431,20 +431,16 @@
                 (module ,module-name)
                 (import (eq.eq ,T) as value_eq)
                 ,@core
-                (define (copy-slice-into!
-                  [source : (& source (Slice ,T))]
-                  [index : i64]
-                  [out : (&mut out ,vec-name)]) : unit
-                  (if (>= index (array-length source))
-                    unit
-                    (begin
-                      (push out (clone (array-ref source index)))
-                      (copy-slice-into! source (+ index 1) out))))
                 (define (from-slice [source : (& source (Slice ,T))]) : ,vec-name
                   (let
-                    [out : ,vec-name (with-capacity (array-length source))]
+                    [count : i64 (array-length source)]
+                    [out : ,vec-name (with-capacity count)]
+                    [index : i64 0]
                     (begin
-                      (copy-slice-into! source 0 (&mut out))
+                      (while (< index count)
+                        (begin
+                          (push (&mut out) (clone (array-ref source index)))
+                          (set! index (+ index 1))))
                       out)))
                 (defenum ,pop-name
                   (Empty)

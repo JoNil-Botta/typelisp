@@ -61200,9 +61200,15 @@
       (make-array i64 1)
       compiler_regalloc.CompilerRegAssignmentList.Nil
       0)
-    (compiler-backend-addr-of-forwarding-disable! backend-state)
-    (compiler-backend-group-vars-disable! backend-state)
-    (compiler-backend-fuse-need-disable! backend-state)
+    ;; Scratch-backed function state is retired before the caller-global
+    ;; sentinels below are cleared. Do not recreate a lazy compatibility state
+    ;; in the long-lived caller arena merely to reset an already-retired owner.
+    (when
+      (compiler-backend-state-function-state-active? backend-state)
+      (begin
+        (compiler-backend-addr-of-forwarding-disable! backend-state)
+        (compiler-backend-group-vars-disable! backend-state)
+        (compiler-backend-fuse-need-disable! backend-state)))
     (compiler-backend-gep-fold-disable!)
     ;; #phi-staged-copy: both are edge-scoped, but a function that never emits a
     ;; phi edge must not inherit the previous function's coordinates.
@@ -61358,9 +61364,9 @@
           crt-entry
           scratch))]
     (begin
-      ;; Scratch-backed function owners are already retired here. Recreate the
-      ;; remaining global sentinels in the caller arena so none survive as
-      ;; pointers into the rewound function scratch arena.
+      ;; Scratch-backed function owners are already retired here. Reset only
+      ;; the remaining global sentinels in the caller arena; function-owned
+      ;; cleanup above deliberately stays inactive after retirement.
       (compiler-backend-clear-function-emit-state! backend-state)
       result)))
 

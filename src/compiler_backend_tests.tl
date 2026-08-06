@@ -40874,6 +40874,13 @@
       (not
         (compiler_backend.compiler-backend-state-function-state-active?
           failure-state-a))]
+    [_clear-retired : unit
+      (compiler_backend.compiler-backend-clear-function-emit-state!
+        failure-state-a)]
+    [retired-stays-retired : bool
+      (not
+        (compiler_backend.compiler-backend-state-function-state-active?
+          failure-state-a))]
     [b-after : compiler_backend.ResultCompilerBackend
       (compiler-backend-emit-test-instrs-target-with-backend-state
         b-instrs
@@ -40897,6 +40904,7 @@
       before-reset
       failure-ok
       failure-retired
+      retired-stays-retired
       b-bytes-stable
       (compiler_backend.compiler-backend-mode-scalar?
         (compiler_backend.compiler-backend-test-get-compiler-backend-current-mode

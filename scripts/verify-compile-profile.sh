@@ -1082,6 +1082,10 @@ fi
 # crossed ast_expr_pool.macro_expand from 50 to 51 segments; the authoritative
 # Windows probe measured 3,284,058 used nodes and 106,954,752 physical payload
 # bytes.
+# #5937's persistent typechecker list storage and focused wide/deep tests
+# crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
+# Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload
+# bytes.
 # All four sit within a few percent of their next step, so expect these to move.
 # #5701 landed while
 # this was in review and consumed 4177 of the expr macro_expand headroom without
@@ -1144,7 +1148,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 51 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 30 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 31 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \

@@ -1133,8 +1133,9 @@ if [ "$NL_HOST_OS" = windows ]; then
     #
     # The type-pool macro_expand boundary is load-bearing beyond sizing: the
     # ordinary scalar `for` macro retains each source binding's produced type
-    # for expr-type inspection, so its macro-walk type footprint is part of the
-    # intentional exact selfhost allocation boundary.
+    # for expr-type inspection, and the native Vec slice-copy loop contributes
+    # its expanded loop types, so their macro-walk type footprint is part of
+    # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 50 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
@@ -1142,7 +1143,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool typecheck 30 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool typecheck 8 1024 24 \

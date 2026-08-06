@@ -51065,6 +51065,302 @@
             out))])
     (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
+;; The remaining `BinOp` fusion cluster of
+;; `compiler-backend-emit-instrs-step`, extracted unchanged (refs #5177).
+;; It owns the shared lookahead for RAX forwarding and compare consumers
+;; (return, direct/total-enum branches, and comparison-plus-not branches).
+(define (compiler-backend-emit-binop-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
+  (if (and
+    (compiler-backend-var-single-use? ctx.use-counts dst)
+    (compiler-backend-rax-forwardable-binop?
+      ctx.types
+      ctx.global-types
+      ctx.assignments
+      op
+      lhs
+      rhs
+      ty)
+    (compiler-backend-rest-starts-rax-forwardable-consumer?
+      ctx.types
+      ctx.global-types
+      ctx.assignments
+      dst
+      instrs
+      index))
+    (match (compiler-backend-emit-binop-to-rax
+      ctx.type-segment-bases
+      ctx.types
+      ctx.global-types
+      ctx.assignments
+      dst
+      op
+      lhs
+      rhs
+      ty
+      false
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        0)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        1)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        2)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        3)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        4)
+      ctx.backend-state)
+      [(ResultCompilerBackend.Ok head)
+        (begin
+          (compiler-backend-asm-append
+            out
+            (compiler-backend-emergency-wrap head ctx.backend-state))
+          (compiler-backend-emit-instrs-with-rax
+            ctx
+            fallthrough
+            dst
+            ty
+            instrs
+            index
+            out))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])
+    (if (and
+      (compiler-backend-compare-op? op)
+      (or
+        (compiler-backend-var-single-use? ctx.use-counts dst)
+        (compiler-backend-var-fuse-safe? dst))
+      (not (compiler-backend-binop-f64? ctx.types ctx.global-types lhs rhs ty)))
+      (if (< index (struct-get instrs len))
+        (let
+          [next : compiler_ir_types.CompilerIrInstr
+            (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+          [after-branch : i64 (+ index 1)]
+          (match next
+            [(compiler_ir_types.CompilerIrInstr.Return maybe)
+              (if (< after-branch (struct-get instrs len))
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  instrs
+                  index
+                  out)
+                (match maybe
+                  [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+                    (if (compiler-backend-branch-uses-var? value dst)
+                      (compiler-backend-emit-terminator-into
+                        (compiler-backend-emit-binop-return-with-plan
+                          ctx.type-segment-bases
+                          ctx.backend-state
+                          ctx.source-function
+                          ctx.blocks
+                          ctx.types
+                          ctx.global-types
+                          ctx.assignments
+                          ctx.vars
+                          op
+                          lhs
+                          rhs
+                          ty
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
+                            0
+                            0)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
+                            0
+                            1)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
+                            0
+                            2)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
+                            0
+                            3)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
+                            0
+                            4))
+                        out
+                        ctx.backend-state)
+                      (compiler-backend-emit-instrs-normal
+                        ctx
+                        fallthrough
+                        instr
+                        instrs
+                        index
+                        out))]
+                  [(compiler_ir_types.CompilerIrMaybeValue.No)
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      instrs
+                      index
+                      out)]))]
+            [(compiler_ir_types.CompilerIrInstr.Branch
+                cond
+                true-label
+                false-label)
+              (if (compiler-backend-branch-uses-var? cond dst)
+                (compiler-backend-emit-fused-compare-branch-rest
+                  ctx
+                  fallthrough
+                  dst
+                  op
+                  lhs
+                  rhs
+                  ty
+                  true-label
+                  false-label
+                  instrs
+                  after-branch
+                  out)
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  instrs
+                  index
+                  out))]
+            [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
+                cond
+                true-label
+                false-label)
+              (if (compiler-backend-branch-uses-var? cond dst)
+                (compiler-backend-emit-fused-compare-branch-rest
+                  ctx
+                  fallthrough
+                  dst
+                  op
+                  lhs
+                  rhs
+                  ty
+                  true-label
+                  false-label
+                  instrs
+                  after-branch
+                  out)
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  instrs
+                  index
+                  out))]
+            [(compiler_ir_types.CompilerIrInstr.UnOp
+                not-dst
+                (compiler_ir_types.CompilerIrUnOp.Not)
+                not-src
+                (compiler_ast_types.AstType.Bool))
+              ;; A single-use `not` between a comparison and its branch
+              ;; only reverses the two successors. Keep the compare
+              ;; flags live, omit both boolean materializations, and
+              ;; branch to the opposite labels directly.
+              (if (and
+                (compiler-backend-var-single-use? ctx.use-counts dst)
+                (compiler-backend-var-single-use? ctx.use-counts not-dst)
+                (compiler-backend-branch-uses-var? not-src dst))
+                (if (< after-branch (struct-get instrs len))
+                  (let
+                    [branch : compiler_ir_types.CompilerIrInstr
+                      (compiler_ir_types.compiler-ir-instr-seq-ref
+                        instrs
+                        after-branch)]
+                    [after-not-branch : i64 (+ after-branch 1)]
+                    (match (compiler_ir_types.compiler-ir-instr-scalar-fact
+                      branch)
+                      [(compiler_ir_types.CompilerIrInstrScalarFact.Branch
+                          cond
+                          true-label
+                          false-label)
+                        (if (compiler-backend-branch-uses-var? cond not-dst)
+                          (compiler-backend-emit-fused-compare-branch-rest
+                            ctx
+                            fallthrough
+                            dst
+                            op
+                            lhs
+                            rhs
+                            ty
+                            false-label
+                            true-label
+                            instrs
+                            after-not-branch
+                            out)
+                          (compiler-backend-emit-instrs-normal
+                            ctx
+                            fallthrough
+                            instr
+                            instrs
+                            index
+                            out))]
+                      [_
+                        (compiler-backend-emit-instrs-normal
+                          ctx
+                          fallthrough
+                          instr
+                          instrs
+                          index
+                          out)]))
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    instrs
+                    index
+                    out))
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  instrs
+                  index
+                  out))]
+            [_
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                instrs
+                index
+                out)]))
+        (compiler-backend-emit-instrs-normal
+          ctx
+          fallthrough
+          instr
+          instrs
+          index
+          out))
+      (compiler-backend-emit-instrs-normal
+        ctx
+        fallthrough
+        instr
+        instrs
+        index
+        out))))
+
 (define (compiler-backend-emit-instrs-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -51163,301 +51459,18 @@
             rest
             out)]
         [(compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
-          (if (and
-            (compiler-backend-var-single-use? ctx.use-counts dst)
-            (compiler-backend-rax-forwardable-binop?
-              ctx.types
-              ctx.global-types
-              ctx.assignments
-              op
-              lhs
-              rhs
-              ty)
-            (compiler-backend-rest-starts-rax-forwardable-consumer?
-              ctx.types
-              ctx.global-types
-              ctx.assignments
-              dst
-              instrs
-              rest))
-            (match (compiler-backend-emit-binop-to-rax
-              ctx.type-segment-bases
-              ctx.types
-              ctx.global-types
-              ctx.assignments
-              dst
-              op
-              lhs
-              rhs
-              ty
-              false
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch ctx.plan)
-                0
-                0)
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch ctx.plan)
-                0
-                1)
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch ctx.plan)
-                0
-                2)
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch ctx.plan)
-                0
-                3)
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch ctx.plan)
-                0
-                4)
-              ctx.backend-state)
-              [(ResultCompilerBackend.Ok head)
-                (begin
-                  (compiler-backend-asm-append
-                    out
-                    (compiler-backend-emergency-wrap head ctx.backend-state))
-                  (compiler-backend-emit-instrs-with-rax
-                    ctx
-                    fallthrough
-                    dst
-                    ty
-                    instrs
-                    rest
-                    out))]
-              [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err message)])
-            (if (and
-              (compiler-backend-compare-op? op)
-              (or
-                (compiler-backend-var-single-use? ctx.use-counts dst)
-                (compiler-backend-var-fuse-safe? dst))
-              (not
-                (compiler-backend-binop-f64?
-                  ctx.types
-                  ctx.global-types
-                  lhs
-                  rhs
-                  ty)))
-              (if (< rest (struct-get instrs len))
-                (let
-                  [next : compiler_ir_types.CompilerIrInstr
-                    (compiler_ir_types.compiler-ir-instr-seq-ref instrs rest)]
-                  [after-branch : i64 (+ rest 1)]
-                  (match next
-                    [(compiler_ir_types.CompilerIrInstr.Return maybe)
-                      (if (< after-branch (struct-get instrs len))
-                        (compiler-backend-emit-instrs-normal
-                          ctx
-                          fallthrough
-                          instr
-                          instrs
-                          rest
-                          out)
-                        (match maybe
-                          [(compiler_ir_types.CompilerIrMaybeValue.Some value)
-                            (if (compiler-backend-branch-uses-var? value dst)
-                              (compiler-backend-emit-terminator-into
-                                (compiler-backend-emit-binop-return-with-plan
-                                  ctx.type-segment-bases
-                                  ctx.backend-state
-                                  ctx.source-function
-                                  ctx.blocks
-                                  ctx.types
-                                  ctx.global-types
-                                  ctx.assignments
-                                  ctx.vars
-                                  op
-                                  lhs
-                                  rhs
-                                  ty
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      ctx.plan)
-                                    0
-                                    0)
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      ctx.plan)
-                                    0
-                                    1)
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      ctx.plan)
-                                    0
-                                    2)
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      ctx.plan)
-                                    0
-                                    3)
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      ctx.plan)
-                                    0
-                                    4))
-                                out
-                                ctx.backend-state)
-                              (compiler-backend-emit-instrs-normal
-                                ctx
-                                fallthrough
-                                instr
-                                instrs
-                                rest
-                                out))]
-                          [(compiler_ir_types.CompilerIrMaybeValue.No)
-                            (compiler-backend-emit-instrs-normal
-                              ctx
-                              fallthrough
-                              instr
-                              instrs
-                              rest
-                              out)]))]
-                    [(compiler_ir_types.CompilerIrInstr.Branch
-                        cond
-                        true-label
-                        false-label)
-                      (if (compiler-backend-branch-uses-var? cond dst)
-                        (compiler-backend-emit-fused-compare-branch-rest
-                          ctx
-                          fallthrough
-                          dst
-                          op
-                          lhs
-                          rhs
-                          ty
-                          true-label
-                          false-label
-                          instrs
-                          after-branch
-                          out)
-                        (compiler-backend-emit-instrs-normal
-                          ctx
-                          fallthrough
-                          instr
-                          instrs
-                          rest
-                          out))]
-                    [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
-                        cond
-                        true-label
-                        false-label)
-                      (if (compiler-backend-branch-uses-var? cond dst)
-                        (compiler-backend-emit-fused-compare-branch-rest
-                          ctx
-                          fallthrough
-                          dst
-                          op
-                          lhs
-                          rhs
-                          ty
-                          true-label
-                          false-label
-                          instrs
-                          after-branch
-                          out)
-                        (compiler-backend-emit-instrs-normal
-                          ctx
-                          fallthrough
-                          instr
-                          instrs
-                          rest
-                          out))]
-                    [(compiler_ir_types.CompilerIrInstr.UnOp
-                        not-dst
-                        (compiler_ir_types.CompilerIrUnOp.Not)
-                        not-src
-                        (compiler_ast_types.AstType.Bool))
-                      ;; A single-use `not` between a comparison and its branch
-                      ;; only reverses the two successors. Keep the compare
-                      ;; flags live, omit both boolean materializations, and
-                      ;; branch to the opposite labels directly.
-                      (if (and
-                        (compiler-backend-var-single-use? ctx.use-counts dst)
-                        (compiler-backend-var-single-use?
-                          ctx.use-counts
-                          not-dst)
-                        (compiler-backend-branch-uses-var? not-src dst))
-                        (if (< after-branch (struct-get instrs len))
-                          (let
-                            [branch : compiler_ir_types.CompilerIrInstr
-                              (compiler_ir_types.compiler-ir-instr-seq-ref
-                                instrs
-                                after-branch)]
-                            [after-not-branch : i64 (+ after-branch 1)]
-                            (match (compiler_ir_types.compiler-ir-instr-scalar-fact
-                              branch)
-                              [(compiler_ir_types.CompilerIrInstrScalarFact.Branch
-                                  cond
-                                  true-label
-                                  false-label)
-                                (if (compiler-backend-branch-uses-var?
-                                  cond
-                                  not-dst)
-                                  (compiler-backend-emit-fused-compare-branch-rest
-                                    ctx
-                                    fallthrough
-                                    dst
-                                    op
-                                    lhs
-                                    rhs
-                                    ty
-                                    false-label
-                                    true-label
-                                    instrs
-                                    after-not-branch
-                                    out)
-                                  (compiler-backend-emit-instrs-normal
-                                    ctx
-                                    fallthrough
-                                    instr
-                                    instrs
-                                    rest
-                                    out))]
-                              [_
-                                (compiler-backend-emit-instrs-normal
-                                  ctx
-                                  fallthrough
-                                  instr
-                                  instrs
-                                  rest
-                                  out)]))
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            instrs
-                            rest
-                            out))
-                        (compiler-backend-emit-instrs-normal
-                          ctx
-                          fallthrough
-                          instr
-                          instrs
-                          rest
-                          out))]
-                    [_
-                      (compiler-backend-emit-instrs-normal
-                        ctx
-                        fallthrough
-                        instr
-                        instrs
-                        rest
-                        out)]))
-                (compiler-backend-emit-instrs-normal
-                  ctx
-                  fallthrough
-                  instr
-                  instrs
-                  rest
-                  out))
-              (compiler-backend-emit-instrs-normal
-                ctx
-                fallthrough
-                instr
-                instrs
-                rest
-                out)))]
+          (compiler-backend-emit-binop-step
+            ctx
+            fallthrough
+            instr
+            dst
+            op
+            lhs
+            rhs
+            ty
+            instrs
+            rest
+            out)]
         [(compiler_ir_types.CompilerIrInstr.UnOp
             dst
             (compiler_ir_types.CompilerIrUnOp.Not)

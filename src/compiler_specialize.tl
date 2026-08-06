@@ -50,10 +50,17 @@
 
 ;; A generated function symbol is a normal one-word name handle backed by this
 ;; session-owned structural recipe until the specialization-to-lowering text
-;; boundary materializes its deterministic spelling.
-(defenum SpecGeneratedSymbolRecords
-  (Nil)
-  (Cons i64 i64 String SpecValueList (Box SpecGeneratedSymbolRecords)))
+;; boundary materializes its deterministic spelling. Recipes form a transient
+;; queue, not persistent snapshots, so keep them in one dense growable buffer.
+(defstruct SpecGeneratedSymbolRecord
+  (structural-key i64)
+  (handle i64)
+  (template-name String)
+  (values SpecValueList))
+
+(defstruct SpecGeneratedSymbolRecords
+  (slots (__tl_dyn-array SpecGeneratedSymbolRecord))
+  (len i64))
 
 ;; All production specialization work is anchored to one compile-job owner.
 ;; Expression reads use the stable segment-bases snapshot; pushes and type
@@ -68,11 +75,59 @@
 (define (spec-owner-context-new
   [pools : ast.AstNodePoolContext]
   [intern-state : spec_ci.InternCompatState]) : SpecOwnerContext
-  (SpecOwnerContext
-    pools
-    (ast.ast-node-pool-context-expr-segment-bases pools)
-    intern-state
-    (array.make-array SpecGeneratedSymbolRecords 1)))
+  (let
+    [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
+      (array.make-array SpecGeneratedSymbolRecords 1)]
+    (begin
+      (array-set!
+        records
+        0
+        (SpecGeneratedSymbolRecords
+          (array.make-array SpecGeneratedSymbolRecord 0)
+          0))
+      (SpecOwnerContext
+        pools
+        (ast.ast-node-pool-context-expr-segment-bases pools)
+        intern-state
+        records))))
+
+(define (spec-generated-symbol-records-copy-range
+  [dst : (&mut dst (__tl_dyn-array SpecGeneratedSymbolRecord))]
+  [src : (& src (__tl_dyn-array SpecGeneratedSymbolRecord))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array.ref src index))
+      (spec-generated-symbol-records-copy-range dst src (+ index 1) count))))
+
+(define (spec-generated-symbol-records-grow!
+  [records : (&mut records SpecGeneratedSymbolRecords)]) : unit
+  (let
+    [count : i64 (struct-get records len)]
+    [bigger : (__tl_dyn-array SpecGeneratedSymbolRecord)
+      (array.make-array SpecGeneratedSymbolRecord (+ (* count 2) 8))]
+    (begin
+      (spec-generated-symbol-records-copy-range
+        (&mut bigger)
+        (& (struct-get records slots))
+        0
+        count)
+      (set! (struct-get records slots) bigger))))
+
+(define (spec-generated-symbol-records-push!
+  [records : (&mut records SpecGeneratedSymbolRecords)]
+  [item : SpecGeneratedSymbolRecord]) : unit
+  (begin
+    (if (< (struct-get records len) (array.length (struct-get records slots)))
+      unit
+      (spec-generated-symbol-records-grow! records))
+    (let
+      [count : i64 (struct-get records len)]
+      (begin
+        (array-set! (struct-get records slots) count item)
+        (set! (struct-get records len) (+ count 1))))))
 
 (define (spec-owner-pools [owner : SpecOwnerContext]) : ast.AstNodePoolContext
   (struct-get owner pools))
@@ -1937,53 +1992,47 @@
         (spec-owner-intern-state owner))]
     [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
       (struct-get owner generated-symbol-records)]
+    [record-list : SpecGeneratedSymbolRecords (array-ref records 0)]
     (begin
-      (array-set!
-        records
-        0
-        (SpecGeneratedSymbolRecords.Cons
+      (spec-generated-symbol-records-push!
+        (&mut record-list)
+        (SpecGeneratedSymbolRecord
           (spec-structural-key-raw key)
           handle
           template-name
-          values
-          (box (array-ref records 0))))
+          values))
+      (array-set! records 0 record-list)
       handle)))
 
 (define (spec-materialize-generated-symbol-records-with-owner!
   [owner : SpecOwnerContext]
   [records : SpecGeneratedSymbolRecords]) : unit
   (let
-    [current : SpecGeneratedSymbolRecords records]
-    [done : bool false]
-    (while (not done)
-      (match current
-        [(SpecGeneratedSymbolRecords.Nil) (set! done true)]
-        [(SpecGeneratedSymbolRecords.Cons
-            raw
-            handle
-            template-name
-            values
-            tail-box)
-          (begin
-            (spec_ci.intern-compat-state-generated-symbol-materialize!
-              (spec-owner-intern-state owner)
-              handle
-              (spec-render-specialized-name-with-owner
-                owner
-                (SpecStructuralKey raw)
-                template-name
-                values))
-            (set! current (box-get tail-box)))]))))
+    [index : i64 0]
+    (while (< index (struct-get records len))
+      (let
+        [record : SpecGeneratedSymbolRecord
+          (array.ref (struct-get records slots) index)]
+        (begin
+          (spec_ci.intern-compat-state-generated-symbol-materialize!
+            (spec-owner-intern-state owner)
+            (struct-get record handle)
+            (spec-render-specialized-name-with-owner
+              owner
+              (SpecStructuralKey (struct-get record structural-key))
+              (struct-get record template-name)
+              (struct-get record values)))
+          (set! index (+ index 1)))))))
 
 (define (spec-materialize-owner-generated-symbols! [owner : SpecOwnerContext]) : unit
   (let
     [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
       (struct-get owner generated-symbol-records)]
+    [record-list : SpecGeneratedSymbolRecords (array-ref records 0)]
     (begin
-      (spec-materialize-generated-symbol-records-with-owner!
-        owner
-        (array-ref records 0))
-      (array-set! records 0 (SpecGeneratedSymbolRecords.Nil)))))
+      (spec-materialize-generated-symbol-records-with-owner! owner record-list)
+      (set! (struct-get record-list len) 0)
+      (array-set! records 0 record-list))))
 
 (define (gen-registry-empty) : GenRegistry
   (let
@@ -9714,6 +9763,62 @@
               ast.AstFnExport.No
               (ast.AstSpmdCallable.Callable b-items))))))))
 
+(define (compiler-specialize-generated-symbol-records-growth-ok?) : bool
+  (let
+    [count : i64 32]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 32 32)]
+    [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
+    [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
+    [handles : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      ;; Cross several recipe-buffer growth boundaries while every generated
+      ;; handle still has no rendered spelling.
+      (while (< index count)
+        (let
+          [values : SpecValueList
+            (spec-value-cons
+              (ctfe.CompilerCtfeValue.I64 index)
+              (spec-value-list-new))]
+          [key : SpecStructuralKey
+            (spec-specialization-structural-key-with-owner owner "wide" values)]
+          [handle : i64
+            (spec-reserve-specialized-symbol-with-owner owner key "wide" values)]
+          (begin
+            (array-set! handles index handle)
+            (if (string.eq
+              (spec_ci.intern-compat-state-str intern-state handle)
+              "")
+              unit
+              (set! ok false))
+            (set! index (+ index 1)))))
+      (spec-materialize-owner-generated-symbols! owner)
+      (set! index 0)
+      (while (and ok (< index count))
+        (let
+          [values : SpecValueList
+            (spec-value-cons
+              (ctfe.CompilerCtfeValue.I64 index)
+              (spec-value-list-new))]
+          (begin
+            (if (string.eq
+              (spec_ci.intern-compat-state-str
+                intern-state
+                (array.ref handles index))
+              (spec-specialized-name-with-owner owner "wide" values))
+              unit
+              (set! ok false))
+            (set! index (+ index 1)))))
+      (and
+        ok
+        (=
+          (struct-get
+            (array-ref (struct-get owner generated-symbol-records) 0)
+            len)
+          0)))))
+
 (define (compiler-specialize-self-test) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -9739,4 +9844,7 @@
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     (unless (compiler-generated-registry-map-ok?) (return 0))
     (unless (compiler-generated-decl-spmd-metadata-distinct-ok?) (return 0))
+    (unless
+      (compiler-specialize-generated-symbol-records-growth-ok?)
+      (return 0))
     1))

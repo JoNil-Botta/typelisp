@@ -1,11 +1,7 @@
-;; SPMD vector/slice surface migration (#3578): public APIs take generated
-;; vectors and borrowed slices, while the SPMD body borrows their backing storage
-;; before using varying lane indexes. The local backing-borrow types infer, so
-;; callers name neither public dynamic `(Array T)` nor the private buffer type.
+;; SPMD vector/native Slice surface: public APIs take generated vectors and
+;; native borrowed slices while varying lane indexes operate through the views.
 (import stdlib.vector)
-(import stdlib.vector_slice)
 (import (vector.vector i64) as i64v)
-(import (vector_slice.slice i64) as i64s)
 
 (define (init-vec [v : (&mut v i64v.Vec)] [n : i64] [scale : i64]) : unit
   (let
@@ -29,17 +25,13 @@
       (array-set! out-slots i (+ (array-ref a-slots i) (array-ref b-slots i))))))
 
 (define (fill-slice-foreach
-  [a : (i64s.Slice a)]
-  [b : (i64s.Slice b)]
-  [out : (i64s.MutSlice out)]
+  [a : (& a (Slice i64))]
+  [b : (& b (Slice i64))]
+  [out : (&mut out (Slice i64))]
   [n : i64]) : unit
-  (let
-    [a-slots (struct-get a slots)]
-    [b-slots (struct-get b slots)]
-    [out-slots (struct-get out slots)]
-    (foreach
-      ([i : i64 0 n])
-      (array-set! out-slots i (+ (array-ref a-slots i) (array-ref b-slots i))))))
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
 
 (define (checksum [v : (& v i64v.Vec)] [n : i64]) : i64
   (let
@@ -64,10 +56,10 @@
       (init-vec (&mut out) n 0)
       (fill-vector-foreach (& a) (& b) (&mut out) n)
       (let
-        [full-a : (i64s.Slice a) (i64s.all-vec (& a))]
-        [full-b : (i64s.Slice b) (i64s.from-vec (& b) 0 n)]
+        [full-a : (& a (Slice i64)) (i64v.view (& a))]
+        [full-b : (& b (Slice i64)) (slice-view (i64v.view (& b)) 0 n)]
         (begin
           (let
-            [out-slice : (i64s.MutSlice out) (i64s.all-vec-mut (&mut out))]
+            [out-slice : (&mut out (Slice i64)) (i64v.view-mut (&mut out))]
             (fill-slice-foreach full-a full-b out-slice n))
           (bit-and (checksum (& out) n) 0xff))))))

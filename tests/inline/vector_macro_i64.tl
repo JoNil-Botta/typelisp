@@ -24,6 +24,17 @@
           (set! i (+ i 1))))
       v)))
 
+(define (vector-macro-slice-sum [view : (& source (Slice i64))]) : i64
+  (let
+    [index : i64 0]
+    [sum : i64 0]
+    (begin
+      (while (< index (array-length view))
+        (begin
+          (set! sum (+ sum (array-ref view index)))
+          (set! index (+ index 1))))
+      sum)))
+
 (test
   vector-macro-i64-growth
   (let
@@ -114,6 +125,12 @@
       (svec.push (&mut words) "beta")
       (svec.set (&mut words) 1 "bee")
       (test.assert-i64-eq (svec.len (& words)) 2 "aliased string vector length")
+      (let
+        [view : (& words (Slice String)) (svec.view (& words))]
+        (test.assert-i64-eq
+          (array-length view)
+          2
+          "string native slice preserves String element"))
       (test.assert-true
         (svec.contains? (& words) "bee")
         "aliased string contains")
@@ -130,3 +147,36 @@
               "aliased string pop shrinks"))]
         [svec.Pop.Empty
           (test.assert-true false "aliased string pop should return a value")]))))
+
+(test
+  vector-macro-native-slice-views
+  (let
+    [items : ivec.Vec (ivec.with-capacity 8)]
+    (begin
+      (ivec.push (&mut items) 5)
+      (ivec.push (&mut items) 6)
+      (ivec.push (&mut items) 7)
+      (let
+        [full : (& items (Slice i64)) (ivec.view (& items))]
+        [middle : (& items (Slice i64)) (slice-view full 1 2)]
+        [copy : ivec.Vec (ivec.from-slice middle)]
+        (begin
+          (test.assert-i64-eq (array-length full) 3 "native full view len")
+          (test.assert-i64-eq (array-length middle) 2 "native subview len")
+          (test.assert-i64-eq (array-ref middle 0) 6 "native subview first")
+          (test.assert-i64-eq
+            (vector-macro-slice-sum middle)
+            13
+            "native slice traversal")
+          (test.assert-i64-eq (ivec.len (& copy)) 2 "native slice copy len")
+          (test.assert-i64-eq
+            (ivec.get (& copy) 1 -1)
+            7
+            "native slice copy value")))
+      (let
+        [view : (&mut items (Slice i64)) (ivec.view-mut (&mut items))]
+        (array-set! view 1 44))
+      (test.assert-i64-eq
+        (ivec.get (& items) 1 -1)
+        44
+        "native mutable view updates vector"))))

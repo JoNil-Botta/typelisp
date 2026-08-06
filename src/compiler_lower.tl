@@ -32751,6 +32751,17 @@
                           ctx
                           type-env
                           name-id)]
+                      ;; Macro hygiene retains the defining-module spelling in
+                      ;; `name`, while the typechecker classifies public Slice
+                      ;; intrinsics from their source name. Reuse that exact
+                      ;; shadow-aware classifier so generated declarations do
+                      ;; not lower slice-view as an ordinary external call.
+                      [slice-call-kind : tc_core.TcSliceViewCallKind
+                        (tc_core.tc-slice-view-call-kind-name
+                          ctx
+                          type-env
+                          source-id
+                          (ci.intern-str source-id))]
                       [atomic-symbol : String
                         (lower-atomic-extern-symbol-for-name-id
                           ctx
@@ -32791,11 +32802,8 @@
                                   (string.append
                                     name
                                     " is compile-time only; wrap it in (comptime ...)")))))]
-                        [(and
-                            builtin-available
-                            (or
-                              (string.eq name "slice-view")
-                              (string.eq name "slice-mut-view")))
+                        [(not
+                            (= slice-call-kind tc_core.TcSliceViewCallKind.None))
                           (lower-slice-view-call
                             ctx
                             state
@@ -39781,11 +39789,23 @@
                         var-id
                         (tc_core.tc-type-without-regions
                           (tc_core.tc-context-type-get ctx elem-ty)))]
+                    ;; Slice references use the same two-word data/length
+                    ;; descriptor consumed by contiguous SPMD load plans.
+                    [(ast.AstType.Slice elem-ty)
+                      (LowerMaybeArrayVar.Some
+                        var-id
+                        (tc_core.tc-type-without-regions
+                          (tc_core.tc-context-type-get ctx elem-ty)))]
                     [_ (LowerMaybeArrayVar.No)])]
                 [(ast.AstType.MutRef _ referent-ty)
                   (match (tc_core.tc-type-strip-region
                     (tc_core.tc-context-type-get ctx referent-ty))
                     [(ast.AstType.DynArray elem-ty)
+                      (LowerMaybeArrayVar.Some
+                        var-id
+                        (tc_core.tc-type-without-regions
+                          (tc_core.tc-context-type-get ctx elem-ty)))]
+                    [(ast.AstType.Slice elem-ty)
                       (LowerMaybeArrayVar.Some
                         var-id
                         (tc_core.tc-type-without-regions

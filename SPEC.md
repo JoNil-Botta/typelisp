@@ -2395,8 +2395,9 @@ rules.
 `TextBuf` is intentionally separate. It is an append-oriented text builder over
 owned or borrowed string chunks whose render operation materializes an immutable
 `String`; it is not a random-access mutable byte buffer and must not become the
-binary slice contract by accident. Generated modules such as `(slice i64)` in
-`stdlib/vector_slice.tl` are typed collection views. `bytes` is the
+binary slice contract by accident. Generated vectors expose lifetime-scoped
+native `(& owner (Slice T))` and `(&mut owner (Slice T))` collection views.
+`bytes` is the
 language-wide raw byte-slice referent for binary data and FFI/IO boundaries.
 
 #### API classification

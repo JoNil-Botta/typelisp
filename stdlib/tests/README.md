@@ -22,8 +22,9 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   first-class scratch arena through `with-escape`. It runs as a normal runnable
   fixture. The `arena_policy_escape_*.tl` fixtures are check-only negative cases
   proving active-arena stdlib results cannot escape their scoped arena.
-- `vector_slice_escape.tl` verifies the checker rejects returning a slice tied
-  to a shorter-lived vector.
+- `vector_native_slice_escape.tl` verifies the checker rejects returning a
+  native slice tied to a shorter-lived vector. The adjacent `grow_live` and
+  `alias_reject` fixtures pin Vec growth and shared/exclusive alias rejection.
 - `comptime_api.tl` remains a check-only import-shape fixture for expression
   macros whose operand types are written through an explicit
   `stdlib.comptime` module alias; its inline test provides the runnable
@@ -195,10 +196,9 @@ Inline stdlib coverage:
 - `vector_api.tl` covers generated scalar, String, and aggregate vector modules,
   including shared/mutable iterator modes, growth, mutation, pop, snapshot,
   reversal, and value containment.
-- `vector_slice.tl` owns inline tests for the lifetime-scoped `(slice i64)`
-  generated module API, including vector and array constructors, invalid ranges
-  producing empty views, sub-slicing, fallback reads, value-threaded iteration,
-  duplicate module-macro imports, and explicit array/vector copy boundaries.
+- `tests/inline/vector_macro_i64.tl` owns inline tests for lifetime-scoped
+  native `Slice i64` views, sub-slicing, traversal, mutable views, and the
+  explicit `from-slice` owned-copy boundary.
 - `sort.tl` owns inline tests for generated stable hybrid merge sort over
   `(vector T)` modules, including scalar, String, and aggregate comparator
   cases, repeated generation deduplication, empty, single, already sorted,

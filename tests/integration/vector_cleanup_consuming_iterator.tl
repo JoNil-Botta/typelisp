@@ -73,6 +73,26 @@
     ([items (tokens.new) tokens.cleanup-vec])
     (tokens.set (&mut items) 4 (CleanupToken 8000000))))
 
+(define (native-views-preserve-cleanup-ownership) : unit
+  (with
+    ([items (append-token (append-token (tokens.new) 3) 30) tokens.cleanup-vec])
+    (begin
+      (let
+        [shared : (& items (Slice CleanupToken)) (tokens.view (& items))]
+        (begin
+          (test.assert-i64-eq (array-length shared) 2 "cleanup view length")
+          (test.assert-i64-eq
+            (struct-get (array-ref shared 1) value)
+            30
+            "cleanup view value")))
+      (let
+        [exclusive : (&mut items (Slice CleanupToken))
+          (tokens.view-mut (&mut items))]
+        (test.assert-i64-eq
+          (struct-get (array-ref exclusive 0) value)
+          3
+          "cleanup mutable view value")))))
+
 (define (enum-payload-cleanup) : unit
   (with ([pair (CleanupPair.Both 4000000 5000000) cleanup-pair]) unit))
 
@@ -84,9 +104,10 @@
     (early-abandonment)
     (replacement-cleans-old-and-new)
     (out-of-range-set-cleans-rejected-owner)
+    (native-views-preserve-cleanup-ownership)
     (enum-payload-cleanup)
     (test.assert-i64-eq
       cleanup-total
-      20111111
+      20111144
       "cleanup vector must clean every constructed token exactly once")
     42))

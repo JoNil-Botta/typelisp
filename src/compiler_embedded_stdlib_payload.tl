@@ -89,8 +89,6 @@
 
 (include-str-lzss payload-vector "../stdlib/vector.tl")
 
-(include-str-lzss payload-vector-slice "../stdlib/vector_slice.tl")
-
 (include-str-lzss payload-io-caller-result "../stdlib/io_caller_result.tl")
 
 (include-str-lzss payload-option "../stdlib/option.tl")
@@ -192,8 +190,6 @@
       (CompilerEmbeddedStdlibPayloadSome payload-text-buf-family)]
     [(string.eq suffix "vector.tl")
       (CompilerEmbeddedStdlibPayloadSome payload-vector)]
-    [(string.eq suffix "vector_slice.tl")
-      (CompilerEmbeddedStdlibPayloadSome payload-vector-slice)]
     [(string.eq suffix "io_caller_result.tl")
       (CompilerEmbeddedStdlibPayloadSome payload-io-caller-result)]
     [(string.eq suffix "option.tl")

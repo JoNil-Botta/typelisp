@@ -20,5 +20,10 @@
 # concurrently and an exact expectation would collide on every merge -- but the
 # verify script prints the numbers to paste here, and re-ratcheting is part of
 # each family's acceptance criteria.
-native-entries-min 95
+#
+# Issue #6238 intentionally removed the native vector_slice macro entry after
+# migrating its users to the language-native Slice type. The total image entry
+# count fell with it (103 -> 102); this one-step floor adjustment therefore
+# preserves the same coverage instead of accepting an interpreted fallback.
+native-entries-min 94
 interpreted-arms-max 0

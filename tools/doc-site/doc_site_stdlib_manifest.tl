@@ -139,7 +139,7 @@
     [page : String (doc-site-stdlib-module-page "arena")]
     [twin : String (doc-site-stdlib-hyphenate "byte_buf_core")]
     [nested : String (doc-site-stdlib-module-page "text_buf_borrowed")]
-    [tail : String (doc-site-stdlib-module-source "vector_slice")]
+    [tail : String (doc-site-stdlib-module-source "vector")]
     [stem : String (doc-site-stdlib-module-stem "text_buf_borrowed.tl")]
     (begin
       ;; This test intentionally runs from the repository root. The builder
@@ -196,5 +196,5 @@
         "doc-site manifest multi-word page name")
       (test.assert-string-eq
         (& tail)
-        "stdlib/vector_slice.tl"
-        "doc-site manifest underscored source path"))))
+        "stdlib/vector.tl"
+        "doc-site manifest tail source path"))))

@@ -137,12 +137,13 @@ mkdir -p "$WORKDIR"
 spmd_corpus() {
     cat <<'EOF'
 tests/spmd/tail_i64_add.tl
+tests/spmd/predicated_map_tail_fault_suppression.tl
 tests/spmd/tail_i32_add.tl
 tests/spmd/foreach_bound_extremes.tl
 tests/spmd/uniform_zip_i64.tl
 tests/spmd/multi_output_i64.tl
 tests/spmd/store_alias_i64.tl
-tests/spmd/vector_slice_surface_i64.tl
+tests/spmd/native_slice_surface_i64.tl
 tests/spmd/inline_helper_i64.tl
 tests/spmd/inline_helper_shadow_i64.tl
 tests/spmd/inline_helper_f64.tl

@@ -405,3 +405,8 @@ float_exponent_malformed_fraction|check-fail|tests/safety/float_exponent_malform
 float_exponent_malformed_fraction_minus|check-fail|tests/safety/float_exponent_malformed_fraction_minus.tl.invalid|-|lexer: malformed number literal
 float_exponent_overflow_f64|check-fail|tests/safety/float_exponent_overflow_f64.tl|-|non-finite f64 literal is not supported
 float_exponent_overflow_f32|check-fail|tests/safety/float_exponent_overflow_f32.tl|-|non-finite f32 literal is not supported
+deref_shared_noncopy_move_reject|check-fail|tests/safety/deref_shared_noncopy_move_reject.tl|-|cannot move non-Copy value through shared reference
+deref_immutable_set_reject|check-fail|tests/safety/deref_immutable_set_reject.tl|-|set! deref requires mutable access
+deref_box_use_after_move_reject|check-fail|tests/safety/deref_box_use_after_move_reject.tl|-|use of moved value `outer`
+deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|-|deref requires Box or reference type
+tuple_set_immutable_ref_reject|check-fail|tests/safety/tuple_set_immutable_ref_reject.tl|-|set! tuple element requires mutable tuple access

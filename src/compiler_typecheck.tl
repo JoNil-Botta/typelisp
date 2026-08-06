@@ -2872,17 +2872,17 @@
   "(define (main) : i64
   (let
     [b : (Box i64) (box 7)]
-    (box-get b)))")
+    (deref b)))")
 
 (define (compiler-typecheck-box-direct-source) : String
-  "(define (main) : i64 (box-get (box 7)))")
+  "(define (main) : i64 (deref (box 7)))")
 
 (define (compiler-typecheck-box-region-source) : String
   "(define (main) : i64
   (with-arena r
     (let
       [b : (in r (Box i64)) (box 7)]
-      (box-get b))))")
+      (deref b))))")
 
 (define (compiler-typecheck-box-region-project-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
@@ -2890,7 +2890,7 @@
   (with-arena r
     (let
       [b : (in r (Box String)) (box (string.int->string 41))]
-      (box-get b))))"))
+      (deref b))))"))
 
 (define (compiler-typecheck-box-get-non-box-source) : String
   "(define (main) : i64 (box-get 1))")
@@ -2899,15 +2899,15 @@
   "(define (main) : i64
   (let
     [b : (Box i64) (box 7)]
-    (box-take b)))")
+    (deref b)))")
 
 (define (compiler-typecheck-box-set-source) : String
   "(define (main) : i64
   (let
     [b : (Box i64) (box 7)]
     (begin
-      (set! (box-get b) 9)
-      (box-get b))))")
+      (set! (deref b) 9)
+      (deref b))))")
 
 (define (compiler-typecheck-box-set-field-source) : String
   "(defstruct Pair (x i64) (y i64))
@@ -2915,17 +2915,17 @@
   (let
     [b : (Box Pair) (box (Pair 1 2))]
     (begin
-      (set! (struct-get (box-get b) x) 9)
-      (struct-get (box-get b) x))))")
+      (set! (struct-get (deref b) x) 9)
+      (struct-get (deref b) x))))")
 
 (define (compiler-typecheck-box-set-mismatch-source) : String
   "(define (main) : unit
   (let
     [b : (Box i64) (box 7)]
-    (set! (box-get b) false)))")
+    (set! (deref b) false)))")
 
 (define (compiler-typecheck-box-take-non-box-source) : String
-  "(define (main) : i64 (box-take 1))")
+  "(define (main) : i64 (deref 1))")
 
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
@@ -2961,7 +2961,7 @@
       "typecheck: box assignment type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-box-take-non-box-source)
-      "typecheck: box-take requires Box type")))
+      "typecheck: deref requires Box or reference type")))
 
 (define (compiler-typecheck-init-source) : String
   "(defstruct Point (x i64) (flag bool))
@@ -2977,7 +2977,7 @@
     [point : Point (init : Point)]
     [maybe : Maybe (init : Maybe)]
     [boxed : (Box i64) (init : (Box i64))]
-    (+ n (+ (struct-get point x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (box-get boxed)))))))")
+    (+ n (+ (struct-get point x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (deref boxed)))))))")
 
 (define (compiler-typecheck-contextual-init-source) : String
   "(defstruct Point (x i64) (flag bool))

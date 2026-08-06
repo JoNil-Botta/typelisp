@@ -485,22 +485,22 @@ thread's default arena the result type is `(Box T)`. Inside
 `(in r (Box T))`; it follows the same region escape rules as other
 arena-owned handles.
 
-`(box-get b)` projects the boxed value for read and pattern use. If `b` has
-type `(Box T)`, the projection has type `T`. If `b` has type `(in r (Box T))`,
-the projection has type `(in r T)` when `T` is region-taggable, otherwise `T`.
-The projection does not copy the box handle and does not by itself consume the
-box. Subsequent use of the projected value is still governed by the move
-rules: copyable `T` values may be copied out, but moving a move-only `T` out
-of a box through `box-get` is an aggregate path move and is rejected. Use
-`(box-take b)` to destructively move the boxed value out; this consumes the
-box handle, and subsequent use of that handle is rejected by the move checker.
+`(deref value)` projects through safe indirection. For `(Box T)`, `(& r T)`,
+and `(&mut r T)` receivers the result is `T` (with the receiver's region or
+lifetime provenance retained where applicable). Copyable values are read
+without consuming the receiver. Moving a non-Copy value from an owned Box
+consumes the Box handle; moving a non-Copy value through either reference kind
+is rejected unless a future replacement operation explicitly supports it.
 
-`(set! (box-get b) value)` mutates the value stored in a box when `b` is a
-storage place such as a local, parameter, or supported aggregate path. The
-value must typecheck against the boxed `T`, must satisfy the same
-region/reference store checks as other storage-place mutations, and the box
-handle itself is not moved. A mutable borrow of `(box-get b)` borrows the
-boxed storage under the ordinary lexical exclusivity rules.
+`(set! (deref value) replacement)` writes through an owned Box or mutable
+reference storage place. Shared references are read-only. The replacement must
+typecheck against `T` and satisfy the same region/reference store checks as
+other place mutations. Borrowing `(deref value)` borrows the projected storage
+under the ordinary lexical exclusivity rules.
+
+`box-get` and `box-take` remain transitional parser aliases while checked-in
+stage0 compilers and the source corpus migrate to `deref`; new source uses
+`deref`.
 
 Examples:
 
@@ -528,7 +528,7 @@ Examples:
   (count i64))
 
 (define (boxed-count [c : (Box Counter)]) : i64
-  (struct-get (box-get c) count))
+  (struct-get (deref c) count))
 ```
 
 ### 3.5 User-defined types
@@ -576,6 +576,9 @@ Examples:
 - Field mutation: `(set! (struct-get place x) value)` writes one field in
   place and returns `unit`. `(set! place.x value)` is the corresponding local
   dotted sugar.
+- Tuple and array elements use the same assignment form:
+  `(set! (tuple-ref place 0) value)` and
+  `(set! (array-ref place index) value)`.
 - Dotted numeric segments such as `p.0` are not index sugar; use `tuple-ref`
   or `array-ref`.
 - Structs are heap-allocated when returned from functions (same rule as
@@ -2392,8 +2395,9 @@ rules.
 `TextBuf` is intentionally separate. It is an append-oriented text builder over
 owned or borrowed string chunks whose render operation materializes an immutable
 `String`; it is not a random-access mutable byte buffer and must not become the
-binary slice contract by accident. Generated modules such as `(slice i64)` in
-`stdlib/vector_slice.tl` are typed collection views. `bytes` is the
+binary slice contract by accident. Generated vectors expose lifetime-scoped
+native `(& owner (Slice T))` and `(&mut owner (Slice T))` collection views.
+`bytes` is the
 language-wide raw byte-slice referent for binary data and FFI/IO boundaries.
 
 #### API classification
@@ -3475,13 +3479,17 @@ without moving it. In v1 these are limited to:
   reference. This rule is identical for stdlib, compiler-owned, user-defined,
   qualified, indirect, lambda, and generated callees: only the resolved
   signature determines whether the argument is borrowed.
-
-Array, tuple, struct, and box projections produce typed places. Reading a
-copyable projected value copies it; borrowing or mutating a projected place is
-governed by its reference or place type. `array-set!`, `array-push!`, field-place
-assignment, and box-place assignment therefore mutate checked storage without
-moving the receiver handle. These are typed place operations, not callee-name
-exceptions; immutable-reference receivers remain rejected.
+- `(set! (array-ref place index) value)` (transitionally also `array-set!`)
+  and `array-push!` on an owned array receiver or mutable
+  reference receiver. These operations mutate the array storage and do not
+  move the array handle; immutable-reference receivers are rejected.
+- Struct field-place assignment `(set! (struct-get place field) value)` on an
+  owned struct receiver or mutable-reference receiver. Local dotted sugar such
+  as `(set! place.field value)` is the same place operation. This mutates only
+  the selected field; immutable-reference receivers are rejected.
+- Box/reference-place assignment `(set! (deref place) value)` and mutable
+  borrows of `(deref place)` through live storage. These operations mutate
+  or borrow the boxed storage and do not move the box handle.
 
 Ordinary user-defined function parameters are by-value unless their type is a
 reference type, but an unmarked parameter does not opt a broad move-only value
@@ -3518,16 +3526,19 @@ owner-consuming direct and nested paths through struct fields, tuple elements,
 and fixed-array literal indexes, so moving one tracked path does not move its
 siblings. Moving a tracked path marks the root partially moved; later
 whole-root owner moves are rejected until every moved path for that root is
-reinitialized. `array-set!` to a supported fixed-array path with an integer
-literal index reinitializes only that exact path after the receiver, index,
-and value have been checked. Reinitializing one element does not clear sibling
-moved paths; if it clears the final moved path for the root, the partial-root
-marker is removed. Dynamic-array elements, non-literal indexes, implicit moves
-through `box-get`, and unsupported path forms do not clear moved state. Struct
-field-place assignment reinitializes the selected tracked path when the
+reinitialized. `set!` of an `array-ref` (transitionally `array-set!`) to a
+supported fixed-array path with an integer literal index reinitializes only
+that exact path after the receiver, index, and value have been checked.
+Reinitializing one element does not clear sibling moved paths; if it clears the
+final moved path for the root, the partial-root marker is removed. Dynamic-array
+elements, non-literal indexes, implicit moves through compatibility `box-get`,
+and unsupported path forms do not clear moved state. Struct field-place
+assignment reinitializes the selected tracked path when the
 receiver path is supported; local dotted field sugar follows the same rule.
+Tuple-element assignment likewise reinitializes the selected literal-index
+path.
 Box-place assignment updates boxed storage but does not reinitialize a moved
-box handle; explicit `box-take` moves the whole box handle instead.
+box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
 `struct-get`, `tuple-ref`, and `array-ref` may copy out only copyable fields
 or elements, and may move out move-only fields/elements only where this
 tracked-path policy accepts the path. A consuming `match` is the enum
@@ -3878,20 +3889,21 @@ guards.
 - `break` and `continue` do not cross lambda/function boundaries, have no
   labels, and cannot carry values. `while` is always unit-valued.
 
-### 5.10 `(set! var expr)` — mutation
+### 5.10 `(set! place expr)` — mutation
 
-- Mutates an existing local, parameter, or global storage binding.
+- Mutates an existing local, parameter, global, struct-field, tuple-element,
+  array-element, Box, or mutable-reference storage place.
 - The type of `expr` must match `var`'s type. Assignment is subject to the
   same move, borrow, and region/lifetime rules as other writes.
 - Returns `unit`.
-- Field mutation uses the field-place forms
-  `(set! (struct-get place field) value)` and, when the receiver's leading
-  segment is a local binding, the equivalent dotted sugar
-  `(set! place.field value)`. Dotted `place.field` reads are likewise sugar
-  for `(struct-get place field)`.
+- Field mutation uses dotted `(set! place.field value)`. Tuple, array, and
+  safe-indirection writes use `(set! (tuple-ref place index) value)`,
+  `(set! (array-ref place index) value)`, and
+  `(set! (deref place) value)` respectively. The legacy explicit struct and
+  array write forms remain transitional parser aliases during migration.
 - Aggregate mutation through place forms follows the receiver's ownership
-  mode: `array-set!` and field assignment require an owned place or a mutable
-  reference receiver; immutable references are rejected.
+  mode: array-element, tuple-element, and field assignment require an owned
+  place or a mutable reference receiver; immutable references are rejected.
 - `ByteBuf`/`bytes` mutation follows the same rule: byte writes require an
   owned `ByteBuf` place, a mutable reference to a `ByteBuf`, or an exclusive
   `(&mut r bytes)` view. Immutable `(& r bytes)`, `(& r str)`, and `String`
@@ -7581,6 +7593,7 @@ borrow-place  ::= ident
                 | "(" "struct-get" borrow-place ident ")"
                 | "(" "tuple-ref" borrow-place integer ")"
                 | "(" "array-ref" borrow-place expr ")"
+                | "(" "deref" borrow-place ")"
 
 ;; Dotted field sugar such as `p.x` is an `ident` in this grammar and becomes a
 ;; borrow-place only when its leading segment resolves to a local binding.

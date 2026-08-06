@@ -20,6 +20,9 @@ compile and run in `avx2` and `avx512`.
 
 - `tail_i64_add.tl` — `foreach` add over `n = 13` (not a multiple of the i64
   vector width 4/8): forces a masked/scalar tail. Exit 247.
+- `predicated_map_tail_fault_suppression.tl` - contiguous simple maps over one,
+  two, and three active i64 lanes whose backing data ends at an unmapped page,
+  proving inactive AVX2/AVX-512 tail loads and stores do not fault. Exit 42.
 - `tail_i32_add.tl` — `foreach` add over `n = 7` `i32` lanes (below the i32
   width 8/16): all-tail, a different element width. Exit 91.
 - `foreach_bound_extremes.tl` - vectorizable zero-trip ranges with negative and
@@ -38,10 +41,9 @@ compile and run in `avx2` and `avx512`.
 - `multi_output_bounds_trap.tl` - a fused two-output map whose second
   destination is too short. The harness requires the ordinary bounds trap in
   scalar and every runnable SIMD mode, pinning all-destination safety checks.
-- `vector_slice_surface_i64.tl` - `foreach` maps whose public functions take
-  generated vectors and generated full slices, then borrow backing storage
-  before the SPMD body. This pins the array-surface migration away from public
-  `(Array T)` signatures.
+- `native_slice_surface_i64.tl` - `foreach` maps whose public functions take
+  generated vectors and native slices. This pins the array-surface migration
+  away from public `(Array T)` signatures.
 - `inline_helper_i64.tl` - `foreach` over `n = 1` i64 lane through a direct
   source-known helper with a varying scalar argument. Exit 42.
 - `inline_helper_shadow_i64.tl` - `foreach` over `n = 13` i64 lanes through a
@@ -217,8 +219,8 @@ Coverage map:
   in `map_shift_value_types.tl` and `map_compare_surface.tl`. The intentionally
   unsupported byte multiply and narrow-shift policies are covered by
   `i8_mul_reject.tl` and `map_shift_i16_reject.tl`.
-- Vector/slice public-surface coverage for borrowed backing storage lives in
-  `vector_slice_surface_i64.tl`.
+- Vector/native-Slice public-surface coverage for borrowed backing storage
+  lives in `native_slice_surface_i64.tl`.
 - Scalar and AVX2/AVX-512 gather-read coverage for generated Vec backing
   storage lives in `../integration/spmd_gather_read.tl`.
 - Scalar and AVX2/AVX-512 bool dynamic-array lane coverage lives in

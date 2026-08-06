@@ -1454,13 +1454,39 @@
   (No)
   (Some ast.AstExternAbi))
 
+(defstruct TcStringListNode
+  (value String)
+  (parent i64))
+
+(defstruct TcStringListStoreData
+  (nodes (__tl_dyn-array TcStringListNode))
+  (len i64)
+  (owner-arena i64))
+
+;; Persistent scoped strings use an allocation-free singleton and then an
+;; append-only dense node store. A list snapshot is only a stable store handle,
+;; tail index, and length; appending a sibling never rewrites either branch.
 (defenum TcStringList
   (Nil)
-  (Cons String (Box TcStringList)))
+  (One String)
+  (Dense i64 i64 i64))
 
+(defstruct TcNameIdListNode
+  (value i64)
+  (parent i64))
+
+(defstruct TcNameIdListStoreData
+  (nodes (__tl_dyn-array TcNameIdListNode))
+  (len i64)
+  (owner-arena i64))
+
+;; Name-id sets, stacks, and ordered paths share the same persistent dense
+;; spine representation as strings. Membership policy stays with each caller;
+;; `tc-name-id-list-cons` preserves duplicates while `-add` deduplicates.
 (defenum TcNameIdList
   (Nil)
-  (Cons i64 (Box TcNameIdList)))
+  (One i64)
+  (Dense i64 i64 i64))
 
 (defstruct TcLazyImportStub
   (module-id i64)
@@ -14644,66 +14670,364 @@
 (define (tc-push-region [env : TcTypeEnv] [region : i64]) : TcTypeEnv
   (tc-push-region-id env region))
 
+(define (tc-string-list-store-read [address : i64]) : TcStringListStoreData
+  (unsafe
+    (ptr-read (int->ptr (cast address : u64) : (Ptr TcStringListStoreData)))))
+
+(define (tc-string-list-store-write!
+  [address : i64]
+  [data : TcStringListStoreData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast address : u64) : (MutPtr TcStringListStoreData))
+      data)))
+
+(define (tc-string-list-store-new [first : String]) : i64
+  (let
+    [cell : (__tl_dyn-array TcStringListStoreData)
+      (array.make-array TcStringListStoreData 1)]
+    [nodes : (__tl_dyn-array TcStringListNode)
+      (array.make-array TcStringListNode 4)]
+    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    (begin
+      (array-set! nodes 0 (TcStringListNode first -1))
+      (array-set! cell 0 (TcStringListStoreData nodes 1 owner))
+      (unsafe
+        (cast
+          (ptr->int (ptr-cast (array-data cell) : (Ptr TcStringListStoreData)))
+          : i64)))))
+
+(define (tc-string-list-store-grow!
+  [data : (&mut data TcStringListStoreData)]
+  [required : i64]) : unit
+  (let
+    [old : (__tl_dyn-array TcStringListNode) (struct-get data nodes)]
+    [old-capacity : i64 (array.length old)]
+    [next-capacity : i64 old-capacity]
+    (if (<= required old-capacity)
+      unit
+      (begin
+        (while (< next-capacity required)
+          (set! next-capacity (* next-capacity 2)))
+        (let
+          [owner : arena.Arena (arena.Arena (struct-get data owner-arena))]
+          [next : (__tl_dyn-array TcStringListNode)
+            (in-arena owner (array.make-array TcStringListNode next-capacity))]
+          [index : i64 0]
+          (begin
+            (while (< index (struct-get data len))
+              (let
+                [node : TcStringListNode (array-ref old index)]
+                [owned : String
+                  (in-arena owner (string.copy (& (struct-get node value))))]
+                (begin
+                  (array-set!
+                    next
+                    index
+                    (TcStringListNode owned (struct-get node parent)))
+                  (set! index (+ index 1)))))
+            (set! (struct-get data nodes) next)))))))
+
+(define (tc-string-list-store-push!
+  [address : i64]
+  [parent : i64]
+  [value : String]) : i64
+  (let
+    [data : TcStringListStoreData (tc-string-list-store-read address)]
+    [index : i64 (struct-get data len)]
+    (begin
+      (tc-string-list-store-grow! (&mut data) (+ index 1))
+      ;; Sibling snapshots can append from short-lived scratch arenas. Own each
+      ;; string in the stable store arena so a later sibling never retains a
+      ;; stale source pointer.
+      (let
+        [owner : arena.Arena (arena.Arena (struct-get data owner-arena))]
+        [owned : String (in-arena owner (string.copy (& value)))]
+        (array-set!
+          (struct-get data nodes)
+          index
+          (TcStringListNode owned parent)))
+      (set! (struct-get data len) (+ index 1))
+      (tc-string-list-store-write! address data)
+      index)))
+
+(define (tc-string-list-store-node [address : i64] [index : i64]) : TcStringListNode
+  (array-ref (struct-get (tc-string-list-store-read address) nodes) index))
+
+(define (tc-string-list-empty? [items : TcStringList]) : bool
+  (match items
+    [(TcStringList.Nil) true]
+    [_ false]))
+
+(define (tc-string-list-len [items : TcStringList]) : i64
+  (match items
+    [(TcStringList.Nil) 0]
+    [(TcStringList.One _) 1]
+    [(TcStringList.Dense _ _ len) len]))
+
+(define (tc-string-list-head [items : TcStringList]) : String
+  (match items
+    [(TcStringList.Nil) ""]
+    [(TcStringList.One value) value]
+    [(TcStringList.Dense address tail _)
+      (struct-get (tc-string-list-store-node address tail) value)]))
+
+(define (tc-string-list-rest [items : TcStringList]) : TcStringList
+  (match items
+    [(TcStringList.Nil) TcStringList.Nil]
+    [(TcStringList.One _) TcStringList.Nil]
+    [(TcStringList.Dense address tail len)
+      (let
+        [parent : i64
+          (struct-get (tc-string-list-store-node address tail) parent)]
+        (if (= len 2)
+          (TcStringList.One
+            (struct-get (tc-string-list-store-node address parent) value))
+          (TcStringList.Dense address parent (- len 1))))]))
+
+(define (tc-string-list-cons [items : TcStringList] [name : String]) : TcStringList
+  (match items
+    [(TcStringList.Nil) (TcStringList.One name)]
+    [(TcStringList.One previous)
+      (let
+        [address : i64 (tc-string-list-store-new previous)]
+        [tail : i64 (tc-string-list-store-push! address 0 name)]
+        (TcStringList.Dense address tail 2))]
+    [(TcStringList.Dense address tail len)
+      (TcStringList.Dense
+        address
+        (tc-string-list-store-push! address tail name)
+        (+ len 1))]))
+
 (define (tc-string-list-contains [items : TcStringList] [name : String]) : bool
   (match items
     [(TcStringList.Nil) false]
-    [(TcStringList.Cons item rest)
-      (if (string.eq item name)
-        true
-        (tc-string-list-contains (box-get rest) name))]))
+    [(TcStringList.One item) (string.eq item name)]
+    [(TcStringList.Dense address tail len)
+      (let
+        [nodes : (__tl_dyn-array TcStringListNode)
+          (struct-get (tc-string-list-store-read address) nodes)]
+        [index : i64 tail]
+        [remaining : i64 len]
+        [found : bool false]
+        (begin
+          ;; Read the shared store once: this membership path is substantially
+          ;; hotter than materializing `rest` snapshots one node at a time.
+          (while (and (not found) (> remaining 0))
+            (let
+              [node : TcStringListNode (array-ref nodes index)]
+              (begin
+                (if (string.eq (struct-get node value) name)
+                  (set! found true)
+                  unit)
+                (set! index (struct-get node parent))
+                (set! remaining (- remaining 1)))))
+          found))]))
 
 (define (tc-string-list-add [items : TcStringList] [name : String]) : TcStringList
   (if (tc-string-list-contains items name)
     items
-    (TcStringList.Cons name (box items))))
+    (tc-string-list-cons items name)))
+
+(define (tc-name-id-list-store-read [address : i64]) : TcNameIdListStoreData
+  (unsafe
+    (ptr-read (int->ptr (cast address : u64) : (Ptr TcNameIdListStoreData)))))
+
+(define (tc-name-id-list-store-write!
+  [address : i64]
+  [data : TcNameIdListStoreData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast address : u64) : (MutPtr TcNameIdListStoreData))
+      data)))
+
+(define (tc-name-id-list-store-new [first : i64]) : i64
+  (let
+    [cell : (__tl_dyn-array TcNameIdListStoreData)
+      (array.make-array TcNameIdListStoreData 1)]
+    [nodes : (__tl_dyn-array TcNameIdListNode)
+      (array.make-array TcNameIdListNode 4)]
+    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    (begin
+      (array-set! nodes 0 (TcNameIdListNode first -1))
+      (array-set! cell 0 (TcNameIdListStoreData nodes 1 owner))
+      (unsafe
+        (cast
+          (ptr->int (ptr-cast (array-data cell) : (Ptr TcNameIdListStoreData)))
+          : i64)))))
+
+(define (tc-name-id-list-store-grow!
+  [data : (&mut data TcNameIdListStoreData)]
+  [required : i64]) : unit
+  (let
+    [old : (__tl_dyn-array TcNameIdListNode) (struct-get data nodes)]
+    [old-capacity : i64 (array.length old)]
+    [next-capacity : i64 old-capacity]
+    (if (<= required old-capacity)
+      unit
+      (begin
+        (while (< next-capacity required)
+          (set! next-capacity (* next-capacity 2)))
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [owner : i64 (struct-get data owner-arena)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+            (let
+              [next : (__tl_dyn-array TcNameIdListNode)
+                (array.make-array TcNameIdListNode next-capacity)]
+              [index : i64 0]
+              (begin
+                (while (< index (struct-get data len))
+                  (let
+                    [node : TcNameIdListNode (array-ref old index)]
+                    (begin
+                      (array-set!
+                        next
+                        index
+                        (TcNameIdListNode
+                          (struct-get node value)
+                          (struct-get node parent)))
+                      (set! index (+ index 1)))))
+                (set! (struct-get data nodes) next)))
+            (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
+
+(define (tc-name-id-list-store-push!
+  [address : i64]
+  [parent : i64]
+  [value : i64]) : i64
+  (let
+    [data : TcNameIdListStoreData (tc-name-id-list-store-read address)]
+    [index : i64 (struct-get data len)]
+    (begin
+      (tc-name-id-list-store-grow! (&mut data) (+ index 1))
+      (array-set! (struct-get data nodes) index (TcNameIdListNode value parent))
+      (set! (struct-get data len) (+ index 1))
+      (tc-name-id-list-store-write! address data)
+      index)))
+
+(define (tc-name-id-list-store-node [address : i64] [index : i64]) : TcNameIdListNode
+  (array-ref (struct-get (tc-name-id-list-store-read address) nodes) index))
+
+(define (tc-name-id-list-empty? [items : TcNameIdList]) : bool
+  (match items
+    [(TcNameIdList.Nil) true]
+    [_ false]))
+
+(define (tc-name-id-list-len [items : TcNameIdList]) : i64
+  (match items
+    [(TcNameIdList.Nil) 0]
+    [(TcNameIdList.One _) 1]
+    [(TcNameIdList.Dense _ _ len) len]))
+
+(define (tc-name-id-list-head [items : TcNameIdList]) : i64
+  (match items
+    [(TcNameIdList.Nil) -1]
+    [(TcNameIdList.One value) value]
+    [(TcNameIdList.Dense address tail _)
+      (struct-get (tc-name-id-list-store-node address tail) value)]))
+
+(define (tc-name-id-list-rest [items : TcNameIdList]) : TcNameIdList
+  (match items
+    [(TcNameIdList.Nil) TcNameIdList.Nil]
+    [(TcNameIdList.One _) TcNameIdList.Nil]
+    [(TcNameIdList.Dense address tail len)
+      (let
+        [parent : i64
+          (struct-get (tc-name-id-list-store-node address tail) parent)]
+        (if (= len 2)
+          (TcNameIdList.One
+            (struct-get (tc-name-id-list-store-node address parent) value))
+          (TcNameIdList.Dense address parent (- len 1))))]))
+
+(define (tc-name-id-list-cons [items : TcNameIdList] [name : i64]) : TcNameIdList
+  (match items
+    [(TcNameIdList.Nil) (TcNameIdList.One name)]
+    [(TcNameIdList.One previous)
+      (let
+        [address : i64 (tc-name-id-list-store-new previous)]
+        [tail : i64 (tc-name-id-list-store-push! address 0 name)]
+        (TcNameIdList.Dense address tail 2))]
+    [(TcNameIdList.Dense address tail len)
+      (TcNameIdList.Dense
+        address
+        (tc-name-id-list-store-push! address tail name)
+        (+ len 1))]))
 
 (define (tc-name-id-list-contains [items : TcNameIdList] [name : i64]) : bool
   (match items
     [(TcNameIdList.Nil) false]
-    [(TcNameIdList.Cons item rest)
-      (if (= item name)
-        true
-        (tc-name-id-list-contains (box-get rest) name))]))
+    [(TcNameIdList.One item) (= item name)]
+    [(TcNameIdList.Dense address tail len)
+      (let
+        [nodes : (__tl_dyn-array TcNameIdListNode)
+          (struct-get (tc-name-id-list-store-read address) nodes)]
+        [index : i64 tail]
+        [remaining : i64 len]
+        [found : bool false]
+        (begin
+          (while (and (not found) (> remaining 0))
+            (let
+              [node : TcNameIdListNode (array-ref nodes index)]
+              (begin
+                (if (= (struct-get node value) name)
+                  (set! found true)
+                  unit)
+                (set! index (struct-get node parent))
+                (set! remaining (- remaining 1)))))
+          found))]))
 
 (define (tc-name-id-list-add [items : TcNameIdList] [name : i64]) : TcNameIdList
   (if (tc-name-id-list-contains items name)
     items
-    (TcNameIdList.Cons name (box items))))
+    (tc-name-id-list-cons items name)))
 
 (define (tc-name-id-list-add-all [items : TcNameIdList] [names : TcNameIdList]) : TcNameIdList
-  (match names
-    [(TcNameIdList.Nil) items]
-    [(TcNameIdList.Cons name rest)
-      (tc-name-id-list-add-all (tc-name-id-list-add items name) (box-get rest))]))
+  (let
+    [out : TcNameIdList items]
+    [cursor : TcNameIdList names]
+    (begin
+      (while (not (tc-name-id-list-empty? cursor))
+        (begin
+          (set! out (tc-name-id-list-add out (tc-name-id-list-head cursor)))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      out)))
 
 (define (tc-name-id-list-overlaps? [a : TcNameIdList] [b : TcNameIdList]) : bool
-  (match a
-    [(TcNameIdList.Nil) false]
-    [(TcNameIdList.Cons item rest)
-      (if (tc-name-id-list-contains b item)
-        true
-        (tc-name-id-list-overlaps? (box-get rest) b))]))
+  (let
+    [cursor : TcNameIdList a]
+    [found : bool false]
+    (begin
+      (while (and (not found) (not (tc-name-id-list-empty? cursor)))
+        (begin
+          (if (tc-name-id-list-contains b (tc-name-id-list-head cursor))
+            (set! found true)
+            unit)
+          (set! cursor (tc-name-id-list-rest cursor))))
+      found)))
 
 (define (tc-name-id-list-eq [a : TcNameIdList] [b : TcNameIdList]) : bool
-  (match a
-    [(TcNameIdList.Nil)
-      (match b
-        [(TcNameIdList.Nil) true]
-        [_ false])]
-    [(TcNameIdList.Cons item rest)
-      (and
-        (tc-name-id-list-contains b item)
-        (tc-name-id-list-eq (box-get rest) b))]))
+  ;; Preserve the former predicate exactly: an empty left side only matches an
+  ;; empty right side, while a non-empty left side tests membership in `b`.
+  (if (tc-name-id-list-empty? a)
+    (tc-name-id-list-empty? b)
+    (tc-name-id-list-all-in? a b)))
 
 (define (tc-name-id-list-all-in?
   [items : TcNameIdList]
   [allowed : TcNameIdList]) : bool
-  (match items
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons item rest)
-      (and
-        (tc-name-id-list-contains allowed item)
-        (tc-name-id-list-all-in? (box-get rest) allowed))]))
+  (let
+    [cursor : TcNameIdList items]
+    [ok : bool true]
+    (begin
+      (while (and ok (not (tc-name-id-list-empty? cursor)))
+        (begin
+          (if (tc-name-id-list-contains allowed (tc-name-id-list-head cursor))
+            unit
+            (set! ok false))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      ok)))
 
 (define (tc-bind-cleanup-owner [env : TcTypeEnv] [name-id : i64]) : TcTypeEnv
   (tc-bind-runtime-marker-id
@@ -15165,12 +15489,16 @@
       (+ index 1))))
 
 (define (tc-name-id-list-to-lifetime-list [items : TcNameIdList]) : ast.AstLifetimeList
-  (match items
-    [(TcNameIdList.Nil) (ast.ast-lifetime-list-new)]
-    [(TcNameIdList.Cons item rest)
-      (ast.ast-lifetime-cons
-        item
-        (tc-name-id-list-to-lifetime-list (box-get rest)))]))
+  (let
+    [out : ast.AstLifetimeList
+      (ast.ast-lifetime-list-with-capacity (tc-name-id-list-len items))]
+    [cursor : TcNameIdList items]
+    (begin
+      (while (not (tc-name-id-list-empty? cursor))
+        (begin
+          (ast.ast-lifetime-list-push (&mut out) (tc-name-id-list-head cursor))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      out)))
 
 (define (tc-lifetime-subst-lookup [subst : TcLifetimeSubst] [name : i64]) : TcMaybeNameId
   (match subst
@@ -15338,12 +15666,17 @@
 (define (tc-reference-lifetimes-visible?
   [env : TcTypeEnv]
   [lifetimes : TcNameIdList]) : bool
-  (match lifetimes
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons lifetime rest)
-      (and
-        (tc-lifetime-visible-id? env lifetime)
-        (tc-reference-lifetimes-visible? env (box-get rest)))]))
+  (let
+    [cursor : TcNameIdList lifetimes]
+    [visible : bool true]
+    (begin
+      (while (and visible (not (tc-name-id-list-empty? cursor)))
+        (begin
+          (if (tc-lifetime-visible-id? env (tc-name-id-list-head cursor))
+            unit
+            (set! visible false))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      visible)))
 
 (define (tc-lifetime-outlives-binding-scan-inner-id
   [env : TcTypeEnv]
@@ -15440,15 +15773,20 @@
   [env : TcTypeEnv]
   [lifetimes : TcNameIdList]
   [target-id : i64]) : bool
-  (match lifetimes
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons lifetime rest)
-      (and
-        (tc-lifetime-outlives-binding-id? env lifetime target-id)
-        (tc-reference-lifetimes-outlive-binding-id?
-          env
-          (box-get rest)
-          target-id))]))
+  (let
+    [cursor : TcNameIdList lifetimes]
+    [outlives : bool true]
+    (begin
+      (while (and outlives (not (tc-name-id-list-empty? cursor)))
+        (begin
+          (if (tc-lifetime-outlives-binding-id?
+            env
+            (tc-name-id-list-head cursor)
+            target-id)
+            unit
+            (set! outlives false))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      outlives)))
 
 (define (tc-lifetime-outlives-lifetime-scan-inner-id
   [env : TcTypeEnv]
@@ -15575,15 +15913,20 @@
   [env : TcTypeEnv]
   [lifetimes : TcNameIdList]
   [target-lifetime-id : i64]) : bool
-  (match lifetimes
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons lifetime rest)
-      (and
-        (tc-lifetime-outlives-lifetime-id? env lifetime target-lifetime-id)
-        (tc-reference-lifetimes-outlive-lifetime-id?
-          env
-          (box-get rest)
-          target-lifetime-id))]))
+  (let
+    [cursor : TcNameIdList lifetimes]
+    [outlives : bool true]
+    (begin
+      (while (and outlives (not (tc-name-id-list-empty? cursor)))
+        (begin
+          (if (tc-lifetime-outlives-lifetime-id?
+            env
+            (tc-name-id-list-head cursor)
+            target-lifetime-id)
+            unit
+            (set! outlives false))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      outlives)))
 
 (define (tc-reference-lifetimes-outlive-lifetime?
   [env : TcTypeEnv]
@@ -16061,15 +16404,15 @@
 (define (tc-signature-single-input-lifetime
   [type-bases : i64]
   [types : ast.AstTypeList]) : TcMaybeNameId
-  (match (tc-signature-input-type-list-lifetimes-into
-    type-bases
-    types
-    TcNameIdList.Nil)
-    [(TcNameIdList.Nil) (TcMaybeNameId.No)]
-    [(TcNameIdList.Cons lifetime rest)
-      (match (box-get rest)
-        [(TcNameIdList.Nil) (TcMaybeNameId.Some lifetime)]
-        [_ (TcMaybeNameId.No)])]))
+  (let
+    [lifetimes : TcNameIdList
+      (tc-signature-input-type-list-lifetimes-into
+        type-bases
+        types
+        TcNameIdList.Nil)]
+    (if (= (tc-name-id-list-len lifetimes) 1)
+      (TcMaybeNameId.Some (tc-name-id-list-head lifetimes))
+      (TcMaybeNameId.No))))
 
 (define (tc-elide-input-type-list
   [type-bases : i64]
@@ -16696,12 +17039,17 @@
 (define (tc-region-list-contains-arena-owner?
   [regions : TcNameIdList]
   [owner : i64]) : bool
-  (match regions
-    [(TcNameIdList.Nil) false]
-    [(TcNameIdList.Cons region rest)
-      (or
-        (tc-arena-region-owned-by-id? owner region)
-        (tc-region-list-contains-arena-owner? (box-get rest) owner))]))
+  (let
+    [cursor : TcNameIdList regions]
+    [found : bool false]
+    (begin
+      (while (and (not found) (not (tc-name-id-list-empty? cursor)))
+        (begin
+          (if (tc-arena-region-owned-by-id? owner (tc-name-id-list-head cursor))
+            (set! found true)
+            unit)
+          (set! cursor (tc-name-id-list-rest cursor))))
+      found)))
 
 (define (tc-type-contains-arena-owner-region? [ty : ast.AstType] [owner : i64]) : bool
   (tc-region-list-contains-arena-owner? (tc-type-collect-regions ty) owner))
@@ -16709,12 +17057,19 @@
 (define (tc-region-list-all-atomic-arena-owners?
   [env : TcTypeEnv]
   [regions : TcNameIdList]) : bool
-  (match regions
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons region rest)
-      (and
-        (tc-atomic-arena-owner-active-id? env region)
-        (tc-region-list-all-atomic-arena-owners? env (box-get rest)))]))
+  (let
+    [cursor : TcNameIdList regions]
+    [all-atomic : bool true]
+    (begin
+      (while (and all-atomic (not (tc-name-id-list-empty? cursor)))
+        (begin
+          (if (tc-atomic-arena-owner-active-id?
+            env
+            (tc-name-id-list-head cursor))
+            unit
+            (set! all-atomic false))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      all-atomic)))
 
 (define (tc-type-regions-all-atomic-arena-owners?
   [env : TcTypeEnv]
@@ -16763,10 +17118,11 @@
 (define (tc-tag-reference-lifetimes
   [lifetimes : TcNameIdList]
   [ty : ast.AstType]) : ast.AstType
-  (match lifetimes
-    [(TcNameIdList.Nil) ty]
-    [(TcNameIdList.Cons lifetime rest)
-      (tc-tag-region lifetime (tc-tag-reference-lifetimes (box-get rest) ty))]))
+  (if (tc-name-id-list-empty? lifetimes)
+    ty
+    (tc-tag-region
+      (tc-name-id-list-head lifetimes)
+      (tc-tag-reference-lifetimes (tc-name-id-list-rest lifetimes) ty))))
 
 (define (tc-constructor-target-type
   [env : TcTypeEnv]
@@ -16838,23 +17194,39 @@
   [env : TcTypeEnv]
   [value-region : i64]
   [target-regions : TcNameIdList]) : bool
-  (match target-regions
-    [(TcNameIdList.Nil) false]
-    [(TcNameIdList.Cons target rest)
-      (if (tc-region-outlives-or-matches env value-region target)
-        true
-        (tc-region-can-flow-into-any env value-region (box-get rest)))]))
+  (let
+    [cursor : TcNameIdList target-regions]
+    [found : bool false]
+    (begin
+      (while (and (not found) (not (tc-name-id-list-empty? cursor)))
+        (begin
+          (if (tc-region-outlives-or-matches
+            env
+            value-region
+            (tc-name-id-list-head cursor))
+            (set! found true)
+            unit)
+          (set! cursor (tc-name-id-list-rest cursor))))
+      found)))
 
 (define (tc-region-list-can-flow-into
   [env : TcTypeEnv]
   [value-regions : TcNameIdList]
   [target-regions : TcNameIdList]) : bool
-  (match value-regions
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons value rest)
-      (and
-        (tc-region-can-flow-into-any env value target-regions)
-        (tc-region-list-can-flow-into env (box-get rest) target-regions))]))
+  (let
+    [cursor : TcNameIdList value-regions]
+    [can-flow : bool true]
+    (begin
+      (while (and can-flow (not (tc-name-id-list-empty? cursor)))
+        (begin
+          (if (tc-region-can-flow-into-any
+            env
+            (tc-name-id-list-head cursor)
+            target-regions)
+            unit
+            (set! can-flow false))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      can-flow)))
 
 (define (tc-ensure-region-value-can-flow-into
   [env : TcTypeEnv]
@@ -21374,12 +21746,19 @@
 (define (tc-decl-lifetime-id-list-all-in?
   [lifetimes : TcNameIdList]
   [params : ast.AstLifetimeList]) : bool
-  (match lifetimes
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons lifetime rest)
-      (and
-        (tc-decl-lifetime-name-allowed? params lifetime)
-        (tc-decl-lifetime-id-list-all-in? (box-get rest) params))]))
+  (let
+    [cursor : TcNameIdList lifetimes]
+    [allowed : bool true]
+    (begin
+      (while (and allowed (not (tc-name-id-list-empty? cursor)))
+        (begin
+          (if (tc-decl-lifetime-name-allowed?
+            params
+            (tc-name-id-list-head cursor))
+            unit
+            (set! allowed false))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      allowed)))
 
 (define (tc-source-type-decl-lifetimes-ok
   [ctx : TcContext]
@@ -26613,42 +26992,51 @@
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]
   [lifetimes : TcNameIdList]) : TcTypeEnv
-  (match lifetimes
-    [(TcNameIdList.Nil) env]
-    [(TcNameIdList.Cons lifetime rest)
-      (let
-        [next-env : TcTypeEnv
-          (if (tc-signature-lifetime-needs-marker? params lifetime)
-            (tc-bind-runtime-marker-id
-              env
-              (tc-signature-lifetime-marker-id)
-              (ast.AstType.Var lifetime)
-              TcTypeEnvScopedMarkerKind.Other)
-            env)]
-        (tc-bind-signature-lifetime-markers next-env params (box-get rest)))]))
+  (let
+    [cursor : TcNameIdList lifetimes]
+    [out : TcTypeEnv env]
+    (begin
+      (while (not (tc-name-id-list-empty? cursor))
+        (let
+          [lifetime : i64 (tc-name-id-list-head cursor)]
+          (begin
+            (if (tc-signature-lifetime-needs-marker? params lifetime)
+              (set!
+                out
+                (tc-bind-runtime-marker-id
+                  out
+                  (tc-signature-lifetime-marker-id)
+                  (ast.AstType.Var lifetime)
+                  TcTypeEnvScopedMarkerKind.Other))
+              unit)
+            (set! cursor (tc-name-id-list-rest cursor)))))
+      out)))
 
 (define (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
   [carrier : TcTypeEnvScopedCarrier (:consume)]
   [params : (& params ast.AstParamList)]
   [lifetimes : TcNameIdList]) : TcTypeEnvScopedCarrier
-  (match lifetimes
-    [(TcNameIdList.Nil) carrier]
-    [(TcNameIdList.Cons lifetime rest)
-      (let
-        [next-carrier : TcTypeEnvScopedCarrier
-          (if (tc-signature-lifetime-needs-marker? params lifetime)
-            (tc-type-env-scoped-carrier-with-sidecar
-              carrier
-              (tc-type-env-scoped-sidecar-bind-marker-id
-                (struct-get carrier sidecar)
-                (tc-signature-lifetime-marker-id)
-                (ast.AstType.Var lifetime)
-                TcTypeEnvScopedMarkerKind.Other))
-            carrier)]
-        (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
-          next-carrier
-          params
-          (box-get rest)))]))
+  (let
+    [cursor : TcNameIdList lifetimes]
+    [out : TcTypeEnvScopedCarrier carrier]
+    (begin
+      (while (not (tc-name-id-list-empty? cursor))
+        (let
+          [lifetime : i64 (tc-name-id-list-head cursor)]
+          (begin
+            (if (tc-signature-lifetime-needs-marker? params lifetime)
+              (set!
+                out
+                (tc-type-env-scoped-carrier-with-sidecar
+                  out
+                  (tc-type-env-scoped-sidecar-bind-marker-id
+                    (struct-get out sidecar)
+                    (tc-signature-lifetime-marker-id)
+                    (ast.AstType.Var lifetime)
+                    TcTypeEnvScopedMarkerKind.Other)))
+              unit)
+            (set! cursor (tc-name-id-list-rest cursor)))))
+      out)))
 
 (define (tc-bind-params
   [ctx : TcContext]
@@ -27237,10 +27625,11 @@
           (tc-field-type-list-at ctx fields (+ index 1)))])))
 
 (define (tc-tag-regions [regions : TcNameIdList] [ty : ast.AstType]) : ast.AstType
-  (match regions
-    [(TcNameIdList.Nil) ty]
-    [(TcNameIdList.Cons region rest)
-      (tc-tag-region region (tc-tag-regions (box-get rest) ty))]))
+  (if (tc-name-id-list-empty? regions)
+    ty
+    (tc-tag-region
+      (tc-name-id-list-head regions)
+      (tc-tag-regions (tc-name-id-list-rest regions) ty))))
 
 (define (tc-tag-type-list-regions
   [regions : TcNameIdList]
@@ -29624,7 +30013,7 @@
     [(ast.AstExpr.BoxTake inner-box)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-box-take-expr-with-expected-or-actual ctx env inner expected))]
+        (tc-deref-expr-with-expected-or-actual ctx env inner expected))]
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
@@ -33646,15 +34035,19 @@
   [env : TcTypeEnv]
   [regions : TcNameIdList]
   [out : TcNameIdList]) : TcNameIdList
-  (match regions
-    [(TcNameIdList.Nil) out]
-    [(TcNameIdList.Cons region rest)
-      (tc-region-list-atomic-arena-owners
-        env
-        (box-get rest)
-        (if (tc-atomic-arena-owner-active-id? env region)
-          (tc-name-id-list-add out region)
-          out))]))
+  (let
+    [cursor : TcNameIdList regions]
+    [owners : TcNameIdList out]
+    (begin
+      (while (not (tc-name-id-list-empty? cursor))
+        (let
+          [region : i64 (tc-name-id-list-head cursor)]
+          (begin
+            (if (tc-atomic-arena-owner-active-id? env region)
+              (set! owners (tc-name-id-list-add owners region))
+              unit)
+            (set! cursor (tc-name-id-list-rest cursor)))))
+      owners)))
 
 (define (tc-type-atomic-arena-owner-regions
   [env : TcTypeEnv]
@@ -35632,19 +36025,14 @@
   (match source
     [(TcSliceViewSourceInfo.Direct direct-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx direct-ty))
-        [(ast.AstType.Array elem _)
-          (tc-borrow-referent-type (ast.ty-node-get elem))]
-        [(ast.AstType.DynArray elem)
-          (tc-borrow-referent-type (ast.ty-node-get elem))]
+        [(ast.AstType.Array elem _) (ast.ty-node-get elem)]
+        [(ast.AstType.DynArray elem) (ast.ty-node-get elem)]
         [_ (ast.AstType.Unit)])]
     [(TcSliceViewSourceInfo.Borrow _ _ referent)
       (match (tc-type-strip-region (tc-resolve-type ctx referent))
-        [(ast.AstType.Array elem _)
-          (tc-borrow-referent-type (ast.ty-node-get elem))]
-        [(ast.AstType.DynArray elem)
-          (tc-borrow-referent-type (ast.ty-node-get elem))]
-        [(ast.AstType.Slice elem)
-          (tc-borrow-referent-type (ast.ty-node-get elem))]
+        [(ast.AstType.Array elem _) (ast.ty-node-get elem)]
+        [(ast.AstType.DynArray elem) (ast.ty-node-get elem)]
+        [(ast.AstType.Slice elem) (ast.ty-node-get elem)]
         [_ (ast.AstType.Unit)])]
     [_ (ast.AstType.Unit)]))
 
@@ -38962,19 +39350,20 @@
   [spmd-env : TcSpmdEnv]
   [names : TcNameIdList]
   [class : TcSpmdClass]) : ResultTcSpmdEnv
-  (match names
-    [(TcNameIdList.Nil) (ResultTcSpmdEnv.Ok spmd-env)]
-    [(TcNameIdList.Cons name-id rest)
+  (if (tc-name-id-list-empty? names)
+    (ResultTcSpmdEnv.Ok spmd-env)
+    (let
+      [name-id : i64 (tc-name-id-list-head names)]
       (match (tc-lookup-id arm-env name-id)
         [(ResultTcType.Ok ty)
           (if (tc-spmd-match-pattern-binding-supported? class ty)
             (tc-spmd-match-bind-pattern-names
               arm-env
               (tc-spmd-env-bind-id spmd-env name-id ty class TcSpmdScope.Local)
-              (box-get rest)
+              (tc-name-id-list-rest names)
               class)
             (ResultTcSpmdEnv.Err (tc-spmd-match-pattern-binding-diagnostic ty)))]
-        [(ResultTcType.Err message) (ResultTcSpmdEnv.Err message)])]))
+        [(ResultTcType.Err message) (ResultTcSpmdEnv.Err message)]))))
 
 (define (tc-spmd-masked-if-match-arms
   [ctx : TcContext]
@@ -44816,14 +45205,15 @@
               (tc-nominal-name-id-display enum-name-id)))))]))
 
 (define (tc-inline-aggregate-cycle-stack-render [stack : TcStringList]) : String
-  (match stack
-    [(TcStringList.Nil) ""]
-    [(TcStringList.Cons head rest)
-      (let
-        [tail : String (tc-inline-aggregate-cycle-stack-render (box-get rest))]
-        (if (string.eq tail "")
-          head
-          (str_cat.str-cat tail " -> " head)))]))
+  (if (tc-string-list-empty? stack)
+    ""
+    (let
+      [head : String (tc-string-list-head stack)]
+      [tail : String
+        (tc-inline-aggregate-cycle-stack-render (tc-string-list-rest stack))]
+      (if (string.eq tail "")
+        head
+        (str_cat.str-cat tail " -> " head)))))
 
 (define (tc-inline-aggregate-cycle-path [stack : TcStringList] [name : String]) : String
   (let
@@ -44952,7 +45342,7 @@
               (tc-inline-aggregate-variants-finite-ok
                 ctx
                 variants
-                (TcStringList.Cons name (box stack)))]
+                (tc-string-list-cons stack name))]
             [(parser.ResultAstVariantDefList.Err message)
               (ResultTcUnit.Err message)])
           (if (=
@@ -44965,7 +45355,7 @@
                     (tc-inline-aggregate-fields-finite-ok
                       ctx
                       fields
-                      (TcStringList.Cons name (box stack)))])]
+                      (tc-string-list-cons stack name))])]
               [(ResultTcStructDecl.Err message) (ResultTcUnit.Err message)])
             (ResultTcUnit.Err
               (string.append "typecheck: unknown aggregate " name))))
@@ -44974,7 +45364,7 @@
             (tc-inline-aggregate-variants-finite-ok
               (tc-inline-aggregate-context-for-name-id ctx name-id)
               variants
-              (TcStringList.Cons name (box stack)))]
+              (tc-string-list-cons stack name))]
           [(parser.ResultAstVariantDefList.Err _)
             (ResultTcUnit.Err
               (string.append "typecheck: unknown aggregate " name))])))))
@@ -45245,7 +45635,7 @@
               fields
               0
               0
-              (TcStringList.Cons struct-name (box stack)))
+              (tc-string-list-cons stack struct-name))
               [(ResultTcInlineFieldsLayout.Ok layout)
                 (match layout
                   [(TcInlineFieldsLayout.Fields size align fields-layout)
@@ -45344,7 +45734,7 @@
           variants
           8
           8
-          (TcStringList.Cons enum-name (box stack)))]
+          (tc-string-list-cons stack enum-name))]
       [(parser.ResultAstVariantDefList.Err message)
         (ResultTcInlineAggregateLayout.Err message)])))
 
@@ -47330,6 +47720,26 @@
           (ResultTcBorrowPlace.Err
             "typecheck: box-get borrow requires Box place")])]))
 
+(define (tc-borrow-place-deref
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [receiver : ast.AstExpr]) : ResultTcBorrowPlace
+  (match (tc-expr ctx env receiver)
+    [(ResultTcType.Ok receiver-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+        [(ast.AstType.Box _)
+          (match (tc-borrow-place ctx expr-bases env receiver)
+            [(ResultTcBorrowPlace.Ok place) (tc-borrow-place-box-get ctx place)]
+            [(ResultTcBorrowPlace.Err message)
+              (ResultTcBorrowPlace.Err message)])]
+        [(ast.AstType.Ref _ _) (tc-borrow-place ctx expr-bases env receiver)]
+        [(ast.AstType.MutRef _ _) (tc-borrow-place ctx expr-bases env receiver)]
+        [_
+          (ResultTcBorrowPlace.Err
+            "typecheck: deref borrow requires Box or reference place")])]
+    [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)]))
+
 (define (tc-borrow-place
   [ctx : TcContext]
   [expr-bases : i64]
@@ -47395,6 +47805,12 @@
         (match (tc-borrow-place ctx expr-bases env box-expr)
           [(ResultTcBorrowPlace.Ok place) (tc-borrow-place-box-get ctx place)]
           [(ResultTcBorrowPlace.Err message) (ResultTcBorrowPlace.Err message)]))]
+    [(ast.AstExpr.BoxTake receiver-box)
+      (tc-borrow-place-deref
+        ctx
+        expr-bases
+        env
+        (ast.ast-expr-segment-bases-get expr-bases receiver-box))]
     [_ (ResultTcBorrowPlace.Err (tc-borrow-place-error-message))]))
 
 (define (tc-mut-borrow-by-value-place-message) : String
@@ -47453,6 +47869,18 @@
                   [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcNameId.Err message) (ResultTcUnit.Err message)]))]
+    [(ast.AstExpr.BoxTake receiver-box)
+      (let
+        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
+        (match (tc-store-place-lifetime ctx env receiver)
+          [(ResultTcNameId.Ok _)
+            (match (tc-expr ctx env receiver)
+              [(ResultTcType.Ok receiver-ty)
+                (match (tc-box-set-inner-type ctx receiver-ty)
+                  [(ResultTcType.Ok _) ResultTcUnit.Ok]
+                  [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
+              [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
+          [(ResultTcNameId.Err message) (ResultTcUnit.Err message)]))]
     [_ ResultTcUnit.Ok]))
 
 (define (tc-store-place-lifetime-var [name : i64] [ty : ast.AstType]) : ResultTcNameId
@@ -47499,6 +47927,15 @@
           [(ResultTcType.Ok box-ty)
             (match (tc-box-set-inner-type ctx box-ty)
               [(ResultTcType.Ok _) (tc-store-place-lifetime ctx env box-expr)]
+              [(ResultTcType.Err message) (ResultTcNameId.Err message)])]
+          [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
+    [(ast.AstExpr.BoxTake receiver-box)
+      (let
+        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
+        (match (tc-expr ctx env receiver)
+          [(ResultTcType.Ok receiver-ty)
+            (match (tc-box-set-inner-type ctx receiver-ty)
+              [(ResultTcType.Ok _) (tc-store-place-lifetime ctx env receiver)]
               [(ResultTcType.Err message) (ResultTcNameId.Err message)])]
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [_ (ResultTcNameId.Err "typecheck: expression is not a storage place")]))
@@ -50832,14 +51269,62 @@
         (ResultTcType.Err "typecheck: box-take requires Box type")
         (ResultTcType.Err message))]))
 
+(define (tc-deref-result-type [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcType
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(ast.AstType.Box inner-ty)
+      (ResultTcType.Ok
+        (tc-project-from-region-container
+          receiver-ty
+          (ast.ty-node-get inner-ty)))]
+    [(ast.AstType.Ref lifetime referent-ty)
+      (ResultTcType.Ok (tc-tag-region lifetime (ast.ty-node-get referent-ty)))]
+    [(ast.AstType.MutRef lifetime referent-ty)
+      (ResultTcType.Ok (tc-tag-region lifetime (ast.ty-node-get referent-ty)))]
+    [_ (ResultTcType.Err "typecheck: deref requires Box or reference type")]))
+
+(define (tc-deref-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [receiver : ast.AstExpr]) : ResultTcType
+  (match (tc-expr ctx env receiver)
+    [(ResultTcType.Ok receiver-ty) (tc-deref-result-type ctx receiver-ty)]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+
+(define (tc-deref-expr-with-expected-or-actual
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [receiver : ast.AstExpr]
+  [expected : ast.AstType]) : ResultTcType
+  (match (tc-expr ctx env receiver)
+    [(ResultTcType.Ok receiver-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+        [(ast.AstType.Box _)
+          (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)]
+        [_
+          (match (tc-deref-result-type ctx receiver-ty)
+            [(ResultTcType.Ok projected)
+              (if (tc-type-compatible? expected projected)
+                (ResultTcType.Ok (tc-contextual-result-type expected projected))
+                (ResultTcType.Ok projected))]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])])]
+    [(ResultTcType.Err _)
+      ;; Preserve contextual inference for `(deref (box (init)))`.
+      (match (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)
+        [(ResultTcType.Ok inner-ty) (ResultTcType.Ok inner-ty)]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]))
+
 (define (tc-box-set-inner-type [ctx : TcContext] [box-ty : ast.AstType]) : ResultTcType
   (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
     [(ast.AstType.Box inner-ty)
       (ResultTcType.Ok
         (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
+    [(ast.AstType.MutRef _ referent-ty)
+      (ResultTcType.Ok (ast.ty-node-get referent-ty))]
     [(ast.AstType.Ref _ _)
-      (ResultTcType.Err "typecheck: set! box requires mutable Box access")]
-    [_ (ResultTcType.Err "typecheck: set! box requires Box type")]))
+      (ResultTcType.Err "typecheck: set! deref requires mutable access")]
+    [_
+      (ResultTcType.Err
+        "typecheck: set! deref requires Box or mutable reference")]))
 
 (define (tc-box-mutation-value
   [ctx : TcContext]
@@ -51863,21 +52348,44 @@
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
+(define (tc-tuple-set-element-type
+  [ctx : TcContext]
+  [receiver-ty : ast.AstType]
+  [index : i64]) : ResultTcType
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(ast.AstType.Tuple elems)
+      (match (tc-type-list-ref (box-get elems) index)
+        [(ResultTcType.Ok elem-ty)
+          (ResultTcType.Ok
+            (tc-project-from-region-container receiver-ty elem-ty))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ast.AstType.MutRef _ referent-ty)
+      (tc-tuple-set-element-type ctx (ast.ty-node-get referent-ty) index)]
+    [(ast.AstType.Ref _ _)
+      (ResultTcType.Err
+        "typecheck: set! tuple element requires mutable tuple access")]
+    [_ (ResultTcType.Err "typecheck: set! tuple element requires tuple")]))
+
 (define (tc-struct-set-field-type-id
   [ctx : TcContext]
   [receiver-ty : ast.AstType]
   [field-id : i64]) : ResultTcType
-  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-    [(ast.AstType.Struct _)
-      (tc-struct-get-result-type-id ctx receiver-ty field-id)]
-    [(ast.AstType.StructArgs _ _)
-      (tc-struct-get-result-type-id ctx receiver-ty field-id)]
-    [(ast.AstType.MutRef _ _)
-      (tc-struct-get-result-type-id ctx receiver-ty field-id)]
-    [(ast.AstType.Ref _ _)
-      (ResultTcType.Err
-        "typecheck: set! struct field requires mutable struct access")]
-    [_ (ResultTcType.Err "typecheck: set! struct field requires struct")]))
+  (if (ast.ast-tuple-set-field-id? field-id)
+    (tc-tuple-set-element-type
+      ctx
+      receiver-ty
+      (ast.ast-tuple-set-index-from-field-id field-id))
+    (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+      [(ast.AstType.Struct _)
+        (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+      [(ast.AstType.StructArgs _ _)
+        (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+      [(ast.AstType.MutRef _ _)
+        (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+      [(ast.AstType.Ref _ _)
+        (ResultTcType.Err
+          "typecheck: set! struct field requires mutable struct access")]
+      [_ (ResultTcType.Err "typecheck: set! struct field requires struct")])))
 
 (define (tc-struct-field-mutation-value-id
   [ctx : TcContext]
@@ -51896,7 +52404,9 @@
                   (match (tc-expect
                     value-ty
                     field-ty
-                    "typecheck: struct field assignment type mismatch")
+                    (if (ast.ast-tuple-set-field-id? field-id)
+                      "typecheck: tuple element assignment type mismatch"
+                      "typecheck: struct field assignment type mismatch"))
                     [(ResultTcUnit.Ok)
                       (match (tc-ensure-cleanup-resource-not-stored-expr
                         env
@@ -51906,14 +52416,18 @@
                             env
                             field-ty
                             value-ty
-                            "struct field")
+                            (if (ast.ast-tuple-set-field-id? field-id)
+                              "tuple element"
+                              "struct field"))
                             [(ResultTcUnit.Ok)
                               (match (tc-ensure-reference-value-can-store-in-place
                                 ctx
                                 env
                                 receiver
                                 value-ty
-                                "struct field")
+                                (if (ast.ast-tuple-set-field-id? field-id)
+                                  "tuple element"
+                                  "struct field"))
                                 [(ResultTcUnit.Ok)
                                   (ResultTcType.Ok (ast.AstType.Unit))]
                                 [(ResultTcUnit.Err message)
@@ -52729,7 +53243,7 @@
     [(ast.AstExpr.BoxTake inner-box)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-box-take-expr ctx env inner))]
+        (tc-deref-expr ctx env inner))]
     [(ast.AstExpr.BoxSet box-box value-box)
       (let
         [box-expr : ast.AstExpr (ast.ast-node-get box-box)]
@@ -53172,17 +53686,18 @@
         [_ (ResultTcUnit.Err "typecheck: macro body must return Expr")]))))
 
 (define (tc-comptime-purity-chain-push [chain : TcStringList] [name : String]) : TcStringList
-  (TcStringList.Cons name (box chain)))
+  (tc-string-list-cons chain name))
 
 (define (tc-comptime-purity-chain-render [chain : TcStringList]) : String
-  (match chain
-    [(TcStringList.Nil) ""]
-    [(TcStringList.Cons head rest)
-      (let
-        [tail : String (tc-comptime-purity-chain-render (box-get rest))]
-        (if (string.eq tail "")
-          head
-          (str_cat.str-cat tail " -> " head)))]))
+  (if (tc-string-list-empty? chain)
+    ""
+    (let
+      [head : String (tc-string-list-head chain)]
+      [tail : String
+        (tc-comptime-purity-chain-render (tc-string-list-rest chain))]
+      (if (string.eq tail "")
+        head
+        (str_cat.str-cat tail " -> " head)))))
 
 (define (tc-comptime-purity-chain-path [chain : TcStringList] [name : String]) : String
   (let
@@ -56492,13 +57007,24 @@
   [items : TcStringList]
   [name : String]
   [marker : String]) : bool
-  (match items
-    [(TcStringList.Nil) false]
-    [(TcStringList.Cons item rest)
-      (cond
-        [(string.eq item marker) true]
-        [(string.eq item name) false]
-        [else (tc-macro-abstract-bound-alias-at? (box-get rest) name marker)])]))
+  (let
+    [cursor : TcStringList items]
+    [found : bool false]
+    [done : bool false]
+    (begin
+      (while (and (not done) (not (tc-string-list-empty? cursor)))
+        (let
+          [item : String (tc-string-list-head cursor)]
+          (begin
+            (cond
+              [(string.eq item marker)
+                (begin
+                  (set! found true)
+                  (set! done true))]
+              [(string.eq item name) (set! done true)]
+              [else unit])
+            (set! cursor (tc-string-list-rest cursor)))))
+      found)))
 
 (define (tc-macro-abstract-bound-alias? [bound : TcStringList] [name : String]) : bool
   (tc-macro-abstract-bound-alias-at?
@@ -56541,15 +57067,15 @@
   (let
     [next-bound : TcStringList
       (if (and tc-macro-abstract-active (not template?))
-        (TcStringList.Cons (tc-env-key-name-text name-id) (box bound))
+        (tc-string-list-cons bound (tc-env-key-name-text name-id))
         (tc-comptime-purity-template-bound template? bound name-id))]
     (if (and
       tc-macro-abstract-active
       (not template?)
       (tc-macro-abstract-param-var? init bound))
-      (TcStringList.Cons
-        (tc-macro-abstract-alias-marker (tc-env-key-name-text name-id))
-        (box next-bound))
+      (tc-string-list-cons
+        next-bound
+        (tc-macro-abstract-alias-marker (tc-env-key-name-text name-id)))
       next-bound)))
 
 (define (tc-macro-abstract-kind-bit [kind : String]) : i64
@@ -58263,7 +58789,7 @@
         (tc-param-storage-origins-union-at (struct-get node parent) seen out)
         (tc-param-storage-origins-union-at
           (struct-get node parent)
-          (TcNameIdList.Cons name-id (box seen))
+          (tc-name-id-list-cons seen name-id)
           (if (and
             (>= (struct-get node parameter-id) 0)
             (match (tc-param-storage-origin-lookup out name-id)
@@ -59749,6 +60275,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-move-root-projection-var-id expr-bases inner))]
+    [(ast.AstExpr.BoxTake inner-box)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-root-projection-var-id expr-bases inner))]
     [(ast.AstExpr.Var name) (TcMaybeNameId.Some name)]
     [_ (TcMaybeNameId.No)]))
 
@@ -60130,7 +60661,12 @@
   [field-id : i64]) : TcMaybeMovePath
   (match (tc-move-direct-root-base-path expr-bases receiver)
     [(TcMaybeMovePath.Some base)
-      (TcMaybeMovePath.Some (tc-move-path-append base field-id))]
+      (TcMaybeMovePath.Some
+        (if (ast.ast-tuple-set-field-id? field-id)
+          (tc-move-tuple-index-path
+            base
+            (ast.ast-tuple-set-index-from-field-id field-id))
+          (tc-move-path-append base field-id)))]
     [(TcMaybeMovePath.No) (TcMaybeMovePath.No)]))
 
 (define (tc-move-reinitialize-array-set-path
@@ -60489,20 +61025,27 @@
   [parameter-id : i64]) : TcMovedSet
   (if (< parameter-id 0)
     moved
-    (match names
-      [(TcNameIdList.Nil) moved]
-      [(TcNameIdList.Cons name-id rest)
-        (tc-param-storage-bind-pattern-names
-          ctx
-          env
-          (match (tc-lookup-id env name-id)
-            [(ResultTcType.Ok ty)
-              (if (tc-param-storage-memory-class-type? ctx ty)
-                (tc-param-storage-origin-bind-in-set moved name-id parameter-id)
-                moved)]
-            [(ResultTcType.Err _) moved])
-          (box-get rest)
-          parameter-id)])))
+    (let
+      [cursor : TcNameIdList names]
+      [out : TcMovedSet moved]
+      (begin
+        (while (not (tc-name-id-list-empty? cursor))
+          (let
+            [name-id : i64 (tc-name-id-list-head cursor)]
+            (begin
+              (match (tc-lookup-id env name-id)
+                [(ResultTcType.Ok ty)
+                  (if (tc-param-storage-memory-class-type? ctx ty)
+                    (set!
+                      out
+                      (tc-param-storage-origin-bind-in-set
+                        out
+                        name-id
+                        parameter-id))
+                    unit)]
+                [(ResultTcType.Err _) unit])
+              (set! cursor (tc-name-id-list-rest cursor)))))
+        out))))
 
 (define (tc-move-after-consuming-projection
   [ctx : TcContext]
@@ -61004,12 +61547,17 @@
 (define (tc-move-mark-hidden-atomic-arena-users
   [moved : TcMovedSet]
   [owners : TcNameIdList]) : TcMovedSet
-  (match owners
-    [(TcNameIdList.Nil) moved]
-    [(TcNameIdList.Cons owner rest)
-      (tc-move-mark-hidden-atomic-arena-users
-        (tc-moved-add-hidden-atomic-user moved owner)
-        (box-get rest))]))
+  (let
+    [cursor : TcNameIdList owners]
+    [out : TcMovedSet moved]
+    (begin
+      (while (not (tc-name-id-list-empty? cursor))
+        (begin
+          (set!
+            out
+            (tc-moved-add-hidden-atomic-user out (tc-name-id-list-head cursor)))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      out)))
 
 (define (tc-move-atomic-arena-hidden-user-message [owner : String]) : String
   (str_cat.str-cat
@@ -62261,20 +62809,30 @@
             (+ index 1))]))))
 
 (define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcNameIdList]) : TcMovedSet
-  (match names
-    [(TcNameIdList.Nil) locals]
-    [(TcNameIdList.Cons name-id rest)
-      (tc-move-add-bound-names (tc-moved-add locals name-id) (box-get rest))]))
+  (let
+    [cursor : TcNameIdList names]
+    [out : TcMovedSet locals]
+    (begin
+      (while (not (tc-name-id-list-empty? cursor))
+        (begin
+          (set! out (tc-moved-add out (tc-name-id-list-head cursor)))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      out)))
 
 (define (tc-move-remove-bound-root-states
   [moved : TcMovedSet]
   [names : TcNameIdList]) : TcMovedSet
-  (match names
-    [(TcNameIdList.Nil) moved]
-    [(TcNameIdList.Cons name-id rest)
-      (tc-move-remove-bound-root-states
-        (tc-moved-remove-root-state moved name-id)
-        (box-get rest))]))
+  (let
+    [cursor : TcNameIdList names]
+    [out : TcMovedSet moved]
+    (begin
+      (while (not (tc-name-id-list-empty? cursor))
+        (begin
+          (set!
+            out
+            (tc-moved-remove-root-state out (tc-name-id-list-head cursor)))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      out)))
 
 (define (tc-move-pattern-bound-names
   [ctx : TcContext]
@@ -63644,17 +64202,32 @@
           moved
           inner)
           [(TcMoveResult.Ok moved1)
-            (match (tc-expr ctx env inner)
-              [(ResultTcType.Ok box-ty)
-                (tc-move-after-consuming-value
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  loop-carried
-                  moved1
-                  inner
-                  box-ty)]
+            (match (tc-expr ctx env expr)
+              [(ResultTcType.Ok result-ty)
+                (if (tc-type-move-only? ctx result-ty)
+                  (match (tc-expr ctx env inner)
+                    [(ResultTcType.Ok receiver-ty)
+                      (match (tc-type-strip-region
+                        (tc-resolve-type ctx receiver-ty))
+                        [(ast.AstType.Box _)
+                          (tc-move-after-consuming-value
+                            ctx
+                            expr-bases
+                            env
+                            locals
+                            loop-carried
+                            moved1
+                            inner
+                            receiver-ty)]
+                        [(ast.AstType.Ref _ _)
+                          (TcMoveResult.Err
+                            "typecheck: cannot move non-Copy value through shared reference")]
+                        [(ast.AstType.MutRef _ _)
+                          (TcMoveResult.Err
+                            "typecheck: cannot move non-Copy value through mutable reference without replacement")]
+                        [_ (TcMoveResult.Ok moved1)])]
+                    [(ResultTcType.Err _) (TcMoveResult.Ok moved1)])
+                  (TcMoveResult.Ok moved1))]
               [(ResultTcType.Err _) (TcMoveResult.Ok moved1)])]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(ast.AstExpr.BoxSet box-box value-box)
@@ -65071,14 +65644,22 @@
 (define (tc-borrow-check-first-overlapping-lifetime
   [type-lifetimes : TcNameIdList]
   [result-lifetimes : TcNameIdList]) : TcMaybeNameId
-  (match result-lifetimes
-    [(TcNameIdList.Nil) TcMaybeNameId.No]
-    [(TcNameIdList.Cons lifetime rest)
-      (if (tc-name-id-list-contains type-lifetimes lifetime)
-        (TcMaybeNameId.Some lifetime)
-        (tc-borrow-check-first-overlapping-lifetime
-          type-lifetimes
-          (box-get rest)))]))
+  (let
+    [cursor : TcNameIdList result-lifetimes]
+    [found : TcMaybeNameId TcMaybeNameId.No]
+    [done : bool false]
+    (begin
+      (while (and (not done) (not (tc-name-id-list-empty? cursor)))
+        (let
+          [lifetime : i64 (tc-name-id-list-head cursor)]
+          (begin
+            (if (tc-name-id-list-contains type-lifetimes lifetime)
+              (begin
+                (set! found (TcMaybeNameId.Some lifetime))
+                (set! done true))
+              unit)
+            (set! cursor (tc-name-id-list-rest cursor)))))
+      found)))
 
 (define (tc-borrow-check-add-bound-returned-call-arg-borrow
   [ctx : TcContext]
@@ -65772,20 +66353,24 @@
     [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
 
 (define (tc-borrow-check-add-names [locals : TcMovedSet] [names : TcNameIdList]) : TcMovedSet
-  (match names
-    [(TcNameIdList.Nil) locals]
-    [(TcNameIdList.Cons name-id rest)
-      (tc-borrow-check-add-names (tc-moved-add locals name-id) (box-get rest))]))
+  (tc-move-add-bound-names locals names))
 
 (define (tc-borrow-check-remove-root-states
   [borrowed : TcMovedSet]
   [names : TcNameIdList]) : TcMovedSet
-  (match names
-    [(TcNameIdList.Nil) borrowed]
-    [(TcNameIdList.Cons name-id rest)
-      (tc-borrow-check-remove-root-states
-        (tc-borrow-check-remove-root-state borrowed name-id)
-        (box-get rest))]))
+  (let
+    [cursor : TcNameIdList names]
+    [out : TcMovedSet borrowed]
+    (begin
+      (while (not (tc-name-id-list-empty? cursor))
+        (begin
+          (set!
+            out
+            (tc-borrow-check-remove-root-state
+              out
+              (tc-name-id-list-head cursor)))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      out)))
 
 (define (tc-borrow-check-pattern-bound-names
   [ctx : TcContext]
@@ -68959,15 +69544,35 @@
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (match (tc-borrow-check-expr ctx expr-bases env locals borrowed inner)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-expr ctx env inner)
-              [(ResultTcType.Ok box-ty)
-                (tc-borrow-check-after-consuming-value
-                  ctx
-                  expr-bases
-                  locals
-                  borrowed1
-                  inner
-                  box-ty)]
+            (match (tc-expr ctx env expr)
+              [(ResultTcType.Ok result-ty)
+                (if (tc-type-move-only? ctx result-ty)
+                  (match (tc-expr ctx env inner)
+                    [(ResultTcType.Ok receiver-ty)
+                      (match (tc-type-strip-region
+                        (tc-resolve-type ctx receiver-ty))
+                        [(ast.AstType.Box _)
+                          (tc-borrow-check-after-consuming-value
+                            ctx
+                            expr-bases
+                            locals
+                            borrowed1
+                            inner
+                            receiver-ty)]
+                        [(ast.AstType.Ref _ _)
+                          (TcBorrowCheckResult.Err
+                            "typecheck: cannot move non-Copy value through shared reference")]
+                        [(ast.AstType.MutRef _ _)
+                          (TcBorrowCheckResult.Err
+                            "typecheck: cannot move non-Copy value through mutable reference without replacement")]
+                        [_ (TcBorrowCheckResult.Ok borrowed1)])]
+                    [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed1)])
+                  (tc-borrow-check-place-read-conflict
+                    expr-bases
+                    locals
+                    borrowed1
+                    expr
+                    expr))]
               [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed1)])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(ast.AstExpr.BoxSet box-box value-box)
@@ -75465,12 +76070,12 @@
 (define (macro-name-set-add-all
   [names : TcNameIdList]
   [set : (&mut set tc_i64_i64_map.Map)]) : unit
-  (match names
-    [(TcNameIdList.Nil) unit]
-    [(TcNameIdList.Cons name-id rest)
+  (let
+    [cursor : TcNameIdList names]
+    (while (not (tc-name-id-list-empty? cursor))
       (begin
-        (tc_i64_i64_map.insert-ref! set name-id 1)
-        (macro-name-set-add-all (box-get rest) set))]))
+        (tc_i64_i64_map.insert-ref! set (tc-name-id-list-head cursor) 1)
+        (set! cursor (tc-name-id-list-rest cursor))))))
 
 (define (macro-name-set-from-list [names : TcNameIdList]) : tc_i64_i64_map.Map
   (let
@@ -75480,12 +76085,13 @@
       set)))
 
 (define (macro-ctfe-visible-name-set-add-all [names : TcNameIdList]) : unit
-  (match names
-    [(TcNameIdList.Nil) unit]
-    [(TcNameIdList.Cons name-id rest)
+  (let
+    [cursor : TcNameIdList names]
+    (while (not (tc-name-id-list-empty? cursor))
       (begin
-        (ctfe_support.ctfe-visible-macro-name-add! name-id)
-        (macro-ctfe-visible-name-set-add-all (box-get rest)))]))
+        (ctfe_support.ctfe-visible-macro-name-add!
+          (tc-name-id-list-head cursor))
+        (set! cursor (tc-name-id-list-rest cursor))))))
 
 (define (macro-expand-set-macro-names! [names : TcNameIdList]) : unit
   (begin
@@ -91028,9 +91634,12 @@
 
 ;; Direct declaration typechecking stays below the self-build memory budget and
 ;; avoids the per-declaration scratch arena overhead.
-(defenum TcPoisonNameList
-  (Nil)
-  (Cons i64 (Box TcPoisonNameList)))
+(defstruct TcPoisonNameList
+  ;; Poisoned declarations are rare error-path state. Keep each returned value
+  ;; as an independent snapshot so declaration scratch arenas cannot invalidate
+  ;; or mutate a sibling snapshot.
+  (slots (__tl_dyn-array i64))
+  (len i64))
 
 (defenum TcMaybePoisonName
   (No)
@@ -91054,13 +91663,24 @@
     [_ TcMaybePoisonName.No]))
 
 (define (tc-poison-name-list-bind [env : TcTypeEnv] [names : TcPoisonNameList]) : TcTypeEnv
-  (match names
-    [(TcPoisonNameList.Nil) env]
-    [(TcPoisonNameList.Cons name rest)
-      (tc-bind-id
-        (tc-poison-name-list-bind env (box-get rest))
-        name
-        (tc-poison-type))]))
+  (if (= (struct-get names len) 0)
+    env
+    (let
+      [index : i64 0]
+      [out : TcTypeEnv env]
+      (begin
+        ;; Slots are appended oldest to newest, matching the former recursive
+        ;; bind order and its duplicate-name shadowing behavior.
+        (while (< index (struct-get names len))
+          (begin
+            (set!
+              out
+              (tc-bind-id
+                out
+                (array-ref (struct-get names slots) index)
+                (tc-poison-type)))
+            (set! index (+ index 1))))
+        out))))
 
 (define (tc-poison-decl-env
   [env : TcTypeEnv]
@@ -91076,7 +91696,19 @@
   [decl : ast.AstDecl]) : TcPoisonNameList
   (match (tc-decl-poison-name module-id decl)
     [(TcMaybePoisonName.No) names]
-    [(TcMaybePoisonName.Some name) (TcPoisonNameList.Cons name (box names))]))
+    [(TcMaybePoisonName.Some name)
+      (let
+        [len : i64 (struct-get names len)]
+        [slots : (__tl_dyn-array i64) (struct-get names slots)]
+        [next : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
+        [index : i64 0]
+        (begin
+          (while (< index len)
+            (begin
+              (array-set! next index (array-ref slots index))
+              (set! index (+ index 1))))
+          (array-set! next len name)
+          (TcPoisonNameList next (+ len 1))))]))
 
 (define (tc-check-decls-with-paths-in-module
   [ctx : TcContext]
@@ -91140,7 +91772,8 @@
     [cur-cache : TcModuleLocalEnvCache cache]
     [cur-local-env : TcTypeEnv local-env]
     [cur-global-env : TcTypeEnv global-env]
-    [poison-names : TcPoisonNameList TcPoisonNameList.Nil]
+    [poison-names : TcPoisonNameList
+      (TcPoisonNameList (array.make-array i64 0) 0)]
     [diagnostics : cdiag.CompilerDiagnosticList
       cdiag.CompilerDiagnosticList.Nil]
     [type-module-cache-valid : bool false]

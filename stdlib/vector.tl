@@ -14,9 +14,10 @@
 ;#
 ;# `(vector T)` emits the full API. Append-oriented users can import
 ;# `(vector T core)` to emit only `Vec`, construction, length/capacity,
-;# bounds-checked get/set, push, and their storage/growth helpers. Core mode
-;# does not construct iterator, clone/pop, map/fold, reverse, or
-;# contains declarations, so non-cloneable aggregate elements remain usable.
+;# native Slice views, bounds-checked get/set, push, and their storage/growth
+;# helpers. Core mode does not construct iterator, clone/pop, map/fold,
+;# reverse, or contains declarations, so non-cloneable aggregate elements
+;# remain usable.
 ;# Full mode instantiates `stdlib.eq` structural equality for `contains?`;
 ;# element types unsupported by generated equality can still use core mode
 ;# when containment and the other full helpers are not required.
@@ -79,11 +80,11 @@
 ;: Emit a generated growable vector module for element type `T`.
 ;:
 ;: `(vector T)` retains the full vector API. `(vector T core)` emits only
-;: `Vec`, `new`, `with-capacity`, `len`, `capacity`, `get`,
+;: `Vec`, `new`, `with-capacity`, `len`, `capacity`, `view`, `view-mut`, `get`,
 ;: `set`, and `push` plus their shared storage/growth helpers. Core mode is
 ;: suitable for append-oriented compiler-private collections and does not
-;: instantiate clone-dependent operations such as `pop` or generated equality
-;: for `contains?`.
+;: instantiate clone-dependent operations such as `from-slice`, `pop`, or
+;: generated equality for `contains?`.
 ;: The kind constraint is the complete storable `type-kind` vocabulary.
 ;: Future kinds must be added here when vector backing storage supports them;
 ;: `never`, `region`, and unresolved `type-var` are intentionally excluded.
@@ -240,6 +241,24 @@
           (struct-get v len))
         (define (capacity [v : (& v Vec)]) : i64
           (struct-get v capacity))
+        ;; The published seed unsizes String elements while typing slice-view.
+        ;; Omit this surface only for its one-generation bootstrap compile; the
+        ;; resulting compiler carries the fix and emits the full API thereafter.
+        (cfg
+          (not stage0-seed-bootstrap)
+          (begin
+            ;; Expose only the live prefix. The returned Slice retains the Vec
+            ;; owner's lifetime, so growth and backing replacement remain blocked
+            ;; while the view is live.
+            (define (view [v : (& source Vec)]) : (& source (Slice ,T))
+              (slice-view (slots v) 0 (len v)))
+            (define (view-mut [v : (&mut source Vec)]) : (&mut
+                source
+                (Slice ,T))
+              (slice-mut-view
+                (&mut (struct-get (struct-get v state) slots))
+                0
+                (struct-get v len)))))
         (define (with-capacity [capacity : i64]) : Vec
           (let
             [cap : i64
@@ -298,6 +317,19 @@
           (struct-get v len))
         (define (capacity [v : (& v Vec)]) : i64
           (array-length (slots v)))
+        ;; See the cleanup-owning specialization above for the temporary seed
+        ;; capability gate. Normal compiles always expose both native views.
+        (cfg
+          (not stage0-seed-bootstrap)
+          (begin
+            ;; The backing array is capacity-sized. Build the native Slice from
+            ;; the live prefix so callers can never observe spare slots.
+            (define (view [v : (& source Vec)]) : (& source (Slice ,T))
+              (slice-view (slots v) 0 (len v)))
+            (define (view-mut [v : (&mut source Vec)]) : (&mut
+                source
+                (Slice ,T))
+              (slice-mut-view (&mut (struct-get v slots)) 0 (struct-get v len)))))
         (define (with-capacity [capacity : i64]) : Vec
           (let
             [cap : i64
@@ -399,6 +431,17 @@
                 (module ,module-name)
                 (import (eq.eq ,T) as value_eq)
                 ,@core
+                (define (from-slice [source : (& source (Slice ,T))]) : ,vec-name
+                  (let
+                    [count : i64 (array-length source)]
+                    [out : ,vec-name (with-capacity count)]
+                    [index : i64 0]
+                    (begin
+                      (while (< index count)
+                        (begin
+                          (push (&mut out) (clone (array-ref source index)))
+                          (set! index (+ index 1))))
+                      out)))
                 (defenum ,pop-name
                   (Empty)
                   (Ok ,T))

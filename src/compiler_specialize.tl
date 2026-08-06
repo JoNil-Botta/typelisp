@@ -160,10 +160,10 @@
       (+ spec-profile-generated-text-materialized 1))
     unit))
 
-(define (spec-profile-note-structural-key [created? : bool]) : unit
+(define (spec-profile-note-structural-key [_created? : bool]) : unit
   (cfg
     compile-profile
-    (if created?
+    (if _created?
       (set!
         spec-profile-structural-key-created
         (+ spec-profile-structural-key-created 1))
@@ -172,12 +172,12 @@
         (+ spec-profile-structural-key-reused 1)))
     unit))
 
-(define (spec-profile-note-name-render [cache-hit? : bool]) : unit
+(define (spec-profile-note-name-render [_cache-hit? : bool]) : unit
   (cfg
     compile-profile
     (begin
       (set! spec-profile-name-render-calls (+ spec-profile-name-render-calls 1))
-      (if cache-hit?
+      (if _cache-hit?
         (set!
           spec-profile-name-render-cache-hits
           (+ spec-profile-name-render-cache-hits 1))

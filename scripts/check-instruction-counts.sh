@@ -35,6 +35,7 @@ STALE_BUDGET_PCT=${TYPELISP_IR_STALE_BUDGET_PCT:-60}
 WORKDIR=${TYPELISP_IR_CHECK_OUT:-$DEFAULT_WORKDIR}
 BASELINE_SOURCE=${TYPELISP_IR_BASELINE_SOURCE:-$ROOT/perf/insn-exec-baseline-source.txt}
 PR_BASE_SHA=${TYPELISP_IR_PR_BASE_SHA:-}
+SELECT_BASELINE_SOURCE_COMMIT=
 UPDATE_BASELINE=0
 BENCHMARKS_ONLY=0
 SELF_COMPILE_ONLY=0
@@ -58,6 +59,10 @@ Options:
   --benchmarks-only    Measure benchmark cases only, not self_compile
   --self-test          Check the comparison logic against fixtures and exit;
                        needs no compiler, valgrind, or Linux host
+  --select-baseline-source COMMIT
+                       Print the commit to record for a post-merge measurement.
+                       A generated-only ratchet merge retains its input commit,
+                       preventing the ratchet from opening another identical PR
   --self-compile-only  Measure and compare self_compile/compile_cli_opt1 only;
                        with --update-baseline, rewrites only that row and
                        preserves every benchmark row (benchmark/c-scalar rows
@@ -129,6 +134,14 @@ while [ "$#" -gt 0 ]; do
         --self-test)
             SELF_TEST=1
             shift
+            ;;
+        --select-baseline-source)
+            [ "$#" -ge 2 ] || {
+                echo "missing value for --select-baseline-source" >&2
+                exit 2
+            }
+            SELECT_BASELINE_SOURCE_COMMIT=$2
+            shift 2
             ;;
         --output)
             [ "$#" -ge 2 ] || {
@@ -347,6 +360,73 @@ compare_counts() {
         "$IR_COMPARE_AWK" "$1" "$2"
 }
 
+# Return success when two commits have the same inputs to the converged Linux
+# compiler and its opt1 self-compile measurement. Keep this list beside both
+# source-marker selection and failure attribution so the two cannot disagree.
+self_compile_inputs_match() {
+    git diff --quiet "$1" "$2" -- \
+        .github/workflows/bootstrap-stage0.yml \
+        .github/workflows/ci.yml \
+        src \
+        stdlib \
+        tools/embedded-stdlib-tlci \
+        scripts/build-embedded-stdlib-tlci.sh \
+        scripts/build-stage0.sh \
+        scripts/check-bootstrap-fixpoint.sh \
+        scripts/check-instruction-counts.sh \
+        scripts/ci-verify.sh \
+        scripts/lib-bootstrap-ctfe.sh \
+        scripts/lib-bootstrap-fixpoint-control.sh \
+        scripts/lib-build-provenance.sh \
+        scripts/lib-linux-entry.sh \
+        scripts/lib-native-link.sh \
+        scripts/measure-instruction-counts.sh
+}
+
+# The automated ratchet changes only these two generated files. Recording the
+# ratchet merge itself would make the next main run change the marker again and
+# open an endless chain of otherwise identical ratchet PRs. Preserve the prior
+# measured commit when nothing else changed; all substantive main commits get a
+# fresh marker even when their compiler inputs happen to compare equal.
+select_self_compile_baseline_source() {
+    _ssbs_current=$1
+    case "$_ssbs_current" in
+        "" | *[!0-9a-fA-F]*)
+            echo "invalid self_compile baseline source commit: $_ssbs_current" >&2
+            return 2
+            ;;
+    esac
+    if ! git cat-file -e "$_ssbs_current^{commit}" 2>/dev/null; then
+        echo "self_compile baseline source commit is unavailable: $_ssbs_current" >&2
+        return 2
+    fi
+    _ssbs_current=$(git rev-parse "$_ssbs_current^{commit}")
+
+    _ssbs_previous=
+    if [ -f "$BASELINE_SOURCE" ]; then
+        _ssbs_previous=$(sed -n '1p' "$BASELINE_SOURCE" | tr -d '\r')
+    fi
+    case "$_ssbs_previous" in
+        "" | *[!0-9a-fA-F]*)
+            printf '%s\n' "$_ssbs_current"
+            return 0
+            ;;
+    esac
+    if ! git cat-file -e "$_ssbs_previous^{commit}" 2>/dev/null; then
+        printf '%s\n' "$_ssbs_current"
+        return 0
+    fi
+    _ssbs_previous=$(git rev-parse "$_ssbs_previous^{commit}")
+
+    if git diff --quiet "$_ssbs_previous" "$_ssbs_current" -- . \
+        ':!perf/insn-exec-baseline.tsv' \
+        ':!perf/insn-exec-baseline-source.txt'; then
+        printf '%s\n' "$_ssbs_previous"
+    else
+        printf '%s\n' "$_ssbs_current"
+    fi
+}
+
 print_self_compile_failure_origin() {
     _psfo_kind=$1
     _psfo_source=$2
@@ -399,15 +479,7 @@ report_self_compile_failure_origin() {
         return 0
     fi
 
-    # These are the inputs to the opt2-built compiler and its compile of
-    # src/main.tl. Gate-only scripts are deliberately absent: changing a report
-    # must not make a previously current compiler measurement look stale.
-    if git diff --quiet "$_rsfo_source" "$PR_BASE_SHA" -- \
-        src stdlib \
-        scripts/build-stage0.sh \
-        scripts/check-bootstrap-fixpoint.sh \
-        scripts/lib-native-link.sh \
-        scripts/measure-instruction-counts.sh; then
+    if self_compile_inputs_match "$_rsfo_source" "$PR_BASE_SHA"; then
         print_self_compile_failure_origin pr "$_rsfo_source" "$PR_BASE_SHA"
     else
         print_self_compile_failure_origin stale "$_rsfo_source" "$PR_BASE_SHA"
@@ -639,6 +711,54 @@ self_test() {
             ;;
     esac
 
+    # A generated ratchet merge must retain the commit whose compiler was
+    # measured, or each ratchet would trigger another marker-only ratchet. Use
+    # temporary commit objects so this covers distinct commits without moving a
+    # ref or depending on the repository's current commit shape.
+    _st_saved_baseline_source=$BASELINE_SOURCE
+    BASELINE_SOURCE="$SELF_TEST_DIR/baseline-source.txt"
+    _st_head=$(git rev-parse HEAD)
+    printf '%s\n' "$_st_head" > "$BASELINE_SOURCE"
+    _st_index="$SELF_TEST_DIR/generated-only.index"
+    GIT_INDEX_FILE="$_st_index" git read-tree "$_st_head"
+    _st_blob=$(printf 'name\tir_count\nself_compile/compile_cli_opt1\t1\n' | \
+        git hash-object -w --stdin)
+    GIT_INDEX_FILE="$_st_index" git update-index --cacheinfo \
+        100644 "$_st_blob" perf/insn-exec-baseline.tsv
+    _st_tree=$(GIT_INDEX_FILE="$_st_index" git write-tree)
+    _st_generated_commit=$(printf 'generated-only ratchet fixture\n' | \
+        git -c user.name=typelisp-self-test \
+            -c user.email=typelisp-self-test@example.invalid \
+            commit-tree "$_st_tree" -p "$_st_head")
+    _st_selected=$(select_self_compile_baseline_source "$_st_generated_commit")
+    if [ "$_st_selected" != "$_st_head" ]; then
+        echo "self-test baseline-source-generated: selected $_st_selected, want $_st_head" >&2
+        _st_status=1
+    fi
+
+    rm -f "$_st_index"
+    _st_index="$SELF_TEST_DIR/compiler-input.index"
+    GIT_INDEX_FILE="$_st_index" git read-tree "$_st_head"
+    _st_blob=$(printf '(define baseline-source-self-test 1)\n' | \
+        git hash-object -w --stdin)
+    GIT_INDEX_FILE="$_st_index" git update-index --add --cacheinfo \
+        100644 "$_st_blob" src/baseline_source_self_test.tl
+    _st_tree=$(GIT_INDEX_FILE="$_st_index" git write-tree)
+    _st_input_commit=$(printf 'compiler-input fixture\n' | \
+        git -c user.name=typelisp-self-test \
+            -c user.email=typelisp-self-test@example.invalid \
+            commit-tree "$_st_tree" -p "$_st_head")
+    _st_selected=$(select_self_compile_baseline_source "$_st_input_commit")
+    if [ "$_st_selected" != "$_st_input_commit" ]; then
+        echo "self-test baseline-source-input: selected $_st_selected, want $_st_input_commit" >&2
+        _st_status=1
+    fi
+    if self_compile_inputs_match "$_st_head" "$_st_input_commit"; then
+        echo "self-test baseline-source-input: compiler input change compared equal" >&2
+        _st_status=1
+    fi
+    BASELINE_SOURCE=$_st_saved_baseline_source
+
     SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=0
     set +e
     _st_local_out=$(compare_counts \
@@ -794,6 +914,17 @@ self_test() {
     fi
     echo "instruction-count comparison self-test passed"
 }
+
+if [ -n "$SELECT_BASELINE_SOURCE_COMMIT" ]; then
+    if [ "$UPDATE_BASELINE" -ne 0 ] || [ "$BENCHMARKS_ONLY" -ne 0 ] ||
+        [ "$SELF_COMPILE_ONLY" -ne 0 ] || [ "$SELF_TEST" -ne 0 ] ||
+        [ -n "$SEED_ARG" ]; then
+        echo "--select-baseline-source cannot be combined with measurement options" >&2
+        exit 2
+    fi
+    select_self_compile_baseline_source "$SELECT_BASELINE_SOURCE_COMMIT"
+    exit $?
+fi
 
 if [ "$SELF_TEST" -eq 1 ]; then
     self_test

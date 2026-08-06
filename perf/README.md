@@ -94,6 +94,8 @@ a stale baseline, while a current marker attributes the delta to the PR. The
 post-merge Linux bootstrap remeasures the converged compiler and opens a focused
 ratchet PR when either the count or marker changed. Repository rules require
 that generated update to pass the normal PR checks before it reaches `main`.
+The generated ratchet merge retains the commit it measured, so the marker does
+not create another otherwise identical ratchet after the two-file PR lands.
 
 ## CI wall-clock compile budgets
 

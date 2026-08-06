@@ -88,7 +88,8 @@ jobs:
             --self-compile-only \
             --baseline target/post-merge-self-compile/insn-exec-baseline.tsv \
             --output target/post-merge-self-compile/measure
-          printf '%s\n' "${{ github.sha }}" \
+          scripts/check-instruction-counts.sh \
+            --select-baseline-source "${{ github.sha }}" \
             > target/post-merge-self-compile/insn-exec-baseline-source.txt
 
       - name: Upload the measured main self-compile baseline
@@ -238,7 +239,8 @@ jobs:
               --body "Automated GitHub-hosted Linux measurement of the converged compiler after main commit ${{ github.sha }}. Refs #5638.")"
           fi
           echo "Opened $pr_url"
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" \
+            -f pr_base_sha="${{ github.sha }}"
 
   publish:
     name: Publish Stage0 Releases

@@ -203,6 +203,7 @@ lambda_lift|tests/integration/lambda_lift.tl|42|-|-|-
 lexer|tests/integration/lexer.tl|12|-|-|stdlib/io.tl stdlib/string.tl
 lifetime_nullary_variant|tests/integration/lifetime_nullary_variant.tl|42|-|-|-
 lifetime_enum_borrow_return|tests/integration/lifetime_enum_borrow_return.tl|42|-|-|stdlib/string.tl
+lifetime_shortening_variance|tests/integration/lifetime_shortening_variance.tl|42|-|-|-
 many_args|tests/integration/many_args.tl|36|-|-|-
 maybe_result|tests/integration/maybe_result.tl|65|-|-|stdlib/string.tl
 min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/min_div_neg1_trap/min_div_neg1_trap.tl:5:7: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n

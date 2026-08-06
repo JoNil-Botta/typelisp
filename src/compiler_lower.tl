@@ -23790,7 +23790,7 @@
         type-cache
         else-branch)
         [(tc_core.ResultTcType.Ok else-ty)
-          (match (tc_core.tc-merge-branch-type ctx then-ty else-ty)
+          (match (tc_core.tc-merge-branch-type ctx type-env then-ty else-ty)
             [(tc_core.ResultTcType.Ok merged) (tc_core.ResultTcType.Ok merged)]
             [(tc_core.ResultTcType.Err message)
               (if (and
@@ -23801,7 +23801,11 @@
                   then-branch
                   else-ty)
                   [(tc_core.ResultTcType.Ok contextual-then)
-                    (tc_core.tc-merge-branch-type ctx contextual-then else-ty)]
+                    (tc_core.tc-merge-branch-type
+                      ctx
+                      type-env
+                      contextual-then
+                      else-ty)]
                   [(tc_core.ResultTcType.Err literal-message)
                     (tc_core.ResultTcType.Err literal-message)])
                 (if (and
@@ -23812,7 +23816,11 @@
                     else-branch
                     then-ty)
                     [(tc_core.ResultTcType.Ok contextual-else)
-                      (tc_core.tc-merge-branch-type ctx then-ty contextual-else)]
+                      (tc_core.tc-merge-branch-type
+                        ctx
+                        type-env
+                        then-ty
+                        contextual-else)]
                     [(tc_core.ResultTcType.Err literal-message)
                       (tc_core.ResultTcType.Err literal-message)])
                   (tc_core.ResultTcType.Err message)))])]
@@ -23927,7 +23935,7 @@
       scrut-ty
       (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback)))
       [(tc_core.ResultTcType.Ok got)
-        (match (tc_core.tc-merge-branch-type ctx want got)
+        (match (tc_core.tc-merge-branch-type ctx type-env want got)
           [(tc_core.ResultTcType.Ok merged)
             (lower-match-rest-result-types-fast-at
               ctx

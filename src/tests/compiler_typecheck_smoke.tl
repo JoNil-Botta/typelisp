@@ -454,8 +454,10 @@
   [left : (& same i64)]
   [right : (& same i64)]) : unit
   unit)
-(define (main [left : i64] [right : i64]) : unit
-  (take-same (& left) (& right)))")
+(define (main
+  [left-value : (& left-life i64)]
+  [right-value : (& right-life i64)]) : unit
+  (take-same left-value right-value))")
 
 (define (compiler-typecheck-call-arity-diagnostic-source) : String
   "(define (takes-two [count : i64] [enabled : bool]) : i64 count)
@@ -474,7 +476,7 @@
       "typecheck: call `Pair` argument 1 (parameter `left`) type mismatch: expected i64, found bool")
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-lifetime-argument-diagnostic-source)
-      "typecheck: call `take-same` argument 2 (parameter `right`) type mismatch: expected (& same i64), found (& right i64)")
+      "typecheck: call `take-same` argument 2 (parameter `right`) type mismatch: expected (& left-life i64), found (& right-life i64); source lifetime `right-life` does not outlive required lifetime `left-life`")
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-call-arity-diagnostic-source)
       "typecheck: call arity mismatch: takes-two expected 2 arguments, got 1 argument")))
@@ -486,9 +488,8 @@
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-auto-borrow-temporary-source)
       "typecheck: borrow requires a local, parameter, or aggregate place")
-    (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-auto-borrow-shared-lifetime-source)
-      "typecheck: call `same-owner` argument 2 (parameter `right`) type mismatch: expected (& same str), found (& right str)")
+    (compiler_typecheck.compiler-typecheck-ok?
+      (compiler-typecheck-auto-borrow-shared-lifetime-source))
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-auto-borrow-mutable-param-source)
       "typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64")
@@ -1196,7 +1197,7 @@
       (compiler-typecheck-signature-lifetime-alias-positive-source))
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-signature-lifetime-alias-unknown-source)
-      "typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64)")
+      "typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64); source lifetime `source` does not outlive required lifetime `missing`")
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-signature-lifetime-alias-local-return-source)
       "typecheck: borrow lifetime mismatch")))
@@ -5174,7 +5175,7 @@
   (unless
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-lifetime-argument-diagnostic-source)
-      "typecheck: call `take-same` argument 2 (parameter `right`) type mismatch: expected (& same i64), found (& right i64)")
+      "typecheck: call `take-same` argument 2 (parameter `right`) type mismatch: expected (& left-life i64), found (& right-life i64); source lifetime `right-life` does not outlive required lifetime `left-life`")
     (io.panic "typecheck: lifetime call diagnostic inline test failed"))
   (unless
     (compiler_typecheck.compiler-typecheck-error-ok?

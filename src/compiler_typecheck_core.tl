@@ -1605,6 +1605,14 @@
   (Copyable)
   (MoveOnly))
 
+;; Lifetime variance is a checker-only property. It never enters AstType,
+;; symbol identity, layout, mangling, or either ABI.
+(defenum TcVariance
+  (TcVarianceBivariant)
+  (TcVarianceCovariant)
+  (TcVarianceContravariant)
+  (TcVarianceInvariant))
+
 (defenum TcSpmdClass
   (Uniform)
   (Varying))
@@ -15637,6 +15645,23 @@
             (TcMaybeNameId.Some replacement)
             (TcMaybeNameId.No))))]))
 
+(define (tc-lifetime-subst-push
+  [subst : TcLifetimeSubst]
+  [from : i64]
+  [to : i64]) : TcLifetimeSubst
+  (match subst
+    [(TcLifetimeSubst.Nil) (TcLifetimeSubst.One from to)]
+    [(TcLifetimeSubst.One previous-from previous-to)
+      (let
+        [address : i64 (tc-lifetime-subst-store-new previous-from previous-to)]
+        [tail : i64 (tc-lifetime-subst-store-push! address 0 from to)]
+        (TcLifetimeSubst.Dense address tail 2))]
+    [(TcLifetimeSubst.Dense address tail len)
+      (TcLifetimeSubst.Dense
+        address
+        (tc-lifetime-subst-store-push! address tail from to)
+        (+ len 1))]))
+
 (define (tc-lifetime-subst-bind
   [subst : TcLifetimeSubst]
   [from : i64]
@@ -15647,20 +15672,7 @@
         (ResultTcLifetimeSubst.Ok subst)
         (ResultTcLifetimeSubst.Err "typecheck: constructor lifetime mismatch"))]
     [(TcMaybeNameId.No)
-      (ResultTcLifetimeSubst.Ok
-        (match subst
-          [(TcLifetimeSubst.Nil) (TcLifetimeSubst.One from to)]
-          [(TcLifetimeSubst.One previous-from previous-to)
-            (let
-              [address : i64
-                (tc-lifetime-subst-store-new previous-from previous-to)]
-              [tail : i64 (tc-lifetime-subst-store-push! address 0 from to)]
-              (TcLifetimeSubst.Dense address tail 2))]
-          [(TcLifetimeSubst.Dense address tail len)
-            (TcLifetimeSubst.Dense
-              address
-              (tc-lifetime-subst-store-push! address tail from to)
-              (+ len 1))]))]))
+      (ResultTcLifetimeSubst.Ok (tc-lifetime-subst-push subst from to))]))
 
 (define (tc-lifetime-subst-apply [subst : TcLifetimeSubst] [name : i64]) : i64
   (match (tc-lifetime-subst-lookup subst name)
@@ -23869,6 +23881,835 @@
         [_ false])]
     [_ false]))
 
+(define (tc-variance-flip [variance : TcVariance]) : TcVariance
+  (match variance
+    [(TcVariance.TcVarianceBivariant) (TcVariance.TcVarianceBivariant)]
+    [(TcVariance.TcVarianceCovariant) (TcVariance.TcVarianceContravariant)]
+    [(TcVariance.TcVarianceContravariant) (TcVariance.TcVarianceCovariant)]
+    [(TcVariance.TcVarianceInvariant) (TcVariance.TcVarianceInvariant)]))
+
+(define (tc-variance-compose [outer : TcVariance] [inner : TcVariance]) : TcVariance
+  (match outer
+    [(TcVariance.TcVarianceBivariant) (TcVariance.TcVarianceBivariant)]
+    [(TcVariance.TcVarianceInvariant) (TcVariance.TcVarianceInvariant)]
+    [(TcVariance.TcVarianceCovariant) inner]
+    [(TcVariance.TcVarianceContravariant) (tc-variance-flip inner)]))
+
+(define (tc-variance-merge [left : TcVariance] [right : TcVariance]) : TcVariance
+  (match left
+    [(TcVariance.TcVarianceBivariant) right]
+    [(TcVariance.TcVarianceInvariant) (TcVariance.TcVarianceInvariant)]
+    [(TcVariance.TcVarianceCovariant)
+      (match right
+        [(TcVariance.TcVarianceBivariant) left]
+        [(TcVariance.TcVarianceCovariant) left]
+        [_ (TcVariance.TcVarianceInvariant)])]
+    [(TcVariance.TcVarianceContravariant)
+      (match right
+        [(TcVariance.TcVarianceBivariant) left]
+        [(TcVariance.TcVarianceContravariant) left]
+        [_ (TcVariance.TcVarianceInvariant)])]))
+
+(define (tc-type-list-lifetime-variance-at
+  [ctx : TcContext]
+  [types : (& types ast.AstTypeList)]
+  [lifetime-id : i64]
+  [stack : TcNameIdList]
+  [position : TcVariance]
+  [index : i64]) : TcVariance
+  (if (>= index (ast.ast-type-list-len types))
+    (TcVariance.TcVarianceBivariant)
+    (tc-variance-merge
+      (tc-type-lifetime-variance
+        ctx
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+        lifetime-id
+        stack
+        position)
+      (tc-type-list-lifetime-variance-at
+        ctx
+        types
+        lifetime-id
+        stack
+        position
+        (+ index 1)))))
+
+(define (tc-type-list-lifetime-variance
+  [ctx : TcContext]
+  [types : ast.AstTypeList]
+  [lifetime-id : i64]
+  [stack : TcNameIdList]
+  [position : TcVariance]) : TcVariance
+  (tc-type-list-lifetime-variance-at ctx (& types) lifetime-id stack position 0))
+
+(define (tc-field-list-lifetime-variance-at
+  [ctx : TcContext]
+  [fields : (& fields ast.AstFieldDefList)]
+  [lifetime-id : i64]
+  [stack : TcNameIdList]
+  [index : i64]) : TcVariance
+  (if (>= index (struct-get fields len))
+    (TcVariance.TcVarianceBivariant)
+    (match (ast.ast-field-def-list-get
+      fields
+      index
+      (ast.ast-field-def-fallback))
+      [(ast.AstFieldDef.Def _ ty _)
+        (tc-variance-merge
+          (tc-type-lifetime-variance
+            ctx
+            ty
+            lifetime-id
+            stack
+            (TcVariance.TcVarianceCovariant))
+          (tc-field-list-lifetime-variance-at
+            ctx
+            fields
+            lifetime-id
+            stack
+            (+ index 1)))])))
+
+(define (tc-variant-list-lifetime-variance-at
+  [ctx : TcContext]
+  [variants : (& variants ast.AstVariantDefList)]
+  [lifetime-id : i64]
+  [stack : TcNameIdList]
+  [index : i64]) : TcVariance
+  (if (>= index (struct-get variants len))
+    (TcVariance.TcVarianceBivariant)
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def _ payloads _)
+        (tc-variance-merge
+          (tc-type-list-lifetime-variance
+            ctx
+            payloads
+            lifetime-id
+            stack
+            (TcVariance.TcVarianceCovariant))
+          (tc-variant-list-lifetime-variance-at
+            ctx
+            variants
+            lifetime-id
+            stack
+            (+ index 1)))])))
+
+(define (tc-nominal-lifetime-variance-at
+  [ctx : TcContext]
+  [name-id : i64]
+  [index : i64]
+  [stack : TcNameIdList]) : TcVariance
+  (let
+    [handle : i64
+      (csym.compiler-symbols-lookup-type-id-or
+        (tc-context-symbols ctx)
+        name-id
+        (csym.compiler-symbols-missing-handle))]
+    (if (not (csym.compiler-symbols-handle-found? handle))
+      (TcVariance.TcVarianceInvariant)
+      (let
+        [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
+        (if (or (< nominal-id 0) (tc-name-id-list-contains stack nominal-id))
+          ;; A recursive occurrence transmits its surrounding polarity. Using
+          ;; covariance here is the conservative one-step fixed point: a
+          ;; mutable-pointer/invariant wrapper still turns the cycle invariant.
+          (TcVariance.TcVarianceCovariant)
+          (let
+            [owner-ctx : TcContext
+              (tc-context-with-nominal-owner-index-module
+                ctx
+                (csym.compiler-symbol-handle-index handle))]
+            [next-stack : TcNameIdList (tc-name-id-list-add stack nominal-id)]
+            (match (csym.compiler-symbols-decl-at-index
+              (tc-context-symbols owner-ctx)
+              (csym.compiler-symbol-handle-index handle))
+              [(parser.ResultAstDecl.Ok decl)
+                (match decl
+                  [(ast.AstDecl.DefStructLifetimes _ _ lifetimes _ _ fields)
+                    (if (>= index (tc-lifetime-list-count lifetimes))
+                      (TcVariance.TcVarianceInvariant)
+                      (tc-field-list-lifetime-variance-at
+                        owner-ctx
+                        (& fields)
+                        (ast.ast-lifetime-list-get
+                          (& lifetimes)
+                          index
+                          (ast.ast-lifetime-fallback))
+                        next-stack
+                        0))]
+                  [(ast.AstDecl.DefEnumLifetimes _ _ lifetimes _ variants)
+                    (if (>= index (tc-lifetime-list-count lifetimes))
+                      (TcVariance.TcVarianceInvariant)
+                      (tc-variant-list-lifetime-variance-at
+                        owner-ctx
+                        (& variants)
+                        (ast.ast-lifetime-list-get
+                          (& lifetimes)
+                          index
+                          (ast.ast-lifetime-fallback))
+                        next-stack
+                        0))]
+                  [_ (TcVariance.TcVarianceInvariant)])]
+              [(parser.ResultAstDecl.Err _) (TcVariance.TcVarianceInvariant)])))))))
+
+(define (tc-nominal-args-lifetime-variance-at
+  [ctx : TcContext]
+  [name-id : i64]
+  [lifetimes : ast.AstLifetimeList]
+  [lifetime-id : i64]
+  [stack : TcNameIdList]
+  [position : TcVariance]
+  [index : i64]) : TcVariance
+  (if (>= index (ast.ast-lifetime-list-len (& lifetimes)))
+    (TcVariance.TcVarianceBivariant)
+    (let
+      [argument : i64
+        (ast.ast-lifetime-list-get
+          (& lifetimes)
+          index
+          (ast.ast-lifetime-fallback))]
+      [head : TcVariance
+        (if (= argument lifetime-id)
+          (tc-variance-compose
+            position
+            (tc-nominal-lifetime-variance-at ctx name-id index stack))
+          (TcVariance.TcVarianceBivariant))]
+      (tc-variance-merge
+        head
+        (tc-nominal-args-lifetime-variance-at
+          ctx
+          name-id
+          lifetimes
+          lifetime-id
+          stack
+          position
+          (+ index 1))))))
+
+(define (tc-type-lifetime-variance
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [lifetime-id : i64]
+  [stack : TcNameIdList]
+  [position : TcVariance]) : TcVariance
+  (match (tc-resolve-type ctx ty)
+    [(ast.AstType.Func params ret)
+      (tc-variance-merge
+        (tc-type-list-lifetime-variance
+          ctx
+          (box-get params)
+          lifetime-id
+          stack
+          (tc-variance-flip position))
+        (tc-type-lifetime-variance
+          ctx
+          (ast.ty-node-get ret)
+          lifetime-id
+          stack
+          position))]
+    [(ast.AstType.Tuple elems)
+      (tc-type-list-lifetime-variance
+        ctx
+        (box-get elems)
+        lifetime-id
+        stack
+        position)]
+    [(ast.AstType.Array elem _)
+      (tc-type-lifetime-variance
+        ctx
+        (ast.ty-node-get elem)
+        lifetime-id
+        stack
+        position)]
+    ;; Compatibility dynamic arrays expose mutable element storage and are
+    ;; therefore invariant. Native Slice is a view and follows its context.
+    [(ast.AstType.DynArray elem)
+      (tc-type-lifetime-variance
+        ctx
+        (ast.ty-node-get elem)
+        lifetime-id
+        stack
+        (TcVariance.TcVarianceInvariant))]
+    [(ast.AstType.Slice elem)
+      (tc-type-lifetime-variance
+        ctx
+        (ast.ty-node-get elem)
+        lifetime-id
+        stack
+        position)]
+    [(ast.AstType.Box elem)
+      (tc-type-lifetime-variance
+        ctx
+        (ast.ty-node-get elem)
+        lifetime-id
+        stack
+        position)]
+    [(ast.AstType.Ptr elem)
+      (tc-type-lifetime-variance
+        ctx
+        (ast.ty-node-get elem)
+        lifetime-id
+        stack
+        position)]
+    [(ast.AstType.MutPtr elem)
+      (tc-type-lifetime-variance
+        ctx
+        (ast.ty-node-get elem)
+        lifetime-id
+        stack
+        (TcVariance.TcVarianceInvariant))]
+    [(ast.AstType.Ref lifetime inner)
+      (tc-variance-merge
+        (if (= lifetime lifetime-id)
+          position
+          (TcVariance.TcVarianceBivariant))
+        (tc-type-lifetime-variance
+          ctx
+          (ast.ty-node-get inner)
+          lifetime-id
+          stack
+          position))]
+    [(ast.AstType.MutRef lifetime inner)
+      (tc-variance-merge
+        (if (= lifetime lifetime-id)
+          position
+          (TcVariance.TcVarianceBivariant))
+        (tc-type-lifetime-variance
+          ctx
+          (ast.ty-node-get inner)
+          lifetime-id
+          stack
+          (TcVariance.TcVarianceInvariant)))]
+    [(ast.AstType.Region lifetime inner)
+      (tc-variance-merge
+        (if (= lifetime lifetime-id)
+          position
+          (TcVariance.TcVarianceBivariant))
+        (tc-type-lifetime-variance
+          ctx
+          (ast.ty-node-get inner)
+          lifetime-id
+          stack
+          position))]
+    [(ast.AstType.EnumArgs name lifetimes)
+      (tc-nominal-args-lifetime-variance-at
+        ctx
+        name
+        (box-get lifetimes)
+        lifetime-id
+        stack
+        position
+        0)]
+    [(ast.AstType.StructArgs name lifetimes)
+      (tc-nominal-args-lifetime-variance-at
+        ctx
+        name
+        (box-get lifetimes)
+        lifetime-id
+        stack
+        position
+        0)]
+    [(ast.AstType.VarArgs _ lifetimes)
+      (if (tc-lifetime-list-contains (box-get lifetimes) lifetime-id)
+        (TcVariance.TcVarianceInvariant)
+        (TcVariance.TcVarianceBivariant))]
+    [(ast.AstType.Consume inner)
+      (tc-type-lifetime-variance
+        ctx
+        (ast.ty-node-get inner)
+        lifetime-id
+        stack
+        position)]
+    [_ (TcVariance.TcVarianceBivariant)]))
+
+(define (tc-lifetime-coercible-for-variance?
+  [env : TcTypeEnv]
+  [variance : TcVariance]
+  [expected : i64]
+  [actual : i64]) : bool
+  (if (= expected actual)
+    true
+    (match variance
+      [(TcVariance.TcVarianceBivariant) true]
+      [(TcVariance.TcVarianceCovariant)
+        (tc-lifetime-outlives-lifetime-id? env actual expected)]
+      [(TcVariance.TcVarianceContravariant)
+        (tc-lifetime-outlives-lifetime-id? env expected actual)]
+      [(TcVariance.TcVarianceInvariant) false])))
+
+(define (tc-nominal-lifetime-args-coercible-at?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [expected : (& expected ast.AstLifetimeList)]
+  [actual : (& actual ast.AstLifetimeList)]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-lifetime-list-len expected))
+    true
+    (and
+      (tc-lifetime-coercible-for-variance?
+        env
+        (tc-nominal-lifetime-variance-at ctx name-id index TcNameIdList.Nil)
+        (ast.ast-lifetime-list-get expected index (ast.ast-lifetime-fallback))
+        (ast.ast-lifetime-list-get actual index (ast.ast-lifetime-fallback)))
+      (tc-nominal-lifetime-args-coercible-at?
+        ctx
+        env
+        name-id
+        expected
+        actual
+        (+ index 1)))))
+
+(define (tc-nominal-lifetime-args-coercible?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [expected : ast.AstLifetimeList]
+  [actual : ast.AstLifetimeList]) : bool
+  (and
+    (=
+      (ast.ast-lifetime-list-len (& expected))
+      (ast.ast-lifetime-list-len (& actual)))
+    (tc-nominal-lifetime-args-coercible-at?
+      ctx
+      env
+      name-id
+      (& expected)
+      (& actual)
+      0)))
+
+(define (tc-type-list-coercible-at?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : (& expected ast.AstTypeList)]
+  [actual : (& actual ast.AstTypeList)]
+  [contravariant : bool]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len expected))
+    true
+    (let
+      [want : ast.AstType
+        (ast.ty-node-get
+          (ast.ast-type-list-get expected index (ast.ast-type-id-fallback)))]
+      [got : ast.AstType
+        (ast.ty-node-get
+          (ast.ast-type-list-get actual index (ast.ast-type-id-fallback)))]
+      (and
+        (if contravariant
+          (tc-type-coercible-core? ctx env got want)
+          (tc-type-coercible-core? ctx env want got))
+        (tc-type-list-coercible-at?
+          ctx
+          env
+          expected
+          actual
+          contravariant
+          (+ index 1))))))
+
+(define (tc-type-list-coercible?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : ast.AstTypeList]
+  [actual : ast.AstTypeList]
+  [contravariant : bool]) : bool
+  (and
+    (= (ast.ast-type-list-len (& expected)) (ast.ast-type-list-len (& actual)))
+    (tc-type-list-coercible-at? ctx env (& expected) (& actual) contravariant 0)))
+
+(define (tc-type-coercible-core?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : bool
+  ;; Region allocation tags are not part of type identity, but when both sides
+  ;; carry one, changing the tag must be a proven shortening.
+  (match expected
+    [(ast.AstType.Region expected-region expected-inner)
+      (match actual
+        [(ast.AstType.Region actual-region actual-inner)
+          (and
+            (tc-lifetime-outlives-lifetime-id?
+              env
+              actual-region
+              expected-region)
+            (tc-type-coercible-core?
+              ctx
+              env
+              (ast.ty-node-get expected-inner)
+              (ast.ty-node-get actual-inner)))]
+        [_
+          (tc-type-coercible-core?
+            ctx
+            env
+            (ast.ty-node-get expected-inner)
+            actual)])]
+    [_
+      (match actual
+        [(ast.AstType.Region _ actual-inner)
+          (tc-type-coercible-core?
+            ctx
+            env
+            expected
+            (ast.ty-node-get actual-inner))]
+        [_
+          (if (tc-type-eq expected actual)
+            true
+            (match expected
+              [(ast.AstType.Func expected-params expected-ret)
+                (match actual
+                  [(ast.AstType.Func actual-params actual-ret)
+                    (and
+                      (tc-type-list-coercible?
+                        ctx
+                        env
+                        (box-get expected-params)
+                        (box-get actual-params)
+                        true)
+                      (tc-type-coercible-core?
+                        ctx
+                        env
+                        (ast.ty-node-get expected-ret)
+                        (ast.ty-node-get actual-ret)))]
+                  [_ false])]
+              [(ast.AstType.Tuple expected-elems)
+                (match actual
+                  [(ast.AstType.Tuple actual-elems)
+                    (tc-type-list-coercible?
+                      ctx
+                      env
+                      (box-get expected-elems)
+                      (box-get actual-elems)
+                      false)]
+                  [_ false])]
+              [(ast.AstType.Array expected-elem expected-len)
+                (match actual
+                  [(ast.AstType.Array actual-elem actual-len)
+                    (and
+                      (= expected-len actual-len)
+                      (tc-type-coercible-core?
+                        ctx
+                        env
+                        (ast.ty-node-get expected-elem)
+                        (ast.ty-node-get actual-elem)))]
+                  [_ false])]
+              [(ast.AstType.Slice expected-elem)
+                (match actual
+                  [(ast.AstType.Slice actual-elem)
+                    (tc-type-coercible-core?
+                      ctx
+                      env
+                      (ast.ty-node-get expected-elem)
+                      (ast.ty-node-get actual-elem))]
+                  [_ false])]
+              [(ast.AstType.Box expected-elem)
+                (match actual
+                  [(ast.AstType.Box actual-elem)
+                    (tc-type-coercible-core?
+                      ctx
+                      env
+                      (ast.ty-node-get expected-elem)
+                      (ast.ty-node-get actual-elem))]
+                  [_ false])]
+              [(ast.AstType.Ptr expected-elem)
+                (match actual
+                  [(ast.AstType.Ptr actual-elem)
+                    (tc-type-coercible-core?
+                      ctx
+                      env
+                      (ast.ty-node-get expected-elem)
+                      (ast.ty-node-get actual-elem))]
+                  [_ false])]
+              [(ast.AstType.Ref expected-lifetime expected-inner)
+                (match actual
+                  [(ast.AstType.Ref actual-lifetime actual-inner)
+                    (and
+                      (tc-lifetime-outlives-lifetime-id?
+                        env
+                        actual-lifetime
+                        expected-lifetime)
+                      (tc-type-coercible-core?
+                        ctx
+                        env
+                        (ast.ty-node-get expected-inner)
+                        (ast.ty-node-get actual-inner)))]
+                  [_ false])]
+              [(ast.AstType.MutRef expected-lifetime expected-inner)
+                (match actual
+                  [(ast.AstType.MutRef actual-lifetime actual-inner)
+                    (and
+                      (tc-lifetime-outlives-lifetime-id?
+                        env
+                        actual-lifetime
+                        expected-lifetime)
+                      (tc-type-eq
+                        (ast.ty-node-get expected-inner)
+                        (ast.ty-node-get actual-inner)))]
+                  [_ false])]
+              [(ast.AstType.EnumArgs expected-name expected-lifetimes)
+                (match actual
+                  [(ast.AstType.EnumArgs actual-name actual-lifetimes)
+                    (and
+                      (tc-nominal-name-id-eq? expected-name actual-name)
+                      (tc-nominal-lifetime-args-coercible?
+                        ctx
+                        env
+                        expected-name
+                        (box-get expected-lifetimes)
+                        (box-get actual-lifetimes)))]
+                  [_ false])]
+              [(ast.AstType.StructArgs expected-name expected-lifetimes)
+                (match actual
+                  [(ast.AstType.StructArgs actual-name actual-lifetimes)
+                    (and
+                      (tc-nominal-name-id-eq? expected-name actual-name)
+                      (tc-nominal-lifetime-args-coercible?
+                        ctx
+                        env
+                        expected-name
+                        (box-get expected-lifetimes)
+                        (box-get actual-lifetimes)))]
+                  [_ false])]
+              [(ast.AstType.Consume expected-inner)
+                (match actual
+                  [(ast.AstType.Consume actual-inner)
+                    (tc-type-coercible-core?
+                      ctx
+                      env
+                      (ast.ty-node-get expected-inner)
+                      (ast.ty-node-get actual-inner))]
+                  [_ false])]
+              [_ false]))])]))
+
+(define (tc-type-coercible?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : bool
+  (if (tc-never-type? actual)
+    true
+    (if (tc-type-coercible-core? ctx env expected actual)
+      true
+      ;; Preserve the existing scalar-only contextual numeric conversion. The
+      ;; structural recursion above deliberately does not lift it into arrays,
+      ;; pointers, references, or nominal aggregates.
+      (tc-f32-to-f64-compatible? expected actual))))
+
+(define (tc-lifetime-coercion-outlives-detail [source : i64] [required : i64]) : String
+  (str_cat.str-cat
+    "; source lifetime `"
+    (ci.intern-str source)
+    "` does not outlive required lifetime `"
+    (ci.intern-str required)
+    "`"))
+
+(define (tc-lifetime-coercion-invariant-detail
+  [label : String]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : String
+  (let
+    [source-lifetimes : TcNameIdList
+      (tc-type-collect-reference-lifetimes actual)]
+    [required-lifetimes : TcNameIdList
+      (tc-type-collect-reference-lifetimes expected)]
+    (if (or
+      (tc-name-id-list-empty? source-lifetimes)
+      (tc-name-id-list-empty? required-lifetimes))
+      (str_cat.str-cat "; " label " is invariant")
+      (str_cat.str-cat
+        "; source lifetime `"
+        (ci.intern-str (tc-name-id-list-head source-lifetimes))
+        "` cannot satisfy required lifetime `"
+        (ci.intern-str (tc-name-id-list-head required-lifetimes))
+        "` because "
+        label
+        " is invariant"))))
+
+(define (tc-lifetime-coercion-variance-detail
+  [label : String]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : String
+  (let
+    [source-lifetimes : TcNameIdList
+      (tc-type-collect-reference-lifetimes actual)]
+    [required-lifetimes : TcNameIdList
+      (tc-type-collect-reference-lifetimes expected)]
+    (if (or
+      (tc-name-id-list-empty? source-lifetimes)
+      (tc-name-id-list-empty? required-lifetimes))
+      (str_cat.str-cat "; " label " failed")
+      (str_cat.str-cat
+        "; source lifetime `"
+        (ci.intern-str (tc-name-id-list-head source-lifetimes))
+        "` cannot satisfy required lifetime `"
+        (ci.intern-str (tc-name-id-list-head required-lifetimes))
+        "` because "
+        label
+        " failed"))))
+
+(define (tc-nominal-lifetime-coercion-failure-detail-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [expected : ast.AstLifetimeList]
+  [actual : ast.AstLifetimeList]
+  [index : i64]) : String
+  (if (>= index (ast.ast-lifetime-list-len (& expected)))
+    ""
+    (let
+      [required : i64
+        (ast.ast-lifetime-list-get
+          (& expected)
+          index
+          (ast.ast-lifetime-fallback))]
+      [source : i64
+        (ast.ast-lifetime-list-get (& actual) index (ast.ast-lifetime-fallback))]
+      [variance : TcVariance
+        (tc-nominal-lifetime-variance-at ctx name-id index TcNameIdList.Nil)]
+      (if (= required source)
+        (tc-nominal-lifetime-coercion-failure-detail-at
+          ctx
+          env
+          name-id
+          expected
+          actual
+          (+ index 1))
+        (match variance
+          [(TcVariance.TcVarianceBivariant) ""]
+          [(TcVariance.TcVarianceCovariant)
+            (if (tc-lifetime-outlives-lifetime-id? env source required)
+              ""
+              (tc-lifetime-coercion-outlives-detail source required))]
+          [(TcVariance.TcVarianceContravariant)
+            (if (tc-lifetime-outlives-lifetime-id? env required source)
+              ""
+              (str_cat.str-cat
+                "; required lifetime `"
+                (ci.intern-str required)
+                "` does not outlive source lifetime `"
+                (ci.intern-str source)
+                "` for contravariant lifetime parameter "
+                (string.int->string (+ index 1))
+                " of `"
+                (tc-nominal-name-id-display name-id)
+                "`"))]
+          [(TcVariance.TcVarianceInvariant)
+            (str_cat.str-cat
+              "; source lifetime `"
+              (ci.intern-str source)
+              "` cannot satisfy required lifetime `"
+              (ci.intern-str required)
+              "` because lifetime parameter "
+              (string.int->string (+ index 1))
+              " of `"
+              (tc-nominal-name-id-display name-id)
+              "` is invariant")])))))
+
+(define (tc-type-coercion-failure-detail
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : String
+  (let
+    [want : ast.AstType (tc-type-strip-region (tc-resolve-type ctx expected))]
+    [got : ast.AstType (tc-type-strip-region (tc-resolve-type ctx actual))]
+    (match want
+      [(ast.AstType.Ref required want-inner)
+        (match got
+          [(ast.AstType.Ref source got-inner)
+            (let
+              [want-inner-ty : ast.AstType (ast.ty-node-get want-inner)]
+              [got-inner-ty : ast.AstType (ast.ty-node-get got-inner)]
+              [inner-detail : String
+                (tc-type-coercion-failure-detail
+                  ctx
+                  env
+                  want-inner-ty
+                  got-inner-ty)]
+              (cond
+                [(not
+                    (tc-type-coercible-core? ctx env want-inner-ty got-inner-ty))
+                  inner-detail]
+                [(tc-lifetime-outlives-lifetime-id? env source required) ""]
+                [else (tc-lifetime-coercion-outlives-detail source required)]))]
+          [_ ""])]
+      [(ast.AstType.MutRef required want-inner)
+        (match got
+          [(ast.AstType.MutRef source got-inner)
+            (if (tc-type-eq
+              (ast.ty-node-get want-inner)
+              (ast.ty-node-get got-inner))
+              (if (tc-lifetime-outlives-lifetime-id? env source required)
+                ""
+                (tc-lifetime-coercion-outlives-detail source required))
+              (tc-lifetime-coercion-invariant-detail
+                "mutable reference referent type"
+                (ast.ty-node-get want-inner)
+                (ast.ty-node-get got-inner)))]
+          [_ ""])]
+      [(ast.AstType.MutPtr want-inner)
+        (match got
+          [(ast.AstType.MutPtr got-inner)
+            (tc-lifetime-coercion-invariant-detail
+              "mutable raw pointer referent type"
+              (ast.ty-node-get want-inner)
+              (ast.ty-node-get got-inner))]
+          [_ ""])]
+      [(ast.AstType.DynArray want-inner)
+        (match got
+          [(ast.AstType.DynArray got-inner)
+            (tc-lifetime-coercion-invariant-detail
+              "dynamic array element type"
+              (ast.ty-node-get want-inner)
+              (ast.ty-node-get got-inner))]
+          [_ ""])]
+      [(ast.AstType.Func _ _)
+        (match got
+          [(ast.AstType.Func _ _)
+            (tc-lifetime-coercion-variance-detail
+              "function parameter/result variance"
+              want
+              got)]
+          [_ ""])]
+      [(ast.AstType.EnumArgs want-name want-lifetimes)
+        (match got
+          [(ast.AstType.EnumArgs got-name got-lifetimes)
+            (if (tc-nominal-name-id-eq? want-name got-name)
+              (tc-nominal-lifetime-coercion-failure-detail-at
+                ctx
+                env
+                want-name
+                (box-get want-lifetimes)
+                (box-get got-lifetimes)
+                0)
+              "")]
+          [_ ""])]
+      [(ast.AstType.StructArgs want-name want-lifetimes)
+        (match got
+          [(ast.AstType.StructArgs got-name got-lifetimes)
+            (if (tc-nominal-name-id-eq? want-name got-name)
+              (tc-nominal-lifetime-coercion-failure-detail-at
+                ctx
+                env
+                want-name
+                (box-get want-lifetimes)
+                (box-get got-lifetimes)
+                0)
+              "")]
+          [_ ""])]
+      [_ ""])))
+
+(define (tc-type-mismatch-message-in-context
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [actual : ast.AstType]
+  [expected : ast.AstType]
+  [message : String]) : String
+  (str_cat.str-cat
+    (tc-type-mismatch-message actual expected message)
+    (tc-type-coercion-failure-detail ctx env expected actual)))
+
 (define (tc-type-compatible? [expected : ast.AstType] [actual : ast.AstType]) : bool
   (if (tc-never-type? actual)
     true
@@ -23878,27 +24719,30 @@
 
 (define (tc-match-canonicalized-inferred-type-for-expected
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [canonical : ast.AstType]
   [expected : ast.AstType]) : TcInferredTypeMatch
   (let
     [canonical-expected : ast.AstType
       (tc-canonicalize-inferred-type ctx expected)]
-    (if (tc-type-compatible? canonical-expected canonical)
+    (if (tc-type-coercible? ctx env canonical-expected canonical)
       (TcInferredTypeMatch.Compatible canonical)
       (TcInferredTypeMatch.Mismatch canonical))))
 
 (define (tc-match-inferred-type-for-expected
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [ty : ast.AstType]
   [expected : ast.AstType]) : TcInferredTypeMatch
-  (if (tc-type-compatible? expected ty)
+  (if (tc-type-coercible? ctx env expected ty)
     (TcInferredTypeMatch.Compatible ty)
     (let
       [canonical : ast.AstType (tc-canonicalize-inferred-type ctx ty)]
-      (if (tc-type-compatible? expected canonical)
+      (if (tc-type-coercible? ctx env expected canonical)
         (TcInferredTypeMatch.Compatible canonical)
         (tc-match-canonicalized-inferred-type-for-expected
           ctx
+          env
           canonical
           expected)))))
 
@@ -23921,7 +24765,11 @@
                 canonical-actual
                 (tc-source-owned-nominal-name-id ctx expected))]))])))
 
-(define (tc-merge-branch-type-raw [a : ast.AstType] [b : ast.AstType]) : ResultTcType
+(define (tc-merge-branch-type-raw
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [a : ast.AstType]
+  [b : ast.AstType]) : ResultTcType
   (cond
     [(tc-never-type? a) (ResultTcType.Ok b)]
     [(tc-never-type? b) (ResultTcType.Ok a)]
@@ -23937,18 +24785,21 @@
               (match b-regions
                 [(TcNameIdList.Nil) (ResultTcType.Ok a)]
                 [_ (ResultTcType.Err "typecheck: if branches must match")])])))]
-    [(tc-type-compatible? a b) (ResultTcType.Ok a)]
-    [(tc-type-compatible? b a) (ResultTcType.Ok b)]
+    [(tc-type-coercible? ctx env a b) (ResultTcType.Ok a)]
+    [(tc-type-coercible? ctx env b a) (ResultTcType.Ok b)]
     [else (ResultTcType.Err "typecheck: if branches must match")]))
 
 (define (tc-merge-branch-type
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [a : ast.AstType]
   [b : ast.AstType]) : ResultTcType
-  (match (tc-merge-branch-type-raw a b)
+  (match (tc-merge-branch-type-raw ctx env a b)
     [(ResultTcType.Ok merged) (ResultTcType.Ok merged)]
     [(ResultTcType.Err _)
       (tc-merge-branch-type-raw
+        ctx
+        env
         (tc-canonicalize-inferred-type ctx a)
         (tc-canonicalize-inferred-type ctx b))]))
 
@@ -29286,32 +30137,45 @@
 
 (define (tc-expect-in-context
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [actual : ast.AstType]
   [expected : ast.AstType]
   [message : String]) : ResultTcUnit
   (cond
-    [(tc-type-compatible? expected actual) ResultTcUnit.Ok]
+    [(tc-type-coercible? ctx env expected actual) ResultTcUnit.Ok]
     [else
       (let
         [canonical-actual : ast.AstType
           (tc-canonicalize-inferred-type ctx actual)]
         (cond
-          [(tc-type-compatible? expected canonical-actual) ResultTcUnit.Ok]
+          [(tc-type-coercible? ctx env expected canonical-actual)
+            ResultTcUnit.Ok]
           [else
             (let
               [canonical-expected : ast.AstType
                 (tc-canonicalize-inferred-type ctx expected)]
               (cond
-                [(tc-type-compatible? canonical-expected canonical-actual)
+                [(tc-type-coercible?
+                    ctx
+                    env
+                    canonical-expected
+                    canonical-actual)
                   ResultTcUnit.Ok]
                 [else
                   (ResultTcUnit.Err
-                    (tc-type-mismatch-message canonical-actual expected message))]))]))]))
+                    (tc-type-mismatch-message-in-context
+                      ctx
+                      env
+                      canonical-actual
+                      expected
+                      message))]))]))]))
 
 (define (tc-contextual-result-type
   [expected : ast.AstType]
   [actual : ast.AstType]) : ast.AstType
-  (if (tc-type-contains-any-region actual)
+  ;; Preserve active allocation-owner tags, but let a successful checker-only
+  ;; lifetime coercion expose the required shorter reference/nominal lifetime.
+  (if (tc-type-contains-region-tag? actual)
     actual
     expected))
 
@@ -29760,10 +30624,10 @@
                 expected)
                 [(ResultTcType.Ok else-ty)
                   (if (and
-                    (tc-type-compatible? expected then-ty)
-                    (tc-type-compatible? expected else-ty))
+                    (tc-type-coercible? ctx env expected then-ty)
+                    (tc-type-coercible? ctx env expected else-ty))
                     (ResultTcType.Ok expected)
-                    (tc-merge-branch-type ctx then-ty else-ty))]
+                    (tc-merge-branch-type ctx env then-ty else-ty))]
                 [(ResultTcType.Err message) (ResultTcType.Err message)])]
             [(ResultTcType.Err message) (ResultTcType.Err message)])]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
@@ -29974,20 +30838,21 @@
 
 (define (tc-expr-result-with-expected-or-actual
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [expected : ast.AstType]
   [allow-mut-by-value-borrow : bool]
   [result : ResultTcType]) : ResultTcType
   (match result
     [(ResultTcType.Ok actual)
       (cond
-        [(tc-type-compatible? expected actual)
+        [(tc-type-coercible? ctx env expected actual)
           (ResultTcType.Ok (tc-contextual-result-type expected actual))]
         [(and
             allow-mut-by-value-borrow
             (tc-call-string-temporary-ref-compatible? ctx expected actual))
           (ResultTcType.Ok expected)]
         [else
-          (match (tc-match-inferred-type-for-expected ctx actual expected)
+          (match (tc-match-inferred-type-for-expected ctx env actual expected)
             [(TcInferredTypeMatch.Compatible matched)
               (ResultTcType.Ok (tc-contextual-result-type expected matched))]
             [(TcInferredTypeMatch.Mismatch _) (ResultTcType.Ok actual)])])]
@@ -30209,6 +31074,7 @@
           (tc-float-literal-expr-with-expected expr expected)
           (tc-expr-result-with-expected-or-actual
             ctx
+            env
             expected
             allow-mut-by-value-borrow
             (tc-expr ctx env expr))))]))
@@ -30435,6 +31301,7 @@
     [(ast.AstExpr.Var name)
       (tc-expr-result-with-expected-or-actual
         ctx
+        env
         expected
         allow-mut-by-value-borrow
         (tc-var-expr-after-local-field-check
@@ -30445,6 +31312,7 @@
     [(ast.AstExpr.Set name value-box)
       (tc-expr-result-with-expected-or-actual
         ctx
+        env
         expected
         allow-mut-by-value-borrow
         (tc-set-expr-after-local-field-check ctx env name value-box))]
@@ -31737,6 +32605,121 @@
       (ResultTcLifetimeSubst.Ok subst)
       (ResultTcLifetimeSubst.Err (tc-call-lifetime-subst-mismatch-message)))))
 
+;; Call inference follows the formal occurrence's structural variance. A
+;; covariant occurrence contributes an upper bound and therefore keeps the
+;; shortest comparable actual lifetime; a contravariant occurrence contributes
+;; a lower bound and keeps the longest. Invariant occurrences must agree
+;; exactly. Shadowing is safe because substitution lookup returns the newest
+;; binding first, and the fully substituted call is validated afterwards.
+(define (tc-lifetime-subst-bind-for-variance
+  [env : TcTypeEnv]
+  [subst : TcLifetimeSubst]
+  [from : i64]
+  [to : i64]
+  [variance : TcVariance]) : ResultTcLifetimeSubst
+  (match (tc-lifetime-subst-lookup subst from)
+    [(TcMaybeNameId.Some existing)
+      (if (= existing to)
+        (ResultTcLifetimeSubst.Ok subst)
+        (match variance
+          [(TcVariance.TcVarianceBivariant) (ResultTcLifetimeSubst.Ok subst)]
+          [(TcVariance.TcVarianceCovariant)
+            (cond
+              [(tc-lifetime-outlives-lifetime-id? env existing to)
+                (ResultTcLifetimeSubst.Ok
+                  (tc-lifetime-subst-push subst from to))]
+              [(tc-lifetime-outlives-lifetime-id? env to existing)
+                (ResultTcLifetimeSubst.Ok subst)]
+              [else
+                (ResultTcLifetimeSubst.Err
+                  (tc-call-lifetime-subst-mismatch-message))])]
+          [(TcVariance.TcVarianceContravariant)
+            (cond
+              [(tc-lifetime-outlives-lifetime-id? env existing to)
+                (ResultTcLifetimeSubst.Ok subst)]
+              [(tc-lifetime-outlives-lifetime-id? env to existing)
+                (ResultTcLifetimeSubst.Ok
+                  (tc-lifetime-subst-push subst from to))]
+              [else
+                (ResultTcLifetimeSubst.Err
+                  (tc-call-lifetime-subst-mismatch-message))])]
+          [(TcVariance.TcVarianceInvariant)
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))]))]
+    [(TcMaybeNameId.No)
+      (ResultTcLifetimeSubst.Ok (tc-lifetime-subst-push subst from to))]))
+
+(define (tc-infer-call-lifetime-name
+  [env : TcTypeEnv]
+  [params : ast.AstLifetimeList]
+  [subst : TcLifetimeSubst]
+  [formal : i64]
+  [actual : i64]
+  [variance : TcVariance]) : ResultTcLifetimeSubst
+  (if (tc-lifetime-list-contains params formal)
+    (tc-lifetime-subst-bind-for-variance env subst formal actual variance)
+    (if (tc-lifetime-coercible-for-variance? env variance formal actual)
+      (ResultTcLifetimeSubst.Ok subst)
+      (ResultTcLifetimeSubst.Err (tc-call-lifetime-subst-mismatch-message)))))
+
+(define (tc-infer-call-nominal-lifetime-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : ast.AstLifetimeList]
+  [subst : TcLifetimeSubst]
+  [name-id : i64]
+  [formal : ast.AstLifetimeList]
+  [actual : ast.AstLifetimeList]
+  [position : TcVariance]) : ResultTcLifetimeSubst
+  (if (=
+    (ast.ast-lifetime-list-len (& formal))
+    (ast.ast-lifetime-list-len (& actual)))
+    (tc-infer-call-nominal-lifetime-list-at
+      ctx
+      env
+      params
+      subst
+      name-id
+      (& formal)
+      (& actual)
+      position
+      0)
+    (ResultTcLifetimeSubst.Err (tc-call-lifetime-subst-mismatch-message))))
+
+(define (tc-infer-call-nominal-lifetime-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : ast.AstLifetimeList]
+  [subst : TcLifetimeSubst]
+  [name-id : i64]
+  [formal : (& formal ast.AstLifetimeList)]
+  [actual : (& actual ast.AstLifetimeList)]
+  [position : TcVariance]
+  [index : i64]) : ResultTcLifetimeSubst
+  (if (>= index (ast.ast-lifetime-list-len formal))
+    (ResultTcLifetimeSubst.Ok subst)
+    (match (tc-infer-call-lifetime-name
+      env
+      params
+      subst
+      (ast.ast-lifetime-list-get formal index (ast.ast-lifetime-fallback))
+      (ast.ast-lifetime-list-get actual index (ast.ast-lifetime-fallback))
+      (tc-variance-compose
+        position
+        (tc-nominal-lifetime-variance-at ctx name-id index TcNameIdList.Nil)))
+      [(ResultTcLifetimeSubst.Ok next-subst)
+        (tc-infer-call-nominal-lifetime-list-at
+          ctx
+          env
+          params
+          next-subst
+          name-id
+          formal
+          actual
+          position
+          (+ index 1))]
+      [(ResultTcLifetimeSubst.Err message) (ResultTcLifetimeSubst.Err message)])))
+
 (define (tc-infer-lifetime-list
   [params : ast.AstLifetimeList]
   [subst : TcLifetimeSubst]
@@ -31767,10 +32750,12 @@
 
 (define (tc-infer-lifetime-subst-from-type
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [params : ast.AstLifetimeList]
   [subst : TcLifetimeSubst]
   [formal : ast.AstType]
-  [actual : ast.AstType]) : ResultTcLifetimeSubst
+  [actual : ast.AstType]
+  [position : TcVariance]) : ResultTcLifetimeSubst
   (let
     [want : ast.AstType (tc-resolve-type ctx formal)]
     [got : ast.AstType (tc-resolve-type ctx actual)]
@@ -31778,11 +32763,13 @@
       [(ast.AstType.Ref formal-lifetime formal-inner)
         (match got
           [(ast.AstType.Ref actual-lifetime actual-inner)
-            (match (tc-infer-lifetime-name
+            (match (tc-infer-call-lifetime-name
+              env
               params
               subst
               formal-lifetime
-              actual-lifetime)
+              actual-lifetime
+              position)
               [(ResultTcLifetimeSubst.Ok next-subst)
                 (let
                   [formal-inner-ty : ast.AstType
@@ -31801,27 +32788,33 @@
                         [(ast.AstType.Slice actual-elem)
                           (tc-infer-lifetime-subst-from-type
                             ctx
+                            env
                             params
                             next-subst
                             (ast.ty-node-get formal-elem)
-                            (ast.ty-node-get actual-elem))]
+                            (ast.ty-node-get actual-elem)
+                            position)]
                         [(ast.AstType.Array actual-elem _)
                           (tc-infer-lifetime-subst-from-type
                             ctx
+                            env
                             params
                             next-subst
                             (ast.ty-node-get formal-elem)
-                            (ast.ty-node-get actual-elem))]
+                            (ast.ty-node-get actual-elem)
+                            position)]
                         [_
                           (ResultTcLifetimeSubst.Err
                             (tc-call-lifetime-subst-mismatch-message))])]
                     [_
                       (tc-infer-lifetime-subst-from-type
                         ctx
+                        env
                         params
                         next-subst
                         (ast.ty-node-get formal-inner)
-                        (ast.ty-node-get actual-inner))]))]
+                        (ast.ty-node-get actual-inner)
+                        position)]))]
               [(ResultTcLifetimeSubst.Err message)
                 (ResultTcLifetimeSubst.Err message)])]
           [_
@@ -31830,11 +32823,13 @@
       [(ast.AstType.MutRef formal-lifetime formal-inner)
         (match got
           [(ast.AstType.MutRef actual-lifetime actual-inner)
-            (match (tc-infer-lifetime-name
+            (match (tc-infer-call-lifetime-name
+              env
               params
               subst
               formal-lifetime
-              actual-lifetime)
+              actual-lifetime
+              position)
               [(ResultTcLifetimeSubst.Ok next-subst)
                 (let
                   [formal-inner-ty : ast.AstType
@@ -31853,27 +32848,57 @@
                         [(ast.AstType.Slice actual-elem)
                           (tc-infer-lifetime-subst-from-type
                             ctx
+                            env
                             params
                             next-subst
                             (ast.ty-node-get formal-elem)
-                            (ast.ty-node-get actual-elem))]
+                            (ast.ty-node-get actual-elem)
+                            (TcVariance.TcVarianceInvariant))]
                         [(ast.AstType.Array actual-elem _)
                           (tc-infer-lifetime-subst-from-type
                             ctx
+                            env
                             params
                             next-subst
                             (ast.ty-node-get formal-elem)
-                            (ast.ty-node-get actual-elem))]
+                            (ast.ty-node-get actual-elem)
+                            (TcVariance.TcVarianceInvariant))]
                         [_
                           (ResultTcLifetimeSubst.Err
                             (tc-call-lifetime-subst-mismatch-message))])]
                     [_
                       (tc-infer-lifetime-subst-from-type
                         ctx
+                        env
                         params
                         next-subst
                         (ast.ty-node-get formal-inner)
-                        (ast.ty-node-get actual-inner))]))]
+                        (ast.ty-node-get actual-inner)
+                        (TcVariance.TcVarianceInvariant))]))]
+              [(ResultTcLifetimeSubst.Err message)
+                (ResultTcLifetimeSubst.Err message)])]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
+      [(ast.AstType.Region formal-lifetime formal-inner)
+        (match got
+          [(ast.AstType.Region actual-lifetime actual-inner)
+            (match (tc-infer-call-lifetime-name
+              env
+              params
+              subst
+              formal-lifetime
+              actual-lifetime
+              position)
+              [(ResultTcLifetimeSubst.Ok next-subst)
+                (tc-infer-lifetime-subst-from-type
+                  ctx
+                  env
+                  params
+                  next-subst
+                  (ast.ty-node-get formal-inner)
+                  (ast.ty-node-get actual-inner)
+                  position)]
               [(ResultTcLifetimeSubst.Err message)
                 (ResultTcLifetimeSubst.Err message)])]
           [_
@@ -31883,11 +32908,15 @@
         (match got
           [(ast.AstType.EnumArgs actual-name actual-lifetimes)
             (if (tc-nominal-name-id-eq? formal-name actual-name)
-              (tc-infer-lifetime-list
+              (tc-infer-call-nominal-lifetime-list
+                ctx
+                env
                 params
                 subst
+                formal-name
                 (box-get formal-lifetimes)
-                (box-get actual-lifetimes))
+                (box-get actual-lifetimes)
+                position)
               (ResultTcLifetimeSubst.Err
                 (tc-call-lifetime-subst-mismatch-message)))]
           [_
@@ -31897,13 +32926,42 @@
         (match got
           [(ast.AstType.StructArgs actual-name actual-lifetimes)
             (if (tc-nominal-name-id-eq? formal-name actual-name)
-              (tc-infer-lifetime-list
+              (tc-infer-call-nominal-lifetime-list
+                ctx
+                env
                 params
                 subst
+                formal-name
                 (box-get formal-lifetimes)
-                (box-get actual-lifetimes))
+                (box-get actual-lifetimes)
+                position)
               (ResultTcLifetimeSubst.Err
                 (tc-call-lifetime-subst-mismatch-message)))]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
+      [(ast.AstType.Func formal-params formal-ret)
+        (match got
+          [(ast.AstType.Func actual-params actual-ret)
+            (match (tc-infer-lifetime-subst-from-type-list
+              ctx
+              env
+              params
+              subst
+              (box-get formal-params)
+              (box-get actual-params)
+              (tc-variance-flip position))
+              [(ResultTcLifetimeSubst.Ok next-subst)
+                (tc-infer-lifetime-subst-from-type
+                  ctx
+                  env
+                  params
+                  next-subst
+                  (ast.ty-node-get formal-ret)
+                  (ast.ty-node-get actual-ret)
+                  position)]
+              [(ResultTcLifetimeSubst.Err message)
+                (ResultTcLifetimeSubst.Err message)])]
           [_
             (ResultTcLifetimeSubst.Err
               (tc-call-lifetime-subst-mismatch-message))])]
@@ -31912,10 +32970,12 @@
           [(ast.AstType.Tuple actual-elems)
             (tc-infer-lifetime-subst-from-type-list
               ctx
+              env
               params
               subst
               (box-get formal-elems)
-              (box-get actual-elems))]
+              (box-get actual-elems)
+              position)]
           [_
             (ResultTcLifetimeSubst.Err
               (tc-call-lifetime-subst-mismatch-message))])]
@@ -31925,10 +32985,12 @@
             (if (= formal-len actual-len)
               (tc-infer-lifetime-subst-from-type
                 ctx
+                env
                 params
                 subst
                 (ast.ty-node-get formal-elem)
-                (ast.ty-node-get actual-elem))
+                (ast.ty-node-get actual-elem)
+                position)
               (ResultTcLifetimeSubst.Err
                 (tc-call-lifetime-subst-mismatch-message)))]
           [_
@@ -31939,10 +33001,12 @@
           [(ast.AstType.DynArray actual-elem)
             (tc-infer-lifetime-subst-from-type
               ctx
+              env
               params
               subst
               (ast.ty-node-get formal-elem)
-              (ast.ty-node-get actual-elem))]
+              (ast.ty-node-get actual-elem)
+              (TcVariance.TcVarianceInvariant))]
           [_
             (ResultTcLifetimeSubst.Err
               (tc-call-lifetime-subst-mismatch-message))])]
@@ -31951,10 +33015,12 @@
           [(ast.AstType.Slice actual-elem)
             (tc-infer-lifetime-subst-from-type
               ctx
+              env
               params
               subst
               (ast.ty-node-get formal-elem)
-              (ast.ty-node-get actual-elem))]
+              (ast.ty-node-get actual-elem)
+              position)]
           [_
             (ResultTcLifetimeSubst.Err
               (tc-call-lifetime-subst-mismatch-message))])]
@@ -31963,58 +33029,112 @@
           [(ast.AstType.Box actual-elem)
             (tc-infer-lifetime-subst-from-type
               ctx
+              env
               params
               subst
               (ast.ty-node-get formal-elem)
-              (ast.ty-node-get actual-elem))]
+              (ast.ty-node-get actual-elem)
+              position)]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
+      [(ast.AstType.Ptr formal-elem)
+        (match got
+          [(ast.AstType.Ptr actual-elem)
+            (tc-infer-lifetime-subst-from-type
+              ctx
+              env
+              params
+              subst
+              (ast.ty-node-get formal-elem)
+              (ast.ty-node-get actual-elem)
+              position)]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
+      [(ast.AstType.MutPtr formal-elem)
+        (match got
+          [(ast.AstType.MutPtr actual-elem)
+            (tc-infer-lifetime-subst-from-type
+              ctx
+              env
+              params
+              subst
+              (ast.ty-node-get formal-elem)
+              (ast.ty-node-get actual-elem)
+              (TcVariance.TcVarianceInvariant))]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
+      [(ast.AstType.Consume formal-inner)
+        (match got
+          [(ast.AstType.Consume actual-inner)
+            (tc-infer-lifetime-subst-from-type
+              ctx
+              env
+              params
+              subst
+              (ast.ty-node-get formal-inner)
+              (ast.ty-node-get actual-inner)
+              position)]
           [_
             (ResultTcLifetimeSubst.Err
               (tc-call-lifetime-subst-mismatch-message))])]
       [_
-        (if (tc-type-compatible? want got)
+        (if (tc-type-coercible? ctx env want got)
           (ResultTcLifetimeSubst.Ok subst)
           (ResultTcLifetimeSubst.Err (tc-call-lifetime-subst-mismatch-message)))])))
 
 (define (tc-infer-lifetime-subst-from-type-list
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [params : ast.AstLifetimeList]
   [subst : TcLifetimeSubst]
   [formal : ast.AstTypeList]
-  [actual : ast.AstTypeList]) : ResultTcLifetimeSubst
+  [actual : ast.AstTypeList]
+  [position : TcVariance]) : ResultTcLifetimeSubst
   (if (= (ast.ast-type-list-len (& formal)) (ast.ast-type-list-len (& actual)))
     (tc-infer-lifetime-subst-from-type-list-at
       ctx
+      env
       params
       subst
       (& formal)
       (& actual)
+      position
       0)
     (ResultTcLifetimeSubst.Err (tc-call-lifetime-subst-mismatch-message))))
 
 (define (tc-infer-lifetime-subst-from-type-list-at
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [params : ast.AstLifetimeList]
   [subst : TcLifetimeSubst]
   [formal : (& formal ast.AstTypeList)]
   [actual : (& actual ast.AstTypeList)]
+  [position : TcVariance]
   [index : i64]) : ResultTcLifetimeSubst
   (if (>= index (ast.ast-type-list-len formal))
     (ResultTcLifetimeSubst.Ok subst)
     (match (tc-infer-lifetime-subst-from-type
       ctx
+      env
       params
       subst
       (ast.ty-node-get
         (ast.ast-type-list-get formal index (ast.ast-type-id-fallback)))
       (ast.ty-node-get
-        (ast.ast-type-list-get actual index (ast.ast-type-id-fallback))))
+        (ast.ast-type-list-get actual index (ast.ast-type-id-fallback)))
+      position)
       [(ResultTcLifetimeSubst.Ok next-subst)
         (tc-infer-lifetime-subst-from-type-list-at
           ctx
+          env
           params
           next-subst
           formal
           actual
+          position
           (+ index 1))]
       [(ResultTcLifetimeSubst.Err message) (ResultTcLifetimeSubst.Err message)])))
 
@@ -32382,6 +33502,7 @@
 
 (define (tc-infer-lifetime-subst-from-mixed-source-type
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [lifetimes : ast.AstLifetimeList]
   [subst : TcLifetimeSubst]
   [want : ast.AstType]
@@ -32390,10 +33511,12 @@
     [canonical-got : ast.AstType (tc-canonicalize-inferred-type ctx got)]
     (match (tc-infer-lifetime-subst-from-type
       ctx
+      env
       lifetimes
       subst
       want
-      canonical-got)
+      canonical-got
+      (TcVariance.TcVarianceCovariant))
       [(ResultTcLifetimeSubst.Ok next-subst)
         (ResultTcLifetimeSubst.Ok next-subst)]
       [(ResultTcLifetimeSubst.Err _)
@@ -32402,19 +33525,23 @@
             (tc-canonicalize-inferred-type ctx want)]
           (match (tc-infer-lifetime-subst-from-type
             ctx
+            env
             lifetimes
             subst
             canonical-want
-            got)
+            got
+            (TcVariance.TcVarianceCovariant))
             [(ResultTcLifetimeSubst.Ok next-subst)
               (ResultTcLifetimeSubst.Ok next-subst)]
             [(ResultTcLifetimeSubst.Err _)
               (tc-infer-lifetime-subst-from-type
                 ctx
+                env
                 lifetimes
                 subst
                 canonical-want
-                canonical-got)]))])))
+                canonical-got
+                (TcVariance.TcVarianceCovariant))]))])))
 
 (define (tc-infer-call-lifetime-subst-at
   [ctx : TcContext]
@@ -32459,10 +33586,12 @@
             [(ResultTcType.Ok got)
               (match (tc-infer-lifetime-subst-from-type
                 ctx
+                env
                 lifetimes
                 subst
                 want
-                got)
+                got
+                (TcVariance.TcVarianceCovariant))
                 [(ResultTcLifetimeSubst.Ok next-subst)
                   (tc-infer-call-lifetime-subst-at
                     ctx
@@ -32478,6 +33607,7 @@
                 [(ResultTcLifetimeSubst.Err _message)
                   (match (tc-infer-lifetime-subst-from-mixed-source-type
                     ctx
+                    env
                     lifetimes
                     subst
                     want
@@ -32500,15 +33630,17 @@
                           (tc-canonicalize-inferred-type ctx want)]
                         [canonical-got : ast.AstType
                           (tc-canonicalize-inferred-type ctx got)]
+                        [required-want : ast.AstType
+                          (tc-lifetime-subst-type subst canonical-want)]
                         (ResultTcLifetimeSubst.Err
                           (tc-locate-error-at-expr
                             arg
-                            (tc-call-argument-mismatch-message
+                            (tc-type-mismatch-message-in-context
                               ctx
-                              func
-                              index
+                              env
                               canonical-got
-                              canonical-want))))])])]
+                              required-want
+                              (tc-call-argument-message-prefix ctx func index)))))])])]
             [(ResultTcType.Err message)
               (ResultTcLifetimeSubst.Err (tc-locate-error-at-expr arg message))]))))))
 
@@ -34714,9 +35846,10 @@
 ;; pass has already rejected non-place values of every other referent type.
 (define (tc-match-call-type-for-expected
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [actual : ast.AstType]
   [expected : ast.AstType]) : TcInferredTypeMatch
-  (match (tc-match-inferred-type-for-expected ctx actual expected)
+  (match (tc-match-inferred-type-for-expected ctx env actual expected)
     [(TcInferredTypeMatch.Compatible matched)
       (TcInferredTypeMatch.Compatible matched)]
     [(TcInferredTypeMatch.Mismatch mismatched)
@@ -34767,7 +35900,7 @@
                 [(ResultTcType.Ok got)
                   (let
                     [matched-got : TcInferredTypeMatch
-                      (tc-match-call-type-for-expected ctx got want)]
+                      (tc-match-call-type-for-expected ctx env got want)]
                     [expect-result : ResultTcUnit
                       (match matched-got
                         [(TcInferredTypeMatch.Compatible _) ResultTcUnit.Ok]
@@ -34775,7 +35908,9 @@
                           (ResultTcUnit.Err
                             (tc-locate-error-at-expr
                               arg
-                              (tc-type-mismatch-message
+                              (tc-type-mismatch-message-in-context
+                                ctx
+                                env
                                 actual
                                 want
                                 (tc-argument-message-prefix-text
@@ -36433,6 +37568,7 @@
 
 (define (tc-let-binding-plain-expected-ok
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [name : String]
   [maybe-ty : ast.AstMaybeType]
   [init : ast.AstExpr]
@@ -36441,6 +37577,7 @@
     [(ast.AstMaybeType.Some want)
       (match (tc-expect-in-context
         ctx
+        env
         init-ty
         want
         (str_cat.str-cat "typecheck: let binding `" name "` type mismatch"))
@@ -36455,7 +37592,7 @@
   [init-ty : ast.AstType]) : ast.AstType
   (match maybe-ty
     [(ast.AstMaybeType.Some want)
-      (if (tc-type-contains-any-region init-ty)
+      (if (tc-type-contains-region-tag? init-ty)
         init-ty
         want)]
     [(ast.AstMaybeType.No) init-ty]))
@@ -36480,6 +37617,7 @@
             [(ResultTcType.Ok init-ty)
               (match (tc-let-binding-plain-expected-ok
                 ctx
+                env
                 (tc-env-key-name-text name)
                 resolved-maybe-ty
                 init
@@ -37653,6 +38791,7 @@
                         [resolved-want : ast.AstType (tc-resolve-type ctx want)]
                         (match (tc-let-binding-plain-expected-ok
                           ctx
+                          env
                           (tc-env-key-name-text name)
                           (ast.AstMaybeType.Some resolved-want)
                           init
@@ -49107,13 +50246,16 @@
                   [(ResultTcType.Ok got)
                     (match (tc-match-inferred-type-for-expected
                       ctx
+                      arm-env
                       got
                       expected)
                       [(TcInferredTypeMatch.Compatible _)
                         (ResultTcType.Ok expected)]
                       [(TcInferredTypeMatch.Mismatch actual)
                         (ResultTcType.Err
-                          (tc-type-mismatch-message
+                          (tc-type-mismatch-message-in-context
+                            ctx
+                            arm-env
                             actual
                             expected
                             "typecheck: match arm result type mismatch"))])]
@@ -49185,7 +50327,7 @@
         [(ResultTcType.Err _)
           (match (tc-match-arm-type ctx env scrut-ty arm)
             [(ResultTcType.Ok got)
-              (match (tc-merge-branch-type ctx want got)
+              (match (tc-merge-branch-type ctx env want got)
                 [(ResultTcType.Ok merged)
                   (tc-match-rest-types-at
                     ctx
@@ -49214,7 +50356,7 @@
       [remaining-index : i64 (+ index 1)]
       (match (tc-match-arm-type ctx env scrut-ty second-arm)
         [(ResultTcType.Ok second-ty)
-          (match (tc-merge-branch-type ctx first-ty second-ty)
+          (match (tc-merge-branch-type ctx env first-ty second-ty)
             [(ResultTcType.Ok merged)
               (tc-match-rest-types-at
                 ctx
@@ -52691,6 +53833,7 @@
           [(ResultTcType.Ok value-ty)
             (match (tc-expect-in-context
               ctx
+              env
               value-ty
               var-ty
               "typecheck: assignment type mismatch")
@@ -53035,7 +54178,7 @@
                 [(ResultTcType.Ok then-ty)
                   (match (tc-expr-id ctx env else-branch-box)
                     [(ResultTcType.Ok else-ty)
-                      (tc-merge-branch-type ctx then-ty else-ty)]
+                      (tc-merge-branch-type ctx env then-ty else-ty)]
                     [(ResultTcType.Err message) (ResultTcType.Err message)])]
                 [(ResultTcType.Err message) (ResultTcType.Err message)])]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
@@ -90504,6 +91647,13 @@
           registered-params)
         resolved-ret)]
     [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
+    ;; The scoped carrier keeps parameters out of the persistent spine. Final
+    ;; result matching runs after the carrier is restored, so retain an ordinary
+    ;; environment for lifetime-outlives queries at that boundary.
+    [comparison-env : TcTypeEnv
+      (tc-bind-return-type
+        (tc-bind-params ctx global-env registered-params)
+        resolved-ret)]
     [scoped-save : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter! carrier)]
     [body-state : TcBodyState (tc-context-body-state ctx)]
@@ -90533,7 +91683,11 @@
         [(ResultTcType.Ok inferred)
           (let
             [matched-got : TcInferredTypeMatch
-              (tc-match-inferred-type-for-expected ctx inferred resolved-ret)]
+              (tc-match-inferred-type-for-expected
+                ctx
+                comparison-env
+                inferred
+                resolved-ret)]
             [got : ast.AstType
               (match matched-got
                 [(TcInferredTypeMatch.Compatible actual) actual]
@@ -90543,7 +91697,9 @@
                 [(TcInferredTypeMatch.Compatible _) ResultTcUnit.Ok]
                 [(TcInferredTypeMatch.Mismatch actual)
                   (ResultTcUnit.Err
-                    (tc-type-mismatch-message
+                    (tc-type-mismatch-message-in-context
+                      ctx
+                      comparison-env
                       actual
                       resolved-ret
                       "typecheck: return type mismatch"))])]
@@ -91067,6 +92223,7 @@
                   [matched-got : TcInferredTypeMatch
                     (tc-match-inferred-type-for-expected
                       ctx
+                      global-env
                       inferred
                       resolved-want)]
                   [got : ast.AstType
@@ -91078,7 +92235,9 @@
                       [(TcInferredTypeMatch.Compatible _) ResultTcUnit.Ok]
                       [(TcInferredTypeMatch.Mismatch actual)
                         (ResultTcUnit.Err
-                          (tc-type-mismatch-message
+                          (tc-type-mismatch-message-in-context
+                            ctx
+                            global-env
                             actual
                             resolved-want
                             "typecheck: value definition type mismatch"))])]

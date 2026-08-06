@@ -4807,9 +4807,8 @@
       (compiler-typecheck-ok?
         (compiler-typecheck-lifetime-iterator-mut-borrow-source))]
     [regular-call-lifetime-conflict-error-ok : bool
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-regular-call-lifetime-conflict-source)
-        "typecheck: call `same-owner` argument 2 (parameter `b`) type mismatch: expected (& source i64), found (& other i64)")]
+      (compiler-typecheck-ok?
+        (compiler-typecheck-regular-call-lifetime-conflict-source))]
     [lifetime-duplicate-error-ok : bool
       (compiler-typecheck-error-location-ok?
         (compiler-typecheck-lifetime-duplicate-source)
@@ -6065,9 +6064,8 @@
         ok
         (and
           ok
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-match-bad-lifetime-result-source)
-            "typecheck: match arms must agree: previous arm type (SlotLookup bag), current arm type (SlotLookup other)")))
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-bad-lifetime-result-source))))
       (set!
         ok
         (and

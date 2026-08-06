@@ -116,6 +116,8 @@
                   (compiler_typecheck_core.tc-context-with-type-module-id
                     ctx
                     module-id)]
+                [type-env : compiler_typecheck_core.TcTypeEnv
+                  (compiler_typecheck_core.tc-default-env)]
                 [actual-ref : ast.AstType
                   (ast.ast-ty-mut-ref lifetime-id (ast.AstType.Enum flat-id))]
                 [expected-ref : ast.AstType
@@ -147,6 +149,7 @@
                       other-qualified-id))
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     ctx
+                    type-env
                     actual
                     expected)
                     [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
@@ -155,6 +158,7 @@
                       false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     ctx
+                    type-env
                     expected
                     actual)
                     [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
@@ -163,6 +167,7 @@
                       false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     ctx
+                    type-env
                     actual
                     different)
                     [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
@@ -171,6 +176,7 @@
                       true])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     type-module-ctx
+                    type-env
                     actual-ref
                     expected-ref)
                     [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
@@ -179,6 +185,7 @@
                       false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     type-module-ctx
+                    type-env
                     actual-ref
                     different-ref)
                     [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
@@ -187,6 +194,7 @@
                       true])
                   (match (compiler_typecheck_core.tc-infer-lifetime-subst-from-mixed-source-type
                     type-module-ctx
+                    type-env
                     (ast.ast-lifetime-list-new)
                     compiler_typecheck_core.TcLifetimeSubst.Nil
                     actual-ref
@@ -196,6 +204,7 @@
                       false])
                   (match (compiler_typecheck_core.tc-infer-lifetime-subst-from-mixed-source-type
                     type-module-ctx
+                    type-env
                     (ast.ast-lifetime-list-new)
                     compiler_typecheck_core.TcLifetimeSubst.Nil
                     actual-ref

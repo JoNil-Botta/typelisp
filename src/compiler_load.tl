@@ -968,21 +968,13 @@
   (if (compiler-load-session-state-program-admission-contains? state key)
     true
     (let
-      [prev-arena : i64 (arena.tl_arena_current)]
-      [recorded : bool
-        (begin
-          (unsafe
-            (arena.tl_arena_set ast.node-pool-base-arena))
-          (let
-            [persistent-key : CompilerLoadProgramCacheKey
-              (compiler-load-program-cache-key-copy key)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set prev-arena))
-              (compiler-load-session-state-program-admission-record
-                state
-                persistent-key))))]
-      recorded)))
+      [persistent-key : CompilerLoadProgramCacheKey
+        (in-arena
+          (arena.Arena ast.node-pool-base-arena)
+          (compiler-load-program-cache-key-copy key))]
+      (compiler-load-session-state-program-admission-record
+        state
+        persistent-key))))
 
 (define (compiler-load-program-admission-record-persistent
   [key : CompilerLoadProgramCacheKey]) : bool
@@ -1254,17 +1246,13 @@
 (define (compiler-load-note-embedded-module! [path : String]) : unit
   (let
     [id : i64 (ci.intern (compiler-load-canonical-module-id-from-path path))]
-    [previous-arena : i64 (arena.tl_arena_current)]
-    (begin
-      ;; The set outlives every load-scoped scratch arena and every intern
-      ;; floor reset; bind its nodes in the dedicated provenance arena.
-      (unsafe
-        (arena.tl_arena_set (compiler-load-provenance-arena)))
+    ;; The set outlives every load-scoped scratch arena and every intern
+    ;; floor reset; bind its nodes in the dedicated provenance arena.
+    (in-arena
+      (arena.Arena (compiler-load-provenance-arena))
       (set!
         compiler-load-embedded-module-ids
-        (sym_i64_env.sym-i64-bind-id compiler-load-embedded-module-ids id 1))
-      (unsafe
-        (arena.tl_arena_set previous-arena)))))
+        (sym_i64_env.sym-i64-bind-id compiler-load-embedded-module-ids id 1)))))
 
 (define compiler-load-embedded-equivalence-cache : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))
@@ -1320,18 +1308,15 @@
                   -1))]
             [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
               -1])]
-        [previous-arena : i64 (arena.tl_arena_current)]
         (begin
-          (unsafe
-            (arena.tl_arena_set (compiler-load-provenance-arena)))
-          (set!
-            compiler-load-embedded-equivalence-cache
-            (sym_i64_env.sym-i64-bind-id
+          (in-arena
+            (arena.Arena (compiler-load-provenance-arena))
+            (set!
               compiler-load-embedded-equivalence-cache
-              key
-              outcome))
-          (unsafe
-            (arena.tl_arena_set previous-arena))
+              (sym_i64_env.sym-i64-bind-id
+                compiler-load-embedded-equivalence-cache
+                key
+                outcome)))
           (if (= outcome 1)
             (begin
               (compiler-load-note-embedded-module!
@@ -2123,26 +2108,21 @@
       module-id)
       [(CompilerLoadSomeString path) path]
       [(CompilerLoadNoString)
-        (let
-          [prev-arena : i64 (arena.tl_arena_current)]
-          (begin
-            ;; Cache values must never point into an arena a caller can rewind
-            ;; (a top-level `with-arena` can mark/reset the pool base arena, and
-            ;; the next request would read the freed path back on a cache hit),
-            ;; so allocate them in the never-reset provenance arena.
-            (unsafe
-              (arena.tl_arena_set (compiler-load-provenance-arena)))
-            (let
-              [path : String
-                (compiler-load-dotted-module-path-uncached module-name)]
-              (begin
-                (compiler-load-session-state-dotted-path-cache-store!
-                  state
-                  module-id
-                  path)
-                (unsafe
-                  (arena.tl_arena_set prev-arena))
-                path))))])))
+        ;; Cache values must never point into an arena a caller can rewind
+        ;; (a top-level `with-arena` can mark/reset the pool base arena, and
+        ;; the next request would read the freed path back on a cache hit),
+        ;; so allocate them in the never-reset provenance arena.
+        (in-arena
+          (arena.Arena (compiler-load-provenance-arena))
+          (let
+            [path : String
+              (compiler-load-dotted-module-path-uncached module-name)]
+            (begin
+              (compiler-load-session-state-dotted-path-cache-store!
+                state
+                module-id
+                path)
+              path)))])))
 
 (define (compiler-load-dotted-module-path-id
   [module-id : i64]
@@ -8672,27 +8652,28 @@
     [(parser.ResultAstProgramDiagnostic.Err diag)
       (parser.ResultAstProgramDiagnostic.Err diag)]))
 
+;; Carry target-arena-owned cache inputs across `in-arena`'s restoration. Cache
+;; table growth and persistent-floor bookkeeping deliberately remain in the
+;; caller's arena, matching the former raw switch/restore protocol exactly.
+(defstruct CompilerLoadPersistentProgramResult
+  (key CompilerLoadProgramCacheKey)
+  (result parser.ResultAstProgramDiagnostic))
+
 (define (compiler-load-parse-file-diagnostic-cache-miss
   [key : CompilerLoadProgramCacheKey]
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [prev-arena : i64 (arena.tl_arena_current)]
-      [loaded : parser.ResultAstProgramDiagnostic
-        (begin
-          (unsafe
-            (arena.tl_arena_set ast.node-pool-base-arena))
-          (let
-            [persistent-key : CompilerLoadProgramCacheKey
-              (compiler-load-program-cache-key-copy key)]
-            [parsed : parser.ResultAstProgramDiagnostic
-              (compiler-load-parse-file-diagnostic-escaping path cfgs)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set prev-arena))
-              (compiler-load-cache-program-result persistent-key parsed))))]
-      loaded)
+      [persistent : CompilerLoadPersistentProgramResult
+        (in-arena
+          (arena.Arena ast.node-pool-base-arena)
+          (CompilerLoadPersistentProgramResult
+            (compiler-load-program-cache-key-copy key)
+            (compiler-load-parse-file-diagnostic-escaping path cfgs)))]
+      (match persistent
+        [(CompilerLoadPersistentProgramResult persistent-key parsed)
+          (compiler-load-cache-program-result persistent-key parsed)]))
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
 (define (compiler-load-parse-file-diagnostic-cache-miss-with-pools
@@ -8703,28 +8684,22 @@
   [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (if (compiler-load-session-state-program-cache-can-store load-state key)
     (let
-      [prev-arena : i64 (arena.tl_arena_current)]
-      [loaded : parser.ResultAstProgramDiagnostic
-        (begin
-          (unsafe
-            (arena.tl_arena_set (ast.ast-node-pool-context-base-arena pools)))
-          (let
-            [persistent-key : CompilerLoadProgramCacheKey
-              (compiler-load-program-cache-key-copy key)]
-            [parsed : parser.ResultAstProgramDiagnostic
-              (compiler-load-parse-file-diagnostic-escaping-with-pools
-                path
-                cfgs
-                pools)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set prev-arena))
-              (compiler-load-cache-program-result-with-pools
-                load-state
-                persistent-key
-                parsed
-                pools))))]
-      loaded)
+      [persistent : CompilerLoadPersistentProgramResult
+        (in-arena
+          (arena.Arena (ast.ast-node-pool-context-base-arena pools))
+          (CompilerLoadPersistentProgramResult
+            (compiler-load-program-cache-key-copy key)
+            (compiler-load-parse-file-diagnostic-escaping-with-pools
+              path
+              cfgs
+              pools)))]
+      (match persistent
+        [(CompilerLoadPersistentProgramResult persistent-key parsed)
+          (compiler-load-cache-program-result-with-pools
+            load-state
+            persistent-key
+            parsed
+            pools)]))
     (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)))
 
 (define (compiler-load-ast-program-result-ok?
@@ -8912,21 +8887,15 @@
   [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [prev-arena : i64 (arena.tl_arena_current)]
-      [loaded : parser.ResultAstProgramDiagnostic
-        (begin
-          (unsafe
-            (arena.tl_arena_set ast.node-pool-base-arena))
-          (let
-            [persistent-key : CompilerLoadProgramCacheKey
-              (compiler-load-program-cache-key-copy key)]
-            [parsed : parser.ResultAstProgramDiagnostic
-              (compiler-load-parse-source-diagnostic-escaping path source cfgs)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set prev-arena))
-              (compiler-load-cache-program-result persistent-key parsed))))]
-      loaded)
+      [persistent : CompilerLoadPersistentProgramResult
+        (in-arena
+          (arena.Arena ast.node-pool-base-arena)
+          (CompilerLoadPersistentProgramResult
+            (compiler-load-program-cache-key-copy key)
+            (compiler-load-parse-source-diagnostic-escaping path source cfgs)))]
+      (match persistent
+        [(CompilerLoadPersistentProgramResult persistent-key parsed)
+          (compiler-load-cache-program-result persistent-key parsed)]))
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
 
 (define (compiler-load-parse-embedded-source-diagnostic-cache-miss-with-pools
@@ -8938,29 +8907,23 @@
   [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (if (compiler-load-session-state-program-cache-can-store load-state key)
     (let
-      [prev-arena : i64 (arena.tl_arena_current)]
-      [loaded : parser.ResultAstProgramDiagnostic
-        (begin
-          (unsafe
-            (arena.tl_arena_set (ast.ast-node-pool-context-base-arena pools)))
-          (let
-            [persistent-key : CompilerLoadProgramCacheKey
-              (compiler-load-program-cache-key-copy key)]
-            [parsed : parser.ResultAstProgramDiagnostic
-              (compiler-load-parse-source-diagnostic-escaping-with-pools
-                path
-                source
-                cfgs
-                pools)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set prev-arena))
-              (compiler-load-cache-program-result-with-pools
-                load-state
-                persistent-key
-                parsed
-                pools))))]
-      loaded)
+      [persistent : CompilerLoadPersistentProgramResult
+        (in-arena
+          (arena.Arena (ast.ast-node-pool-context-base-arena pools))
+          (CompilerLoadPersistentProgramResult
+            (compiler-load-program-cache-key-copy key)
+            (compiler-load-parse-source-diagnostic-escaping-with-pools
+              path
+              source
+              cfgs
+              pools)))]
+      (match persistent
+        [(CompilerLoadPersistentProgramResult persistent-key parsed)
+          (compiler-load-cache-program-result-with-pools
+            load-state
+            persistent-key
+            parsed
+            pools)]))
     (compiler-load-parse-source-diagnostic-escaping-with-pools
       path
       source
@@ -15584,6 +15547,7 @@
   (begin
     (compiler-load-dotted-path-cache-reset!)
     (let
+      [home : arena.Arena (arena.current)]
       [stdlib-name : String "stdlib.core_macros"]
       [pkg-name : String "pkg.local.mod"]
       [stdlib-id : i64 (ci.intern stdlib-name)]
@@ -15595,6 +15559,7 @@
       [third : String
         (compiler-load-dotted-module-path-id pkg-id "pkg.local.mod")]
       (and
+        (arena.eq? (arena.current) home)
         (string.eq first "stdlib/core_macros.tl")
         (string.eq second "stdlib/core_macros.tl")
         (string.eq third "pkg/local/mod.tl")
@@ -15919,6 +15884,7 @@
 
 (define (compiler-load-session-explicit-parse-isolation-ok?) : bool
   (let
+    [home : arena.Arena (arena.current)]
     [previous-state : CompilerLoadSessionState
       compiler-load-active-session-state]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
@@ -15956,6 +15922,7 @@
         pools)]
     [ok : bool
       (and
+        (arena.eq? (arena.current) home)
         (compiler-load-ast-program-result-ok? first)
         (compiler-load-ast-program-result-ok? second)
         (match bad

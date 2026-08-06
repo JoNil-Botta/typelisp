@@ -15263,45 +15263,60 @@
   [ty : compiler_ast_types.AstType]
   [reg : String]
   [backend-state : CompilerBackendState]) : String
-  (match (compiler-backend-emit-assignment-lookup assignments id)
-    [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
-      (match location
-        [(compiler_regalloc.CompilerRegLocation.Register home)
-          (compiler-backend-emit-load-register-to-reg
-            type-segment-bases
-            (compiler_abi.compiler-abi-register-spelling home)
-            ty
-            reg)]
-        ;; A whole register-group is loaded word-wise by the group
-        ;; ABI paths; reaching the generic scalar load means word0's home.
-        [(compiler_regalloc.CompilerRegLocation.RegisterPair home _)
-          (compiler-backend-emit-load-register-to-reg
-            type-segment-bases
-            (compiler_abi.compiler-abi-register-spelling home)
-            ty
-            reg)]
-        [(compiler_regalloc.CompilerRegLocation.Spill offset)
+  (let
+    [forward-src : i64 (compiler-backend-forwarded-addr-of-src id)]
+    ;; AddrOf forwarding suppresses the defining instruction and leaves its
+    ;; allocator home uninitialized. Typed copies must therefore rematerialize
+    ;; the source slot address just like the ordinary scalar loader does.
+    (if (>= forward-src 0)
+      (str_cat.str-cat
+        "    leaq "
+        (compiler-backend-addr-of-source-slot
+          assignments
+          forward-src
+          backend-state)
+        ", "
+        reg
+        "\n")
+      (match (compiler-backend-emit-assignment-lookup assignments id)
+        [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+          (match location
+            [(compiler_regalloc.CompilerRegLocation.Register home)
+              (compiler-backend-emit-load-register-to-reg
+                type-segment-bases
+                (compiler_abi.compiler-abi-register-spelling home)
+                ty
+                reg)]
+            ;; A whole register-group is loaded word-wise by the group
+            ;; ABI paths; reaching the generic scalar load means word0's home.
+            [(compiler_regalloc.CompilerRegLocation.RegisterPair home _)
+              (compiler-backend-emit-load-register-to-reg
+                type-segment-bases
+                (compiler_abi.compiler-abi-register-spelling home)
+                ty
+                reg)]
+            [(compiler_regalloc.CompilerRegLocation.Spill offset)
+              (compiler-backend-emit-load-memory-to-reg
+                type-segment-bases
+                (compiler-backend-frame-offset-with-backend-state
+                  backend-state
+                  offset)
+                ty
+                reg)]
+            ;; Rematerialise the value into `reg` (constants/addresses are i64-class,
+            ;; so the immediate/leaq materialisation is width-correct for any use).
+            [(compiler_regalloc.CompilerRegLocation.Remat value)
+              (compiler-backend-load-value-asm
+                compiler_regalloc.CompilerRegAssignmentList.Nil
+                value
+                reg
+                backend-state)])]
+        [(compiler_regalloc.CompilerRegMaybeLocation.No)
           (compiler-backend-emit-load-memory-to-reg
             type-segment-bases
-            (compiler-backend-frame-offset-with-backend-state
-              backend-state
-              offset)
+            (compiler-backend-slot-with-backend-state backend-state id)
             ty
-            reg)]
-        ;; Rematerialise the value into `reg` (constants/addresses are i64-class,
-        ;; so the immediate/leaq materialisation is width-correct for any use).
-        [(compiler_regalloc.CompilerRegLocation.Remat value)
-          (compiler-backend-load-value-asm
-            compiler_regalloc.CompilerRegAssignmentList.Nil
-            value
-            reg
-            backend-state)])]
-    [(compiler_regalloc.CompilerRegMaybeLocation.No)
-      (compiler-backend-emit-load-memory-to-reg
-        type-segment-bases
-        (compiler-backend-slot-with-backend-state backend-state id)
-        ty
-        reg)]))
+            reg)]))))
 
 (define (compiler-backend-address-base-register-ok?
   [home : String]
@@ -17937,45 +17952,14 @@
           backend-state)])
     (match value
       [(compiler_ir_types.CompilerIrValue.Var id)
-        (match (compiler-backend-emit-assignment-lookup assignments id)
-          [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
-            (match location
-              [(compiler_regalloc.CompilerRegLocation.Register home)
-                (ResultCompilerBackend.Ok
-                  (compiler-backend-emit-load-register
-                    type-segment-bases
-                    (compiler_abi.compiler-abi-register-spelling home)
-                    ty))]
-              ;; A whole register-group is loaded word-wise by the group
-              ;; ABI paths; reaching the generic scalar load means word0's home.
-              [(compiler_regalloc.CompilerRegLocation.RegisterPair home _)
-                (ResultCompilerBackend.Ok
-                  (compiler-backend-emit-load-register
-                    type-segment-bases
-                    (compiler_abi.compiler-abi-register-spelling home)
-                    ty))]
-              [(compiler_regalloc.CompilerRegLocation.Spill offset)
-                (ResultCompilerBackend.Ok
-                  (compiler-backend-emit-load-memory
-                    type-segment-bases
-                    (compiler-backend-frame-offset-with-backend-state
-                      backend-state
-                      offset)
-                    ty))]
-              ;; Rematerialise into %rax (this loader's implicit destination, as the
-              ;; CompilerIrValue.GlobalAddr arm below also uses).
-              [(compiler_regalloc.CompilerRegLocation.Remat value)
-                (compiler-backend-emit-load-value-with-plan
-                  compiler_regalloc.CompilerRegAssignmentList.Nil
-                  value
-                  "%rax"
-                  backend-state)])]
-          [(compiler_regalloc.CompilerRegMaybeLocation.No)
-            (ResultCompilerBackend.Ok
-              (compiler-backend-emit-load-memory
-                type-segment-bases
-                (compiler-backend-slot-with-backend-state backend-state id)
-                ty))])]
+        (ResultCompilerBackend.Ok
+          (compiler-backend-emit-load-typed-var-to-reg-with-plan
+            type-segment-bases
+            assignments
+            id
+            ty
+            "%rax"
+            backend-state))]
       [(compiler_ir_types.CompilerIrValue.Global name)
         (ResultCompilerBackend.Ok
           (compiler-backend-emit-load-memory

@@ -191,8 +191,7 @@
 ;; from a transient file/test arena leaves the global dangling at teardown.
 (define (sp-node-pool-grow!) : unit
   (let
-    [old-slots : (__tl_dyn-array SpannedSexpr) sp-node-pool-slots]
-    [old-cap : i64 (array-length old-slots)]
+    [old-cap : i64 (array-length sp-node-pool-slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1024
@@ -219,15 +218,14 @@
     (begin
       (while (< i len)
         (begin
-          (array-set! new-slots i (array-ref old-slots i))
+          (array-set! new-slots i (array-ref sp-node-pool-slots i))
           (set! i (+ i 1))))
       (set! sp-node-pool-base-arena head-arena)
       (set! sp-node-pool-slots new-slots))))
 
 (define (sexpr-node-pool-grow!) : unit
   (let
-    [old-slots : (__tl_dyn-array Sexpr) sexpr-node-pool-slots]
-    [old-cap : i64 (array-length old-slots)]
+    [old-cap : i64 (array-length sexpr-node-pool-slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1024
@@ -253,15 +251,14 @@
     (begin
       (while (< i len)
         (begin
-          (array-set! new-slots i (array-ref old-slots i))
+          (array-set! new-slots i (array-ref sexpr-node-pool-slots i))
           (set! i (+ i 1))))
       (set! sexpr-node-pool-base-arena head-arena)
       (set! sexpr-node-pool-slots new-slots))))
 
 (define (sp-builder-grow!) : unit
   (let
-    [old-slots : (__tl_dyn-array SpannedSexpr) sp-builder-slots]
-    [old-cap : i64 (array-length old-slots)]
+    [old-cap : i64 (array-length sp-builder-slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1024
@@ -287,15 +284,14 @@
     (begin
       (while (< i sp-builder-count)
         (begin
-          (array-set! new-slots i (array-ref old-slots i))
+          (array-set! new-slots i (array-ref sp-builder-slots i))
           (set! i (+ i 1))))
       (set! sp-node-pool-base-arena head-arena)
       (set! sp-builder-slots new-slots))))
 
 (define (sexpr-builder-grow!) : unit
   (let
-    [old-slots : (__tl_dyn-array Sexpr) sexpr-builder-slots]
-    [old-cap : i64 (array-length old-slots)]
+    [old-cap : i64 (array-length sexpr-builder-slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1024
@@ -320,7 +316,7 @@
     (begin
       (while (< i sexpr-builder-count)
         (begin
-          (array-set! new-slots i (array-ref old-slots i))
+          (array-set! new-slots i (array-ref sexpr-builder-slots i))
           (set! i (+ i 1))))
       (set! sexpr-node-pool-base-arena head-arena)
       (set! sexpr-builder-slots new-slots))))
@@ -349,11 +345,40 @@
         (set! sexpr-node-pool-count (+ id 1))
         id))))
 
+;; Reader nodes and builder rows live in the reader's arena-backed pools. These
+;; compatibility accessors expose immutable/shared views without transferring
+;; ownership out of their global storage.
+(define (sp-node-pool-shared-view [id : i64]) : SpannedSexpr
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (ptr-cast (array-data sp-node-pool-slots) : (Ptr SpannedSexpr))
+        id))))
+
+(define (sexpr-node-pool-shared-view [id : i64]) : Sexpr
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (ptr-cast (array-data sexpr-node-pool-slots) : (Ptr Sexpr))
+        id))))
+
+(define (sexpr-builder-shared-view [id : i64]) : Sexpr
+  (unsafe
+    (ptr-read
+      (ptr-offset (ptr-cast (array-data sexpr-builder-slots) : (Ptr Sexpr)) id))))
+
+(define (sp-builder-shared-view [id : i64]) : SpannedSexpr
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (ptr-cast (array-data sp-builder-slots) : (Ptr SpannedSexpr))
+        id))))
+
 (define (sp-node-get [id : i64]) : SpannedSexpr
-  (array-ref sp-node-pool-slots id))
+  (sp-node-pool-shared-view id))
 
 (define (sexpr-node-get [id : i64]) : Sexpr
-  (array-ref sexpr-node-pool-slots id))
+  (sexpr-node-pool-shared-view id))
 
 (define (sp-node-pool-truncate! [mark : i64]) : unit
   (set! sp-node-pool-count mark))
@@ -500,7 +525,7 @@
     (begin
       (while (< i len)
         (begin
-          (sexpr-node-push (array-ref sexpr-builder-slots (+ builder-start i)))
+          (sexpr-node-push (sexpr-builder-shared-view (+ builder-start i)))
           (set! i (+ i 1))))
       (set! sexpr-builder-count builder-start)
       (Sexpr.List start len))))
@@ -516,7 +541,7 @@
     (begin
       (while (< i len)
         (begin
-          (sp-node-push (array-ref sp-builder-slots (+ builder-start i)))
+          (sp-node-push (sp-builder-shared-view (+ builder-start i)))
           (set! i (+ i 1))))
       (set! sp-builder-count builder-start)
       (SpannedSexpr.List start len span))))

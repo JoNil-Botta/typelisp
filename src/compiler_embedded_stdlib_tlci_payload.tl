@@ -10,3 +10,7 @@
   "../target/embedded-stdlib-tlci/stdlib.tlci")
 
 (include-str embedded-stdlib-tlci-source-hash "../target/embedded-stdlib-tlci/source-hash.txt")
+
+(define (embedded-stdlib-tlci-source-hash-shared-view) : String
+  (unsafe
+    (ptr-read (ptr-addr-of embedded-stdlib-tlci-source-hash))))

@@ -10,6 +10,13 @@
 (import read as reader)
 (import package_cache_core)
 
+(defmacro (package-lock-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (defstruct PackageLockEntry
   (alias String)
   (url String)
@@ -60,6 +67,9 @@
 
 (define package-lock-version : String
   "v1")
+
+(define (package-lock-version-shared-view) : String
+  (package-lock-global-shared-view package-lock-version))
 
 (define (package-lock-char-code-at [text : String] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))

@@ -1541,7 +1541,7 @@
   (let
     [lock : package_lock_core.PackageLockFile
       (package_lock_core.PackageLockFile
-        package_lock_core.package-lock-version
+        (package_lock_core.package-lock-version-shared-view)
         entries)]
     [text : String (package_lock_core.package-lock-emit lock)]
     [path : String (struct-get state path)]

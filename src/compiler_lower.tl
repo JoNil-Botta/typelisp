@@ -307,6 +307,13 @@
   (module-id i64)
   (parent LowerNameParent))
 
+(defmacro (lower-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 ;; The shared global lowering name cache. Set once per sub-phase
 ;; (prune body-index build, then decl lowering) from that phase's whole-program
 ;; name env; per-module overlays fall through here.
@@ -331,7 +338,7 @@
   false)
 
 (define (lower-active-global-name-cache-current) : LowerNameCache
-  lower-active-global-name-cache)
+  (lower-global-shared-view lower-active-global-name-cache))
 
 (define (lower-active-global-name-cache-set! [cache : LowerNameCache]) : unit
   (set! lower-active-global-name-cache cache))
@@ -1011,11 +1018,11 @@
         unit
         (begin
           (ast.ast-node-pool-context-destroy-storage!
-            lower-checked-dest-pools-context)
+            (lower-global-shared-view lower-checked-dest-pools-context))
           (unsafe
             (arena.tl_arena_destroy
               (ast.ast-node-pool-context-base-arena
-                lower-checked-dest-pools-context)))))
+                (lower-global-shared-view lower-checked-dest-pools-context))))))
       (set! lower-checked-dest-pools-rolled-over false)
       (set! lower-checked-dest-pools-deferred false)
       (set! lower-checked-dest-pools-active false))
@@ -1029,7 +1036,8 @@
 (define (lower-checked-dest-pools-rollover-for-macro!) : unit
   (if lower-checked-dest-pools-committed
     (let
-      [source-pools : ast.AstNodePoolContext lower-checked-dest-pools-context]
+      [source-pools : ast.AstNodePoolContext
+        (clone lower-checked-dest-pools-context)]
       [source-arena : i64 (ast.ast-node-pool-context-base-arena source-pools)]
       [expr-capacity : i64
         (ast.ast-node-pool-context-expr-capacity source-pools)]
@@ -1077,7 +1085,8 @@
         (unsafe
           (arena.tl_arena_set source-arena))
         (set! lower-checked-dest-pools-context source-pools)
-        (ast.ast-node-pool-context-install! lower-checked-dest-pools-context)
+        (ast.ast-node-pool-context-install!
+          (lower-global-shared-view lower-checked-dest-pools-context))
         (if (= macro-frontend-arena 0)
           unit
           (unsafe
@@ -1218,7 +1227,8 @@
             final-expr-state
             final-type-state
             dest-arena))
-        (ast.ast-node-pool-context-install! lower-checked-dest-pools-context)
+        (ast.ast-node-pool-context-install!
+          (lower-global-shared-view lower-checked-dest-pools-context))
         (ast.ast-node-pool-storage-arenas-destroy!
           old-expr-storage-arena
           old-type-storage-arena
@@ -2519,7 +2529,7 @@
 
 (define (lower-active-module-name-cache-lookup [module-id : i64]) : LowerMaybeModuleNameCache
   (lower-module-name-cache-list-lookup
-    lower-active-module-name-caches
+    (lower-global-shared-view lower-active-module-name-caches)
     module-id))
 
 (define (lower-active-module-name-cache-insert!
@@ -2573,7 +2583,7 @@
         [(LowerNameParent.None) -1]
         [(LowerNameParent.Global)
           (lower-name-cache-clone-helper-id
-            lower-active-global-name-cache
+            (lower-global-shared-view lower-active-global-name-cache)
             type-key-id)]))))
 
 (define (lower-name-cache-clone-key-id
@@ -2593,7 +2603,7 @@
           [(LowerNameParent.None) -1]
           [(LowerNameParent.Global)
             (lower-name-cache-clone-key-id
-              lower-active-global-name-cache
+              (lower-global-shared-view lower-active-global-name-cache)
               type-key-id)])))))
 
 (define (lower-name-cache-lookup-id [cache : LowerNameCache] [source-id : i64]) : tc_core.TcMaybeString
@@ -2612,7 +2622,7 @@
           [(LowerNameParent.None) (tc_core.TcMaybeString.No)]
           [(LowerNameParent.Global)
             (lower-name-cache-lookup-id
-              lower-active-global-name-cache
+              (lower-global-shared-view lower-active-global-name-cache)
               source-id)])))))
 
 (define (lower-name-cache-lookup-logical-id
@@ -2785,7 +2795,7 @@
               lower-active-symbols-ready
               (csym.compiler-symbols-handle-found?
                 (csym.compiler-symbols-lookup-value-in-module-id-or
-                  lower-active-symbols
+                  (lower-global-shared-view lower-active-symbols)
                   module-id
                   source-id
                   (csym.compiler-symbols-missing-handle))))
@@ -2954,7 +2964,7 @@
                 (string.append "typecheck: unbound name " display-name))]
             [(LowerTypeParent.Global)
               (lower-type-cache-lookup-id
-                lower-decls-global-type-cache
+                (lower-global-shared-view lower-decls-global-type-cache)
                 name-id
                 display-name)])))]))
 
@@ -4136,7 +4146,9 @@
 
 (define (lower-canonical-path-remember! [path : String]) : unit
   (begin
-    (set! lower-canonical-path-prior lower-canonical-path-recent)
+    (set!
+      lower-canonical-path-prior
+      (lower-global-shared-view lower-canonical-path-recent))
     (set! lower-canonical-path-recent path)
     (if (< lower-canonical-path-count 2)
       (set! lower-canonical-path-count (+ lower-canonical-path-count 1))
@@ -6132,7 +6144,7 @@
   [module : String]
   [module-id : i64]) : ResultLowerModuleLocalView
   (match (lower-module-local-view-list-lookup
-    lower-active-module-local-views
+    (lower-global-shared-view lower-active-module-local-views)
     module-id)
     [(LowerMaybeModuleLocalView.Some view) (ResultLowerModuleLocalView.Ok view)]
     [(LowerMaybeModuleLocalView.No)
@@ -6140,7 +6152,7 @@
         ctx
         top-env
         names
-        lower-active-global-name-cache
+        (lower-global-shared-view lower-active-global-name-cache)
         module
         module-id)
         [(ResultLowerModuleLocalEnv.Ok
@@ -6408,7 +6420,9 @@
                 (=
                   (csym.compiler-symbol-handle-kind handle)
                   (csym.compiler-symbol-kind-function-define))
-                (lower-id-set-contains? lower-spmd-inline-helper-stack handle))
+                (lower-id-set-contains?
+                  (lower-global-shared-view lower-spmd-inline-helper-stack)
+                  handle))
               (begin
                 (set! lower-spmd-inline-recursion-detected true)
                 (ResultLowerSpmdInlineHelper.Err
@@ -6628,7 +6642,7 @@
   (match (lower-spmd-inline-arg-subst ctx params args origin)
     [(ResultLowerSpmdInlineSubst.Ok helper-subst)
       (let
-        [previous : LowerIdSet lower-spmd-inline-helper-stack]
+        [previous : LowerIdSet (clone lower-spmd-inline-helper-stack)]
         [result : ResultLowerAstExpr
           (ResultLowerAstExpr.Err
             (box
@@ -7755,7 +7769,10 @@
     (>= (tc_core.tc-name-first-dot-id name) 0))
     (set!
       lower-reach-active-body-used-types
-      (lower-used-type-name-add lower-reach-active-body-used-types "" name))
+      (lower-used-type-name-add
+        (lower-global-shared-view lower-reach-active-body-used-types)
+        ""
+        name))
     unit))
 
 (define (lower-reach-used-types-add-pattern-roots! [pattern : ast.AstPattern]) : unit
@@ -7981,7 +7998,7 @@
         callee
         (lower-clone-handoff-type-args ctx pools roots))]
     (ast.AstDecl.Import
-      ast.ast-decl-meta-runtime
+      (ast.ast-decl-meta-runtime-shared-view)
       (ast.AstImportSpec.Spec
         (ast.AstImportKind.MacroDecls call-id ast.AstMaybeModuleName.No)
         ""
@@ -9625,17 +9642,10 @@
             (match (lower-function-body-index-find body-index name)
               [(LowerMaybeFunctionBody.Some body body-names body-path-owner-id)
                 (begin
-                  (set!
-                    lower-reach-active-runtime-paths
-                    (let
-                      [paths : lower_i64_i64_map.Map
-                        lower-reach-active-runtime-paths]
-                      (begin
-                        (lower_i64_i64_map.insert-ref!
-                          (&mut paths)
-                          body-path-owner-id
-                          1)
-                        paths)))
+                  (lower_i64_i64_map.insert-ref!
+                    (&mut lower-reach-active-runtime-paths)
+                    body-path-owner-id
+                    1)
                   (lower-reach-process
                     pools
                     all-functions
@@ -10900,7 +10910,7 @@
   [paths : ast.AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [reachable-paths : lower_i64_i64_map.Map]
+  [reachable-paths : (& reachable-paths lower_i64_i64_map.Map)]
   [used : lower_i64_i64_map.Map (:consume)]
   [covered : bool]) : LowerUsedTypePathSeed
   (match (ast.ast-decl-list-step decls)
@@ -11728,8 +11738,6 @@
                     (match reached-state
                       [(LowerReachState.State reachable _)
                         (let
-                          [reachable-runtime-paths : lower_i64_i64_map.Map
-                            lower-reach-active-runtime-paths]
                           [type-path-seed : LowerUsedTypePathSeed
                             (lower-used-types-path-seed-in-module
                               pools
@@ -11737,8 +11745,9 @@
                               paths
                               entry-path
                               ""
-                              reachable-runtime-paths
-                              lower-reach-active-body-used-types
+                              lower-reach-active-runtime-paths
+                              (lower-global-shared-view
+                                lower-reach-active-body-used-types)
                               true)]
                           [used-types : lower_i64_i64_map.Map
                             (match type-path-seed
@@ -14966,6 +14975,28 @@
         [(ast.AstType.Tuple _) true]
         [(ast.AstType.Array _ _) true]
         [(ast.AstType.DynArray _) true]
+        [(ast.AstType.Struct _) true]
+        [(ast.AstType.StructArgs _ _) true]
+        [(ast.AstType.Enum _) true]
+        [(ast.AstType.EnumArgs _ _) true]
+        [_ false]))))
+
+;; A memory-class global's symbol stores a pointer to its aggregate payload, so
+;; the address of the value is the loaded symbol. Owning/view handles such as a
+;; dynamic array are themselves stored inline in the symbol and therefore use
+;; the symbol's address even though ordinary borrowing treats their payload
+;; pointer as the referent.
+(define (lower-ptr-addr-of-global-value-reference?
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : bool
+  (let
+    [resolved : ast.AstType
+      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
+    (if (lower-type-register-resident? ctx resolved)
+      false
+      (match resolved
+        [(ast.AstType.Tuple _) true]
+        [(ast.AstType.Array _ _) true]
         [(ast.AstType.Struct _) true]
         [(ast.AstType.StructArgs _ _) true]
         [(ast.AstType.Enum _) true]
@@ -22147,7 +22178,7 @@
                   (lower_arg_writeback_vec.get
                     (& items)
                     index
-                    lower-arg-writeback-fallback)))
+                    (lower-global-shared-view lower-arg-writeback-fallback))))
               (set! index (+ index 1))))
           out))]))
 
@@ -24316,7 +24347,7 @@
         (if (if (= (array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
           (= (array-ref tc-rtf-id-arr slot) inner-box)
           false)
-          (tc_core.ResultTcType.Ok (array-ref tc-rtf-ty-arr slot))
+          (tc_core.ResultTcType.Ok (clone (array-ref tc-rtf-ty-arr slot)))
           (match (lower-expr-result-type-fast
             ctx
             env
@@ -24567,11 +24598,25 @@
                       addr-ty)))]))]
         [(tc_core.ResultTcType.Err message)
           (ResultLowerExpr.Err (box (lower-diagnostic-at-expr origin message)))])
-      (ResultLowerExpr.Err
-        (box
-          (lower-diagnostic-at-expr
-            origin
-            "lower: ptr-addr-of requires local or parameter storage"))))))
+      (match (lower-lookup-type-id
+        ctx
+        (lower-state-type-cache state)
+        env
+        type-env
+        name)
+        [(tc_core.ResultTcType.Ok place-ty)
+          (ResultLowerExpr.Ok
+            (LowerExpr.Expr
+              state
+              (if (lower-ptr-addr-of-global-value-reference? ctx place-ty)
+                (ir.CompilerIrValue.Global
+                  (lower-resolve-name-symbol-id state name))
+                (ir.CompilerIrValue.GlobalAddr
+                  (lower-resolve-name-symbol-id state name)))
+              (tc_core.tc-type-without-regions
+                (tc_core.tc-resolve-type ctx place-ty))))]
+        [(tc_core.ResultTcType.Err message)
+          (ResultLowerExpr.Err (box (lower-diagnostic-at-expr origin message)))]))))
 
 (define (lower-integer-expr-with-expected-or-actual
   [ctx : tc_core.TcContext]
@@ -32466,7 +32511,7 @@
   [args : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : LowerMaybeSpmdCall
-  (match lower-spmd-scalar-call-context
+  (match (clone lower-spmd-scalar-call-context)
     [(LowerSpmdScalarCallContext.No) (LowerMaybeSpmdCall.No)]
     [(LowerSpmdScalarCallContext.Some index)
       (match (lower-spmd-inline-helper-lookup
@@ -40714,7 +40759,8 @@
                   (if (< arg-lanes 0)
                     -1
                     (let
-                      [previous : LowerIdSet lower-spmd-inline-helper-stack]
+                      [previous : LowerIdSet
+                        (clone lower-spmd-inline-helper-stack)]
                       [result : i64 -1]
                       (begin
                         (set!
@@ -43890,10 +43936,12 @@
     [(ResultLowerSpmdInlineHelper.Ok helper)
       (match helper
         [(LowerSpmdInlineHelper.Some name _ _ body)
-          (if (lower-id-set-contains? lower-spmd-inline-helper-stack name)
+          (if (lower-id-set-contains?
+            (lower-global-shared-view lower-spmd-inline-helper-stack)
+            name)
             false
             (let
-              [previous : LowerIdSet lower-spmd-inline-helper-stack]
+              [previous : LowerIdSet (clone lower-spmd-inline-helper-stack)]
               [result : bool false]
               (begin
                 (set!
@@ -52869,7 +52917,7 @@
     "|"
     signature
     "|"
-    lower-spmd-package-abi
+    (lower-global-shared-view lower-spmd-package-abi)
     "|"
     (lower-spmd-package-backend-name backend)
     "|"
@@ -53628,7 +53676,7 @@
         [index-param : i64 (struct-get specialization index-param)]
         [hidden-name-text : String
           (lower-spmd-package-symbol
-            lower-spmd-package-name
+            (lower-global-shared-view lower-spmd-package-name)
             canonical-name
             signature
             ret
@@ -53641,7 +53689,7 @@
           (ci.intern-generated-canonical-name hidden-name-text)]
         [symbol-identity : String
           (lower-spmd-package-symbol-identity
-            lower-spmd-package-name
+            (lower-global-shared-view lower-spmd-package-name)
             canonical-name
             signature
             backend
@@ -53696,7 +53744,7 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
-    [previous : LowerIdSet lower-spmd-inline-helper-stack]
+    [previous : LowerIdSet (clone lower-spmd-inline-helper-stack)]
     (begin
       (set!
         lower-spmd-inline-helper-stack
@@ -55041,7 +55089,8 @@
   [index : String]
   [body : ast.AstExpr]) : ResultLowerExpr
   (let
-    [previous : LowerSpmdScalarCallContext lower-spmd-scalar-call-context]
+    [previous : LowerSpmdScalarCallContext
+      (clone lower-spmd-scalar-call-context)]
     [result : ResultLowerExpr
       (ResultLowerExpr.Err
         (box (lower-diagnostic "lower: SPMD scalar body lowering failed")))]
@@ -59100,7 +59149,7 @@
       (= (array-ref lower-variant-arm-memo-keys slot) variant-name-id)
       (ast.ast-type-eq-with-pools?
         (tc_core.tc-context-pools ctx)
-        (array-ref lower-variant-arm-memo-scrut-tys slot)
+        (clone (array-ref lower-variant-arm-memo-scrut-tys slot))
         scrut-ty))
       (array-ref lower-variant-arm-memo-outcomes slot)
       (let
@@ -63157,7 +63206,7 @@
   [pools : ast.AstNodePoolContext]) : ResultCompilerLower
   (lower-typecheck-clone-and-lower-with-source-names
     (load.compiler-load-serial-test-session-state)
-    tc_core.tc-prefix-snapshot-serial-test-cache-state
+    (tc_core.tc-prefix-snapshot-serial-test-cache-state-shared-view)
     (tc_core.tc-serial-job-state)
     entry-path
     program
@@ -63269,7 +63318,8 @@
                           (if detach-source?
                             (ast.ast-program-compact-with-pools
                               pools
-                              lower-checked-dest-pools-context
+                              (lower-global-shared-view
+                                lower-checked-dest-pools-context)
                               specialized)
                             (ast.AstProgramCompaction specialized pools))]
                         [source-program : ast.AstProgram
@@ -63356,7 +63406,7 @@
   [intern-state : ci.InternCompatState]) : ResultCompilerLower
   (let
     [prev-active : bool lower-entry-main-module-active]
-    [prev-module : String lower-entry-main-module]
+    [prev-module : String (string.copy (& lower-entry-main-module))]
     [prev-module-id : i64 lower-entry-main-module-id]
     [selection : LowerMaybeEntryMainModule
       (lower-entry-main-selection-for-program entry-path program paths)]
@@ -63742,7 +63792,7 @@
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
   (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
     (load.compiler-load-serial-test-session-state)
-    tc_core.tc-prefix-snapshot-serial-test-cache-state
+    (tc_core.tc-prefix-snapshot-serial-test-cache-state-shared-view)
     (tc_core.tc-serial-job-state)
     entry-path
     program

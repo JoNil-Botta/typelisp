@@ -161,11 +161,11 @@
 (define (compiler-symbols-last-error-diagnostic [message : String]) : cdiag.CompilerDiagnostic
   (if compiler-symbols-last-error-has-span
     (cdiag.compiler-diagnostic-from-ast-span
-      compiler-symbols-last-error-path
+      (string.copy (& compiler-symbols-last-error-path))
       compiler-symbols-last-error-span
       message)
     (cdiag.compiler-diagnostic-at-start
-      compiler-symbols-last-error-path
+      (string.copy (& compiler-symbols-last-error-path))
       message)))
 
 (define (compiler-symbol-kind-value-define) : i64

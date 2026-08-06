@@ -44,6 +44,13 @@
 (import stdlib.result)
 (import (result.result i64 String) as result_lex_i64)
 
+(defmacro (lex-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (defenum ResultTokens
   (Ok (__tl_dyn-array token.Token))
   (Err String))
@@ -849,7 +856,7 @@
       (LexPosition.Position next-line next-col))))
 
 ;; Scan `src` into the shared spanned-token buffer, growing it on demand.
-;; `stoks`/`limit` mirror the global buffer and are refreshed whenever it moves;
+;; `limit` mirrors the global buffer capacity and is refreshed whenever it moves;
 ;; the guard at the top of the loop reserves room for this iteration's token AND
 ;; the trailing `token.Token.End`, so every `array-set!` below is in range
 ;; without a per-write capacity test.
@@ -863,8 +870,7 @@
     [ok : bool true]
     [message : String ""]
     [err-pos : i64 0]
-    [stoks : (__tl_dyn-array token.SpannedToken) lex-spanned-token-buffer]
-    [limit : i64 (array-length stoks)]
+    [limit : i64 (array-length lex-spanned-token-buffer)]
     (begin
       (cfg compile-profile (ci.intern-profile-note-source-bytes n))
       (while (and (< i n) ok)
@@ -872,8 +878,7 @@
           (if (> (+ count 2) limit)
             (begin
               (spanned-token-buffer-ensure! (+ count 2) count)
-              (set! stoks lex-spanned-token-buffer)
-              (set! limit (array-length stoks)))
+              (set! limit (array-length lex-spanned-token-buffer)))
             unit)
           (let
             [c : char (__tl_string_ref src i)]
@@ -889,7 +894,7 @@
               [(= c '(')
                 (begin
                   (array-set!
-                    stoks
+                    lex-spanned-token-buffer
                     count
                     (token.spanned-token-new token.Token.LParen line col))
                   (set! count (+ count 1))
@@ -898,7 +903,7 @@
               [(= c '[')
                 (begin
                   (array-set!
-                    stoks
+                    lex-spanned-token-buffer
                     count
                     (token.spanned-token-new token.Token.LBracket line col))
                   (set! count (+ count 1))
@@ -907,7 +912,7 @@
               [(= c ')')
                 (begin
                   (array-set!
-                    stoks
+                    lex-spanned-token-buffer
                     count
                     (token.spanned-token-new token.Token.RParen line col))
                   (set! count (+ count 1))
@@ -916,7 +921,7 @@
               [(= c ']')
                 (begin
                   (array-set!
-                    stoks
+                    lex-spanned-token-buffer
                     count
                     (token.spanned-token-new token.Token.RBracket line col))
                   (set! count (+ count 1))
@@ -930,7 +935,7 @@
                     [(ResultMaybeLexCharLiteral.Ok value end)
                       (begin
                         (array-set!
-                          stoks
+                          lex-spanned-token-buffer
                           count
                           (token.spanned-token-new
                             (token.Token.Char value)
@@ -947,7 +952,7 @@
                     [(ResultMaybeLexCharLiteral.No)
                       (begin
                         (array-set!
-                          stoks
+                          lex-spanned-token-buffer
                           count
                           (token.spanned-token-new token.Token.Quote line col))
                         (set! count (+ count 1))
@@ -956,7 +961,7 @@
               [(= c '`')
                 (begin
                   (array-set!
-                    stoks
+                    lex-spanned-token-buffer
                     count
                     (token.spanned-token-new token.Token.Backtick line col))
                   (set! count (+ count 1))
@@ -968,21 +973,21 @@
                     (if (= (__tl_string_ref src (+ i 1)) '@')
                       (begin
                         (array-set!
-                          stoks
+                          lex-spanned-token-buffer
                           count
                           (token.spanned-token-new token.Token.CommaAt line col))
                         (set! i (+ i 2))
                         (set! col (+ col 2)))
                       (begin
                         (array-set!
-                          stoks
+                          lex-spanned-token-buffer
                           count
                           (token.spanned-token-new token.Token.Comma line col))
                         (set! i (+ i 1))
                         (set! col (+ col 1))))
                     (begin
                       (array-set!
-                        stoks
+                        lex-spanned-token-buffer
                         count
                         (token.spanned-token-new token.Token.Comma line col))
                       (set! i (+ i 1))
@@ -1004,7 +1009,7 @@
                             (string.string-length text))]
                         (begin
                           (array-set!
-                            stoks
+                            lex-spanned-token-buffer
                             count
                             (token.spanned-token-new
                               (token.Token.Str string-id)
@@ -1037,7 +1042,7 @@
                       (begin
                         (if (number-float? src i end n)
                           (array-set!
-                            stoks
+                            lex-spanned-token-buffer
                             count
                             (token.spanned-token-new
                               (token.Token.Float
@@ -1045,7 +1050,7 @@
                               token-line
                               token-col))
                           (array-set!
-                            stoks
+                            lex-spanned-token-buffer
                             count
                             (token.spanned-token-new
                               (token.Token.Int
@@ -1067,7 +1072,7 @@
                   (if (> end (+ i 1))
                     (begin
                       (array-set!
-                        stoks
+                        lex-spanned-token-buffer
                         count
                         (token.spanned-token-new
                           (token.Token.Sym
@@ -1079,7 +1084,7 @@
                       (set! i end))
                     (begin
                       (array-set!
-                        stoks
+                        lex-spanned-token-buffer
                         count
                         (token.spanned-token-new
                           (token.Token.Sym (colon-intern-id src i))
@@ -1093,7 +1098,7 @@
                   [end : i64 (scan-symbol-end src i n)]
                   (begin
                     (array-set!
-                      stoks
+                      lex-spanned-token-buffer
                       count
                       (token.spanned-token-new
                         (token.Token.Sym
@@ -1113,10 +1118,10 @@
           (if (>= count limit)
             (begin
               (spanned-token-buffer-ensure! (+ count 1) count)
-              (set! stoks lex-spanned-token-buffer))
+              unit)
             unit)
           (array-set!
-            stoks
+            lex-spanned-token-buffer
             count
             (token.spanned-token-new token.Token.End line col))
           (ResultLexIntoSpanned.Ok count))
@@ -1241,7 +1246,6 @@
   (let
     [previous-arena : i64 (arena.tl_arena_current)]
     [old-storage-arena : i64 lex-spanned-token-buffer-arena]
-    [old-buffer : (__tl_dyn-array token.SpannedToken) lex-spanned-token-buffer]
     [storage-root : i64
       (if (= old-storage-arena 0)
         (arena.tl_arena_make)
@@ -1263,7 +1267,7 @@
             previous-arena)))
       (while (< j used)
         (begin
-          (array-set! new-buffer j (array-ref old-buffer j))
+          (array-set! new-buffer j (array-ref lex-spanned-token-buffer j))
           (set! j (+ j 1))))
       (set! lex-spanned-token-buffer-arena new-storage-arena)
       (set! lex-spanned-token-buffer new-buffer))))
@@ -1350,12 +1354,13 @@
 ;; The record the ownership check parked at slot 0 must survive the grow above:
 ;; mid-scan growth relies on it.
 (define (spanned-token-buffer-grow-preserves-records?) : bool
-  (let
-    [kept : token.SpannedToken (array-ref lex-spanned-token-buffer 0)]
-    (and
-      (= (token.tag (token.spanned-token-tok kept)) (token.tag-lbracket))
-      (= (token.spanned-token-line kept) 7)
-      (= (token.spanned-token-col kept) 11))))
+  (and
+    (=
+      (token.tag
+        (token.spanned-token-tok (clone (array-ref lex-spanned-token-buffer 0))))
+      (token.tag-lbracket))
+    (= (token.spanned-token-line (array-ref lex-spanned-token-buffer 0)) 7)
+    (= (token.spanned-token-col (array-ref lex-spanned-token-buffer 0)) 11)))
 
 ;; `spanned-result : (-> String ResultSpannedTokens)` - lex into the shared
 ;; spanned-token buffer and hand back that buffer; slot `count` holds the
@@ -1364,7 +1369,7 @@
 (define (spanned-result [src : String]) : ResultSpannedTokens
   (match (into-spanned-tokens-result src)
     [(ResultLexIntoSpanned.Ok _)
-      (ResultSpannedTokens.Ok lex-spanned-token-buffer)]
+      (ResultSpannedTokens.Ok (lex-global-shared-view lex-spanned-token-buffer))]
     [(ResultLexIntoSpanned.Err err) (ResultSpannedTokens.Err err)]))
 
 (define (percent-symbol-ok?) : bool

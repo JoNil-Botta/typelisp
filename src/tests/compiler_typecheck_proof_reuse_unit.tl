@@ -211,7 +211,7 @@
             "tc-self-first-wins-generator"
             "tc-self-first-wins-item")]
         (if (and (>= family-slot 0) (< family-slot tc_core.additional-capacity))
-          (match (array-ref tc_core.augmented-decls family-slot)
+          (match (array-ref (tc_core.augmented-decls-shared-view) family-slot)
             [(ast.AstDecl.Module module-id)
               (if (= module-id (ci.intern "tc-self-first-wins-module"))
                 unit
@@ -447,7 +447,7 @@
             "tc-self-lifecycle-generator"
             "tc-self-lifecycle-item")]
         (if (and (>= family-slot 0) (< family-slot tc_core.additional-capacity))
-          (match (array-ref tc_core.augmented-decls family-slot)
+          (match (array-ref (tc_core.augmented-decls-shared-view) family-slot)
             [(ast.AstDecl.Module module-id)
               (if (= module-id (ci.intern "tc-self-lifecycle-module"))
                 unit
@@ -498,7 +498,7 @@
             "tc-self-lifecycle-generator"
             "tc-self-lifecycle-item")]
         (if (and (>= family-slot 0) (< family-slot tc_core.additional-capacity))
-          (match (array-ref tc_core.augmented-decls family-slot)
+          (match (array-ref (tc_core.augmented-decls-shared-view) family-slot)
             [(ast.AstDecl.Module module-id)
               (if (= module-id (ci.intern "tc-self-lifecycle-module"))
                 unit

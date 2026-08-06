@@ -951,8 +951,15 @@
 
 ;; Compatibility state for direct parser helpers and parser-only tests. Driver
 ;; paths always attach their own state with compiler-parse-state-cfgs.
-(define compiler-parse-default-state : CompilerParseState
-  (compiler-parse-state-new))
+(define compiler-parse-default-state : (__tl_dyn-array CompilerParseState)
+  (make-array (compiler-parse-state-new)))
+
+(define (compiler-parse-default-state-shared-view) : CompilerParseState
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data compiler-parse-default-state)
+        : (Ptr CompilerParseState)))))
 
 (define (sexpr-colon? [s : reader.Sexpr]) : bool
   (match (reader.sexpr-view s)
@@ -2657,7 +2664,9 @@
       (if (=
         (compiler-parse-env-marker-value cfgs compiler-parse-state-marker-id)
         0)
-        (compiler-parse-state-cfgs compiler-parse-default-state cfgs)
+        (compiler-parse-state-cfgs
+          (compiler-parse-default-state-shared-view)
+          cfgs)
         cfgs)]
     [control : i64
       (compiler-parse-env-marker-value
@@ -8902,7 +8911,7 @@
   [span : ast.AstSourceSpan]) : ResultAstDecl
   (ResultAstDecl.Ok
     (ast.AstDecl.Import
-      ast.ast-decl-meta-runtime
+      (ast.ast-decl-meta-runtime-shared-view)
       (ast.AstImportSpec.Spec kind path module-name alias (box span)))))
 
 (define (parse-ast-import-alias
@@ -10057,7 +10066,7 @@
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Cons
         (ast.AstDecl.Import
-          ast.ast-decl-meta-runtime
+          _
           (ast.AstImportSpec.Spec
             (ast.AstImportKind.Module)
             path
@@ -10135,11 +10144,7 @@
                 [(ast.AstDeclListStep.Nil)
                   (match (ast.ast-decl-list-step body)
                     [(ast.AstDeclListStep.Cons
-                        (ast.AstDecl.Def
-                          ast.ast-decl-meta-runtime
-                          value-name
-                          _
-                          _)
+                        (ast.AstDecl.Def _ value-name _ _)
                         body-rest)
                       (let
                         [body-rest : ast.AstDeclList body-rest]
@@ -10168,7 +10173,7 @@
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                _
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Module)
                   path
@@ -10196,7 +10201,7 @@
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                _
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Module)
                   module-path
@@ -10224,7 +10229,7 @@
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                _
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Module)
                   module-path
@@ -10257,7 +10262,7 @@
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                _
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.MacroDecls call-expr _)
                   path
@@ -10284,7 +10289,7 @@
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                _
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Macro call-expr _)
                   path
@@ -10737,13 +10742,7 @@
         [decls : ast.AstDeclList (box-get decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn
-                ast.ast-decl-meta-runtime
-                name
-                _
-                (ast.AstType.F64)
-                body-box
-                _)
+              (ast.AstDecl.DefFn _ name _ (ast.AstType.F64) body-box _)
               _)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -10878,13 +10877,7 @@
         [decls : ast.AstDeclList (box-get decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn
-                ast.ast-decl-meta-runtime
-                name
-                _
-                (ast.AstType.I64)
-                body-box
-                _)
+              (ast.AstDecl.DefFn _ name _ (ast.AstType.I64) body-box _)
               _)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -11739,12 +11732,7 @@
         [decls : ast.AstDeclList (box-get decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefStruct
-                ast.ast-decl-meta-runtime
-                name
-                repr
-                cleanup
-                fields)
+              (ast.AstDecl.DefStruct _ name repr cleanup fields)
               rest)
             (let
               [rest : ast.AstDeclList rest]
@@ -12760,12 +12748,7 @@
         [decls : ast.AstDeclList (box-get decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefMacro
-                ast.ast-decl-meta-runtime
-                name
-                params
-                (ast.AstType.Bool)
-                _)
+              (ast.AstDecl.DefMacro _ name params (ast.AstType.Bool) _)
               rest)
             (let
               [rest : ast.AstDeclList rest]

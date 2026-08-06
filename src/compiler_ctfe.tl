@@ -15155,7 +15155,7 @@
       (box
         (ast.ast-decl-cons-boxed
           (ast.AstDecl.DefStruct
-            ast.ast-decl-meta-runtime
+            (ast.ast-decl-meta-runtime-shared-view)
             cbi.compiler-builtin-id-fix-Record
             (ast.AstStructRepr.Default)
             (ast.AstStructCleanup.No)
@@ -15163,7 +15163,7 @@
           (box
             (ast.ast-decl-cons-boxed
               (ast.AstDecl.DefEnum
-                ast.ast-decl-meta-runtime
+                (ast.ast-decl-meta-runtime-shared-view)
                 cbi.compiler-builtin-id-fix-Status
                 (ast.AstEnumCleanup.No)
                 variants)

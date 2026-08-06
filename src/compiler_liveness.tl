@@ -170,11 +170,18 @@
 ;; and it removes an allocation from a function called throughout liveness --
 ;; call-edge attribution puts 318,627,090 Ir of `tl_alloc` behind this one
 ;; caller in an opt2 self-compile.
-(define compiler-live-set-empty-value : CompilerLiveI64Set
-  (CompilerLiveI64Set (make-array i64 0)))
+(define compiler-live-set-empty-value : (__tl_dyn-array CompilerLiveI64Set)
+  (make-array (CompilerLiveI64Set (make-array i64 0))))
+
+(define (compiler-live-set-empty-shared-view) : CompilerLiveI64Set
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data compiler-live-set-empty-value)
+        : (Ptr CompilerLiveI64Set)))))
 
 (define (compiler-live-set-empty) : CompilerLiveI64Set
-  compiler-live-set-empty-value)
+  (compiler-live-set-empty-shared-view))
 
 (define (compiler-live-set-word-count [set : CompilerLiveI64Set]) : i64
   (array-length (compiler-live-set-words set)))
@@ -2097,17 +2104,28 @@
 ;; 17..64-id call/phi (1,571 of them) and never exceeds 64; a wider one simply
 ;; returns -1 and the caller takes the bitset path, so capacity is a throughput
 ;; choice, not a correctness one.
-(define compiler-live-instr-ids-buffer : (__tl_dyn-array i64)
-  (make-array i64 64))
+(define compiler-live-instr-ids-buffer : (__tl_dyn-array (__tl_dyn-array i64))
+  (make-array (make-array i64 64)))
+
+(define (compiler-live-instr-ids-buffer-shared-view) : (__tl_dyn-array i64)
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data compiler-live-instr-ids-buffer)
+        : (Ptr (__tl_dyn-array i64))))))
 
 (define (compiler-live-instr-ids) : (__tl_dyn-array i64)
-  compiler-live-instr-ids-buffer)
+  (compiler-live-instr-ids-buffer-shared-view))
 
 (define (compiler-live-instr-use-ids! [instr : ir.CompilerIrInstr]) : i64
-  (compiler-live-instr-use-ids-into! instr compiler-live-instr-ids-buffer))
+  (compiler-live-instr-use-ids-into!
+    instr
+    (compiler-live-instr-ids-buffer-shared-view)))
 
 (define (compiler-live-instr-use-ids-nophi! [instr : ir.CompilerIrInstr]) : i64
-  (compiler-live-instr-use-ids-nophi-into! instr compiler-live-instr-ids-buffer))
+  (compiler-live-instr-use-ids-nophi-into!
+    instr
+    (compiler-live-instr-ids-buffer-shared-view)))
 
 ;; Word count of the bitset the ids would have produced: the widest id decides
 ;; it, exactly as `compiler-live-set-word-count` reads it off a set whose top

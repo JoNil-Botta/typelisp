@@ -312,7 +312,7 @@
             symbols
             name-offset
             name-len
-            tlci.tlci-image-entry-symbol)
+            (tlci.tlci-image-entry-symbol-shared-view))
           (if found
             (ResultTlciLoaderI64.Err
               "tlci loader: duplicate tlci_image_entry entry")
@@ -358,7 +358,7 @@
                 symbols
                 name-offset
                 name-len
-                tlci.tlci-macro-table-symbol))
+                (tlci.tlci-macro-table-symbol-shared-view)))
               (set! found (tlci.tlci-read-u64 entries (+ record-offset 16)))
               unit)
             (set! index (+ index 1)))))
@@ -646,8 +646,8 @@
     (struct-get image-region writable)
     (struct-get image-region executable)
     (+ image-base (+ code-offset entry-code-offset))
-    tlci-loader-no-retained-storage
-    tlci-loader-no-retained-storage
+    (clone tlci-loader-no-retained-storage)
+    (clone tlci-loader-no-retained-storage)
     0
     0
     0
@@ -1910,7 +1910,10 @@
     [out : (__tl_dyn-array u8)
       (make-array u8 tlci.tlci-section-symbol-record-size)]
     (begin
-      (tlci-loader-test-put-string! out 0 tlci.tlci-image-entry-symbol)
+      (tlci-loader-test-put-string!
+        out
+        0
+        (tlci.tlci-image-entry-symbol-shared-view))
       out)))
 
 (define (tlci-loader-test-set-byte!
@@ -2006,7 +2009,7 @@
     (tlci-loader-test-u64-record fixup-offset)
     (tlci-loader-test-entry-record
       0
-      (tlci.tlci-string-length tlci.tlci-image-entry-symbol)
+      (tlci.tlci-string-length (tlci.tlci-image-entry-symbol-shared-view))
       0)
     (tlci-loader-test-symbol-bytes)
     imports))

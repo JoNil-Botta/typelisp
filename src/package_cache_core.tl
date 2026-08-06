@@ -221,7 +221,7 @@
 (define (package-cache-default-root [package-root : (& package-root str)]) : String
   (let
     [root : String (package-cache-unversioned-root package-root)]
-    (fs.path-join-owned-pair root package-cache-version)))
+    (fs.path-join-owned-pair root (string.copy (& package-cache-version)))))
 
 (define (package-cache-entry-url-dir
   [root : (& root str)]
@@ -281,12 +281,14 @@
     (fs.path-join-owned-pair rev-dir staged-name)))
 
 (define (package-cache-metadata-path [entry-path : (& entry_path str)]) : String
-  (fs.path-join-owned-pair (string.copy entry-path) package-cache-metadata-name))
+  (fs.path-join-owned-pair
+    (string.copy entry-path)
+    (string.copy (& package-cache-metadata-name))))
 
 (define (package-cache-complete-marker-path [entry-path : (& entry_path str)]) : String
   (fs.path-join-owned-pair
     (string.copy entry-path)
-    package-cache-complete-marker-name))
+    (string.copy (& package-cache-complete-marker-name))))
 
 (define (package-cache-metadata-content [key : (& key PackageCacheKey)]) : String
   (let

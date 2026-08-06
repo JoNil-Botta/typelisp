@@ -185,14 +185,13 @@
 
 (define (compiler-ir-label-grow!) : unit
   (let
-    [old-slots : (Array String) compiler-ir-label-slots]
-    [old-len : i64 (array-length old-slots)]
+    [old-len : i64 (array-length compiler-ir-label-slots)]
     [next : (Array String) (array.make-array String (* old-len 2))]
     [index : i64 0]
     (begin
       (while (< index old-len)
         (begin
-          (array-set! next index (array-ref old-slots index))
+          (array-set! next index (array-ref compiler-ir-label-slots index))
           (set! index (+ index 1))))
       (set! compiler-ir-label-slots next))))
 
@@ -248,7 +247,7 @@
                 (array-set! compiler-ir-label-slots id owned)
                 (ir_label_map.insert-ref!
                   (&mut compiler-ir-label-ids)
-                  (array-ref compiler-ir-label-slots id)
+                  (string.copy (& (array-ref compiler-ir-label-slots id)))
                   id)))
             (set! compiler-ir-label-count (+ id 1))
             id)))]))
@@ -318,14 +317,13 @@
 
 (define (compiler-ir-symbol-grow!) : unit
   (let
-    [old-slots : (Array String) compiler-ir-symbol-slots]
-    [old-len : i64 (array-length old-slots)]
+    [old-len : i64 (array-length compiler-ir-symbol-slots)]
     [next : (Array String) (array.make-array String (* old-len 2))]
     [index : i64 0]
     (begin
       (while (< index old-len)
         (begin
-          (array-set! next index (array-ref old-slots index))
+          (array-set! next index (array-ref compiler-ir-symbol-slots index))
           (set! index (+ index 1))))
       (set! compiler-ir-symbol-slots next))))
 
@@ -402,7 +400,7 @@
           (array-set! compiler-ir-symbol-slots index owned)
           (ir_label_map.insert-ref!
             (&mut compiler-ir-symbol-ids)
-            (array-ref compiler-ir-symbol-slots index)
+            (string.copy (& (array-ref compiler-ir-symbol-slots index)))
             id)))
       (set! compiler-ir-symbol-count (+ index 1))
       (unsafe

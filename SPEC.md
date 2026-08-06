@@ -3478,6 +3478,24 @@ therefore preserves the resolved underlying class. The classifier's recursive
 result describes source-level ownership, not whether the backend transports a
 value in registers or through a pointer-sized handle.
 
+**Global places.** An ordinary `define` may initialize a non-Copy value. The
+global remains the permanent owner of that value in a static-lifetime place;
+it is not a shared handle and safe code cannot move ownership out of it. A
+Copy global, or a Copy projection from any global, may be read by value
+normally. Every by-value use of a non-Copy global or non-Copy projection is
+rejected, including a `let` initializer, ordinary or consuming call argument,
+constructor operand, match scrutinee, function/lambda result, and a use inside
+a task-thread or SPMD body. The rule is based on the resolved declaration, so
+qualified, aliased, and macro-generated global names behave identically.
+
+Safe inspection uses an explicit shared or mutable borrow; a reference-typed
+call context may insert the same typed auto-borrow used for local places.
+Mutation operates on the global place directly or through a checked `&mut`
+borrow and retains the ordinary exclusivity and task-thread sharing rules. A
+by-value read therefore never manufactures an untracked owning alias of
+mutable global storage. `extern` and raw static storage remain governed by
+their unsafe C boundary rather than this safe ordinary-global rule.
+
 **Move sites.** The checker treats these by-value positions as moves for
 move-only values and as copies for copyable values:
 
@@ -3501,7 +3519,12 @@ move-only values and as copies for copyable values:
 - `set!` right-hand sides. Assigning a move-only value into a definitely moved
   or definitely uninitialized local moves the value into that slot. Assigning
   over an initialized move-only slot is rejected in v1: there is no implicit
-  drop, destructor, or replacement cleanup. Move-only globals are rejected.
+  drop, destructor, or replacement cleanup. Whole-place assignment to an
+  ordinary non-cleanup-owning global instead replaces that permanent place's
+  stored value; it does not move the previous value out or run cleanup.
+  Cleanup-owning global replacement remains rejected without explicit cleanup
+  transfer. In every case, the right-hand side is checked independently and
+  cannot move a non-Copy value out of another global.
 - Tuple, fixed-array, struct, and enum constructors. Constructor arguments are
   consumed by value unless their expression is copyable or explicitly borrowed
   by a reference form.
@@ -3613,6 +3636,8 @@ by the selected arm.
   aggregate path.
 - Storing, capturing, or returning a move-only value where the destination
   would outlive the owner scope.
+- Moving a non-Copy value or projection out of an ordinary global, naming the
+  global and pointing at the attempted by-value read.
 
 Move-while-borrowed and assignment-while-borrowed diagnostics are produced by
 the borrow checker (section 3.10), not by move checking. `str` borrowing and
@@ -5617,6 +5642,10 @@ input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
 
 - A whole local or parameter storage slot, including scalar and aggregate
   locals/parameters.
+- An ordinary global storage slot. This does not constitute a safe by-value
+  read: dereferencing the resulting raw pointer to copy a non-Copy handle is an
+  explicit unsafe ownership/aliasing operation whose validity is entirely the
+  caller's responsibility.
 - A struct field path rooted in an addressable local or parameter, written as
   `(struct-get place field)` or equivalent local dotted-field sugar.
 - A fixed-array element path rooted in addressable storage, written as
@@ -5625,8 +5654,9 @@ input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
   sugar is not addressable in v1. The element index is checked with the same
   bounds policy as fixed-array element access before the pointer is returned.
 
-The operation's result type is `(MutPtr T)` for the selected owned storage of
-type `T`. V1 does not define reference-rooted address-of. A later design may
+The operation's result type is `(MutPtr T)` for the selected owned local,
+parameter, or ordinary global storage of type `T`. V1 does not define
+reference-rooted address-of. A later design may
 allow reference roots, in which case immutable roots should produce `(Ptr T)`
 and mutable roots `(MutPtr T)`.
 

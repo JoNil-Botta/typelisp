@@ -10463,7 +10463,7 @@
               (>
                 (compiler_ir_types.compiler-ir-function-list-count functions)
                 4)
-              (match compiler_lower.lower-spmd-scalar-call-context
+              (match (clone compiler_lower.lower-spmd-scalar-call-context)
                 [(compiler_lower.LowerSpmdScalarCallContext.No) true]
                 [(compiler_lower.LowerSpmdScalarCallContext.Some _) false]))])]
       [(compiler_lower.ResultCompilerLower.Err _) false])))

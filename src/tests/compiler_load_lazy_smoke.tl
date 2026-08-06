@@ -621,7 +621,7 @@
     [(ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls))
       (let
         [previous-state : compiler_load.CompilerLoadSessionState
-          compiler_load.compiler-load-active-session-state]
+          (compiler_load.compiler-load-active-session-state-shared-view)]
         [state-a : compiler_load.CompilerLoadSessionState
           (compiler_load.compiler-load-session-state-new)]
         [state-b : compiler_load.CompilerLoadSessionState

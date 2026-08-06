@@ -40677,7 +40677,7 @@
 
 (define (opt-bt-expand-witness-run [k : i64]) : i64
   (let
-    [arr : (Array i64) opt-bt-expand-witness-arr]
+    [arr : (Array i64) (clone opt-bt-expand-witness-arr)]
     (if (= (bit-and (array-ref arr 3) 2) 0)
       (+ k 100)
       (+ k 200))))

@@ -4021,9 +4021,11 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-int-to-ptr-bad-source)
       "typecheck: int->ptr requires an integer operand")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-raw-pointer-addr-of-global-source)
-      "typecheck: ptr-addr-of requires a local or parameter name")
+    ;; Globals are permanent places. Taking their address is permitted only at
+    ;; this explicit unsafe boundary; the global-move guard still rejects a
+    ;; normal by-value transfer of non-Copy global storage.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-raw-pointer-addr-of-global-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-dynamic-array-element-source)
       "typecheck: ptr-addr-of dynamic array elements are not addressable; use array-data plus ptr-offset")
@@ -7670,7 +7672,8 @@
   `(begin
     (module generated.type_kind_record)
     (import (record-leaf T) as leaf)
-    (define reflected-kind : String leaf.reflected-kind)))
+    (define reflected-kind : String
+      (unsafe (ptr-read (ptr-addr-of leaf.reflected-kind))))))
 (import (record-module Point) as first)
 (import (record-module Point) as second)
 (define (main) : i64
@@ -11698,7 +11701,7 @@
                     (struct-get decls slots)
                     (struct-get decls offset)
                     (ast.AstDecl.DefStruct
-                      ast.ast-decl-meta-runtime
+                      (ast.ast-decl-meta-runtime-shared-view)
                       name
                       (ast.AstStructRepr.C)
                       cleanup

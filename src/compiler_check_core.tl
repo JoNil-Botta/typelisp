@@ -90,7 +90,7 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
       (compiler_load.compiler-load-serial-test-session-state)
-      tc.tc-prefix-snapshot-serial-test-cache-state
+      (tc.tc-prefix-snapshot-serial-test-cache-state-shared-view)
       job-state
       (ast.ast-program decls)
       paths
@@ -426,7 +426,9 @@
 (import compiler_ast_types as ast)
 (define selected : ast.AstType (ast.AstType.I64))
 (define (main) : i64
-  (match selected [(ast.AstType.I64) 42] [_ 0]))")
+  (match (unsafe (ptr-read (ptr-addr-of selected)))
+    [(ast.AstType.I64) 42]
+    [_ 0]))")
 
 (define (compiler-check-export-source) : String
   "(defstruct Pair (left i64))

@@ -415,3 +415,19 @@ lifetime_shortening_mut_ref_referent_invariant_reject|check-fail|tests/safety/li
 lifetime_shortening_mut_ptr_invariant_reject|check-fail|tests/safety/lifetime_shortening_mut_ptr_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because mutable raw pointer referent type is invariant
 lifetime_shortening_function_variance_reject|check-fail|tests/safety/lifetime_shortening_function_variance_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because function parameter/result variance failed
 lifetime_shortening_nominal_invariant_reject|check-fail|tests/safety/lifetime_shortening_nominal_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because lifetime parameter 1 of `InvariantView` is invariant
+
+# Ordinary globals retain permanent ownership of non-Copy values. Safe code may
+# borrow/mutate/replace their places, but never manufacture an owned alias.
+global_noncopy_access_ok|check-ok|tests/safety/global_noncopy_access_ok.tl|-|-
+global_move_let_reject|check-fail|tests/safety/global_move_let_reject.tl|-|cannot move out of global `global-text`
+global_move_initializer_reject|check-fail|tests/safety/global_move_initializer_reject.tl|-|cannot move out of global `global-source`
+global_move_argument_reject|check-fail|tests/safety/global_move_argument_reject.tl|-|cannot move out of global `global-box`
+global_move_dynarray_alias_reject|check-fail|tests/safety/global_move_dynarray_alias_reject.tl|-|cannot move out of global `global-items`
+global_move_return_reject|check-fail|tests/safety/global_move_return_reject.tl|-|cannot move out of global `global-values`
+global_move_lambda_reject|check-fail|tests/safety/global_move_lambda_reject.tl|-|cannot move out of global `global-owner`
+global_move_projection_reject|check-fail|tests/safety/global_move_projection_reject.tl|-|cannot move out of global `global-owner`
+global_move_match_reject|check-fail|tests/safety/global_move_match_reject.tl|-|cannot move out of global `global-choice`
+global_move_qualified_reject|check-fail|tests/safety/global_move_qualified_reject.tl|tests/safety/global_move_qualified_helper.tl|cannot move out of global `helper.global-text`
+global_move_generated_reject|check-fail|tests/safety/global_move_generated_reject.tl|-|cannot move out of global `generated.global-text`
+global_move_task_reject|check-fail|tests/safety/global_move_task_reject.tl|-|cannot move out of global `global-text`
+global_move_spmd_reject|check-fail|tests/safety/global_move_spmd_reject.tl|-|cannot move out of global `global-text`

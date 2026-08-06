@@ -24,6 +24,13 @@
 (import stdlib.string)
 (import sym_i64_env)
 
+(defmacro (selfhost-lint-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (define (selfhost-lint-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
@@ -64,7 +71,7 @@
 (define (selfhost-lint-language-cfgs) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs-with-names
     selfhost-lint-language-target
-    selfhost-lint-language-cfg-names))
+    (clone selfhost-lint-language-cfg-names)))
 
 (define (selfhost-lint-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
@@ -879,7 +886,8 @@
   (selfhost-lint-unsafe-surface-cache-empty))
 
 (define (selfhost-lint-unsafe-surface-cache-entry [index : i64]) : SelfhostLintUnsafeSurfaceCacheEntry
-  (array-ref (struct-get selfhost-lint-unsafe-surface-cache slots) index))
+  (clone
+    (array-ref (struct-get selfhost-lint-unsafe-surface-cache slots) index)))
 
 ;; The cache arena is the explicit batch's outer arena. Entries copy only path,
 ;; declaration name, and safety bits out of each file scratch; no AST nodes,
@@ -903,6 +911,9 @@
 ;; is reset; findings-only source callers keep their existing API.
 (define selfhost-lint-typed-unused-unsafe-error : String
   "")
+
+(define (selfhost-lint-typed-unused-unsafe-error-shared-view) : String
+  (selfhost-lint-global-shared-view selfhost-lint-typed-unused-unsafe-error))
 
 (define (selfhost-lint-unsafe-surface-cache-reset!) : unit
   (begin
@@ -1856,7 +1867,7 @@
           (string.substring name member-start (- name-len member-start))]
         [target : i64
           (sym_i64_env.sym-i64-lookup-id-or
-            selfhost-lint-dead-import-aliases
+            (clone selfhost-lint-dead-import-aliases)
             (ci.intern-source-slice name 0 last-dot)
             -1)]
         [module : String

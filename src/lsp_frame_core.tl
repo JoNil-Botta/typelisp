@@ -661,7 +661,7 @@
 (define (lsp-language-cfgs) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs-with-names
     lsp-language-target
-    lsp-language-cfg-names))
+    (clone lsp-language-cfg-names)))
 
 (define (lsp-position-encoding-name) : String
   (if lsp-position-encoding-utf8

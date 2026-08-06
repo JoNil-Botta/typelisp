@@ -14,6 +14,10 @@
         (args.flag-option "verbose" "verbose" "v")
         (args.option-spec-empty)))))
 
+(define (args-api-specs-shared-view) : args.ArgsOptionSpecList
+  (unsafe
+    (ptr-read (ptr-addr-of args-api-specs))))
+
 (define (args-api-assert-true [condition : bool] [message : String]) : unit
   (if condition
     unit
@@ -102,7 +106,7 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.parse-array args-api-specs (args-api-array0))
+        (args.parse-array (args-api-specs-shared-view) (args-api-array0))
         "empty argv should parse")]
     (begin
       (args-api-assert-vec-empty
@@ -118,7 +122,9 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.parse-array args-api-specs (args-api-array3 "src.tl" "out.s" "-"))
+        (args.parse-array
+          (args-api-specs-shared-view)
+          (args-api-array3 "src.tl" "out.s" "-"))
         "positional-only argv should parse")]
     (args-api-assert-vec3
       (args.parsed-positionals (& parsed))
@@ -133,7 +139,7 @@
     [parsed : args.ArgsParsed
       (args-api-expect-ok
         (args.parse-array
-          args-api-specs
+          (args-api-specs-shared-view)
           (args-api-array5 "input.tl" "--verbose" "-o" "out.s" "rest"))
         "flags around positionals should parse")]
     (begin
@@ -160,7 +166,7 @@
     [parsed : args.ArgsParsed
       (args-api-expect-ok
         (args.parse-array
-          args-api-specs
+          (args-api-specs-shared-view)
           (args-api-array3 "--" "--verbose" "-o"))
         "end-of-options should parse")]
     (begin
@@ -179,7 +185,9 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args.parse-array args-api-specs (args-api-array1 "--output"))
+        (args.parse-array
+          (args-api-specs-shared-view)
+          (args-api-array1 "--output"))
         "missing value should fail")]
     (begin
       (args-api-assert-true
@@ -195,7 +203,9 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args.parse-array args-api-specs (args-api-array1 "--missing"))
+        (args.parse-array
+          (args-api-specs-shared-view)
+          (args-api-array1 "--missing"))
         "unknown option should fail")]
     (begin
       (args-api-assert-true
@@ -212,7 +222,7 @@
     [parsed : args.ArgsParsed
       (args-api-expect-ok
         (args.parse-array
-          args-api-specs
+          (args-api-specs-shared-view)
           (args-api-array6 "-I" "inc1" "--include" "inc2" "-v" "-v"))
         "repeated options should parse")]
     (begin
@@ -234,7 +244,9 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args.parse-array args-api-specs (args-api-array1 "--output=file"))
+        (args.parse-array
+          (args-api-specs-shared-view)
+          (args-api-array1 "--output=file"))
         "equals spelling should be rejected in v1")]
     (begin
       (args-api-assert-true

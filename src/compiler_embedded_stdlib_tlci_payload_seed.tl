@@ -8,3 +8,7 @@
   (make-array u8 0))
 (define embedded-stdlib-tlci-source-hash : String
   "")
+
+(define (embedded-stdlib-tlci-source-hash-shared-view) : String
+  (unsafe
+    (ptr-read (ptr-addr-of embedded-stdlib-tlci-source-hash))))

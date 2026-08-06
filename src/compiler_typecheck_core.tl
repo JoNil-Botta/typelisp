@@ -1539,9 +1539,25 @@
   (Ok ast.AstLifetimeList)
   (Err String))
 
+(defstruct TcLifetimeSubstNode
+  (from i64)
+  (to i64)
+  (parent i64))
+
+(defstruct TcLifetimeSubstStoreData
+  (nodes (__tl_dyn-array TcLifetimeSubstNode))
+  (len i64)
+  (owner-arena i64))
+
+;; Lifetime inference is functional: a failed structural match may retry from
+;; an earlier substitution, while successful recursion extends the newest
+;; snapshot. Keep zero/one mappings allocation-free and publish wider snapshots
+;; as stable tail indexes into one append-only dense node store. Sibling
+;; extensions append separate nodes and never rewrite their shared prefix.
 (defenum TcLifetimeSubst
   (Nil)
-  (Cons i64 i64 (Box TcLifetimeSubst)))
+  (One i64 i64)
+  (Dense i64 i64 i64))
 
 (defenum ResultTcLifetimeSubst
   (Ok TcLifetimeSubst)
@@ -15500,13 +15516,126 @@
           (set! cursor (tc-name-id-list-rest cursor))))
       out)))
 
+(define (tc-lifetime-subst-store-read [address : i64]) : TcLifetimeSubstStoreData
+  (unsafe
+    (ptr-read (int->ptr (cast address : u64) : (Ptr TcLifetimeSubstStoreData)))))
+
+(define (tc-lifetime-subst-store-write!
+  [address : i64]
+  [data : TcLifetimeSubstStoreData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast address : u64) : (MutPtr TcLifetimeSubstStoreData))
+      data)))
+
+(define (tc-lifetime-subst-store-new [from : i64] [to : i64]) : i64
+  (let
+    [cell : (__tl_dyn-array TcLifetimeSubstStoreData)
+      (array.make-array TcLifetimeSubstStoreData 1)]
+    [nodes : (__tl_dyn-array TcLifetimeSubstNode)
+      (array.make-array TcLifetimeSubstNode 4)]
+    [owner : i64 (tc-type-env-store-owner-root (arena.tl_arena_current))]
+    (begin
+      (array-set! nodes 0 (TcLifetimeSubstNode from to -1))
+      (array-set! cell 0 (TcLifetimeSubstStoreData nodes 1 owner))
+      (unsafe
+        (cast
+          (ptr->int
+            (ptr-cast (array-data cell) : (Ptr TcLifetimeSubstStoreData)))
+          : i64)))))
+
+(define (tc-lifetime-subst-store-grow!
+  [data : (&mut data TcLifetimeSubstStoreData)]
+  [required : i64]) : unit
+  (let
+    [old : (__tl_dyn-array TcLifetimeSubstNode) (struct-get data nodes)]
+    [old-capacity : i64 (array.length old)]
+    [next-capacity : i64 old-capacity]
+    (if (<= required old-capacity)
+      unit
+      (begin
+        (while (< next-capacity required)
+          (set! next-capacity (* next-capacity 2)))
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [owner : i64 (struct-get data owner-arena)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+            (let
+              [next : (__tl_dyn-array TcLifetimeSubstNode)
+                (array.make-array TcLifetimeSubstNode next-capacity)]
+              [index : i64 0]
+              (begin
+                (while (< index (struct-get data len))
+                  (let
+                    [node : TcLifetimeSubstNode (array-ref old index)]
+                    (begin
+                      (array-set!
+                        next
+                        index
+                        (TcLifetimeSubstNode
+                          (struct-get node from)
+                          (struct-get node to)
+                          (struct-get node parent)))
+                      (set! index (+ index 1)))))
+                (set! (struct-get data nodes) next)))
+            (tc-type-env-store-restore-after-owner-alloc! previous owner)))))))
+
+(define (tc-lifetime-subst-store-push!
+  [address : i64]
+  [parent : i64]
+  [from : i64]
+  [to : i64]) : i64
+  (let
+    [data : TcLifetimeSubstStoreData (tc-lifetime-subst-store-read address)]
+    [index : i64 (struct-get data len)]
+    (begin
+      (tc-lifetime-subst-store-grow! (&mut data) (+ index 1))
+      (array-set!
+        (struct-get data nodes)
+        index
+        (TcLifetimeSubstNode from to parent))
+      (set! (struct-get data len) (+ index 1))
+      (tc-lifetime-subst-store-write! address data)
+      index)))
+
+(define (tc-lifetime-subst-len [subst : TcLifetimeSubst]) : i64
+  (match subst
+    [(TcLifetimeSubst.Nil) 0]
+    [(TcLifetimeSubst.One _ _) 1]
+    [(TcLifetimeSubst.Dense _ _ len) len]))
+
 (define (tc-lifetime-subst-lookup [subst : TcLifetimeSubst] [name : i64]) : TcMaybeNameId
   (match subst
     [(TcLifetimeSubst.Nil) (TcMaybeNameId.No)]
-    [(TcLifetimeSubst.Cons from to rest)
+    [(TcLifetimeSubst.One from to)
       (if (= from name)
         (TcMaybeNameId.Some to)
-        (tc-lifetime-subst-lookup (box-get rest) name))]))
+        (TcMaybeNameId.No))]
+    [(TcLifetimeSubst.Dense address tail len)
+      (let
+        [nodes : (__tl_dyn-array TcLifetimeSubstNode)
+          (struct-get (tc-lifetime-subst-store-read address) nodes)]
+        [index : i64 tail]
+        [remaining : i64 len]
+        [found : bool false]
+        [replacement : i64 -1]
+        (begin
+          (while (and (not found) (> remaining 0))
+            (let
+              [node : TcLifetimeSubstNode (array-ref nodes index)]
+              (begin
+                (if (= (struct-get node from) name)
+                  (begin
+                    (set! replacement (struct-get node to))
+                    (set! found true))
+                  unit)
+                (set! index (struct-get node parent))
+                (set! remaining (- remaining 1)))))
+          (if found
+            (TcMaybeNameId.Some replacement)
+            (TcMaybeNameId.No))))]))
 
 (define (tc-lifetime-subst-bind
   [subst : TcLifetimeSubst]
@@ -15518,7 +15647,20 @@
         (ResultTcLifetimeSubst.Ok subst)
         (ResultTcLifetimeSubst.Err "typecheck: constructor lifetime mismatch"))]
     [(TcMaybeNameId.No)
-      (ResultTcLifetimeSubst.Ok (TcLifetimeSubst.Cons from to (box subst)))]))
+      (ResultTcLifetimeSubst.Ok
+        (match subst
+          [(TcLifetimeSubst.Nil) (TcLifetimeSubst.One from to)]
+          [(TcLifetimeSubst.One previous-from previous-to)
+            (let
+              [address : i64
+                (tc-lifetime-subst-store-new previous-from previous-to)]
+              [tail : i64 (tc-lifetime-subst-store-push! address 0 from to)]
+              (TcLifetimeSubst.Dense address tail 2))]
+          [(TcLifetimeSubst.Dense address tail len)
+            (TcLifetimeSubst.Dense
+              address
+              (tc-lifetime-subst-store-push! address tail from to)
+              (+ len 1))]))]))
 
 (define (tc-lifetime-subst-apply [subst : TcLifetimeSubst] [name : i64]) : i64
   (match (tc-lifetime-subst-lookup subst name)

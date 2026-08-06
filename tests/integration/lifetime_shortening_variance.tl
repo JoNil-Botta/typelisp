@@ -21,10 +21,12 @@
     i64)
   left)
 
-(define (same-text-owner [left : (& same str)] [right : (& same str)]) : i64
+(define (same-text-owner [_left : (& same str)] [_right : (& same str)]) : i64
   0)
 
-(define (same-consumer-owner [left : (Consumer same)] [right : (Consumer same)]) : i64
+(define (same-consumer-owner
+  [_left : (Consumer same)]
+  [_right : (Consumer same)]) : i64
   0)
 
 (define (auto-borrow-shortest [left : String] [right : String]) : i64
@@ -44,45 +46,46 @@
   (let
     [short-owner : i64 0]
     [short-shared : (& short-owner i64) shared]
-    [short-mutable : (&mut short-owner i64) mutable]
-    [short-view : (SharedView short-owner) view]
-    [short-choice : (SharedChoice short-owner) choice]
-    [constructed-view : (SharedView short-owner) (SharedView shared)]
-    [constructed-choice : (SharedChoice short-owner)
+    [_short-mutable : (&mut short-owner i64) mutable]
+    [_short-view : (SharedView short-owner) view]
+    [_short-choice : (SharedChoice short-owner) choice]
+    [_constructed-view : (SharedView short-owner) (SharedView shared)]
+    [_constructed-choice : (SharedChoice short-owner)
       (SharedChoice.Borrowed shared)]
-    [short-tuple : (Tuple (& short-owner i64)) tuple-value]
-    [short-array : (Array (& short-owner i64) 1) array-value]
-    [short-box : (Box (& short-owner i64)) boxed]
-    [short-raw : (Ptr (& short-owner i64)) raw]
-    [short-slice : (& short-owner (Slice i64)) slice]
-    [short-producer : (-> (& short-owner i64)) producer]
+    [_short-tuple : (Tuple (& short-owner i64)) tuple-value]
+    [_short-array : (Array (& short-owner i64) 1) array-value]
+    [_short-box : (Box (& short-owner i64)) boxed]
+    [_short-raw : (Ptr (& short-owner i64)) raw]
+    [_short-slice : (& short-owner (Slice i64)) slice]
+    [_short-producer : (-> (& short-owner i64)) producer]
     [short-consumer : (-> (& short-owner i64) i64)
       (lambda ([value : (& short-owner i64)]) : i64
         (deref value))]
-    [outer-consumer : (-> (& outer i64) i64) short-consumer]
+    [_outer-consumer : (-> (& outer i64) i64) short-consumer]
     [nominal-consumer : (Consumer short-owner) (Consumer short-consumer)]
     [wide-nominal-consumer : (Consumer outer) nominal-consumer]
-    [contravariant-call : i64
+    [_contravariant-call : i64
       (same-consumer-owner nominal-consumer wide-nominal-consumer)]
-    [contravariant-call-reversed : i64
+    [_contravariant-call-reversed : i64
       (same-consumer-owner wide-nominal-consumer nominal-consumer)]
-    [chosen : (& short-owner i64) (choose-left shared short-shared)]
-    [chosen-reversed : (& short-owner i64) (choose-left short-shared shared)]
-    [joined : (& short-owner i64)
+    [_chosen : (& short-owner i64) (choose-left shared short-shared)]
+    [_chosen-reversed : (& short-owner i64) (choose-left short-shared shared)]
+    [_joined : (& short-owner i64)
       (if (= (deref short-shared) 42)
         shared
         short-shared)]
-    [matched : (& short-owner i64)
+    [_matched : (& short-owner i64)
       (match choice
         [(SharedChoice.Borrowed value) value]
         [(SharedChoice.Empty) short-shared])]
-    [captured : (-> (& short-owner i64))
+    [_captured : (-> (& short-owner i64))
       (lambda () : (& short-owner i64)
         shared)]
     [slot : (& short-owner i64) short-shared]
+    [before-assignment : i64 (deref slot)]
     (begin
       (set! slot shared)
-      0)))
+      (+ before-assignment (deref slot)))))
 
 (define (main) : i64
   42)

@@ -15645,6 +15645,23 @@
             (TcMaybeNameId.Some replacement)
             (TcMaybeNameId.No))))]))
 
+(define (tc-lifetime-subst-push
+  [subst : TcLifetimeSubst]
+  [from : i64]
+  [to : i64]) : TcLifetimeSubst
+  (match subst
+    [(TcLifetimeSubst.Nil) (TcLifetimeSubst.One from to)]
+    [(TcLifetimeSubst.One previous-from previous-to)
+      (let
+        [address : i64 (tc-lifetime-subst-store-new previous-from previous-to)]
+        [tail : i64 (tc-lifetime-subst-store-push! address 0 from to)]
+        (TcLifetimeSubst.Dense address tail 2))]
+    [(TcLifetimeSubst.Dense address tail len)
+      (TcLifetimeSubst.Dense
+        address
+        (tc-lifetime-subst-store-push! address tail from to)
+        (+ len 1))]))
+
 (define (tc-lifetime-subst-bind
   [subst : TcLifetimeSubst]
   [from : i64]
@@ -15655,20 +15672,7 @@
         (ResultTcLifetimeSubst.Ok subst)
         (ResultTcLifetimeSubst.Err "typecheck: constructor lifetime mismatch"))]
     [(TcMaybeNameId.No)
-      (ResultTcLifetimeSubst.Ok
-        (match subst
-          [(TcLifetimeSubst.Nil) (TcLifetimeSubst.One from to)]
-          [(TcLifetimeSubst.One previous-from previous-to)
-            (let
-              [address : i64
-                (tc-lifetime-subst-store-new previous-from previous-to)]
-              [tail : i64 (tc-lifetime-subst-store-push! address 0 from to)]
-              (TcLifetimeSubst.Dense address tail 2))]
-          [(TcLifetimeSubst.Dense address tail len)
-            (TcLifetimeSubst.Dense
-              address
-              (tc-lifetime-subst-store-push! address tail from to)
-              (+ len 1))]))]))
+      (ResultTcLifetimeSubst.Ok (tc-lifetime-subst-push subst from to))]))
 
 (define (tc-lifetime-subst-apply [subst : TcLifetimeSubst] [name : i64]) : i64
   (match (tc-lifetime-subst-lookup subst name)
@@ -32623,7 +32627,7 @@
             (cond
               [(tc-lifetime-outlives-lifetime-id? env existing to)
                 (ResultTcLifetimeSubst.Ok
-                  (TcLifetimeSubst.Cons from to (box subst)))]
+                  (tc-lifetime-subst-push subst from to))]
               [(tc-lifetime-outlives-lifetime-id? env to existing)
                 (ResultTcLifetimeSubst.Ok subst)]
               [else
@@ -32635,7 +32639,7 @@
                 (ResultTcLifetimeSubst.Ok subst)]
               [(tc-lifetime-outlives-lifetime-id? env to existing)
                 (ResultTcLifetimeSubst.Ok
-                  (TcLifetimeSubst.Cons from to (box subst)))]
+                  (tc-lifetime-subst-push subst from to))]
               [else
                 (ResultTcLifetimeSubst.Err
                   (tc-call-lifetime-subst-mismatch-message))])]
@@ -32643,7 +32647,7 @@
             (ResultTcLifetimeSubst.Err
               (tc-call-lifetime-subst-mismatch-message))]))]
     [(TcMaybeNameId.No)
-      (ResultTcLifetimeSubst.Ok (TcLifetimeSubst.Cons from to (box subst)))]))
+      (ResultTcLifetimeSubst.Ok (tc-lifetime-subst-push subst from to))]))
 
 (define (tc-infer-call-lifetime-name
   [env : TcTypeEnv]

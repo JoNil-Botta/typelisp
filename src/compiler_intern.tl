@@ -2088,6 +2088,66 @@
             (array-set! (struct-get state generated-next-id) 0 (- next-id 1))
             next-id))))))
 
+;; Reserve a renderable generated-symbol lane without constructing its text.
+;; The caller owns the structural record and must materialize the exact spelling
+;; before crossing a text boundary. Metadata consumers can use the handle in the
+;; meantime with the same zero-cost array access as every other generated name.
+(define (intern-compat-state-generated-symbol-handle
+  [state : InternCompatState]) : i64
+  (begin
+    (if (array-ref (struct-get state map-ready) 0)
+      unit
+      (intern-compat-state-reset! state))
+    (let
+      [next-id : i64 (array-ref (struct-get state generated-next-id) 0)]
+      (if (< next-id (intern-compat-state-pool-len state))
+        (tl_oob_abort)
+        (begin
+          (array-set! (struct-get state pool-slots) next-id "")
+          (array-set! (struct-get state pool-qualified-slots) next-id false)
+          (array-set!
+            (struct-get state pool-last-slash-slots)
+            next-id
+            (cast -1 : i32))
+          (array-set!
+            (struct-get state pool-first-dot-slots)
+            next-id
+            (cast -1 : i32))
+          (array-set!
+            (struct-get state pool-leading-dot-id-slots)
+            next-id
+            (intern-id-slot-encode -1))
+          (array-set!
+            (struct-get state pool-dotted-prefix-id-slots)
+            next-id
+            (intern-id-slot-encode -1))
+          (array-set!
+            (struct-get state pool-module-id-slots)
+            next-id
+            (intern-id-slot-encode -1))
+          (array-set!
+            (struct-get state pool-base-id-slots)
+            next-id
+            (intern-id-slot-encode next-id))
+          (array-set! (struct-get state generated-next-id) 0 (- next-id 1))
+          next-id)))))
+
+(define (intern-compat-state-generated-symbol-materialize!
+  [state : InternCompatState]
+  [id : i64]
+  [name : String]) : String
+  (if (intern-compat-state-generated-id-active? state id)
+    (let
+      [cached : String (array-ref (struct-get state pool-slots) id)]
+      (if (> (intern-private-string-length cached) 0)
+        cached
+        (let
+          [persistent : String (intern-compat-state-persistent-copy state name)]
+          (begin
+            (array-set! (struct-get state pool-slots) id persistent)
+            persistent))))
+    (tl_oob_abort)))
+
 (define (intern-compat-state-generated-id-active?
   [state : InternCompatState]
   [id : i64]) : bool

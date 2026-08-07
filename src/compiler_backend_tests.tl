@@ -19,6 +19,7 @@
 (import compiler_liveness)
 (import compiler_optimize)
 (import compiler_lower_tests)
+(import compiler_regalloc_tests)
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
@@ -6053,7 +6054,7 @@
       (compiler_regalloc.compiler-reg-plan-assignments
         (compiler_regalloc.compiler-reg-plan-function-scalar-for-abi
           compiler_abi.CompilerRegTargetAbi.Windows
-          (compiler_regalloc.compiler-reg-f64-call-live-function)))]
+          (compiler_regalloc_tests.compiler-reg-f64-call-live-function)))]
     [planned-frame : i64
       (compiler_backend.compiler-backend-frame-size
         (compiler_backend.compiler-backend-frame-slots 3 planned backend-state))]
@@ -18300,7 +18301,7 @@
 (define (compiler-backend-avx2-vector-homes-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-target-with-mode
     (compiler-backend-vector-home-program
-      (compiler_regalloc.compiler-reg-vector-home-function))
+      (compiler_regalloc_tests.compiler-reg-vector-home-function))
     (compiler_backend.CompilerBackendTarget.Linux)
     (compiler_backend.CompilerBackendMode.Avx2)
     (compiler_ir_types.compiler-source-spans-empty)
@@ -18375,7 +18376,7 @@
 (define (compiler-backend-avx512-select-false-home-asm-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-target-with-mode
     (compiler-backend-vector-home-program
-      (compiler_regalloc.compiler-reg-vector-select-false-home-function))
+      (compiler_regalloc_tests.compiler-reg-vector-select-false-home-function))
     (compiler_backend.CompilerBackendTarget.Linux)
     (compiler_backend.CompilerBackendMode.Avx512)
     (compiler_ir_types.compiler-source-spans-empty)
@@ -18398,7 +18399,7 @@
 (define (compiler-backend-avx512-mask-homes-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-target-with-mode
     (compiler-backend-vector-home-program
-      (compiler_regalloc.compiler-reg-mask-home-function))
+      (compiler_regalloc_tests.compiler-reg-mask-home-function))
     (compiler_backend.CompilerBackendTarget.Linux)
     (compiler_backend.CompilerBackendMode.Avx512)
     (compiler_ir_types.compiler-source-spans-empty)

@@ -250,37 +250,26 @@
     [mass : i64vec.Vec (nb-zero-vec n)]
     [round : i64 0]
     [acc : i64 0]
+    [px-slots : (&mut px (Slice i64)) (i64vec.view-mut (&mut px))]
+    [py-slots : (&mut py (Slice i64)) (i64vec.view-mut (&mut py))]
+    [vx-slots : (&mut vx (Slice i64)) (i64vec.view-mut (&mut vx))]
+    [vy-slots : (&mut vy (Slice i64)) (i64vec.view-mut (&mut vy))]
+    [ax-slots : (&mut ax (Slice i64)) (i64vec.view-mut (&mut ax))]
+    [ay-slots : (&mut ay (Slice i64)) (i64vec.view-mut (&mut ay))]
+    [mass-slots : (&mut mass (Slice i64)) (i64vec.view-mut (&mut mass))]
     (begin
-      (let
-        [px-slots : (&mut px (Slice i64)) (i64vec.view-mut (&mut px))]
-        [py-slots : (&mut py (Slice i64)) (i64vec.view-mut (&mut py))]
-        [vx-slots : (&mut vx (Slice i64)) (i64vec.view-mut (&mut vx))]
-        [vy-slots : (&mut vy (Slice i64)) (i64vec.view-mut (&mut vy))]
-        [ax-slots : (&mut ax (Slice i64)) (i64vec.view-mut (&mut ax))]
-        [ay-slots : (&mut ay (Slice i64)) (i64vec.view-mut (&mut ay))]
-        [mass-slots : (&mut mass (Slice i64)) (i64vec.view-mut (&mut mass))]
+      (nb-seed px-slots py-slots vx-slots vy-slots mass-slots n 1)
+      (while (< round rounds)
         (begin
-          (nb-seed px-slots py-slots vx-slots vy-slots mass-slots n 1)
-          (while (< round rounds)
-            (begin
-              (nb-forces px-slots py-slots mass-slots ax-slots ay-slots n)
-              (nb-integrate
-                px-slots
-                py-slots
-                vx-slots
-                vy-slots
-                ax-slots
-                ay-slots
-                n)
-              (set!
-                acc
-                (%
-                  (+
-                    (* acc 31)
-                    (nb-checksum px-slots py-slots vx-slots vy-slots n))
-                  nb-modulus))
-              (set! round (+ round 1))))
-          acc)))))
+          (nb-forces px-slots py-slots mass-slots ax-slots ay-slots n)
+          (nb-integrate px-slots py-slots vx-slots vy-slots ax-slots ay-slots n)
+          (set!
+            acc
+            (%
+              (+ (* acc 31) (nb-checksum px-slots py-slots vx-slots vy-slots n))
+              nb-modulus))
+          (set! round (+ round 1))))
+      acc)))
 
 (define (main) : i64
   (let

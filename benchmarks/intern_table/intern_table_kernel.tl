@@ -81,7 +81,7 @@
 
 (define (it-string-to-u8-vec [source : String]) : u8vec.Vec
   (let
-    [n : i64 (string-length source)]
+    [n : i64 (string.string-length source)]
     [out : u8vec.Vec (u8vec.Vec (array.make-array u8 n) n)]
     [slots (u8vec.slots-mut (&mut out))]
     [src : (Ptr u8)

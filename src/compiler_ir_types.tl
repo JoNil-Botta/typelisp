@@ -4737,15 +4737,6 @@
               "\n")])
         (box-get rest))]))
 
-(define (compiler-ir-function-list-render
-  [type-segment-bases : i64]
-  [functions : CompilerIrFunctionList]) : String
-  (text_buf.render
-    (compiler-ir-function-list-render-into
-      type-segment-bases
-      (text_buf.empty)
-      functions)))
-
 (define (compiler-ir-global-render
   [type-segment-bases : i64]
   [global : CompilerIrGlobal]) : String
@@ -4778,15 +4769,6 @@
           buf
           (compiler-ir-global-render type-segment-bases global))
         (box-get rest))]))
-
-(define (compiler-ir-global-list-render
-  [type-segment-bases : i64]
-  [globals : CompilerIrGlobalList]) : String
-  (text_buf.render
-    (compiler-ir-global-list-render-into
-      type-segment-bases
-      (text_buf.empty)
-      globals)))
 
 (define (compiler-ir-extern-abi-render
   [type-segment-bases : i64]
@@ -4836,15 +4818,6 @@
           buf
           (compiler-ir-extern-render type-segment-bases extern))
         (box-get rest))]))
-
-(define (compiler-ir-extern-list-render
-  [type-segment-bases : i64]
-  [externs : CompilerIrExternList]) : String
-  (text_buf.render
-    (compiler-ir-extern-list-render-into
-      type-segment-bases
-      (text_buf.empty)
-      externs)))
 
 (define (compiler-ir-program-render
   [type-segment-bases : i64]

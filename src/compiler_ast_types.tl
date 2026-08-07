@@ -5524,17 +5524,8 @@
 (define (ast-expr-comptime [inner : i64]) : i64
   (ast-node-push (AstExpr.Comptime inner)))
 
-(define (ast-expr-quote [inner : i64]) : i64
-  (ast-node-push (AstExpr.Quote inner)))
-
 (define (ast-expr-quasiquote [inner : i64]) : i64
   (ast-node-push (AstExpr.Quasiquote inner)))
-
-(define (ast-expr-unquote [inner : i64]) : i64
-  (ast-node-push (AstExpr.Unquote inner)))
-
-(define (ast-expr-unquote-splicing [inner : i64]) : i64
-  (ast-node-push (AstExpr.UnquoteSplicing inner)))
 
 (define (ast-expr-try [inner : i64]) : i64
   (ast-node-push (AstExpr.Try inner)))
@@ -5566,17 +5557,11 @@
 (define (ast-expr-ptr-cast [ptr : i64] [ty : AstType]) : i64
   (ast-node-push (AstExpr.PtrCast ptr (ty-node-push ty))))
 
-(define (ast-expr-ptr-cast-id [ptr : i64] [ty-id : i64]) : i64
-  (ast-node-push (AstExpr.PtrCast ptr ty-id)))
-
 (define (ast-expr-ptr-to-int [ptr : i64]) : i64
   (ast-node-push (AstExpr.PtrToInt ptr)))
 
 (define (ast-expr-int-to-ptr [value : i64] [ty : AstType]) : i64
   (ast-node-push (AstExpr.IntToPtr value (ty-node-push ty))))
-
-(define (ast-expr-int-to-ptr-id [value : i64] [ty-id : i64]) : i64
-  (ast-node-push (AstExpr.IntToPtr value ty-id)))
 
 (define (ast-expr-string-data [value : i64]) : i64
   (ast-node-push (AstExpr.StringData value)))

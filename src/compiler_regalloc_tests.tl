@@ -6577,6 +6577,9 @@
       "compiler-reg-color-spill-param-pins-ok?"
       (reg.compiler-reg-color-spill-param-pins-ok?))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-color-avx2-param-ranges-ok?"
+      (reg.compiler-reg-color-avx2-param-ranges-ok?))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-color-spill-hole-demand-ok?"
       (reg.compiler-reg-color-spill-hole-demand-ok?))
     (compiler-regalloc-self-test-require!

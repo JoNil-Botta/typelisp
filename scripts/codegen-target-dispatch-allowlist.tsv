@@ -54,7 +54,8 @@ src/compiler_backend.tl	compiler-backend-debug-function-end-label	object-format	
 src/compiler_backend.tl	compiler-backend-debug-trailer	object-format	compiler-backend-target-(linux|windows)[?]	2	Debug trailers select DWARF metadata on Linux and CodeView metadata on Windows.
 src/compiler_backend.tl	compiler-backend-call-arg-space-from	abi	CompilerBackendTarget[.](Linux|Windows)	2	Per-call stack adjustment is explicitly zero for both pre-reserved target frames.
 src/compiler_backend.tl	compiler-backend-varargs-pre-call	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V and Win64 varargs setup are different ABIs.
-src/compiler_backend.tl	compiler-backend-abort-site-target	runtime	CompilerBackendTarget[.]Linux	1	The inactive abort-site state uses Linux as a harmless default and is overwritten from the emission context before target ABI registers are selected.
+src/compiler_backend.tl	compiler-backend-function-state-new	runtime	CompilerBackendTarget[.]Linux	1	Fresh function state initializes its inactive abort-site target to Linux before the emission context installs the active target.
+src/compiler_backend.tl	compiler-backend-function-state-reset!	runtime	CompilerBackendTarget[.]Linux	1	Reset function state restores the inactive abort-site target to its harmless Linux default.
 src/compiler_backend.tl	compiler-backend-abort-arg-reg	abi	CompilerBackendTarget[.](Linux|Windows)	2	Runtime abort diagnostics pass their site and value operands in the target calling convention's integer argument registers.
 src/compiler_backend.tl	compiler-backend-atomic-ptr-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's first integer argument register.
 src/compiler_backend.tl	compiler-backend-atomic-value-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's second integer argument register.

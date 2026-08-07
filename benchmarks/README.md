@@ -45,7 +45,7 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
 | Name | Workload |
 |------|----------|
 | `arith_loop` | Scalar LCG recurrence over wrapping 64-bit arithmetic. |
-| `array_sum` | `(Array i64)` fill + repeated sum, with the accumulator stored back per round to defeat loop-invariant folding (refs #1098). |
+| `array_sum` | `Vec i64` fill + repeated backing-storage sum, with the accumulator stored back per round to defeat loop-invariant folding (refs #1098). |
 | `borrowed_disjoint_store` | Loop-invariant shared checked-reference loads separated by a non-inlined direct call that writes through a distinct mutable-reference root (refs #5201, #5216). |
 | `string_scan` | Polynomial rolling hash (`acc = acc * 131 + byte`) over a fixed ASCII string scanned many rounds, carrying the hash across rounds (refs #1098). |
 | `hashmap_get` | Generated i64/i64 hashmap hit/miss lookups on a fixed map, focused on the read probe path (refs #2166). |
@@ -79,9 +79,9 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
 | `opt_recursion_tail` | Tail-recursive call workload. |
 | `opt_struct_enum_dispatch` | Struct and enum dispatch workload. |
 | `opt_allocation_heavy` | Allocation-heavy runtime workload. |
-| `opt_quicksort` | Recursive Lomuto quicksort over an `(Array i64)`, exercising non-tail recursion, bounds-checked indexing, and in-place swaps. |
-| `opt_crc32` | Table-driven reflected CRC-32, exercising bitwise ops, 256-entry table lookups, and `(Array u8)` byte handling. |
-| `opt_bytecode_vm` | Stack bytecode interpreter, exercising enum `match` with a payload variant, a dispatch loop over `(Array Inst)`, and a stack `(Array i64)`. |
+| `opt_quicksort` | Recursive Lomuto quicksort over `Vec i64` backing storage, exercising non-tail recursion, bounds-checked indexing, and in-place swaps. |
+| `opt_crc32` | Table-driven reflected CRC-32, exercising bitwise ops, a 256-entry `Vec i64` table, and `Vec u8` byte handling. |
+| `opt_bytecode_vm` | Stack bytecode interpreter, exercising enum `match` with a payload variant, a dispatch loop over fixed `(Array Inst 9)`, and fixed `(Array i64 2)` stack scratch. |
 
 ### Writing a benchmark
 

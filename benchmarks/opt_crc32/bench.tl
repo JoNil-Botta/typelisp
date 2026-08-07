@@ -5,12 +5,16 @@
 ;# buffer many rounds, perturbing one buffer byte per round so the work cannot be
 ;# constant-folded, and folds each round's CRC into a wrapping accumulator.
 ;# Exercises bitwise ops (xor / shift / and), 256-entry table lookups, and
-;# `(Array u8)` byte handling. The buffer length and round count are runtime
+;# direct access to a `Vec`'s inferred backing storage. The buffer length and
+;# round count are runtime
 ;# arguments; the accumulator stays in [0, 2^32) so its printed decimal matches
 ;# the C baseline.
 (import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector i64) as i64vec)
+(import (vector.vector u8) as u8vec)
 
 (define crc-low-mask : i64
   4294967295)
@@ -32,53 +36,65 @@
           (set! bit (+ bit 1))))
       crc)))
 
-(define (crc-build-table) : (Array i64)
+(define (crc-build-table) : i64vec.Vec
   (let
-    [table : (Array i64) (array.make-array i64 256)]
+    [table : i64vec.Vec (i64vec.Vec (array.make-array i64 256) 256)]
+    [slots (i64vec.slots-mut (&mut table))]
     [n : i64 0]
     (begin
       (while (< n 256)
         (begin
-          (array-set! table n (crc-table-entry n))
+          (array-set! slots n (crc-table-entry n))
           (set! n (+ n 1))))
       table)))
 
-(define (crc-update [table : (Array i64)] [buf : (Array u8)] [len : i64]) : i64
+(define (crc-update
+  [table : (& table i64vec.Vec)]
+  [buf : (&mut buf u8vec.Vec)]
+  [len : i64]) : i64
   (let
+    [table-slots (i64vec.slots table)]
+    [buf-slots (u8vec.slots-mut buf)]
     [crc : i64 crc-low-mask]
     [i : i64 0]
     (begin
       (while (< i len)
         (begin
           (let
-            [byte : i64 (cast (array-ref buf i) : i64)]
+            [byte : i64 (cast (array-ref buf-slots i) : i64)]
             [index : i64 (bit-and (bit-xor crc byte) crc-byte-mask)]
-            (set! crc (bit-xor (shr crc 8) (array-ref table index))))
+            (set! crc (bit-xor (shr crc 8) (array-ref table-slots index))))
           (set! i (+ i 1))))
       (bit-xor crc crc-low-mask))))
 
-(define (crc-fill [buf : (Array u8)] [len : i64]) : unit
+(define (crc-fill [buf : (&mut buf u8vec.Vec)] [len : i64]) : unit
   (let
+    [slots (u8vec.slots-mut buf)]
     [i : i64 0]
     (begin
       (while (< i len)
         (begin
-          (array-set! buf i (cast (bit-and (+ (* i 167) 13) 255) : u8))
+          (array-set! slots i (cast (bit-and (+ (* i 167) 13) 255) : u8))
           (set! i (+ i 1))))
       unit)))
 
 (define (crc-bench [len : i64] [rounds : i64]) : i64
   (let
-    [table : (Array i64) (crc-build-table)]
-    [buf : (Array u8) (array.make-array u8 len)]
+    [table : i64vec.Vec (crc-build-table)]
+    [buf : u8vec.Vec (u8vec.Vec (array.make-array u8 len) len)]
     [round : i64 0]
     [acc : i64 0]
     (begin
-      (crc-fill buf len)
+      (crc-fill (&mut buf) len)
       (while (< round rounds)
         (begin
-          (array-set! buf (% round len) (cast (bit-and (+ round 1) 255) : u8))
-          (set! acc (bit-and (+ acc (crc-update table buf len)) crc-low-mask))
+          (u8vec.set
+            (&mut buf)
+            (% round len)
+            (cast (bit-and (+ round 1) 255) : u8))
+          (set!
+            acc
+            (bit-and (+ acc (crc-update (& table) (&mut buf) len)) crc-low-mask))
           (set! round (+ round 1))))
       acc)))
 

@@ -48,10 +48,30 @@
 ;# repeats an earlier round's accumulator. The checksum is a wrapping 64-bit
 ;# FNV-1a fold with no division, so the printed decimal matches the C baseline's
 ;# `%lld` bit for bit.
-(import stdlib.array)
 (import stdlib.byte_buf)
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector i64) as i64vec)
+
+(define (cfg-zero-vec [n : i64]) : i64vec.Vec
+  (i64vec.Vec (array.make-array i64 n) n))
+
+(define (cfg-vec-ref [items : (& items i64vec.Vec)] [index : i64]) : i64
+  (array-ref (i64vec.slots items) index))
+
+(define (cfg-vec-set!
+  [items : (&mut items i64vec.Vec)]
+  [index : i64]
+  [value : i64]) : unit
+  (array-set! (i64vec.slots-mut items) index value))
+
+(defmacro (cfg-ref [items : Expr] [index : Expr]) : Expr
+  `(cfg-vec-ref (& ,items) ,index))
+
+(defmacro (cfg-set! [items : Expr] [index : Expr] [value : Expr]) : Expr
+  `(cfg-vec-set! (&mut ,items) ,index ,value))
 
 (define cfg-hash-basis : i64
   1469598103934665603)
@@ -61,50 +81,50 @@
 ;; Parsed corpus tokens and the scratch arrays every per-function pass reuses.
 ;; Module globals keep the analysis functions parameterless, matching how the
 ;; compiler threads one workspace through a pass.
-(define cfg-tokens : (Array i64)
-  (array.make-array i64 1))
-(define cfg-offsets : (Array i64)
-  (array.make-array i64 1))
-(define cfg-succ-off : (Array i64)
-  (array.make-array i64 1))
-(define cfg-succ-edge : (Array i64)
-  (array.make-array i64 1))
-(define cfg-succ-fill : (Array i64)
-  (array.make-array i64 1))
-(define cfg-pred-off : (Array i64)
-  (array.make-array i64 1))
-(define cfg-pred-edge : (Array i64)
-  (array.make-array i64 1))
-(define cfg-pred-fill : (Array i64)
-  (array.make-array i64 1))
-(define cfg-child-off : (Array i64)
-  (array.make-array i64 1))
-(define cfg-child-edge : (Array i64)
-  (array.make-array i64 1))
-(define cfg-child-fill : (Array i64)
-  (array.make-array i64 1))
-(define cfg-reachable : (Array i64)
-  (array.make-array i64 1))
-(define cfg-postorder : (Array i64)
-  (array.make-array i64 1))
-(define cfg-rpo : (Array i64)
-  (array.make-array i64 1))
-(define cfg-rpo-num : (Array i64)
-  (array.make-array i64 1))
-(define cfg-idom : (Array i64)
-  (array.make-array i64 1))
-(define cfg-tin : (Array i64)
-  (array.make-array i64 1))
-(define cfg-tout : (Array i64)
-  (array.make-array i64 1))
-(define cfg-marks : (Array i64)
-  (array.make-array i64 1))
-(define cfg-worklist : (Array i64)
-  (array.make-array i64 1))
-(define cfg-stack-node : (Array i64)
-  (array.make-array i64 1))
-(define cfg-stack-edge : (Array i64)
-  (array.make-array i64 1))
+(define cfg-tokens : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-offsets : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-succ-off : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-succ-edge : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-succ-fill : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-pred-off : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-pred-edge : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-pred-fill : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-child-off : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-child-edge : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-child-fill : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-reachable : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-postorder : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-rpo : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-rpo-num : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-idom : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-tin : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-tout : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-marks : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-worklist : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-stack-node : i64vec.Vec
+  (cfg-zero-vec 1))
+(define cfg-stack-edge : i64vec.Vec
+  (cfg-zero-vec 1))
 
 ;; Per-function view of the corpus, set by cfg-function before it runs.
 (define cfg-blocks : i64
@@ -129,7 +149,7 @@
 
 ;; Whitespace-separated decimal integers, with `#` starting a comment that runs
 ;; to the end of its line.
-(define (cfg-scan-ints [text : String] [out : (Array i64)]) : i64
+(define (cfg-scan-ints [text : String] [out : (&mut out i64vec.Vec)]) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -154,7 +174,7 @@
                         value
                         (+ (* value 10) (- (cfg-byte-at text n i) 48)))
                       (set! i (+ i 1))))
-                  (array-set!
+                  (i64vec.set
                     out
                     count
                     (if negative
@@ -169,7 +189,14 @@
 ;; reproduces the compiler's successor rows exactly; predecessor rows come out
 ;; in ascending source order, which is the order `opt-i64-list-add` builds and
 ;; `opt-cfg-csr-fill-rows!` reverses back.
-(define (cfg-build-csr) : unit
+(define (cfg-build-csr
+  [tokens-vec : (& tokens i64vec.Vec)]
+  [succ-off-vec : (&mut succ-off i64vec.Vec)]
+  [succ-edge-vec : (&mut succ-edge i64vec.Vec)]
+  [succ-fill-vec : (&mut succ-fill i64vec.Vec)]
+  [pred-off-vec : (&mut pred-off i64vec.Vec)]
+  [pred-edge-vec : (&mut pred-edge i64vec.Vec)]
+  [pred-fill-vec : (&mut pred-fill i64vec.Vec)]) : unit
   (let
     [count : i64 cfg-blocks]
     [i : i64 0]
@@ -177,48 +204,86 @@
     [succ-total : i64 0]
     [pred-total : i64 0]
     (begin
-      (while (< i count)
+      (let
+        [tokens (i64vec.slots tokens-vec)]
+        [succ-fill (i64vec.slots-mut succ-fill-vec)]
+        [pred-fill (i64vec.slots-mut pred-fill-vec)]
         (begin
-          (array-set! cfg-succ-fill i 0)
-          (array-set! cfg-pred-fill i 0)
-          (set! i (+ i 1))))
-      (set! edge 0)
-      (while (< edge cfg-edges)
-        (let
-          [src : i64 (array-ref cfg-tokens (+ cfg-edge-base (* edge 2)))]
-          [dst : i64 (array-ref cfg-tokens (+ (+ cfg-edge-base (* edge 2)) 1))]
-          (begin
-            (array-set! cfg-succ-fill src (+ (array-ref cfg-succ-fill src) 1))
-            (array-set! cfg-pred-fill dst (+ (array-ref cfg-pred-fill dst) 1))
-            (set! edge (+ edge 1)))))
-      (set! i 0)
-      (while (< i count)
+          (while (< i count)
+            (begin
+              (array-set! succ-fill i 0)
+              (array-set! pred-fill i 0)
+              (set! i (+ i 1))))
+          (set! edge 0)
+          (while (< edge cfg-edges)
+            (let
+              [src : i64 (array-ref tokens (+ cfg-edge-base (* edge 2)))]
+              [dst : i64 (array-ref tokens (+ (+ cfg-edge-base (* edge 2)) 1))]
+              (begin
+                (array-set! succ-fill src (+ (array-ref succ-fill src) 1))
+                (array-set! pred-fill dst (+ (array-ref pred-fill dst) 1))
+                (set! edge (+ edge 1)))))
+          0))
+      (let
+        [succ-off (i64vec.slots-mut succ-off-vec)]
+        [succ-fill (i64vec.slots-mut succ-fill-vec)]
+        [pred-off (i64vec.slots-mut pred-off-vec)]
+        [pred-fill (i64vec.slots-mut pred-fill-vec)]
         (begin
-          (array-set! cfg-succ-off i succ-total)
-          (set! succ-total (+ succ-total (array-ref cfg-succ-fill i)))
-          (array-set! cfg-succ-fill i (array-ref cfg-succ-off i))
-          (array-set! cfg-pred-off i pred-total)
-          (set! pred-total (+ pred-total (array-ref cfg-pred-fill i)))
-          (array-set! cfg-pred-fill i (array-ref cfg-pred-off i))
-          (set! i (+ i 1))))
-      (array-set! cfg-succ-off count succ-total)
-      (array-set! cfg-pred-off count pred-total)
-      (set! edge 0)
-      (while (< edge cfg-edges)
-        (let
-          [src : i64 (array-ref cfg-tokens (+ cfg-edge-base (* edge 2)))]
-          [dst : i64 (array-ref cfg-tokens (+ (+ cfg-edge-base (* edge 2)) 1))]
-          (begin
-            (array-set! cfg-succ-edge (array-ref cfg-succ-fill src) dst)
-            (array-set! cfg-succ-fill src (+ (array-ref cfg-succ-fill src) 1))
-            (array-set! cfg-pred-edge (array-ref cfg-pred-fill dst) src)
-            (array-set! cfg-pred-fill dst (+ (array-ref cfg-pred-fill dst) 1))
-            (set! edge (+ edge 1))))))))
+          (set! i 0)
+          (while (< i count)
+            (begin
+              (array-set! succ-off i succ-total)
+              (set! succ-total (+ succ-total (array-ref succ-fill i)))
+              (array-set! succ-fill i (array-ref succ-off i))
+              (array-set! pred-off i pred-total)
+              (set! pred-total (+ pred-total (array-ref pred-fill i)))
+              (array-set! pred-fill i (array-ref pred-off i))
+              (set! i (+ i 1))))
+          (array-set! succ-off count succ-total)
+          (array-set! pred-off count pred-total)
+          0))
+      (let
+        [tokens (i64vec.slots tokens-vec)]
+        [succ-edge (i64vec.slots-mut succ-edge-vec)]
+        [succ-fill (i64vec.slots-mut succ-fill-vec)]
+        [pred-edge (i64vec.slots-mut pred-edge-vec)]
+        [pred-fill (i64vec.slots-mut pred-fill-vec)]
+        (begin
+          (set! edge 0)
+          (while (< edge cfg-edges)
+            (let
+              [src : i64 (array-ref tokens (+ cfg-edge-base (* edge 2)))]
+              [dst : i64 (array-ref tokens (+ (+ cfg-edge-base (* edge 2)) 1))]
+              (begin
+                (array-set! succ-edge (array-ref succ-fill src) dst)
+                (array-set! succ-fill src (+ (array-ref succ-fill src) 1))
+                (array-set! pred-edge (array-ref pred-fill dst) src)
+                (array-set! pred-fill dst (+ (array-ref pred-fill dst) 1))
+                (set! edge (+ edge 1)))))
+          0))
+      unit)))
 
 ;; opt-cfg-index-dfs-postorder! written with an explicit stack: mark on entry,
 ;; append on exit, successors in CSR row order.
-(define (cfg-dfs-postorder) : unit
+(define (cfg-dfs-postorder
+  [succ-off-vec : (& succ-off i64vec.Vec)]
+  [succ-edge-vec : (& succ-edge i64vec.Vec)]
+  [reachable-vec : (&mut reachable i64vec.Vec)]
+  [postorder-vec : (&mut postorder i64vec.Vec)]
+  [rpo-vec : (&mut rpo i64vec.Vec)]
+  [rpo-num-vec : (&mut rpo-num i64vec.Vec)]
+  [stack-node-vec : (&mut stack-node i64vec.Vec)]
+  [stack-edge-vec : (&mut stack-edge i64vec.Vec)]) : unit
   (let
+    [succ-off (i64vec.slots succ-off-vec)]
+    [succ-edge (i64vec.slots succ-edge-vec)]
+    [reachable (i64vec.slots-mut reachable-vec)]
+    [postorder (i64vec.slots-mut postorder-vec)]
+    [rpo (i64vec.slots-mut rpo-vec)]
+    [rpo-num (i64vec.slots-mut rpo-num-vec)]
+    [stack-node (i64vec.slots-mut stack-node-vec)]
+    [stack-edge (i64vec.slots-mut stack-edge-vec)]
     [count : i64 cfg-blocks]
     [i : i64 0]
     [sp : i64 0]
@@ -226,211 +291,265 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! cfg-reachable i 0)
-          (array-set! cfg-postorder i -1)
-          (array-set! cfg-rpo i -1)
-          (array-set! cfg-rpo-num i -1)
+          (array-set! reachable i 0)
+          (array-set! postorder i -1)
+          (array-set! rpo i -1)
+          (array-set! rpo-num i -1)
           (set! i (+ i 1))))
       (when
         (> count 0)
         (begin
-          (array-set! cfg-reachable 0 1)
-          (array-set! cfg-stack-node 0 0)
-          (array-set! cfg-stack-edge 0 (array-ref cfg-succ-off 0))
+          (array-set! reachable 0 1)
+          (array-set! stack-node 0 0)
+          (array-set! stack-edge 0 (array-ref succ-off 0))
           (set! sp 0)
           (while (>= sp 0)
             (let
-              [node : i64 (array-ref cfg-stack-node sp)]
-              [cursor : i64 (array-ref cfg-stack-edge sp)]
-              (if (< cursor (array-ref cfg-succ-off (+ node 1)))
+              [node : i64 (array-ref stack-node sp)]
+              [cursor : i64 (array-ref stack-edge sp)]
+              (if (< cursor (array-ref succ-off (+ node 1)))
                 (let
-                  [next : i64 (array-ref cfg-succ-edge cursor)]
+                  [next : i64 (array-ref succ-edge cursor)]
                   (begin
-                    (array-set! cfg-stack-edge sp (+ cursor 1))
+                    (array-set! stack-edge sp (+ cursor 1))
                     (when
-                      (= (array-ref cfg-reachable next) 0)
+                      (= (array-ref reachable next) 0)
                       (begin
-                        (array-set! cfg-reachable next 1)
+                        (array-set! reachable next 1)
                         (set! sp (+ sp 1))
-                        (array-set! cfg-stack-node sp next)
-                        (array-set!
-                          cfg-stack-edge
-                          sp
-                          (array-ref cfg-succ-off next))))))
+                        (array-set! stack-node sp next)
+                        (array-set! stack-edge sp (array-ref succ-off next))))))
                 (begin
-                  (array-set! cfg-postorder post node)
+                  (array-set! postorder post node)
                   (set! post (+ post 1))
                   (set! sp (- sp 1))))))))
       (set! cfg-reach-count post)
       (set! i 0)
       (while (< i post)
         (begin
-          (array-set! cfg-rpo i (array-ref cfg-postorder (- (- post 1) i)))
+          (array-set! rpo i (array-ref postorder (- (- post 1) i)))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i post)
         (begin
-          (array-set! cfg-rpo-num (array-ref cfg-rpo i) i)
+          (array-set! rpo-num (array-ref rpo i) i)
           (set! i (+ i 1)))))))
 
-;; opt-dom-intersect-idom: walk both fingers up the partial dominator tree until
-;; they meet, always advancing the one with the larger RPO number.
-(define (cfg-intersect [left : i64] [right : i64]) : i64
+(define (cfg-idom-iterate
+  [entry : i64]
+  [rpo-vec : (& rpo i64vec.Vec)]
+  [pred-off-vec : (& pred-off i64vec.Vec)]
+  [pred-edge-vec : (& pred-edge i64vec.Vec)]
+  [reachable-vec : (& reachable i64vec.Vec)]
+  [idom-vec : (&mut idom i64vec.Vec)]
+  [rpo-num-vec : (& rpo-num i64vec.Vec)]) : bool
   (let
-    [a : i64 left]
-    [b : i64 right]
-    (begin
-      (while (not (= a b))
-        (begin
-          (while (> (array-ref cfg-rpo-num a) (array-ref cfg-rpo-num b))
-            (set! a (array-ref cfg-idom a)))
-          (while (> (array-ref cfg-rpo-num b) (array-ref cfg-rpo-num a))
-            (set! b (array-ref cfg-idom b)))))
-      a)))
-
-(define (cfg-idom-from-preds [id : i64]) : i64
-  (let
-    [edge : i64 (array-ref cfg-pred-off id)]
-    [end : i64 (array-ref cfg-pred-off (+ id 1))]
-    [candidate : i64 -1]
-    (begin
-      (while (< edge end)
-        (let
-          [pred : i64 (array-ref cfg-pred-edge edge)]
-          (begin
-            (when
-              (and
-                (= (array-ref cfg-reachable pred) 1)
-                (>= (array-ref cfg-idom pred) 0))
-              (if (< candidate 0)
-                (set! candidate pred)
-                (set! candidate (cfg-intersect pred candidate))))
-            (set! edge (+ edge 1)))))
-      candidate)))
-
-(define (cfg-idom-iterate [entry : i64]) : bool
-  (let
+    [rpo (i64vec.slots rpo-vec)]
+    [pred-off (i64vec.slots pred-off-vec)]
+    [pred-edge (i64vec.slots pred-edge-vec)]
+    [reachable (i64vec.slots reachable-vec)]
+    [idom (i64vec.slots-mut idom-vec)]
+    [rpo-num (i64vec.slots rpo-num-vec)]
     [slot : i64 1]
     [changed : bool false]
     (begin
       (while (< slot cfg-reach-count)
         (let
-          [id : i64 (array-ref cfg-rpo slot)]
-          [next : i64 (cfg-idom-from-preds id)]
+          [id : i64 (array-ref rpo slot)]
+          [edge : i64 (array-ref pred-off id)]
+          [end : i64 (array-ref pred-off (+ id 1))]
+          [candidate : i64 -1]
           (begin
+            (while (< edge end)
+              (let
+                [pred : i64 (array-ref pred-edge edge)]
+                (begin
+                  (when
+                    (and
+                      (= (array-ref reachable pred) 1)
+                      (>= (array-ref idom pred) 0))
+                    (if (< candidate 0)
+                      (set! candidate pred)
+                      (let
+                        [a : i64 pred]
+                        [b : i64 candidate]
+                        (begin
+                          (while (not (= a b))
+                            (begin
+                              (while (>
+                                (array-ref rpo-num a)
+                                (array-ref rpo-num b))
+                                (set! a (array-ref idom a)))
+                              (while (>
+                                (array-ref rpo-num b)
+                                (array-ref rpo-num a))
+                                (set! b (array-ref idom b)))))
+                          (set! candidate a)))))
+                  (set! edge (+ edge 1)))))
             (when
               (and
                 (not (= id entry))
-                (>= next 0)
-                (not (= (array-ref cfg-idom id) next)))
+                (>= candidate 0)
+                (not (= (array-ref idom id) candidate)))
               (begin
-                (array-set! cfg-idom id next)
+                (array-set! idom id candidate)
                 (set! changed true)))
             (set! slot (+ slot 1)))))
       changed)))
 
 ;; opt-dom-build-euler!: dominator-tree children in ascending id order, then a
 ;; DFS stamping tin on entry and tout on exit.
-(define (cfg-build-euler [entry : i64]) : unit
+(define (cfg-build-euler-tree
+  [idom-vec : (& idom i64vec.Vec)]
+  [reachable-vec : (& reachable i64vec.Vec)]
+  [tin-vec : (&mut tin i64vec.Vec)]
+  [tout-vec : (&mut tout i64vec.Vec)]
+  [child-fill-vec : (&mut child-fill i64vec.Vec)]
+  [child-off-vec : (&mut child-off i64vec.Vec)]
+  [child-edge-vec : (&mut child-edge i64vec.Vec)]) : unit
   (let
+    [idom (i64vec.slots idom-vec)]
+    [reachable (i64vec.slots reachable-vec)]
+    [tin (i64vec.slots-mut tin-vec)]
+    [tout (i64vec.slots-mut tout-vec)]
+    [child-fill (i64vec.slots-mut child-fill-vec)]
+    [child-off (i64vec.slots-mut child-off-vec)]
+    [child-edge (i64vec.slots-mut child-edge-vec)]
     [count : i64 cfg-blocks]
     [i : i64 0]
     [total : i64 0]
-    [sp : i64 0]
-    [time : i64 0]
     (begin
       (while (< i count)
         (begin
-          (array-set! cfg-tin i -1)
-          (array-set! cfg-tout i -1)
-          (array-set! cfg-child-fill i 0)
+          (array-set! tin i -1)
+          (array-set! tout i -1)
+          (array-set! child-fill i 0)
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i count)
         (let
-          [parent : i64 (array-ref cfg-idom i)]
+          [parent : i64 (array-ref idom i)]
           (begin
             (when
               (and
-                (= (array-ref cfg-reachable i) 1)
+                (= (array-ref reachable i) 1)
                 (>= parent 0)
                 (not (= parent i)))
-              (array-set!
-                cfg-child-fill
-                parent
-                (+ (array-ref cfg-child-fill parent) 1)))
+              (array-set! child-fill parent (+ (array-ref child-fill parent) 1)))
             (set! i (+ i 1)))))
       (set! i 0)
       (while (< i count)
         (begin
-          (array-set! cfg-child-off i total)
-          (set! total (+ total (array-ref cfg-child-fill i)))
-          (array-set! cfg-child-fill i (array-ref cfg-child-off i))
+          (array-set! child-off i total)
+          (set! total (+ total (array-ref child-fill i)))
+          (array-set! child-fill i (array-ref child-off i))
           (set! i (+ i 1))))
-      (array-set! cfg-child-off count total)
+      (array-set! child-off count total)
       (set! i 0)
       (while (< i count)
         (let
-          [parent : i64 (array-ref cfg-idom i)]
+          [parent : i64 (array-ref idom i)]
           (begin
             (when
               (and
-                (= (array-ref cfg-reachable i) 1)
+                (= (array-ref reachable i) 1)
                 (>= parent 0)
                 (not (= parent i)))
               (begin
-                (array-set! cfg-child-edge (array-ref cfg-child-fill parent) i)
+                (array-set! child-edge (array-ref child-fill parent) i)
                 (array-set!
-                  cfg-child-fill
+                  child-fill
                   parent
-                  (+ (array-ref cfg-child-fill parent) 1))))
+                  (+ (array-ref child-fill parent) 1))))
             (set! i (+ i 1)))))
+      unit)))
+
+(define (cfg-stamp-euler
+  [entry : i64]
+  [reachable-vec : (& reachable i64vec.Vec)]
+  [child-off-vec : (& child-off i64vec.Vec)]
+  [child-edge-vec : (& child-edge i64vec.Vec)]
+  [stack-node-vec : (&mut stack-node i64vec.Vec)]
+  [stack-edge-vec : (&mut stack-edge i64vec.Vec)]
+  [tin-vec : (&mut tin i64vec.Vec)]
+  [tout-vec : (&mut tout i64vec.Vec)]) : unit
+  (let
+    [reachable (i64vec.slots reachable-vec)]
+    [child-off (i64vec.slots child-off-vec)]
+    [child-edge (i64vec.slots child-edge-vec)]
+    [stack-node (i64vec.slots-mut stack-node-vec)]
+    [stack-edge (i64vec.slots-mut stack-edge-vec)]
+    [tin (i64vec.slots-mut tin-vec)]
+    [tout (i64vec.slots-mut tout-vec)]
+    [count : i64 cfg-blocks]
+    [sp : i64 0]
+    [time : i64 0]
+    (begin
       (when
-        (and (> count 0) (= (array-ref cfg-reachable entry) 1))
+        (and (> count 0) (= (array-ref reachable entry) 1))
         (begin
-          (array-set! cfg-stack-node 0 entry)
-          (array-set! cfg-stack-edge 0 (array-ref cfg-child-off entry))
-          (array-set! cfg-tin entry 0)
+          (array-set! stack-node 0 entry)
+          (array-set! stack-edge 0 (array-ref child-off entry))
+          (array-set! tin entry 0)
           (set! time 1)
           (set! sp 0)
           (while (>= sp 0)
             (let
-              [node : i64 (array-ref cfg-stack-node sp)]
-              [cursor : i64 (array-ref cfg-stack-edge sp)]
-              (if (< cursor (array-ref cfg-child-off (+ node 1)))
+              [node : i64 (array-ref stack-node sp)]
+              [cursor : i64 (array-ref stack-edge sp)]
+              (if (< cursor (array-ref child-off (+ node 1)))
                 (let
-                  [child : i64 (array-ref cfg-child-edge cursor)]
+                  [child : i64 (array-ref child-edge cursor)]
                   (begin
-                    (array-set! cfg-stack-edge sp (+ cursor 1))
-                    (array-set! cfg-tin child time)
+                    (array-set! stack-edge sp (+ cursor 1))
+                    (array-set! tin child time)
                     (set! time (+ time 1))
                     (set! sp (+ sp 1))
-                    (array-set! cfg-stack-node sp child)
-                    (array-set!
-                      cfg-stack-edge
-                      sp
-                      (array-ref cfg-child-off child))))
+                    (array-set! stack-node sp child)
+                    (array-set! stack-edge sp (array-ref child-off child))))
                 (begin
-                  (array-set! cfg-tout node time)
-                  (set! sp (- sp 1)))))))))))
+                  (array-set! tout node time)
+                  (set! sp (- sp 1))))))))
+      unit)))
 
 ;; opt-dom-info-dominates-id?
-(define (cfg-dominates? [dominator : i64] [label : i64]) : bool
-  (if (and
-    (= (array-ref cfg-reachable dominator) 1)
-    (= (array-ref cfg-reachable label) 1))
-    (and
-      (>= (array-ref cfg-tin dominator) 0)
-      (>= (array-ref cfg-tin label) 0)
-      (<= (array-ref cfg-tin dominator) (array-ref cfg-tin label))
-      (<= (array-ref cfg-tout label) (array-ref cfg-tout dominator)))
-    false))
+(define (cfg-dominates?
+  [dominator : i64]
+  [label : i64]
+  [reachable-vec : (& reachable i64vec.Vec)]
+  [tin-vec : (& tin i64vec.Vec)]
+  [tout-vec : (& tout i64vec.Vec)]) : bool
+  (let
+    [reachable (i64vec.slots reachable-vec)]
+    [tin (i64vec.slots tin-vec)]
+    [tout (i64vec.slots tout-vec)]
+    (if (and
+      (= (array-ref reachable dominator) 1)
+      (= (array-ref reachable label) 1))
+      (and
+        (>= (array-ref tin dominator) 0)
+        (>= (array-ref tin label) 0)
+        (<= (array-ref tin dominator) (array-ref tin label))
+        (<= (array-ref tout label) (array-ref tout dominator)))
+      false)))
 
 ;; opt-natural-loop-build's body collection: seed the marks with header and
 ;; latch, then walk predecessors backwards from the latch only (a self loop
 ;; expands nothing), taking the most recently added label first.
-(define (cfg-loop-body [header : i64] [latch : i64]) : i64
+(define (cfg-loop-body
+  [header : i64]
+  [latch : i64]
+  [pred-off-vec : (& pred-off i64vec.Vec)]
+  [pred-edge-vec : (& pred-edge i64vec.Vec)]
+  [reachable-vec : (& reachable i64vec.Vec)]
+  [marks-vec : (&mut marks i64vec.Vec)]
+  [worklist-vec : (&mut worklist i64vec.Vec)]) : i64
   (let
+    [pred-off (i64vec.slots pred-off-vec)]
+    [pred-edge (i64vec.slots pred-edge-vec)]
+    [reachable (i64vec.slots reachable-vec)]
+    [marks (i64vec.slots-mut marks-vec)]
+    [worklist (i64vec.slots-mut worklist-vec)]
     [count : i64 cfg-blocks]
     [i : i64 0]
     [size : i64 0]
@@ -438,38 +557,38 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! cfg-marks i 0)
+          (array-set! marks i 0)
           (set! i (+ i 1))))
-      (array-set! cfg-marks header 1)
-      (array-set! cfg-marks latch 1)
+      (array-set! marks header 1)
+      (array-set! marks latch 1)
       (set! size 1)
       (when
         (not (= header latch))
         (begin
           (set! size 2)
-          (array-set! cfg-worklist 0 latch)
+          (array-set! worklist 0 latch)
           (set! pending 1)))
       (while (> pending 0)
         (let
-          [node : i64 (array-ref cfg-worklist (- pending 1))]
+          [node : i64 (array-ref worklist (- pending 1))]
           [edge : i64 0]
           [end : i64 0]
           (begin
             (set! pending (- pending 1))
-            (set! edge (array-ref cfg-pred-off node))
-            (set! end (array-ref cfg-pred-off (+ node 1)))
+            (set! edge (array-ref pred-off node))
+            (set! end (array-ref pred-off (+ node 1)))
             (while (< edge end)
               (let
-                [pred : i64 (array-ref cfg-pred-edge edge)]
+                [pred : i64 (array-ref pred-edge edge)]
                 (begin
                   (when
                     (and
-                      (= (array-ref cfg-reachable pred) 1)
-                      (= (array-ref cfg-marks pred) 0))
+                      (= (array-ref reachable pred) 1)
+                      (= (array-ref marks pred) 0))
                     (begin
-                      (array-set! cfg-marks pred 1)
+                      (array-set! marks pred 1)
                       (set! size (+ size 1))
-                      (array-set! cfg-worklist pending pred)
+                      (array-set! worklist pending pred)
                       (set! pending (+ pending 1))))
                   (set! edge (+ edge 1))))))))
       size)))
@@ -477,33 +596,44 @@
 ;; opt-natural-loop-find-preheader: the loop has a preheader when exactly one
 ;; reachable predecessor of the header lies outside the body and its only
 ;; successor is the header.
-(define (cfg-loop-preheader [header : i64]) : i64
+(define (cfg-loop-preheader
+  [header : i64]
+  [pred-off-vec : (& pred-off i64vec.Vec)]
+  [pred-edge-vec : (& pred-edge i64vec.Vec)]
+  [reachable-vec : (& reachable i64vec.Vec)]
+  [marks-vec : (& marks i64vec.Vec)]
+  [succ-off-vec : (& succ-off i64vec.Vec)]
+  [succ-edge-vec : (& succ-edge i64vec.Vec)]) : i64
   (let
-    [edge : i64 (array-ref cfg-pred-off header)]
-    [end : i64 (array-ref cfg-pred-off (+ header 1))]
+    [pred-off (i64vec.slots pred-off-vec)]
+    [pred-edge (i64vec.slots pred-edge-vec)]
+    [reachable (i64vec.slots reachable-vec)]
+    [marks (i64vec.slots marks-vec)]
+    [succ-off (i64vec.slots succ-off-vec)]
+    [succ-edge (i64vec.slots succ-edge-vec)]
+    [edge : i64 (array-ref pred-off header)]
+    [end : i64 (array-ref pred-off (+ header 1))]
     [state : i64 0]
     [found : i64 -1]
     (begin
       (while (< edge end)
         (let
-          [pred : i64 (array-ref cfg-pred-edge edge)]
+          [pred : i64 (array-ref pred-edge edge)]
           (begin
             (when
               (and
-                (= (array-ref cfg-reachable pred) 1)
-                (= (array-ref cfg-marks pred) 0))
+                (= (array-ref reachable pred) 1)
+                (= (array-ref marks pred) 0))
               (cond
                 [(= state 2) unit]
                 [(= state 0)
                   (if (and
                     (=
                       (-
-                        (array-ref cfg-succ-off (+ pred 1))
-                        (array-ref cfg-succ-off pred))
+                        (array-ref succ-off (+ pred 1))
+                        (array-ref succ-off pred))
                       1)
-                    (=
-                      (array-ref cfg-succ-edge (array-ref cfg-succ-off pred))
-                      header))
+                    (= (array-ref succ-edge (array-ref succ-off pred)) header))
                     (begin
                       (set! state 1)
                       (set! found pred))
@@ -525,21 +655,42 @@
       (while (>= pos 0)
         (begin
           (when
-            (= (array-ref cfg-reachable pos) 1)
+            (= (cfg-ref cfg-reachable pos) 1)
             (let
-              [edge : i64 (array-ref cfg-succ-off pos)]
-              [end : i64 (array-ref cfg-succ-off (+ pos 1))]
+              [edge : i64 (cfg-ref cfg-succ-off pos)]
+              [end : i64 (cfg-ref cfg-succ-off (+ pos 1))]
               (while (< edge end)
                 (let
-                  [header : i64 (array-ref cfg-succ-edge edge)]
+                  [header : i64 (cfg-ref cfg-succ-edge edge)]
                   (begin
                     (when
                       (and
-                        (= (array-ref cfg-reachable header) 1)
-                        (cfg-dominates? header pos))
+                        (= (cfg-ref cfg-reachable header) 1)
+                        (cfg-dominates?
+                          header
+                          pos
+                          (& cfg-reachable)
+                          (& cfg-tin)
+                          (& cfg-tout)))
                       (let
-                        [size : i64 (cfg-loop-body header pos)]
-                        [preheader : i64 (cfg-loop-preheader header)]
+                        [size : i64
+                          (cfg-loop-body
+                            header
+                            pos
+                            (& cfg-pred-off)
+                            (& cfg-pred-edge)
+                            (& cfg-reachable)
+                            (&mut cfg-marks)
+                            (&mut cfg-worklist))]
+                        [preheader : i64
+                          (cfg-loop-preheader
+                            header
+                            (& cfg-pred-off)
+                            (& cfg-pred-edge)
+                            (& cfg-reachable)
+                            (& cfg-marks)
+                            (& cfg-succ-off)
+                            (& cfg-succ-edge))]
                         (begin
                           (set! hash (cfg-mix hash header))
                           (set! hash (cfg-mix hash pos))
@@ -559,31 +710,71 @@
     [i : i64 0]
     [remaining : i64 0]
     (begin
-      (cfg-build-csr)
-      (cfg-dfs-postorder)
+      (cfg-build-csr
+        (& cfg-tokens)
+        (&mut cfg-succ-off)
+        (&mut cfg-succ-edge)
+        (&mut cfg-succ-fill)
+        (&mut cfg-pred-off)
+        (&mut cfg-pred-edge)
+        (&mut cfg-pred-fill))
+      (cfg-dfs-postorder
+        (& cfg-succ-off)
+        (& cfg-succ-edge)
+        (&mut cfg-reachable)
+        (&mut cfg-postorder)
+        (&mut cfg-rpo)
+        (&mut cfg-rpo-num)
+        (&mut cfg-stack-node)
+        (&mut cfg-stack-edge))
       (while (< i count)
         (begin
-          (array-set! cfg-idom i -1)
+          (cfg-set! cfg-idom i -1)
           (set! i (+ i 1))))
       (when
-        (and (> count 0) (= (array-ref cfg-reachable 0) 1))
+        (and (> count 0) (= (cfg-ref cfg-reachable 0) 1))
         (begin
-          (array-set! cfg-idom 0 0)
+          (cfg-set! cfg-idom 0 0)
           (set! remaining (+ count 1))
-          (while (and (> remaining 0) (cfg-idom-iterate 0))
+          (while (and
+            (> remaining 0)
+            (cfg-idom-iterate
+              0
+              (& cfg-rpo)
+              (& cfg-pred-off)
+              (& cfg-pred-edge)
+              (& cfg-reachable)
+              (&mut cfg-idom)
+              (& cfg-rpo-num)))
             (set! remaining (- remaining 1)))))
-      (cfg-build-euler 0)
+      (cfg-build-euler-tree
+        (& cfg-idom)
+        (& cfg-reachable)
+        (&mut cfg-tin)
+        (&mut cfg-tout)
+        (&mut cfg-child-fill)
+        (&mut cfg-child-off)
+        (&mut cfg-child-edge))
+      (cfg-stamp-euler
+        0
+        (& cfg-reachable)
+        (& cfg-child-off)
+        (& cfg-child-edge)
+        (&mut cfg-stack-node)
+        (&mut cfg-stack-edge)
+        (&mut cfg-tin)
+        (&mut cfg-tout))
       (set! hash (cfg-mix hash count))
       (set! hash (cfg-mix hash cfg-reach-count))
       (set! i 0)
       (while (< i cfg-reach-count)
         (begin
-          (set! hash (cfg-mix hash (array-ref cfg-rpo i)))
+          (set! hash (cfg-mix hash (cfg-ref cfg-rpo i)))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i count)
         (begin
-          (set! hash (cfg-mix hash (array-ref cfg-idom i)))
+          (set! hash (cfg-mix hash (cfg-ref cfg-idom i)))
           (set! i (+ i 1))))
       (cfg-natural-loops hash))))
 
@@ -599,42 +790,42 @@
     [start : i64 0]
     [acc : i64 cfg-hash-basis]
     (begin
-      (set! cfg-tokens (array.make-array i64 capacity))
-      (set! acc (cfg-mix acc (cfg-scan-ints text cfg-tokens)))
-      (set! functions (array-ref cfg-tokens 0))
-      (set! cfg-offsets (array.make-array i64 (+ functions 1)))
+      (set! cfg-tokens (cfg-zero-vec capacity))
+      (set! acc (cfg-mix acc (cfg-scan-ints text (&mut cfg-tokens))))
+      (set! functions (cfg-ref cfg-tokens 0))
+      (set! cfg-offsets (cfg-zero-vec (+ functions 1)))
       (let
         [f : i64 0]
         (while (< f functions)
           (let
-            [blocks : i64 (array-ref cfg-tokens cursor)]
-            [edges : i64 (array-ref cfg-tokens (+ cursor 1))]
+            [blocks : i64 (cfg-ref cfg-tokens cursor)]
+            [edges : i64 (cfg-ref cfg-tokens (+ cursor 1))]
             (begin
-              (array-set! cfg-offsets f cursor)
+              (cfg-set! cfg-offsets f cursor)
               (when (> blocks max-blocks) (set! max-blocks blocks))
               (when (> edges max-edges) (set! max-edges edges))
               (set! cursor (+ cursor (+ 2 (* edges 2))))
               (set! f (+ f 1))))))
-      (set! cfg-succ-off (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-succ-edge (array.make-array i64 (+ max-edges 1)))
-      (set! cfg-succ-fill (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-pred-off (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-pred-edge (array.make-array i64 (+ max-edges 1)))
-      (set! cfg-pred-fill (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-child-off (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-child-edge (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-child-fill (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-reachable (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-postorder (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-rpo (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-rpo-num (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-idom (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-tin (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-tout (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-marks (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-worklist (array.make-array i64 (+ max-blocks 1)))
-      (set! cfg-stack-node (array.make-array i64 (+ max-blocks 2)))
-      (set! cfg-stack-edge (array.make-array i64 (+ max-blocks 2)))
+      (set! cfg-succ-off (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-succ-edge (cfg-zero-vec (+ max-edges 1)))
+      (set! cfg-succ-fill (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-pred-off (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-pred-edge (cfg-zero-vec (+ max-edges 1)))
+      (set! cfg-pred-fill (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-child-off (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-child-edge (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-child-fill (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-reachable (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-postorder (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-rpo (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-rpo-num (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-idom (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-tin (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-tout (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-marks (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-worklist (cfg-zero-vec (+ max-blocks 1)))
+      (set! cfg-stack-node (cfg-zero-vec (+ max-blocks 2)))
+      (set! cfg-stack-edge (cfg-zero-vec (+ max-blocks 2)))
       (while (< round rounds)
         (let
           [step : i64 0]
@@ -646,9 +837,9 @@
               (begin
                 (set! index (+ start step))
                 (when (>= index functions) (set! index (- index functions)))
-                (set! offset (array-ref cfg-offsets index))
-                (set! cfg-blocks (array-ref cfg-tokens offset))
-                (set! cfg-edges (array-ref cfg-tokens (+ offset 1)))
+                (set! offset (cfg-ref cfg-offsets index))
+                (set! cfg-blocks (cfg-ref cfg-tokens offset))
+                (set! cfg-edges (cfg-ref cfg-tokens (+ offset 1)))
                 (set! cfg-edge-base (+ offset 2))
                 (set! acc (cfg-mix acc (cfg-function)))
                 (set! step (+ step 1))))
